@@ -41,15 +41,6 @@ Main publication and GitHub Actions deployment were authorized in turn 12. No li
   root and monorepo examples; review desktop, tablet and phone without touching live services.
 - Unknowns: none beyond checks recorded below.
 
-## 5. Shared site navigation and origin
-- Rationale: expose the catalog in the documentation header and keep navigation on one hostname.
-- Data: documentation page-html, Worker shellHTML and the shared theme.css.
-- Acceptance criteria: a visible header link on desktop and touch devices, no link in embedded docs,
-  and documentation/catalog navigation on the same public origin.
-- Unknowns: the common hostname. GitHub Pages cannot route requests to this Worker. Moving the
-  docs to the Worker hostname or adding a user-selected domain requires a hosting decision.
-  No DNS or origin migration was performed.
-
 ## Plan state
 1–4 complete locally. The Python web server is removed; the Worker renders catalog/details as HTML
 and D1 separates public listings from pending submissions. Installer behavior is unchanged.
@@ -87,11 +78,6 @@ The production Turnstile SDK and widget load; completing its interactive challen
 a repository still requires a human check. No fixture catalog entries were published.
 The local default checkout was left untouched; temporary review services and browsers are stopped.
 
-Turn 17: the header link is implemented in the public documentation and catalog. Both use the
-shared Vis light stylesheet; the catalog marks its active location and the Vis brand links to docs.
-36 Worker/UI/deployment tests and 25 documentation tests pass. Browser measurements match at
-1280 px and 320 px with 130% text scaling, without horizontal overflow; the new touch target
-exceeds 44 px. Shared-origin delivery remains blocked on the hostname decision in phase 5.
 ---
 
 # Session health in app metrics
@@ -1156,4 +1142,63 @@ Require full release and installed native verification before replacing healthy 
   changed-region formatting pass. Main CI 34322681529, Android companion 34322681333 and
   CodeQL 34322680874 pass. This test-only change does not alter the published artifacts.
 - Earlier failed release tags v0.1.45 through v0.1.48 remain immutable; incomplete drafts
-  were not promoted. No delivery blocker remains. Unrelated concurrent work is preserved.
+   were not promoted. No delivery blocker remains. Unrelated concurrent work is preserved.
+
+---
+
+# Extension contracts, packaged skills and authoring documentation
+
+One tool declaration supplies discovery and documentation; one package carries code and skills.
+
+## Context
+Issue #176 requests machine-readable tool descriptions without another callable registry.
+`extension.py` owns SDK declarations; `python/extensions.clj` bridges them into the engine.
+`extension_package.py` validates inert package metadata; harness discovery owns skills.
+`resources/vis-docs/` serves both doc() and the site. Keep unrelated plans and edits intact.
+Do not generate a CLI, invent a workflow language, evaluate annotations, or change sys.path.
+
+## 1. Tool contract and tested example
+- Rationale: derive structure from Python rather than duplicating signatures in ToolSpec.
+- Data: Symbol and method declarations, annotations, docstrings, SDK and loader tests.
+- Acceptance criteria: portable contracts cover every parameter kind, absent/None defaults,
+  typed results and field descriptions; sandbox callables expose the same data used by doc().
+  Inspection never calls tools, authentication, factories or annotation expressions.
+- Unknowns: resolved with existing symbol entries and callable attributes; no runtime shim changes.
+
+## 2. Package-owned skills
+- Rationale: install, reload and remove tools and their procedures as one reviewed package.
+- Data: tool.vis manifest, frozen extension sources, harness skill discovery and reload tests.
+- Acceptance criteria: declared in-package skills and resources, explicit provenance and
+  collision policy, last-good reload, no automatic execution or second skill registry.
+- Unknowns: resolved by registered extension skills and the existing discovery cache marker.
+
+## 3. Documentation consolidation and verification
+- Rationale: one canonical page per concern and one executable authoring example.
+- Data: quickstart, design guide, packaging, API reference, troubleshooting, docs catalog/site.
+- Acceptance criteria: tested example, affected SDK/JVM suites, formatting, lint/reflection,
+  canonical contract validation, content/link/diff checks; no remote publication in this task.
+- Unknowns: none in scope; unrelated full-suite failures are recorded below.
+
+## Plan state
+Completed locally. No commit, push, release or service restart was performed.
+- Portable Symbol contracts drive tool documentation and sandbox callable inspection. Tests
+  cover parameter kinds, private defaults, nested result fields, recursive references and
+  inert Python 3.14 deferred annotations. Existing declaration and invocation paths remain.
+- Declared package skills retain resources and package/version provenance, qualified names,
+  local override precedence and last-good reload behavior. Removal clears discovery. Tests
+  exercise the real loader, doc(), slash templates and sandbox without executing procedures.
+- The quickstart and four focused guides share one greeter package. Tests execute its domain
+  tests and real registered tool, and enforce exact documentation snippets. Navigation,
+  cross-page anchors and the SDK README point to the canonical pages.
+- Verification: 132 affected SDK tests and 807 JVM tests pass. Scoped Python/Clojure
+  formatting, lint including reflection, canonical JSON validation and docs/link checks pass.
+  The scoped diff check is clean. Full SDK: 381 passed, 9 skipped, 6 existing failures in
+  test_activity.py shared_operation_groups; its implementation/tests were not changed here.
+  A concurrent TUI test edit also caused an unrelated whole-worktree whitespace check failure.
+  All unrelated shared-worktree changes are preserved.
+- Discovery follow-up: apropos previews page prose instead of repeating Markdown titles.
+  Real sandbox tests cover tool/doc/skill row types, bounded descriptions, doc(row), complete
+  parameter/result documentation and skill provenance/resources. The same session observes
+  successful reloads, retains last-good discovery on failure and removes uninstalled skills.
+  The quickstart demonstrates apropos → doc(row) → contract → call. All 254 affected JVM
+  tests and 4 executable-example SDK tests pass; formatting, lint/reflection and diff checks pass.

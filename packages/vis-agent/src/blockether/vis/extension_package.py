@@ -112,12 +112,18 @@ def manifest_metadata(text, vis_version=None, python_version=None):
             )
         if category not in CATEGORIES:
             raise ValueError("category must be providers, tools or workflows")
-        if set(vis) - {"category", "source_paths"}:
-            raise ValueError("tool.vis accepts category and source_paths")
+        if set(vis) - {"category", "source_paths", "skills"}:
+            raise ValueError("tool.vis accepts category, source_paths and skills")
         paths = vis.get("source_paths", [])
         if not isinstance(paths, list) or len(paths) > 16:
             raise ValueError("source_paths must be a list of at most 16 directories")
         paths = [_relative(p) for p in paths]
+        skills = vis.get("skills", [])
+        if not isinstance(skills, list) or len(skills) > 64:
+            raise ValueError("skills must be a list of at most 64 skill directories")
+        skills = [_relative(p) for p in skills]
+        if len(set(skills)) != len(skills):
+            raise ValueError("skills must not repeat a directory")
         return {
             "name": canonicalize_name(name),
             "version": version,
@@ -126,6 +132,7 @@ def manifest_metadata(text, vis_version=None, python_version=None):
             "requires_python": requires_python,
             "dependencies": dependencies,
             "source_paths": paths,
+            "skills": skills,
         }
     except (KeyError, TypeError, AttributeError) as exc:
         raise ValueError(
@@ -151,6 +158,18 @@ def inspect_source(directory, vis_version=None, python_version=None):
         resolved = (directory / path).resolve(strict=True)
         if not resolved.is_relative_to(directory) or not resolved.is_dir():
             raise ValueError("source_paths must be directories inside the project")
+    for path in metadata["skills"]:
+        skill = directory / path
+        if not skill.is_dir() or not (skill / "SKILL.md").is_file():
+            raise ValueError(
+                f"skills entry {path!r} needs a directory containing SKILL.md"
+            )
+        for resource in [skill, *skill.rglob("*")]:
+            if not resource.resolve().is_relative_to(directory):
+                raise ValueError(
+                    "skills and their resources must stay inside the project"
+                )
+            _relative(resource.relative_to(directory).as_posix())
     return metadata
 
 

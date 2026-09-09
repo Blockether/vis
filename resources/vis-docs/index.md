@@ -79,6 +79,10 @@ To check which runtime is installed, run `vis-agent runtime`.
 ### Extensions
 
 - [Extending Vis](extending.md) — write a Python extension: tools, commands, guards and state.
+- [Extension design](extension-design.md) — design and test typed tools.
+- [Extension packages](extension-packages.md) — install, publish and bundle skills.
+- [Extension API](extension-api.md) — declarations, tool contracts and host operations.
+- [Extension troubleshooting](extension-troubleshooting.md) — diagnose loading and call errors.
 - [Asking the human](human-input.md) — show a typed form and read the answer.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.

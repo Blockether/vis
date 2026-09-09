@@ -3013,6 +3013,15 @@ export function SessionScreen({
     };
   }, [sid]);
 
+  // Let the native editor own typing, selection and marked text. A controlled
+  // textarea also rewrites defaultValue (its child text) on every keystroke,
+  // even when its live value already matches. Only application changes such as
+  // draft restore, completion and send need a write back into the editor.
+  useLayoutEffect(() => {
+    const textarea = composerRef.current;
+    if (textarea && textarea.value !== prompt) textarea.value = prompt;
+  }, [prompt]);
+
   useEffect(() => {
     const textarea = composerRef.current;
     if (textarea) return watchComposerInputDiagnostics(textarea, sid);
@@ -4794,7 +4803,6 @@ export function SessionScreen({
                 <textarea
                   ref={composerRef}
                   rows={1}
-                  value={prompt}
                   disabled={voicePhase === "recording"}
                   placeholder={
                     voicePhase === "recording"

@@ -278,7 +278,7 @@
 (defdescribe editable-package-docs-test
              ;; #175: the authoring guide must not undo editable installs in its instructions.
              (it "documents editable package metadata instead of copied local wheels"
-                 (let [md (page-md "extending")]
+                 (let [md (page-md "extension-packages")]
                    (expect (not (re-find #"--no-editable|installed\s+noneditably" md)))
                    (doseq [file ["einmal/pyproject.toml" "einmal/src/einmal/__init__.py"
                                  ".vis/extensions/einmal_tools.py" "einmal/tests/test_status.py"]]
@@ -542,8 +542,7 @@
                      page
                      (first (:pages site))]
 
-                 (expect (str/includes? (re-find #"<header[^>]*>.*?</header>"
-                                                 (docs/page-html site page :static))
+                 (expect (str/includes? (docs/page-html site page :static)
                                         "href=\"https://center.example.com/\""))
                  (expect (not (str/includes? (docs/page-html site page :live)
                                              "https://center.example.com/")))

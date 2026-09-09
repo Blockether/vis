@@ -86,4 +86,4 @@ Shell shortcuts need the **Shell commands** toggle enabled in settings.
 
 - [Skills](skills.md) — instructions loaded on demand.
 - [Configuration → System prompt](configuration.md#system-prompt) — the equivalent config keys.
-- [Extending Vis → Slash commands](extending.md#slash-commands) — commands provided by extensions.
+- [Extension API → Slash commands](extension-api.md#slash-commands) — commands provided by extensions.

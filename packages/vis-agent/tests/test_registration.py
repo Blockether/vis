@@ -18,6 +18,7 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
     source.write_text(
         "\n".join(
             [
+                "from __future__ import annotations",
                 "from dataclasses import dataclass",
                 "import blockether.vis.extension as vis",
                 "@dataclass(frozen=True)",
@@ -39,7 +40,10 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
     tool = declaration["symbols"][0]
     assert declaration["name"] == "greeter"
     assert tool["name"] == "greet"
-    assert tool["doc"] == "Greet one person, optionally in uppercase."
+    assert (
+        tool["contract"]["description"] == "Greet one person, optionally in uppercase."
+    )
+    assert "loud: bool" in tool["doc"]
     assert tool["params"] == ["name"]
     # Folded keyword arguments are how the engine invokes the same tool.
     result = tool["fn"]("Ada", {"loud": True})
@@ -63,7 +67,7 @@ def test_thin_entry_registers_tool_from_separate_package(tmp_path, monkeypatch):
     package = tmp_path / "einmal" / "src" / "einmal"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text(
-        'def status() -> str:\n    """Return the company integration status."""\n    return "ready"\n',
+        'from __future__ import annotations\ndef status() -> str:\n    """Return the company integration status."""\n    return "ready"\n',
         encoding="utf-8",
     )
     entry = tmp_path / ".vis" / "extensions" / "einmal.py"
@@ -81,7 +85,10 @@ def test_thin_entry_registers_tool_from_separate_package(tmp_path, monkeypatch):
         assert declaration["name"] == "einmal"
         tool = declaration["symbols"][0]
         assert tool["name"] == "status"
-        assert tool["doc"] == "Return the company integration status."
+        assert (
+            tool["contract"]["description"] == "Return the company integration status."
+        )
+        assert "Returns: str" in tool["doc"]
         assert tool["fn"]() == "ready"
     finally:
         sys.modules.pop("einmal", None)
@@ -256,13 +263,11 @@ vis.register(
     assert updates[-1]["content"] == [{"type": "text", "text": result.text}]
 
 
-def test_documented_extension_example_runs_with_the_installed_sdk(monkeypatch):
-    import re
+def test_sdk_readme_links_to_canonical_authoring_guides():
     from pathlib import Path
 
     readme = (Path(__file__).parents[1] / "README.md").read_text()
-    example = re.search(r"```python\n(.*?)\n```", readme, re.DOTALL).group(1)
-    monkeypatch.setattr(vis._host, "declare_env", lambda _: "{}")
-    exec(compile(example, "README.md", "exec"), {})
-    tool = vis._registration["spec"]["symbols"][0]
-    assert tool["fn"]("Ada") == "Hello, Ada!"
+    # #176: executable examples live in examples/greeter and test_authoring.py.
+    assert "extending" in readme
+    assert "extension-design" in readme
+    assert "vis.Extension(" not in readme

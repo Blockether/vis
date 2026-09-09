@@ -93,7 +93,7 @@ Every create, approve and discard goes through the `draft/create`,
 or observe them with `vis.OpHook`. A `before` hook returning `vis.block(reason)`
 stops the operation. Each approval-created draft commit also crosses
 `git/commit`; Git's own hooks are not bypassed. See
-[Extending Vis](extending.md#op-hooks).
+[Extension API](extension-api.md#op-hooks).
 
 ## See also
 

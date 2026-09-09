@@ -23,6 +23,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
+            [com.blockether.vis.contract.document :as contract-document]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -390,27 +391,29 @@
 
 (defn- fn-symbol-entry?
   [x]
-  (and (map? x)
-       (symbol? (:ext.symbol/symbol x))
-       (fn? (:ext.symbol/fn x))
-       (non-blank-string? (:ext.symbol/doc x))
-       (vector? (:ext.symbol/arglists x))
-       (seq (:ext.symbol/arglists x))
-       (optional-field? x :ext.symbol/raw? boolean?)
-       (optional-field? x :ext.symbol/hidden? boolean?)
-       (optional-field? x :ext.symbol/tag #{:observation :mutation})
-       (optional-field? x :ext.symbol/presenter keyword?)
-       (optional-field? x :ext.symbol/batch-hint pos-int?)
-       (every? #(optional-field? x % fn?)
-               [:ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/after-fn
-                :ext.symbol/on-error-fn :ext.symbol/ticker-fn])
-       (optional-field? x :ext.symbol/inject-env? boolean?)
-       (optional-field? x :ext.symbol/source non-blank-string?)
-       (optional-field? x :ext.symbol/name non-blank-string?)
-       (optional-field? x :ext.symbol/call #(or (map? %) (fn? %)))
-       (optional-field? x :ext.symbol/description non-blank-string?)
-       (optional-field? x :ext.symbol/result non-blank-string?)
-       (optional-field? x :ext.symbol/params params?)))
+  (and
+    (map? x)
+    (symbol? (:ext.symbol/symbol x))
+    (fn? (:ext.symbol/fn x))
+    (non-blank-string? (:ext.symbol/doc x))
+    (vector? (:ext.symbol/arglists x))
+    (seq (:ext.symbol/arglists x))
+    (optional-field? x :ext.symbol/contract #(contract-document/valid-json? "symbol" "callable" %))
+    (optional-field? x :ext.symbol/raw? boolean?)
+    (optional-field? x :ext.symbol/hidden? boolean?)
+    (optional-field? x :ext.symbol/tag #{:observation :mutation})
+    (optional-field? x :ext.symbol/presenter keyword?)
+    (optional-field? x :ext.symbol/batch-hint pos-int?)
+    (every? #(optional-field? x % fn?)
+            [:ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/after-fn
+             :ext.symbol/on-error-fn :ext.symbol/ticker-fn])
+    (optional-field? x :ext.symbol/inject-env? boolean?)
+    (optional-field? x :ext.symbol/source non-blank-string?)
+    (optional-field? x :ext.symbol/name non-blank-string?)
+    (optional-field? x :ext.symbol/call #(or (map? %) (fn? %)))
+    (optional-field? x :ext.symbol/description non-blank-string?)
+    (optional-field? x :ext.symbol/result non-blank-string?)
+    (optional-field? x :ext.symbol/params params?)))
 
 (defn- val-symbol-entry?
   [x]
@@ -721,6 +724,9 @@
 
           (:hidden? opts)
           (assoc :ext.symbol/hidden? true)
+
+          (:contract opts)
+          (assoc :ext.symbol/contract (:contract opts))
 
           source
           (assoc :ext.symbol/source source)
@@ -2889,9 +2895,9 @@
 (defn symbol-signature
   "Python parameter list for ONE symbol entry — what stands between the
    parentheses of the signature the sandbox reports for it, e.g.
-   `\"language=None, **kwargs\"`. The `:call` shape wins (it is the declared
-   keyword->positional contract); the implementation's arglists are the
-   fallback. nil when the entry declares nothing a caller could act on.
+   `\"language=None, **kwargs\"`. A portable symbol contract wins, then the `:call`
+   shape (the declared keyword->positional contract); implementation arglists are
+   the fallback. nil when the entry declares nothing a caller could act on.
 
    `env-python` ships these to the sandbox as `__vis_sigs__`, where a deferred
    tool hangs its parameters off `__wrapped__` so `inspect.signature(tool)` and
@@ -2900,7 +2906,8 @@
   [entry]
   (when (:ext.symbol/fn entry)
     (let [shape (:ext.symbol/call entry)]
-      (or (when (map? shape) (call-shape-signature shape))
+      (or (get-in entry [:ext.symbol/contract "signature"])
+          (when (map? shape) (call-shape-signature shape))
           (arglists-signature (:ext.symbol/arglists entry)
                               (boolean (:ext.symbol/inject-env? entry)))))))
 

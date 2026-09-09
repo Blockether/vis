@@ -10709,6 +10709,9 @@
               (env/set-python-binding-signature! python-context
                                                  target
                                                  (extension/symbol-signature (get by-sym sym)))
+              (env/set-python-binding-contract! python-context
+                                                target
+                                                (:ext.symbol/contract (get by-sym sym)))
               ;; ...and the keys its options dict must carry, so `doc(name)`
               ;; states requiredness for an aliased tool too.
               (env/set-python-binding-keys! python-context

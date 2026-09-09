@@ -76,12 +76,15 @@
 (defn body-text
   "The opening of `text` as ONE line, capped at `body-max-len`: the `body` an
    `apropos` row shows. Whitespace collapses so a wrapped docstring reads as the
-   sentence its author wrote, and a leading markdown heading goes the way `gist`
-   drops it. The first PARAGRAPH is the whole of it — a docstring's opening sentence
-   describes the symbol; what follows is one `doc(name)` away."
+   sentence its author wrote. Skip a leading Markdown title when prose follows it,
+   so pages describe their purpose instead of repeating their name. The first
+   paragraph is enough; the complete document remains one `doc(name)` away."
   [text]
-  (let [para
-        (first (str/split (str/trim (str text)) #"\n\s*\n"))
+  (let [prose
+        (str/replace-first (str/trim (str text)) #"^#{1,6}[ \t]+[^\r\n]*(?:\r?\n[ \t]*)+" "")
+
+        para
+        (first (str/split prose #"\n\s*\n"))
 
         s
         (str/trim (str/replace (str/replace (str para) #"\s+" " ") #"^#+\s*" ""))]
@@ -219,13 +222,27 @@
    the discovery cache, so search has no effect on the session."
   []
   (into []
-        (keep (fn [{:keys [name description body]}]
-                (when (seq (str name))
-                  {:name (str name)
-                   :kind "skill"
-                   :text (str (when (seq (str description)) (str description "
-
-")) body)})))
+        (keep
+          (fn [{:keys [name description body package dir resources]}]
+            (when (seq (str name))
+              {:name (str name)
+               :kind "skill"
+               :text (str (when (seq (str description)) (str description "\n\n"))
+                          (when package
+                            (str "Package: "
+                                 (:name package)
+                                 "@"
+                                 (:version package)
+                                 "\n"
+                                 "Skill directory: "
+                                 dir
+                                 "\n"
+                                 (when (seq resources)
+                                   (str "Resources:\n"
+                                        (str/join "\n" (map #(str "- " %) resources))
+                                        "\n"))
+                                 "\n"))
+                          body)})))
         (discovery/skills)))
 
 (register-source! :manifest-apropos #'manifest-records)

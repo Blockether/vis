@@ -46,6 +46,7 @@
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.notifications :as notifications]
@@ -1115,13 +1116,23 @@
         activity
         (get spec "activity")
 
+        contract
+        (get spec "contract")
+
+        _
+        (when-not (and (contract-document/valid-json? "symbol" "callable" contract)
+                       (= (str sym) (get contract "name"))
+                       (= (get spec "tag") (get contract "tag")))
+          (throw (ex-info (str "Invalid Python symbol contract for " sym)
+                          {:type :extension/invalid-symbol-contract})))
+
         _
         (when (and activity (not (contract-document/valid-json? "activity" "declaration" activity)))
           (throw (ex-info "Invalid Python Activity declaration"
                           {:type :extension/invalid-activity})))
 
         opts
-        (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
+        (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation) :contract contract}
           (get spec "hidden")
           (assoc :hidden? true)
 
@@ -2015,7 +2026,8 @@
                          (assoc spec
                            :ext/version (get metadata "version")
                            :ext/kind (get metadata "category")
-                           :ext/description (get metadata "description"))
+                           :ext/description (get metadata "description")
+                           :ext/skills (discovery/read-package-skills snap metadata))
                          spec)
                   validated (extension/register-extension! spec)]
 

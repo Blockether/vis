@@ -1,0 +1,14 @@
+[project]
+name = "vis-greeter"
+version = "1.0.0"
+description = "Typed greeting tools and an optional greeting procedure."
+requires-python = ">=3.11"
+dependencies = ["vis-agent>=0.1.45"]
+
+[tool.vis]
+category = "tools"
+source_paths = ["src"]
+skills = ["skills/greeting"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

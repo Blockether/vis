@@ -14,6 +14,8 @@
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
+            [com.blockether.vis.internal.foundation.harness.core :as harness]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.view.core :as human-input]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -689,7 +691,7 @@ raise RuntimeError(' | '.join(errors))
 
                  (expect (nil? (:error result)))
                  (expect (str/includes? out "BuildStatus job:4:0 safe"))
-                 (expect (str/includes? out "(job, number, wait"))
+                 (expect (str/includes? out "(job, number=None, wait=Ellipsis)"))
                  (expect (str/includes? out "['deploy_status', 'poll']"))
                  (expect (str/ends-with? (str/trim out) "True"))
                  (lp/sync-active-extension-symbols! env [])
@@ -3816,3 +3818,200 @@ vis.register(vis.Extension(
                                     (fn [result _]
                                       (expect (= 0 (:failed result)))
                                       (expect (= 0 (:loaded result)))))))
+
+(defdescribe
+  python-symbol-contract-test
+  ;; Issue #176: metadata must survive the actual registration/session boundary.
+  (it
+    "uses one inert contract for keyword-only docs and callable inspection across reloads"
+    (with-fresh-loaded
+      {"contract_tools.py"
+       (str
+         "from __future__ import annotations\n"
+         "from dataclasses import dataclass\n" "from typing import Annotated\n"
+         "import blockether.vis.extension as vis\n" "@dataclass(frozen=True)\n"
+         "class Result:\n" "    \"A greeting result.\"\n"
+         "    text: Annotated[str, 'Greeting text.']\n" "class Greeter:\n"
+         "    def hello(self, name: str, /, *, loud: bool = False) -> Result:\n"
+         "        \"Greet one person without changing state.\"\n"
+         "        return Result(name.upper() if loud else name)\n"
+         "vis.register(vis.Extension(name='contract-tools', description='Contract tools', alias='greet', symbols=[vis.Symbol(Greeter(), name='greet')]))\n")}
+      (fn [result {:keys [ext-dir]}]
+        (expect (= 1 (:loaded result)))
+        (let [made
+              (ep/create-python-context {} nil {:worker? true} nil)
+
+              ctx
+              (:python-context made)
+
+              env
+              {:python-context ctx :extensions (atom []) :active-extensions (atom [])}]
+
+          (try
+            (dotimes [_ 2]
+              (let [ext (registered "contract-tools")
+                    entry (first (get-in ext [:ext/engine :ext.engine/symbols]))]
+
+                (expect (= "greet.hello" (get-in entry [:ext.symbol/contract "name"])))
+                (reset! (:extensions env) [ext])
+                (lp/sync-active-extension-symbols! env [ext])
+                (let
+                  [answer
+                   (ep/run-python-block
+                     ctx
+                     (str
+                       "import json, inspect\n"
+                       "assert greet.hello.contract['name'] == 'greet.hello'\n"
+                       "assert greet.hello.contract['parameters'][1]['kind'] == 'keyword_only'\n"
+                       "assert 'loud: bool' in doc('greet.hello')\n"
+                       "assert 'Greeting text.' in doc('greet.hello')\n"
+                       "assert str(inspect.signature(greet.hello)) == '(name, /, *, loud=Ellipsis)'\n"
+                       "assert (await greet.hello('Ada', loud=True)).text == 'ADA'\n"
+                       "print(json.dumps(greet.hello.contract['returns']['fields'][0]['name']))"))]
+                  (expect (nil? (:error answer)) (pr-str answer))
+                  (expect (str/includes? (or (:stdout answer) "") "text"))))
+              (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))
+            (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe
+  package-owned-skills-test
+  ;; Issue #176: package procedures follow the same successful reload as code.
+  (it
+    "discovers qualified skills with resources and retains last-good on failure"
+    (with-redefs [python-runtime/ensure-project! (constantly nil)]
+      (with-fresh-loaded
+        {"skillpack/pyproject.toml"
+         (str "[project]\nname='vis-skillpack'\nversion='1.0.0'\n"
+              "description='Skill package'\nrequires-python='>=3.11'\n"
+              "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='workflows'\n"
+              "skills=['skills/review']\n")
+         "skillpack/extension.py"
+         "import blockether.vis.extension as vis\nvis.register(vis.Extension(name='vis-skillpack', description='Skill package'))\n"
+         "skillpack/skills/review/SKILL.md"
+         "---\nname: review\ndescription: Review when requested.\n---\nRead v1.\n"
+         "skillpack/skills/review/references/checklist.md" "Checklist v1."}
+        (fn [result {:keys [ext-dir]}]
+          (expect (= 1 (:loaded result)))
+          (let [find-skill #(some (fn [s]
+                                    (when (= "vis-skillpack/review" (:name s)) s))
+                                  (discovery/skills))
+                first-skill (find-skill)
+                entry (io/file ext-dir "skillpack/extension.py")
+                skill-file (io/file ext-dir "skillpack/skills/review/SKILL.md")
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                check-discovery (fn [body description]
+                                  (let [answer (ep/run-python-block
+                                                 ctx
+                                                 (str "hits = apropos(r'^vis-skillpack/review$')\n"
+                                                      (if body
+                                                        (str "assert len(hits) == 1, repr(hits)\n"
+                                                             "assert hits[0].type == 'skill'\n"
+                                                             "assert hits[0].body == "
+                                                             (json/generate-string description)
+                                                             "\n"
+                                                             "assert "
+                                                             (json/generate-string body)
+                                                             " in doc(hits[0])\n")
+                                                        "assert not hits, repr(hits)\n")
+                                                      "print('discovery verified')"))]
+                                    (expect (nil? (:error answer)) (pr-str answer))
+                                    (expect (str/includes? (or (:stdout answer) "")
+                                                           "discovery verified"))))]
+
+            (try (check-discovery "Read v1." "Review when requested.")
+                 (expect (= "1.0.0" (get-in first-skill [:package :version])))
+                 (expect (= ["references/checklist.md"] (:resources first-skill)))
+                 (expect (= "Checklist v1."
+                            (slurp (io/file (:dir first-skill) "references/checklist.md"))))
+                 (expect (nil? (:project-root first-skill)))
+                 (spit skill-file
+                       "---\nname: review\ndescription: Review revised inputs.\n---\nRead v2.\n")
+                 (expect (= (:body first-skill) (:body (find-skill))))
+                 (check-discovery "Read v1." "Review when requested.")
+                 (let [code (slurp entry)]
+                   (spit entry "raise RuntimeError('fixture load failure')\n")
+                   (expect (= 1 (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))
+                   (expect (= (:body first-skill) (:body (find-skill))))
+                   (check-discovery "Read v1." "Review when requested.")
+                   (spit entry code))
+                 (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))
+                 (expect (= "Read v2.\n" (:body (find-skill))))
+                 (check-discovery "Read v2." "Review revised inputs.")
+                 (pyx/reload-python-extensions! {:dirs []})
+                 (expect (nil? (find-skill)))
+                 (check-discovery nil nil)
+                 (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
+  authoring-example-test
+  ;; #176: load the documented package itself, not a second copy of its snippets.
+  (it
+    "exposes its contract, result, documentation and packaged skill in a real session"
+    (let [example
+          (io/file "packages/vis-agent/examples/greeter")
+
+          files
+          ["pyproject.toml" "extension.py" "src/vis_greeter/__init__.py" "skills/greeting/SKILL.md"
+           "skills/greeting/references/style.md"]
+
+          sources
+          (into {}
+                (map (fn [path]
+                       [(str "greeter/" path) (slurp (io/file example path))]))
+                files)]
+
+      (with-redefs [python-runtime/ensure-project! (constantly nil)]
+        (with-fresh-loaded
+          sources
+          (fn [result _]
+            (expect (= 1 (:loaded result)) (pr-str result))
+            (let [ext (registered "vis-greeter")
+                  ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                  env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+              (try
+                (lp/sync-active-extension-symbols! env [ext])
+                (let
+                  [answer
+                   (ep/run-python-block
+                     ctx
+                     (str
+                       "hits = apropos(r'^(?:greet\\.hello|vis-greeter/greeting|extension-(?:design|packages|api|troubleshooting))$')\n"
+                       "assert len(hits) == 6, repr(hits)\n"
+                       "by_name = {hit.name: hit for hit in hits}\n"
+                       "tool_hit = by_name['greet.hello']\n"
+                       "assert tool_hit.type == 'tool', repr(tool_hit)\n"
+                       "assert tool_hit.body.startswith('Greet one person.'), repr(tool_hit)\n"
+                       "assert 'Parameters:' not in tool_hit.body\n"
+                       "assert 'Unicode code points' in doc(tool_hit)\n"
+                       "assert 'uppercase: bool' in doc(tool_hit)\n"
+                       "assert doc(tool_hit) == doc('greet.hello')\n"
+                       "assert all(0 < len(hit.body) <= 100 and '\\n' not in hit.body for hit in hits)\n"
+                       "for name in ('extension-design', 'extension-packages', 'extension-api', 'extension-troubleshooting'):\n"
+                       "    hit = by_name[name]\n" "    assert hit.type == 'doc', repr(hit)\n"
+                       "    page = doc(hit)\n" "    assert '# Extension ' in page, page[:100]\n"
+                       "    assert hit.body.casefold() != name.replace('-', ' '), repr(hit)\n"
+                       "    assert '## See also' in page\n"
+                       "skill_hit = by_name['vis-greeter/greeting']\n"
+                       "assert skill_hit.type == 'skill', repr(skill_hit)\n"
+                       "assert skill_hit.body.startswith('Use when the user requests a greeting'), repr(skill_hit)\n"
+                       "assert 'vis-greeter@1.0.0' in doc(skill_hit)\n"
+                       "assert 'references/style.md' in doc(skill_hit)\n"
+                       "assert 'Do not send it to another service' in doc(skill_hit)\n"
+                       "assert greet.hello.contract['name'] == 'greet.hello'\n"
+                       "assert 'Unicode code points' in doc('greet.hello')\n"
+                       "assert (await greet.hello('Ada')).text == 'Hello, Ada!'\n"
+                       "assert (await greet.hello('Ada', uppercase=True)).text == 'HELLO, ADA!'\n"
+                       "skill = doc('vis-greeter/greeting')\n"
+                       "assert 'vis-greeter@1.0.0' in skill\n"
+                       "assert 'references/style.md' in skill\n" "print('example verified')"))
+                   template (some #(when (= "skill:vis-greeter/greeting" (:name %)) %)
+                                  (#'harness/skill-template-entries))]
+
+                  (expect (nil? (:error answer)) (pr-str answer))
+                  (expect (str/includes? (or (:stdout answer) "") "example verified"))
+                  (expect (some? template))
+                  (expect (nil? (:project-root template)))
+                  (expect (str/includes? ((:expand-fn template) {} "for Ada")
+                                         "references/style.md")))
+                (finally (ep/dispose-python-context! ctx))))))))))

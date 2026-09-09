@@ -643,6 +643,19 @@
   [session sym keys-text]
   (set-python-binding-meta! session sym "__vis_keys__" keys-text))
 
+(defn set-python-binding-contract!
+  "Attach a portable description to an installed Python extension callable.
+   No runtime shim or parallel registry: the value comes from its symbol entry."
+  [session sym contract]
+  (when (and session contract)
+    (exec! session
+           (str "__vis_parts__ = " (py-json-literal (str/split (sym->py-name sym) #"\."))
+                "\n" "__vis_tool__ = globals()[__vis_parts__[0]]\n"
+                "for __vis_part__ in __vis_parts__[1:]:\n"
+                "    __vis_tool__ = getattr(__vis_tool__, __vis_part__)\n"
+                "__vis_tool__.contract = " (py-json-literal contract)
+                "\n" "del __vis_parts__, __vis_tool__\n"))))
+
 (defn remove-python-binding!
   "Remove `sym` from `session` entirely, including dotted namespace members and
    every discovery metadata table."
@@ -1260,6 +1273,12 @@
     (install-introspection! session)
     (py-exec! session "import vis_results\nvis_results.install(globals())")
     (exec! session "__vis_stamp_tools__()")
+    (doseq [ext (extension/registered-extensions)
+            entry (extension/ext-symbols ext)
+            :let [sym (:ext.symbol/symbol entry)]
+            :when (contains? (or custom-bindings {}) sym)]
+
+      (set-python-binding-contract! session sym (:ext.symbol/contract entry)))
     (install-network! session network-opts)
     (install-network-probe! session)
     {:python-context session

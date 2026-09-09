@@ -2,7 +2,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
             [com.blockether.vis.internal.workspace.core :as workspace]
-            [lazytest.core :refer [defdescribe it expect]])
+            [lazytest.core :refer [defdescribe it expect throws?]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -332,3 +332,40 @@
                    (expect (= #{"already-here" "arrived-later"} (set (map :name (d/skills)))))
                    (expect (< (long generation) (long (d/generation)))))))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+
+(defdescribe
+  package-skill-conflicts-test
+  ;; #176: duplicates fail admission; local qualified overrides retain precedence.
+  (it "rejects duplicate or invalid names within one package"
+      (let [snapshot
+            (.toFile (Files/createTempDirectory "vis-package-skill" (make-array FileAttribute 0)))
+
+            metadata
+            {"name" "vis-fixture" "version" "1.0.0" "skills" ["skills/a" "skills/b"]}]
+
+        (try
+          (doseq [path (get metadata "skills")]
+            (let [file (io/file snapshot path "SKILL.md")]
+              (io/make-parents file)
+              (spit file "---\nname: repeated\ndescription: Procedure.\n---\nBody.")))
+          (expect (throws? clojure.lang.ExceptionInfo #(d/read-package-skills snapshot metadata)))
+          (spit (io/file snapshot "skills/b/SKILL.md") "---\nname: bad/name\n---\nBody.")
+          (expect (throws? clojure.lang.ExceptionInfo #(d/read-package-skills snapshot metadata)))
+          (finally (run! #(.delete ^java.io.File %) (reverse (file-seq snapshot)))))))
+  (it "keeps an exact local override without hiding another package's skill"
+      (let [directory
+            (.toFile (Files/createTempDirectory "vis-skill-override" (make-array FileAttribute 0)))
+
+            local
+            (io/file directory "SKILL.md")]
+
+        (try (spit local "---\nname: vis-fixture/review\ndescription: Local override.\n---\nLOCAL")
+             (with-redefs-fn {#'d/skill-candidates (constantly [[:vis local]])
+                              #'d/registered-package-skills
+                              (constantly [{:name "vis-fixture/review" :body "PACKAGE"}
+                                           {:name "vis-other/review" :body "OTHER"}])}
+               (fn []
+                 (let [skills (into {} (map (juxt :name :body)) (d/discover-skills))]
+                   (expect (= "LOCAL" (get skills "vis-fixture/review")))
+                   (expect (= "OTHER" (get skills "vis-other/review"))))))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq directory))))))))

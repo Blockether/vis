@@ -13,30 +13,16 @@ pip install vis-agent
 
 The package is imported as `blockether.vis`. It does not include the Vis executable.
 
-## Add a tool
+## Write an extension
 
-Save as `.vis/extensions/greeter.py` in your project:
-
-```python
-import blockether.vis.extension as vis
-
-
-def greet(name: str) -> str:
-    """Greet someone by name."""
-    return f"Hello, {name}!"
-
-
-vis.register(
-    vis.Extension(
-        name="greeter",
-        description="Greeting tools.",
-        alias="greeter",
-        symbols=[vis.Symbol(greet)],
-    )
-)
-```
-
-Start Vis or run `/reload` to make the tool available to the agent.
+Start with the [extension quickstart](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extending.md)
+and its [tested package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter). It includes a thin entrypoint,
+typed Python results, a machine-readable tool contract and a bundled skill.
+The canonical guides cover [design](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-design.md),
+[packaging](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-packages.md),
+[API details](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-api.md)
+and [troubleshooting](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-troubleshooting.md).
+The same pages are available through Vis's `doc()`.
 
 ## Connect to a gateway
 

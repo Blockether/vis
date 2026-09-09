@@ -29,6 +29,18 @@
    [{:blurb "Write a Python extension: tools, commands, guards and state."
      :page "extending"
      :title "Extending Vis"}
+    {:blurb "Design typed tools from one tested package."
+     :page "extension-design"
+     :title "Extension design"}
+    {:blurb "Install, publish and bundle skills with extensions."
+     :page "extension-packages"
+     :title "Extension packages"}
+    {:blurb "Declarations, tool contracts and host operations."
+     :page "extension-api"
+     :title "Extension API"}
+    {:blurb "Diagnose imports, registration and reload failures."
+     :page "extension-troubleshooting"
+     :title "Extension troubleshooting"}
     {:blurb "Show a typed form and read the answer." :page "human-input" :title "Asking the human"}
     {:blurb "Show progress a person can watch and stop." :page "live-views" :title "Live views"}
     {:blurb "Register an LLM provider from an extension."

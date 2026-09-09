@@ -59,6 +59,26 @@ Whole skill body."}
         (expect (str/starts-with? (:text entry) "Fixture summary."))
         (expect (str/ends-with? (:text entry) (:body skill)))
         ;; No `call`: there is no skill verb. `doc(name)` IS the whole use.
+        (expect (nil? (:call entry)))))
+  (it "keeps package provenance and resources without altering the skill body"
+      ;; #176: doc() must make resources in the admitted package usable.
+      (let [skill
+            {:name "vis-greeter/greeting"
+             :description "Greet when requested."
+             :body "# Greeting\nRead references/style.md.\n"
+             :package {:name "vis-greeter" :version "1.0.0"}
+             :dir "/fixture/greeter/skills/greeting"
+             :resources ["references/style.md"]}
+
+            entry
+            (first (with-redefs [discovery/skills (constantly [skill])]
+                     (#'dc/skill-entries)))]
+
+        (expect (str/starts-with? (:text entry) (:description skill)))
+        (expect (str/includes? (:text entry) "vis-greeter@1.0.0"))
+        (expect (str/includes? (:text entry) (:dir skill)))
+        (expect (str/includes? (:text entry) "references/style.md"))
+        (expect (str/ends-with? (:text entry) (:body skill)))
         (expect (nil? (:call entry))))))
 
 (defdescribe
@@ -169,6 +189,12 @@ Whole skill body."}
   (it "answers the opening of the document, whitespace collapsed"
       (expect (= "Read a CSV file into a DataFrame."
                  (dc/body-text "Read a CSV file into a DataFrame.\n\nIgnores `dtype`."))))
+  (it "uses page prose rather than repeating its Markdown title"
+      ;; #176: the new authoring guides must have useful apropos rows.
+      (doseq [text ["# Extension design\n\nDesign typed tools from one tested package.\n\n## Next"
+                    "# Extension design\r\n\r\nDesign typed tools from one tested package."]]
+        (expect (= "Design typed tools from one tested package." (dc/body-text text))))
+      (expect (= "Standalone title" (dc/body-text "# Standalone title"))))
   (it "stays bounded whatever the document weighs"
       (let [huge (apply str (repeat 4000 "screenshot everything everywhere. "))]
         (expect (<= (count (dc/body-text huge)) 100))))
