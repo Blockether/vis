@@ -210,19 +210,6 @@ Renderers switch on `block.type` and preserve block order and message role:
 Generated display output must not replace stored content. The `content` array
 is the only answer representation; renderers cannot supply an alternate one.
 
-## Guarantees
-
-Contract tests verify that:
-
-1. Clojure constructors and schema validation reject non-string nested keys and
-   non-JSON values.
-2. REST, SSE, in-process clients, persistence, and channels observe identical
-   string-keyed maps and string enum values.
-3. Prose streaming, code, tool lifecycle, errors, cancellation, reconnect, and
-   restart rendering are covered.
-4. A completed answer survives restart using only `content`.
-5. Restart never resubmits pending or interrupted user requests.
-
 ## See also
 
 - [Exporting sessions](exporting-sessions.md) — the same blocks rendered to Markdown, HTML or a screencast.

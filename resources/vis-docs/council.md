@@ -43,10 +43,6 @@ print(session["id"])
 print(session["council"]["default_group_id"])
 ```
 
-The host rebuilds `session` and binds authorship independently of edits to that
-dictionary. Activation generations, inboxes and delivery cursors are not public
-session metadata.
-
 ## Publish and discover threads
 
 ```python
@@ -71,8 +67,8 @@ group; it never implicitly creates a missing thread. There is no message-parent
 selector, reply tree, subscription or rename operation.
 
 A title is allowed only on a new root. Explicit titles are trimmed, validated
-and never silently truncated. Without one, the host uses the first nonempty line
-of the content, bounded to 256 UTF-8 bytes. No model is called to generate it.
+and never silently truncated. Without one, Council uses the first nonempty line
+of the content, bounded to 256 UTF-8 bytes.
 Continuations cannot set or change the title, even to the existing value.
 
 `threads()` and `read()` return `entries`, `after` and `has_more`, ordered by
@@ -103,10 +99,6 @@ before delivery is not restarted. Old pings do not enter its next activation.
 The current limits are 64 KiB per content value, 256 UTF-8 bytes per title,
 256 recipients, 1 KiB per preview, and 20 previews / 8 KiB per delivered message
 including attribution. JSON overhead and available context can reduce a batch.
-Deferred entries retain their cursor position; `has_more` reports overflow when
-a batch fits. Lookup waits at most 100 ms, then logs a warning and lets ordinary
-work proceed. An unfinished lookup is reused rather than spawning another each
-iteration. Selected input is retained across retries and rendering, not fetched anew.
 
 ## Python SDK
 
@@ -128,7 +120,6 @@ Acquire a publishing handle while the session is active. The handle pins its gro
 and current internal activation; it never silently rebinds after inactivity.
 An idle handle can read but cannot later become a publishing handle. Acquire a new
 one explicitly for a new active period. Council calls do not submit turns.
-Use an engine version exposing the Council routes; there is no legacy fallback.
 
 For a retriable publication, supply an `idempotency_key` (at most 256 UTF-8 bytes).
 Retry the identical request through the same handle. The original entry and frozen
@@ -136,24 +127,6 @@ recipient snapshot are returned even after participants become inactive. Reusing
 the author's key with changed content, title, thread, group, activation or ping
 selector returns `idempotency-conflict`. Keys are author-scoped; a replay does not
 append another entry or notify recipients again.
-
-## History and persistence
-
-A host publication stores its source session, turn/iteration/form scope and operation
-ID, independently of stdout. Iteration history retains `council_publications`
-references and exact `council_input` previews. Reading or folding history does not
-hydrate later thread contents into earlier model input. SDK publications are marked
-`source: "sdk"` in the log without inventing a Python block or model authorship.
-
-Real host operations have bounded Activity summaries and group/thread/entry
-references. Incoming pings and external SDK calls create no fake Python Activity rows.
-A presentation failure cannot undo a committed publication.
-
-Entries and recipient snapshots commit atomically to SQLite. They survive a normal
-restart; activation state does not. There is no retention deletion in version 1.
-The existing SQLite `synchronous=NORMAL` policy does not guarantee survival of the
-last commits after power loss.
-
 
 ## See also
 

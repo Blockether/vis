@@ -189,8 +189,6 @@ vis-agent extension list
 The import prints `ready` and the path to `einmal/src/einmal/__init__.py` in this
 checkout, not a copied module under `~/.vis/python/packages`. The extension list
 includes `einmal`. Start Vis in `project/`, or run `/reload` there, to load its tools.
-Editable import and reload support requires a Vis build with
-`vis-python-runtime` **0.5.5 or later**.
 
 Run sync as the same OS user and with the same Vis runtime and package-directory
 settings as the gateway. It uses the embedded Python and runs
@@ -223,12 +221,10 @@ to the referenced source: sandbox imports still require that checkout to be in a
 allowed [workspace filesystem root](jail.md#filesystem-access).
 Keep the checkout at its installed path; moving it requires another sync.
 
-There are no per-project dependency environments. `~/.vis/python/projects/` holds
-readiness metadata only. Start and `/reload` **do not run an installer for uv
-projects**. They validate that metadata before registering the entry. Changed
-`pyproject.toml`, `uv.lock`, runtime, default index or recorded distribution metadata
-requires another explicit sync. Conflicting dependency versions are not isolated,
-and a failed load does not roll back shared package changes.
+`~/.vis/python/packages` is shared across projects, so dependency versions are
+not isolated. Start and `/reload` do not install uv projects. Changes to
+`pyproject.toml`, `uv.lock`, runtime, default index or installed distribution metadata
+require another explicit sync. A failed load does not roll back shared package changes.
 
 Build backends and executable `.pth` lines are trusted package code, not inert
 configuration. Review projects and dependencies before installing them. Builds run
@@ -252,9 +248,7 @@ gateway's PATH.
 | Change Vis runtime, package directory or index | Sync using the intended runtime and settings, then load the extension |
 | Replace compiled extension code | Rebuild and install it, then use a fresh Vis process; Python source reload is not a native-library reload |
 
-After editing `status()` to return `updated`, run `/reload` and call its tool again.
-Reload clears editable imports in the registration worker and rebuilds session
-workers; live sessions receive updated tool bindings at the next turn boundary.
+`/reload` updates tools in live sessions at the next turn boundary.
 Already running calls may finish with old code. `/reload` does not replace a running
 gateway's binary or startup environment; adopting a new Vis build or changing
 startup location overrides requires starting the gateway with those settings once.

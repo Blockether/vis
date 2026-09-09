@@ -3,7 +3,7 @@
 A draft is an isolated working copy of the current repository. The session
 works inside it. `draft_approve()` commits the work and merges it into the
 repository's local default branch, updating that branch's checkout when one
-exists. It does not merely leave a commit on `vis/<name>` for a manual merge.
+exists.
 
 Only the agent manages drafts. There is no draft slash command, picker or menu
 in the TUI or Companion app.

@@ -3,15 +3,10 @@
 The model runs Python code in a CPython sandbox. This page describes its
 permissions, package installation and differences from your project's Python.
 
-## Interpreter processes
+## Running Python
 
-Each gateway session has a worker process with its own CPython interpreter.
-The model's sandbox and trusted Python extensions use separate namespaces
-inside that worker. A one-shot CLI session can use an interpreter in its
-existing process.
-
-The interpreter is provided by `libvispython`, a shared library with a bundled
-CPython installation, accessed through the JDK Foreign Function and Memory API.
+Each session has its own Python state. The sandbox and trusted Python extensions
+use separate namespaces.
 Tools such as `grep`, `cat`, `patch`, `shell` and `run_tests` are available as
 Python functions. `apropos` and `doc` inspect the available API synchronously.
 
@@ -36,11 +31,10 @@ Do not routinely print either for large results.
 `apropos(pattern)` remains a list of `(type, name, body)` records. Printing it
 shows one compact row per symbol; attributes, indexing and `doc(row)` still work.
 
-`read_session()` prints a summary but returns a structured session. Its version-2
-model transcript has one content projection: `transcript["turns"]`, then
-`iterations`, then `blocks` with `code`, `stdout` and optional `error`. Folded
-history and form timing/call metadata remain available there. The global index is
-only in `list_sessions()`; human transcript exports retain their existing views.
+`read_session()` returns structured history; its printed view is a summary.
+Read `transcript["turns"]`, then `iterations`, then `blocks` for `code`, `stdout`
+and optional `error`, including folded history. Use `list_sessions()` to find
+another session.
 
 ## What the sandbox may do
 
@@ -79,8 +73,7 @@ A locked uv project can install its own package and local dependencies editably.
 Their `.pth` files or backend import hooks resolve imports to the source checkout.
 After editing Python source, `/reload` refreshes editable imports and extension
 tools without another sync or gateway restart. Dependency or packaging-metadata
-changes require another sync. This requires a Vis build containing
-`vis-python-runtime` 0.5.5 or later; see the complete
+changes require another sync. See the
 [package-authoring example](extending.md#uv-projects).
 
 Editable source is not a frozen snapshot. Already imported modules can retain old
