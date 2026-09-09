@@ -1,5 +1,6 @@
 import type { PendingAttachment } from "../lib/attachments";
 import { isAudioMediaType, isVideoMediaType } from "../lib/attachments";
+import { artifactMedia } from "../lib/artifacts";
 import { keepKeyboard } from "../lib/keyboard";
 import type { ComposerPaste } from "../lib/paste";
 import { MicIcon } from "./icons";
@@ -71,6 +72,13 @@ export function ComposerPayloadShelf({
                 <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5">
                   <MicIcon className="size-4 shrink-0" />
                   <span className="truncate font-mono text-chip text-dialog-hint">
+                    {attachment.filename}
+                  </span>
+                </span>
+              ) : !attachment.media_type.startsWith("image/") ? (
+                <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5">
+                  <span className="font-mono text-ui text-dialog-hint">{artifactMedia(attachment)}</span>
+                  <span className="truncate font-mono text-ui text-dialog-foreground" title={attachment.filename}>
                     {attachment.filename}
                   </span>
                 </span>

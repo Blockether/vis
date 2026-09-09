@@ -167,7 +167,8 @@ describe("a turn cancelled from this screen", () => {
     expect(cancelledRow.querySelector('[aria-hidden="true"].mt-5')).toBe(
       phaseSlot,
     );
-    expect(cancelledRow.querySelector(".bg-answer")?.textContent).toBe("");
+    // Cancelling before output arrives must not create an empty answer bubble.
+    expect(cancelledRow.querySelector(".bg-answer")).toBeNull();
   });
   // Regression, reported from the app: cancelling after output started replaced
   // the streamed trace with an emptier durable row, so work vanished and the rail jumped.

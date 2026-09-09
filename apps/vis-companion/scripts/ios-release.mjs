@@ -334,8 +334,8 @@ if (identity) {
     manualArchive = stamp.stamped.length > 0;
     console.log(`· ${identity} signing for ${stamp.stamped.join(', ')}`);
   } catch (error) {
-    // Never fatal: an expired key or a portal outage falls back to the signing
-    // that has always worked, instead of failing a release outright.
+    if (process.env.VIS_IOS_SIGNING_KEYCHAIN) throw error;
+    // Local releases without an imported CI identity can still sign automatically.
     console.log(`· ${error.message}\n· signing automatically instead`);
   }
 }
@@ -349,7 +349,7 @@ const signing = signingPlan({ bundleIds: [appBundleId, shareBundleId, notifyBund
 if (signing.unnamed.length > 0) {
   console.log(`· no profile for ${signing.unnamed.join(', ')} — exporting with automatic signing`);
 }
-writeFileSync(exportOptions, exportOptionsPlist({ teamId, ...signing }));
+writeFileSync(exportOptions, exportOptionsPlist({ teamId, ...signing, signingIdentity: identity }));
 console.log(`· wrote ${exportOptions} (${signing.signingStyle} signing)`);
 
 const archiveArgs = [

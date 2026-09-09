@@ -1742,7 +1742,7 @@
 
       nil)))
 
-(def ^:private code-copy-label "[COPY]")
+(def ^:private code-copy-label " COPY ")
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -2501,14 +2501,13 @@
                       (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
                       (when-let [copy-width (:copy-width meta)]
+                        ;; Match the header buttons; screen regions still own copy/selection.
+                        (p/clear-styles! g)
                         (p/set-colors! g t/button-fg t/button-bg)
-                        (p/styled g
-                                  [p/BOLD]
-                                  (p/put-str! g
-                                              (+ (long x)
-                                                 (- (long iw) right-inset (long copy-width)))
-                                              y
-                                              code-copy-label)))
+                        (p/put-str! g
+                                    (+ (long x) (- (long iw) right-inset (long copy-width)))
+                                    y
+                                    code-copy-label))
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)

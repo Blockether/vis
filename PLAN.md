@@ -1047,7 +1047,7 @@ or live gateway restart is included. Existing main-worktree changes are preserve
 
 Phrase: publish a complete, tested native production release and verify its installed processes.
 
-Context: `deps.edn` pins runtime 0.5.5 at the current runtime main. The previous release
+Context: `deps.edn` pins the verified runtime 0.5.6 release commit. The previous release
 published bootstrap assets before native artifacts existed. `bin/install-vis-agent`,
 `bin/vis-agent`, native integration tests and companion workflows define the delivery
 boundary. Production now selects complete stable native bundles; explicit JVM development
@@ -1085,25 +1085,52 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1 and 2 implemented and locally verified; phase 3 in progress.
-Runtime main and published v0.5.5 match the consumer pin; four native archives and the jar
-are uploaded. Native dry-run 34270462640 passed on Linux x64, Linux ARM64 and macOS ARM64,
-including installed-wrapper/gateway smoke checks, native tests, real HTTP/stdio Python SDK
-checks and standalone TUI builds. Native macOS x64 is not supported by the pinned CE toolchain.
-The production installer and 15-artifact draft gate have regression coverage. Release,
-container, palette and loop suites: 541 tests passed; scoped lint, reflection, workflow
-validation and shell checks passed. Companion: 2408 tests passed, 2 skipped; 184 browser
-stories passed; full theme contrast scan, compiler lint and production build passed.
-Baseline full JVM verification passed 5044 cases; main CI 34286742665 passed after retrying
-one transient package download. Cold Linux permission-snapshot leakage and same-millisecond
-draft edits are fixed. Cancellation now watches actual replies from both Python workers,
-not just cancelled host futures; native waits are retired and normal cancellation preserves
-state. Affected suites passed 580 cases; installed SDK HTTP/stdio passed all 8 cases, including
-post-cancel reuse and trusted-extension process reclamation. Formatting and scoped lint and
-reflection passed. The latest full run overlapped concurrent Council changes: 5050 cases,
-5 failures in that separate work; rerun after it settles before the release gate.
-Version v0.1.45 is committed and its tag is immutable. Its release run 34283012944 was
-rejected before starting: the caller omitted actions:read required by the native runner
-pickup job. The job-scoped permission fix has a red/green regression and 42 passing
-release tests. The next attempt needs a new version/tag; no stable promotion or server
-deployment has occurred. Preserve unrelated concurrent work.
+Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.52. Runtime
+v0.5.6 remains current. The v0.1.51 source CI and 5082 isolated Linux tests pass, but
+publication stopped when a concurrent commit advanced main during source verification.
+The workflow now checks tag/version/main alignment before slow CI. All artifact jobs
+still require full source verification and stable publication still requires all 15
+assets. Regression coverage also isolates the fork-baseline test clock from background
+timers. The affected 83 tests, formatting, lint, reflection and workflow checks pass.
+Require full release and installed native verification before replacing healthy v0.1.49.
+
+- Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
+  34297827905 passed all four platform builds/tests and published the runtime archives and
+  JVM jar. The readiness handshake passes 2000 immediate process-group terminations on
+  each tested operating system; the full runtime suite passes 171 cases on macOS and Linux.
+- Cancellation waits for actual sandbox and trusted-worker replies, not only cancelled
+  host futures. Wedged native waits retire their workers; normal cancellation preserves
+  state and permits reuse. Affected suites passed 580 cases, with formatting, scoped lint
+  and reflection checks passing.
+- The installer defaults to complete stable native bundles. The draft guard resolves
+  release metadata by ID and rejects incomplete artifacts. iOS signing pins the exact
+  identity imported into the job keychain through archive and export and fails closed.
+  All 44 release cases and 220 script cases pass, with one existing script skip; shell,
+  formatting, lint, reflection and workflow checks pass.
+- [Release v0.1.49](https://github.com/Blockether/vis/releases/tag/v0.1.49) passed all 31 jobs
+  in [release run 34311326223](https://github.com/Blockether/vis/actions/runs/34311326223),
+  including the complete source CI. Its 15 nonempty assets include bootstrap files, native
+  engine/worker and TUI bundles for Linux x64, Linux ARM64 and macOS ARM64, signed mobile
+  packages and five desktop packages. Clojars publication, iOS TestFlight distribution,
+  all existing Android tester tracks, stable promotion and installer verification passed.
+  Android production publication was not requested or performed. The pinned CE toolchain
+  does not support a native macOS x64 engine.
+- Clean full JVM verification passed 5058 cases on macOS and Linux; the administered
+  Linux host completed its run in 676.706 seconds. The published installer was exercised
+  with a fresh home, without installing source or selecting JVM fallback. Installed SDK
+  HTTP/stdio verification passed all 25 cases, including cancellation, reuse and native
+  wait reclamation. The installed native suite passed all 15 cases in 615.218 seconds.
+- The administered production gateway now runs the published native release. Executable
+  identities confirmed a native engine and Python worker. A native TUI was exercised
+  through a real terminal with the native fixture gateway and keyboard input. Public CLI
+  entrypoints select the same pinned native bundle. Canonical production health and admin
+  checks return 200; session creation, hydration, deletion (204) and absence afterward
+  (404) pass. Database integrity checks pass and the persisted session count is unchanged.
+  Rollback backups are retained; the healthy production service is left running.
+- Post-release commit 43e687f388ac6c64a00dad8bc7c7a8cd04349d18 corrects only the regression
+  assertion for an absent cancelled-answer bubble. All seven focused tests and the full
+  companion suite pass: 2440 cases, two existing skips. Type checking, scoped lint and
+  changed-region formatting pass. Main CI 34322681529, Android companion 34322681333 and
+  CodeQL 34322680874 pass. This test-only change does not alter the published artifacts.
+- Earlier failed release tags v0.1.45 through v0.1.48 remain immutable; incomplete drafts
+  were not promoted. No delivery blocker remains. Unrelated concurrent work is preserved.

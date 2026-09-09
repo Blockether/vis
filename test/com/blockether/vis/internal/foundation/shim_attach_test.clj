@@ -409,7 +409,7 @@
   (it "raises when called with no active capture sink (outside a driven block)"
       (let [pctx (ctx-with-root (temp-root))]
         ;; a bare .eval does NOT bind the per-block sink, so the bridge refuses
-        (expect (re-find #"no active capture sink"
+        (expect (re-find #"attach: call inside python_execution"
                          (ev pctx
                              (str "\ntry:\n" "    attach(b'x', 'y.txt')\n"
                                   "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
@@ -529,7 +529,7 @@
    the one descriptor and `read_attachment` hands back the raw BYTES and nothing
    else. All three take the SAME target — the filename the artifact was attached
    under, or an id out of a descriptor — so a caller never has to know which of
-   the two it is holding. Unbound, they raise a clear RuntimeError instead of
+   the two it is holding. Unbound, they raise a catchable host error instead of
    silently returning nothing."
   (it "lists metadata and reads the bytes back"
       (let [pctx
@@ -570,7 +570,7 @@
                           "print(get_attachment('chart.png')['id'])\n"
                           "print(show_attachment('chart.png')['id'])\n"
                           "try:\n" "    read_attachment('nope.png')\n"
-                          "except LookupError as e:\n"
+                          "except Exception as e:\n"
                           "    print('RAISED', 'id or filename' in str(e))\n")))
 
             so
@@ -624,7 +624,7 @@
                      (str "try:\n"
                           "    read_attachment('zzz')\n" "    print('NO-RAISE')\n"
                           "except Exception as e:\n"
-                          "    print('RAISED', 'no attachment' in str(e))\n")))]
+                          "    print('RAISED', 'unknown id or filename' in str(e))\n")))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out))))))
@@ -641,7 +641,7 @@
             (block pctx
                    (str
                      "try:\n"
-                     "    show_attachment(Path('local-proof.png'))\n" "except LookupError as e:\n"
+                     "    show_attachment(Path('local-proof.png'))\n" "except Exception as e:\n"
                      "    print('HINT', 'show_attachment(attach(path))' in str(e))\n"
                      "print('DOC', 'show_attachment(attach(path))' in doc('show_attachment'))\n")))]
 
@@ -660,9 +660,9 @@
         (expect (nil? (:error out)))
         (expect (re-find #"solo\.txt" (str (:stdout out))))))
   (it "raises where there is neither a reader nor a sink (outside a driven block)"
-      (let [env ((get (#'shim-attach/attach-bridge-bindings) "__vis_list_attachments__"))]
-        (expect (false? (first env)))
-        (expect (re-find #"no active attachment reader" (str (second env)))))))
+      (expect (= "list_attachments: call inside python_execution."
+                 (try ((get (#'shim-attach/attach-bridge-bindings) "__vis_list_attachments__"))
+                      (catch clojure.lang.ExceptionInfo e (ex-message e)))))))
 
 (defn- attach-out
   "Run ONE `attach*` call in a fresh sandbox; the block result with `:row`
@@ -735,19 +735,18 @@
 
           out
           (binding [mpl-capture/*attachment-reader* (versioned-reader)]
-            (block pctx
-                   (str "vs = list_attachments('chart.png')\n"
-                        "print([v['version'] for v in vs], [v['id'] for v in vs])\n"
-                        "print(get_attachment('chart.png')['id'])\n"
-                        "print(get_attachment('chart.png', 1)['id'])\n"
-                        "print(get_attachment('chart.png', -2)['id'])\n"
-                        "print(get_attachment('v2')['id'])\n"
-                        "print(list_attachments('nope.png'))\n"
-                        "try:\n" "    get_attachment('chart.png', 9)\n"
-                        "except LookupError as e:\n"
-                        "    print('RAISED', 'versions: 1, 2, 3' in str(e))\n"
-                        "try:\n" "    get_attachment('nope.png')\n"
-                        "except LookupError:\n" "    print('MISSING')\n")))
+            (block
+              pctx
+              (str "vs = list_attachments('chart.png')\n"
+                   "print([v['version'] for v in vs], [v['id'] for v in vs])\n"
+                   "print(get_attachment('chart.png')['id'])\n"
+                   "print(get_attachment('chart.png', 1)['id'])\n"
+                   "print(get_attachment('chart.png', -2)['id'])\n"
+                   "print(get_attachment('v2')['id'])\n" "print(list_attachments('nope.png'))\n"
+                   "try:\n" "    get_attachment('chart.png', 9)\n"
+                   "except Exception as e:\n" "    print('RAISED', 'versions: 1, 2, 3' in str(e))\n"
+                   "try:\n" "    get_attachment('nope.png')\n"
+                   "except Exception:\n" "    print('MISSING')\n")))
 
           so
           (str (:stdout out))]
@@ -975,3 +974,77 @@
         (expect (nil? (:error out)))
         (expect (re-find #"Keys: source \(REQUIRED" (str (:stdout out))))
         (expect (re-find #"Keys: target \(REQUIRED" (str (:stdout out)))))))
+
+(defdescribe
+  compact-attachment-host-errors-test
+  "Attachment host failures use the same observed boundary as filesystem tools."
+  (it
+    "reports one sentence without repeating the block or the tool name"
+    (tpc/with-own
+      [ctx {}]
+      (doseq
+        [[code message symbol]
+         [["attach(b'', 'empty.txt')" "attach: empty payload." :attach]
+          ["get_attachment('missing.png')"
+           "get_attachment: unknown id or filename \"missing.png\"; use list_attachments()."
+           :get_attachment]
+          ["read_attachment('missing.png')"
+           "read_attachment: unknown id or filename \"missing.png\"; use list_attachments()."
+           :read_attachment]
+          ["show_attachment('missing.png')"
+           "show_attachment: unknown id or filename \"missing.png\"; local image: show_attachment(attach(path))."
+           :show_attachment]]]
+        (let [out
+              (ep/run-python-block ctx (str "print('before')\n" code "\nprint('after')") "t1/i1")]
+          (expect (= message (get-in out [:error :message])))
+          (expect (= :python/host (get-in out [:error :data :phase])))
+          (expect (= :vis/tool-failure (get-in out [:error :data :type])))
+          (expect (= symbol (get-in out [:error :data :symbol])))
+          (expect (= "before\n" (:stdout out)))))))
+  (it
+    "keeps argument errors as Python errors and host refusals catchable"
+    (tpc/with-own
+      [ctx {}]
+      (let
+        [bad
+         (ep/run-python-block ctx "attach(b'x', 'x.txt', audience='everyone')" "t1/i1")
+
+         caught
+         (ep/run-python-block
+           ctx
+           "try:\n    get_attachment('missing.png')\nexcept Exception as e:\n    print(type(e).__name__)"
+           "t1/i2")]
+
+        (expect (= :python/runtime (get-in bad [:error :data :phase])))
+        (expect (str/starts-with? (get-in bad [:error :message]) "ValueError:"))
+        (expect (nil? (:error caught)))
+        (expect (= "VisToolError\n" (:stdout caught))))))
+  (it "crosses the jailed worker boundary without adding Python source context"
+      (tpc/with-own
+        [ctx {} (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]
+        (let [out (ep/run-python-block ctx "read_attachment('missing.png')" "t1/i1")]
+          (expect
+            (= "read_attachment: unknown id or filename \"missing.png\"; use list_attachments()."
+               (get-in out [:error :message])))
+          (expect (= :python/host (get-in out [:error :data :phase])))
+          (expect (= :read_attachment (get-in out [:error :data :symbol]))))))
+  (it "keeps attachment bytes out of Activity and preserves attachment presentation"
+      (tpc/with-own [ctx {}]
+                    (let [events
+                          (atom [])
+
+                          out
+                          (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                            (ep/run-python-block
+                              ctx
+                              (str "a = attach(b'attachment-payload-fixture', 'note.txt')\n"
+                                   "assert read_attachment(a) == b'attachment-payload-fixture'\n"
+                                   "show_attachment(a)")
+                              "t1/i1"))]
+
+                      (expect (= 1 (count (:attachments out))))
+                      (expect (= "show_attachment: \"note.txt\" is not an image."
+                                 (get-in out [:error :message])))
+                      (expect (empty? @events))
+                      (expect (not (str/includes? (pr-str @events)
+                                                  "YXR0YWNobWVudC1wYXlsb2FkLWZpeHR1cmU=")))))))

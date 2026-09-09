@@ -249,35 +249,40 @@
                         (seq ms) {:ambiguous l :matches ms})))
               (candidate-languages explicit))]
 
-    (cond (empty? handlers) (throw (ex-info
-                                     (str "No language extension registered for " (name capability))
-                                     {:type :language-surface/no-handler :capability capability}))
+    (cond (empty? handlers)
+          (throw (ex-info (str (capability->tool capability) ": no language handler enabled.")
+                          {:type :language-surface/no-handler :capability capability}))
           (:handler picked) (:handler picked)
-          (:ambiguous picked)
-          (throw (ex-info (str
-                            "Multiple language handlers match "
-                            (:ambiguous picked)
-                            "; pass the language as first arg, e.g. repl_eval with language first")
-                          {:type :language-surface/ambiguous-language
-                           :language (:ambiguous picked)
-                           :capability capability
-                           :available (vec (keep :language (:matches picked)))}))
+          (:ambiguous picked) (throw (ex-info (str (capability->tool capability)
+                                                   ": multiple handlers for '"
+                                                   (:ambiguous picked)
+                                                   "'; disable the duplicate language extension.")
+                                              {:type :language-surface/ambiguous-language
+                                               :language (:ambiguous picked)
+                                               :capability capability
+                                               :available (vec (keep :language
+                                                                     (:matches picked)))}))
           ;; No candidate matched, but exactly one pack is active and the caller named
           ;; no language — use it (single-pack convenience).
           (and (nil? explicit) (= 1 (count handlers))) (first handlers)
-          explicit (throw (ex-info (str "No " (name capability) " handler for language " explicit)
+          explicit (throw (ex-info (str (capability->tool capability)
+                                        ": no handler for '"
+                                        explicit
+                                        "'; available: "
+                                        (str/join ", " (distinct (keep :language handlers)))
+                                        ".")
                                    {:type :language-surface/no-language-handler
                                     :language explicit
                                     :capability capability
                                     :available (vec (keep :language handlers))}))
-          :else (throw (ex-info
-                         (str
-                           "Multiple language handlers match current workspace"
-                           "; pass the language as first arg, e.g. repl_eval with language first")
-                         {:type :language-surface/ambiguous-language
-                          :language nil
-                          :capability capability
-                          :available (vec (keep :language handlers))})))))
+          :else (throw (ex-info (str (capability->tool capability)
+                                     ": specify language; available: "
+                                     (str/join ", " (distinct (keep :language handlers)))
+                                     ".")
+                                {:type :language-surface/ambiguous-language
+                                 :language nil
+                                 :capability capability
+                                 :available (vec (keep :language handlers))})))))
 
 (defn- parse-language-call
   [args]
@@ -375,9 +380,7 @@
         (first more)]
 
     (when-not (or (nil? opts) (map? opts))
-      (throw (ex-info (str "A REPL lifecycle call is (language?, {options}); " (pr-str opts)
-                           " is not an options map — name what it selects:"
-                           " {\"cwd\": ...}, {\"id\": ...}, {\"port\": ...}.")
+      (throw (ex-info "REPL: options must be a map; use {'cwd': ...}, {'id': ...} or {'port': ...}."
                       {:type :language-surface/bad-args
                        :got args
                        :examples ["repl_start('clojure', {'cwd': 'extensions/foo'})"

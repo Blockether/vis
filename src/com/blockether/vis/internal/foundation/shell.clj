@@ -2002,9 +2002,7 @@
 
      (authorize-origin! env session id)
      (when-not (or entry (.isFile file))
-       (throw (ex-info (str "No shell '" id
-                            "' in this session — every run and every background start"
-                            " answers with its own id; live ids are listed in resources.")
+       (throw (ex-info (str "shell: unknown id '" id "'; use the handle returned by shell().")
                        {:type ::unknown-bg-id :id id})))
      (let [chunk
            (shell-log/read-chunk id file {:offset offset :limit limit :lines lines})
@@ -2393,16 +2391,13 @@
         need-command
         (fn []
           (or valid-command
-              (throw (ex-info
-                       (str "shell op \"" op "\" needs {\"command\": \"…\"} in its options map.")
-                       {:type ::missing-command :op op}))))
+              (throw (ex-info "shell: command required; use shell(command)."
+                              {:type ::missing-command :op op}))))
 
         need-id
         (fn []
           (or id
-              (throw (ex-info (str "shell op \""
-                                   op
-                                   "\" needs {\"id\": \"…\"}; live ids are listed in resources.")
+              (throw (ex-info "shell: id required; use the handle returned by shell()."
                               {:type ::missing-id :op op}))))
 
         reject-command

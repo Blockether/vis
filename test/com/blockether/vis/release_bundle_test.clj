@@ -1345,31 +1345,116 @@
                    (expect (str/includes? preparation "com.blockether.vis.internal.python.runtime"))
                    (expect (str/includes? preparation "(python-runtime/ensure-library!)")))))
 
+(defn- run-draft-release-action
+  [release-json view-exit]
+  (let [dir
+        (.toFile (Files/createTempDirectory "vis-draft-release-" (make-array FileAttribute 0)))
+
+        output-file
+        (io/file dir "outputs")
+
+        script
+        (-> (slurp ".github/actions/require-draft-release/action.yml")
+            (str/split #"      run: \|\n" 2)
+            second
+            (str/replace #"(?m)^        " ""))]
+
+    (try
+      (write-executable!
+        (io/file dir "gh")
+        (str
+          "#!/usr/bin/env python3\n"
+          "import os, sys\n" "args = sys.argv[1:]\n"
+          "url = 'https://api.github.com/repos/example/project/releases/42'\n"
+          "if args == ['release', 'view', 'v9.8.7', '--repo', 'example/project', '--json', 'apiUrl', '--template', '{{.apiUrl}}']:\n"
+          "    if os.environ['FIXTURE_VIEW_EXIT'] != '0': sys.exit(1)\n" "    print(url)\n"
+          "elif args == ['api', url]:\n" "    print(os.environ['FIXTURE_RELEASE'])\n"
+          "else:\n"
+          "    sys.exit('Draft releases require lookup by ID, not the published-tag endpoint')\n"))
+      (let [result
+            (run-bash ["bash" "-c" script]
+                      {"PATH" (str (.getPath dir) ":" (System/getenv "PATH"))
+                       "GITHUB_REPOSITORY" "example/project"
+                       "RELEASE_TAG" "v9.8.7"
+                       "RUNNER_TEMP" (.getPath dir)
+                       "GITHUB_OUTPUT" (.getPath output-file)
+                       "FIXTURE_VIEW_EXIT" view-exit
+                       "FIXTURE_RELEASE" release-json})
+
+            metadata-path
+            (when (.exists output-file)
+              (second (re-find #"(?m)^metadata=(.+)$" (slurp output-file))))]
+
+        (assoc result :metadata (when metadata-path (str/trim (slurp metadata-path)))))
+      (finally (delete-tree! dir)))))
+
+(defdescribe
+  draft-release-lookup-test
+  ;; The complete release stopped because GitHub's published-tag endpoint hides drafts.
+  (it "resolves draft metadata by release ID and exposes it to the complete-asset gate"
+      (let [metadata
+            "{\"tag_name\":\"v9.8.7\",\"draft\":true,\"assets\":[]}"
+
+            result
+            (run-draft-release-action metadata 0)]
+
+        (expect (zero? (:exit result)) (:output result))
+        (expect (= metadata (:metadata result)))))
+  (it "refuses published, mismatched, malformed or unavailable releases without output metadata"
+      (doseq [[metadata view-exit] [["{\"tag_name\":\"v9.8.7\",\"draft\":false}" 0]
+                                    ["{\"tag_name\":\"v9.8.6\",\"draft\":true}" 0]
+                                    ["{\"tag_name\":\"v9.8.7\",\"draft\":\"true\"}" 0]
+                                    ["invalid JSON" 0]
+                                    ["{\"tag_name\":\"v9.8.7\",\"draft\":true}" 1]]]
+        (let [result (run-draft-release-action metadata view-exit)]
+          (expect (pos? (:exit result)) metadata)
+          (expect (nil? (:metadata result)))))))
+
 (defdescribe
   complete-release-gate-test
-  (it "keeps stable publication behind native, mobile, desktop and full CI verification"
-      (let [release
-            (slurp ".github/workflows/release.yml")
+  (it
+    "keeps stable publication behind native, mobile, desktop and full CI verification"
+    (let [release
+          (slurp ".github/workflows/release.yml")
 
-            native
-            (slurp ".github/workflows/native-release.yml")
+          native
+          (slurp ".github/workflows/native-release.yml")
 
-            mobile
-            (slurp ".github/workflows/mobile-release.yml")]
+          mobile
+          (slurp ".github/workflows/mobile-release.yml")]
 
-        (doseq [needle ["uses: ./.github/workflows/ci.yml"
-                        "uses: ./.github/workflows/native-release.yml"
-                        "needs: [prepare, native, mobile, desktop]" "bin/verify-release-assets.py"
-                        "--draft" "--draft=false --latest" "require_complete: true"]]
-          (expect (str/includes? release needle) needle))
-        (expect (str/includes? native "workflow_call:"))
-        (expect (not (str/includes? release "git commit")))
-        (expect (str/includes? mobile "require_complete:"))
-        (expect (str/includes? mobile "IFS= read -r keychain"))
-        (expect (str/includes? mobile "security default-keychain -d user -s \"$keychain\""))
-        (expect (str/includes? mobile "security list-keychain -d user -s \"${keychains[@]}\""))
-        (doseq [needle ["-ios.ipa" "-android.aab"]]
-          (expect (str/includes? mobile needle) needle))))
+      (doseq [needle ["uses: ./.github/workflows/ci.yml"
+                      "uses: ./.github/workflows/native-release.yml"
+                      "needs: [prepare, native, mobile, desktop]" "bin/verify-release-assets.py"
+                      "--draft" "--draft=false --latest" "require_complete: true"]]
+        (expect (str/includes? release needle) needle))
+      (expect (= 2 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
+      (expect (not (str/includes? release "/releases/tags/")))
+      (expect (str/includes? release "RELEASE_METADATA: ${{ steps.release.outputs.metadata }}"))
+      (expect (str/includes? native "workflow_call:"))
+      (expect (not (str/includes? release "git commit")))
+      (expect (str/includes? mobile "require_complete:"))
+      (expect (str/includes? mobile "IFS= read -r keychain"))
+      (expect (str/includes? mobile "security default-keychain -d user -s \"$keychain\""))
+      (expect (str/includes? mobile "security list-keychain -d user -s \"${keychains[@]}\""))
+      (expect (str/includes? mobile "printf 'path=%s\\n' \"$KEYCHAIN_PATH\" >> \"$GITHUB_OUTPUT\""))
+      (expect (str/includes? mobile "VIS_IOS_SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.path }}"))
+      (doseq [needle ["-ios.ipa" "-android.aab"]]
+        (expect (str/includes? mobile needle) needle))))
+  (it "checks main alignment before slow CI without allowing unverified artifact jobs"
+      (let [jobs (into {}
+                       (map (fn [[_ name body]]
+                              [name body])
+                            (re-seq #"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\z)"
+                                    (slurp ".github/workflows/release.yml"))))]
+        ;; Concurrent main commits must not invalidate a candidate after its full CI run.
+        (expect (not (str/includes? (get jobs "prepare") "needs:")))
+        (expect (str/includes? (get jobs "prepare")
+                               "test \"$(git rev-parse origin/main)\" = \"$(git rev-parse HEAD)\""))
+        (expect (str/includes? (get jobs "prepare") "--verify-tag --draft"))
+        (expect (str/includes? (get jobs "verify") "needs: prepare"))
+        (doseq [job ["native" "mobile" "desktop"]]
+          (expect (str/includes? (get jobs job) "needs: [prepare, verify]") job))))
   (it "delegates job-list read access to the native workflow's runner pickup check"
       (let [native-call (second (re-find #"(?s)  native:\n(.*?)\n  mobile:"
                                          (slurp ".github/workflows/release.yml")))]

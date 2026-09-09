@@ -11,29 +11,14 @@ because a host tool runs while the block waits inside it and cannot ask the
 interpreter anything: whatever the host needs has to travel with the question.
 """
 
-import json
-
-import vis_runtime
-
 #: Names that are globals but not tools: the async runtime a block imports, and
 #: Python's own builtins, which a TOOL-discovery surface must never list.
 NON_TOOLS = frozenset({"asyncio"})
 
 
 def _ask(namespace, tool, args):
-    """Call the host tool `tool` with `args`, answering the value it replied with.
-
-    The boundary carries TEXT and one envelope shape: the session is named
-    because the host binds a tool per session, and a host failure comes back as
-    a `RuntimeError` the caller can catch instead of a reply nobody reads.
-    """
-    payload = json.dumps(
-        {"session": namespace.get("__vis_session__"), "args": args}, default=str
-    )
-    reply = json.loads(vis_runtime.host_call(tool, payload))
-    if "error" in reply:
-        raise RuntimeError(reply["error"])
-    return reply.get("value")
+    """Use the standard synchronous host binding; preserve catchable host errors."""
+    return namespace[tool](*args)
 
 
 def _tables(namespace):

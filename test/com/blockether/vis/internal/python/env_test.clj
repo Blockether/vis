@@ -335,7 +335,15 @@
                                           (str "print(doc('doc').splitlines()[0])\n"
                                                "print([item.name for item in apropos(r'^doc$')])"))]
           (expect (nil? (:error result)))
-          (expect (= "# doc  ·  callable\n['doc']\n" (:stdout result)))))))
+          (expect (= "# doc  ·  callable\n['doc']\n" (:stdout result))))))
+  (it "keeps discovery failures compact through the jailed worker"
+      (tpc/with-own [ctx {} (constantly [(System/getProperty "user.dir")])
+                     {:worker? true :jail-enabled? true}]
+                    (let [out (ep/run-python-block ctx "apropos('[')" "t1/i1")]
+                      (expect (= "apropos: invalid regex at index 0: Unclosed character class."
+                                 (get-in out [:error :message])))
+                      (expect (= :python/host (get-in out [:error :data :phase])))
+                      (expect (= :apropos (get-in out [:error :data :symbol])))))))
 
 (defdescribe
   doc-apropos-surface-test
@@ -977,3 +985,35 @@ Follow every fixture step without truncation."}]))
                                                       "print(len(open('/etc/hosts').read()) > 0)")]
                       (expect (nil? (:error answer)))
                       (expect (str/includes? (str (:stdout answer)) "True"))))))
+
+(defdescribe
+  compact-discovery-host-error-test
+  "Discovery uses the standard host error boundary, not a guest RuntimeError adapter."
+  (it "names the invalid regex without repeating the source block"
+      (tpc/with-own [ctx {}]
+                    (let [out (ep/run-python-block ctx "apropos('[')\nprint('after')" "t1/i1")]
+                      (expect (= "apropos: invalid regex at index 0: Unclosed character class."
+                                 (get-in out [:error :message])))
+                      (expect (= :python/host (get-in out [:error :data :phase])))
+                      (expect (= :apropos (get-in out [:error :data :symbol]))))))
+  (it "preserves the original trace in host diagnostics, not the model-facing message"
+      (let [err (try ((#'ep/discovery-tool 'apropos re-pattern) "[")
+                     (catch clojure.lang.ExceptionInfo e e))]
+        (expect (= "apropos: invalid regex at index 0: Unclosed character class." (ex-message err)))
+        (expect (str/includes? (get-in (ex-data err) [:error :trace] "")
+                               "PatternSyntaxException"))))
+  (it "does not duplicate discovery documents or catalogs in Activity"
+      (tpc/with-own [ctx {}]
+                    (let [events
+                          (atom [])
+
+                          out
+                          (binding [ext/*tool-event-sink* #(swap! events conj %)]
+                            (ep/run-python-block
+                              ctx
+                              "assert doc('doc')\nassert apropos('^doc$')\nprint('ok')"
+                              "t1/i1"))]
+
+                      (expect (nil? (:error out)))
+                      (expect (= "ok\n" (:stdout out)))
+                      (expect (empty? @events))))))

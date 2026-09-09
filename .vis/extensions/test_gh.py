@@ -108,7 +108,7 @@ def test_a_poll_reads_as_the_seven_answers():
     # Regression, session f64a6044-9f64-41ab-8d01-dff764cc9149: the status counted jobs
     # ("4 of 6 jobs finished") and so said the same sentence for 23 minutes of a 97-minute
     # run. It names the WORK now — what broke, or what is moving — and the arithmetic
-    # moved to the progress bar, which counts STEPS because steps are what change.
+    # stays in the progress bar; current steps remain visible in the status and timeline.
     assert (
         shape["headline"] == "tests · vis-agent + vis-contract (PyPI packages) failed"
     )
@@ -117,7 +117,7 @@ def test_a_poll_reads_as_the_seven_answers():
     # and elapsed durations but not the calendar date and time it began. It is an identity
     # fact of the run, so it rides in the view's head with the branch and the title —
     # test_the_head_says_when_the_run_began holds that line.
-    assert (shape["done"], shape["total"]) == (31, 35)
+    assert (shape["done"], shape["total"]) == (4, 6)
     assert shape["tone"] == "running"
     # Four counters, four fixed ids: only the LABEL changes when the run ends, because a
     # stat is patched by id and "how much is moving" becomes "how much never ran".
@@ -681,7 +681,7 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
         node(picture, "run")["text"]
         == "tests · vis-agent + vis-contract (PyPI packages) failed"
     )
-    assert node(picture, "progress")["done"] == 31
+    assert node(picture, "progress")["done"] == 4
 
 
 def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
@@ -1179,3 +1179,72 @@ def test_selectors_refuse_everything_that_is_not_one_value():
         gh._repo_flag("o/r; echo no")
     with pytest.raises(ValueError, match="pr must be"):
         gh._pull_selector("1421; echo no")
+
+
+@pytest.mark.parametrize("pending", ["queued", "pending", "waiting"])
+def test_completed_prepare_does_not_finish_a_queued_release(pending):
+    # Regression: the Mikrus session showed 100% (8/8) with 15 jobs waiting.
+    payload = {
+        "status": "pending",
+        "jobs": [
+            {
+                "databaseId": 1,
+                "name": "prepare",
+                "status": "completed",
+                "conclusion": "success",
+                "steps": [{"status": "completed", "name": str(i)} for i in range(8)],
+            }
+        ]
+        + [
+            {"databaseId": i + 2, "name": f"build {i}", "status": pending, "steps": []}
+            for i in range(15)
+        ],
+    }
+    shape = gh.run_shape(payload)
+    assert (shape["done"], shape["total"]) == (1, 16)
+    assert shape["is_over"] is False
+    assert shape["detail"] == "15 jobs queued"
+    assert shape["tone"] == "running"
+
+
+@pytest.mark.parametrize("conclusion", ["skipped", "neutral"])
+def test_success_does_not_claim_every_job_passed(conclusion):
+    payload = fixture("run-final.json")
+    payload["conclusion"] = "success"
+    for job in payload["jobs"]:
+        job["conclusion"] = "success"
+    payload["jobs"][-1]["conclusion"] = conclusion
+    shape = gh.run_shape(payload)
+    assert shape["headline"] == "Succeeded"
+    waiting = next(one for one in shape["score"] if one["id"] == "waiting")
+    assert waiting["value_text"] == ("1" if conclusion == "skipped" else "0")
+
+
+def test_between_steps_does_not_describe_a_finished_step_as_running():
+    payload = {
+        "status": "in_progress",
+        "jobs": [
+            {
+                "name": "build",
+                "status": "in_progress",
+                "steps": [
+                    {
+                        "name": "checkout",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "startedAt": "2026-09-09T08:00:00Z",
+                        "completedAt": "2026-09-09T08:00:10Z",
+                    }
+                ],
+            }
+        ],
+    }
+    shape = gh.run_shape(payload, now=gh._timestamp("2026-09-09T08:01:00Z"))
+    assert shape["headline"] == "build"
+    assert shape["detail"] == "Waiting for next step"
+
+
+def test_empty_job_list_does_not_claim_to_be_waiting_for_a_runner():
+    shape = gh.run_shape({"status": "queued", "jobs": []})
+    assert shape["headline"] == "Waiting for job details"
+    assert shape["detail"] == "No jobs reported yet"

@@ -613,6 +613,35 @@
         (expect (true? (:readable-blind? blind)))
         (expect (str/includes? (:reason blind) "read_attachment")))))
 
+;; Regression: the app's non-gzip diagnostics export could not be uploaded again.
+(defdescribe
+  jsonl-attachment-test
+  (it "keeps JSONL bytes available to read_attachment, never as an image"
+      (let [bytes
+            (.getBytes "{\"kind\":\"vis-app-diagnostics\",\"schema\":1}\n{\"event\":\"started\"}\n"
+                       "UTF-8")
+
+            out
+            (attachments/prepare-inline-attachments [{:base64 (b64 bytes)
+                                                      :filename "vis-diagnostics.jsonl"
+                                                      :media-type "application/octet-stream"}])
+
+            attachment
+            (first (:attached out))
+
+            wire
+            (attachments/wire-images (:attached out))]
+
+        (expect (empty? (:skipped out)))
+        (expect (= "application/x-ndjson" (:media-type attachment)))
+        (expect (= (b64 bytes) (:base64 attachment)))
+        (expect (attachments/hidden-from-model? attachment))
+        (expect (empty? (:attached wire)))
+        (expect (:readable-blind? (first (:skipped wire))))))
+  (it "does not accept prose or malformed JSON as a log container"
+      (doseq [text ["ordinary log text\n" "{broken}\n" "[1,2]\n"]]
+        (expect (nil? (attachments/detect-media-mime (.getBytes text "UTF-8")))))))
+
 (defdescribe
   provider-safe-media-type-test
   "Intake STORES, it does not decide. The wire's four containers are still the

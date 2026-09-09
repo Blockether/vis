@@ -162,10 +162,12 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   .main{padding:1.6rem max(1rem,env(safe-area-inset-right)) 3rem max(1rem,env(safe-area-inset-left))}
   .content pre{padding:.875rem 1rem}
   .content th,.content td{padding:.45rem .5rem}
-  .side{position:fixed;top:calc(4rem + env(safe-area-inset-top));left:0;bottom:0;height:auto;width:min(20rem,82vw);z-index:60;
+  .side{position:fixed;top:calc(4rem + env(safe-area-inset-top));left:0;bottom:0;width:min(20rem,82vw);z-index:60;
+    height:calc(100dvh - 4rem - env(safe-area-inset-top));overscroll-behavior-y:contain;
     background:var(--bg);border-right:1px solid var(--line);box-shadow:var(--shadow);
     transform:translateX(-100%);transition:transform .22s ease;padding-top:1.4rem;
-    padding-left:max(1rem,env(safe-area-inset-left))}
+    padding-left:max(1rem,env(safe-area-inset-left));
+    padding-bottom:calc(3rem + env(safe-area-inset-bottom))}
   .navtoggle:checked ~ .shell .side{transform:translateX(0)}
   .navtoggle:checked ~ .scrim{display:block;position:fixed;
     top:calc(4rem + env(safe-area-inset-top));left:0;right:0;bottom:0;z-index:55;

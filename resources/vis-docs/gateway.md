@@ -122,75 +122,17 @@ means the client reached a token-protected gateway without a valid token:
 pair the remote client again, run on the gateway's machine, or restart the
 gateway on loopback.
 
-## Push notifications
-
-The gateway sends an alert when a turn finishes. The payload includes the
-session title, identifiers and an answer preview of up to 180 characters.
-In the app, open **Settings → Notifications** for the gateway, enable
-*Notify this device* and use *Send a test*.
-
-The store-distributed app uses a relay operated by the app's publisher. The
-relay receives the notification content and forwards it to the push provider.
-The full transcript is not included in the push payload. `VIS_PUSH_RELAY_URL`
-or `~/.vis/relay.edn` selects a different relay for a machine.
-
-Direct APNs or FCM credentials only work for a Companion you build and sign
-yourself; Apple and Google bind push credentials to the app build. In that
-case give the gateway your key, in the macOS keychain or through environment
-variables:
-
-```bash
-# iOS
-security add-generic-password -U -s vis-apns -a key -w "$(cat AuthKey_ABCD123456.p8)"
-security add-generic-password -U -s vis-apns -a key_id -w ABCD123456
-security add-generic-password -U -s vis-apns -a team_id -w YOURTEAMID
-security add-generic-password -U -s vis-apns -a topic -w com.example.yourapp
-security add-generic-password -U -s vis-apns -a environment -w production
-# or: VIS_APNS_KEY_PATH, VIS_APNS_KEY_ID, VIS_APNS_TEAM_ID, VIS_APNS_TOPIC, VIS_APNS_ENV
-
-# Android
-security add-generic-password -U -s vis-fcm -a service_account -w "$(cat sa.json)"
-security add-generic-password -U -s vis-fcm -a project_id -w your-firebase-project
-# or: VIS_FCM_SERVICE_ACCOUNT_PATH
-```
-
-A `.p8` in `~/.vis/apns/` with `apns.edn` beside it, or a service-account JSON
-in `~/.vis/fcm/`, is picked up as well. `GET /v1/capabilities` reports push
-readiness under `features.push`.
-
-The web Companion uses browser Web Push with a key pair the gateway generates
-under `~/.vis/web-push/`; `VIS_WEB_PUSH_SUBJECT` sets the contact.
-
-Treat the APNs key, the FCM service account, the gateway token and
-`~/.vis/devices.edn` as secrets. Bundle ids, team ids, project ids and
-`google-services.json` are not.
-
 ## HTTP API
 
-Every built-in route is described as OpenAPI 3.1, without a token:
+The gateway serves its OpenAPI 3.1 schema without a token:
 
 ```bash
 curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 ```
 
-The gateway and clients advertise their protocol version and the oldest
-compatible version. The gateway reports these on `GET /healthz`,
-`GET /v1/capabilities` and `GET /v1/admin/status`. Clients send `X-Vis-Protocol`,
-`X-Vis-Min-Gateway-Protocol`, `X-Vis-Client` and `X-Vis-Client-Version`.
-The gateway returns `HTTP 426` to an incompatible client. Clients display a
-version-mismatch screen for an incompatible gateway. Health, capabilities,
-OpenAPI and docs routes remain accessible without authentication.
-
-Other API routes:
-
-- `GET /v1/events?sids=<sid>` — the session event stream (SSE), resumable with
-  `Last-Event-ID`.
-- `POST /v1/sessions/:sid/voice` — upload a recording; answers `202` with a
-  job, whose progress streams from `…/voice/jobs/:job-id/events` as
-  `voice.job` frames.
-- `GET /v1/slashes` — the slash commands available to web clients.
-- `GET`/`POST`/`DELETE /v1/devices` — registered push devices, tokens masked.
-- `GET /metrics` — Prometheus metrics (or JSON with `Accept: application/json`).
+Use the schema for routes, request formats and responses. Protected routes
+require the gateway token. An incompatible client receives `HTTP 426`;
+update the client or gateway to a compatible version.
 
 ## Python SDK
 

@@ -1,0 +1,16 @@
+{
+  "lang": "clojure",
+  "prompt": "Locate the Clojure namespace demo.directory-map in this project. Use ls to list the directory containing it, including its immediate subdirectories. Report the directory's project-relative path and the immediate subdirectory names. Do not edit files.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "packages/listing/src/demo",
+    "fixtures"
+  ],
+  "want_tools": [
+    "ls"
+  ],
+  "want_forms": [
+    "ls("
+  ]
+}

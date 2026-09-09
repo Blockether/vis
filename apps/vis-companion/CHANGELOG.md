@@ -1,3 +1,25 @@
+# Vis Companion — release notes
+
+What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
+
+## 0.1.51 (5618) — 2026-09-09
+<!-- commit: 9a741e64bbbd2326e2a88bda9ebf2eb5633a4172 -->
+
+- V0.1.51
+- V0.1.50
+- Keep project ordering stable across live updates
+- Improve tool errors, drafts and activity spacing
+- Assert no empty answer after cancellation
+- V0.1.49
+- Pin the imported distribution signing identity
+- Add compact voice recording and import
+- V0.1.48
+- V0.1.47
+- Remove push setup and simplify HTTP API
+- Preserve shared logs across app and TUI
+- Align message content below role labels
+- Record companion build 5588
+
 ## 0.1.45 (5588) — 2026-09-09
 <!-- commit: dbe0fced9974f9d67b8ce836fa56bb0509e2c6b0 -->
 

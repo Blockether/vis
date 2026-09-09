@@ -139,7 +139,8 @@
               (:result (drafts/draft-status env))
 
               _
-              (do (spit (io/file draft-root "b.txt") "new\n") (spit (io/file base "a.txt") "x\n"))
+              (do (spit (io/file draft-root "b.txt") "new\n")
+                  (spit (io/file base "local.txt") "keep local work\n"))
 
               draft-content
               (slurp (io/file draft-root "a.txt"))
@@ -160,7 +161,7 @@
           (expect (= "feature-x" (get (:result opened) "label")))
           (expect (= "vis/feature-x" (get (:result opened) "branch")))
           (expect (= "worktree" (get (:result opened) "backend")))
-          (expect (false? (get (:result opened) "clean")))
+          (expect (true? (get (:result opened) "clean")))
           (expect (not= base draft-root))
           ;; the ctx block follows the live pointer the same turn
           (expect (= draft-root ctx-in-draft))
@@ -168,10 +169,10 @@
           (expect (= "main" ctx-target))
           (expect (true? (get draft-status "in_draft")))
           (expect (= draft-root (get draft-status "root")))
-          ;; the pending trunk edit came along
-          (expect (= "x\npending\n" draft-content))
+          ;; Default drafts exclude pending trunk work.
+          (expect (= "x\n" draft-content))
           (expect (= "approved" (get approved "status")))
-          (expect (= 2 (count (get approved "files"))))
+          (expect (= 1 (count (get approved "files"))))
           (expect (= "main" (get approved "target_branch")))
           (expect (= "feat: add b" (git! base "log" "-1" "--format=%s" "main")))
           (expect (= (get approved "commit") (git! base "rev-parse" "main")))
@@ -183,6 +184,9 @@
           (expect (= base (ctx-root env)))
           (expect (false? (get trunk-status "in_draft")))
           (expect (= base (get trunk-status "root")))
+          (expect (= "keep local work\n" (slurp (io/file base "local.txt"))))
+          (expect (= "x\npending\n" (slurp (io/file base "a.txt"))))
+          (expect (= "M a.txt\n?? local.txt" (git! base "status" "--porcelain")))
           (expect (= "new\n" (slurp (io/file base "b.txt"))))))))
   (it "clean=True seeds from HEAD and leaves pending trunk work behind"
       (with-session "vis-fdrafts-clean"
@@ -192,6 +196,15 @@
                         (expect (true? (get (:result opened) "clean")))
                         (expect (= "x\n"
                                    (slurp (io/file (get (:result opened) "root") "a.txt"))))))))
+  (it "explicit clean=False still copies pending work, for positional and map arguments"
+      (doseq [arg [false {"clean" false} {:clean false}]]
+        (with-session "vis-fdrafts-dirty"
+                      (fn [_base env]
+                        (let [opened (drafts/draft-create env "dirty-x" arg)]
+                          (expect (true? (extension/envelope-success? opened)))
+                          (expect (false? (get (:result opened) "clean")))
+                          (expect (= "x\npending\n"
+                                     (slurp (io/file (get (:result opened) "root") "a.txt")))))))))
   (it
     "refuses what makes no sense: an unnamed draft, a second draft, approving or discarding on trunk"
     (with-session "vis-fdrafts-refuse"

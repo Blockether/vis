@@ -4,14 +4,22 @@ inputs:
   tag:
     description: Existing draft release tag
     required: true
+outputs:
+  metadata:
+    description: Path to the verified draft release REST metadata.
+    value: ${{ steps.release.outputs.metadata }}
 runs:
   using: composite
   steps:
-    - shell: bash
+    - id: release
+      shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         RELEASE_TAG: ${{ inputs.tag }}
       run: |
         set -euo pipefail
-        gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | \
-          python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["draft"], "Published releases are immutable; create a new version"'
+        release_url=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json apiUrl --template '{{.apiUrl}}')
+        metadata=$(mktemp "$RUNNER_TEMP/vis-release.XXXXXX")
+        gh api "$release_url" > "$metadata"
+        python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r.get("draft") is True and r.get("tag_name") == sys.argv[2] else "Expected the requested unpublished draft; published releases are immutable")' "$metadata" "$RELEASE_TAG"
+        printf 'metadata=%s\n' "$metadata" >> "$GITHUB_OUTPUT"

@@ -335,34 +335,33 @@ export function installProfile({ uuid, content }, home = homedir()) {
 }
 
 /**
- * The generic distribution identity this keychain can sign with, if any.
+ * The exact SHA-1 fingerprint of an available distribution signing identity.
  *
- * Manual signing cannot invent one: without the certificate's PRIVATE KEY in a
- * keychain — the workflow imports it, a laptop usually has not — the release has
- * to fall back to automatic signing rather than fail at the codesign step.
- *
- * The NAME matters as much as the presence. A certificate created as
- * IOS_DISTRIBUTION is issued to "iPhone Distribution: …", the modern DISTRIBUTION
- * type to "Apple Distribution: …", and codesign matches CODE_SIGN_IDENTITY by
- * prefix — so guessing the wrong generic name finds no identity at all. Read it
- * back from the keychain instead of assuming.
+ * A generic certificate name is ambiguous on persistent runners: Xcode can
+ * select a different identity with a locked private key. The release job scopes
+ * discovery to its imported keychain and pins this fingerprint through export.
  *
  * @param {string} [output] `security find-identity` output; for tests
- * @returns {string|undefined} "Apple Distribution", "iPhone Distribution", or none
+ * @param {string} [keychainPath] keychain to search; defaults to VIS_IOS_SIGNING_KEYCHAIN
+ * @returns {string|undefined} certificate fingerprint, or none for local automatic signing
  */
-export function distributionIdentity(output) {
+export function distributionIdentity(output, keychainPath = process.env.VIS_IOS_SIGNING_KEYCHAIN) {
   let text = output;
   if (text === undefined) {
     if (process.platform !== "darwin") return undefined;
     try {
       text = execFileSync(
         "security",
-        ["find-identity", "-v", "-p", "codesigning"],
+        ["find-identity", "-v", "-p", "codesigning", ...(keychainPath ? [keychainPath] : [])],
         { encoding: "utf8" },
       );
     } catch {
-      return undefined;
+      text = "";
     }
   }
-  return text.match(/"(Apple Distribution|iPhone Distribution):/)?.[1];
+  const identity = text.match(/^\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"(?:Apple|iPhone) Distribution:/m)?.[1]?.toUpperCase();
+  if (keychainPath && !identity) {
+    throw new Error("No distribution signing identity in the release keychain");
+  }
+  return identity;
 }

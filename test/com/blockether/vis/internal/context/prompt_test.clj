@@ -317,6 +317,10 @@
       (expect (str/includes? text "scoped to real paths"))
       (expect (str/includes? text "locates unknown code"))
       (expect (str/includes? text "**Filesystem work is Python**"))
+      ;; Regression, issue #126: list a known parent rather than inventing source roots.
+      (expect (str/includes? text "confirmed directories"))
+      (expect (str/includes? text "namespace/package names"))
+      (expect (str/includes? text "one missing path aborts"))
       ;; The routing rule sends every filesystem CHANGE to Python; naming the retired
       ;; verbs again would re-open the `mkdir -p`/`test -f` reflex it exists to close.
       (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]

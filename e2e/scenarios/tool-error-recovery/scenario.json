@@ -1,0 +1,24 @@
+{
+  "lang": "python",
+  "prompt": "Read report.txt with cat. Attach its bytes as report.txt, fetch its descriptor with get_attachment and its bytes with read_attachment, and assert the bytes match the fixture. In guarded calls, exercise get_attachment(\"__missing__.txt\") and apropos(\"[\"). Catch Exception as exc and assert type(exc).__name__ == \"VisToolError\" and that str(exc) contains no newline; print the messages. The first must mention list_attachments and the second invalid regex. Then successfully use list_attachments() and apropos(\"^doc$\"). Do not edit files. Conclude tool-error-recovery-ok only after every assertion passes.",
+  "want": {
+    "report.txt": [
+      "tool-error-fixture"
+    ]
+  },
+  "wantnot": {},
+  "want_answer": [
+    "tool-error-recovery-ok"
+  ],
+  "want_tools": [
+    "cat"
+  ],
+  "want_forms": [
+    "attach(",
+    "get_attachment(",
+    "read_attachment(",
+    "apropos(",
+    "list_attachments(",
+    "VisToolError"
+  ]
+}

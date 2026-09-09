@@ -289,3 +289,160 @@ describe("hearing a voice before choosing it", () => {
     );
   });
 });
+
+describe("imported voice actions", () => {
+  // Regression, user report: Forget occupied a permanent column instead of the shared drawer.
+  it("reveals an icon and Forget action in the voice drawer and confirms deletion", async () => {
+    const voice = { id: "my-voice", label: "My voice", is_imported: true };
+    const catalogue: SpeechVoices = {
+      engine: { id: "piper-local", label: "Piper" },
+      voices: [voice],
+    };
+    const client = {
+      speechVoices: vi.fn().mockResolvedValue(catalogue),
+      forgetSpeechVoice: vi.fn().mockImplementation(async () => {
+        catalogue.voices = [];
+      }),
+    } as unknown as GatewayClient;
+    render(<VoicesPanel client={client} prefs={prefs} onChange={vi.fn()} />);
+    const choice = await screen.findByRole("button", { name: /^My voice/ });
+    const track = choice.closest<HTMLElement>("[data-swipe-track]");
+    expect(track).not.toBeNull();
+    const action = within(track!).getByRole("button", {
+      name: "Forget My voice",
+    });
+    expect(action).toHaveTextContent("Forget");
+    expect(action.querySelector("svg")).not.toBeNull();
+    track!.scrollTo = vi.fn();
+    fireEvent.click(action);
+    expect(client.forgetSpeechVoice).not.toHaveBeenCalled();
+    const confirmation = screen.getByRole("group", {
+      name: "Forget My voice?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Forget" }),
+    );
+    await waitFor(() =>
+      expect(client.forgetSpeechVoice).toHaveBeenCalledWith("my-voice", {
+        engine: "piper-local",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^My voice/ })).toBeNull(),
+    );
+  });
+});
+
+describe("testing custom speech", () => {
+  const audio = new Blob(["wav"], { type: "audio/wav" });
+  function mount(gatewayVoice: string | null = "my-voice") {
+    const client = {
+      speechVoices: vi
+        .fn()
+        .mockResolvedValue({
+          voices: [{ id: "my-voice", label: "My voice", is_imported: true }],
+        }),
+      speakText: vi.fn().mockResolvedValue(audio),
+      speechVoiceSample: vi.fn(),
+    } as unknown as GatewayClient;
+    const onChange = vi.fn();
+    const played = vi
+      .spyOn(speechOutput, "playSample")
+      .mockResolvedValue(undefined);
+    const stopped = vi.spyOn(speechOutput, "stop").mockImplementation(() => {});
+    const view = render(
+      <VoicesPanel
+        client={client}
+        prefs={{ ...prefs, gatewayVoice }}
+        engine="chatterbox-local"
+        onChange={onChange}
+      />,
+    );
+    return { ...view, client, onChange, played, stopped };
+  }
+  async function enter(text = "This is my own test sentence.") {
+    const input = await screen.findByRole("textbox", {
+      name: "Text to synthesize",
+    });
+    fireEvent.change(input, { target: { value: text } });
+    return screen.getByRole("button", { name: "Test" });
+  }
+  it("synthesizes entered text with this engine and the selected voice without saving preferences", async () => {
+    const { client, onChange, played } = mount();
+    fireEvent.click(await enter());
+    await waitFor(() => expect(played).toHaveBeenCalledWith(audio));
+    expect(client.speakText).toHaveBeenCalledWith(
+      null,
+      "This is my own test sentence.",
+      {
+        engine: "chatterbox-local",
+        voice: "my-voice",
+        signal: expect.any(AbortSignal),
+      },
+    );
+    expect(client.speechVoiceSample).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+  it("uses the engine default when no named voice is selected", async () => {
+    const { client, played } = mount(null);
+    fireEvent.click(await enter());
+    await waitFor(() => expect(played).toHaveBeenCalledWith(audio));
+    expect(client.speakText).toHaveBeenCalledWith(
+      null,
+      expect.any(String),
+      expect.objectContaining({ voice: null }),
+    );
+  });
+  it("does not submit empty or whitespace-only text", async () => {
+    const { client } = mount();
+    expect(await enter("   ")).toBeDisabled();
+    expect(client.speakText).not.toHaveBeenCalled();
+  });
+  it("can stop synthesis and ignores a late audio response", async () => {
+    const { client, played, stopped } = mount();
+    let finish!: (value: Blob) => void;
+    vi.mocked(client.speakText).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    fireEvent.click(await enter());
+    expect(screen.getByRole("status")).toHaveTextContent("Synthesizing");
+    const signal = vi.mocked(client.speakText).mock.calls[0]?.[2]?.signal;
+    fireEvent.click(screen.getByRole("button", { name: "Stop test" }));
+    expect(signal?.aborted).toBe(true);
+    expect(stopped).toHaveBeenCalled();
+    finish(audio);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Test" })).toBeEnabled(),
+    );
+    expect(played).not.toHaveBeenCalled();
+  });
+  it("can stop playback and cancels it when the panel closes", async () => {
+    const { played, stopped, unmount } = mount();
+    played.mockReturnValue(new Promise(() => {}));
+    fireEvent.click(await enter());
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Playing"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop test" }));
+    expect(stopped).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    await waitFor(() => expect(played).toHaveBeenCalledTimes(2));
+    unmount();
+    expect(stopped).toHaveBeenCalledTimes(2);
+  });
+  it("keeps the text after a failure so Test retries it", async () => {
+    const { client, played } = mount();
+    vi.mocked(client.speakText).mockRejectedValueOnce(
+      new Error("The machine is offline."),
+    );
+    fireEvent.click(await enter());
+    await screen.findByText(/The machine is offline/);
+    expect(
+      screen.getByRole("textbox", { name: "Text to synthesize" }),
+    ).toHaveValue("This is my own test sentence.");
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    await waitFor(() => expect(played).toHaveBeenCalledWith(audio));
+  });
+});

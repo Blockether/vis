@@ -1,9 +1,8 @@
 # Drafts
 
 A draft is an isolated working copy of the current repository. The session
-works inside it. `draft_approve()` commits the work and merges it into the
-repository's local default branch, updating that branch's checkout when one
-exists.
+works inside it. `draft_approve()` commits the work, fast-forwards the default
+branch, restores local work and pushes to origin when configured.
 
 Only the agent manages drafts. There is no draft slash command, picker or menu
 in the TUI or Companion app.
@@ -12,9 +11,9 @@ in the TUI or Companion app.
 
 | Tool | Effect |
 |---|---|
-| `draft_create("name")` | Open a draft and move the session into it. Pending trunk changes come along; `draft_create("name", clean=True)` seeds from `HEAD` and leaves them behind. One draft at a time. |
+| `draft_create("name")` | Open a draft from committed `HEAD` and move the session into it. `clean=False` explicitly copies pending trunk changes; those may overlap on approval. One draft at a time. |
 | `draft_status()` | Report the draft branch, `target_branch`, draft commits the target lacks (`ahead`) and pending paths (`pending`). |
-| `draft_approve()` | Commit pending work and merge the draft into the local default branch. `draft_approve("subject")` sets the commit subject. The draft stays open for further work. |
+| `draft_approve()` | Commit pending work, fast-forward the default branch and publish to origin if configured. `draft_approve("subject")` sets the subject. The draft stays open. |
 | `draft_discard()` | Return to the original checkout and remove the draft working copy. Approved work stays on the default branch; unapproved changes are lost. A merged draft branch may be removed. |
 
 Inside the turn that opens or discards a draft, sandbox confinement changes at
@@ -26,44 +25,49 @@ While in a draft, `session["workspace"]["draft"]` includes `label`, `backend`,
 
 The target is the local branch named by `origin/HEAD`. Without that symbolic
 ref, Vis selects `main`, then `master`. If the target does not exist locally,
-approval refuses rather than selecting an arbitrary branch. Vis does not
-switch the branch in your original checkout or fetch from or push to a remote.
+approval refuses rather than selecting an arbitrary branch. Vis never switches
+the branch in the original checkout.
 
-Approval stages changed and non-ignored untracked paths, excluding backend
-bookkeeping, and commits them on `vis/<name>`. The subject defaults to
-`draft(<name>): approve`; new commits include `Vis-Session` and `Vis-Draft`
-trailers. Existing draft commits are merged even if no paths are pending.
-The result includes `branch`, `target_branch`, `commit` and `files`.
-`nothing-to-approve` means the target already contains the draft and there are
-no pending changes.
+Approval fetches the target from origin when configured. The draft must contain
+both the local target and that fetched commit. Otherwise approval refuses with
+`:draft/sync-required`: merge or rebase onto the reported commit in the draft,
+resolve conflicts, then retry. Approval itself never merges target history.
+An existing merge, rebase, cherry-pick or revert must be finished or aborted.
 
-When the target has advanced independently, Vis merges its history inside the
-draft and creates a merge commit, then fast-forwards the target. Otherwise it
-fast-forwards directly to the draft commit. A linked checkout of the target is
-updated in place; an unchecked-out target is updated without changing the
-original checkout.
+Pending draft work is committed on `vis/<name>`, excluding backend bookkeeping.
+The subject defaults to `draft(<name>): approve`; commits include `Vis-Session`
+and `Vis-Draft` trailers. Local landing is fast-forward only. A linked target
+checkout is updated in place; an unchecked-out branch is updated by compare-and-swap.
 
-The target checkout must be clean. This also applies when `draft_create()`
-copied pending changes from it: copying does not remove the originals. Commit
-or stash those changes deliberately before approving. Vis does not stash,
-force-update or overwrite local changes automatically.
+The target checkout can be dirty. Overlapping paths are conservatively refused
+before any stash or landing, even when edits affect different lines in one file.
+Unrelated staged, unstaged and untracked work is saved in an approval-owned stash,
+then restored with `--index`. Existing user stashes are preserved. Ignored files
+are not stashed and cannot be overwritten by landing.
 
-A merge conflict leaves the target unchanged and the draft commit intact;
-Vis aborts its attempted merge in the draft. Resolve the conflicting changes
-there and retry `draft_approve()`. Failed commits or extension vetoes are
-reported as failures, not successful approvals. An existing merge, rebase,
-cherry-pick or revert in the draft must be finished or aborted before approval.
+Push to origin happens only after successful restoration, without force. With no
+origin, approval is local only. The result includes `published`, `branch`,
+`target_branch`, `commit` and `files`. `nothing-to-approve` means the draft and local
+target already match with no pending changes; it still retries publication.
+
+If restoration fails, no push is attempted and the saved stash is retained.
+Recover and verify local work manually, then drop that approval stash. Further
+approval is blocked while an approval stash remains. If push fails, the error
+explicitly reports that landing succeeded locally. Local work is already restored;
+fetch, synchronize the draft if necessary and retry. A rejected push does not roll
+back local history. Remote movement after fetch is rejected by normal Git push.
+Failed commits and extension vetoes are failures, not successful approvals.
 
 ## Backends
 
 | Backend | How the draft is made | Where it lands |
 |---|---|---|
-| `worktree` | `git worktree add` on a new `vis/<name>` branch from `HEAD`; pending changes are applied as a patch | Commit on the shared draft branch, then merge into the local default branch. |
-| `rift` | A copy-on-write clone of the directory (Rift) | Commit in the clone, fetch the draft branch into the original repository, then merge into its local default branch. |
+| `worktree` | `git worktree add` from `HEAD`; pending work is excluded by default | Fast-forward the shared target, restore local work, then push to origin if configured. |
+| `rift` | Copy-on-write clone, reset to committed `HEAD` by default | Fetch the draft branch into the original repository, then use the same approval flow. |
 
 `worktree` needs a git repository with at least one commit; `rift` works in any
-directory but needs the Rift native library. The `draft_backend` toggle chooses
-between them:
+directory with `clean=False` but needs the Rift native library. Clean drafts
+require Git history. The `draft_backend` toggle chooses between them:
 
 | Value | Meaning |
 |---|---|
@@ -87,7 +91,7 @@ own `draft` policy from the `filesystem_roots` configuration (see
 Every create, approve and discard goes through the `draft/create`,
 `draft/approve` and `draft/discard` operations, so a Python extension can guard
 or observe them with `vis.OpHook`. A `before` hook returning `vis.block(reason)`
-stops the operation. Both the draft commit and any merge commit also cross
+stops the operation. Each approval-created draft commit also crosses
 `git/commit`; Git's own hooks are not bypassed. See
 [Extending Vis](extending.md#op-hooks).
 

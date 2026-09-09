@@ -14,11 +14,12 @@ concurrency:
 jobs:
   verify:
     name: Verify release source
+    needs: prepare
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
   prepare:
-    needs: verify
+    # Validate main before slow CI; artifact jobs still require all source checks.
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,17 +38,18 @@ jobs:
       - name: Prepare unpublished release
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
-            python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["draft"], "Published releases are immutable"' "$RUNNER_TEMP/release.json"
-            gh release upload "$RELEASE_TAG" bin/install-vis-agent bin/vis-agent --clobber
-          else
-            gh release create "$RELEASE_TAG" bin/install-vis-agent bin/vis-agent \
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
               --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
           fi
+      - uses: ./.github/actions/require-draft-release
+        with:
+          tag: ${{ github.ref_name }}
+      - name: Upload installers to the verified draft
+        run: gh release upload "$RELEASE_TAG" bin/install-vis-agent bin/vis-agent --clobber
 
   native:
-    needs: prepare
+    needs: [prepare, verify]
     permissions:
       contents: write
       actions: read
@@ -58,7 +60,7 @@ jobs:
     secrets: inherit
 
   mobile:
-    needs: prepare
+    needs: [prepare, verify]
     uses: ./.github/workflows/mobile-release.yml
     with:
       platforms: both
@@ -68,7 +70,7 @@ jobs:
     secrets: inherit
 
   desktop:
-    needs: prepare
+    needs: [prepare, verify]
     uses: ./.github/workflows/desktop-companion.yml
     with:
       tag: ${{ github.ref_name }}
@@ -83,11 +85,14 @@ jobs:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/require-draft-release
+        id: release
+        with:
+          tag: ${{ github.ref_name }}
       - name: Require every verified product artifact
-        run: |
-          set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
-          python3 bin/verify-release-assets.py "$RUNNER_TEMP/release.json" "$RELEASE_TAG"
+        env:
+          RELEASE_METADATA: ${{ steps.release.outputs.metadata }}
+        run: python3 bin/verify-release-assets.py "$RELEASE_METADATA" "$RELEASE_TAG"
       - uses: ./.github/actions/setup-graalvm-25
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:

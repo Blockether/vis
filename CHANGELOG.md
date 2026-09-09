@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.52] - 2026-09-09
+
+### Fixed
+- Validate release tag, version and main alignment before long-running CI while preserving every artifact and publication gate.
+- Isolate the fork-baseline regression clock from background timers.
+
+## [v0.1.51] - 2026-09-09
+
+### Fixed
+- Synchronize drafts before fast-forward approval and include the current main fixes in the native production release.
+
+## [v0.1.50] - 2026-09-09
+
+### Fixed
+- Report compact, actionable tool errors and validate them independently of checkout path length.
+- Correct draft handling, attachment metadata and companion activity spacing.
+- Verify that cancellation leaves no empty answer bubble in the companion.
+- Keep gateway project ordering stable during live updates.
+
+## [v0.1.49] - 2026-09-09
+
+### Fixed
+- Pin the imported iOS distribution certificate for both archive signing and package export.
+
+## [v0.1.48] - 2026-09-09
+
+### Fixed
+- Isolate the latest jail policy test from concurrent configuration readers.
+
+## [v0.1.47] - 2026-09-09
+
+### Fixed
+- Resolve unpublished GitHub releases by ID before uploading or validating product assets.
+
+## [v0.1.46] - 2026-09-09
+
+### Fixed
+- Reclaim trusted Python extensions that stay blocked after cancellation, while preserving healthy interpreter state and subsequent turns.
+- Use Python runtime 0.5.6 to prevent lost termination signals during process and PTY startup.
+- Keep cold JVM dependency preparation off the SDK stdio protocol.
+- Preserve edits made at the draft fork timestamp and isolate cached test permission policies.
+- Allow the complete native release workflow to inspect its macOS runner pickup.
+- Resolve Council groups from persisted repositories for sessions without an explicit UI project.
+
 ## [v0.1.45] - 2026-09-08
 
 ### Changed
@@ -6079,7 +6123,7 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.45...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.47...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -6116,3 +6160,5 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 [v0.1.43]: https://github.com/Blockether/vis/releases/tag/v0.1.43
 [v0.1.44]: https://github.com/Blockether/vis/releases/tag/v0.1.44
 [v0.1.45]: https://github.com/Blockether/vis/releases/tag/v0.1.45
+[v0.1.46]: https://github.com/Blockether/vis/releases/tag/v0.1.46
+[v0.1.47]: https://github.com/Blockether/vis/releases/tag/v0.1.47

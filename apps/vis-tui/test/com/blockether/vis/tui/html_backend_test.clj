@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.client :as client]
@@ -208,39 +209,43 @@
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest execution-header-copy-and-right-inset-test
-  ;; COPY and the operation count retain the same two-cell inset as the labels.
-  (try (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
-         (theme/apply-theme! theme-id)
-         (doseq [cols [40 80 160]]
-           (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
-                       ts (doto (TerminalScreen. terminal) (.startScreen))]
+  ;; Copy uses the header button style without moving its six-cell click target.
+  (try
+    (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
+      (theme/apply-theme! theme-id)
+      (doseq [cols [40 80 160]]
+        (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                    ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-             (paint-activity-review! ts (activity-review-rows "succeeded") {})
-             (let [grid (cell-grid terminal cols 50)
-                   row-text (fn [row]
-                              (apply str
-                                (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
-                                     row)))
-                   code-row (first (filter #(str/includes? (row-text %) "CODE") grid))
-                   activity-row (first (filter #(str/includes? (row-text %) "ACTIVITY") grid))]
+          (paint-activity-review! ts (activity-review-rows "succeeded") {})
+          (components/button! (.newTextGraphics ts) 0 0 " COPY " :copy-code {:register? false})
+          (.refresh ts)
+          (let [grid (cell-grid terminal cols 50)
+                row-text (fn [row]
+                           (apply str
+                             (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
+                                  row)))
+                code-row (first (filter #(str/includes? (row-text %) "CODE") grid))
+                activity-row (first (filter #(str/includes? (row-text %) "ACTIVITY") grid))]
 
-               (doseq [row [code-row activity-row]]
-                 (is (= (- cols 5) (count (str/trimr (row-text row))))))
-               (is (str/ends-with? (str/trimr (row-text code-row)) "[COPY]"))
-               (is (str/ends-with? (str/trimr (row-text activity-row)) "7 operations"))
-               (doseq [x (range (- cols 11) (- cols 5))]
-                 (is (nil? (.lookup interactions/hit-map
-                                    (TerminalPosition. (int x)
-                                                       (.indexOf ^java.util.List grid code-row))))))
-               (doseq [cell (subvec code-row (- cols 11) (- cols 5))]
-                 (is (.isBold ^com.googlecode.lanterna.TextCharacter cell))
-                 (is (= theme/button-fg
-                        (.getForegroundColor ^com.googlecode.lanterna.TextCharacter cell)))
-                 (is (= theme/button-bg
-                        (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell)))
-                 (is (not= theme/code-block-bg
-                           (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))))))
-       (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+            (is (= (- cols 6) (count (str/trimr (row-text code-row)))))
+            (is (= (- cols 5) (count (str/trimr (row-text activity-row)))))
+            (is (str/ends-with? (str/trimr (row-text code-row)) " COPY"))
+            (is (= (subvec (first grid) 0 6) (subvec code-row (- cols 11) (- cols 5))))
+            (is (str/ends-with? (str/trimr (row-text activity-row)) "7 operations"))
+            (doseq [x (range (- cols 11) (- cols 5))]
+              (is (nil? (.lookup interactions/hit-map
+                                 (TerminalPosition. (int x)
+                                                    (.indexOf ^java.util.List grid code-row))))))
+            (doseq [cell (subvec code-row (- cols 11) (- cols 5))]
+              (is (not (.isBold ^com.googlecode.lanterna.TextCharacter cell)))
+              (is (= theme/button-fg
+                     (.getForegroundColor ^com.googlecode.lanterna.TextCharacter cell)))
+              (is (= theme/button-bg
+                     (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell)))
+              (is (not= theme/code-block-bg
+                        (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))))))
+    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest joined-activity-html-native-parity-test
   (doseq [cols

@@ -98,8 +98,8 @@ describe('groupByWorkDir', () => {
     ];
 
     expect(groupByWorkDir(rows)).toEqual([
-      ['/Users/me/vis', [rows[0], rows[1]]],
       ['/Users/me/other', [rows[2]]],
+      ['/Users/me/vis', [rows[0], rows[1]]],
     ]);
   });
 
@@ -110,7 +110,7 @@ describe('groupByWorkDir', () => {
   // painted the projects in two different orders from identical data.
   const roots = (rows: Session[]) => groupByWorkDir(rows).map(([root]) => root);
 
-  it('orders projects by their own recency, whatever order the rows arrive in', () => {
+  it('orders fallback projects by root regardless of arrival order', () => {
     const old = session('old', {
       modified_at: '2024-01-01T00:00:00Z',
       workspace: { root: '/Users/me/old' },
@@ -124,7 +124,7 @@ describe('groupByWorkDir', () => {
     expect(roots([fresh, old])).toEqual(['/Users/me/fresh', '/Users/me/old']);
   });
 
-  it('reads a project’s recency from its newest session, not its first row', () => {
+  it('keeps fallback order when a session becomes newer', () => {
     const stale = session('stale', {
       modified_at: '2024-01-01T00:00:00Z',
       workspace: { root: '/Users/me/busy' },
@@ -141,7 +141,7 @@ describe('groupByWorkDir', () => {
     expect(roots([stale, other, newest])).toEqual(['/Users/me/busy', '/Users/me/quiet']);
   });
 
-  it('puts a project with work running above a more recent idle one', () => {
+  it('does not lift a running fallback project', () => {
     const running = session('running', {
       live: true,
       modified_at: '2024-01-01T00:00:00Z',
@@ -152,7 +152,7 @@ describe('groupByWorkDir', () => {
       workspace: { root: '/Users/me/idle' },
     });
 
-    expect(roots([idle, running])).toEqual(['/Users/me/running', '/Users/me/idle']);
+    expect(roots([idle, running])).toEqual(['/Users/me/idle', '/Users/me/running']);
   });
 
   it('breaks a tie on the workspace root, so the order is total', () => {
@@ -612,11 +612,14 @@ describe('projectGroups', () => {
       awaiting_count: 0,
     };
     const groups = projectGroups(overview, []);
-    expect(groups.map((group) => group.root)).toEqual(['/repo/busy', '/repo/quiet']);
+    expect(groups.map((group) => group.root)).toEqual(['/repo/quiet', '/repo/busy']);
     expect(groups.map((group) => group.tally)).toEqual([
-      { count: 12, live: 2, awaiting: 0, unread: 0 },
       { count: 400, live: 0, awaiting: 0, unread: 0 },
+      { count: 12, live: 2, awaiting: 0, unread: 0 },
     ]);
+    overview.projects[1]!.last_activity_ms = 9999;
+    overview.projects[1]!.live_count = 5;
+    expect(projectGroups(overview, []).map((group) => group.root)).toEqual(['/repo/quiet', '/repo/busy']);
     expect(groups.every((group) => group.sessions.length === 0)).toBe(true);
   });
 

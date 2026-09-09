@@ -2606,13 +2606,21 @@ vis.register(vis.Extension(
                  {"this_key_is_invalid" true}])
 
           loads
-          (atom 0)]
+          (atom 0)
+
+          test-thread
+          (Thread/currentThread)
+
+          load-config
+          config/load-config-raw]
 
       (with-redefs [config/load-config-raw (fn []
-                                             (swap! loads inc)
-                                             (let [value (first @configs)]
-                                               (swap! configs subvec 1)
-                                               value))]
+                                             (if (identical? test-thread (Thread/currentThread))
+                                               (do (swap! loads inc)
+                                                   (let [value (first @configs)]
+                                                     (swap! configs subvec 1)
+                                                     value))
+                                               (load-config)))]
         (let [first-run (:result (shell/jailed-shell
                                    nil
                                    {"cwd" (.getCanonicalPath latest-root)
@@ -2622,6 +2630,10 @@ vis.register(vis.Extension(
                                                             "command" "printf must-not-run"}))
                               (catch Throwable t {"note" (ex-message t)}))]
 
+          ;; Background readers must not consume this test's scripted spawn policies.
+          (let [reader (future (try (config/load-config-raw) (catch Throwable _ nil)))]
+            (try (expect (not= ::timeout (deref reader 5000 ::timeout)))
+                 (finally (future-cancel reader))))
           ;; What this test is about is the policy snapshot read by each spawn, not
           ;; platform-specific enforcer diagnostics.
           (expect (str/ends-with? (str (get (jail-wait first-run) "out")) "latest-policy"))

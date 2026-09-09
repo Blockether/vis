@@ -1,10 +1,8 @@
 (ns com.blockether.vis.internal.foundation.shim-ls-test
   "The `ls` sandbox SHIM: the directory listing as an ordinary Python call.
 
-   What these tests hold down is the whole reason the listing left the tool
-   layer: it is called like a function, it answers Python DATA (a list of dicts,
-   not an envelope to unwrap), every failure is a Python exception a caller can
-   catch, and the `:fs/access` gate still decides which trees may be seen."
+   The listing returns a printable Python string. Host failures remain catchable
+   Python exceptions, and the `:fs/access` gate decides which trees may be seen."
   (:require [clojure.string :as string]
             [charred.api :as json]
             [com.blockether.vis.internal.python.env :as ep]
@@ -129,6 +127,32 @@
       (expect (= "True True True True\n" (out ctx code))))))
 
 (defdescribe
+  ls-shim-worker-test
+  ;; Regression: the deployed session worker must return listing rows, not a
+  ;; transport envelope that the Python shim attempts to parse as JSON.
+  (it "lists pathlib paths through the confined session worker"
+      (let [directory
+            (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+
+            roots-fn
+            (constantly [directory])]
+
+        (tpc/with-own
+          [ctx {} roots-fn
+           {:worker? true
+            :worker-policy-fn (fn []
+                                {:roots-fn roots-fn :net-enabled? false})
+            :jail-enabled? true
+            :enabled? false}]
+          (expect (= "True True True\n"
+                     (out ctx
+                          (str "from pathlib import Path\n" "text = ls(Path('.'), depth=2)\n"
+                               "batch = ls([Path('resources/vis-shims'), "
+                               "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
+                               "print('AGENTS.md  ' in text, 'vis-shims/' in text, "
+                               "'ls.py  ' in batch and 'core.clj  ' in batch)"))))))))
+
+(defdescribe
   ls-shim-failure-test
   "A failure is a Python exception, not a sentence to parse."
   (it "maps refusal / missing / file / malformed onto catchable exceptions"
@@ -143,23 +167,23 @@
                  "      kind(lambda: ls(\"src/com/blockether/nope\")),\n"
                  "      kind(lambda: ls([])))")]
 
-        (expect (= "NotADirectoryError FileNotFoundError ValueError\n" (out ctx code)))))
+        (expect (= "VisToolError VisToolError VisToolError\n" (out ctx code)))))
   ;; Regression, issue #126: an invented address (a filesystem path assembled from
   ;; a language namespace) bounced with nothing but "no such path", so the next
   ;; call guessed again. The recovery has to survive the move into Python.
-  (it "names the nearest existing directory in the FileNotFoundError"
+  (it "names the nearest existing directory in the host error"
       (let [ctx
             (sandbox)
 
             code
             (str "try:\n"
-                 "    ls(\"src/com/blockether/nope\")\n" "except FileNotFoundError as e:\n"
+                 "    ls(\"src/com/blockether/nope\")\n" "except Exception as e:\n"
                  "    m = str(e)\n"
-                 "print(\"nearest existing directory\" in m, \"namespace\" in m)")]
+                 "print(\"list `src/com/blockether` first\" in m, \"namespace\" not in m)")]
 
         (expect (= "True True\n" (out ctx code)))))
   (it
-    "raises PermissionError when the `:fs/access` gate refuses the directory"
+    "raises a host tool error when the `:fs/access` gate refuses the directory"
     (let
       [ctx
        (sandbox)
@@ -180,7 +204,61 @@
 
       ;; The gate's own sentence crosses the boundary verbatim, and a directory
       ;; it did not name stays readable.
-      (expect (= "PermissionError:said none\n" (with-fs-gate! hook #(out ctx code)))))))
+      (expect (= "VisToolError:said none\n" (with-fs-gate! hook #(out ctx code)))))))
+
+(defdescribe
+  ls-shim-host-failure-test
+  "Listing failures use the normal host-tool error boundary."
+  ;; Regression, issue #126: a guessed path in a batch must name the real parent
+  ;; without repeating the Python block, and retain the canonical failure identity.
+  (it "reports one compact host error and stops a batch containing a missing directory"
+      (tpc/with-own
+        [ctx {}]
+        (let [code
+              (str "print('before')\n"
+                   "paths = ['resources/vis-shims', 'resources/__vis_missing_ls__/nested']\n"
+                   "ls(paths)\n" "print('after')")
+
+              result
+              (ep/run-python-block ctx code "t1/i1")
+
+              {:keys [message data]}
+              (:error result)]
+
+          (expect (= "before\n" (:stdout result)))
+          (expect
+            (=
+              "ls: no such directory `resources/__vis_missing_ls__/nested`; list `resources` first."
+              message))
+          (expect (= :python/host (:phase data)))
+          (expect (= :vis/tool-failure (:type data)))
+          (expect (= :ls (:symbol data)))
+          (expect (= 3 (:line data))))))
+  (it "keeps absolute missing-path diagnostics relative to the project"
+      (tpc/with-own
+        [ctx {}]
+        (let [code
+              (str "from pathlib import Path\n"
+                   "ls(Path('resources/__vis_missing_ls__/nested').absolute())")
+
+              result
+              (ep/run-python-block ctx code "t1/i1")]
+
+          (expect
+            (=
+              "ls: no such directory `resources/__vis_missing_ls__/nested`; list `resources` first."
+              (get-in result [:error :message]))))))
+  (it "keeps Python argument errors distinct from host failures"
+      (tpc/with-own [ctx {}]
+                    (let [result
+                          (ep/run-python-block ctx "ls('resources', depth='deep')" "t1/i1")
+
+                          {:keys [message data]}
+                          (:error result)]
+
+                      (expect (= :python/runtime (:phase data)))
+                      (expect (string/starts-with? message "ValueError:"))
+                      (expect (string/includes? message "ls('resources', depth='deep')"))))))
 
 (defdescribe
   ls-symbol-content-test
@@ -246,10 +324,8 @@
             (atom [])]
 
         (binding [extension/*tool-event-sink* #(swap! events conj %)]
-          (expect
-            (= "caught\n"
-               (out ctx
-                    "try:\n    ls('deps.edn')\nexcept NotADirectoryError:\n    print('caught')"))))
+          (expect (= "caught\n"
+                     (out ctx "try:\n    ls('deps.edn')\nexcept Exception:\n    print('caught')"))))
         (let [projection (-> @events
                              activity/replay
                              activity/presentation)]

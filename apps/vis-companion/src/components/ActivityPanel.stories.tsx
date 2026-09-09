@@ -84,6 +84,23 @@ export const Chronology: Story = {
 /** What a block did to the tree with no tool call of its own: one row per kind. */
 export const TreeChanges: Story = {
   args: { activity: ACTIVITY_TREE_CHANGES },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    const step = canvas.getByRole("button", {
+      name: /Changed 13 files and 2 directories/,
+    });
+    await userEvent.click(step);
+    const children = canvasElement.querySelector("[data-activity-children]")!;
+    await expect(children).toBeVisible();
+    await expect(getComputedStyle(children).marginTop).toBe("0px");
+    await userEvent.click(step);
+    await expect(
+      canvasElement.querySelector("[data-activity-children]"),
+    ).toBeNull();
+  },
 };
 
 export const SymbolContent: Story = { args: { activity: ACTIVITY_RICH } };
@@ -118,5 +135,35 @@ export const ListingBatch: Story = {
     const step = canvas.getByRole("button", { name: /Listed 2 directories/ });
     await userEvent.click(step);
     await expect(canvas.getAllByRole("table")).toHaveLength(2);
+    // The first result follows its header closely; separate results keep one line.
+    const sections = [
+      ...canvasElement.querySelectorAll("[data-activity-section]"),
+    ];
+    const bodies = [
+      ...canvasElement.querySelectorAll("[data-activity-content]"),
+    ];
+    await expect(
+      sections[0].getBoundingClientRect().top -
+        step.getBoundingClientRect().bottom,
+    ).toBe(4);
+    await expect(
+      sections[1].getBoundingClientRect().top -
+        sections[0].getBoundingClientRect().bottom,
+    ).toBe(16);
+    for (const body of bodies) {
+      await expect(getComputedStyle(body).marginTop).toBe("4px");
+      await expect(getComputedStyle(body).rowGap).toBe("4px");
+    }
+    const chronology = canvas.getByRole("list", {
+      name: "Invocation chronology",
+    });
+    await expect(getComputedStyle(chronology).paddingBottom).toBe("4px");
+    await expect(step.getBoundingClientRect().height).toBeGreaterThanOrEqual(
+      28,
+    );
+    step.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(step).toHaveAttribute("aria-expanded", "false");
+    await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
   },
 };

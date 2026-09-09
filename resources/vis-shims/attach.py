@@ -240,12 +240,8 @@ def __vis_install_attach__():
             # told the file exists.
             if aud == "model":
                 raise ValueError(
-                    "attach: "
-                    + str(mt)
-                    + " is a document for the human, so audience='model' is "
-                    "impossible - it is never sent as an image. Attach it with "
-                    "audience='user'; the model is told the file exists and "
-                    "opens it with read_attachment(id)."
+                    "attach: documents require audience='user'; "
+                    "read_attachment(target) returns their bytes."
                 )
             return "user"
         return aud
@@ -265,15 +261,13 @@ def __vis_install_attach__():
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
             raise RuntimeError("attach: capture bridge not bound in this sandbox")
-        env = rec(knd, mt, b64, name, len(data), aud, cap)
-        if not env[0]:
-            raise RuntimeError("attach: " + str(env[1]))
+        payload = rec(knd, mt, b64, name, len(data), aud, cap)
         import json as _json
 
         # The stored artifact's own DESCRIPTOR: its id and version exist from
         # this moment, so the caller holds a handle to what it just made instead
         # of having to go looking for it.
-        row = __vis_row(_json.loads(str(env[1])))
+        row = __vis_row(_json.loads(str(payload)))
         disp = row.pop("display", None)
         if aud == "model":
             # audience='model': the bytes ride the next request and NOTHING is
@@ -481,14 +475,12 @@ def __vis_install_attach__():
             raise RuntimeError(
                 "list_attachments: reader bridge not bound in this sandbox"
             )
-        env = lst()
-        if not env[0]:
-            raise RuntimeError("list_attachments: " + str(env[1]))
+        payload = lst()
         import json as _json
 
         # Stored artifacts AND the ones this very block attached: an artifact is
         # addressable the moment it exists.
-        rows = _json.loads(str(env[1]))
+        rows = _json.loads(str(payload))
         return [__vis_row(r) for r in rows]
 
     def __vis_thread(rows, name):
@@ -501,61 +493,21 @@ def __vis_install_attach__():
         rows = __vis_attachment_rows()
         return rows if name is None else __vis_thread(rows, name)
 
-    def __vis_locate(caller, target, version=None):
-        # ONE addressing rule for the whole family, so "is this an id or a name?"
-        # is never a question the caller has to answer: an id names ONE stored
-        # cut, a filename names the ARTIFACT and resolves to its latest cut, and
-        # a version only ever qualifies a filename. A DESCRIPTOR addresses
-        # itself - attach() and get_attachment() hand one back, so passing it
-        # straight to the next call is the obvious move.
-        rows = __vis_attachment_rows()
+    def __vis_attachment_args(target, version):
         wanted = (
             str(target.get("id") or target.get("filename") or "")
             if isinstance(target, dict)
             else str(target)
         )
-        if version is None:
-            for r in rows:
-                if str(r.get("id")) == wanted:
-                    return r
-        thread = __vis_thread(rows, wanted)
-        if not thread:
-            hint = (
-                "; to show a local image, persist it first with "
-                "show_attachment(attach(path))"
-                if caller == "show_attachment"
-                else ""
-            )
-            raise LookupError(
-                caller
-                + ": no attachment with id or filename "
-                + repr(wanted)
-                + " in this session"
-                + hint
-            )
-        if version is None:
-            return thread[-1]
-        want = int(version)
-        # -1 is the latest cut, -2 the one before it: the walk backwards a Python
-        # list already means.
-        if -len(thread) <= want < 0:
-            return thread[want]
-        for r in thread:
-            if int(r.get("version") or 1) == want:
-                return r
-        raise LookupError(
-            caller
-            + ": "
-            + repr(wanted)
-            + " has no version "
-            + str(version)
-            + " (versions: "
-            + ", ".join(str(int(r.get("version") or 1)) for r in thread)
-            + ")"
-        )
+        return wanted, None if version is None else int(version)
 
     def get_attachment(target, version=None):
-        return __vis_locate("get_attachment", target, version)
+        import json as _json
+
+        payload = globals()["__vis_get_attachment__"](
+            *__vis_attachment_args(target, version)
+        )
+        return __vis_row(_json.loads(str(payload)))
 
     def show_attachment(target, version=None):
         reinsp = globals().get("__vis_reinspect_attachment__")
@@ -563,11 +515,7 @@ def __vis_install_attach__():
             raise RuntimeError(
                 "show_attachment: reader bridge not bound in this sandbox"
             )
-        row = __vis_locate("show_attachment", target, version)
-        env = reinsp(str(row.get("id")))
-        if not env[0]:
-            raise RuntimeError("show_attachment: " + str(env[1]))
-        out = env[1]
+        out = reinsp(*__vis_attachment_args(target, version))
         return {"id": out[0], "filename": out[1], "media_type": out[2], "size": out[3]}
 
     def read_attachment(target, version=None):
@@ -576,11 +524,7 @@ def __vis_install_attach__():
             raise RuntimeError(
                 "read_attachment: reader bridge not bound in this sandbox"
             )
-        row = __vis_locate("read_attachment", target, version)
-        env = rd(str(row.get("id")))
-        if not env[0]:
-            raise RuntimeError("read_attachment: " + str(env[1]))
-        b64 = env[1]
+        b64 = rd(*__vis_attachment_args(target, version))
         # BYTES, nothing else: the descriptor is one get_attachment() away, so
         # printing this call can never spill a metadata map nobody asked for.
         return _b64.b64decode(b64) if b64 else b""
@@ -652,7 +596,7 @@ def __vis_install_attach__():
             "(negative counts back) - an id, or a descriptor attach() handed back, "
             "which is one exact cut. That same addressing holds for every read verb "
             "here."
-            "\n\nRaw result: one descriptor dict, no bytes; LookupError when nothing "
+            "\n\nRaw result: one descriptor dict, no bytes; a catchable host error when nothing "
             "in this session carries that target.",
         ),
         (

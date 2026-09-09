@@ -105,6 +105,33 @@
                      (expect (not (str/includes? html ".hamburger:hover")))
                      (expect (str/includes? html "-webkit-tap-highlight-color:transparent"))))))
 
+(defdescribe
+  mobile-sidebar-scroll-test
+  (it "keeps the mobile drawer scrollable within the visible viewport"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            home
+            (first (filter #(= "index" (:slug %)) pages))]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site home mode)
+
+                      drawer
+                      (second (re-find #"(?s)@media\(max-width:820px\).*?\.side\{([^}]+)\}" html))]]
+
+          ;; WebKit expands a fixed grid item with height:auto to its contents,
+          ;; leaving no internal overflow even when the last links are offscreen.
+          (expect (str/includes? drawer "height:calc(100dvh - 4rem - env(safe-area-inset-top))"))
+          (expect (not (str/includes? drawer "height:auto")))
+          (expect (re-find #"\.side\{[^}]*overflow-y:auto" html))
+          (expect (str/includes? drawer "overscroll-behavior-y:contain"))
+          (expect (str/includes? drawer
+                                 "padding-bottom:calc(3rem + env(safe-area-inset-bottom))"))))))
+
 (defdescribe responsive-typography-test
              (it "uses one bundled font and compact, wrapping tables in both outputs"
                  (let [{:keys [pages] :as site}

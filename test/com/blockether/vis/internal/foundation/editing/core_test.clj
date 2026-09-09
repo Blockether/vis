@@ -670,7 +670,7 @@
 
         (expect (= 2 (get out "depth")))
         (expect (= ["b.txt"] (mapv #(get % "name") (get sub "children"))))))
-  (it "ls refuses a FILE and points at python_execution"
+  (it "ls refuses a file and directs the caller to cat"
       (let [_
             (write-temp! "lsrefuse/b.txt" "x")
 
@@ -681,13 +681,9 @@
             (try (ls-rows {"paths" [file]}) nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :ext.foundation.editing/ls-on-file (:type (ex-data err))))
-        (expect (string/includes? (ex-message err) "python_execution"))))
-  ;; Regression: `ls` on a path that does not exist answered with nothing but
-  ;; "no such path", so an address INVENTED from a language namespace
-  ;; (`com.blockether.vis.ext.channel-tui.human-input` →
-  ;; `src/com/blockether/vis/channel_tui`) bounced with no way back and the next
-  ;; call guessed again. The nearest EXISTING directory turns that bounce into a
-  ;; recovery and names the wrong move.
+        (expect (string/includes? (ex-message err) "is a file; use `cat`."))))
+  ;; Regression, issue #126: a missing path must name a real parent to list.
+  ;; Namespace-to-path guidance belongs in the prompt, not in every error.
   (it "ls names the nearest existing directory for a path that does not exist"
       (let [_
             (write-temp! "lsnear/real/keep.txt" "x")
@@ -699,9 +695,9 @@
             (try (ls-rows {"paths" [missing]}) nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :ext.foundation.editing/ls-missing-path (:type (ex-data err))))
-        (expect (string/includes? (ex-message err) "no such path"))
-        (expect (string/includes? (ex-message err) "nearest existing directory"))
-        (expect (string/includes? (ex-message err) "namespace"))
+        (expect (string/includes? (ex-message err) "no such directory"))
+        (expect (string/includes? (ex-message err)
+                                  (str "list `" (:nearest (ex-data err)) "` first.")))
         (expect (string/ends-with? (:nearest (ex-data err)) "lsnear/real")))))
 
 (defdescribe

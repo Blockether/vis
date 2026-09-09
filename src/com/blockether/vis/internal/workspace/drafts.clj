@@ -4,11 +4,10 @@
    `:draft/approve`, `:draft/discard`), so an extension can veto it with a
    `:before` guard or observe it with an `:after` hook.
 
-   Approval commits the draft on `vis/<label>` and merges it into the local
-   default branch: `origin/HEAD`, otherwise `main` or `master`. Divergence is
-   merged inside the draft before fast-forwarding the target; target checkouts
-   must be clean. No remote is pushed. Every new commit crosses the
-   `:git/commit` boundary through `workspace.git/commit!`."
+   Approval requires the draft to contain the local and fetched origin target.
+   It fast-forwards locally, restores saved local work, then pushes to origin
+   when configured. Conflicts must be resolved in the draft before approval.
+   Every new commit crosses the `:git/commit` boundary."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -144,18 +143,14 @@
              :discard-future) trunk])))))
 
 (defn- ensure-draft-branch!
-  "Put the draft at `root` on a `vis/…` branch: a worktree already is; a Rift clone
-   still sits on the trunk's branch and gets a fresh one, named free in `trunk`
-   so the fetch below lands it without a clash."
+  "Keep the worktree branch; give a Rift clone its own vis/ branch."
   [^File root ^File trunk label]
   (or (draft-branch (current-branch root))
       (let [branch (free-branch-name trunk label)]
         (git! root ["switch" "-c" branch])
         branch)))
 
-(defn- stage-all!
-  "Stage every change in the draft except backend bookkeeping; returns the
-   staged paths."
+(defn- require-idle!
   [^File root]
   (doseq [operation
           ["MERGE_HEAD" "CHERRY_PICK_HEAD" "REVERT_HEAD" "rebase-merge" "rebase-apply"]
@@ -164,8 +159,13 @@
                                         ["rev-parse" "--path-format=absolute" "--git-path"
                                          operation])))]
 
-    (throw (ex-info "Finish or abort the draft's existing Git operation before approving."
-                    {:type :draft/in-progress :operation operation})))
+    (throw (ex-info "Finish or abort the checkout's existing Git operation before approving."
+                    {:type :draft/in-progress :operation operation :dir (.getPath root)}))))
+
+(defn- stage-all!
+  "Stage draft changes except backend bookkeeping; return staged paths."
+  [^File root]
+  (require-idle! root)
   (git! root ["add" "-A" "--" "."])
   (git! root ["rm" "-r" "-q" "--cached" "--ignore-unmatch" "--" ".rift" ".trash"])
   (git-lines root ["diff" "--cached" "--name-only"]))
@@ -215,18 +215,11 @@
           (str/split (git! trunk ["worktree" "list" "--porcelain" "-z"])
                      (re-pattern (str separator separator))))))
 
-(defn- require-clean-target!
+(defn- require-target-branch!
   [^File checkout target]
   (when-not (= target (current-branch checkout))
     (throw (ex-info "The target checkout changed branches; retry approval."
-                    {:type :draft/target-moved :target-branch target})))
-  (when-not (str/blank? (git! checkout ["status" "--porcelain" "--untracked-files=all"]))
-    (throw (ex-info (str "Approval needs a clean "
-                         target
-                         " checkout at "
-                         (.getPath checkout)
-                         "; commit or stash its changes first. No changes were overwritten.")
-                    {:type :draft/dirty-target :target-branch target :root (.getPath checkout)}))))
+                    {:type :draft/target-moved :target-branch target}))))
 
 (defn- ancestor?
   [^File root ancestor descendant]
@@ -241,45 +234,131 @@
 
       (throw (git-error root ["merge-base" "--is-ancestor" ancestor descendant] result)))))
 
-(defn- merge-target!
-  "Merge target history in the draft, never in the user's checkout."
-  [^File root target-sha message]
-  (when-not (ancestor? root target-sha "HEAD")
+(defn- require-synced!
+  [^File root target sha]
+  (when-not (ancestor? root sha "HEAD")
+    (throw (ex-info "Synchronize the target into the draft and resolve conflicts before approval."
+                    {:type :draft/sync-required
+                     :target-branch target
+                     :target-commit sha
+                     :hint
+                     (str "In the draft, merge or rebase onto " sha ", then retry approval.")}))))
+
+(defn- fetch-origin!
+  [^File trunk ^File root target]
+  (when (some #{"origin"} (git-lines trunk ["remote"]))
+    (git! trunk ["fetch" "--quiet" "--no-tags" "origin" (str "refs/heads/" target)])
+    (let [sha (git! trunk ["rev-parse" "FETCH_HEAD"])]
+      (when-not (= trunk root) (git! root ["fetch" "--quiet" "--no-tags" (.getPath trunk) sha]))
+      sha)))
+
+(defn- require-recovered!
+  [^File trunk]
+  (when (some #(str/includes? % "vis-approve-") (git-lines trunk ["stash" "list" "--format=%gs"]))
+    (throw
+      (ex-info
+        "An approval stash still needs recovery; approval and push are blocked."
+        {:type :draft/recovery-required
+         :hint
+         "Inspect git stash list, restore the saved vis-approve stash and drop it only after verifying your local work."}))))
+
+(defn- publish!
+  [^File trunk target sha origin?]
+  (when origin?
     (try
-      (git! root
-            ["merge" "--no-ff" "--no-commit" "--no-autostash" "--no-overwrite-ignore" target-sha])
-      (commit! root message)
+      (git! trunk ["push" "--porcelain" "origin" (str sha ":refs/heads/" target)])
       (catch Exception e
-        ;; The draft was committed before this merge. Restore that commit on
-        ;; conflicts or commit vetoes so the agent can resolve and retry safely.
-        (when (= 0
-                 (:exit
-                   (git/run-git root ["rev-parse" "--verify" "--quiet" "MERGE_HEAD"] git-timeout)))
-          (git! root ["merge" "--abort"]))
-        (throw e)))))
+        (throw
+          (ex-info
+            "Draft landed locally, but origin rejected publication."
+            {:type :draft/push-failed
+             :status :landed-locally
+             :target-branch target
+             :commit sha
+             :hint
+             "Local work has been restored. Fetch origin, synchronize the draft and retry approval; no force push was used."}
+            e)))))
+  (boolean origin?))
+
+(defn- restore-stash!
+  [^File checkout target stash]
+  (try (require-target-branch! checkout target)
+       (git! checkout ["stash" "apply" "--index" stash])
+       (catch Exception e
+         (throw (ex-info (str "Local work could not be restored; saved stash "
+                              stash
+                              " was retained. No push was attempted.")
+                         {:type :draft/restore-failed
+                          :stash stash
+                          :hint (str "Resolve the checkout manually using saved stash "
+                                     stash
+                                     "; do not approve again until recovery is complete.")}
+                         e))))
+  ;; Another session can add a stash. Never drop its entry by assuming stash@{0}.
+  (when-let [entry (some (fn [line]
+                           (let [[sha ref] (str/split line #" " 2)]
+                             (when (= sha stash) ref)))
+                         (git-lines checkout ["stash" "list" "--format=%H %gd"]))]
+    (git! checkout ["stash" "drop" entry])))
 
 (defn- land!
   [^File trunk target target-sha sha]
   (if-let [checkout (target-checkout trunk target)]
-    (do (require-clean-target! checkout target)
-        (git! checkout ["merge" "--ff-only" "--no-autostash" "--no-overwrite-ignore" sha]))
-    ;; Compare-and-swap refuses a concurrent update; never reset another branch
-    ;; or switch the user's checkout just to move an unchecked-out target.
+    (do
+      (require-target-branch! checkout target)
+      (require-idle! checkout)
+      (when-not (= target-sha (git! checkout ["rev-parse" "HEAD"]))
+        (throw (ex-info "Target moved during approval; retry." {:type :draft/target-moved})))
+      ;; Conservative preflight: never stash local paths touched by the landing.
+      ;; This also covers copied dirty drafts and avoids post-landing stash conflicts.
+      (let [changed (set (str/split (git! checkout
+                                          ["diff" "--name-only" "--no-renames" "-z" target-sha sha])
+                                    #"\u0000"))
+            local (concat
+                    (str/split (git! checkout ["diff" "--cached" "--name-only" "--no-renames" "-z"])
+                               #"\u0000")
+                    (str/split (git! checkout ["diff" "--name-only" "--no-renames" "-z"]) #"\u0000")
+                    (str/split (git! checkout ["ls-files" "--others" "-z"]) #"\u0000"))]
+
+        (when (some (fn [path]
+                      (and (not (str/blank? path))
+                           (some #(or (= path %)
+                                      (str/starts-with? path (str % "/"))
+                                      (str/starts-with? % (str path "/")))
+                                 (remove str/blank? changed))))
+                    local)
+          (throw
+            (ex-info
+              "Local work overlaps draft paths; move or resolve it before approval. Nothing was stashed or landed."
+              {:type :draft/git-failed :hint "Approval does not merge local working changes."}))))
+      (let [dirty? (not (str/blank? (git! checkout
+                                          ["status" "--porcelain" "--untracked-files=all"])))
+            marker (str "vis-approve-" (random-uuid))
+            stash
+            (when dirty?
+              (git! checkout ["stash" "push" "--include-untracked" "-m" marker])
+              (or
+                (some (fn [line]
+                        (when (str/ends-with? line marker) (first (str/split line #" " 2))))
+                      (git-lines checkout ["stash" "list" "--format=%H %gs"]))
+                (throw
+                  (ex-info
+                    "Approval stash could not be identified; inspect the checkout before retrying."
+                    {:type :draft/recovery-required}))))]
+
+        (try (require-target-branch! checkout target)
+             (git! checkout ["merge" "--ff-only" "--no-autostash" "--no-overwrite-ignore" sha])
+             (finally (when stash (restore-stash! checkout target stash))))))
     (git! trunk ["update-ref" (str "refs/heads/" target) sha target-sha])))
 
 (defn approve!
-  "Commit the draft and merge it into the local default branch (origin/HEAD,
-   otherwise main or master). A diverged target is merged inside the draft,
-   then the target is fast-forwarded. Dirty target checkouts refuse; conflicts
-   leave the draft commit available for resolution and retry. No push, stash,
-   force update or checkout switch. The draft stays active.
-
-   Crosses :draft/approve and, for each new commit, :git/commit. Returns
-   {:status :approved :branch … :target-branch … :commit … :files …}, or
-   :nothing-to-approve only when the target already includes the draft and
-   there are no pending changes. Existing draft commits can be retried without
-   creating another commit. opts: :workspace-id and optional :message;
-   Vis-Session/Vis-Draft trailers are appended to new commits."
+  "Commit the draft, require synchronized local/origin history, fast-forward the
+   target, restore local changes with their index, then push without force when
+   origin exists. Overlapping local paths are refused before stashing. Failed
+   restore retains its stash and prevents push; failed push reports local landing.
+   The draft stays active. Retry also publishes an already-landed commit.
+   opts: :workspace-id and optional :message. Returns :approved or
+   :nothing-to-approve with :published indicating whether origin was pushed."
   [env {:keys [workspace-id message]}]
   (let [ws
         (require-draft (:db-info env) workspace-id)
@@ -308,6 +387,14 @@
                     ["fetch" "--quiet" "--no-tags" (.getPath trunk) (str "refs/heads/" target)])
               (git! root ["rev-parse" "FETCH_HEAD"])))
 
+        _
+        (do (require-recovered! trunk)
+            (when-let [checkout (target-checkout trunk target)]
+              (require-idle! checkout)))
+
+        origin-sha
+        (fetch-origin! trunk root target)
+
         staged
         (stage-all! root)
 
@@ -315,28 +402,36 @@
         (vec (distinct (concat (git-lines root ["diff" "--name-only" (str target-sha "...HEAD")])
                                staged)))]
 
-    (if (and (empty? staged) (ancestor? root "HEAD" target-sha))
-      {:status :nothing-to-approve :branch branch :target-branch target :files [] :workspace ws}
+    (if (and (empty? staged) (= (git! root ["rev-parse" "HEAD"]) target-sha))
+      (do (when origin-sha (require-synced! root target origin-sha))
+          (through-hooks
+            :draft/approve
+            env
+            (hook-ctx ws {:branch branch :target-branch target :files [] :message message})
+            #(hash-map :status :nothing-to-approve
+                       :branch branch
+                       :target-branch target
+                       :published (publish! trunk target target-sha origin-sha)
+                       :files []
+                       :workspace ws)))
       (through-hooks
         :draft/approve
         env
         (hook-ctx ws {:branch branch :target-branch target :files files :message message})
         (fn []
           (when-let [checkout (target-checkout trunk target)]
-            (require-clean-target! checkout target))
+            (require-target-branch! checkout target))
           (when (seq staged) (commit! root (commit-message (:label ws) message (:session-id env))))
-          (merge-target! root
-                         target-sha
-                         (commit-message (:label ws)
-                                         (str "merge: approve " (:label ws) " into " target)
-                                         (:session-id env)))
+          (require-synced! root target target-sha)
+          (when origin-sha (require-synced! root target origin-sha))
           (let [sha (git! root ["rev-parse" "HEAD"])]
+            ;; Import objects only: a refused draft may have been rebased before retry.
+            ;; Do not maintain a second local branch that would require a forced update.
             (when-not (worktree? ws)
-              (git! trunk
-                    ["fetch" "--quiet" "--no-tags" (.getPath root)
-                     (str "refs/heads/" branch ":refs/heads/" branch)]))
+              (git! trunk ["fetch" "--quiet" "--no-tags" (.getPath root) sha]))
             (land! trunk target target-sha sha)
             (let [result {:status :approved
+                          :published (publish! trunk target sha origin-sha)
                           :branch branch
                           :target-branch target
                           :commit sha
@@ -378,11 +473,14 @@
      :branch branch
      :target-branch target
      :ahead (when (and branch target)
-              (let [{:keys [exit out]} (git/run-git trunk
-                                                    ["rev-list" "--count"
-                                                     (str "refs/heads/" target ".." branch)]
-                                                    git-timeout)]
-                (when (= 0 exit) (parse-long (str/trim (str out))))))
+              (let [{target-exit :exit target-out :out}
+                    (git/run-git trunk ["rev-parse" (str "refs/heads/" target)] git-timeout)]
+                (when (= 0 target-exit)
+                  (let [{:keys [exit out]} (git/run-git root
+                                                        ["rev-list" "--count"
+                                                         (str (str/trim (str target-out)) "..HEAD")]
+                                                        git-timeout)]
+                    (when (= 0 exit) (parse-long (str/trim (str out))))))))
      :pending
      (when git?
        (let [{:keys [exit out]}

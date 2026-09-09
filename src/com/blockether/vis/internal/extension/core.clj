@@ -265,6 +265,12 @@
   (let [err (or error (when throwable (normalize-error throwable)))]
     (envelope-of args false err)))
 
+(defn tool-failure-on-error
+  "Observed-symbol error hook. Preserve the exception's message and diagnostic
+   trace; the wrapper supplies the declared tool identity and classification."
+  [err _env _f _args]
+  {:result (failure {:throwable err})})
+
 (defn envelope-success?
   "True when `envelope` is an `:envelope` and `:success?` is
    true. Use this instead of raw `(:success? e)` in renderers and
@@ -1176,9 +1182,11 @@
     {:env env :fn f :args args :result result}))
 
 (defn- run-on-error
-  [ext-ns sym-entry err env f args]
-  (if-let [on-error (:ext.symbol/on-error-fn sym-entry)]
-    (let [sym (:ext.symbol/symbol sym-entry)
+  [ext sym-entry err env f args]
+  (if-let [on-error (or (:ext.symbol/on-error-fn sym-entry)
+                        (when (instance? clojure.lang.ArityException err) tool-failure-on-error))]
+    (let [ext-ns (:ext/name ext)
+          sym (:ext.symbol/symbol sym-entry)
           t0 (System/nanoTime)
           _ (log-hook! :warn
                        ::on-error-fn
@@ -1195,6 +1203,13 @@
                                        {:type :extension/on-error-fn-error :symbol sym}
                                        e)))))
           _ (validate-hook-return! ":on-error-fn" sym ret)
+          ret (if (and (instance? clojure.lang.ArityException err)
+                       (envelope-failure? (:result ret)))
+                (let [tool (str/replace (tool-call-name ext sym) "-" "_")]
+                  (assoc-in ret
+                    [:result :error :message]
+                    (str tool ": wrong number of arguments; see doc(\"" tool "\").")))
+                ret)
           ms (elapsed-ms t0)]
 
       (cond
@@ -1869,7 +1884,7 @@
                      (catch Throwable e
                        (let [ms (elapsed-ms ct0)]
                          (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
-                         (try (let [recovery (run-on-error ext-ns sym-entry e call-env f call-args)]
+                         (try (let [recovery (run-on-error ext sym-entry e call-env f call-args)]
                                 (cond (contains? recovery :result) recovery
                                       (contains? recovery :error) (throw (:error recovery))
                                       :else {:result (apply (get recovery :fn f)
@@ -2059,8 +2074,24 @@
         (seq (:ext/channel-contributions spec)) "channels"
         :else nil))
 
+(defn shim-src
+  "Python source paired with a shim's host bindings by `extension`.
+
+   Constructed extensions retain their source even if the classpath resource changes
+   before another sandbox starts. Reconstruct from the raw descriptor to adopt new
+   source. Raw descriptors read `:shim/source` from the classpath, also supporting
+   doctor checks before construction. Missing resources fail loudly. Native images
+   embed the same resources through `-H:IncludeResources=vis-shims/.*`."
+  ^String [shim]
+  (or (::shim-source shim)
+      (let [res (:shim/source shim)]
+        (if-let [u (io/resource res)]
+          (slurp u)
+          (throw (ex-info (str "sandbox shim source not found on classpath: " res)
+                          {:shim/name (:shim/name shim) :shim/source res}))))))
+
 (defn extension
-  "Build and validate an extension. The canonical constructor.
+  "Build and validate an extension, capturing shim source alongside host bindings.
 
    See docs/src/extensions/extension-spec.md for the full key list."
   [spec]
@@ -2122,7 +2153,12 @@
 
         (not (:ext/doctor-fn spec))
         (assoc :ext/doctor-fn (constantly [])))
-      (validate!)))
+      (validate!)
+      (cond->
+        (seq (:ext/sandbox-shims spec))
+        (update :ext/sandbox-shims
+                (fn [shims]
+                  (mapv #(assoc % ::shim-source (shim-src %)) shims))))))
 
 ;; Extension source markers
 ;; Hash + mtime primitives.
@@ -3023,27 +3059,13 @@
   "Every Python sandbox SHIM contributed across all registered extensions, in
    registration order (built-ins first). `env-python/build-agent-context`
    installs each into the model sandbox Context at creation time — wiring the
-   shim's host `:shim/bindings` onto the globals, then eval'ing its
-   `:shim/source` Python file — turning a host / JVM capability into an importable
-   module. Loads built-ins first (idempotent) so the registry is populated
+   shim's host `:shim/bindings` onto the globals, then evaluating the Python source
+   captured by `extension`, so later resource edits cannot change one side of that
+   boundary alone. Loads built-ins first (idempotent) so the registry is populated
    before we read it."
   []
   (manifest/initialize!)
   (into [] (mapcat ext-sandbox-shims) (registered-extensions)))
-
-(defn shim-src
-  "Python source of `shim`, slurped from its `:shim/source` CLASSPATH RESOURCE
-   (e.g. \"vis-shims/yaml.py\"). This is the single reader for shim source: the
-   Python source never lives in a Clojure string. Works identically in the native
-   image because build.clj embeds `vis-shims/.*` via `-H:IncludeResources`.
-   Throws when the resource is missing - a shim whose file did not make it onto
-   the classpath must fail loudly, not install a silently empty module."
-  ^String [shim]
-  (let [res (:shim/source shim)]
-    (if-let [u (io/resource res)]
-      (slurp u)
-      (throw (ex-info (str "sandbox shim source not found on classpath: " res)
-                      {:shim/name (:shim/name shim) :shim/source res})))))
 
 ;; CLI bridge -- the `vis-agent extension` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,

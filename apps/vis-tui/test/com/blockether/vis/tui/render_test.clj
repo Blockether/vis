@@ -497,7 +497,7 @@
             (first (filter #(str/includes? (body-of (:line %)) "CODE") entries))]
 
         (expect (some? band) (str "got: " (mapv :line entries)))
-        (expect (str/ends-with? (body-text band) "1m 1s  [COPY]"))
+        (expect (str/ends-with? (body-text band) "1m 1s   COPY"))
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (= 1 (count (filter #(str/includes? (body-text %) "1m 1s") entries))))))
   ;; The three shapes the companion bands and the TUI did not: `toolCards`
@@ -5024,7 +5024,7 @@ h = 8"
         (let [row (band-row "CODE")]
           (expect (str/includes? (row-text row) "CODE"))
           (expect (str/includes? (row-text row) "▸"))
-          (expect (str/includes? (row-text row) "COPY"))
+          (expect (str/ends-with? (row-text row) " COPY"))
           (expect (not (str/includes? (row-text row) "PYTHON")))))
     (it "paints THINKING bold ON TOP of the band's own italic"
         ;; The thinking band is painted italic as a whole and
@@ -5391,7 +5391,7 @@ h = 8"
                    (.indexOf ^String body "SECOND RESULT")
                    (.indexOf ^String body "FIRST OPERATION")
                    (.indexOf ^String body "Done.")))
-        (expect (= 1 (count (re-seq #"\[COPY\]" body))))
+        (expect (= 1 (count (re-seq #" COPY " body))))
         (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
         (expect (not (str/includes? body "Succeeded 1"))
                 "expanded detail does not repeat counters")))
@@ -6594,7 +6594,7 @@ print(paths)"
           (expect (= marker (nth (:lines data) (inc last-source-idx)))))
         (expect (= 1 (count (re-seq #"apps/vis-companion/src" text))))
         (expect (< (.indexOf ^String head "42ms") (.indexOf ^String head "▾")))
-        (expect (str/includes? code "COPY"))
+        (expect (str/ends-with? code " COPY"))
         (doseq [source (filter #(or (str/includes? % "ls()") (str/includes? % "print(paths)"))
                                lines)]
           (expect (= (.indexOf ^String code "CODE")

@@ -27,17 +27,9 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.extension.core :as extension]
             [charred.api :as json]
             [clojure.string :as str]))
-
-(defn- attach-envelope
-  "Run thunk `f`, returning the 2-vector the attach shim expects: [true result]
-   on success, [false message] on any Throwable. Errors cross the boundary as
-   DATA so the Python shim can raise a catchable `RuntimeError` instead of a raw
-   host error (a Throwable crossing the bridge is not routed through
-   Python `except`)."
-  [f]
-  (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
 (defn- display-info
   "Write an attachment's decoded bytes to a HOST temp file and describe what a
@@ -115,6 +107,54 @@
   []
   (into [] (map-indexed pending-descriptor) (mpl-capture/pending-attachments)))
 
+(defn- attachment-descriptors
+  "Stored and pending descriptors, in attachment order."
+  []
+  (let [reader mpl-capture/*attachment-reader*]
+    (when-not (or reader mpl-capture/*attachment-sink*)
+      (throw (ex-info "list_attachments: call inside python_execution." {})))
+    (into (vec (when reader (or ((:list reader)) []))) (pending-descriptors))))
+
+(defn- locate-attachment
+  "Resolve an id, filename or relative version against this session's descriptors."
+  [caller target version]
+  (let [rows
+        (attachment-descriptors)
+
+        wanted
+        (str target)
+
+        by-id
+        (when (nil? version) (some #(when (= wanted (str (:id %))) %) rows))
+
+        versions
+        (sort-by #(long (or (:version %) 1)) (filter #(= wanted (:filename %)) rows))
+
+        n
+        (count versions)]
+
+    (or by-id
+        (when (pos? n)
+          (cond (nil? version) (last versions)
+                (<= (- n) (long version) -1) (nth (vec versions) (+ n (long version)))
+                :else (some #(when (= (long version) (long (or (:version %) 1))) %) versions)))
+        (throw (ex-info (if (zero? n)
+                          (str caller
+                               ": unknown id or filename "
+                               (pr-str wanted)
+                               (if (= caller "show_attachment")
+                                 "; local image: show_attachment(attach(path))."
+                                 "; use list_attachments()."))
+                          (str caller
+                               ": "
+                               (pr-str wanted)
+                               " has no version "
+                               version
+                               " (versions: "
+                               (str/join ", " (map #(or (:version %) 1) versions))
+                               ")."))
+                        {:type ::attachment-not-found :target wanted :version version})))))
+
 (defn- pending-by-id
   "The raw sink entry (BYTES included) this block recorded under `id`, or nil."
   [id]
@@ -130,9 +170,7 @@
   [att]
   (if-not (and (str/starts-with? (str (:media-type att)) "image/")
                (not (str/blank? (str (:base64 att)))))
-    (throw (ex-info
-             (str "show_attachment: no image attachment with id " (:id att) " in this session")
-             {}))
+    (throw (ex-info (str "show_attachment: " (pr-str (:filename att)) " is not an image.") {}))
     (do (when (= "user" (attachments/attachment-audience att))
           (mpl-capture/queue-reinspection! att))
         [(str (:id att)) (str (:filename att)) (str (:media-type att)) (long (or (:size att) 0))])))
@@ -148,105 +186,105 @@
    HANDLE to what it just stored and every read verb can address it inside the
    same block."
   [kind media-type b64 filename size audience label]
-  (attach-envelope
-    #(cond (str/blank? (str b64)) (throw (ex-info "attach: empty payload (no bytes to persist)" {}))
-           (str/blank? (str media-type)) (throw (ex-info "attach: missing media type" {}))
-           (> (long (or size 0)) mpl-capture/max-capture-bytes)
-           (throw (ex-info (str "attach: payload "
-                                (long (or size 0))
-                                " bytes exceeds the "
-                                (quot mpl-capture/max-capture-bytes (* 1024 1024))
-                                " MiB attachment limit")
-                           {}))
-           (nil? mpl-capture/*attachment-sink*)
-           (throw (ex-info (str "attach: no active capture sink — call it inside a "
-                                "python_execution block so the produced artifact can be "
-                                "attached to that iteration")
-                           {}))
-           :else (let [info
-                       (display-info (str media-type) (str b64))
+  (cond (str/blank? (str b64)) (throw (ex-info "attach: empty payload." {}))
+        (str/blank? (str media-type)) (throw (ex-info "attach: missing media type" {}))
+        (> (long (or size 0)) mpl-capture/max-capture-bytes)
+        (throw (ex-info (str "attach: payload "
+                             (long (or size 0))
+                             " bytes exceeds the "
+                             (quot mpl-capture/max-capture-bytes (* 1024 1024))
+                             " MiB attachment limit")
+                        {}))
+        (nil? mpl-capture/*attachment-sink*) (throw (ex-info "attach: call inside python_execution."
+                                                             {}))
+        :else (let [info
+                    (display-info (str media-type) (str b64))
 
-                       recorded
-                       (mpl-capture/record-attachment!
-                         (cond-> {:kind (or (not-empty (str kind)) "file")
-                                  :media-type (str media-type)
-                                  :base64 (str b64)
-                                  :size (long (or size 0))
-                                  ;; One funnel: a PDF/HTML document is clamped to "user" by
-                                  ;; `attachment-audience` itself, so no caller can put a
-                                  ;; document on the wire as an image block.
-                                  :audience (attachments/attachment-audience
-                                              {:media-type (str media-type) :audience audience})}
-                           (not (str/blank? (str filename)))
-                           (assoc :filename (str filename))
+                    recorded
+                    (mpl-capture/record-attachment!
+                      (cond-> {:kind (or (not-empty (str kind)) "file")
+                               :media-type (str media-type)
+                               :base64 (str b64)
+                               :size (long (or size 0))
+                               ;; One funnel: a PDF/HTML document is clamped to "user" by
+                               ;; `attachment-audience` itself, so no caller can put a
+                               ;; document on the wire as an image block.
+                               :audience (attachments/attachment-audience
+                                           {:media-type (str media-type) :audience audience})}
+                        (not (str/blank? (str filename)))
+                        (assoc :filename (str filename))
 
-                           (not (str/blank? (str label)))
-                           (assoc :label (str/trim (str label)))))]
+                        (not (str/blank? (str label)))
+                        (assoc :label (str/trim (str label)))))]
 
-                   (json/write-json-str (cond-> (dissoc (pending-descriptor 0 recorded) :position)
-                                          (some? info)
-                                          (assoc :display (vec info))))))))
+                (json/write-json-str (cond-> (dissoc (pending-descriptor 0 recorded) :position)
+                                       (some? info)
+                                       (assoc :display (vec info)))))))
+
+(defn- attachment-tool
+  "Wrap an attachment operation with the standard error hook."
+  [symbol tag f]
+  (let [entry {:ext.symbol/symbol symbol
+               :ext.symbol/tag tag
+               :ext.symbol/on-error-fn extension/tool-failure-on-error
+               :ext.symbol/fn (fn [& args]
+                                (extension/success {:result (apply f args)}))}]
+    (fn [& args]
+      ;; Attachment presentation already records descriptors. Do not duplicate raw
+      ;; upload/download bytes in tool Activity when applying the error hook.
+      (binding [extension/*tool-event-sink* nil]
+        (extension/invoke-symbol-wrapper {:ext/name "foundation-shim-attach"}
+                                         entry
+                                         args
+                                         extension/*current-environment*)))))
 
 (defn- attach-bridge-bindings
-  "Host callables the `attach` shim delegates to. `__vis_record_attachment__`
-   takes the already-decided attachment fields (kind / media-type / base64 /
-   filename / size / audience / label), appends the map to the active per-block
-   artifact sink via `mpl-capture/record-attachment!` and returns the stored
-   artifact's descriptor as JSON. Errors come back as [false message] — no
-   active capture sink (called outside a driven `python_execution` block) or a
-   missing field — and surface to the model as a `RuntimeError`, never silently
-   dropped.
-
-   ONE SESSION, TWO AGES. The read callables answer over BOTH the artifacts
-   already persisted (`*attachment-reader*`, database-backed) and the ones the
-   RUNNING block just attached (`*attachment-sink*`, not stored until the
-   iteration is): an artifact is addressable the moment it exists, which is what
-   makes `attach` + `get_attachment`/`read_attachment`/`show_attachment` inside
-   one block work.
-
-   `audience` is WHO the artifact is for (`attachments/audiences`): `\"both\"`,
-   `\"user\"` (the human sees it, the bytes never reach the wire — an image
-   replays IN FULL on every later request, so a screenshot the model does not
-   need is re-billed forever) or `\"model\"` (the model gets it, the human's
-   transcript stays clean)."
+  "Attachment host operations. Values cross directly; failures use the shared
+   observed-symbol hook and remain catchable host errors in Python."
   []
-  {"__vis_record_attachment__"
-   (fn record-attachment [kind media-type b64 filename size audience label]
-     (record-attachment-call kind media-type b64 filename size audience label))
+  {"__vis_record_attachment__" (attachment-tool 'attach :mutation record-attachment-call)
    "__vis_list_attachments__"
-   (fn []
-     (attach-envelope
-       #(let [r mpl-capture/*attachment-reader*]
-          (when-not (or r mpl-capture/*attachment-sink*)
-            (throw (ex-info (str "list_attachments: no active attachment reader — call it "
-                                 "inside a python_execution block")
-                            {}))) (json/write-json-str (into (vec (when r (or ((:list r)) [])))
-                                                             (pending-descriptors))))))
+   (attachment-tool 'list_attachments :observation #(json/write-json-str (attachment-descriptors)))
+   "__vis_get_attachment__"
+   (attachment-tool 'get_attachment
+                    :observation
+                    (fn [target version]
+                      (json/write-json-str (locate-attachment "get_attachment" target version))))
    "__vis_read_attachment__"
-   (fn [id]
-     (attach-envelope
-       #(if-let [pending (pending-by-id id)] (:base64 pending)
-          (if-let [r mpl-capture/*attachment-reader*]
-            (if-let [a ((:read r) (str id))]
-              (:base64 a)
-              (throw (ex-info (str "read_attachment: no attachment with id " id " in this session")
-                              {})))
-            (throw (ex-info (str "read_attachment: no active attachment reader — call it "
-                                 "inside a python_execution block")
-                            {}))))))
+   (attachment-tool
+     'read_attachment
+     :observation
+     (fn [target version]
+       (let [id
+             (:id (locate-attachment "read_attachment" target version))
+
+             attachment
+             (or (pending-by-id id)
+                 (when-let [reader mpl-capture/*attachment-reader*]
+                   ((:read reader) (str id))))]
+
+         (if attachment
+           (:base64 attachment)
+           (throw (ex-info (str "read_attachment: bytes unavailable for " (pr-str (str target)) ".")
+                           {:type ::attachment-not-found}))))))
    "__vis_reinspect_attachment__"
-   (fn [id]
-     (attach-envelope
-       #(if-let [pending (pending-by-id id)] (reinspect-pending pending)
-          (if-let [r mpl-capture/*attachment-reader*]
-            (if-let [a ((:reinspect r) (str id))]
-              [(str (:id a)) (str (:filename a)) (str (:media-type a)) (long (or (:size a) 0))]
-              (throw (ex-info
-                       (str "show_attachment: no image attachment with id " id " in this session")
-                       {})))
-            (throw (ex-info (str "show_attachment: no active attachment reader — call it "
-                                 "inside a python_execution block")
-                            {}))))))})
+   (attachment-tool
+     'show_attachment
+     :observation
+     (fn [target version]
+       (let [row
+             (locate-attachment "show_attachment" target version)
+
+             id
+             (:id row)]
+
+         (if-let [pending (pending-by-id id)]
+           (reinspect-pending pending)
+           (if-let [a (when-let [reader mpl-capture/*attachment-reader*]
+                        ((:reinspect reader) (str id)))]
+             [(str (:id a)) (str (:filename a)) (str (:media-type a)) (long (or (:size a) 0))]
+             (throw (ex-info (str "show_attachment: " (pr-str (:filename row)) " is not an image.")
+                             {:type ::not-an-image})))))))})
 
 (def vis-extension
   (vis/extension
