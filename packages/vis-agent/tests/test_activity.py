@@ -60,6 +60,26 @@ def test_shared_operation_groups(sample):
             projection.groups[0].label = "changed"
 
 
+@pytest.mark.parametrize(
+    "sample",
+    json.loads((_contracts._DATA / "fixtures/activity-arguments.json").read_text()),
+    ids=lambda sample: sample["name"],
+)
+def test_shared_argument_groups(sample):
+    from blockether.vis.activity import ActivityProjection
+
+    projection = ActivityProjection.from_wire(sample["projection"])
+    assert projection.to_wire() == sample["projection"]
+    assert [
+        {"id": group.id, "rows": [row.id for row in group.rows]}
+        for group in projection.argument_groups
+    ] == sample["groups"]
+    for group in projection.groups:
+        assert sum(len(item.rows) for item in group.argument_groups) == len(group.rows)
+    with pytest.raises(FrozenInstanceError):
+        projection.argument_groups[0].id = "changed"
+
+
 def test_activity_event_uses_the_shared_fixture_and_named_records():
     from blockether.vis.activity import ActivityProjection
 

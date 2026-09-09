@@ -1,6 +1,7 @@
 /** The Activity projection against `internal.activity.core`'s own bounded snapshot. */
 import { describe, expect, it } from "vitest";
 import {
+  argumentGroups,
   operationGroups,
   activityProjectionFromWire,
   ACTIVITY_PRESENTERS,
@@ -11,7 +12,20 @@ import {
 import contract from "../../../../packages/vis-contract/resources/vis-contract/activity.json";
 import cases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-cases.json";
 import groupingCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json";
+import argumentCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json";
 
+for (const sample of argumentCases) {
+  it(`portable argument grouping: ${sample.name}`, () => {
+    const projection = activityProjectionFromWire(sample.projection);
+    expect(projection).toEqual(sample.projection);
+    expect(
+      argumentGroups(projection!.rows).map(({ id, rows }) => ({
+        id,
+        rows: rows.map((row) => row.id),
+      })),
+    ).toEqual(sample.groups);
+  });
+}
 for (const sample of groupingCases) {
   it(`portable grouping: ${sample.name}`, () => {
     const projection = activityProjectionFromWire(sample.projection);

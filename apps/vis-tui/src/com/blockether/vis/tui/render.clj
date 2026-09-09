@@ -5103,13 +5103,11 @@
       operation)))
 
 (defn- activity-row-tail
-  "How long the step took, or the `...` the web prints while it is still counting: this
-   wire carries no elapsed time for a call in flight, and an empty column reads as a
-   number that went missing rather than one not taken yet."
-  [{:keys [duration-ms] :as row}]
-  (if (pos? (long (or duration-ms 0)))
-    (vis/format-duration duration-ms)
-    (when (= :running (activity-row-state row)) "…")))
+  "Keep repetition counts visible at the right edge; otherwise show duration or live state."
+  [{:keys [duration-ms activity-repeat-count] :as row}]
+  (cond activity-repeat-count (str "×" activity-repeat-count)
+        (pos? (long (or duration-ms 0))) (vis/format-duration duration-ms)
+        (= :running (activity-row-state row)) "…"))
 
 (defn- activity-state-word
   "The execution word for a form's Activity. The form's OWN verdict wins; before it
@@ -5506,64 +5504,77 @@
             entries)))
       blocks)))
 
+(defn- activity-group-row
+  [id label rows children]
+  (if (= 1 (count rows))
+    (first rows)
+    (let [files
+          (set (map :id (filter #(= "file" (:type %)) (mapcat :resources rows))))
+
+          complete?
+          (every? #(and (not (:is-truncated %))
+                        (some (fn [r]
+                                (= "file" (:type r)))
+                              (:resources %)))
+                  rows)
+
+          deltas
+          (map activity-step-delta rows)
+
+          additions
+          (reduce + 0 (map :additions deltas))
+
+          deletions
+          (reduce + 0 (map :deletions deltas))
+
+          states
+          (frequencies (map activity-row-state rows))
+
+          facts
+          (str/join " · "
+                    (remove nil?
+                      [(when (seq files)
+                         (str (count files)
+                              (if complete? " " " known ")
+                              (if (= 1 (count files)) "file" "files")))
+                       (when (pos? (+ additions deletions)) (str "+" additions " −" deletions))
+                       (not-empty (str/join " · "
+                                            (for [state
+                                                  [:running :failed :cancelled]
+
+                                                  :when (get states state)]
+
+                                              (str (get states state) " " (name state)))))
+                       (when (some :is-truncated rows) "partial details")]))]
+
+      {:id id
+       :sequence (:sequence (first rows))
+       :operation label
+       :summary ""
+       :activity-group? true
+       :state (name (or (some #(when (get states %) %) [:failed :running :cancelled]) :succeeded))
+       :presentation {:headline (str label " ×" (count rows)) :summary facts}
+       :children children
+       :resources []
+       :evidence []})))
+
 (defn- activity-operation-rows
-  "The shared operation groups, expressed as local disclosures without changing receipts."
+  "Shared operation and argument groups as local disclosures; receipts remain unchanged."
   [rows]
-  (mapv
-    (fn [{:keys [id label rows]}]
-      (if (= 1 (count rows))
-        (first rows)
-        (let [files
-              (set (map :id (filter #(= "file" (:type %)) (mapcat :resources rows))))
-
-              complete?
-              (every? #(and (not (:is-truncated %))
-                            (some (fn [r]
-                                    (= "file" (:type r)))
-                                  (:resources %)))
-                      rows)
-
-              deltas
-              (map activity-step-delta rows)
-
-              additions
-              (reduce + 0 (map :additions deltas))
-
-              deletions
-              (reduce + 0 (map :deletions deltas))
-
-              states
-              (frequencies (map activity-row-state rows))
-
-              facts
-              (str/join " · "
-                        (remove nil?
-                          [(when (seq files)
-                             (str (count files)
-                                  (if complete? " " " known ")
-                                  (if (= 1 (count files)) "file" "files")))
-                           (when (pos? (+ additions deletions)) (str "+" additions " −" deletions))
-                           (not-empty (str/join " · "
-                                                (for [state
-                                                      [:running :failed :cancelled]
-
-                                                      :when (get states state)]
-
-                                                  (str (get states state) " " (name state)))))
-                           (when (some :is-truncated rows) "partial details")]))]
-
-          {:id (str id "#group")
-           :sequence (:sequence (first rows))
-           :operation label
-           :summary ""
-           :activity-group? true
-           :state (name (or (some #(when (get states %) %) [:failed :running :cancelled])
-                            :succeeded))
-           :presentation {:headline (str label " ×" (count rows)) :summary facts}
-           :children rows
-           :resources []
-           :evidence []})))
-    (activity-contract/operation-groups rows)))
+  (mapv (fn [{:keys [id label rows]}]
+          (activity-group-row
+            (str id "#group")
+            label
+            rows
+            (mapv (fn [{:keys [id rows]}]
+                    (if (= 1 (count rows))
+                      (first rows)
+                      (let [title (or (not-empty (activity-step-object (first rows))) label)]
+                        (-> (activity-group-row (str id "#arguments") title rows rows)
+                            (assoc :activity-repeat-count (count rows))
+                            (assoc-in [:presentation :headline] title)))))
+                  (activity-contract/argument-groups rows))))
+        (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
   "A joined, independently folded Activity band. Every operation group is visible when
@@ -5988,7 +5999,24 @@
                                                                          {:kind :activity-evidence
                                                                           :item-id id})})
 
-                                                     (and (not open?) (seq nested))
+                                                     (and (not open?) (:activity-repeat-count row))
+                                                     (into (map (fn [message]
+                                                                  {:line (str activity-marker
+                                                                              (ellipsize-cols
+                                                                                (str (activity-lead
+                                                                                       col)
+                                                                                     message)
+                                                                                width))
+                                                                   :meta (merge meta-base
+                                                                                {:kind
+                                                                                 :activity-evidence
+                                                                                 :item-id id})})
+                                                                (distinct (keep :error-summary
+                                                                                nested))))
+
+                                                     (and (not open?)
+                                                          (seq nested)
+                                                          (not (:activity-repeat-count row)))
                                                      (into (mapcat #(row-entry % (inc (long depth)))
                                                                    (remove #(= :succeeded
                                                                                (activity-row-state

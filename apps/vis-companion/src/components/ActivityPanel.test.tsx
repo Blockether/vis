@@ -12,6 +12,7 @@ import {
 } from "./ActivityPanel";
 import activityPanelSource from "./ActivityPanel.tsx?raw";
 import activityFixture from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json";
+import argumentCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json";
 import {
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_TREE_CHANGES,
@@ -87,6 +88,66 @@ describe("joined Activity operation groups", () => {
       rows,
     };
   }
+
+  it("collapses identical arguments, preserves different/unknown calls and every outcome", () => {
+    const activity = activityProjectionFromWire(argumentCases[0].projection)!;
+    const { rerender } = render(<ActivityPanel activity={activity} />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
+    fireEvent.click(screen.getByRole("button", { name: /Search ×6/ }));
+    const repeat = screen.getByRole("button", { name: /same query ×3/ });
+    expect(repeat.textContent).toContain("1 running");
+    expect(repeat.textContent).toContain("1 failed");
+    expect(repeat.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector('[data-activity-row="search-1"]')).toBeNull();
+    for (const id of ["search-2", "unknown-1", "unknown-2", "read-1"]) {
+      expect(
+        document.querySelector(`[data-activity-row="${id}"]`),
+      ).toBeTruthy();
+    }
+    expect(screen.getByText(/Search directory unavailable/)).toBeTruthy();
+    fireEvent.click(repeat);
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="search-1"] [data-disclosure-toggle]',
+      )!,
+    );
+    expect(screen.getByText("First search: 2 matches")).toBeTruthy();
+    expect(
+      document.querySelector('[data-activity-row="search-3"]'),
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-activity-row="search-4"]'),
+    ).toBeTruthy();
+    rerender(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          state: "failed",
+          rows: activity.rows.map((row) =>
+            row.id === "search-4"
+              ? {
+                  ...row,
+                  state: "succeeded",
+                  result_summary: "Last search: 5 matches",
+                }
+              : row,
+          ),
+        }}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: /same query ×3/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(screen.getByText("First search: 2 matches")).toBeTruthy();
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="search-4"] [data-disclosure-toggle]',
+      )!,
+    );
+    expect(screen.getByText("Last search: 5 matches")).toBeTruthy();
+  });
 
   it("groups adjacent reads, counts unique files and preserves disclosure through updates", () => {
     const activity = reads();

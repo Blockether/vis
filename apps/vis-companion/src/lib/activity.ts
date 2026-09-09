@@ -26,6 +26,31 @@ export type OperationGroup = {
   rows: ActivityRow[];
 };
 
+export type ArgumentGroup = Pick<OperationGroup, "id" | "rows">;
+
+function firstInvocationId(row: ActivityRow): string {
+  return (row.operation === "shell" ? (row.children?.[0] ?? row) : row).id;
+}
+
+/** Exact operation/argument pairs, within one block. Unknown keys never collapse. */
+export function argumentGroups(rows: readonly ActivityRow[]): ArgumentGroup[] {
+  const groups: ArgumentGroup[] = [];
+  const byArguments = new Map<string, ArgumentGroup>();
+  for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
+    const key = row.argument_key
+      ? JSON.stringify([row.operation, row.argument_key])
+      : undefined;
+    const existing = key === undefined ? undefined : byArguments.get(key);
+    if (existing) existing.rows.push(row);
+    else {
+      const group = { id: firstInvocationId(row), rows: [row] };
+      groups.push(group);
+      if (key !== undefined) byArguments.set(key, group);
+    }
+  }
+  return groups;
+}
+
 /** One group per operation across the block, ordered by first entry. Shell evidence stays intact. */
 export function operationGroups(
   rows: readonly ActivityRow[],
@@ -41,9 +66,7 @@ export function operationGroups(
       const label = Object.hasOwn(labels, row.operation)
         ? labels[row.operation]
         : row.operation;
-      const first =
-        row.operation === "shell" ? (row.children?.[0] ?? row) : row;
-      const group = { id: first.id, label, rows: [row] };
+      const group = { id: firstInvocationId(row), label, rows: [row] };
       groups.push(group);
       byOperation.set(row.operation, group);
     }
@@ -303,6 +326,7 @@ export interface ActivityRow {
   state: ActivityState;
   summary: string;
   summary_format?: ActivityTextFormat;
+  argument_key?: string;
   group_token?: string;
   duration_ms?: number;
   result_summary?: string;
@@ -453,6 +477,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
         "evidence",
       ],
       [
+        "argument_key",
         "group_token",
         "duration_ms",
         "result_summary",
@@ -487,6 +512,12 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     : null;
   const groupToken =
     raw.group_token === undefined ? undefined : optionalText(raw.group_token);
+  const argumentKey =
+    typeof raw.argument_key === "string" &&
+    raw.argument_key.length === 64 &&
+    /^[0-9a-f]{64}$/.test(raw.argument_key)
+      ? raw.argument_key
+      : undefined;
   const duration =
     raw.duration_ms === undefined ? undefined : activityCount(raw.duration_ms);
   const resultSummary =
@@ -528,6 +559,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     evidence === null ||
     evidence.length !== evidenceRaw!.length ||
     (raw.group_token !== undefined && groupToken === undefined) ||
+    (raw.argument_key !== undefined && argumentKey === undefined) ||
     duration === null ||
     (raw.result_summary !== undefined && resultSummary === undefined) ||
     (raw.error_summary !== undefined && errorSummary === undefined) ||
@@ -551,6 +583,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     resources,
     evidence,
     ...(groupToken !== undefined ? { group_token: groupToken } : {}),
+    ...(argumentKey !== undefined ? { argument_key: argumentKey } : {}),
     ...(duration !== undefined ? { duration_ms: duration } : {}),
     ...(resultSummary !== undefined ? { result_summary: resultSummary } : {}),
     ...(errorSummary !== undefined ? { error_summary: errorSummary } : {}),

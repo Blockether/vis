@@ -64,6 +64,31 @@
   (when (and (document/valid-json? "activity" "projection" value) (valid-projection? value))
     (wire/->engine value)))
 
+(defn- first-invocation-id
+  [row]
+  (:id (if (= "shell" (:operation row)) (or (first (:children row)) row) row)))
+
+(defn argument-groups
+  "Group exact operation and argument-key pairs within one block. Missing keys stay
+   separate; displayed summaries never prove equality. Preserve all invocation evidence."
+  [rows]
+  (let [ordered
+        (sort-by :sequence rows)
+
+        group-key
+        (fn [row]
+          (if-let [key (:argument-key row)]
+            [:arguments (:operation row) key]
+            [:row (:id row)]))
+
+        grouped
+        (group-by group-key ordered)]
+
+    (mapv (fn [key]
+            (let [members (get grouped key)]
+              {:id (first-invocation-id (first members)) :rows members}))
+          (distinct (map group-key ordered)))))
+
 (defn operation-groups
   "One group per exact operation across the block, ordered by first entry.
    Known operations use canonical labels; extensions retain their operation names.
@@ -80,12 +105,9 @@
                   (get grouped operation)
 
                   row
-                  (first members)
+                  (first members)]
 
-                  first-row
-                  (if (= "shell" operation) (or (first (:children row)) row) row)]
-
-              {:id (:id first-row)
+              {:id (first-invocation-id row)
                :label (get-in vocabulary ["operation_groups" operation] operation)
                :rows members}))
           (distinct (map :operation ordered)))))

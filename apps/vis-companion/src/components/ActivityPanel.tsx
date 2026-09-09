@@ -10,7 +10,11 @@ import type {
   ActivityTextEvidence,
   ActivityTextFormat,
 } from "../lib/activity";
-import { operationGroups, type OperationGroup } from "../lib/activity";
+import {
+  argumentGroups,
+  operationGroups,
+  type OperationGroup,
+} from "../lib/activity";
 import { workspaceRelativePath } from "../lib/path";
 import { useWorkspaceRoots } from "../lib/workspace-roots";
 
@@ -959,42 +963,70 @@ function groupFacts(rows: readonly ActivityRow[]): string {
     .join(" · ");
 }
 
-function ActivityGroup({ group }: { group: OperationGroup }) {
+function ActivityGroup({
+  group,
+  repeated = false,
+}: {
+  group: OperationGroup;
+  repeated?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   if (group.rows.length === 1) return <ActivityStep row={group.rows[0]} />;
   const title = `${group.label} ×${group.rows.length}`;
   const facts = groupFacts(group.rows);
+  const previewRows = group.rows.filter((row) =>
+    repeated ? row.state === "failed" : row.state !== "succeeded",
+  );
+  const previews = repeated
+    ? [
+        ...new Map(
+          previewRows.map((row) => [row.error_summary || row.state, row]),
+        ).values(),
+      ]
+    : previewRows;
   return (
-    <li className="min-w-0" data-activity-group={group.id}>
+    <li
+      className="min-w-0"
+      data-activity-group={repeated ? undefined : group.id}
+      data-activity-arguments={repeated ? group.id : undefined}
+    >
       <Disclosure
         tone="execution"
         isOpen={open}
         onClick={() => setOpen((value) => !value)}
       >
         <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <span className="font-semibold">{title}</span>
+          <span className="min-w-0 break-words font-semibold">{title}</span>
           {facts && <span className="text-meta text-dialog-hint">{facts}</span>}
         </span>
       </Disclosure>
       {!open &&
-        group.rows
-          .filter((row) => row.state !== "succeeded")
-          .map((row) => (
-            <p
-              key={row.id}
-              className={`min-w-0 break-words pb-1 pl-3 text-meta ${row.state === "failed" ? "text-err-ink" : "text-dialog-hint"}`}
-            >
-              {activityStepObject(row) ||
-                row.presentation?.headline ||
-                row.operation}{" "}
-              · {row.error_summary || row.state}
-            </p>
-          ))}
+        previews.map((row) => (
+          <p
+            key={row.id}
+            className={`min-w-0 break-words pb-1 pl-3 text-meta ${row.state === "failed" ? "text-err-ink" : "text-dialog-hint"}`}
+          >
+            {activityStepObject(row) ||
+              row.presentation?.headline ||
+              row.operation}{" "}
+            · {row.error_summary || row.state}
+          </p>
+        ))}
       {open && (
         <ol className="min-w-0 pl-3" aria-label={`${title} operations`}>
-          {group.rows.map((row) => (
-            <ActivityStep key={row.id} row={row} />
-          ))}
+          {repeated
+            ? group.rows.map((row) => <ActivityStep key={row.id} row={row} />)
+            : argumentGroups(group.rows).map((argumentsGroup) => (
+                <ActivityGroup
+                  key={argumentsGroup.id}
+                  group={{
+                    ...argumentsGroup,
+                    label:
+                      activityStepObject(argumentsGroup.rows[0]) || group.label,
+                  }}
+                  repeated
+                />
+              ))}
         </ol>
       )}
     </li>

@@ -22,6 +22,7 @@
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import activityGroupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
+import activityArgumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
 import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
@@ -69,6 +70,9 @@ export const ACTIVITY_INTERLEAVED = projection(
     (sample) => sample.name === 'ten interleaved reads and searches with failed and running tests',
   )!.projection,
 );
+
+/** Exact repeated arguments with distinct results, a live call and a failed call. */
+export const ACTIVITY_REPEATED_ARGUMENTS = projection(activityArgumentCases[0].projection);
 
 /** The engine's own payload, refused loudly rather than drawn empty. */
 function projection(wire: unknown): ActivityProjection {

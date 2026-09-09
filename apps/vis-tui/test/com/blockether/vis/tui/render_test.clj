@@ -8,6 +8,8 @@
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.iteration :as iteration]
+            [com.blockether.vis.contract.activity :as activity-contract]
+            [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe describe expect it]]))
@@ -82,6 +84,81 @@
                      (count (filter #(= :activity-header (get-in % [:meta :kind]))
                                     (entries rows {"#band" false})))))))
     (it "does not paint an empty Activity band" (expect (empty? (entries [] {}))))))
+
+(defdescribe
+  repeated-activity-arguments-test
+  (let [fixture
+        (-> (io/resource "vis-contract/fixtures/activity-arguments.json")
+            slurp
+            json/read-str
+            first
+            (get "projection")
+            activity-contract/from-wire)
+
+        rows
+        (:rows fixture)
+
+        entries
+        (fn [value opened width]
+          (#'render/activity-detail-entries
+           {:node-id "activity"
+            :activity-rows value
+            :activity-expanded? (fn [key default]
+                                  (get opened key default))}
+           width
+           "s1"))
+
+        opened
+        {"#band" true "search-1#group" true}
+
+        row-ids
+        (fn [result]
+          (mapv #(get-in % [:meta :item-id])
+                (filter #(= :activity-row (get-in % [:meta :kind])) result)))]
+
+    (it "groups complete identical arguments while retaining different and unknown calls"
+        (let [result (entries rows opened 72)]
+          (expect (= ["search-1#group" "search-1#arguments" "search-2" "unknown-1" "unknown-2"
+                      "read-1"]
+                     (row-ids result)))
+          (expect (some #(str/includes? (:line %) "×3") result))
+          (expect (some #(str/includes? (:line %) "1 failed") result))))
+    (it "keeps every result and live replacement behind the repeated-argument disclosure"
+        (let [choices
+              (assoc opened
+                "search-1#arguments" true
+                "search-1" true
+                "search-4" true)
+
+              settled
+              (mapv #(if (= "search-4" (:id %))
+                       (assoc %
+                         :state "succeeded"
+                         :result-summary "Last search: 5 matches")
+                       %)
+                    rows)
+
+              result
+              (entries settled choices 100)
+
+              text
+              (str/join "\n" (map :line result))]
+
+          (expect (= ["search-1#group" "search-1#arguments" "search-1" "search-3" "search-4"
+                      "search-2" "unknown-1" "unknown-2" "read-1"]
+                     (row-ids result)))
+          (doseq [value ["First search: 2 matches" "Search directory unavailable"
+                         "Last search: 5 matches"]]
+            (expect (str/includes? text value)))))
+    (it "keeps the repetition count visible on narrow rows with long arguments"
+        (let [long-rows
+              (mapv #(assoc % :summary (apply str (repeat 120 "q"))) rows)
+
+              repeated-row
+              (some #(when (= "search-1#arguments" (get-in % [:meta :item-id])) %)
+                    (entries long-rows opened 36))]
+
+          (expect (str/includes? (str (:line repeated-row)) "×3"))))))
 
 (defn- step-expansions
   "Control step details while keeping the independent Activity band open."

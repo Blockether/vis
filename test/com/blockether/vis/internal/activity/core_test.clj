@@ -33,6 +33,41 @@
                               (not= outcome :succeeded)
                               (assoc :error (ex-info (str result) {}))))])))
 
+(defdescribe
+  argument-identity-test
+  (it "retains complete argument identity through lifecycle and canonical projection"
+      (let [ctx
+            (event/context)
+
+            events
+            (vec (concat
+                   (event-pair ctx
+                               :grep :succeeded
+                               "first result" {:args [{:query ["same"] :paths ["src"]}]})
+                   (event-pair ctx
+                               :grep :failed
+                               "second result" {:args [(array-map :paths ["src"] :query ["same"])]})
+                   (event-pair ctx
+                               :grep :succeeded
+                               "third result" {:args [{:query ["different"] :paths ["src"]}]})))
+
+            projection
+            (-> events
+                activity/replay
+                activity/presentation)
+
+            keys
+            (mapv :argument-key (:rows projection))]
+
+        (expect (contract/valid-projection? projection))
+        (expect (every? #(and (string? %) (re-matches #"[0-9a-f]{64}" %)) keys))
+        (expect (= (first keys) (second keys)))
+        (expect (not= (first keys) (last keys)))
+        (expect (= (mapv :argument-key (take-nth 2 events)) keys))
+        (expect (= (mapv :argument-key (take-nth 2 (rest events))) keys))
+        (expect (= 3 (reduce + (vals (:counts projection)))))
+        (expect (= ["succeeded" "failed" "succeeded"] (mapv :state (:rows projection)))))))
+
 (defdescribe canonical-presentation-test
              (it "keeps required lines for an empty structured diff"
                  (let [evidence (#'activity/presentation-evidence
@@ -242,6 +277,10 @@
       (expect (= 1 (count (:rows snapshot))))
       (expect (= :shell (:operation group)))
       (expect (= "cmd: npm test" (:summary group)))
+      (expect (= (:argument-key (ffirst pairs)) (:argument-key group)))
+      (expect (= (:argument-key group)
+                 (:argument-key (first (:rows (activity/presentation snapshot))))))
+      (expect (not= (:argument-key group) (:argument-key (first (second pairs)))))
       (expect (= ["shell" "cmd: npm test"]
                  ((juxt :operation :summary) (first (:rows (activity/presentation snapshot))))))
       (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))

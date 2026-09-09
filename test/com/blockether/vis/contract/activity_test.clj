@@ -45,3 +45,19 @@
                        {"id" id "label" label "rows" (mapv :id rows)})
                      (group-rows (:rows receipt))))
             name)))))
+
+(deftest shared-argument-groups-test
+  (doseq [{:strs [name projection groups]}
+          (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-arguments.json")))]
+    (let [receipt (activity/from-wire projection)
+          group-rows (ns-resolve 'com.blockether.vis.contract.activity 'argument-groups)]
+
+      (is (some? receipt) name)
+      (is (= projection (wire/->wire receipt)) name)
+      (is (some? group-rows))
+      (when group-rows
+        (is (= groups
+               (mapv (fn [{:keys [id rows]}]
+                       {"id" id "rows" (mapv :id rows)})
+                     (group-rows (:rows receipt))))
+            name)))))

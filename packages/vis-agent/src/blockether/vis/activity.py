@@ -49,6 +49,7 @@ class ActivityRow:
     summary: str
     resources: tuple[ActivityResource, ...]
     evidence: tuple[ActivityEvidence, ...]
+    argument_key: str | None = None
     group_token: str | None = None
     duration_ms: int | None = None
     result_summary: str | None = None
@@ -97,17 +98,47 @@ class ActivityRow:
         )
 
 
+def _first_invocation_id(row: ActivityRow) -> str:
+    return (row.children[0] if row.operation == "shell" and row.children else row).id
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityArgumentGroup:
+    """One operation with identical complete arguments; all invocation evidence is retained."""
+
+    id: str
+    rows: tuple[ActivityRow, ...]
+
+
+def _argument_groups(
+    rows: tuple[ActivityRow, ...],
+) -> tuple[ActivityArgumentGroup, ...]:
+    grouped: dict[tuple[str | None, str], list[ActivityRow]] = {}
+    for row in sorted(rows, key=lambda row: row.sequence):
+        key = (row.operation, row.argument_key) if row.argument_key else (None, row.id)
+        grouped.setdefault(key, []).append(row)
+    return tuple(
+        ActivityArgumentGroup(_first_invocation_id(members[0]), tuple(members))
+        for members in grouped.values()
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ActivityGroup:
-    """Adjacent operations; rows retain their evidence, not extra invocations.
+    """One exact operation across the block, ordered by first invocation.
 
-    The id survives shell polling and appending operations. Unknown operations stay
-    separate. UI disclosure state belongs to the reader, never to this receipt.
+    Shell polling remains child evidence. Unknown operations use their exact names.
+    Disclosure state belongs to the reader, never to this receipt.
     """
 
     id: str
-    label: str | None
+    label: str
     rows: tuple[ActivityRow, ...]
+
+    @property
+    def argument_groups(self) -> tuple[ActivityArgumentGroup, ...]:
+        """Repeated arguments in first-entry order; unknown argument keys stay separate."""
+        return _argument_groups(self.rows)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,21 +166,23 @@ class ActivityProjection:
 
     @property
     def groups(self) -> tuple[ActivityGroup, ...]:
-        """The same chronological runs used by Companion and TUI; not serialized."""
-        groups: list[ActivityGroup] = []
+        """The same per-operation groups used by Companion and TUI; not serialized."""
+        grouped: dict[str, list[ActivityRow]] = {}
         for row in sorted(self.rows, key=lambda row: row.sequence):
-            label = ACTIVITY["operation_groups"].get(row.operation)
-            if label and groups and groups[-1].label == label:
-                previous = groups[-1]
-                groups[-1] = ActivityGroup(previous.id, label, (*previous.rows, row))
-            else:
-                first = (
-                    row.children[0]
-                    if row.operation == "shell" and row.children
-                    else row
-                )
-                groups.append(ActivityGroup(first.id, label, (row,)))
-        return tuple(groups)
+            grouped.setdefault(row.operation, []).append(row)
+        return tuple(
+            ActivityGroup(
+                _first_invocation_id(rows[0]),
+                ACTIVITY["operation_groups"].get(operation, operation),
+                tuple(rows),
+            )
+            for operation, rows in grouped.items()
+        )
+
+    @property
+    def argument_groups(self) -> tuple[ActivityArgumentGroup, ...]:
+        """Exact operation/argument pairs within this block; not serialized."""
+        return _argument_groups(self.rows)
 
     @classmethod
     def from_wire(cls, value: Any) -> ActivityProjection:

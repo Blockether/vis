@@ -2004,5 +2004,194 @@
         "by_classification": {}
       }
     }
+  },
+  {
+    "name": "argument key valid at depth 2",
+    "valid": true,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "parent-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "children": [
+            {
+              "id": "parent-2",
+              "sequence": 2,
+              "operation": "grep",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "succeeded",
+              "summary": "same query",
+              "resources": [],
+              "evidence": [],
+              "children": [
+                {
+                  "id": "leaf",
+                  "sequence": 3,
+                  "operation": "grep",
+                  "presenter": "generic",
+                  "signal": "observation",
+                  "state": "succeeded",
+                  "summary": "same query",
+                  "resources": [],
+                  "evidence": [],
+                  "argument_key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "argument key null at depth 0",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "leaf",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "argument_key": null
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "argument key uppercase at depth 1",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "parent",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "children": [
+            {
+              "id": "leaf",
+              "sequence": 2,
+              "operation": "grep",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "succeeded",
+              "summary": "same query",
+              "resources": [],
+              "evidence": [],
+              "argument_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "argument key trailing newline at depth 2",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "parent-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "children": [
+            {
+              "id": "parent-2",
+              "sequence": 2,
+              "operation": "grep",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "succeeded",
+              "summary": "same query",
+              "resources": [],
+              "evidence": [],
+              "children": [
+                {
+                  "id": "leaf",
+                  "sequence": 3,
+                  "operation": "grep",
+                  "presenter": "generic",
+                  "signal": "observation",
+                  "state": "succeeded",
+                  "summary": "same query",
+                  "resources": [],
+                  "evidence": [],
+                  "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
   }
 ]

@@ -1,6 +1,9 @@
 (ns com.blockether.vis.internal.extension.core-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.activity.event :as activity-event]
+            [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.loop :as vis-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -787,6 +790,38 @@
 
 (defdescribe
   invocation-lifecycle-event-test
+  (it "carries exact argument identity from real invocation wrappers to the reader"
+      (let [events
+            (atom [])
+
+            sym
+            (extension/symbol #'activity-success-probe {:tag :observation})
+
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}]
+
+        (binding [extension/*tool-event-sink*
+                  #(swap! events conj %)
+
+                  extension/*tool-event-context*
+                  (activity-event/context)]
+
+          (doseq [args [[{:query ["same"] :paths ["src"]}]
+                        [(array-map :paths ["src"] :query ["same"])]
+                        [{:query ["different"] :paths ["src"]}]]]
+            (expect (:ok (extension/invoke-symbol-wrapper ext sym args {})))))
+        (let [projection
+              (-> @events
+                  activity/replay
+                  activity/presentation)
+
+              groups
+              (activity-contract/argument-groups (:rows projection))]
+
+          (expect (activity-contract/valid-projection? projection))
+          (expect (= [2 1] (mapv (comp count :rows) groups)))
+          (expect (= 3 (get-in projection [:counts :succeeded])))
+          (expect (= 6 (count @events))))))
   (it "emits exactly one start and public-success terminal"
       (let [events
             (atom [])

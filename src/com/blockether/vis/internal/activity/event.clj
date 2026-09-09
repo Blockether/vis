@@ -165,13 +165,70 @@
 
     (update bounded :is-truncated #(or % is-truncated))))
 
+(defn- argument-key
+  "A block-scoped opaque identity for complete, bounded portable arguments.
+   Map order is irrelevant; sequence order and value types are not. Never use a
+   redacted or truncated preview as equality evidence. The private salt and raw
+   arguments stay out of events; opaque values and exhausted budgets do not group."
+  [ctx args]
+  (when-let [salt (:argument-salt ctx)]
+    (let [nodes (volatile! max-summary-nodes)
+          bytes (volatile! (long max-detail-bytes))
+          unsupported (Object.)]
+
+      (letfn
+        [(word [s]
+           (if (> (count s) (long @bytes))
+             unsupported
+             (let [size (utf8-bytes s)]
+               (vswap! bytes #(- (long %) size))
+               (if (neg? (long @bytes)) unsupported s))))
+         (collect [xs]
+           (loop [remaining (seq xs)
+                  result []]
+
+             (if-not remaining
+               result
+               (let [item (visit (first remaining))]
+                 (if (identical? unsupported item)
+                   unsupported
+                   (recur (next remaining) (conj result item)))))))
+         (scalar [tag s]
+           (let [text (word s)]
+             (if (identical? unsupported text) unsupported [tag text])))
+         (visit [value]
+           (vswap! nodes #(unchecked-dec (long %)))
+           (cond (neg? (long @nodes)) unsupported
+                 (nil? value) ["nil"]
+                 (boolean? value) ["boolean" value]
+                 (string? value) (scalar "string" value)
+                 (keyword? value) (scalar "keyword" (str value))
+                 (integer? value) (scalar "integer" (str value))
+                 (number? value) (scalar "number" (pr-str value))
+                 (or (callback-envelope? value)
+                     (and (map? value) (contains? value "__vis_object__")))
+                 unsupported
+                 (map? value) (let [entries (collect value)]
+                                (if (identical? unsupported entries)
+                                  unsupported
+                                  ["map" (vec (sort-by pr-str entries))]))
+                 (sequential? value)
+                 (let [items (collect value)]
+                   (if (identical? unsupported items) unsupported ["sequence" items]))
+                 :else unsupported))]
+        (let [value (visit (or args []))]
+          (when-not (identical? unsupported value)
+            (util/sha256-hex (str salt "\u0000" (pr-str value)))))))))
+
 (defn context
   "Create one concurrency-safe counter context for a single block's tool calls.
 
    Ownerless by contract: the form this block becomes is the snapshot's only
    identity, so no evaluation, iteration or form coordinate is carried here."
   []
-  {:invocation-counter (AtomicLong. 0) :event-counter (AtomicLong. 0)})
+  {:invocation-counter (AtomicLong. 0)
+   :event-counter (AtomicLong. 0)
+   :argument-salt (str (UUID/randomUUID))})
 
 (defn invocation
   "Allocate stable identity and wrapper-entry sequence from `ctx`."
@@ -200,6 +257,10 @@
           (not (valid-id? (:invocation-id event))) "malformed invocation id"
           (and (:parent-invocation-id event) (not (valid-id? (:parent-invocation-id event))))
           "malformed parent invocation id"
+          (and (contains? event :argument-key)
+               (not (and (string? (:argument-key event))
+                         (re-matches #"[0-9a-f]{64}" (:argument-key event)))))
+          "malformed argument key"
           (not (contains? #{:start :content :terminal} (:phase event))) "unknown lifecycle phase"
           (and terminal? (not= 1 (count outcomes))) "terminal must have exactly one outcome"
           (and (not terminal?) (seq outcomes)) "start cannot carry an outcome"
@@ -487,7 +548,10 @@
               (first args)))
 
         argument
-        (when (seq args) (bounded-summary args max-summary-bytes))]
+        (when (seq args) (bounded-summary args max-summary-bytes))
+
+        identity
+        (argument-key ctx args)]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :start)
@@ -495,6 +559,9 @@
                      {:status :running})
         argument
         (assoc :argument-summary (:text argument))
+
+        identity
+        (assoc :argument-key identity)
 
         extension
         (assoc :extension extension)
@@ -558,7 +625,10 @@
                             max-detail-bytes))
 
         diff-evidence
-        (when (= outcome :succeeded) (result-diff-evidence details))]
+        (when (= outcome :succeeded) (result-diff-evidence details))
+
+        identity
+        (argument-key ctx (:args details))]
 
     (checked
       (fit-event
@@ -574,6 +644,9 @@
 
                                   :failed)
                         :duration-ms duration})
+          identity
+          (assoc :argument-key identity)
+
           (and (= outcome :succeeded) (:text summary))
           (assoc :result-summary (:text summary))
 

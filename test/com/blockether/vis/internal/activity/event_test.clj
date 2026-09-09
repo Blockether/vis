@@ -4,6 +4,76 @@
             [clojure.string :as string]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- argument-start
+  [ctx args]
+  (event/start-event ctx
+                     (event/invocation ctx nil)
+                     {:operation :grep :presenter :generic :args args}))
+
+(defdescribe
+  argument-identity-test
+  (it "identifies complete argument tuples independently of map insertion order"
+      (let [ctx
+            (event/context)
+
+            args
+            [(array-map :query ["needle"] :paths ["src" "test"])]
+
+            key-of
+            #(:argument-key (argument-start ctx %))
+
+            identity
+            (key-of args)]
+
+        (expect (string? identity))
+        (expect (boolean (and identity (re-matches #"[0-9a-f]{64}" identity))))
+        (expect (= identity (key-of [(array-map :paths ["src" "test"] :query ["needle"])])))
+        (expect (not= identity (key-of [{:query ["other"] :paths ["src" "test"]}])))
+        (expect (not= identity (key-of [{:query ["needle"] :paths ["test" "src"]}])))
+        (expect (= (key-of []) (key-of [])))
+        (expect (= 5 (count (set (map key-of [[1] ["1"] [1.0] [true] [nil]])))))))
+  (it "distinguishes arguments beyond their visible preview and keeps private values off the wire"
+      (let [ctx
+            (event/context)
+
+            prefix
+            (apply str (repeat (inc event/max-summary-bytes) "x"))
+
+            a
+            (argument-start ctx [{:query (str prefix "a") :password "fixture-first"}])
+
+            b
+            (argument-start ctx [{:query (str prefix "b") :password "fixture-first"}])
+
+            c
+            (argument-start ctx [{:query (str prefix "a") :password "fixture-second"}])]
+
+        (expect (every? :argument-key [a b c]))
+        (expect (= 3 (count (set (map :argument-key [a b c])))))
+        (doseq [public [a b c]]
+          (expect (nil? (event/event-error public)))
+          (expect (not (string/includes? (wire/json-str public) "fixture-first")))
+          (expect (not (string/includes? (wire/json-str public) "fixture-second"))))))
+  (it "scopes identities to one block and refuses incomplete or opaque arguments"
+      (let [a
+            (argument-start (event/context) [{:query "needle"}])
+
+            b
+            (argument-start (event/context) [{:query "needle"}])]
+
+        (expect (some? (:argument-key a)))
+        (expect (not= (:argument-key a) (:argument-key b))))
+      (doseq [args [[(repeat 1)] [(apply str (repeat (inc event/max-detail-bytes) "x"))]
+                    [{"__vis_callable__" "callback-1"}] [(Object.)]]]
+        (expect (nil? (:argument-key (argument-start (event/context) args)))))))
+
+(defdescribe argument-key-validation-test
+             (it "rejects malformed equality keys rather than trusting display text"
+                 (let [valid (argument-start (event/context) [])]
+                   (doseq [key [nil "" "guess" (apply str (repeat 64 "A")) 42]]
+                     (expect (= "malformed argument key"
+                                (event/event-error (assoc valid :argument-key key))))))))
+
 (defdescribe
   custom-presentation-redaction-test
   (it "redacts custom headlines, summaries, code and table content"

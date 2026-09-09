@@ -4,6 +4,7 @@ import {
   ACTIVITY_ALL_GROUPS,
   ACTIVITY_CHRONOLOGY,
   ACTIVITY_INTERLEAVED,
+  ACTIVITY_REPEATED_ARGUMENTS,
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_LISTING,
   ACTIVITY_LISTING_BATCH,
@@ -39,6 +40,38 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
+
+export const RepeatedArguments: Story = {
+  args: { activity: ACTIVITY_REPEATED_ARGUMENTS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    await userEvent.click(canvas.getByRole("button", { name: /Search ×6/ }));
+    const repeated = canvas.getByRole("button", { name: /same query ×3/ });
+    await expect(repeated).toHaveAttribute("aria-expanded", "false");
+    await expect(
+      canvas.getByText(/Search directory unavailable/),
+    ).toBeVisible();
+    repeated.focus();
+    await userEvent.keyboard("{Enter}");
+    const first = within(
+      canvasElement.querySelector<HTMLElement>(
+        '[data-activity-row="search-1"]',
+      )!,
+    );
+    await userEvent.click(first.getByRole("button"));
+    await expect(canvas.getByText("First search: 2 matches")).toBeVisible();
+    await userEvent.click(repeated);
+    await expect(
+      canvas.queryByText("First search: 2 matches"),
+    ).not.toBeInTheDocument();
+    await expect(
+      canvasElement.querySelector('[data-activity-row="search-2"]'),
+    ).toBeVisible();
+  },
+};
 
 /** A turn in flight: one call answered, one still running. */
 export const Running: Story = {
