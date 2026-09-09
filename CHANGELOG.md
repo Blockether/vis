@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Reclaim trusted Python extensions that stay blocked after cancellation, while preserving healthy interpreter state and subsequent turns.
+- Use Python runtime 0.5.6 to prevent lost termination signals during process and PTY startup.
 - Keep cold JVM dependency preparation off the SDK stdio protocol.
 - Preserve edits made at the draft fork timestamp and isolate cached test permission policies.
 - Allow the complete native release workflow to inspect its macOS runner pickup.
