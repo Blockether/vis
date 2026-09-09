@@ -3,6 +3,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { STORY_GOAL } from "../dev/story-data";
 import { SessionHeader } from "./SessionHeader";
 
 const model = {
@@ -50,5 +51,17 @@ describe("SessionHeader", () => {
 
     expect(screen.getByText("Reconnecting")).toBeInTheDocument();
     expect(screen.queryByText(/artifacts produced/)).not.toBeInTheDocument();
+  });
+  it("shows only explicitly supplied goals and opens the full objective", () => {
+    const { rerender } = render(<SessionHeader model={model} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+    expect(screen.queryByRole("button", { name: /^Goal:/ })).not.toBeInTheDocument();
+    const goal = { ...STORY_GOAL, objective: "Verify a very long objective ".repeat(50), status: "blocked" as const, reason: "Awaiting test credentials." };
+    rerender(<SessionHeader model={{ ...model, goal }} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Goal: Blocked/ }));
+    expect(screen.getByRole("dialog", { name: "Session goal" })).toBeInTheDocument();
+    expect(screen.getByText(goal.reason)).toBeInTheDocument();
+    expect(screen.getByText(/12,400 tokens used/)).toHaveTextContent("100,000 budget");
+    fireEvent.click(screen.getByRole("button", { name: "Close session goal" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

@@ -1366,3 +1366,68 @@ by HTTP 403. No live provider or paid model call was made.
 
 No commit, push, publication, deployment or gateway restart was performed. The
 running gateway's older bundled docs remain unchanged until it adopts a new build.
+
+# Explicit session goals
+
+Keep pursuing an explicitly requested objective until completion, blockage or a user stop.
+
+## Context
+Session goals are explicit. `/goal` in foundation session slashes and
+`Session.goal` in the Python engine SDK share the existing turn submission path.
+The session owner persists the goal; context projection and Companion's SessionHeader
+read the same state. No AutoGoal, public get/update API, separate scheduler or inferred
+objective. Internal completion updates remain evidence-based model declarations.
+
+## 1. Goal state and execution
+- Rationale: one durable state machine must govern slash creation, continuation and stop.
+- Data: session storage, foundation symbols, loop answer gate and context projection.
+- Acceptance criteria: explicit creation, bounded input, status transitions, revision-safe
+  updates, accounting, cancellation and resume covered through the existing test suite.
+- Unknowns: resolved through real SQLite, slash, context and Python execution tests.
+
+## 2. SDK and Companion
+- Rationale: use existing submission and session-event boundaries rather than duplicate APIs.
+- Data: engine Session client, session metadata/event contract and SessionHeader.
+- Acceptance criteria: SDK/slash parity, live and resumed header state, readable phone
+  layout with accessible goal text and status; no goal row for sessions without one.
+- Unknowns: browser checks passed at phone, tablet and desktop widths; native device testing was not run.
+
+## 3. Verify and document
+- Rationale: this crosses host, persistence, transport and UI boundaries.
+- Data: affected Lazytest, SDK and Companion suites, lint/format and production stories.
+- Acceptance criteria: required checks pass; remaining environmental blockers are explicit.
+- Unknowns: shared-worktree changes must stay separate.
+
+## 4. Canonical session data and TUI
+- Rationale: a goal is session metadata, not a client-local feature or toggle.
+- Data: persisted session projection, OpenAPI response schemas, subscription snapshots and TUI footer.
+- Acceptance criteria: the same goal is present in API/SDK session reads and lists, survives idle
+  reconnects without stale revisions, and renders with a readable status and full details in TUI.
+- Unknowns: resolved by API/SSE, SDK, terminal-grid and live HTML-backend checks.
+
+## 5. Separate footer controls
+- Rationale: provider quotas and the goal are separate disclosures, not competing usage labels.
+- Data: shared footer buttons, existing details viewer and goal/session state.
+- Acceptance criteria: separate Limits and Goal status buttons, no goal tokens in the label,
+  no extra header row, preserved quota resets and unchanged goal budget behavior.
+- Unknowns: native-image and physical-terminal verification were not run.
+
+## Plan state
+Implemented and verified locally. The canonical session goal is exposed in API/SDK reads,
+session lists, introspection and OpenAPI, with the same status labels in Companion and TUI.
+Idle reconnects carry a current snapshot; stale revisions cannot overwrite newer state.
+There is no goal toggle. The second TUI footer row has separate Limits and Goal status buttons;
+the Goal button appears only for sessions with a goal. Usage remains in its details.
+
+Final affected checks passed: 165 API/introspection/contract tests, 513 loop/goal boundary
+and state tests, 479 TUI tests in a clean JVM, 72 SDK tests, 44 Companion tests and seven
+SessionHeader browser stories. Formatting, lint including reflection, the Companion build,
+documentation links and diff checks passed. Live HTML-backend review covered 40/120-column
+headers, Unicode objectives, the production details viewer, Enter activation and Escape close.
+The earlier Companion review covered all 210 stories across 10 themes, phone/tablet/desktop
+widths, long objectives and 130% text scaling. Native device and native-image tests were not run.
+Footer follow-up: 524 affected TUI tests, 176 API/introspection/contract and goal tests,
+72 SDK tests and 44 Companion tests pass. The combined API suite exposed a fixture-order
+registration dependency; goal boundary tests now own their foundation registration.
+Formatting, lint/reflection and Companion build pass. Goal budget behavior is unchanged.
+No release, deployment or gateway restart was performed. Commit and push are user-authorized.

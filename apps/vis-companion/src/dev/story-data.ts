@@ -1786,3 +1786,9 @@ export const STORY_JOINED_ACTIVITY = Object.fromEntries(
     forms: [{ source: "results = await gather(read_files(), apply_changes())\nprint(results)", activity: joinedActivity(state) }],
   }]])
 ) as Record<"running" | "succeeded" | "failed", TranscriptIteration[]>;
+
+export const STORY_GOAL = {
+  id: "goal-example", objective: "Implement explicit session goals and verify the SDK and phone header.",
+  status: "active" as const, token_budget: 100000, tokens_used: 12400, time_used_ms: 32000,
+  revision: 3, version: 1, reason: null, created_at: 1780000000000, updated_at: 1780000032000,
+};

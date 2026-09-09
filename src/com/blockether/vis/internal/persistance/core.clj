@@ -419,6 +419,10 @@
 
 (defdelegate db-update-session-title! [db-info ref title])
 
+(defdelegate db-get-session-goal [db-info session-id])
+
+(defdelegate db-compare-session-goal! [db-info session-id revision goal])
+
 (defdelegate db-claim-session! [db-info ref])
 
 (defdelegate db-delete-session-tree! [db-info id])

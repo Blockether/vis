@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.council.host :as council-host]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -88,7 +89,7 @@
         council-context
         (council-host/context env)]
 
-    (cond-> {}
+    (cond-> {"session_goal" (goals/check-goal env)}
       council-context
       (assoc "session_council" council-context)
 
@@ -118,6 +119,7 @@
                                                    environment/environment-symbols
                                                    introspection/all-symbols
                                                    council-host/symbols
+                                                   goals/symbols
                                                    shell/shell-symbols
                                                    drafts/symbols))}
      :ext/kind "foundation"

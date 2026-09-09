@@ -78,6 +78,8 @@ CREATE TABLE session_soul (
   -- default.
   llm_pref_provider TEXT,
   llm_pref_model    TEXT,
+  -- Explicit user-owned objective and its versioned lifecycle, independent of folds.
+  goal              TEXT CHECK (goal IS NULL OR json_valid(goal)),
   created_at        INTEGER NOT NULL,
 
   -- Adoption stamp. NULL = unclaimed warm-pool scaffolding (hidden from

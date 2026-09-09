@@ -6,6 +6,7 @@
 // we send it on every request. A 401 surfaces as GatewayError so the UI can
 // prompt a re-pair.
 
+import goalContract from "../../../../packages/vis-contract/resources/vis-contract/gateway.json";
 import type { PushGateway } from "./relay";
 import {
   ATTACHMENT_MEMORY_BUDGET,
@@ -36,6 +37,7 @@ import type {
   IterationAttachment,
   SessionArtifactRow,
   Session,
+  SessionGoal,
   SessionUsage,
   SettingsResponse,
   SlashCommand,
@@ -700,6 +702,28 @@ function reconcileRows<T>(previous: T[] | null, next: T[]): T[] {
 /** Single-payload variant: keep the cached object when the wire repeats itself. */
 function reconcileRow<T>(previous: T | null, next: T): T {
   return previous !== null && sameJson(previous, next) ? previous : next;
+}
+
+function sessionGoalFromWire(raw: unknown): SessionGoal | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const g = raw as Record<string, unknown>;
+  if (typeof g.id !== "string" || !g.id || typeof g.objective !== "string" ||
+      !g.objective.trim() || g.objective.length > goalContract.session_goal.max_objective_chars ||
+      typeof g.status !== "string" || !goalContract.session_goal.statuses.includes(g.status) ||
+      !(g.reason === null || (typeof g.reason === "string" && g.reason.length <= goalContract.session_goal.max_reason_chars)) ||
+      !(g.token_budget === null || (Number.isSafeInteger(g.token_budget) && (g.token_budget as number) > 0)) ||
+      !["tokens_used", "time_used_ms", "created_at", "updated_at"].every(k => Number.isSafeInteger(g[k]) && (g[k] as number) >= 0) ||
+      !["revision", "version"].every(k => Number.isSafeInteger(g[k]) && (g[k] as number) >= 1)) return null;
+  return g as unknown as SessionGoal;
+}
+
+function reconcileSession(previous: Session | null, next: Session, pending?: SessionGoal | null): Session {
+  const oldGoal = sessionGoalFromWire(previous?.goal);
+  const goal = pending && pending.revision > (oldGoal?.revision ?? 0) ? pending : oldGoal;
+  const nextGoal = sessionGoalFromWire(next.goal);
+  const row = goal && goal.revision > (nextGoal?.revision ?? 0)
+    ? { ...next, goal } : next.goal == null ? next : { ...next, goal: nextGoal };
+  return reconcileRow(previous, row);
 }
 
 /**
@@ -2664,7 +2688,7 @@ export class GatewayClient {
     if (warming) return warming.then(() => this.prefetchTranscript(row));
 
     const held = this.cachedSession(row.id);
-    const merged = reconcileRow(held, row);
+    const merged = reconcileSession(held, row, readSnapshot<SessionGoal>(this.snapshotKey("goal", row.id)));
     if (merged !== held) writeSnapshot(this.snapshotKey("session", row.id), merged);
     const stamp = transcriptPrefetchStamp(merged);
     // A running placeholder is provisional to an OPEN screen, which must read its
@@ -3272,7 +3296,7 @@ export class GatewayClient {
     if (includeQueued && !Array.isArray(queuedTurns)) {
       throw new Error("Gateway response omitted queued_turns");
     }
-    const merged = reconcileRow(this.cachedSession(sid), row as Session);
+    const merged = reconcileSession(this.cachedSession(sid), row as Session, readSnapshot<SessionGoal>(this.snapshotKey("goal", sid)));
     writeSnapshot(this.snapshotKey("session", sid), merged);
 
     if (includeQueued) {
@@ -3354,16 +3378,28 @@ export class GatewayClient {
    * session header repaint from cache with what it says instead of the stale row.
    */
   private absorbSessionRow(sid: string, row: Session): Session {
-    const merged = reconcileRow(this.cachedSession(sid), row);
+    const merged = reconcileSession(this.cachedSession(sid), row, readSnapshot<SessionGoal>(this.snapshotKey("goal", sid)));
     writeSnapshot(this.snapshotKey("session", sid), merged);
     const rows = this.cachedSessions();
     if (rows) {
       writeSnapshot(
         this.snapshotKey("sessions"),
-        rows.map((entry) => (entry.id === sid ? reconcileRow(entry, row) : entry)),
+        rows.map((entry) => (entry.id === sid ? reconcileSession(entry, merged) : entry)),
       );
     }
     return merged;
+  }
+
+  /** Apply a live goal without allowing replay or an older HTTP snapshot to rewind it. */
+  noteSessionGoal(sid: string, raw: unknown): Session | null {
+    const previous = this.cachedSession(sid);
+    const goal = sessionGoalFromWire(raw);
+    if (!goal) return previous;
+    const key = this.snapshotKey("goal", sid);
+    const held = readSnapshot<SessionGoal>(key);
+    if (!held || goal.revision > held.revision) writeSnapshot(key, goal);
+    if (!previous) return null;
+    return this.absorbSessionRow(sid, { ...previous, goal });
   }
 
   /** Rename a session. The gateway echoes the updated meta row. */

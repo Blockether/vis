@@ -3,6 +3,7 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.header-model :as vh]
             [com.blockether.vis.tui.chat :as chat]
@@ -1405,6 +1406,21 @@
                                 (assoc w
                                   :session-model-pref {:provider (str provider) :model (str model)})
                                 (dissoc w :session-model-pref))))))
+
+(defn- sync-session-goal
+  [db tab-id {:keys [session-id goal]}]
+  (update-tab db
+              tab-id
+              (fn [tab]
+                (if (and (:session tab)
+                         (or (nil? session-id)
+                             (= (str session-id) (str (get-in tab [:session :id])))))
+                  (update-in tab [:session :goal] gateway-contract/newer-session-goal goal)
+                  tab))))
+
+(reg-event-db :sync-session-goal
+              (fn [db [_ tab-id chunk]]
+                (sync-session-goal db tab-id chunk)))
 
 (reg-event-db :set-layout
               (fn [db [_ layout]]
@@ -4893,6 +4909,9 @@
 
           tab-id
           (or tab-id (current-tab-id db))
+
+          db
+          (sync-session-goal db tab-id chunk)
 
           tab
           (db-for-tab db tab-id)

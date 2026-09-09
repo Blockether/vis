@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.session.model :as smodel]
+            [com.blockether.vis.internal.session.goals :as goals]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.contract.wire :as wire]
@@ -1077,6 +1078,10 @@
 (defonce model-listener
   ;; Registered ONCE at namespace load, mirroring `title-listener` below.
   (smodel/add-model-listener! #'broadcast-model-event!))
+
+(defonce goal-listener
+  (goals/add-listener! (fn [sid goal]
+                         (append-event! sid "session.goal_updated" {:goal goal} {:store? false}))))
 
 (defn session-model
   "The session's persisted model preference as `{:provider :model}`
@@ -4463,10 +4468,11 @@
 ;; Session lifecycle + souls
 
 (defn- session->wire
-  [{:keys [id channel title external-id workspace-id]}]
+  [{:keys [id channel title external-id workspace-id goal]}]
   (wire/canonical {:id (str id)
                    :channel (name channel)
                    :title title
+                   :goal goal
                    :external_id external-id
                    :workspace_id workspace-id}))
 
@@ -4556,6 +4562,7 @@
                  :channel (some-> (:channel session)
                                   name)
                  :title (:title session)
+                 :goal (:goal session)
                  :model (:model session) ; the state's ROOT model, NOT the pin below
                  :created_at (:created-at session)
                  :project_id (some-> (:project-id session)

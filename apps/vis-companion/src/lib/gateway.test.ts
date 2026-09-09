@@ -1189,4 +1189,23 @@ describe('GatewayClient abandoned requests', () => {
     expect(calls).toBe(1);
     expect(unhandled).toEqual([]);
   });
+ });
+
+describe('session goal revisions', () => {
+  it('keeps live state across replay, stale reads and a cold initial fetch', async () => {
+    const { STORY_GOAL } = await import('../dev/story-data');
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    const live = { ...STORY_GOAL, revision: 10, status: 'complete' as const };
+    expect(client.noteSessionGoal('s1', live)).toBeNull();
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ id: "s1", goal: STORY_GOAL })))));
+    expect((await client.session('s1')).goal).toEqual(live);
+    expect(client.noteSessionGoal('s1', STORY_GOAL)?.goal).toEqual(live);
+    expect(client.noteSessionGoal('s1', { ...live, revision: 11, status: 'invalid' })?.goal).toEqual(live);
+    const pending = client.session('s1');
+    const replacement = { ...STORY_GOAL, id: 'replacement', revision: 12 };
+    client.noteSessionGoal('s1', replacement);
+    expect((await pending).goal).toEqual(replacement);
+    expect(client.cachedSession('s1')?.goal).toEqual(replacement);
+  });
 });

@@ -11,7 +11,8 @@
    title mutation point."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.session.titling :as titling]))
+            [com.blockether.vis.internal.session.titling :as titling]
+            [com.blockether.vis.internal.session.goals :as goals]))
 
 (defn- render-transcript
   "Render a session's transcript as Markdown (`:md`) or a STANDALONE,
@@ -108,7 +109,13 @@
 (def specs
   "Declarative session slash specs, hooked onto foundation-core's manifest
    via `:ext/slash-commands` (concatenated with the workspace slashes)."
-  [{:slash/name "rename"
+  [{:slash/name "goal"
+    :slash/doc "Set an explicit session goal, or pause, resume or cancel it."
+    :slash/usage "/goal [--budget N] [--] <objective> | --pause | --resume | --cancel"
+    :slash/prompt-arg "Objective"
+    :slash/requires #{:session}
+    :slash/run-fn goals/slash!}
+   {:slash/name "rename"
     :slash/doc "Rename this session's title."
     :slash/usage "/rename <new title>"
     :slash/prompt-arg "New session title"

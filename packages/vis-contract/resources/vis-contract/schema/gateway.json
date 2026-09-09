@@ -117,6 +117,12 @@
                       "resource",
                       "sse"
                     ]
+                  },
+                  "response_schema": {
+                    "enum": [
+                      "session",
+                      "session_list"
+                    ]
                   }
                 },
                 "required": [
@@ -145,6 +151,12 @@
                       "negotiated",
                       "resource",
                       "sse"
+                    ]
+                  },
+                  "response_schema": {
+                    "enum": [
+                      "session",
+                      "session_list"
                     ]
                   }
                 },
@@ -175,6 +187,12 @@
                       "resource",
                       "sse"
                     ]
+                  },
+                  "response_schema": {
+                    "enum": [
+                      "session",
+                      "session_list"
+                    ]
                   }
                 },
                 "required": [
@@ -204,6 +222,12 @@
                       "resource",
                       "sse"
                     ]
+                  },
+                  "response_schema": {
+                    "enum": [
+                      "session",
+                      "session_list"
+                    ]
                   }
                 },
                 "required": [
@@ -232,6 +256,12 @@
                       "negotiated",
                       "resource",
                       "sse"
+                    ]
+                  },
+                  "response_schema": {
+                    "enum": [
+                      "session",
+                      "session_list"
                     ]
                   }
                 },
@@ -494,6 +524,71 @@
         "ready_event",
         "generation_start_event"
       ]
+    },
+    "session_goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "max_objective_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_reason_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status_labels": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paused": {
+              "type": "string",
+              "minLength": 1
+            },
+            "blocked": {
+              "type": "string",
+              "minLength": 1
+            },
+            "budget_limited": {
+              "type": "string",
+              "minLength": 1
+            },
+            "complete": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cancelled": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "active",
+            "paused",
+            "blocked",
+            "budget_limited",
+            "complete",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "statuses",
+        "max_objective_chars",
+        "max_reason_chars",
+        "status_labels"
+      ]
     }
   },
   "required": [
@@ -504,6 +599,125 @@
     "routes",
     "events",
     "envelopes",
-    "replay"
-  ]
+    "replay",
+    "session_goal"
+  ],
+  "$defs": {
+    "session_goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "pattern": "\\S"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "paused",
+            "blocked",
+            "budget_limited",
+            "complete",
+            "cancelled"
+          ]
+        },
+        "token_budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "tokens_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "time_used_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated_at": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "objective",
+        "status",
+        "token_budget",
+        "tokens_used",
+        "time_used_ms",
+        "revision",
+        "version",
+        "reason",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "session": {
+      "type": "object",
+      "description": "Session metadata. goal is null until an explicit /goal or SDK request creates it. Other session fields are not yet constrained here.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/session_goal"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "goal"
+      ]
+    },
+    "session_list": {
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session"
+          }
+        }
+      },
+      "required": [
+        "sessions"
+      ]
+    }
+  }
 }

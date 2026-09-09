@@ -447,6 +447,7 @@
              (cond-> {:id session-id
                       :channel (:channel session)
                       :title (:title session)
+                      :goal (:goal session)
                       :model (:model session)
                       :created-at (:created-at session)
                       :turns turns
@@ -494,6 +495,7 @@
      (cond-> {:id (:id session)
               :channel (:channel session)
               :title (:title session)
+              :goal (:goal session)
               :created-at (:created-at session)
               :modified-at modified-at
               :turn-count (count turns)}
@@ -1394,8 +1396,9 @@
      :result
      (str
        "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
-       "usage, transcript}`. Printing shows a summary; all fields remain accessible by key or "
-       "`dict(r)`/`json.dumps(r)`. The transcript has one `turns`/`iterations`/`blocks` projection, "
+       "usage, transcript}`. `session.goal` is the persisted goal or None. Printing shows a summary; "
+       "all fields remain accessible by key or `dict(r)`/`json.dumps(r)`. The transcript has one "
+       "`turns`/`iterations`/`blocks` projection, "
        "including folded history and block timing/call metadata, not duplicate `forms`, `dialog`, "
        "or `timeline`. No global index: use `list_sessions()`. `usage` is compact "
        "token/cost/outcome/error/routing; its tool rows OVERLAP, so never sum them.")}))
@@ -1410,9 +1413,11 @@
        "ONE session's descriptor — `get_session()` is the current session, `get_session(target)` "
        "another (an id, an unambiguous prefix, or the copied `vis_session_id#<uuid>` marker). No "
        "transcript: the content is `read_session(id)`, the whole index `list_sessions()`.")
-     :result (str "String-keyed row `{id, channel, title, turn_count, created_at, modified_at, "
-                  "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
-                  "(`{id, outcome, user_request}`) when known. None when nothing matches.")}))
+     :result (str
+               "String-keyed row `{id, channel, title, goal, turn_count, created_at, modified_at, "
+               "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
+               "(`{id, outcome, user_request}`) when known. `goal` is the persisted goal or None. "
+               "None when nothing matches.")}))
 
 (def list-sessions-symbol
   (vis/symbol
@@ -1427,10 +1432,10 @@
           "`get_session(id)`, its content `read_session(id)`. Filter in python_execution; never "
           "stringify or slice blindly.")
      :result
-     (str
-       "String-keyed rows `{id, channel, title, turn_count, created_at, modified_at}`; a matched "
-       "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
-       "`request_snippet`/`reply_snippet` windows.")}))
+     (str "String-keyed rows `{id, channel, title, goal, turn_count, created_at, modified_at}`; "
+          "`goal` is the persisted goal or None. A matched "
+          "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
+          "`request_snippet`/`reply_snippet` windows.")}))
 
 ;; Session introspection is part of foundation-core, but its callable symbols and
 ;; prompt guidance remain behind the default-off `introspection` toggle.

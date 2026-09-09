@@ -3220,7 +3220,8 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :workspace-entry :header-help :header-tasks :header-search :header-new-session})
+  #{:copy-id :workspace-entry :header-help :footer-goal :footer-limits :header-tasks :header-search
+    :header-new-session})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -4582,6 +4583,9 @@
                   ;; keep the tab's chip in sync with the shared store.
                   :model-sync
                   (state/dispatch [:sync-session-model tab-id chunk])
+
+                  :goal-sync
+                  (state/dispatch [:sync-session-goal tab-id chunk])
 
                   ;; A run is BLOCKED on the operator in a process that is NOT
                   ;; this one — typically the serve daemon. The in-process `:tui`
@@ -6215,6 +6219,20 @@
                                      :search-close
                                      (state/dispatch [:search-clear])
 
+                                     :footer-goal
+                                     (dlg/text-view-dialog! screen
+                                                            "Session goal"
+                                                            (footer/goal-detail-lines
+                                                              (get-in @state/app-db
+                                                                      [:session :goal])))
+
+                                     :footer-limits
+                                     (dlg/text-view-dialog! screen
+                                                            "Limits"
+                                                            (footer/limits-detail-lines
+                                                              @state/app-db
+                                                              (System/currentTimeMillis)))
+
                                      :header-help
                                      (state/dispatch [:toggle-help])
 
@@ -6486,6 +6504,19 @@
                                  :toggle-help
                                  (state/dispatch [:toggle-help])
 
+                                 :footer-goal
+                                 (dlg/text-view-dialog! screen
+                                                        "Session goal"
+                                                        (footer/goal-detail-lines
+                                                          (get-in @state/app-db [:session :goal])))
+
+                                 :footer-limits
+                                 (dlg/text-view-dialog! screen
+                                                        "Limits"
+                                                        (footer/limits-detail-lines
+                                                          @state/app-db
+                                                          (System/currentTimeMillis)))
+
                                  :header-help
                                  (state/dispatch [:toggle-help])
 
@@ -6611,6 +6642,19 @@
                                  ;; its own dispatch — so without these two branches
                                  ;; the chips fell through to `open-click-target!`
                                  ;; (a no-op) and never toggled their panel.
+                                 :footer-goal
+                                 (dlg/text-view-dialog! screen
+                                                        "Session goal"
+                                                        (footer/goal-detail-lines
+                                                          (get-in @state/app-db [:session :goal])))
+
+                                 :footer-limits
+                                 (dlg/text-view-dialog! screen
+                                                        "Limits"
+                                                        (footer/limits-detail-lines
+                                                          @state/app-db
+                                                          (System/currentTimeMillis)))
+
                                  :header-help
                                  (state/dispatch [:toggle-help])
 

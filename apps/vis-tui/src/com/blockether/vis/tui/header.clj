@@ -204,7 +204,7 @@
   (or (:active-tab-id db) (:id (some #(when (:active? %) %) entries)) (:id (first entries))))
 
 (defn header-rows
-  "Rows needed by the fixed standalone-app header."
+  "Rows reserved by the session tabs; goal controls live in the footer."
   ([_db] header-rows-base)
   ([_db _cols] header-rows-base))
 

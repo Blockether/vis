@@ -1179,6 +1179,8 @@
                    :channel (->kw-back (:channel soul))
                    :external-id (:external_id soul)
                    :title (:title state)
+                   :goal (some-> (:goal soul)
+                                 json/read-json)
                    :system-prompt (:system_prompt state)
                    :model (:llm_root_model state)
                    :version (or (:version state) 0)
@@ -1265,6 +1267,8 @@
            :channel (->kw-back (:channel row))
            :external-id (:external_id row)
            :title (:state_title row)
+           :goal (some-> (:goal row)
+                         json/read-json)
            :version (:version row)
            :fork-count (or (:fork_count row) 0)
            :created-at (->date (:created_at row))
@@ -1275,7 +1279,7 @@
            :favorite-rank (:favorite_rank row)})
         (query! db-info
                 {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
-                          :cs.project_id :cs.project_position :cs.favorite_rank
+                          :cs.project_id :cs.project_position :cs.favorite_rank :cs.goal
                           [:p.name :project_name] [:s.title :state_title] :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
@@ -2701,6 +2705,30 @@
      :else v)))
 
 ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model)
+
+(defn db-get-session-goal
+  "Read the canonical string-keyed goal, or nil. Goals belong to a soul, not a fold."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (some-> (query-one! db-info
+                        {:select [:goal] :from :session_soul :where [:= :id (->ref session-id)]})
+            :goal
+            json/read-json)))
+
+(defn db-compare-session-goal!
+  "Replace a goal only if its persisted revision still matches. Missing sessions refuse."
+  [db-info session-id revision goal]
+  (locking sqlite-write-lock
+    (pos?
+      (long
+        (or
+          (:next.jdbc/update-count
+            (first
+              (jdbc/execute!
+                (ds db-info)
+                ["UPDATE session_soul SET goal = ? WHERE id = ? AND COALESCE(json_extract(goal, '$.revision'), 0) = ?"
+                 (->json goal) (->ref session-id) revision])))
+          0)))))
 
 (defn db-get-session-model-pref
   "The persisted model preference for a session (soul id) as

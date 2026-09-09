@@ -35,6 +35,7 @@
    reason run-state had to live inside the assistant bubble; this
    namespace replaces that whole path."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.tui.client :as lp]
             [com.blockether.vis.tui.limits-fmt :as lfmt]
             [com.blockether.vis.tui.components :as components]
@@ -615,24 +616,57 @@
       cost-text
       (conj {:text cost-text :fg t/footer-fg-muted :bold? false :region :right :priority 3}))))
 
-(defn- build-limits-segments
+(defn- goal-token-count [n] (String/format Locale/ROOT "%,d" (object-array [(long n)])))
+
+(defn goal-detail-lines
+  "Full persisted objective, state and measured usage for the existing read-only viewer."
+  [goal]
+  (if-not goal
+    ["No session goal. Use /goal <objective> to create one."]
+    (cond-> [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
+             (get goal "objective") ""
+             (str (goal-token-count (get goal "tokens_used"))
+                  " tokens used"
+                  (when-let [budget (get goal "token_budget")]
+                    (str " / " (goal-token-count budget) " budget")))
+             (str "Provider time: " (or (fmt/format-duration (get goal "time_used_ms")) "0s"))]
+      (seq (get goal "reason"))
+      (into ["" (get goal "reason")])
+
+      true
+      (into ["" "Use /goal --pause, --resume or --cancel in the composer."]))))
+
+(defn limits-detail-lines
+  "Provider quota summary and reset windows from the current session's cached report."
   [db now-ms]
-  ;; Limits/usage belong to the provider the SESSION actually routes through —
-  ;; the same per-session pref the model label (builtin_hooks) and the engine
-  ;; use. Reading `chosen-model-info` here showed the GLOBAL router default
-  ;; (e.g. zai) even after the user switched the session to Claude, so the
-  ;; "request usages" row reported the wrong coding plan. Fall back to the
-  ;; router default only when the session has no explicit pick.
   (let [provider
         (session-effective-provider db)
 
-        text
-        (when provider (generic-limits-footer-text db provider now-ms))]
+        report
+        (report-for-current-provider db provider)]
 
-    (into (cond-> []
-            text
-            (conj {:text text :fg t/footer-fg-muted :bold? false :region :left :priority 1}))
-          (build-usage-segments db))))
+    (into [(or (when provider (generic-limits-footer-text db provider now-ms))
+               "No limits reported by this provider.")]
+          (for [row
+                (get-in report [:dynamic :limits])
+
+                :when (get-in row [:window :resets-at-ms])]
+
+            (format-generic-limit-rows now-ms [row])))))
+
+(defn- build-limits-segments
+  [db _now-ms]
+  (into (cond-> [{:text " Limits " :kind :footer-limits :region :left :priority 1}]
+          (get-in db [:session :goal])
+          (conj {:text (str " Goal: "
+                            (get gateway-contract/session-goal-labels
+                                 (get-in db [:session :goal "status"]))
+                            " ")
+                 :kind :footer-goal
+                 :region :left
+                 :priority 1
+                 :join-left? true}))
+        (build-usage-segments db)))
 
 ;;; ── Echo area (which-key strip + transient messages) ────────────────
 (defn- hint-segment

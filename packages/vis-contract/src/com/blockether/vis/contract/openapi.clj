@@ -2,6 +2,8 @@
   "Renders the validated built-in gateway contract as OpenAPI 3.1.
    Extension routes remain in their extension-owned contracts."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as gateway]))
 
 (def ^:private openapi-version "OpenAPI specification version this document is written to." "3.1.1")
@@ -78,7 +80,7 @@
              (array-map "$ref" "#/components/responses/error")))
 
 (defn- operation
-  [method {:keys [path audience]} {:keys [request response]}]
+  [method {:keys [path audience]} {:keys [request response response-schema]}]
   (let [body (when-let [content (request-content request)]
                (array-map "required" true "content" content))]
     (cond-> (array-map "operationId" (operation-id method path) "tags" [(name audience)])
@@ -87,6 +89,10 @@
 
       true
       (assoc "responses" (responses response))
+
+      response-schema
+      (assoc-in ["responses" "200" "content" "application/json" "schema"]
+        {"$ref" (str "#/components/schemas/" (name response-schema))})
 
       ;; The document's default security covers the gated audiences; a public
       ;; route is answered without a token even when the gateway requires one.
@@ -121,9 +127,9 @@
                                      (array-map type-key text-schema message-key text-schema))))))
 
 (def ^:private components
-  (array-map "securitySchemes"
-             (array-map
-               "bearer"
+  (array-map
+    "securitySchemes"
+    (array-map "bearer"
                (array-map
                  "type" "http"
                  "scheme" "bearer"
@@ -136,12 +142,18 @@
                           "name" (gateway/header :gateway-secret)
                           "description"
                           "The same secret, as the header a same-machine client already sends."))
-             "schemas" (array-map "error" error-schema)
-             "responses"
-             (array-map "error"
-                        (array-map "description" "The call was refused; the body names the reason."
-                                   "content" {"application/json"
-                                              {"schema" {"$ref" "#/components/schemas/error"}}}))))
+    "schemas" (into {"error" error-schema}
+                    (walk/postwalk
+                      (fn [value]
+                        (if (and (map? value) (string? (get value "$ref")))
+                          (update value "$ref" str/replace "#/$defs/" "#/components/schemas/")
+                          value))
+                      (get (document/schema-document "gateway") "$defs")))
+    "responses" (array-map "error"
+                           (array-map
+                             "description" "The call was refused; the body names the reason."
+                             "content" {"application/json"
+                                        {"schema" {"$ref" "#/components/schemas/error"}}}))))
 
 (defn document
   "The OpenAPI 3.1 document for the built-in gateway routes, string-keyed and

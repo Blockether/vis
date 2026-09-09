@@ -37,10 +37,26 @@ export interface GatewayConn {
   pinned?: boolean;
 }
 
+export interface SessionGoal {
+  id: string;
+  objective: string;
+  status: "active" | "paused" | "blocked" | "budget_limited" | "complete" | "cancelled";
+  token_budget: number | null;
+  tokens_used: number;
+  time_used_ms: number;
+  revision: number;
+  version: number;
+  reason: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface Session {
   id: string;
   title?: string;
   channel?: string;
+  /** Explicit objective; null means this session has no goal. */
+  goal?: SessionGoal | null;
   /** The session state's ROOT model — a bare name, no provider, not the pin. */
   model?: string;
   /**

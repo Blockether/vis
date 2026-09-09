@@ -1943,6 +1943,8 @@ export function SessionScreen({
       sid,
       (event) => {
         if (event.type !== "subscription.ready" || typeof event.is_live !== "boolean") return;
+        const nextSession = client.noteSessionGoal(sid, event.goal);
+        if (nextSession) setSession(nextSession);
         const currentRunningTurn = runningTurnRef.current;
         const painted =
           currentRunningTurn?.status === "running" ? currentRunningTurn.id : "";
@@ -2606,6 +2608,11 @@ export function SessionScreen({
               }),
             );
             break;
+          case "session.goal_updated": {
+            const row = client.noteSessionGoal(sid, event.goal);
+            if (row) setSession(row);
+            break;
+          }
           default:
             break;
         }
@@ -4519,6 +4526,7 @@ export function SessionScreen({
     sessionId: sid,
     connected,
     artifacts: { count: artifacts.length, isOpen: artifactsOpen },
+    goal: session?.goal,
   };
   const headerCommands: SessionHeaderCommands = {
     back: onBack,

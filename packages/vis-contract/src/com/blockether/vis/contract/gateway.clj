@@ -51,6 +51,25 @@
   [method path]
   (get route-operations [method path]))
 
+(def session-goal-labels
+  "Display labels for the closed session-goal status vocabulary. Keys stay in wire spelling."
+  (get-in @source ["session_goal" "status_labels"]))
+
+(defn valid-session-goal?
+  "True for a canonical wire goal. A session without a goal carries nil instead."
+  [goal]
+  (document/valid-json? "gateway" "session_goal" goal))
+
+(defn newer-session-goal
+  "Keep the highest valid session-wide revision across HTTP snapshots and event replay.
+   Goal replacement increments revision too; invalid, absent and older snapshots cannot rewind it."
+  [previous incoming]
+  (let [previous (when (valid-session-goal? previous) previous)]
+    (if (and (valid-session-goal? incoming)
+             (> (long (get incoming "revision")) (long (get previous "revision" 0))))
+      incoming
+      previous)))
+
 (def session-event-types
   "Closed built-in vocabulary carried by the session journal and multiplexed session SSE stream."
   (set (get-in @source ["events" "session"])))
@@ -186,7 +205,7 @@
 
 (defn subscription-ready-event
   "Build the canonical first frame for one session subscription."
-  [{:keys [session-id cursor current-turn-id is-live server-time-ms latest-iteration]}]
+  [{:keys [session-id cursor current-turn-id is-live server-time-ms latest-iteration goal]}]
   (let [required
         subscription-ready-required-keys
 
@@ -199,7 +218,8 @@
              (get required :current-turn-id) (some-> current-turn-id
                                                      str)
              (get required :is-live) (boolean is-live)
-             (get required :server-time-ms) server-time-ms}
+             (get required :server-time-ms) server-time-ms
+             (get required :goal) goal}
       (some? latest-iteration)
       (assoc (get optional :latest-iteration) latest-iteration))))
 

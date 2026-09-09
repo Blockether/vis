@@ -37,6 +37,7 @@
     [com.blockether.vis.internal.channel.render :as render]
     [com.blockether.vis.internal.persistance.core :as persistance]
     [com.blockether.vis.internal.session.model :as session-model]
+    [com.blockether.vis.internal.session.goals :as goals]
     [com.blockether.vis.internal.context.prompt :as prompt]
     [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
     [com.blockether.vis.internal.provider.error :as perr]
@@ -1861,8 +1862,9 @@
                      :blocks blocks
                      :answer answer-value}
                     extra-ctx)]
-     ;; Council replies and extension validators share the normal continuation path.
+     ;; Explicit goals and extension validators share the normal continuation path.
      (or (council/reply-error environment)
+         (goals/completion-error environment)
          (some (fn [ext]
                  (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                          (when (= :turn.answer/validate phase)
@@ -5204,6 +5206,7 @@
           ;; gateway's last-resort watchdog can cancel the entire turn.
           provider-watchdog-timeouts (assoc provider-deadlines
                                        :first-output-timeout-ms (+ first-output-timeout-ms 10000))
+          goal-at-request-start (goals/check-goal environment)
           provider-started-at-ms (util/now-ms)
           _ (when on-chunk
               (on-chunk (provider-call-chunk iteration-position
@@ -5372,6 +5375,7 @@
                                 :thinking thinking}
                                code-observation))
           api-usage (:api-usage ask-result)
+          _ (goals/account! environment goal-at-request-start api-usage provider-duration-ms)
           actual-provider (actual-llm-provider resolved-model ask-result)
           actual-model (actual-llm-model resolved-model ask-result)
           ;; Blockether/vis#174: publish measured input before Python can fold this request.
@@ -5503,9 +5507,14 @@
                                                           :activity snapshot}
                                                    settled?
                                                    (assoc :settled? true)))))
+                    goal-halt (goals/halt-result environment goal-at-request-start)
                     raw-execution
                     (try
                       (cond
+                        goal-halt {:error (op-error (:answer goal-halt)
+                                                    {:code expr :phase :vis/goal})
+                                   :duration-ms 0
+                                   :op :vis/guard}
                         preflight-error {:error (op-error preflight-error
                                                           {:code expr :phase :vis/preflight})
                                          :duration-ms 0
@@ -7909,7 +7918,8 @@
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
            reasoning-effort turn-features workspace-overrides]}]
   (let [system-prompt
-        (voice-system-prompt system-prompt turn-features)
+        (str (voice-system-prompt system-prompt turn-features)
+             (when (goals/check-goal environment) (str "\n\n" goals/prompt)))
 
         environment
         (cond-> environment
@@ -7943,6 +7953,9 @@
           (assoc :turn/user-request
             user-request :turn/system-prompt
             system-prompt))
+
+        goal-at-turn-start
+        (goals/check-goal environment)
 
         resolved-model
         (resolve-effective-model (:router environment))
@@ -8484,7 +8497,9 @@
                                  FRESH_ITER_CARRY
                                  (when (seq seeded-trailer-iters)
                                    {:trailer-iters seeded-trailer-iters}))]
-          (let [{:keys [iteration trace trailer-iters llm-provider]} loop-state]
+          (let [{:keys [iteration trace trailer-iters llm-provider]} loop-state
+                goal-halt (goals/halt-result environment goal-at-turn-start)]
+
             (ctx-loop/set-turn-state! environment :iteration (inc (long iteration)))
             (cond
               (when cancel-atom @cancel-atom)
@@ -8507,6 +8522,11 @@
                                       (finalize-cost))]
 
                     result))
+              goal-halt (merge goal-halt
+                               {:status-id (status->id (:status goal-halt))
+                                :trace trace
+                                :iteration-count iteration}
+                               (finalize-cost))
               :else
               (let
                 [raw-reasoning-level (when has-reasoning? base-reasoning-level)
@@ -9735,13 +9755,23 @@
         _
         (titling/maybe-auto-title! env user-request)
 
+        goal-at-turn-start
+        (goals/check-goal env)
+
         result
-        (let [result
-              (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))]
-          (if-let [prepare-result (get-in loop-opts [:hooks :prepare-result])]
-            (let [prepared (prepare-result result)]
-              (assoc prepared :status-id (status->id (:status prepared))))
-            result))
+        (try
+          (let [raw
+                (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
+
+                result
+                (if-let [prepare-result (get-in loop-opts [:hooks :prepare-result])]
+                  (let [prepared (prepare-result raw)]
+                    (assoc prepared :status-id (status->id (:status prepared))))
+                  raw)]
+
+            (goals/finish-turn! env goal-at-turn-start (:status result))
+            result)
+          (catch Throwable t (goals/finish-turn! env goal-at-turn-start :error) (throw t)))
 
         ;; Deferred auto-title: only a successful foreground turn earns a cosmetic
         ;; provider call. Cancellation and failure must stay terminal without
@@ -9749,7 +9779,8 @@
         ;; a rate-limited gateway's slot away from the user's request
         ;; (Blockether/vis#71). A no-op unless `titling.mode` is `llm`.
         _
-        (when (= :success (:status result)) (titling/after-turn-auto-title! env user-request))
+        (when (and (= :success (:status result)) (nil? (goals/halt-result env goal-at-turn-start)))
+          (titling/after-turn-auto-title! env user-request))
 
         prior-outcome
         (:status result)
@@ -10172,7 +10203,11 @@
                            env)]
             (extension/with-context {:env turn-env}
                                     (run-normal-turn! turn-env (:text expansion) loop-opts)))
-          (run-slash-turn! env user-request slash-result loop-opts))
+          (if (and (= ["goal"] (:path slash-result))
+                   (= :ok (get-in slash-result [:result :slash/status]))
+                   (true? (get-in slash-result [:result :slash/data :goal-run?])))
+            (run-normal-turn! env user-request loop-opts)
+            (run-slash-turn! env user-request slash-result loop-opts)))
         (run-normal-turn! env user-request loop-opts)))))
 
 (defn custom-bindings
@@ -12378,6 +12413,7 @@
      :model (:model session) ; the state's ROOT model, not the user's pin
      :model-pref (:model-pref session) ; {:provider :model} pin, or nil for router default
      :title (:title session)
+     :goal (:goal session)
      :created-at (:created-at session)
      :owner-id (:owner-id session)
      :project-id (:project-id session)
@@ -12392,6 +12428,7 @@
            :channel (:channel c)
            :external-id (:external-id c)
            :title (:title c)
+           :goal (:goal c)
            :created-at (:created-at c)
            :owner-id (:owner-id c)
            :project-id (:project-id c)

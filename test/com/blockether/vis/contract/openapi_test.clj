@@ -106,3 +106,22 @@
       (expect (= "3.1.1" (get @encoded "openapi")))
       (expect (= (str contract/protocol-version) (get-in @encoded ["info" "version"])))
       (expect (= contract/protocol-version (get-in @encoded ["x-vis-protocol" "version"])))))
+
+(defdescribe
+  session-goal-schema-test
+  (it "exposes the canonical goal on detail, creation, mutation and list responses"
+      (doseq [[path method shape]
+              [["/v1/sessions/{sid}" "get" "session"] ["/v1/sessions/{sid}" "patch" "session"]
+               ["/v1/sessions" "post" "session"] ["/v1/sessions" "get" "session_list"]]]
+        (expect (= {"$ref" (str "#/components/schemas/" shape)}
+                   (get-in @encoded
+                           ["paths" path method "responses" "200" "content" "application/json"
+                            "schema"]))))
+      (expect (= ["id" "goal"] (get-in @encoded ["components" "schemas" "session" "required"])))
+      (expect (= {"$ref" "#/components/schemas/session_goal"}
+                 (get-in @encoded
+                         ["components" "schemas" "session" "properties" "goal" "anyOf" 1])))
+      (expect (= (set (keys contract/session-goal-labels))
+                 (set (get-in @encoded
+                              ["components" "schemas" "session_goal" "properties" "status"
+                               "enum"]))))))

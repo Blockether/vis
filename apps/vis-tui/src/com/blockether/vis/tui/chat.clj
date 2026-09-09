@@ -6,6 +6,7 @@
    Session data is persisted in `~/.vis/vis.mdb` so you can come back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
             [com.blockether.vis.tui.terminal-image :as timg]
@@ -1317,6 +1318,9 @@
       "session.model_updated"
       {:phase :model-sync :provider (event-get event :provider) :model (event-get event :model)}
 
+      "session.goal_updated"
+      {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
+
       ;; Both capabilities cross the process boundary on one lifecycle. Internal
       ;; state remains specialized: input owns the keyboard; live preserves it.
       "view.open"
@@ -1355,9 +1359,11 @@
       ;; reconnect replays what it owes), and acting on it was a guess. The frame
       ;; below carries the daemon's actual turn state, which is what the UI acts on.
       "subscription.ready"
-      {:phase :gateway-ready
-       :gateway-turn-id (event-get event :current-turn-id)
-       :is-state-known (some? (event-get event :is-live))}
+      (cond-> {:phase :gateway-ready
+               :gateway-turn-id (event-get event :current-turn-id)
+               :is-state-known (some? (event-get event :is-live))}
+        (some? (event-get event :goal))
+        (assoc :goal (event-get event :goal)))
 
       nil)))
 
@@ -1509,6 +1515,7 @@
 
         (cond-> {:id resolved-id
                  :history (:messages page)
+                 :goal (gateway-contract/newer-session-goal nil (get soul "goal"))
                  ;; Cursor for the lazy scroll-up loader. It rides INSIDE the
                  ;; session map, so it is tab-scoped for free (`:session` is
                  ;; already per-tab state).

@@ -1,12 +1,18 @@
+import { useState } from "react";
+import gatewayContract from "../../../../packages/vis-contract/resources/vis-contract/gateway.json";
+import type { SessionGoal } from "../lib/types";
 import { useDeskRail } from "../lib/fit-rows";
 import { markSessionId } from "../lib/session-id";
 import { ArtifactsChip } from "./ArtifactsSheet";
-import { BackButton, CopyChip, SidebarToggle } from "./ui";
+import { BackButton, Button, CopyChip, DialogFrame, Modal, SidebarToggle } from "./ui";
+
+const GOAL_STATUS = gatewayContract.session_goal.status_labels;
 
 export type SessionHeaderModel = Readonly<{
   title: string;
   sessionId: string;
   connected: boolean;
+  goal?: SessionGoal | null;
   artifacts: Readonly<{ count: number; isOpen: boolean }>;
 }>;
 
@@ -50,6 +56,8 @@ export function SessionHeader({
   // puts the list away, or brings it back, takes that leading column; only a desk
   // with no list to toggle lets the title claim the edge.
   const isDesk = useDeskRail();
+  const [goalDetails, setGoalDetails] = useState(false);
+  const goal = model.goal;
   return (
     /* The notch strip stands above the 52px band via box-content. Edge controls
        own horizontal safe-area padding so the header's paper still reaches the glass. */
@@ -69,7 +77,7 @@ export function SessionHeader({
         <h1 className="truncate text-subhead font-semibold text-white mouse:text-title">
           {model.title}
         </h1>
-        <div className="flex min-w-0 items-center gap-1.5 font-mono text-meta text-dialog-hint">
+        <div className="flex min-w-0 items-center gap-1.5 font-mono text-ui text-dialog-hint mouse:text-meta">
           <span
             className={`size-1.5 shrink-0 ${
               model.connected
@@ -80,6 +88,13 @@ export function SessionHeader({
           <span className="shrink-0">
             {model.connected ? "Connected" : "Reconnecting"}
           </span>
+          {goal && (
+            <Button variant="quiet" density="panel" pressEffect="none" className="min-w-0 max-w-full"
+              aria-label={`Goal: ${GOAL_STATUS[goal.status]} — ${goal.objective}`}
+              aria-haspopup="dialog" onClick={() => setGoalDetails(true)}>
+              <span className="block max-w-full truncate">Goal: {goal.status !== "active" && `${GOAL_STATUS[goal.status]} — `}{goal.objective}</span>
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))] mouse:gap-1">
@@ -90,6 +105,22 @@ export function SessionHeader({
           onToggle={commands.toggleArtifacts}
         />
       </div>
+      {goal && goalDetails && (
+        <Modal onDismiss={() => setGoalDetails(false)} size="fit">
+          <DialogFrame title="Session goal" subtitle={GOAL_STATUS[goal.status]}
+            closeLabel="Close session goal" onClose={() => setGoalDetails(false)}>
+            <div className="space-y-3 p-4 text-body text-white">
+              <p className="whitespace-pre-wrap break-words">{goal.objective}</p>
+              <p className="text-ui text-dialog-hint">
+                {goal.tokens_used.toLocaleString("en-US")} tokens used
+                {goal.token_budget !== null && ` / ${goal.token_budget.toLocaleString("en-US")} budget`}
+              </p>
+              {goal.reason && <p className="whitespace-pre-wrap break-words">{goal.reason}</p>}
+              <p className="text-ui text-dialog-hint">Use /goal --pause, --resume or --cancel in the composer.</p>
+            </div>
+          </DialogFrame>
+        </Modal>
+      )}
     </header>
   );
 }

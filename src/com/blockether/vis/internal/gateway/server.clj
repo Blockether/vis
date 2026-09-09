@@ -856,6 +856,7 @@
                                                     :current-turn-id tid
                                                     :is-live (some? tid)
                                                     :server-time-ms (util/now-ms)
+                                                    :goal (get (state/soul sid) "goal")
                                                     :latest-iteration (when (pos? latest-iteration)
                                                                         latest-iteration)})]
 
