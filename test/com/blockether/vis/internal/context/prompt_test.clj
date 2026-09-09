@@ -333,75 +333,92 @@
                        "## 3. Inspect" "## 4. Edit + verify" "## 5. Act autonomously"
                        "## 6. Manage context" "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      (doseq [required ["Host project default" "`apropos(pattern)` filters SYMBOL names"
-                        "`doc(name)` returns" "runtime > source > docs > assumption"
-                        "obey its stated preconditions" "the curated index"
-                        "A skill is one of those documents" "`python_execution`" "ONE call exists"
-                        "there is no tool to choose" "Batch independent work in ONE block"
-                        "`await gather(...)` for"
-                        ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
-                        ;; is gone, so core routes to background + a poll the model can read.
-                        ;; Regression, issue #137: the handle line spelled `sh.type()` among the
-                        ;; status accessors, so following it verbatim raised a TypeError —
-                        ;; `type` SENDS keystrokes and its text argument is required.
-                        "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
-                        "NEVER paste a near-identical loop or block twice" "Define once and reuse"
-                        "factor it out on the second occurrence" "keep results in"
-                        ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
-                        ;; "print only what the answer needs" a contract instead of cost advice.
-                        "`print()` is the ONE channel back" "unprinted value is DISCARDED"
-                        "bare trailing expression is never echoed" "Inspect shape before indexing"
-                        "nothing lists one for you" "tests-only work starts with `run_tests`"
-                        "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
-                        "rerun after the fix" "unverified until a test covers it"
-                        "BATCH inside one block" "Write only files the task asked"
-                        "Commit, push, publish" "Treat context as a budget" "at most two targeted"
-                        ;; Regression, user report: cross-validating §6 against the runtime. The
-                        ;; utilization line named no field, and the two fields a model reads first
-                        ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
-                        ;; limit — calm at 15% while `over-budget-hint` is already saying FOLD SOON.
-                        ;; Name the ratio the fold triggers actually use.
-                        "pressure is `last_request_tokens`" "`auto_compress_above`"
-                        "`saturation`/`headroom_tokens` price"
-                        "`hint` only arms at 75% of that operating budget"
-                        ;; Svar owns prompt-cache policy; the core tells the model which explicit
-                        ;; provider-cache fields it receives and separates transport continuation.
-                        "`prompt_cache.token_read_percent`" "`request_hit_percent`"
-                        "WebSocket delta continuation is separate transport telemetry"
-                        ;; `session_drop` is gone: omitting the gist IS the discard, and a model
-                        ;; that does not know that writes a useless gist instead of dropping.
-                        "the gist discards outright" "named unresolved decision blocks the edit"
-                        "no repeated search/read"
-                        ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
-                        ;; but named no callable, so `fold_session` had to be remembered or
-                        ;; rediscovered through `doc()` — every other verb in the core is named.
-                        "`fold_session(key, gist)`" "Fold obsolete settled work"
-                        ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
-                        ;; but not the KEY it takes, so the shape was guessed — a selector structure
-                        ;; or a bare id that resolved to nothing. The key grammar is in the core now.
-                        "the key is a STRING" "`\"-t2/i9\"` everything through it"
-                        ;; Nothing stores a folded step for later: the gist is the whole survivor,
-                        ;; and a prompt that hints otherwise buys a fold the model regrets.
-                        "a folded step is NOT re-readable, so the gist is what survives"
-                        ;; Regression, user report: the benchmark said folding worked only because the task
-                        ;; ordered it. Real Z.ai GLM-5.3 Flash A/B data showed a forced 4k settled-prefix fold
-                        ;; doubled cost. Use the runtime's measured hint, require enough future work to amortize
-                        ;; the cache reset, and pin the exact oldest-prefix call instead of an arbitrary trigger.
-                        "research-to-implementation boundary" "`hint` as the default fold threshold"
-                        "Require a substantial next" "repeated large/clipped results"
-                        "clearly worth one cache reset" "beat append-only history"
-                        "Make the next iteration only" "`fold_session(\"-tN/iK\", gist)`"
-                        "last completed research step" "oldest settled prefix folds"
-                        "live step stays out" "one cache discontinuity" "One broad fold"
-                        ;; Regression, user report: Anthropic, OpenAI and Z.ai all continued from one
-                        ;; multi-turn fold without a read/fold loop, but transcript-like gists retained
-                        ;; raw logs and complete tests. Pin minimum sufficient narrowing, not just survival.
-                        "continue append-only from its gist"
-                        "never re-read settled work to refold it" "minimum sufficient checkpoint"
-                        "not a transcript" "conclusions, unknowns" "exact paths/symbols"
-                        "decisive evidence" "verification, edit/test state and dirty files"
-                        "omit raw outputs and full files/tests" "confirm reduction"]]
+      (doseq [required
+              ["Host project default" "`apropos(pattern)` filters SYMBOL names"
+               "`doc(name)` returns" "runtime > source > docs > assumption"
+               "obey its stated preconditions" "the curated index"
+               "A skill is one of those documents" "`python_execution`" "ONE call exists"
+               "there is no tool to choose" "Batch independent work in ONE block"
+               "`await gather(...)` for"
+               ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
+               ;; is gone, so core routes to background + a poll the model can read.
+               ;; Regression, issue #137: the handle line spelled `sh.type()` among the
+               ;; status accessors, so following it verbatim raised a TypeError —
+               ;; `type` SENDS keystrokes and its text argument is required.
+               "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
+               "Reuse helpers when they simplify repeated multi-step work" "keep results in"
+               ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
+               ;; "print only what the answer needs" a contract instead of cost advice.
+               "`print()` is the ONE channel back" "unprinted value is DISCARDED"
+               "bare trailing expression is never echoed" "Inspect shape before indexing"
+               "nothing lists one for you" "tests-only work starts with `run_tests`"
+               "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
+               "rerun after the fix" "Cover changed behavior with tests"
+               "Write only files the task asked" "Commit and push" "Treat context as a budget"
+               "Stop discovery once"
+               ;; Regression, user report: cross-validating §6 against the runtime. The
+               ;; utilization line named no field, and the two fields a model reads first
+               ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
+               ;; limit — calm at 15% while `over-budget-hint` is already saying FOLD SOON.
+               ;; Name the ratio the fold triggers actually use.
+               "pressure is `last_request_tokens`" "`auto_compress_above`"
+               "`saturation`/`headroom_tokens` price"
+               "`hint` only arms at 75% of that operating budget"
+               ;; Svar owns prompt-cache policy; the core tells the model which explicit
+               ;; provider-cache fields it receives and separates transport continuation.
+               "`prompt_cache.token_read_percent`" "`request_hit_percent`"
+               "WebSocket delta continuation is separate transport telemetry"
+               ;; `session_drop` is gone: omitting the gist IS the discard, and a model
+               ;; that does not know that writes a useless gist instead of dropping.
+               "the gist discards outright" "concrete uncertainty that affects the next step"
+               ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
+               ;; but named no callable, so `fold_session` had to be remembered or
+               ;; rediscovered through `doc()` — every other verb in the core is named.
+               "`fold_session(key, gist)`" "Fold obsolete settled work"
+               ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
+               ;; but not the KEY it takes, so the shape was guessed — a selector structure
+               ;; or a bare id that resolved to nothing. The key grammar is in the core now.
+               "the key is a STRING" "`\"-t2/i9\"` everything through it"
+               ;; Nothing stores a folded step for later: the gist is the whole survivor,
+               ;; and a prompt that hints otherwise buys a fold the model regrets.
+               "a folded step is NOT re-readable, so the gist is what survives"
+               ;; Regression, user report: the benchmark said folding worked only because the task
+               ;; ordered it. Real Z.ai GLM-5.3 Flash A/B data showed a forced 4k settled-prefix fold
+               ;; doubled cost. Use the runtime's measured hint, require enough future work to amortize
+               ;; the cache reset, and pin the exact oldest-prefix call instead of an arbitrary trigger.
+               "research-to-implementation boundary" "`hint` as the default fold threshold"
+               "Require a substantial next" "repeated large/clipped results"
+               "clearly worth one cache reset" "beat append-only history"
+               "Make the next iteration only" "`fold_session(\"-tN/iK\", gist)`"
+               "last completed research step" "oldest settled prefix folds" "live step stays out"
+               "one cache discontinuity" "One broad fold"
+               ;; Regression, user report: Anthropic, OpenAI and Z.ai all continued from one
+               ;; multi-turn fold without a read/fold loop, but transcript-like gists retained
+               ;; raw logs and complete tests. Pin minimum sufficient narrowing, not just survival.
+               "continue append-only from its gist" "never re-read settled work to refold it"
+               "minimum sufficient checkpoint" "not a transcript" "conclusions, unknowns"
+               "exact paths/symbols" "decisive evidence"
+               "verification, edit/test state and dirty files"
+               "omit raw outputs and full files/tests" "confirm reduction"]]
         (expect (str/includes? text required)))
+      ;; These assertions pin prompt content, not model compliance.
+      (doseq
+        [required
+         ["If asked only for analysis or a diff preview, do not apply changes"
+          "create worktrees or clones only when explicitly requested"
+          "Commit and push require an explicit request"
+          "or explicit authorization in applicable project instructions"
+          "Honor narrower user requests"
+          "Other external actions (releases, messages, deployments, live service restarts) require an explicit request"
+          "When relevant checks pass, finish the authorized workflow"
+          "only for new edits, failures, or a concrete unresolved risk"]]
+        (expect (str/includes? text required)))
+      ;; Regression: a blanket CORE prohibition overrode repository Git opt-in.
+      (expect
+        (not
+          (str/includes?
+            text
+            "Commit, push, publish, message people, or mutate external systems only when explicitly requested")))
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.
       (doseq [required
@@ -949,7 +966,7 @@
                    ;; Several hits in ONE file are ONE patch call now, so there is no
                    ;; order left for the caller to compute.
                    (expect (not (str/includes? text "bottom-up")))
-                   (expect (str/includes? text "every `patch` edit for a file"))
+                   (expect (str/includes? text "`patch(path, edits)`, ONE call per file"))
                    (expect (str/includes? text "FRESH ANCHOR"))
                    ;; User reports: recent sessions copied the primary grep example without
                    ;; context even though nearby lines often answered the question outright.
@@ -966,9 +983,8 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "`sh.logs(-50)` (last n LINES)")))))
 
-;; Regression: §2 named the execution surfaces but never the SHAPE of the code written on
-;; them, so blocks retyped absolute paths, redefined the same helper in every block, and a
-;; chore repeated across turns never became anything the project keeps.
+;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
+;; do not redefine paths or helpers that the session already provides.
 (defdescribe core-prompt-steers-python-shape-test
              (it "uses the advertised prebound paths instead of defining or guessing aliases"
                  (let [text (prompt/build-system-prompt {})]
@@ -992,23 +1008,20 @@
              ;; obvious place to keep a helper is the one place that silently loses it.
              (it "scopes a definition to the whole session and refuses `session` as storage"
                  (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "CALL the one an earlier block defined"))
+                   (expect (str/includes? text "Reuse helpers"))
                    (expect (str/includes? text "`defs()`"))
-                   (expect (str/includes? text "`defs(name)` reads one back to refine"))
+                   (expect (str/includes? text "`defs(name)` reads one back"))
                    ;; Regression: the prompt promised a `def` only "persists for the whole
                    ;; session" — true of the interpreter, false of the PROCESS, so a restart
                    ;; silently emptied the sandbox the transcript still described.
-                   (expect (str/includes? text "outlives the block, the turn, and"))
-                   (expect (str/includes? text "a gateway restart"))
+                   (expect (str/includes? text "outlives the block, turn"))
+                   (expect (str/includes? text "gateway restart"))
                    (expect (str/includes? text "REBUILT before every block"))
                    (expect (str/includes? text "never store in it"))
                    (expect (not (str/includes? text "definitions persist between blocks")))
                    (expect (not (str/includes? text "live read-only map")))))
-             ;; A chore that repeats across turns is the one thing a session can turn into
-             ;; project-durable tooling, and the rule is executable only if it names the file
-             ;; it lives in and the document that shows how to write it.
-             (it "proposes a Python extension when the chore outlives the turn"
+             ;; Creating extensions requires a request and reading their contract first.
+             (it "creates extensions only when asked and reads their contract"
                  (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text ".vis/extensions/*.py"))
-                   (expect (str/includes? text "doc(\"extending\")"))
-                   (expect (str/includes? text "write it when asked")))))
+                   (expect (str/includes? text "Create Python extensions only when asked"))
+                   (expect (str/includes? text "first read `doc(\"extending\")`")))))

@@ -20,18 +20,25 @@ Use `cat(path, start, end)` windows around the region you will edit, not whole f
 to the directories that can hold the symbol and keep its default context; batch reads per edit
 target, not per repository. Read a file whole only when a rule requires it or you will rewrite it.
 
-For simple, unambiguous bug-fix requests, the user expects the complete workflow: reproduce, fix,
-verify, then commit the scoped changes and push to `main` without another permission round, unless
-that request says otherwise. Treat such requests as authorization for that commit and push, not for
-unrelated changes, releases, deployments or service restarts. Never include unrelated working-tree
-changes. Do not finish a verified bug fix as local-only: commit and push before reporting completion.
 An unrelated full-build failure does not by itself block delivery when affected tests and checks pass
 and the failure is demonstrably outside the scoped diff; report that failure separately. If affected
 verification, hooks or a safe push are blocked, report the exact blocker and the remaining action;
 never bypass checks or hooks.
-For other work, commit, push, publish, close issues or mutate external systems only when requested.
-Permission for local work is not permission to restart a live gateway or deploy. Confirm destructive
-actions and history rewrites; never bypass hooks. When committing, use the configured human identity,
+
+For simple, unambiguous change requests, including regression fixes, this repository grants standing
+authorization to verify, commit only the task's changes and push to `main` without asking again.
+An analysis-only, diff-preview, local-only or no-commit/push request overrides this default.
+Required checks must pass, and the scoped changes must be safely separable from other work.
+This does not authorize unrelated changes, releases, deployments, live service restarts or history
+rewrites. For other tasks, commit and push only when explicitly requested.
+
+When handling a Git request, capture its intended changes before verification or staging.
+For `add all`, scope is the staged, unstaged and untracked content captured at the start, not
+later work by other sessions. Recheck before staging and committing; preserve out-of-scope changes.
+If concurrent edits overlap that scope and cannot be separated safely, pause the Git operation
+and report the conflict.
+
+When committing, use the configured human identity,
 not `root`, and a conventional `type(scope): imperative summary` under 72 characters, with
 `Vis-Session: <bare-uuid>` as a trailer. Keep the body to the reason the diff cannot explain.
 
