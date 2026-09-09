@@ -351,36 +351,54 @@
                        (expect (not (str/includes? output "not an advertised branch")) output))))))
 
 ;; Regression #177: an unreadable pack index made source updates require a second run.
-(defdescribe source-update-pack-index-test
-             (it "updates once with healthy, missing or corrupt pack indexes"
-                 (doseq [pack-index [:healthy :missing :corrupt :truncated]]
-                   (with-source-update-fixture
-                     {:pack-index pack-index}
-                     (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
-                       (expect (zero? exit) output)
-                       (expect (= old-commit (str/trim (slurp clojure-calls))) output)
-                       (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
-                       (expect (not (str/includes? output "error:")) output)
-                       (expect (= (not= :healthy pack-index)
-                                  (str/includes? output "rebuilding pack index"))
-                               output)
-                       (expect (= new-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
-                       (expect (= "new\n" (slurp (io/file managed-src "update-marker"))))
-                       (let [{:keys [exit output]}
-                             (run-bash ["git" "-C" (.getAbsolutePath ^java.io.File managed-src)
-                                        "fsck" "--no-dangling"]
-                                       {})]
-                         (expect (zero? exit) output))))))
-             (it "does not move the source or report success when a pack cannot be reindexed"
-                 (with-source-update-fixture
-                   {:pack-index :missing :corrupt-pack? true :keep-gateway? true}
-                   (fn [{:keys [exit output old-commit managed-src]}]
-                     (expect (not (zero? exit)) output)
-                     (expect (str/includes? output "could not rebuild pack index") output)
-                     (expect (not (str/includes? output "source pinned at")) output)
-                     (expect (= old-commit (git! managed-src "rev-parse" "HEAD")))
-                     (expect (= old-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
-                     (expect (= "old\n" (slurp (io/file managed-src "update-marker"))))))))
+(defdescribe
+  source-update-pack-index-test
+  (it "updates once with healthy, missing or corrupt pack indexes"
+      (doseq [pack-index [:healthy :missing :corrupt :truncated]]
+        (with-source-update-fixture
+          {:pack-index pack-index}
+          (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
+            (expect (zero? exit) output)
+            (expect (= old-commit (str/trim (slurp clojure-calls))) output)
+            (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
+            (expect (not (str/includes? output "error:")) output)
+            (expect (= (not= :healthy pack-index) (str/includes? output "rebuilding pack index"))
+                    output)
+            (expect (= new-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
+            (expect (= "new\n" (slurp (io/file managed-src "update-marker"))))
+            (let [{:keys [exit output]} (run-bash ["git" "-C"
+                                                   (.getAbsolutePath ^java.io.File managed-src)
+                                                   "fsck" "--no-dangling"]
+                                                  {})]
+              (expect (zero? exit) output))))))
+  ;; Regression #177: damaged pack data needs a fresh fetch, not another index rebuild.
+  (it "recovers corrupt packs and preserves the original checkout"
+      (doseq [pack-index [:missing :healthy]]
+        (with-source-update-fixture
+          {:pack-index pack-index :corrupt-pack? true :keep-gateway? true}
+          (fn [{:keys [exit output new-commit managed-src]}]
+            (expect (zero? exit) output)
+            (expect (= new-commit (git! managed-src "rev-parse" "HEAD")))
+            (expect (= new-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
+            (expect (= "new\n" (slurp (io/file managed-src "update-marker"))))
+            (expect (string? (git! managed-src "fsck" "--no-dangling")))
+            (let [backups (filter #(.isDirectory ^java.io.File %)
+                                  (filter #(str/starts-with? (.getName ^java.io.File %)
+                                                             "src-recovery.")
+                                          (.listFiles (.getParentFile ^java.io.File managed-src))))]
+              (expect (= 1 (count backups)))
+              (when-let [backup (first backups)]
+                (expect (= "old\n" (slurp (io/file backup "previous" "update-marker"))))))))))
+  (it "keeps the original source and pin if recovery cannot fetch"
+      (with-source-update-fixture
+        {:pack-index :missing :corrupt-pack? true :keep-gateway? true :fetch-failures 3}
+        (fn [{:keys [exit output old-commit managed-src]}]
+          (expect (not (zero? exit)) output)
+          (expect (str/includes? output "vis-agent update") output)
+          (expect (not (str/includes? output "source pinned at")) output)
+          (expect (= old-commit (git! managed-src "rev-parse" "HEAD")))
+          (expect (= old-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
+          (expect (= "old\n" (slurp (io/file managed-src "update-marker"))))))))
 
 (defdescribe native-image-python-sidecar-test
              (it "stages the embedded interpreter beside the image instead of inside it"

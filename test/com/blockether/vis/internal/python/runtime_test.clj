@@ -218,6 +218,10 @@
     (spit (io/file project "uv.lock") "version = 1\n")
     (.mkdirs packages)
     (spit (io/file packages "unrelated.py") "VALUE = 7\n")
+    ;; Regression #178: shared packages unrelated to this project must not stale it.
+    (let [metadata (io/file packages "unrelated-1.dist-info/METADATA")]
+      (io/make-parents metadata)
+      (spit metadata "Name: unrelated\nVersion: 1\n"))
     (try
       (with-redefs-fn {#'python-runtime/project-home (fn [_]
                                                        home)
@@ -248,6 +252,10 @@
           (is (.isFile (io/file packages "value.py")))
           (is (.isFile (io/file packages "unrelated.py")))
           (is (not-any? #(.isDirectory ^java.io.File %) (.listFiles home)))
+          (spit (io/file packages "unrelated-1.dist-info/METADATA")
+                "Name: unrelated\nVersion: 2\n")
+          (is (= packages (python-runtime/prepared-project project))
+              "An unrelated shared distribution update does not require another sync")
           (let [extra (io/file packages "fixture-2.dist-info/METADATA")]
             (io/make-parents extra)
             (spit extra "Name: fixture\nVersion: 2\n")

@@ -1078,7 +1078,7 @@ remains available. Published version tags remain immutable, including the bootst
    Rationale: engine, TUI, gateway, worker and companion packages must match the release.
    Data: clean JVM/runtime tests, native binary tests, SDK boundary checks, platform CI.
    Acceptance criteria: required checks green and all supported release artifacts present;
-   failures fixed rather than bypassed; immutable version/tag/main agree.
+   failures fixed rather than bypassed; immutable version/tag/main agree at preparation.
    Unknowns: build resource limits and signing/toolchain availability.
 4. Install and verify on the administered server.
    Rationale: native build results alone do not establish end-to-end operation.
@@ -1094,14 +1094,12 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.52. Runtime
-v0.5.6 remains current. The v0.1.51 source CI and 5082 isolated Linux tests pass, but
-publication stopped when a concurrent commit advanced main during source verification.
-The workflow now checks tag/version/main alignment before slow CI. All artifact jobs
-still require full source verification and stable publication still requires all 15
-assets. Regression coverage also isolates the fork-baseline test clock from background
-timers. The affected 83 tests, formatting, lint, reflection and workflow checks pass.
-Require full release and installed native verification before replacing healthy v0.1.49.
+Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.53. Runtime
+v0.5.6 remains current. Release v0.1.52 passed its complete publication gate, but an
+extended native regression reproduced a missing directory-listing downcall registration
+in the published binary. The FFF 0.12.9 fix and native search coverage are already on main.
+Build a new immutable release with that fix and rerun the complete installed native path.
+Preserve the healthy production hotfix until the replacement passes every required check.
 
 - Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
   34297827905 passed all four platform builds/tests and published the runtime archives and
@@ -1111,38 +1109,24 @@ Require full release and installed native verification before replacing healthy 
   host futures. Wedged native waits retire their workers; normal cancellation preserves
   state and permits reuse. Affected suites passed 580 cases, with formatting, scoped lint
   and reflection checks passing.
-- The installer defaults to complete stable native bundles. The draft guard resolves
-  release metadata by ID and rejects incomplete artifacts. iOS signing pins the exact
-  identity imported into the job keychain through archive and export and fails closed.
-  All 44 release cases and 220 script cases pass, with one existing script skip; shell,
-  formatting, lint, reflection and workflow checks pass.
-- [Release v0.1.49](https://github.com/Blockether/vis/releases/tag/v0.1.49) passed all 31 jobs
-  in [release run 34311326223](https://github.com/Blockether/vis/actions/runs/34311326223),
-  including the complete source CI. Its 15 nonempty assets include bootstrap files, native
-  engine/worker and TUI bundles for Linux x64, Linux ARM64 and macOS ARM64, signed mobile
-  packages and five desktop packages. Clojars publication, iOS TestFlight distribution,
-  all existing Android tester tracks, stable promotion and installer verification passed.
-  Android production publication was not requested or performed. The pinned CE toolchain
-  does not support a native macOS x64 engine.
-- Clean full JVM verification passed 5058 cases on macOS and Linux; the administered
-  Linux host completed its run in 676.706 seconds. The published installer was exercised
-  with a fresh home, without installing source or selecting JVM fallback. Installed SDK
-  HTTP/stdio verification passed all 25 cases, including cancellation, reuse and native
-  wait reclamation. The installed native suite passed all 15 cases in 615.218 seconds.
-- The administered production gateway now runs the published native release. Executable
-  identities confirmed a native engine and Python worker. A native TUI was exercised
-  through a real terminal with the native fixture gateway and keyboard input. Public CLI
-  entrypoints select the same pinned native bundle. Canonical production health and admin
-  checks return 200; session creation, hydration, deletion (204) and absence afterward
-  (404) pass. Database integrity checks pass and the persisted session count is unchanged.
-  Rollback backups are retained; the healthy production service is left running.
-- Post-release commit 43e687f388ac6c64a00dad8bc7c7a8cd04349d18 corrects only the regression
-  assertion for an absent cancelled-answer bubble. All seven focused tests and the full
-  companion suite pass: 2440 cases, two existing skips. Type checking, scoped lint and
-  changed-region formatting pass. Main CI 34322681529, Android companion 34322681333 and
-  CodeQL 34322680874 pass. This test-only change does not alter the published artifacts.
-- Earlier failed release tags v0.1.45 through v0.1.48 remain immutable; incomplete drafts
-   were not promoted. No delivery blocker remains. Unrelated concurrent work is preserved.
+- The installer defaults to complete stable native bundles. Release preparation checks
+  tag/version/main alignment before long-running source verification. Every artifact job
+  still requires source verification; stable promotion requires all 15 nonempty assets.
+  iOS signing pins the imported identity for archive and export and fails closed.
+- [Release v0.1.52](https://github.com/Blockether/vis/releases/tag/v0.1.52) passed all 31 jobs
+  in [release run 34331911466](https://github.com/Blockether/vis/actions/runs/34331911466).
+  Its 15 assets include bootstrap files, native engine/worker and TUI bundles for Linux
+  x64, Linux ARM64 and macOS ARM64, signed mobile packages and five desktop packages.
+  TestFlight and Android tester distribution passed; Android production was not published.
+  The pinned CE toolchain does not support a native macOS x64 engine.
+- The immutable v0.1.52 checkout passed 5083 Linux JVM cases. Its installed SDK passed
+  25 HTTP/stdio cases and the original native suite passed 15 cases. A real-terminal TUI
+  turn exercised native gateway and worker processes and returned to idle. These results
+  do not cover the subsequently added native directory-listing regression, which fails
+  against that published binary. Release v0.1.53 must pass the expanded suite.
+- Fresh default-stable installation, native SDK and TUI end-to-end verification, complete
+  release assets and rollback-safe production replacement remain required for v0.1.53.
+  Existing immutable tags and concurrent work are preserved.
 
 ---
 

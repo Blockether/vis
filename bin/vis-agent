@@ -739,21 +739,20 @@ build_native_runtime() {
 # there cannot be followed, and an install downloads one commit instead of every
 # commit ever made.
 
-# Repair only derived indexes, never remove packs or replace the source checkout.
-# A fetch can exit successfully with an unreadable index, leaving checkout to
-# print repeated pack errors (#177). Validate indexes before fetching anything.
+# Repair derived indexes first. Damaged pack data needs a verified fresh checkout
+# while retaining the original source directory for recovery (#177).
 repair_pack_indexes() {
   local pack index index_error
   for pack in "$managed_src/.git/objects/pack/"*.pack; do
     [[ -f "$pack" ]] || continue
     index="${pack%.pack}.idx"
-    if [[ -r "$index" ]] && git -C "$managed_src" verify-pack --stat-only "$index" >/dev/null 2>&1; then
+    if [[ -r "$index" ]] && git -C "$managed_src" verify-pack "$index" >/dev/null 2>&1; then
       continue
     fi
     say "rebuilding pack index for ${pack##*/}"
     if ! index_error="$(git -C "$managed_src" index-pack "$pack" 2>&1)"; then
       [[ -z "$index_error" ]] || printf '%s\n' "$index_error" >&2
-      die "update: could not rebuild pack index for $pack; source was not updated"
+      return 1
     fi
   done
 }
@@ -800,6 +799,29 @@ drop_moving_refs() {
   done < <(git -C "$managed_src" for-each-ref --format='%(refname)' refs/heads refs/remotes 2>/dev/null)
 }
 
+# Stage recovery beside the source so directory renames stay on the same filesystem.
+recover_source() {
+  local ref="$1" recovery pinned
+  recovery="$(mktemp -d "$vis_install_dir/src-recovery.XXXXXX")" || exit 1
+  say "damaged source pack; downloading a fresh checkout"
+  if ! (
+    managed_src="$recovery/src" managed_ref_file="$recovery/ref" update_source "$ref"
+    git -C "$recovery/src" fsck --full --no-dangling
+  ); then
+    die "update: source recovery failed; original source and pin were preserved" \
+        "Retry with 'vis-agent update'. Recovery files: $recovery"
+  fi
+  pinned="$(cat "$recovery/ref")" || exit 1
+  mv "$managed_src" "$recovery/previous" || exit 1
+  if ! mv "$recovery/src" "$managed_src"; then
+    mv "$recovery/previous" "$managed_src" || \
+      die "update: restore the preserved source from $recovery/previous"
+    die "update: could not install recovered source; original restored. Retry 'vis-agent update'."
+  fi
+  printf '%s\n' "$pinned" > "$managed_ref_file"
+  say "source recovered; previous source preserved at $recovery/previous"
+}
+
 update_source() {
   local ref="${1:-}" target pinned
   require_cmd git "the source runtime"
@@ -810,7 +832,10 @@ update_source() {
     mkdir -p "$managed_src" || exit 1
     git -C "$managed_src" init --quiet || exit 1
   fi
-  repair_pack_indexes
+  if ! repair_pack_indexes; then
+    recover_source "$ref"
+    return
+  fi
   git -C "$managed_src" remote add origin "$vis_repo_url" 2>/dev/null \
     || git -C "$managed_src" remote set-url origin "$vis_repo_url" || exit 1
   # This source is a detached pin, never a branch — so even a hand-run `git fetch`
