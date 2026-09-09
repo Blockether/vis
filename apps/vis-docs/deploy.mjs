@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { verifyHTTPS } from '../../scripts/cloudflare-https.mjs';
 
 function docsOrigin(hostname) {
   if (typeof hostname !== 'string' || hostname.length > 253 || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname)) throw new Error('Configure DOCS_HOSTNAME as a public hostname without scheme, port or path');
@@ -33,9 +34,10 @@ export async function verifyDeployment(hostname) {
       }
       const api = await fetch(new URL('/api/extensions', origin), {signal: AbortSignal.timeout(20000), redirect: 'error'});
       if (!api.ok || !Array.isArray((await api.json()).extensions)) throw new Error('Catalog is not ready');
+      await verifyHTTPS(origin, ['/', '/extensions/', '/assets/theme.css', '/api/extensions', '/extensions/a%2Fb?check=1&value=x%2Fy']);
       return;
     } catch {
-      if (attempt === 7) throw new Error('Deployed docs, assets and catalog verification failed after 8 attempts');
+      if (attempt === 7) throw new Error('Deployed docs, assets, catalog and HTTPS redirect verification failed after 8 attempts');
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }

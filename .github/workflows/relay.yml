@@ -1,16 +1,17 @@
 name: Relay
 
-# The push relay deploys itself, and only when it changed: a commit that touches
-# Clojure, the companion, or the docs runs nothing here.
+# Deploy only when the relay, its HTTPS deployment helper or this workflow changes.
 on:
   push:
     branches: [main]
     paths:
       - "apps/vis-companion-relay/**"
+      - "scripts/cloudflare-https*.mjs"
       - ".github/workflows/relay.yml"
   pull_request:
     paths:
       - "apps/vis-companion-relay/**"
+      - "scripts/cloudflare-https*.mjs"
       - ".github/workflows/relay.yml"
   workflow_dispatch:
 
@@ -47,6 +48,7 @@ jobs:
       # The suite drives the real router against a fake provider fetch and fake
       # rate limiters: no network, no Cloudflare account, same gate as local.
       - run: npm test
+      - run: node --test ../../scripts/cloudflare-https.test.mjs
 
   deploy:
     name: Deploy to Cloudflare
@@ -98,27 +100,38 @@ jobs:
             --var "APNS_DEFAULT_ENV:${{ vars.APNS_DEFAULT_ENV || 'production' }}" \
             --var "GRANT_TTL_DAYS:${{ vars.GRANT_TTL_DAYS || '90' }}"
 
+      - name: Require HTTPS on the production Custom Domain
+        if: steps.guard.outputs.is_configured == 'true' && vars.RELAY_HEALTHCHECK_URL != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          HTTPS_URL: ${{ vars.RELAY_HEALTHCHECK_URL }}
+          WORKER_NAME: vis-companion-relay
+        run: node ../../scripts/cloudflare-https.mjs configure
+
       # Upload exiting 0 is not delivery. Ask the deployed Worker whether it can
       # sign for a provider at all; `is_accepting_grants` false means the seal
       # key never made it into the account.
       - name: Smoke test the deployment
         if: steps.guard.outputs.is_configured == 'true' && vars.RELAY_HEALTHCHECK_URL != ''
+        env:
+          HTTPS_URL: ${{ vars.RELAY_HEALTHCHECK_URL }}
         run: |
           for attempt in 1 2 3 4 5; do
-            if curl -sS --fail --max-time 10 "${{ vars.RELAY_HEALTHCHECK_URL }}" -o /tmp/healthz.json; then
-              cat /tmp/healthz.json
+            if node ../../scripts/cloudflare-https.mjs verify &&
+              curl -sS --fail --max-time 10 "$HTTPS_URL" -o /tmp/healthz.json &&
               node -e '
-                const health = require("/tmp/healthz.json");
-                if (!health.is_ok) throw new Error("relay did not answer is_ok");
-                if (!health.is_accepting_grants) throw new Error("relay has no RELAY_SEAL_KEY");
-                if (!health.apns.is_available && !health.fcm.is_available) {
-                  throw new Error("relay can push to neither APNs nor FCM");
-                }
-              '
+                try {
+                  const health = JSON.parse(require("node:fs").readFileSync("/tmp/healthz.json", "utf8"));
+                  if (!health.is_ok || !health.is_accepting_grants ||
+                      (!health.apns.is_available && !health.fcm.is_available)) process.exit(1);
+                } catch { process.exit(1); }
+              '; then
+              echo "HTTPS redirects and relay health verified"
               exit 0
             fi
-            echo "healthz attempt $attempt failed; retrying"
+            echo "HTTPS redirect or healthz attempt $attempt failed; retrying"
             sleep 5
           done
-          echo "::error::the deployed relay never answered /healthz"
+          echo "::error::the deployed relay failed HTTPS redirect or health verification"
           exit 1
