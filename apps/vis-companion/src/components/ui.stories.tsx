@@ -360,6 +360,11 @@ export const Rows: Story = {
         >
           CODE +12 more
         </Disclosure>
+        <div className="isolate w-full">
+          <Disclosure isOpen={false} tone="execution" density="compact">
+            Read src/config.ts
+          </Disclosure>
+        </div>
         <Disclosure className="w-full" isOpen tone="execution" inlineChevron>
           RESULT
         </Disclosure>

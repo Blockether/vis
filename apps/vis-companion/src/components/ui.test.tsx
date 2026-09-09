@@ -2303,6 +2303,16 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(html()).toContain("data-disclosure-toggle");
     });
 
+    it("keeps compact operation rows opt-in and preserves the band target", () => {
+      const compact = first(html({ tone: "execution", density: "compact" }));
+      expect(compact).toContain("min-h-6");
+      expect(compact).not.toContain("min-h-11");
+      expect(compact).toContain("after:-inset-y-2.5");
+      expect(compact).toContain("mouse:after:-inset-y-0.5");
+      expect(compact).toContain("after:-z-10");
+      expect(first(html({ tone: "execution" }))).toContain("min-h-11");
+    });
+
     // Bold AND italic at the same time: the reasoning this band opens is set in
     // italic, so the name of that band is italic too, exactly as the TUI paints
     // it. It used to spell `not-italic` and cancel the slant.

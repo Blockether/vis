@@ -853,6 +853,7 @@ function ActivityStep({
             <Disclosure
               isOpen={open}
               tone="execution"
+              density="compact"
               className="min-w-0 max-w-full"
               onClick={() => setToggled(!open)}
             >
@@ -994,6 +995,7 @@ function ActivityGroup({
     >
       <Disclosure
         tone="execution"
+        density="compact"
         isOpen={open}
         onClick={() => setOpen((value) => !value)}
       >
@@ -1077,7 +1079,7 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
       activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
   );
   return (
-    <section className="min-w-0" aria-live="off" data-activity-axis>
+    <section className="isolate min-w-0" aria-live="off" data-activity-axis>
       <div className="flex min-w-0 items-center gap-2">
         <Disclosure
           className="min-w-0 flex-1"

@@ -723,14 +723,18 @@ const BAND_NAME = 'font-extrabold tracking-[0.06em]';
  * off the frame instead of competing inside it.
  *
  * Execution and Thinking rows keep the chevron after the text, never in a reserved
- * leading column. Execution targets are 44px on touch, 28px with a pointer;
- * other bands retain their existing 32px / 24px rhythm.
+ * leading column. Execution bands are 44px on touch, 28px with a pointer.
+ * Compact operation rows use a 24px face with invisible reach to those targets.
+ * Place compact rows in an isolated container: the reach stays behind visible
+ * controls and content, so adjacent rows never intercept each other's faces.
+ * Other bands retain their existing 32px / 24px rhythm.
  */
 export function Disclosure({
   isOpen,
   tone = 'muted',
   bleed = false,
   inlineChevron = false,
+  density = 'default',
   className = '',
   children,
   ...props
@@ -758,6 +762,8 @@ export function Disclosure({
   bleed?: boolean;
   /** Keep the chevron immediately after the label and tally, not at either row edge. */
   inlineChevron?: boolean;
+  /** Compact operation rows; the containing list owns stacking isolation. */
+  density?: 'default' | 'compact';
 }) {
   const ink =
     tone === 'step'
@@ -771,12 +777,18 @@ export function Disclosure({
             : tone === 'chronology' || tone === 'execution'
               ? 'text-code-result hover:bg-hover'
               : 'text-footer-muted hover:bg-hover';
+  const size =
+    density === 'compact'
+      ? 'relative min-h-6 text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
+      : tone === 'execution'
+        ? 'min-h-11 text-meta mouse:min-h-7'
+        : `min-h-8 mouse:min-h-6 ${tone === 'branch' ? 'text-ui' : 'text-chip'}`;
   return (
     <button
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'execution' ? 'min-h-11 text-meta mouse:min-h-7' : `min-h-8 mouse:min-h-6 ${tone === 'branch' ? 'text-ui' : 'text-chip'}`} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
+      className={`flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${size} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
       {!inlineChevron && tone !== 'execution' && tone !== 'thinking' && (

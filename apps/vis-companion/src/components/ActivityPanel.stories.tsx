@@ -81,8 +81,11 @@ export const RepeatedArguments: Story = {
     await userEvent.click(
       canvas.getByRole("button", { name: "Expand Activity" }),
     );
-    await userEvent.click(canvas.getByRole("button", { name: /Search ×6/ }));
+    const group = canvas.getByRole("button", { name: /Search ×6/ });
+    await expect(group.getBoundingClientRect().height).toBe(24);
+    await userEvent.click(group);
     const repeated = canvas.getByRole("button", { name: /same query ×3/ });
+    await expect(repeated.getBoundingClientRect().height).toBe(24);
     await expect(repeated).toHaveAttribute("aria-expanded", "false");
     await expect(
       canvas.getByText(/Search directory unavailable/),
@@ -287,9 +290,15 @@ export const ListingBatch: Story = {
       name: "Operation groups",
     });
     await expect(getComputedStyle(chronology).paddingBottom).toBe("4px");
-    await expect(step.getBoundingClientRect().height).toBeGreaterThanOrEqual(
-      28,
-    );
+    const reach = getComputedStyle(step, "::after");
+    const targetHeight =
+      step.getBoundingClientRect().height -
+      parseFloat(reach.top) -
+      parseFloat(reach.bottom);
+    const minimum = matchMedia("(width >= 40rem) and (pointer: fine)").matches
+      ? 28
+      : 44;
+    await expect(targetHeight).toBeGreaterThanOrEqual(minimum);
     step.focus();
     await userEvent.keyboard("{Enter}");
     await expect(step).toHaveAttribute("aria-expanded", "false");
@@ -325,7 +334,21 @@ export const CompactMiddle: Story = {
       canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
     );
     const middle = within(rows[1]).getByRole("button");
+    // Adjacent boxes alone miss the blank space inside an oversized toggle.
     const checkSiblings = async () => {
+      for (const row of rows) {
+        const toggle = within(row).getByRole("button");
+        const box = toggle.getBoundingClientRect();
+        await expect(box.height).toBe(24);
+        // Invisible reach must not cover any part of a neighboring toggle.
+        for (const x of [box.left + 2, box.right - 2]) {
+          for (const y of [box.top + 1, box.top + box.height / 2, box.bottom - 1]) {
+            await expect(
+              document.elementFromPoint(x, y)?.closest("button"),
+            ).toBe(toggle);
+          }
+        }
+      }
       await expect(rows[1].getBoundingClientRect().top).toBe(
         rows[0].getBoundingClientRect().bottom,
       );
