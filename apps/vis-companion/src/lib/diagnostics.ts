@@ -266,6 +266,123 @@ export function recordDiagnostic(
   enqueue(() => appendRecord(`${json}\n`));
 }
 
+/**
+ * Summarize composer input in the existing private/exportable diagnostic log.
+ * One record per five-second typing window, plus a final blur/background/unmount
+ * flush; idle composers schedule nothing. No text, key names or raw input types
+ * are retained, and `textLength` reads only the UTF-16 length, not the value.
+ *
+ * Capture runs before React's change handler. Event timestamps measure dispatch
+ * delay; one coalesced rAF per batch measures time to the next frame callback,
+ * NOT a completed paint or native-keyboard latency. Delays >=100ms warn. Cancel
+ * unfinished frame samples on exit so background suspension is not reported as lag.
+ */
+export function watchComposerInputDiagnostics(
+  textarea: HTMLTextAreaElement,
+  sessionId: string,
+): () => void {
+  const document = textarea.ownerDocument;
+  const view = document.defaultView;
+  if (!view) return () => {};
+  const empty = {
+    input_count: 0,
+    replacement_count: 0,
+    composing_count: 0,
+    deletion_count: 0,
+    paste_count: 0,
+    max_draft_chars: 0,
+    input_delay_sample_count: 0,
+    max_input_delay_ms: 0,
+    slow_input_count: 0,
+    frame_count: 0,
+    max_next_frame_ms: 0,
+    slow_frame_count: 0,
+  };
+  let summary = { ...empty };
+  let startedAt = 0;
+  let timer: number | null = null;
+  let frame: number | null = null;
+  let pendingInputs = 0;
+
+  const flush = (reason: 'interval' | 'blur' | 'background' | 'unmount') => {
+    if (timer !== null) view.clearTimeout(timer);
+    if (frame !== null) view.cancelAnimationFrame(frame);
+    timer = null;
+    frame = null;
+    if (summary.input_count > 0) {
+      recordDiagnostic(
+        summary.slow_input_count || summary.slow_frame_count ? 'warn' : 'info',
+        'composer',
+        'typing_summary',
+        {
+          session_id: sessionId,
+          reason,
+          window_ms: Math.round(Math.max(0, view.performance.now() - startedAt)),
+          ...summary,
+          unmeasured_input_count: pendingInputs,
+        },
+      );
+    }
+    summary = { ...empty };
+    pendingInputs = 0;
+  };
+
+  const onInput = (event: Event) => {
+    if (document.visibilityState === 'hidden') return;
+    const input = event as InputEvent;
+    const now = view.performance.now();
+    if (timer === null) {
+      startedAt = now;
+      timer = view.setTimeout(() => flush('interval'), 5_000);
+    }
+    summary.input_count += 1;
+    summary.max_draft_chars = Math.max(summary.max_draft_chars, textarea.textLength);
+    if (input.inputType === 'insertReplacementText') summary.replacement_count += 1;
+    if (
+      input.isComposing || input.inputType === 'insertCompositionText' ||
+      input.inputType === 'deleteCompositionText'
+    ) summary.composing_count += 1;
+    if (input.inputType?.startsWith('delete')) summary.deletion_count += 1;
+    if (input.inputType === 'insertFromPaste') summary.paste_count += 1;
+
+    // Older WebKit reports epoch timestamps; modern engines use the performance clock.
+    const stamp =
+      event.timeStamp > 1e12
+        ? event.timeStamp - view.performance.timeOrigin
+        : event.timeStamp;
+    if (Number.isFinite(stamp) && stamp > 0 && stamp <= now) {
+      const delay = Math.round(now - stamp);
+      summary.input_delay_sample_count += 1;
+      summary.max_input_delay_ms = Math.max(summary.max_input_delay_ms, delay);
+      if (delay >= 100) summary.slow_input_count += 1;
+    }
+
+    pendingInputs += 1;
+    if (frame !== null) return;
+    const current = summary;
+    frame = view.requestAnimationFrame(() => {
+      if (summary !== current) return;
+      frame = null;
+      if (document.visibilityState === 'hidden') return;
+      pendingInputs = 0;
+      const delay = Math.round(Math.max(0, view.performance.now() - now));
+      summary.frame_count += 1;
+      summary.max_next_frame_ms = Math.max(summary.max_next_frame_ms, delay);
+      if (delay >= 100) summary.slow_frame_count += 1;
+    });
+  };
+  const onBlur = () => flush('blur');
+  const stopAway = onAway(() => flush('background'));
+  textarea.addEventListener('input', onInput, true);
+  textarea.addEventListener('blur', onBlur);
+  return () => {
+    textarea.removeEventListener('input', onInput, true);
+    textarea.removeEventListener('blur', onBlur);
+    stopAway();
+    flush('unmount');
+  };
+}
+
 function trackedRequestDetails(request: TrackedGatewayRequest): Record<string, unknown> {
   return {
     request_id: request.request_id,
