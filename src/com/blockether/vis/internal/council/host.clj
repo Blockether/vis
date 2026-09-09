@@ -55,7 +55,7 @@
                               opts)))))
 
 (defn publish
-  "Publish a thread entry. Explicit ping IDs (UUID or vis_session_id#UUID) can wake idle peers; all selects active peers only."
+  "Publish a thread entry even without active peers. Explicit ping IDs (UUID or vis_session_id#UUID) can wake idle peers; all selects active peers only. Delivery is best-effort."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db

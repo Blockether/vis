@@ -118,6 +118,7 @@ class Council:
 
         Targets accept a UUID or vis_session_id#UUID. Keep an explicit
         idempotency_key when retrying uncertain IO; retries never wake again.
+        Unavailable recipients do not reject the entry; ping records delivery intent.
         """
         body = {
             "content": content,

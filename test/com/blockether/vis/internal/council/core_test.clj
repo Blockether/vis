@@ -1112,9 +1112,11 @@
                 ;; Woken sessions can reply to a running author, not start wake chains.
                 (let [reply-actor
                       {:session-id b :activation-id (:activation-id active) :source "host"}]
-                  (is (rejected?
-                        :invalid-recipient
-                        #(council 'publish! db snapshot reply-actor {:content "Chain" :ping [c]})))
+                  (is
+                    (= [c]
+                       (:ping
+                         (council 'publish! db snapshot reply-actor {:content "Chain" :ping [c]}))))
+                  (is (= [b] (mapv first @launched)))
                   (is (= [a]
                          (:ping (council 'publish!
                                          db
@@ -1190,13 +1192,21 @@
                   (update! b (constantly {:queue-paused true :turns {}}))
 
                   nil)
-                (if (#{:paused-idle :foreign-runtime :invalid-target} scenario)
+                (cond
+                  (= :invalid-target scenario)
                   (do (is (rejected? :invalid-recipient
                                      #(publish! (cond-> request
                                                   (= :invalid-target scenario)
                                                   (assoc :ping [b (str (random-uuid))])))))
                       (is (empty? (:entries (council 'read-entries db a {}))))
                       (is (empty? @launched)))
+                  (#{:paused-idle :foreign-runtime} scenario)
+                  (let [entry (publish! request)]
+                    (is (= [b] (:ping entry)))
+                    (is (= [(:id entry)] (mapv :id (:entries (council 'read-entries db a {})))))
+                    (is (empty? @launched))
+                    (is (nil? (get (council 'runtime db) b))))
+                  :else
                   (let [entries (if (= :concurrent scenario)
                                   (mapv deref
                                         (mapv (fn [_]
@@ -1226,6 +1236,44 @@
                              (count
                                (ps/db-council-pending db b (:activation-id active) gid 0 20)))))))))
               (finally (run! drop! ids)))))))))
+
+(deftest publish-survives-peers-becoming-inactive-test
+  ;; Finishing peers must not prevent the remaining session from replying in the thread.
+  (with-council
+    (doseq [scenario [:woken-author :not-eligible :no-runtime :eligibility-failure :wake-failure]]
+      (let [{:keys [ids fleet] :as w} (world)
+            [a b c] ids
+            entry (publish w {:content "Research question" :ping "all"})
+            attempted (atom [])
+            targets (sort [b c])
+            request {:content "Here are the findings"
+                     :thread_id (:id entry)
+                     :ping [b (str "vis_session_id#" c)]
+                     :idempotency_key "reply"}
+            handler (when-not (= :no-runtime scenario)
+                      {:eligible? (fn [_ _]
+                                    (if (= :eligibility-failure scenario)
+                                      (throw (ex-info "Presence changed" {}))
+                                      (not= :not-eligible scenario)))
+                       :wake! (fn [_ sid _]
+                                (swap! attempted conj sid)
+                                (when (= sid (first targets))
+                                  (throw (ex-info "Recipient became unavailable" {}))))})]
+
+        (swap! fleet #(hash-map a (assoc (get % a) :wake? (= :woken-author scenario))))
+        (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
+                         (atom handler)}
+          (fn []
+            (let [reply (publish w request)]
+              (is (= (:id entry) (:thread_id reply)))
+              (is (= (set [b c]) (set (:ping reply))))
+              (is (= [(:id entry) (:id reply)] (mapv :id (:entries (page w {})))))
+              (is (= (if (= :wake-failure scenario) (vec targets) []) @attempted))
+              (is (empty? (:ping (publish w {:content "Nobody else active" :ping "all"}))))
+              (is (empty? (:ping (publish w {:content "Log reply" :thread_id (:id entry)}))))
+              (reset! fleet {})
+              (is (= reply (publish w request)))
+              (is (= (if (= :wake-failure scenario) (vec targets) []) @attempted)))))))))
 
 (deftest sparse-thread-seeks-and-batched-pings-test
   ;; Explain the actual production queries. Fifty continuations cover a full page;

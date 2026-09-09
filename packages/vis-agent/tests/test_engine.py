@@ -680,6 +680,84 @@ def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transport):
+    author_ready, peer_ready = threading.Event(), threading.Event()
+    release_author, release_peer = threading.Event(), threading.Event()
+
+    def before_reply(position):
+        if position == 1:
+            author_ready.set()
+            assert release_author.wait(30), "author was not released"
+        elif position == 3:
+            peer_ready.set()
+            assert release_peer.wait(30), "peer was not released"
+
+    def wait_peer(peer, count):
+        deadline = time.monotonic() + 30
+        while True:
+            turns = peer.turns()
+            if len(turns) == count and all(
+                row["status"] == "completed" for row in turns
+            ):
+                return
+            assert time.monotonic() < deadline, "peer did not finish"
+            time.sleep(0.05)
+
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        transport,
+        council=True,
+        tool_code=(
+            "thread = (await council.threads())['entries'][0]\n"
+            "if session['id'] != thread['author_session_id']:\n"
+            "    reply = await council.publish('Research findings', thread_id=thread['thread_id'], "
+            "ping=[thread['author_session_id']], idempotency_key='findings')\n"
+            "    assert (await council.publish('No active peers', ping='all', idempotency_key='broadcast'))['ping'] == []\n"
+            "    print(reply)\n"
+        ),
+        before_reply=before_reply,
+    ) as (client, work, _requests):
+        author = client.create_session(
+            title="Council author", root=str(work), channel="app"
+        )
+        peer = client.create_session(
+            title="Council researcher", root=str(work), channel="app"
+        )
+        turn = author.send("Ask about prior research")
+        try:
+            assert author_ready.wait(30), "author did not start"
+            conversation = author.council()
+            entry = conversation.publish("Research question", ping=[peer.id])
+            wait_peer(peer, 1)
+            # A second explicit ping starts the peer's next activation, held at its model call.
+            conversation.publish(
+                "Please give details", thread_id=entry.id, ping=[peer.id]
+            )
+            assert peer_ready.wait(30), "peer did not wake"
+            release_author.set()
+            assert turn.wait(timeout=30)["status"] == "completed"
+            assert [member.session_id for member in conversation.members()] == [peer.id]
+            release_peer.set()
+            wait_peer(peer, 2)
+            replies = [
+                row
+                for row in conversation.read(thread_id=entry.id).entries
+                if row.content == "Research findings"
+            ]
+            assert len(replies) == 1
+            assert replies[0].source == "host" and replies[0].ping == (author.id,)
+            assert (
+                len(author.turns()) == 1
+            )  # A reply is saved, without a reverse wake chain.
+        finally:
+            release_author.set()
+            release_peer.set()
+        author.delete()
+        peer.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
 def test_real_council_disabled(tmp_path, monkeypatch, transport):
     with sdk_fixture(
         tmp_path,

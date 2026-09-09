@@ -95,14 +95,19 @@ An explicit target accepts a bare session UUID or `vis_session_id#<uuid>`.
 Both spellings identify the same recipient and are deduplicated before validation
 and idempotency checks. Use `list_sessions(search=...)` to find past sessions by
 topic or title, then ping their ID; titles and activation IDs are not target selectors.
-A missing, foreign-group, self, paused-idle or externally running target rejects the
-publication before insertion. Every target is validated before any entry is written.
+A missing, foreign-group or self target rejects the publication before insertion.
+Every target's group membership is validated before any entry is written; presence
+is not membership. The author can publish even when no other session is active.
+`ping="all"` then records an entry with an empty recipient list.
 
-An explicit idle target starts one ordinary runtime turn with its saved session
+An eligible explicit idle target starts one ordinary runtime turn with its saved session
 context and model selection. Concurrent pings join an already active activation;
 they do not queue additional turns. Held queues remain held. A session started by
 Council can ping active peers and publish replies, but cannot wake another idle
 session during that activation. This prevents direct chains of automatic wakes.
+Replies to an inactive author are still saved, including their explicit ping intent,
+without waking that author. Paused-idle and externally running targets likewise do
+not block publication; their unavailable delivery is skipped, not queued for later.
 
 At the next model invocation, a ping supplies attributed peer data: author, group,
 entry/thread IDs and a bounded content preview. Other log entries are read on demand.
@@ -117,9 +122,11 @@ Council does not wait for responses or block completion.
 
 Delivery is activation-scoped and best-effort. Existing active pings never restart
 a session that finishes or is cancelled before delivery. Old pings do not enter
-its next activation. Publication commits before idle dispatch: a runtime failure
-can leave a committed entry without a wake; retries return that entry and do not
-restart it. Startup does not replay undelivered wakes. Read the thread to check
+its next activation. Publication commits before idle dispatch: eligibility or wake
+failures are logged without failing the publication or stopping other recipients.
+The returned `ping` list records intent, not confirmation of delivery. Retries return
+the original entry and do not restart it. Startup does not replay undelivered wakes.
+Read the thread to check
 for responses rather than assuming a ping was answered.
 
 The current limits are 64 KiB per content value, 256 UTF-8 bytes per title,
