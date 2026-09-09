@@ -343,5 +343,6 @@
         named
         (second (re-find #"PUBLISHER_RELAY_URL\s*=\s*\n?\s*\"([^\"]+)\"" src))]
 
+    (is (= "https://vis.relay.blockether.com" relay/DEFAULT-URL))
     (is (some? named))
     (is (= relay/DEFAULT-URL named))))

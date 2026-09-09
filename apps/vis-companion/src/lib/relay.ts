@@ -65,8 +65,7 @@ const RENEW_BEFORE_MS = 7 * 24 * 60 * 60 * 1000;
  * paired machine may still name its own relay, which overrides this: an
  * operator who runs one knows something the build does not.
  */
-export const PUBLISHER_RELAY_URL =
-  "https://vis-companion-relay.blockether.workers.dev";
+export const PUBLISHER_RELAY_URL = "https://vis.relay.blockether.com";
 
 /**
  * The relay one gateway needs to reach THIS device, or null when it can sign

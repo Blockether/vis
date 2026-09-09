@@ -91,7 +91,7 @@
    nothing has to pretend push is broken until the first phone registers. Ship
    your own build and both constants move together, beside the bundle id and
    `google-services.json` that already had to."
-  "https://vis-companion-relay.blockether.workers.dev")
+  "https://vis.relay.blockether.com")
 
 (defn config
   "The relay this gateway names for every device that named none.

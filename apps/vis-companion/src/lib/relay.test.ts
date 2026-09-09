@@ -153,7 +153,7 @@ describe("which machines need a relay", () => {
     expect(
       relayUrlFor(status({ relay: { is_available: false, url: null } }), "ios"),
     ).toBe(PUBLISHER_RELAY_URL);
-    expect(PUBLISHER_RELAY_URL.startsWith("https://")).toBe(true);
+    expect(PUBLISHER_RELAY_URL).toBe("https://vis.relay.blockether.com");
     // A gateway we have not heard from yet is not a gateway with no relay.
     expect(relayUrlFor(undefined, "ios")).toBeNull();
   });
