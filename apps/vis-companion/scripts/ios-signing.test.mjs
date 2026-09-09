@@ -115,40 +115,58 @@ describe("stampManualSigning", () => {
 });
 
 describe("distributionIdentity", () => {
-  // Verbatim `security find-identity -v -p codesigning` output.
   const listing = (...names) =>
     `${names
-      .map((name, i) => `  ${i + 1}) ${"0".repeat(40)} "${name}"`)
+      .map((name, i) => `  ${i + 1}) ${String(i + 1).repeat(40)} "${name}"`)
       .join("\n")}\n     ${names.length} valid identities found\n`;
 
-  it("reads the generic name back rather than assuming one", () => {
+  it("returns the exact distribution fingerprint, not an ambiguous name", () => {
     expect(
       distributionIdentity(
         listing(
           "Apple Development: Someone (ABC123)",
-          "Apple Distribution: Blockether (JSZTFUBUBB)",
+          "Apple Distribution: Example (ABC123)",
         ),
       ),
-    ).toBe("Apple Distribution");
+    ).toBe("2".repeat(40));
   });
 
-  // A certificate created as IOS_DISTRIBUTION is issued to the legacy name, and
-  // CODE_SIGN_IDENTITY = "Apple Distribution" would then match nothing.
   it("recognises the legacy iPhone Distribution certificate", () => {
     expect(
-      distributionIdentity(
-        listing("iPhone Distribution: Blockether (JSZTFUBUBB)"),
-      ),
-    ).toBe("iPhone Distribution");
+      distributionIdentity(listing("iPhone Distribution: Example (ABC123)")),
+    ).toBe("1".repeat(40));
   });
 
-  it("finds nothing in a keychain that can only sign for development", () => {
+  it("pins the first searchable certificate when names are identical", () => {
+    // A generic name let Xcode choose a different, locked runner identity.
+    expect(
+      distributionIdentity(
+        listing(
+          "iPhone Distribution: Example (ABC123)",
+          "iPhone Distribution: Example (ABC123)",
+        ),
+      ),
+    ).toBe("1".repeat(40));
+  });
+
+  it("ignores malformed fingerprints and development-only keychains", () => {
+    expect(
+      distributionIdentity('  1) ABCD "Apple Distribution: Example (ABC123)"'),
+    ).toBeUndefined();
     expect(
       distributionIdentity(listing("Apple Development: Someone (ABC123)")),
     ).toBeUndefined();
     expect(
       distributionIdentity("     0 valid identities found\n"),
     ).toBeUndefined();
+  });
+  it("refuses automatic fallback when the release keychain has no distribution identity", () => {
+    expect(() =>
+      distributionIdentity(
+        listing("Apple Development: Someone (ABC123)"),
+        "/tmp/release.keychain-db",
+      ),
+    ).toThrow(/No distribution signing identity/);
   });
 });
 

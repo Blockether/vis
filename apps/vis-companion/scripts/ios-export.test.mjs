@@ -65,6 +65,7 @@ describe('exportOptionsPlist', () => {
   it('names a profile for every bundle of a manual export', () => {
     const plist = exportOptionsPlist({
       teamId: 'TEAM123',
+      signingIdentity: 'A'.repeat(40),
       ...signingPlan({
         bundleIds: [appId, shareId],
         profileNames: { [appId]: 'Vis App Store', [shareId]: 'Vis Share App Store' },
@@ -74,6 +75,7 @@ describe('exportOptionsPlist', () => {
     expect(plist).toContain(`<key>${appId}</key>\n\t\t<string>Vis App Store</string>`);
     expect(plist).toContain(`<key>${shareId}</key>\n\t\t<string>Vis Share App Store</string>`);
     expect(plist).toContain('<key>teamID</key>\n\t<string>TEAM123</string>');
+    expect(plist).toContain(`<key>signingCertificate</key>\n\t<string>${'A'.repeat(40)}</string>`);
   });
 
   it('leaves an automatic export without a profile dictionary to fall short of', () => {
@@ -84,6 +86,15 @@ describe('exportOptionsPlist', () => {
     expect(plist).toContain('<key>signingStyle</key>\n\t<string>automatic</string>');
     expect(plist).not.toContain('provisioningProfiles');
     expect(plist).not.toContain('Vis App Store');
+    expect(plist).not.toContain('signingCertificate');
+  });
+
+  it('refuses manual signing without an exact certificate fingerprint', () => {
+    for (const signingIdentity of [undefined, 'iOS Distribution', 'invalid']) {
+      expect(() => exportOptionsPlist({ teamId: 'TEAM123', signingStyle: 'manual', signingIdentity })).toThrow(
+        /exact distribution certificate/,
+      );
+    }
   });
 
   it('always exports for App Store Connect, and stays a parseable plist', () => {
@@ -97,6 +108,7 @@ describe('exportOptionsPlist', () => {
     const plist = exportOptionsPlist({
       teamId: 'TEAM123',
       signingStyle: 'manual',
+      signingIdentity: 'B'.repeat(40),
       provisioningProfiles: { [appId]: 'Ben & Co <Store>' },
     });
     expect(plist).toContain('<string>Ben &amp; Co &lt;Store&gt;</string>');

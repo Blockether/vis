@@ -43,22 +43,26 @@ export function signingPlan({ bundleIds, profileNames = {} }) {
  * Render the ExportOptions plist for an App Store Connect export.
  *
  * `ios/` is gitignored, so this file is generated on every release rather than
- * committed; it is a pure function of the team, the plan, and nothing else.
+ * committed; it is generated from the team, profiles and exact signing identity.
  *
  * @param {object} options
  * @param {string} options.teamId Apple Developer team
  * @param {'manual'|'automatic'} options.signingStyle from {@link signingPlan}
  * @param {Record<string, string>} [options.provisioningProfiles] profile per bundle id
+ * @param {string} [options.signingIdentity] exact certificate SHA-1 fingerprint; required for manual signing
  * @returns {string} plist contents
  */
-export function exportOptionsPlist({ teamId, signingStyle, provisioningProfiles = {} }) {
+export function exportOptionsPlist({ teamId, signingStyle, provisioningProfiles = {}, signingIdentity }) {
+  if (signingStyle === 'manual' && !/^[A-Fa-f0-9]{40}$/.test(signingIdentity ?? '')) {
+    throw new Error('Manual signing requires an exact distribution certificate fingerprint');
+  }
   const profiles = Object.entries(provisioningProfiles)
     .map(([bundleId, name]) => `\t\t<key>${xml(bundleId)}</key>\n\t\t<string>${xml(name)}</string>\n`)
     .join('');
   const manualSigningXml =
     signingStyle === 'manual'
       ? `\t<key>signingCertificate</key>
-\t<string>iOS Distribution</string>
+	<string>${xml(signingIdentity)}</string>
 \t<key>provisioningProfiles</key>
 \t<dict>
 ${profiles}\t</dict>

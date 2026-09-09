@@ -1412,32 +1412,35 @@
 
 (defdescribe
   complete-release-gate-test
-  (it "keeps stable publication behind native, mobile, desktop and full CI verification"
-      (let [release
-            (slurp ".github/workflows/release.yml")
+  (it
+    "keeps stable publication behind native, mobile, desktop and full CI verification"
+    (let [release
+          (slurp ".github/workflows/release.yml")
 
-            native
-            (slurp ".github/workflows/native-release.yml")
+          native
+          (slurp ".github/workflows/native-release.yml")
 
-            mobile
-            (slurp ".github/workflows/mobile-release.yml")]
+          mobile
+          (slurp ".github/workflows/mobile-release.yml")]
 
-        (doseq [needle ["uses: ./.github/workflows/ci.yml"
-                        "uses: ./.github/workflows/native-release.yml"
-                        "needs: [prepare, native, mobile, desktop]" "bin/verify-release-assets.py"
-                        "--draft" "--draft=false --latest" "require_complete: true"]]
-          (expect (str/includes? release needle) needle))
-        (expect (= 2 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
-        (expect (not (str/includes? release "/releases/tags/")))
-        (expect (str/includes? release "RELEASE_METADATA: ${{ steps.release.outputs.metadata }}"))
-        (expect (str/includes? native "workflow_call:"))
-        (expect (not (str/includes? release "git commit")))
-        (expect (str/includes? mobile "require_complete:"))
-        (expect (str/includes? mobile "IFS= read -r keychain"))
-        (expect (str/includes? mobile "security default-keychain -d user -s \"$keychain\""))
-        (expect (str/includes? mobile "security list-keychain -d user -s \"${keychains[@]}\""))
-        (doseq [needle ["-ios.ipa" "-android.aab"]]
-          (expect (str/includes? mobile needle) needle))))
+      (doseq [needle ["uses: ./.github/workflows/ci.yml"
+                      "uses: ./.github/workflows/native-release.yml"
+                      "needs: [prepare, native, mobile, desktop]" "bin/verify-release-assets.py"
+                      "--draft" "--draft=false --latest" "require_complete: true"]]
+        (expect (str/includes? release needle) needle))
+      (expect (= 2 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
+      (expect (not (str/includes? release "/releases/tags/")))
+      (expect (str/includes? release "RELEASE_METADATA: ${{ steps.release.outputs.metadata }}"))
+      (expect (str/includes? native "workflow_call:"))
+      (expect (not (str/includes? release "git commit")))
+      (expect (str/includes? mobile "require_complete:"))
+      (expect (str/includes? mobile "IFS= read -r keychain"))
+      (expect (str/includes? mobile "security default-keychain -d user -s \"$keychain\""))
+      (expect (str/includes? mobile "security list-keychain -d user -s \"${keychains[@]}\""))
+      (expect (str/includes? mobile "printf 'path=%s\\n' \"$KEYCHAIN_PATH\" >> \"$GITHUB_OUTPUT\""))
+      (expect (str/includes? mobile "VIS_IOS_SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.path }}"))
+      (doseq [needle ["-ios.ipa" "-android.aab"]]
+        (expect (str/includes? mobile needle) needle))))
   (it "delegates job-list read access to the native workflow's runner pickup check"
       (let [native-call (second (re-find #"(?s)  native:\n(.*?)\n  mobile:"
                                          (slurp ".github/workflows/release.yml")))]
