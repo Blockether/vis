@@ -3040,13 +3040,16 @@ export function SessionScreen({
     }
     // 80px is `max-h-20`, the class's own ceiling: measuring past it only wrote
     // a height the stylesheet clamps away, every keystroke, forever.
-    const needed = Math.min(textarea.scrollHeight, 80);
+    const contentHeight = textarea.scrollHeight;
+    const needed = Math.min(contentHeight, 80);
     if (needed > textarea.clientHeight + 1) {
       // Content wrapped past the current box — grow (one cheap targeted write).
       textarea.style.height = `${needed}px`;
       return;
     }
-    if (!remeasure || !textarea.style.height) return;
+    // An overflowing box still needs the maximum height after a deletion or
+    // autocorrection. Resetting it to `auto` only reflows the transcript twice.
+    if (contentHeight > 80 || !remeasure || !textarea.style.height) return;
     // Natural-height measurement can transiently clamp a bottom-pinned scroller. Restore
     // its prior position after writing the final composer height.
     const box = scrollRef.current;

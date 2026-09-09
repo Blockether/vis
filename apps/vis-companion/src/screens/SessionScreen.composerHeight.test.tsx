@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
@@ -103,6 +103,40 @@ describe("composer height", () => {
     await user.type(composer, "{backspace}".repeat(10));
     expect(composer.style.height).toBe("32px");
   });
+
+  // Regression: shortening a long Polish draft (including an autocorrection)
+  // reset the live box to `auto` and reflowed the transcript despite staying capped.
+  it.each(["deleteContentBackward", "insertReplacementText"])(
+    "does not reset a still-overflowing composer for %s",
+    (inputType) => {
+      installLayout();
+      installObserver();
+      renderSessionScreen();
+      const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
+      const text = "Zażółć gęślą jaźń. ".repeat(12) + "dluuugie";
+      fireEvent.input(composer, { target: { value: text } });
+      expect(composer.style.height).toBe("80px");
+      const heightWrites = vi.spyOn(composer.style, "height", "set");
+      const corrected =
+        inputType === "insertReplacementText"
+          ? text.replace("dluuugie", "długie")
+          : text.slice(0, -1);
+
+      fireEvent.input(composer, { target: { value: corrected }, inputType });
+
+      expect(composer.value).toBe(corrected);
+      expect(composer.style.height).toBe("80px");
+      expect(heightWrites).not.toHaveBeenCalled();
+      heightWrites.mockRestore();
+
+      // Crossing back below the ceiling must still shrink the box.
+      fireEvent.input(composer, {
+        target: { value: "Krótka wiadomość" },
+        inputType: "deleteContentBackward",
+      });
+      expect(composer.style.height).toBe("32px");
+    },
+  );
 
   it("refits when the box narrows under text that did not change", async () => {
     const user = userEvent.setup();
