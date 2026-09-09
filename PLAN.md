@@ -46,9 +46,8 @@ Main publication and GitHub Actions deployment were authorized in turn 12. No li
 - Data: documentation page-html, Worker shellHTML and the shared theme.css.
 - Acceptance criteria: a visible header link on desktop and touch devices, no link in embedded docs,
   and documentation/catalog navigation on the same public origin.
-- Unknowns: the public hostname was selected in turn 19. The registrar still hosts DNS;
-  the user must verify the zone import and DNSSEC transition before nameservers change.
-  No DNS cutover or old-site unpublishing has occurred.
+- Unknowns: none. Authoritative DNS is active at Cloudflare; the public docs and catalog
+  now share the configured hostname. Existing website and mail records were retained.
 
 ## 6. Unified Cloudflare docs application
 - Rationale: documentation and catalog must share one public origin and deployment.
@@ -56,14 +55,17 @@ Main publication and GitHub Actions deployment were authorized in turn 12. No li
 - Acceptance criteria: docs at /, catalog at /extensions/, relative navigation, identical CSS,
   external scripts compatible with CSP, static docs independent of D1, one source-filtered
   Cloudflare workflow, existing catalog data retained and no secrets in uploaded assets.
-- Unknowns: production DNS activation, new Worker secrets and the docs GitHub environment
-  must be configured before publication. Relay domain cutover is separate.
+- Unknowns: the current deployment credential is time-limited and must be rotated before expiry.
+  Interactive Turnstile completion remains a human acceptance check.
 
 ## Plan state
-1–4 shipped. Phases 5–6 are complete locally: apps/vis-docs serves generated docs and the
-catalog together, retaining the existing D1 identity. Publication is blocked on the new
-Worker/environment configuration and DNS activation. Previous production services and
-installer behavior remain unchanged; these changes are not committed or pushed.
+1–6 shipped on main. The Docs workflow successfully deployed and verified the unified Worker.
+47 Worker/UI/deployment tests and 49 JVM documentation tests pass after integrating current main;
+lint/reflection, formatting, actionlint, dry-run, dependency audit and redacted secret scans pass.
+Production HTTPS serves docs, shared CSS and the catalog; relay custom-domain health reports
+both push providers available. GitHub Pages publishing workflows are removed. Existing D1 data
+and old relay endpoints remain intact. Some local DNS caches still resolve the former origin;
+verification against the current public DNS address confirms the new deployment.
 
 Verification for the Worker application:
 - 28 tests passed: actual local workerd/D1 plus UI, including Turnstile replay/action/hostname
