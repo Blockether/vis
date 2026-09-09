@@ -48,6 +48,9 @@ packages/vis-benchmark/results/
 packages/vis-benchmark/trajectories/
 packages/vis-benchmark/swebench-harness/
 
+# Temporary agent UI previews and screenshots.
+/.vis/artifacts/
+
 # Sessions / runtime data
 .omc/
 .zcode/
