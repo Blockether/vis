@@ -28,6 +28,27 @@
                               "max_video_bytes" 2048
                               "max_audio_bytes" 3072}}})
 
+;; Regression: uncompressed app diagnostics were refused by every intake adapter.
+(defdescribe
+  diagnostics-attachment-test
+  (it "admits JSONL by content and preserves its bytes for submission"
+      (let [bytes
+            (.getBytes "{\"kind\":\"vis-app-diagnostics\",\"schema\":1}\n{\"event\":\"started\"}\n"
+                       "UTF-8")
+
+            file
+            (temporary-file ".jsonl" bytes)
+
+            result
+            (composer-attachments/admit-files (capabilities {:media-types ["application/x-ndjson"]})
+                                              []
+                                              [file])]
+
+        (expect (= [] (:rejected result)))
+        (expect (= "application/x-ndjson" (:media-type (first (:added result)))))
+        (expect (= (.encodeToString (java.util.Base64/getEncoder) bytes)
+                   (:base64 (first (composer-attachments/inline-payloads (:added result)))))))))
+
 (defdescribe
   composer-attachment-admission-test
   (it "stages canonical metadata and a content-stable identity"

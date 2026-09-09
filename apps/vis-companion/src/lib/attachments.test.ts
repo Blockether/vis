@@ -237,3 +237,21 @@ describe('what Android hands over', () => {
     expect(candidateMediaType('book.m4b', '')).toBe('audio/mp4');
   });
 });
+
+// Regression: diagnostics shared back to Vis were rejected by paste/file intake.
+describe('diagnostics attachments', () => {
+  it.each([
+    ['vis-diagnostics.jsonl.gz', 'application/gzip'],
+    ['vis-diagnostics.jsonl', 'application/x-ndjson'],
+  ])('admits %s from the clipboard with an unspecified type', async (name, media) => {
+    const result = await attachmentsFromFiles([new File(['log bytes'], name)]);
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0]).toMatchObject({ filename: name, media_type: media });
+  });
+
+  it('still obeys the gateway media and size limits', async () => {
+    const file = new File(['log bytes'], 'vis-diagnostics.jsonl.gz');
+    expect((await attachmentsFromFiles([file], { mediaTypes: ['image/png'] })).attachments).toEqual([]);
+    expect((await attachmentsFromFiles([file], { mediaTypes: ['application/gzip'], maxFileBytes: 1 })).attachments).toEqual([]);
+  });
+});

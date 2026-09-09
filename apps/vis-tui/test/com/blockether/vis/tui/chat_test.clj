@@ -1011,6 +1011,24 @@
 
                    (expect (str/includes? out "[Attachment #1: brief.html]")))))
 
+;; Regression coverage: log-only turns must survive the draft-to-history boundary.
+(defdescribe shared-log-history-test
+             (it "keeps both exported log containers in optimistic and resumed messages"
+                 (doseq [[filename media] [["vis-diagnostics.jsonl.gz" "application/gzip"]
+                                           ["vis-diagnostics.jsonl" "application/x-ndjson"]]]
+                   (let [attachment {:filename filename :media-type media :source "user"}
+                         staged (chat/user-request-with-staged-attachments "" [attachment])
+                         messages (@#'chat/turns->messages
+                                   [{"turn_id" "logs"
+                                     "status" "completed"
+                                     "request" ""
+                                     "attachments" (wire-canonical [attachment])}])
+                         user (first (filter #(= :user (:role %)) messages))]
+
+                     (expect (str/includes? staged filename))
+                     (expect (str/includes? (:text user) filename))
+                     (expect (not (str/includes? (:text user) "vis-image")))))))
+
 (defdescribe explicit-turn-attachment-test
              (it "passes explicit inline attachments to the canonical gateway request"
                  (let [sent

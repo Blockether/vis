@@ -26,7 +26,10 @@ import {
   PauseIcon,
   PlayIcon,
 } from "./icons";
+import { artifactShareVerb, shareArtifact } from "../lib/artifact-share";
 import {
+  artifactMedia,
+  isDocMedia,
   attachmentBytes,
   attachmentIsAudio,
   attachmentIsDoc,
@@ -44,6 +47,7 @@ import {
   CopyChip,
   Disclosure,
   IconButton,
+  ListRow,
   LoadMore,
   MetaButton,
   PROSE,
@@ -3818,6 +3822,45 @@ function attachmentKey(att: GatewayAttachment, index: number): string {
   return `${index}:${att.media_type}:${att.filename}:${att.size ?? att.base64.length}`;
 }
 
+/** User files keep their original bytes and a usable action in the transcript. */
+function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const name = attachment.filename || "Attachment";
+  const media = attachment.media_type;
+  const url = attachment.base64 ? attachmentSrc(attachment) : null;
+  const size = attachmentBytes(attachment.size);
+  if (isDocMedia(media, name)) {
+    return <DocPreview name={name} mime={media} sizeLabel={size} url={url}
+      failed={!url} onNeeded={() => {}} />;
+  }
+  const verb = artifactShareVerb(name, media);
+  return (
+    <div>
+      <ListRow disabled={busy || !url} aria-label={`${verb} ${name}`} onClick={async () => {
+        if (!url) return;
+        setBusy(true);
+        setNotice("");
+        try {
+          const blob = await (await fetch(url)).blob();
+          setNotice(await shareArtifact(blob, name, media));
+        } catch {
+          setNotice("Could not share file. Try again.");
+        } finally {
+          setBusy(false);
+        }
+      }}>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-title text-dialog-foreground" title={name}>{name}</span>
+          <span className="block font-mono text-ui text-dialog-hint">{[artifactMedia(attachment), size].filter(Boolean).join(" · ")}</span>
+        </span>
+        <span className="font-mono text-ui text-accent-ink">{busy ? "Preparing…" : verb}</span>
+      </ListRow>
+      {(notice || !url) && <p role="status" className="px-3 pb-2 font-mono text-ui text-dialog-hint">{!url ? "File bytes unavailable." : notice}</p>}
+    </div>
+  );
+}
+
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
@@ -3829,14 +3872,11 @@ export const UserMessage = memo(function UserMessage({
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
   // in the assistant trace, so only the `user` rail belongs in the user bubble.
-  const mediaAttachments = (attachments ?? []).filter(
-    (a) =>
-      (a.source ?? "user") === "user" &&
-      !!a.base64 &&
-      (!!a.media_type?.startsWith("image/") ||
-        !!a.media_type?.startsWith("video/") ||
-        !!a.media_type?.startsWith("audio/")),
+  const userAttachments = (attachments ?? []).filter((a) => (a.source ?? "user") === "user");
+  const mediaAttachments = userAttachments.filter((a) =>
+    !!a.base64 && /^(image|video|audio)\//.test(a.media_type),
   );
+  const files = userAttachments.filter((a) => !/^(image|video|audio)\//.test(a.media_type));
   // The very rule the assistant rail follows (`mediaGroupLayout`): ONE picture
   // is a plate with its own caption, several are a gallery. A clip always keeps
   // the plate, since the platform's controls do not fit a gallery tile, and a
@@ -3911,6 +3951,13 @@ export const UserMessage = memo(function UserMessage({
           ),
         )}
       </div>
+      {files.length > 0 && (
+        <div className={`mt-2.5 min-w-0 ${RAIL_SPINE_PAPER}`}>
+          <DocStack>
+            {files.map((attachment, index) => <UserFileAttachment key={attachmentKey(attachment, index)} attachment={attachment} />)}
+          </DocStack>
+        </div>
+      )}
       {mediaAttachments.length > 0 && (
         <div className={`mt-2.5 min-w-0 ${RAIL_SPINE_PAPER}`}>
           {/* The clip the user sent replays from the SAME DB-owned bytes as a

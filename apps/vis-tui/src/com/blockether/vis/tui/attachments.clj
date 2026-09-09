@@ -32,7 +32,8 @@
    every later turn, so a row blessed once on the way IN is shipped forever —
    one corrupt PNG that way is a permanent provider 400. Judged on the way OUT,
    the same row is simply dropped and the session keeps working."
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.tui.format :as fmt]
             [com.blockether.vis.tui.image-convert :as image-convert]
             [com.blockether.vis.tui.paths :as paths]
@@ -310,7 +311,10 @@
 
 (def document-media-types
   "The one vocabulary for documents stored for the human and named to the model."
-  {:pdf "application/pdf" :html "text/html" :xhtml "application/xhtml+xml"})
+  {:pdf "application/pdf"
+   :html "text/html"
+   :xhtml "application/xhtml+xml"
+   :jsonl "application/x-ndjson"})
 
 (def gzip-media-types
   "MIME spellings file providers use for a gzip stream. Intake sniffs and stores
@@ -353,6 +357,22 @@
   [^bytes b]
   (when (bytes-at? b 0 [0x1f 0x8b]) "application/gzip"))
 
+(defn detect-jsonl-mime
+  "Recognize a complete leading JSON object in a bounded file head. The remainder
+   may be truncated by sniffing; original log bytes are stored without parsing."
+  [^bytes b]
+  (let [head
+        (String. b 0 (int (min (alength b) 4096)) StandardCharsets/UTF_8)
+
+        newline
+        (.indexOf head "\n")]
+
+    (when (not (neg? newline))
+      (let [line (str/trim (str/replace (.substring head 0 newline) "\uFEFF" ""))]
+        (when (and (str/starts-with? line "{") (str/ends-with? line "}"))
+          (try (when (map? (json/read-json line)) "application/x-ndjson")
+               (catch Exception _ nil)))))))
+
 (defn detect-media-mime
   "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
    then audio, video, document and gzip detection. Stills win the ISO-BMFF tie
@@ -362,7 +382,8 @@
       (detect-audio-mime b)
       (detect-video-mime b)
       (detect-document-mime b)
-      (detect-gzip-mime b)))
+      (detect-gzip-mime b)
+      (detect-jsonl-mime b)))
 
 (def provider-image-media-types
   "The ONLY image media types a vision wire accepts VERBATIM. Anthropic names

@@ -1799,3 +1799,18 @@ describe("compact execution groups", () => {
     expect(painted.container.textContent).toContain("second_call()");
   });
 });
+
+// Regression: the user transcript discarded every non-media attachment.
+describe("user log attachments", () => {
+  it("shows log files without prose, and never treats them as images", () => {
+    const view = render(<UserMessage attachments={[
+      { source: "user", filename: "vis-diagnostics.jsonl.gz", media_type: "application/gzip", base64: "H4sIAAAAAAAA/w==", size: 10 },
+      { source: "user", filename: "vis-diagnostics.jsonl", media_type: "application/x-ndjson", base64: "e30K", size: 3 },
+      { source: "tool", filename: "not-user.gz", media_type: "application/gzip", base64: "H4sI" },
+    ]}>{""}</UserMessage>);
+    expect(view.getByText("vis-diagnostics.jsonl.gz")).toBeTruthy();
+    expect(view.getByText("vis-diagnostics.jsonl")).toBeTruthy();
+    expect(view.queryByText("not-user.gz")).toBeNull();
+    expect(view.container.querySelector("img, audio, video")).toBeNull();
+  });
+});

@@ -58,6 +58,9 @@ const DEFAULT_MEDIA_TYPES = [
   ...DEFAULT_DOCUMENT_MEDIA_TYPES,
   ...DEFAULT_VIDEO_MEDIA_TYPES,
   ...DEFAULT_AUDIO_MEDIA_TYPES,
+  'application/gzip',
+  'application/x-gzip',
+  'application/x-ndjson',
 ];
 
 // Intake ceiling, not the provider's: the gateway shrinks an oversize still on
@@ -256,6 +259,8 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   htm: 'text/html',
   xhtml: 'application/xhtml+xml',
   gz: 'application/gzip',
+  jsonl: 'application/x-ndjson',
+  ndjson: 'application/x-ndjson',
   mp4: 'video/mp4',
   m4v: 'video/mp4',
   mov: 'video/quicktime',
