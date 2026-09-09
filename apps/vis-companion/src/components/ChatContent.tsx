@@ -3676,6 +3676,15 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
   const cancelled =
     turn.status === "cancelled" || turn.prior_outcome === "cancelled";
+  const emptyStatus =
+    !streaming &&
+    !blocks.length &&
+    !fallback &&
+    !cancelled &&
+    turn.status !== "completed" &&
+    turn.status !== "running"
+      ? (turn.status ?? "No response")
+      : null;
   // A row still IN FLIGHT has no footer to show. Usage, cost and duration only
   // exist once the turn ends, so mid-turn the summary degrades to a bare
   // `provider/model` (the gateway stamps it from the last completed iteration's
@@ -3701,7 +3710,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ref={paintSkip}
     >
       <div
-        className={`mb-4 flex items-center justify-between gap-2 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
+        className={`mb-1 flex items-center justify-between gap-2 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
         <span>Vis</span>
         {onFork && (
@@ -3718,7 +3727,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           </span>
         )}
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 [&>:first-child]:mt-0">
         <IterationTrace
           iterations={turn.iterations ?? []}
           answered={answered}
@@ -3731,28 +3740,25 @@ export const AssistantMessage = memo(function AssistantMessage({
             tool results, thinking bands and code cards are all `text-ui` (11px), so an
             answer at `text-body` (12px) was one px of drift, not a hierarchy. The role
             label (`text-meta`) and the meta footer (`text-chip`) still step down from it. */}
-        <div
-          className={`bg-answer pr-3 text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
-        >
-          {blocks.map((block) => (
-            <ContentBlockView
-              key={block.id}
-              block={block}
-              onOpenAttachment={onOpenAttachment}
-            />
-          ))}
-          {fallback && (
-            <Markdown onOpenAttachment={onOpenAttachment}>{fallback}</Markdown>
-          )}
-          {!streaming &&
-            !blocks.length &&
-            !fallback &&
-            !cancelled &&
-            turn.status !== "completed" &&
-            turn.status !== "running" && (
-              <span>{turn.status ?? "No response"}</span>
+        {(blocks.length > 0 || fallback || emptyStatus) && (
+          <div
+            className={`bg-answer pr-3 text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
+          >
+            {blocks.map((block) => (
+              <ContentBlockView
+                key={block.id}
+                block={block}
+                onOpenAttachment={onOpenAttachment}
+              />
+            ))}
+            {fallback && (
+              <Markdown onOpenAttachment={onOpenAttachment}>
+                {fallback}
+              </Markdown>
             )}
-        </div>
+            {emptyStatus && <span>{emptyStatus}</span>}
+          </div>
+        )}
         {liveViewPanel}
         {streaming ? (
           <TurnPhaseLine

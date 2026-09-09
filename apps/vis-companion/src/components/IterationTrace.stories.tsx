@@ -202,6 +202,24 @@ async function expectForkAlignment(answer: HTMLElement) {
   );
 }
 
+async function expectRoleSpacing(canvasElement: HTMLElement) {
+  const canvas = within(canvasElement);
+  const userRole = canvas.getByText("You", { exact: true });
+  const userBody = userRole.nextElementSibling!;
+  const userGap =
+    userBody.getBoundingClientRect().top -
+    userRole.getBoundingClientRect().bottom;
+  // Regression: every answer starts at the same distance below its role as a request.
+  for (const role of canvas.getAllByText("Vis", { exact: true })) {
+    const body = role.closest("article")!.children[1];
+    await waitFor(() => {
+      expect(
+        body.getBoundingClientRect().top - role.getBoundingClientRect().bottom,
+      ).toBeCloseTo(userGap, 0);
+    });
+  }
+}
+
 /**
  * THE EXCHANGE — your message and the turn it started, on ONE line.
  *
@@ -253,6 +271,7 @@ export const Exchange: Story = {
     await userEvent.hover(answer);
     await expect(fork).toBeVisible();
     await expectForkAlignment(answer);
+    await expectRoleSpacing(canvasElement);
     forkFromAnswer.mockClear();
     await userEvent.click(fork);
     await expect(forkFromAnswer).toHaveBeenCalledOnce();
@@ -281,6 +300,51 @@ export const Forking: Story = {
     await expect(fork).toBeDisabled();
     await expect(fork).toHaveTextContent("Forking...");
     await expectForkAlignment(answer);
+    await expectRoleSpacing(canvasElement);
+  },
+};
+
+/** Role spacing does not depend on an answer's content or lifecycle state. */
+export const MessageSpacing: Story = {
+  render: () => (
+    <>
+      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      {[false, true].map((withFork) => (
+        <AssistantMessage
+          key={`answer-${withFork}`}
+          turn={{ ...STORY_EXCHANGE_TURN, iterations: [] }}
+          onFork={withFork ? forkFromAnswer : undefined}
+        />
+      ))}
+      <AssistantMessage
+        turn={{ ...STORY_EXCHANGE_TURN, iterations: STORY_THINKING_AND_CODE }}
+        onFork={forkFromAnswer}
+        whole
+      />
+      {["running", "cancelled", "failed", "completed"].map((status) => (
+        <AssistantMessage
+          key={status}
+          turn={{ ...STORY_EXCHANGE_TURN, status, content: [], iterations: [] }}
+          settled
+        />
+      ))}
+      <AssistantMessage
+        turn={{
+          ...STORY_EXCHANGE_TURN,
+          status: "running",
+          content: [],
+          iterations: [],
+        }}
+        streaming
+      />
+      <AssistantMessage
+        turn={{ ...STORY_EXCHANGE_TURN, content: [], iterations: [] }}
+        pending="Loading latest changes"
+      />
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    await expectRoleSpacing(canvasElement);
   },
 };
 
