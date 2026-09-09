@@ -720,7 +720,10 @@ export const Markdown = memo(function Markdown({
           ),
           table: ({ children: table }) => (
             <div
-              className={`${compact ? "my-2" : "my-3"} max-w-full overflow-x-auto overscroll-x-contain`}
+              role="region"
+              aria-label="Table"
+              tabIndex={0}
+              className={`${compact ? "my-2" : "my-3"} max-w-full overflow-x-auto overscroll-x-contain border border-code-edge`}
             >
               {/* The table sits on the SAME step as the surrounding prose — hardcoding
                   `text-ui` made a tool result's table one step BIGGER than the compact
@@ -733,8 +736,10 @@ export const Markdown = memo(function Markdown({
                   back to `normal` here — the inherited `overflow-wrap: break-word` still
                   breaks a token too long for a line of its own — so a column asks for the
                   width its content needs and a wide table reaches for the scroller. */}
+              {/* The scroll viewport owns the frame; separate cell borders stay inside
+                  it in WebKit, including the bottom edge and partly visible columns. */}
               <table
-                className={`w-full border-collapse ${compact ? "text-meta" : "text-ui"} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
+                className={`w-full border-separate border-spacing-0 ${compact ? "text-meta" : "text-ui"} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
               >
                 {table}
               </table>
@@ -745,14 +750,14 @@ export const Markdown = memo(function Markdown({
           // when every cell starts on the first line.
           td: ({ children: cell }) => (
             <td
-              className={`${compact ? "px-1.5 py-1" : "px-2 py-1.5"} border border-code-edge text-left align-top`}
+              className={`${compact ? "px-1.5 py-1" : "px-2 py-1.5"} border-r border-t border-code-edge text-left align-top last:border-r-0`}
             >
               {cell}
             </td>
           ),
           th: ({ children: cell }) => (
             <th
-              className={`${compact ? "px-1.5 py-1" : "px-2 py-1.5"} border border-code-edge bg-code text-left align-top font-semibold`}
+              className={`${compact ? "px-1.5 py-1" : "px-2 py-1.5"} border-r border-code-edge bg-code text-left align-top font-semibold last:border-r-0`}
             >
               {cell}
             </th>
@@ -2566,7 +2571,7 @@ const TraceSegment = memo(function TraceSegment({
       )}
       {segment.head.prose && (
         // The role owns the opening gap; narration between bands keeps both insets.
-        <div className="py-2.5 pr-3 text-ui text-vis-message first:group-first/trace-segment:pt-0">
+        <div className="py-2.5 text-ui text-vis-message first:group-first/trace-segment:pt-0">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
@@ -3746,7 +3751,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             label (`text-meta`) and the meta footer (`text-chip`) still step down from it. */}
         {(blocks.length > 0 || fallback || emptyStatus) && (
           <div
-            className={`bg-answer pr-3 text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
+            className={`bg-answer text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
           >
             {blocks.map((block) => (
               <ContentBlockView

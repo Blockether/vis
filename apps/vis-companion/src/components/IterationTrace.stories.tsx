@@ -721,7 +721,8 @@ export const ProseAlignment: Story = {
         0,
       );
       await expect(paragraph.getBoundingClientRect().right).toBeCloseTo(
-        thought.getBoundingClientRect().right,
+        // Prose aligns to both outer edges, not the inset reasoning text.
+        thought.closest("section")!.getBoundingClientRect().right,
         0,
       );
     }
