@@ -54,7 +54,7 @@ export function mount(container,request=fetch,initial) {
     const sitekey=$('#turnstile').dataset.sitekey;
     if(!sitekey) {$('#submit-status').textContent='Submissions are not configured yet. Try again later.';return;}
     try {
-      if(!window.turnstile) {
+      if(typeof window.turnstile?.render!=='function') {
         challengeLoading ||= new Promise((resolve,reject)=>{
           const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.onload=resolve;script.onerror=()=>{script.remove();challengeLoading=null;reject(new Error('Could not load the anti-spam check. Close and reopen the form to retry.'));};document.head.append(script);
         });

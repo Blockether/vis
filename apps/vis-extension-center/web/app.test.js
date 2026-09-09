@@ -196,6 +196,17 @@ test('typing while Turnstile loads does not cancel the challenge', async () => {
   expect(turnstile.render).toHaveBeenCalledOnce(); script.remove();
 });
 
+test('a browser named element is not mistaken for the loaded Turnstile API', async () => {
+  setup(); await tick(); const api=window.turnstile;
+  // Browsers expose the widget container as window.turnstile before its script loads.
+  window.turnstile=$('#turnstile');
+  $('#submit-open').click();
+  const script=document.head.querySelector('script[src*="turnstile"]');
+  expect(script).not.toBeNull();
+  window.turnstile=api; script.dispatchEvent(new window.Event('load')); await tick();
+  expect(api.render).toHaveBeenCalledOnce(); script.remove();
+});
+
 test('an expired or removed challenge cannot authorize a later form', async () => {
   const request=setup(); await tick(); $('#submit-open').click();
   const callbacks=window.turnstile.render.mock.calls.at(-1)[1];
