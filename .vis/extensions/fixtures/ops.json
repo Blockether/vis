@@ -13,9 +13,9 @@
           "id": "run"
         },
         {
-          "done": 31,
-          "total": 35,
-          "label": "Steps finished",
+          "done": 4,
+          "total": 6,
+          "label": "Jobs finished",
           "type": "progress",
           "id": "progress"
         },
@@ -225,8 +225,8 @@
           "node_id": "run"
         },
         {
-          "done": 36,
-          "total": 36,
+          "done": 6,
+          "total": 6,
           "op": "set",
           "node_id": "progress"
         },

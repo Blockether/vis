@@ -352,25 +352,8 @@ def _step_tone(step):
     return "idle"
 
 
-def _step_counts(jobs):
-    """Steps finished over steps known.
-
-    GitHub lists a job's steps only once that job STARTS, so the total grows as the run
-    fans out. That is the truth and not a defect: work nobody has scheduled is work
-    nobody can measure. What matters is that it MOVES — a matrix of three that takes
-    forty minutes moves a job counter zero times and a step counter every minute or two.
-    """
-    done = 0
-    total = 0
-    for job in jobs:
-        for step in _job_steps(job):
-            total += 1
-            if str(step.get("status") or "") == "completed":
-                done += 1
-    if total:
-        return done, total
-    # A pull request's checks are jobs with no steps at all: then the check IS the unit,
-    # and counting steps would leave the bar dead at 0 of 0 for the whole run.
+def _job_counts(jobs):
+    """Completed jobs over known jobs, including jobs whose steps are not published yet."""
     finished = sum(1 for job in jobs if str(job.get("status") or "") == "completed")
     return finished, len(jobs)
 
@@ -439,7 +422,11 @@ def _run_status(payload, jobs, tones, groups, now=None):
             headline,
             f"{len(jobs)} jobs · {took}" if took != "·" else f"{len(jobs)} jobs",
         )
-    waiting = len(jobs) or "no"
+    waiting = sum(
+        1
+        for job, tone, _ in paired
+        if tone == "running" and str(job.get("status") or "") != "in_progress"
+    )
     return "Waiting for a runner", f"{waiting} jobs queued"
 
 
@@ -548,7 +535,7 @@ def run_shape(payload, selected_ids=None, now=None):
     ]
     is_over = str(payload.get("status") or "") == "completed"
     headline, detail = _run_status(payload, jobs, tones, groups, now)
-    done, total = _step_counts(jobs)
+    done, total = _job_counts(jobs)
     steps, active_step_ids = _timeline(selected, groups_by_id, is_over, now)
     selection_names = [
         _job_display(job, groups_by_id.get(job_id)) for job_id, job in selected
@@ -668,7 +655,7 @@ def declared_nodes(shape):
             "run", shape["headline"], tone=shape["tone"], detail=shape["detail"]
         ),
         vis.progress(
-            "progress", done=shape["done"], total=shape["total"], label="Steps finished"
+            "progress", done=shape["done"], total=shape["total"], label="Jobs finished"
         ),
         vis.stat("score", stats=[dict(one) for one in shape["score"]]),
         vis.table(

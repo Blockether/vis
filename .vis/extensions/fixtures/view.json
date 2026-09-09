@@ -25,9 +25,9 @@
       "total_lines": 6
     },
     {
-      "done": 36,
-      "total": 36,
-      "label": "Steps finished",
+      "done": 6,
+      "total": 6,
+      "label": "Jobs finished",
       "type": "progress",
       "id": "progress"
     },

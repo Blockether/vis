@@ -97,7 +97,7 @@
       (expect (= "tests · vis-agent + vis-contract (PyPI packages) failed"
                  (:text (node view "run"))))
       (expect (= :error (:tone (node view "run"))))
-      (expect (= [36 36] ((juxt :done :total) (node view "progress"))))
+      (expect (= [6 6] ((juxt :done :total) (node view "progress"))))
       (expect (= ["1" "5" "0" "28m 33s"] (mapv :value-text (:stats (node view "score")))))
       ;; A row is addressed by the job's databaseId, so a job that changes state keeps its slot.
       (let [jobs-node
@@ -149,7 +149,7 @@
             (live/->markdown view)]
 
         (expect (str/includes? document "tests · vis-agent + vis-contract (PyPI packages) failed"))
-        (expect (str/includes? document "**100%** · 36/36 done"))
+        (expect (str/includes? document "**100%** · 6/6 done"))
         (expect (str/includes? document "tests / vis-agent + vis-contract (PyPI packages)"))
         (expect (str/includes? document "exit code 1"))))
   (it "paints the picture the extension's own host painted, key for key"
