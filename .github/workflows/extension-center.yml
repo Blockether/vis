@@ -82,14 +82,4 @@ jobs:
       - name: Check deployed HTML and catalog
         env:
           CENTER_URL: ${{ vars.VIS_EXTENSION_CENTER_URL }}
-        run: |
-          node --input-type=module <<'JS'
-          const url=new URL(process.env.CENTER_URL);
-          if(url.protocol!=="https:" || url.username || url.password) throw new Error("Configure VIS_EXTENSION_CENTER_URL");
-          const page=await fetch(url,{signal:AbortSignal.timeout(20000)});
-          const html=await page.text();
-          if(!page.ok || !html.includes("/assets/theme.css") || !html.includes("Extension Center")) throw new Error("Deployed HTML check failed");
-          const api=await fetch(new URL("/api/extensions",url),{signal:AbortSignal.timeout(20000)});
-          if(!api.ok || !Array.isArray((await api.json()).extensions)) throw new Error("Deployed catalog check failed");
-          console.log("Deployed HTML and catalog verified");
-          JS
+        run: node deploy.mjs --verify
