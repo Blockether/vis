@@ -407,7 +407,7 @@ export function SessionsScreen({
   // session that has some is DIRTY: it stays in the list — with a way back into
   // what you wrote, and a way to throw it away — instead of being hidden with
   // the words locked inside it.
-  const draftMessages = useDraftMessages();
+  const draftMessages = useDraftMessages(isVisible);
 
   // A session this device has never met is NOT unread: seed it at the turn count
   // it arrived with, so only answers that land AFTER this point raise a badge.
@@ -732,14 +732,17 @@ export function SessionsScreen({
         .join('|'),
     [draftMessages],
   );
-  const overlayRef = useRef(dirtyOverlay);
+  const overlayRef = useRef({ dirtyOverlay, isVisible });
   useEffect(() => {
-    if (overlayRef.current === dirtyOverlay) return;
-    overlayRef.current = dirtyOverlay;
+    const previous = overlayRef.current;
+    overlayRef.current = { dirtyOverlay, isVisible };
+    // The visibility effect loads on return. Only a draft change made while the
+    // list remains visible needs its own read; hidden renders must never fetch.
+    if (!isVisible || !previous.isVisible || previous.dirtyOverlay === dirtyOverlay) return;
     const controller = new AbortController();
     void load(controller.signal).then(() => adoptRef.current());
     return () => controller.abort();
-  }, [dirtyOverlay, load]);
+  }, [dirtyOverlay, isVisible, load]);
 
   // Rehydrate connection metadata without refetching rows when labels, IDs or recovered
   // addresses change.

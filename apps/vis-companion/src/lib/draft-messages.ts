@@ -3,7 +3,7 @@
 // Notify the fleet only when draft presence or persisted content changes, never per key.
 // Store staged attachment bytes separately so typing cannot rewrite large payloads.
 
-import { useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { Preferences } from '@capacitor/preferences';
 import { bridged } from './bridge';
 import type { ComposerPaste } from './paste';
@@ -439,19 +439,24 @@ export function watchDraftMessageExits(): void {
 }
 
 /**
- * The draft messages this device is holding, re-read on every change.
+ * The draft messages this device is holding. Hidden lists do not subscribe;
+ * becoming visible reads the latest snapshot without delaying persistence.
  *
  * The sessions list needs them: a session you typed into and left is EMPTY on
  * the gateway, and an empty session is hidden — so without this the words (and
  * the session that owns them) were unreachable from the list. Hydration is
  * kicked off here too, because the list may be the first screen to ask.
  */
-export function useDraftMessages(): DraftMessageStore {
+export function useDraftMessages(isVisible: boolean): DraftMessageStore {
   useEffect(() => {
     void hydrateDraftMessages();
   }, []);
+  const subscribeVisible = useCallback(
+    (listener: () => void) => isVisible ? subscribe(listener) : () => {},
+    [isVisible],
+  );
   return useSyncExternalStore(
-    subscribe,
+    subscribeVisible,
     () => snapshot,
     () => snapshot,
   );

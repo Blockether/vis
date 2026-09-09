@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 
 import { renderApp } from "../app-harness";
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
+import {
+  draftMessageKey,
+  flushDraftMessages,
+  writeDraftMessage,
+} from "../lib/draft-messages";
 
 const settle = (ms = 0) => new Promise((done) => setTimeout(done, ms));
 
@@ -13,7 +18,8 @@ const settle = (ms = 0) => new Promise((done) => setTimeout(done, ms));
 const isListRead = (request: { method: string; path: string }) =>
   request.method === "GET" &&
   (request.path === "/v1/sessions" ||
-    (request.path.startsWith("/v1/sessions?") && !request.path.includes("root=")));
+    (request.path.startsWith("/v1/sessions?") &&
+      !request.path.includes("root=")));
 
 const fleet = () => [
   {
@@ -44,11 +50,52 @@ describe("a sessions list that is not on the glass", () => {
     expect(view.requests.filter(isListRead)).toHaveLength(1);
 
     view.setVisible(true);
-    await waitFor(() => expect(view.requests.filter(isListRead).length).toBeGreaterThan(1));
+    await waitFor(() =>
+      expect(view.requests.filter(isListRead).length).toBeGreaterThan(1),
+    );
     // Shown means CURRENT: the load is the first thing coming back does.
     expect(await screen.findByText("A session")).toBeTruthy();
     view.unmount();
     view.restore();
+  });
+
+  it("updates visible drafts and catches up once after hidden draft changes", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        { label: "laptop", sessions: [listSession({ id: "s1", title: "" })] },
+      ],
+    });
+    const key = draftMessageKey(view.conns[0].url, "s1");
+    const save = async (text: string) => {
+      await act(async () => {
+        writeDraftMessage(key, { text });
+        await flushDraftMessages();
+      });
+    };
+    try {
+      await screen.findByText("Untitled session");
+      await save("Visible draft");
+      expect(await screen.findByText("Visible draft")).toBeTruthy();
+
+      view.setVisible(false);
+      const before = view.requests.filter(isListRead).length;
+      await save("Changed while hidden");
+      // An unrelated shell render can read the latest snapshot even while unsubscribed.
+      view.setVisible(false);
+      await settle();
+      expect(view.requests.filter(isListRead)).toHaveLength(before);
+
+      view.setVisible(true);
+      expect(await screen.findByText("Changed while hidden")).toBeTruthy();
+      await waitFor(() =>
+        expect(view.requests.filter(isListRead)).toHaveLength(before + 1),
+      );
+      await save("Visible again");
+      expect(await screen.findByText("Visible again")).toBeTruthy();
+    } finally {
+      view.unmount();
+      view.restore();
+    }
   });
 
   it("is reloaded by the shell on the way back out of a session", async () => {

@@ -17,6 +17,7 @@ vi.mock("./lib/fleet", async (importOriginal) => {
 });
 
 import { renderApp } from "./app-harness";
+import { flushDraftMessages } from "./lib/draft-messages";
 import { listSession } from "./screens/sessions-screen-harness";
 
 let restore = () => {};
@@ -67,7 +68,6 @@ const type = async (composer: HTMLTextAreaElement, text: string) => {
 // app hangs for half a second, many times, on iOS"): the sessions list stays
 // MOUNTED behind an open transcript, and every keystroke in the composer wrote
 // the draft message through the store that list subscribes to. Each write
-// published a fresh snapshot object, so a character re-ran the fleet-wide
 // published a fresh snapshot object, so a character re-ran the fleet-wide pass
 // over every machine and every session, and re-rendered every project group, for
 // a screen the reader cannot see.
@@ -75,14 +75,48 @@ describe("typing in the composer", () => {
   it("does not re-run the sessions list behind it", async () => {
     const { view, composer } = await openFirstSession();
 
-    // The first character is real news: this session now holds unsent work, so
-    // its row is dirty. Everything after it tells the list nothing new.
+    // Once the draft is nonempty, further characters do not change row presence.
     await type(composer, "h");
     const before = counters.passes;
     await type(composer, "hello there");
 
     expect(composer.value).toBe("hello there");
     expect(counters.passes - before).toBe(0);
+    view.unmount();
+  });
+
+  // The iOS report includes fleet reads during typing. The first dirty character
+  // and each persisted pause used to wake the hidden list despite paused polling.
+  it("does not reload the hidden fleet when a draft first becomes dirty", async () => {
+    const { view, composer } = await openFirstSession();
+    const listReads = () =>
+      view.requests.filter(
+        (request) => new URL(request).pathname === "/v1/sessions",
+      ).length;
+    const before = listReads();
+
+    await type(composer, "h");
+
+    expect(listReads() - before).toBe(0);
+    expect(composer.value).toBe("h");
+    view.unmount();
+  });
+
+  it("persists typing pauses without recomputing the hidden fleet", async () => {
+    const { view, composer } = await openFirstSession();
+    await type(composer, "h");
+    const before = counters.passes;
+
+    for (const text of ["hello", "hello there", "hello there again"]) {
+      await type(composer, text);
+      await flushDraftMessages();
+      await settle();
+    }
+
+    expect(counters.passes - before).toBe(0);
+    expect(localStorage.getItem("vis.draftMessages")).toContain(
+      "hello there again",
+    );
     view.unmount();
   });
 
