@@ -686,16 +686,10 @@ export function ConfirmRow({
 }
 
 /**
- * THE WEIGHT A BAND'S NAME WEARS, pressable or not.
- *
- * `PYTHON` over a program, `RESULT` over what it printed, `THINKING` over the
- * reasoning that produced it: one word, in caps, saying what the band under it
- * holds. It is ONE weight because a row the reader cannot press must read as
- * the same kind of row as the one they can — `Disclosure` tone `step` is this
- * ink on a button, `BandLabel` is it standing on its own, and the TUI paints
- * the same names in the same weight (`render/band-label`).
+ * Execution names share one semibold weight, whether static or pressable.
+ * Font size and primary ink match transcript text; counts stay secondary.
  */
-const BAND_NAME = 'font-extrabold tracking-[0.06em]';
+const BAND_NAME = 'font-semibold tracking-[0.06em]';
 
 /**
  * A TRACE ROW YOU EXPAND, and there is only one of it.
@@ -767,7 +761,7 @@ export function Disclosure({
 }) {
   const ink =
     tone === 'step'
-      ? `${BAND_NAME} text-accent-ink hover:bg-hover`
+      ? `${BAND_NAME} text-white hover:bg-hover`
       : tone === 'thinking'
         ? 'font-bold italic tracking-[0.07em] text-thinking hover:text-dialog-hint-key'
         : tone === 'caption'
@@ -781,8 +775,8 @@ export function Disclosure({
     density === 'compact'
       ? 'relative min-h-6 text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
       : tone === 'execution'
-        ? 'min-h-11 text-meta mouse:min-h-7'
-        : `min-h-8 mouse:min-h-6 ${tone === 'branch' ? 'text-ui' : 'text-chip'}`;
+        ? 'min-h-11 text-ui mouse:min-h-7'
+        : `min-h-8 mouse:min-h-6 ${tone === 'step' || tone === 'branch' ? 'text-ui' : 'text-chip'}`;
   return (
     <button
       type="button"
@@ -796,29 +790,27 @@ export function Disclosure({
       )}
       {children}
       {(inlineChevron || tone === 'execution' || tone === 'thinking') && (
-        <ChevronIcon open={isOpen} className={`${inlineChevron ? '' : 'ml-auto'} size-3 shrink-0`} />
+        <ChevronIcon
+          open={isOpen}
+          className={`${inlineChevron ? '' : 'ml-auto'} size-3 shrink-0`}
+        />
       )}
     </button>
   );
 }
 
 /**
- * THE NAME OF A BAND THAT DOES NOT OPEN.
- *
- * A program's header when the whole program is already on screen, a result card
- * whose value carried no tally: there is nothing to disclose, so the row is not
- * a `Disclosure` — but it is the same NAME in the same weight. Without it those
- * rows said nothing at all, a chevron and a duration standing for whatever the
- * band happened to hold.
+ * Transcript-sized execution name, shared by static and collapsible bands.
+ * Named failure and interruption states retain their semantic ink.
  */
 export function BandLabel({
   className = '',
-  tone = 'accent',
+  tone = 'default',
   children,
 }: {
   className?: string;
-  /** The ink of the state the band reports: a failure, a stop, a call still running. */
-  tone?: 'accent' | 'err' | 'hint' | 'result';
+  /** Only failure and interruption labels override the primary text color. */
+  tone?: 'default' | 'err' | 'hint';
   children: ReactNode;
 }) {
   const ink =
@@ -826,12 +818,10 @@ export function BandLabel({
       ? 'text-err'
       : tone === 'hint'
         ? 'text-dialog-hint'
-        : tone === 'result'
-          ? 'text-code-result'
-          : 'text-accent-ink';
+        : 'text-white';
   return (
     <span
-      className={`select-none truncate font-mono text-chip ${BAND_NAME} ${ink} ${className}`}
+      className={`select-none truncate font-mono text-ui ${BAND_NAME} ${ink} ${className}`}
     >
       {children}
     </span>
@@ -839,14 +829,14 @@ export function BandLabel({
 }
 
 /**
- * THE COUNT BESIDE A BAND'S NAME, and it never takes the name's weight.
- *
- * `+3 more`, `+8 more`: what is HIDDEN is not what the band IS, so the name
- * stays the one constant the eye can find down the column and the tally steps
- * back out of it.
+ * Secondary metadata beside a band name: regular weight and readable touch sizing.
  */
 export function BandTally({ children }: { children: ReactNode }) {
-  return <span className="font-normal tracking-normal">{children}</span>;
+  return (
+    <span className="font-normal tracking-normal text-ui text-dialog-hint mouse:text-meta">
+      {children}
+    </span>
+  );
 }
 
 /**

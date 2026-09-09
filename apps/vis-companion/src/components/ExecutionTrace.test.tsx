@@ -356,7 +356,7 @@ it("opens the complete program below its own CODE header", () => {
   expect(band.textContent).not.toContain("print(paths)");
   fireEvent.click(view.getByRole("button", { name: "Expand code" }));
   expect(
-    band.querySelector("[data-code-body]")?.classList.contains("py-3"),
+    band.querySelector("[data-code-body]")?.classList.contains("py-2"),
   ).toBe(true);
   expect(band.querySelector("pre")?.textContent).toContain(
     "paths = await ls(root)",

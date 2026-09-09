@@ -922,11 +922,15 @@ describe("a Python evaluation without detected Activity", () => {
     expect(
       painted.queryByRole("button", { name: "Expand execution trace" }),
     ).toBeNull();
-    // The CODE name itself turns red; the band says nothing else about the failure.
+    // The execution name stays primary; the visible failure label carries the state.
     const codeName = painted.getByRole("button", { name: "Expand code" });
     expect(codeName.textContent).toMatch(/^CODE/);
     expect(codeName.textContent).not.toContain("Failed");
-    expect(codeName.querySelector(".text-err")).not.toBeNull();
+    expect(codeName.querySelector(".text-white")).not.toBeNull();
+    expect(codeName.querySelector(".text-err")).toBeNull();
+    expect(
+      painted.container.querySelector("[data-code-result] .text-err"),
+    ).not.toBeNull();
   });
 
   it("shows an interrupted Python execution as a stop, not a JVM failure", () => {

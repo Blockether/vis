@@ -2325,16 +2325,12 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     // A step of a run is a SENTENCE — `Searched · 18 matches` — not the name of a
     // band, so it must not wear the weight a tool header wears above a block.
     it("reads a chronology step as a sentence, not a band name", () => {
-      expect(first(html({ tone: "chronology" }))).not.toContain(
-        "font-extrabold",
-      );
-      expect(first(html({ tone: "step" }))).toContain("font-extrabold");
+      expect(first(html({ tone: "chronology" }))).not.toContain("font-semibold");
+      expect(first(html({ tone: "step" }))).toContain("font-semibold");
     });
   });
 
-  // A band says in ONE word what it holds — `PYTHON` over a program, `RESULT`
-  // over what it printed, `THINKING` over the reasoning — and that word wears
-  // one weight whether or not its row can be pressed.
+  // Execution names share the transcript text size and primary ink in either fold state.
   describe("BandLabel", () => {
     const label = renderToStaticMarkup(<BandLabel>RESULT</BandLabel>);
     const pressable = first(
@@ -2345,22 +2341,40 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       ),
     );
 
-    it("names a band in the weight the pressable one wears", () => {
+    it("uses transcript-sized primary text for static and pressable names", () => {
       expect(label).toContain("RESULT");
       for (const token of [
-        "font-extrabold",
+        "text-ui",
+        "font-semibold",
         "tracking-[0.06em]",
-        "text-accent-ink",
+        "text-white",
       ]) {
         expect(label).toContain(token);
         expect(pressable).toContain(token);
       }
+      expect(label).not.toContain("text-chip");
+      expect(label).not.toContain("text-accent-ink");
     });
 
-    it("keeps the count beside a name out of the name's weight", () => {
-      expect(renderToStaticMarkup(<BandTally> +3 more</BandTally>)).toContain(
+    it("keeps tallies smaller, quieter and regular weight", () => {
+      const tally = renderToStaticMarkup(<BandTally> +3 more</BandTally>);
+      for (const token of [
         "font-normal",
-      );
+        "text-ui",
+        "mouse:text-meta",
+        "text-dialog-hint",
+      ]) {
+        expect(tally).toContain(token);
+      }
+    });
+
+    it("retains semantic ink for failure and interruption labels", () => {
+      expect(
+        renderToStaticMarkup(<BandLabel tone="err">Failed</BandLabel>),
+      ).toContain("text-err");
+      expect(
+        renderToStaticMarkup(<BandLabel tone="hint">Interrupted</BandLabel>),
+      ).toContain("text-dialog-hint");
     });
 
     it("is the only place that weight is spelled", () => {

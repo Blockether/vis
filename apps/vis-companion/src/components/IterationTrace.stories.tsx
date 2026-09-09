@@ -482,6 +482,22 @@ export const CodeWithResult: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
     const band = canvasElement.querySelector("[data-execution-code]")!;
     const result = canvasElement.querySelector("[data-code-result]")!;
+    const codeBody = code.querySelector("[data-code-body]")!;
+    const labelSize = getComputedStyle(document.documentElement)
+      .getPropertyValue("--text-ui")
+      .trim();
+    for (const name of ["CODE", "RESULT", "ACTIVITY"]) {
+      const label = canvas.getByText(name, { exact: true, selector: "span" });
+      await expect(getComputedStyle(label).fontSize).toBe(labelSize);
+      await expect(getComputedStyle(label).fontWeight).toBe("600");
+      await expect(getComputedStyle(label).color).toBe(
+        getComputedStyle(document.body).color,
+      );
+    }
+    for (const side of ["paddingTop", "paddingBottom"] as const) {
+      await expect(getComputedStyle(codeBody)[side]).toBe("8px");
+      await expect(getComputedStyle(result)[side]).toBe("4px");
+    }
     for (const surface of [code, result, activity]) {
       await expect(getComputedStyle(surface).borderLeftWidth).toBe("0px");
     }
@@ -489,9 +505,8 @@ export const CodeWithResult: Story = {
     await expect(activity.getBoundingClientRect().top).toBeGreaterThan(result.getBoundingClientRect().top);
     await assertHeader(canvas.getByRole("button", { name: "Expand result" }), "RESULT +1 more");
     await expect(band.textContent).not.toContain("Listed 5 entries.");
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand result" }),
-    );
+    canvas.getByRole("button", { name: "Expand result" }).focus();
+    await userEvent.keyboard("{Enter}");
     await expect(band.textContent).toContain("Listed 5 entries.");
     await expect(band.querySelector("summary")).toBeNull();
     await expect(
@@ -529,7 +544,9 @@ export const JoinedActivity: Story = {
     const code = canvasElement.querySelector("[data-execution-code]")!;
     const activity = canvasElement.querySelector("[data-execution-activity]")!;
     const copyIcon = code.querySelector('button[aria-label="Copy code"] svg')!;
-    const activityCopyIcon = activity.querySelector('button[aria-label="Copy activity"] svg')!;
+    const activityCopyIcon = activity.querySelector(
+      'button[aria-label="Copy activity"] svg',
+    )!;
     await expect(copyIcon.getBoundingClientRect().right).toBeCloseTo(
       activityCopyIcon.getBoundingClientRect().right,
       0,
@@ -602,19 +619,24 @@ export const JoinedActivity: Story = {
     for (const element of [reads, canvas.getByText("6 files")]) {
       await expect(getComputedStyle(element).fontSize).toBe(codeSize);
     }
-    // The operation tally is compact header metadata, not activity body copy.
+    // Names use the transcript body token; counts remain secondary metadata.
+    const labelSize = getComputedStyle(document.documentElement)
+      .getPropertyValue("--text-ui")
+      .trim();
     const countSize = getComputedStyle(
       canvas.getByText(/13 operations/),
     ).fontSize;
-    await expect(countSize).toBe(
-      getComputedStyle(canvas.getByText("ACTIVITY")).fontSize,
+    await expect(Number.parseFloat(countSize)).toBeLessThanOrEqual(
+      Number.parseFloat(labelSize),
     );
-    await expect(Number.parseFloat(countSize)).toBeLessThan(
-      Number.parseFloat(codeSize),
-    );
-    await expect(getComputedStyle(canvas.getByText("ACTIVITY")).fontSize).toBe(
-      getComputedStyle(canvas.getByText("CODE")).fontSize,
-    );
+    for (const name of ["CODE", "ACTIVITY"]) {
+      const label = canvas.getByText(name);
+      await expect(getComputedStyle(label).fontSize).toBe(labelSize);
+      await expect(getComputedStyle(label).fontWeight).toBe("600");
+      await expect(getComputedStyle(label).color).toBe(
+        getComputedStyle(document.body).color,
+      );
+    }
     await userEvent.click(
       canvas.getByRole("button", { name: "Expand Activity" }),
     );
@@ -715,6 +737,12 @@ export const ProseAlignment: Story = {
       "I checked the files before making these changes.",
     );
     const answer = canvas.getByText("The changes are ready for review.");
+    // Match the real answer, not an assumed size from the typography scale.
+    for (const name of ["CODE", "ACTIVITY"]) {
+      await expect(getComputedStyle(canvas.getByText(name)).fontSize).toBe(
+        getComputedStyle(answer).fontSize,
+      );
+    }
     for (const paragraph of [prose, answer]) {
       await expect(paragraph.getBoundingClientRect().left).toBeCloseTo(
         thought.closest("section")!.getBoundingClientRect().left,

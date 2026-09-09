@@ -1209,13 +1209,7 @@ const ToolCard = memo(function ToolCard({
   // one-way, so re-collapsing keeps the parsed body for the next open, and
   // "Copy result" copies `body` (the string), never the DOM.
   const [wasOpened, setWasOpened] = useState(false);
-  const stateTone = interrupted
-    ? "hint"
-    : failed
-      ? "err"
-      : running
-        ? "result"
-        : "accent";
+  const stateTone = interrupted ? "hint" : failed ? "err" : "default";
   const stateClass = interrupted
     ? "text-dialog-hint"
     : failed
@@ -1234,7 +1228,7 @@ const ToolCard = memo(function ToolCard({
     return (
       <div
         data-code-result
-        className="min-w-0 bg-result py-3 text-meta text-code-result"
+        className="min-w-0 bg-result py-1 text-meta text-code-result"
       >
         {failed || interrupted ? (
           <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
@@ -1277,7 +1271,7 @@ const ToolCard = memo(function ToolCard({
         !running && <BandLabel className="min-w-0 flex-1">RESULT</BandLabel>
       )}
       {duration && (
-        <span className="ml-auto shrink-0 font-mono text-chip tabular-nums text-code-duration">
+        <span className="ml-auto shrink-0 font-mono text-ui tabular-nums text-code-duration mouse:text-meta">
           {duration}
         </span>
       )}
@@ -1375,7 +1369,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const lineCount = value ? value.split("\n").length : 0;
   return (
     <section className="relative z-0 min-w-0 bg-code px-3" data-execution-code>
-      <div className="flex min-h-8 min-w-0 items-center gap-2">
+      <div className="flex min-h-11 min-w-0 items-center gap-2 mouse:min-h-7">
         {showCode ? (
           <Disclosure
             isOpen={expanded}
@@ -1385,34 +1379,24 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             aria-label={expanded ? "Collapse code" : "Expand code"}
             onClick={() => setExpanded((open) => !open)}
           >
-            <BandLabel tone={failure ? "err" : "accent"}>
+            <BandLabel>
               CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}
             </BandLabel>
           </Disclosure>
         ) : (
-          <BandLabel
-            tone={failure ? "err" : "accent"}
-            className="min-w-0 flex-1"
-          >
-            CODE
-          </BandLabel>
+          <BandLabel className="min-w-0 flex-1">CODE</BandLabel>
         )}
         {duration && (
-          <span className="shrink-0 whitespace-nowrap font-mono text-chip tabular-nums text-code-duration">
+          <span className="shrink-0 whitespace-nowrap font-mono text-ui tabular-nums text-code-duration mouse:text-meta">
             {duration}
           </span>
         )}
         {showCode && (
-          <CopyChip
-            value={value}
-            label="Copy code"
-            density="compact"
-            edge
-          />
+          <CopyChip value={value} label="Copy code" density="compact" edge />
         )}
       </div>
       {expanded && showCode && (
-        <div className="py-3" data-code-body>
+        <div className="py-2" data-code-body>
           <SyntaxCodeBlock
             value={value}
             language={language}
