@@ -1744,6 +1744,16 @@
 
 (def ^:private code-copy-label " COPY ")
 
+(defn- draw-band-copy!
+  [g meta x y iw right-inset]
+  (when-let [copy-width (:copy-width meta)]
+    (p/clear-styles! g)
+    (p/set-colors! g t/button-fg t/button-bg)
+    (p/put-str! g
+                (+ (long x) (- (long iw) (long right-inset) (long copy-width)))
+                y
+                code-copy-label)))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -2338,12 +2348,14 @@
                             ;; expansion store, so bulk fold and `C-x t` reach it too.
                             (when (:node-id meta)
                               (.register interactions/hit-map
-                                         {:bounds
-                                          {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                         {:bounds {:row (+ (long viewport-top) (long y))
+                                                   :col x
+                                                   :width (or (:click-width meta) iw)}
                                           :kind :toggle-details
                                           :session-id (:session-id meta)
                                           :node-id (:node-id meta)
-                                          :collapsed? (:collapsed? meta)})))
+                                          :collapsed? (:collapsed? meta)}))
+                            (draw-band-copy! g meta x y iw right-inset))
 
                         ;; A path keeps its name: the directory reads quiet because it is
                         ;; only where the file lives, the filename wears the darker ink
@@ -2500,14 +2512,7 @@
                       (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
-                      (when-let [copy-width (:copy-width meta)]
-                        ;; Match the header buttons; screen regions still own copy/selection.
-                        (p/clear-styles! g)
-                        (p/set-colors! g t/button-fg t/button-bg)
-                        (p/put-str! g
-                                    (+ (long x) (- (long iw) right-inset (long copy-width)))
-                                    y
-                                    code-copy-label))
+                      (draw-band-copy! g meta x y iw right-inset)
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
@@ -6064,8 +6069,14 @@
             prefix
             (str (band-label "ACTIVITY") " " (if band-open? "▾" "▸"))
 
+            copy?
+            (and node-id (>= width 20))
+
             suffix
-            (ellipsize-cols suffix (max 0 (- (long width) 12)))
+            (str/join "  "
+                      (remove str/blank?
+                        [(ellipsize-cols suffix (max 0 (- width (if copy? 20 12))))
+                         (when copy? code-copy-label)]))
 
             header
             {:line (str activity-marker (first (with-right-suffix [prefix] suffix width)))
@@ -6076,6 +6087,9 @@
                            :right-inset 2
                            :node-id (str node-id ":#band")
                            :item-id "#band"
+                           :copy-text (activity-contract/copy-text
+                                        {:rows activity-rows :omitted {:rows activity-omitted}})
+                           :copy-width (when copy? (p/display-width code-copy-label))
                            :collapsed? (not band-open?)
                            :operation-col 0
                            :operation-label "ACTIVITY"})}]

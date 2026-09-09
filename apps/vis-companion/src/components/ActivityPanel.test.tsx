@@ -4,7 +4,7 @@
 // reads the document that landed. Nothing here opens, patches or closes a view:
 // that is the Live View rail, and it is a different file for that reason.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ActivityPanel,
   activityCostParts,
@@ -64,6 +64,67 @@ function openEverySettledStep() {
     shut.forEach((toggle) => fireEvent.click(toggle));
   }
 }
+
+describe("Activity copy", () => {
+  it("copies retained activity while collapsed without opening the band", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    try {
+      const activity = activityProjectionFromWire(argumentCases[0].projection)!;
+      const { rerender } = render(<ActivityPanel activity={activity} />);
+      fireEvent.click(screen.getByRole("button", { name: "Copy activity" }));
+      await screen.findByRole("button", { name: "Copied" });
+      expect(writeText).toHaveBeenCalledTimes(1);
+      const copied = writeText.mock.calls[0][0] as string;
+      expect(copied).toContain("First search: 2 matches");
+      expect(copied).toContain("Search directory unavailable");
+      expect(copied).not.toContain(activity.rows[0].argument_key);
+      expect(
+        screen
+          .getByRole("button", { name: "Expand Activity" })
+          .getAttribute("aria-expanded"),
+      ).toBe("false");
+      fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
+      rerender(
+        <ActivityPanel
+          activity={{
+            ...activity,
+            state: "failed",
+            rows: activity.rows.map((row) =>
+              row.id === "search-4"
+                ? {
+                    ...row,
+                    state: "succeeded",
+                    result_summary: "Latest retained result",
+                  }
+                : row,
+            ),
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Copied" }));
+      expect(writeText).toHaveBeenCalledTimes(2);
+      expect(writeText.mock.calls[1][0]).toContain("Latest retained result");
+      expect(
+        screen
+          .getByRole("button", { name: "Collapse Activity" })
+          .getAttribute("aria-expanded"),
+      ).toBe("true");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each(["running", "succeeded", "failed", "cancelled"] as const)(
+    "keeps Copy available in the %s state",
+    (state) => {
+      render(<ActivityPanel activity={{ ...activityProjection(), state }} />);
+      const copy = screen.getByRole("button", { name: "Copy activity" });
+      expect(copy.closest("[data-disclosure-toggle]")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
+      expect(screen.getByRole("button", { name: "Copy activity" })).toBe(copy);
+    },
+  );
+});
 
 describe("joined Activity operation groups", () => {
   function reads() {

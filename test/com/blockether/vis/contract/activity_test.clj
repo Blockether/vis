@@ -7,6 +7,13 @@
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
+(deftest shared-activity-copy-test
+  (doseq [{:strs [name projection text]}
+          (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-copy.json")))]
+    (let [receipt (activity/from-wire projection)]
+      (is (some? receipt) name)
+      (is (= text (activity/copy-text receipt)) name))))
+
 (deftest portable-activity-contract-test
   (let [vocabulary
         (document/load! "activity")

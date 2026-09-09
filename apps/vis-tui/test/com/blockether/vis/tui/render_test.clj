@@ -4507,6 +4507,43 @@
       (expect (str/includes? expanded "RESULT")))))
 
 (defdescribe
+  activity-copy-header-test
+  (it
+    "copies the full retained Activity independently of disclosure and code"
+    (let [entry
+          {:forms [{:code "answer = search()"
+                    :success? true
+                    :activity {:state "succeeded"
+                               :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                               :rows [{:id "grep-1"
+                                       :sequence 0
+                                       :operation "grep"
+                                       :summary "source"
+                                       :state "succeeded"
+                                       :result-summary "one match beyond the folded row"}]
+                               :omitted {:rows 0 :by-classification {}}}}]}
+
+          headers
+          (for [expanded? [false true]]
+            (->> (format-iteration-entry-entries entry
+                                                 40
+                                                 1
+                                                 {:session-id "s1"
+                                                  :session-turn-id "t1"
+                                                  :detail-expansions
+                                                  {:vis.channel-tui/expand-all-details? expanded?}})
+                 (filter #(= :activity-header (get-in % [:meta :kind])))
+                 first))]
+
+      (doseq [header headers]
+        (expect (str/includes? (:line header) "COPY"))
+        (expect (= 6 (get-in header [:meta :copy-width])))
+        (expect (str/includes? (str (get-in header [:meta :copy-text]))
+                               "one match beyond the folded row"))
+        (expect (not (str/includes? (str (get-in header [:meta :copy-text])) "answer ="))))
+      (expect (apply = (map #(get-in % [:meta :copy-text]) headers))))))
+
+(defdescribe
   python-code-disclosure-is-a-header-test
   (it
     "keeps exactly one source line before the receipt and expands the full program"
@@ -5468,7 +5505,7 @@ h = 8"
                    (.indexOf ^String body "SECOND RESULT")
                    (.indexOf ^String body "FIRST OPERATION")
                    (.indexOf ^String body "Done.")))
-        (expect (= 1 (count (re-seq #" COPY " body))))
+        (expect (= 2 (count (re-seq #" COPY " body))) "Code and Activity each have one Copy")
         (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
         (expect (not (str/includes? body "Succeeded 1"))
                 "expanded detail does not repeat counters")))

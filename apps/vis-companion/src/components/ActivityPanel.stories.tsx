@@ -41,6 +41,39 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+/** The Storybook clipboard is a boundary stub, as for the shared Code copy control. */
+export const CopyActivity: Story = {
+  args: { activity: ACTIVITY_REPEATED_ARGUMENTS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const copy = canvas.getByRole("button", { name: "Copy activity" });
+    const minimum = matchMedia("(pointer: coarse)").matches ? 44 : 28;
+    await expect(copy.getBoundingClientRect().width).toBeGreaterThanOrEqual(
+      minimum,
+    );
+    await expect(copy.getBoundingClientRect().height).toBeGreaterThanOrEqual(
+      minimum,
+    );
+    await user.click(copy);
+    await expect(navigator.clipboard.readText()).resolves.toContain(
+      "First search: 2 matches",
+    );
+    await expect(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    await user.click(canvas.getByRole("button", { name: "Expand Activity" }));
+    copy.focus();
+    await user.keyboard("{Enter}");
+    await expect(navigator.clipboard.readText()).resolves.toContain(
+      "Search directory unavailable",
+    );
+    await expect(
+      canvas.getByRole("button", { name: "Collapse Activity" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  },
+};
+
 export const RepeatedArguments: Story = {
   args: { activity: ACTIVITY_REPEATED_ARGUMENTS },
   play: async ({ canvasElement }) => {

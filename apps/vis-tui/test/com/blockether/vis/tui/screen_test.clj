@@ -2726,6 +2726,70 @@ therapy line 2"
                               geometry)))))
 
 (defdescribe
+  compact-activity-copy-test
+  (it
+    "copies retained Activity, with a target separate from Code and the band disclosure"
+    (doseq [expanded?
+            [false true]
+
+            status
+            ["running" "succeeded" "failed" "cancelled"]]
+
+      (let [result
+            (str "Retained result " (apply str (repeat 120 "界")))
+
+            payload
+            (render/format-answer-with-thinking-data
+              ""
+              [{:forms [{:code "search()"
+                         :success? true
+                         :activity {:state status
+                                    :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                                    :rows [{:id "search-1"
+                                            :sequence 0
+                                            :operation "grep"
+                                            :state status
+                                            :summary "source"
+                                            :result-summary result}]
+                                    :omitted {:rows 2 :by-classification {:generic 2}}}}]}]
+              (- 80 (long render/MESSAGE_SIDE_PAD))
+              {:show-thinking true :show-iterations true}
+              nil
+              false
+              {:session-id "sid"
+               :session-turn-id "turn"
+               :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+
+            message
+            {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
+
+            grid
+            (painted-bubble-grid message 3)
+
+            row
+            (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) grid))
+
+            col
+            (.indexOf ^String (nth grid row) " COPY ")
+
+            regions
+            (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)
+
+            copy
+            (first (filter #(str/ends-with? (:node-id %) ":#band") regions))]
+
+        (expect (some? copy))
+        (expect (= 6 (:width copy)))
+        (expect (str/includes? (:text copy) result))
+        (expect (str/includes? (:text copy) "2 steps omitted"))
+        (expect (not (str/includes? (:text copy) "search()")))
+        (doseq [x (range col (+ col 6))]
+          (expect (= (:text copy) (:text (bubble-copy-hit {:row row :col x} regions))))
+          (expect (not= (:node-id copy) (:node-id (.lookup interactions/hit-map x row)))))
+        (expect (nil? (bubble-copy-hit {:row row :col (dec col)} regions)))
+        (expect (nil? (bubble-copy-hit {:row row :col (+ col 6)} regions)))))))
+
+(defdescribe
   compact-code-copy-test
   (it
     "copies the complete program from the single painted Copy target"

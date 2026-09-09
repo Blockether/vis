@@ -450,6 +450,7 @@ export function CopyChip({
   label,
   title,
   density = 'default',
+  edge = false,
   className = '',
   children,
 }: {
@@ -467,6 +468,8 @@ export function CopyChip({
    * of its own height.
    */
   density?: 'default' | 'compact';
+  /** Use the existing full trailing cell for an icon-only execution-band action. */
+  edge?: boolean;
   /** Placement only; the chip's own face is fixed. */
   className?: string;
   /** Visible value at rest; omit for an icon-only copy action. */
@@ -491,6 +494,8 @@ export function CopyChip({
         title={isCopied ? 'Copied' : title ?? label}
         variant="quiet"
         density={density}
+        edge={edge}
+        fullCell={edge}
         onClick={copy}
         className={className}
       >

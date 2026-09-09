@@ -355,6 +355,74 @@ export interface ActivityProjection {
   };
 }
 
+/** Copy retained invocations, not the visible grouping or viewport. Never include identity keys. */
+export function activityCopyText(activity: ActivityProjection): string {
+  const contentText = (block: ActivityContent): string => {
+    if ("text" in block) return block.text;
+    if (block.type === "table")
+      return [block.columns, ...block.rows]
+        .map((row) => row.join("\t"))
+        .join("\n");
+    if (block.type === "progress")
+      return `${block.label}${block.value === undefined ? "" : `: ${block.value}/${block.total}`}`;
+    return `${block.type}: ${block.label} (${block.attachment_id})`;
+  };
+  const rowText = (row: ActivityRow, depth: number): string => {
+    const indent = "  ".repeat(depth);
+    const lines = [
+      `${indent}${row.operation} [${row.state}]${row.duration_ms === undefined ? "" : ` (${row.duration_ms}ms)`}`,
+    ];
+    const add = (text?: string) => {
+      if (text?.trim())
+        lines.push(...text.split("\n").map((line) => `${indent}  ${line}`));
+    };
+    add(row.summary);
+    if (row.result_summary) add(`Result: ${row.result_summary}`);
+    if (row.error_summary) add(`Error: ${row.error_summary}`);
+    for (const resource of row.resources)
+      add(`${resource.type}: ${resource.id}`);
+    for (const evidence of row.evidence) {
+      const parts = [`${evidence.kind}:\n${evidence.text}`];
+      if (evidence.kind === "diff") {
+        for (const line of evidence.lines)
+          parts.push(
+            `${line.kind === "addition" ? "+" : line.kind === "deletion" ? "-" : line.kind === "context" ? " " : ""}${line.text}`,
+          );
+        if (evidence.is_truncated) parts.push("Diff truncated");
+        if (evidence.is_redacted) parts.push("Diff redacted");
+      }
+      add(parts.join("\n"));
+    }
+    if (row.presentation) {
+      for (const section of [
+        row.presentation,
+        ...(row.presentation.sections ?? []),
+      ]) {
+        add(section.headline);
+        add(section.summary);
+        section.content.forEach((block) => add(contentText(block)));
+      }
+    }
+    if (row.is_truncated) add("Details truncated");
+    for (const child of [...(row.children ?? [])].sort(
+      (a, b) => a.sequence - b.sequence,
+    ))
+      lines.push("", rowText(child, depth + 1));
+    return lines.join("\n");
+  };
+  const blocks = [
+    "ACTIVITY",
+    ...[...activity.rows]
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((row) => rowText(row, 0)),
+  ];
+  if (activity.omitted.rows)
+    blocks.push(
+      `${activity.omitted.rows} ${activity.omitted.rows === 1 ? "step" : "steps"} omitted · Activity limit`,
+    );
+  return blocks.join("\n\n");
+}
+
 function activityEnum<T extends string>(
   value: unknown,
   values: readonly T[],

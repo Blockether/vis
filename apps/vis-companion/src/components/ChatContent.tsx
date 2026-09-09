@@ -1399,7 +1399,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             value={value}
             label="Copy code"
             density="compact"
-            className="-mr-2.5 shrink-0 mouse:-mr-2"
+            edge
           />
         )}
       </div>

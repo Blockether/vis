@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from "./ChatContent";
-import { BandLabel, Disclosure, LoadMore } from "./ui";
+import { BandLabel, CopyChip, Disclosure, LoadMore } from "./ui";
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
@@ -11,6 +11,7 @@ import type {
   ActivityTextFormat,
 } from "../lib/activity";
 import {
+  activityCopyText,
   argumentGroups,
   operationGroups,
   type OperationGroup,
@@ -1076,27 +1077,36 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
   );
   return (
     <section className="min-w-0" aria-live="off" data-activity-axis>
-      <Disclosure
-        tone="execution"
-        isOpen={open}
-        aria-label={open ? "Collapse Activity" : "Expand Activity"}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <BandLabel>ACTIVITY</BandLabel>
-          <span className="min-w-0 break-words text-chip text-dialog-hint">
-            {[
-              summary,
-              ...states,
-              !open && activity.omitted.rows
-                ? `${activity.omitted.rows} omitted`
-                : "",
-            ]
-              .filter(Boolean)
-              .join(" · ")}
+      <div className="flex min-w-0 items-center gap-2">
+        <Disclosure
+          className="min-w-0 flex-1"
+          tone="execution"
+          isOpen={open}
+          aria-label={open ? "Collapse Activity" : "Expand Activity"}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <BandLabel>ACTIVITY</BandLabel>
+            <span className="min-w-0 break-words text-chip text-dialog-hint">
+              {[
+                summary,
+                ...states,
+                !open && activity.omitted.rows
+                  ? `${activity.omitted.rows} omitted`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
           </span>
-        </span>
-      </Disclosure>
+        </Disclosure>
+        <CopyChip
+          value={activityCopyText(activity)}
+          label="Copy activity"
+          density="compact"
+          edge
+        />
+      </div>
       <div hidden={!open}>
         <ActivityThread activity={activity} />
       </div>
