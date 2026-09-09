@@ -24,7 +24,7 @@
         ;; programmatic API (clj-kondo.core/run!).
         clj-kondo/clj-kondo {:mvn/version "2026.07.24"}
         com.blockether/anomaly {:mvn/version "1.0.1"}
-        com.blockether/fff {:mvn/version "0.12.6"}
+        com.blockether/fff {:mvn/version "0.12.9"}
         ;; Imaging WITHOUT `java.desktop`: decode/encode, transforms, vector drawing, text,
         ;; SVG rasterisation and plotting, in-process over a first-party Rust cdylib (image
         ;; + resvg/tiny-skia) through the JDK Foreign Function & Memory API. This replaced
