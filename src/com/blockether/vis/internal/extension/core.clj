@@ -2074,8 +2074,24 @@
         (seq (:ext/channel-contributions spec)) "channels"
         :else nil))
 
+(defn shim-src
+  "Python source paired with a shim's host bindings by `extension`.
+
+   Constructed extensions retain their source even if the classpath resource changes
+   before another sandbox starts. Reconstruct from the raw descriptor to adopt new
+   source. Raw descriptors read `:shim/source` from the classpath, also supporting
+   doctor checks before construction. Missing resources fail loudly. Native images
+   embed the same resources through `-H:IncludeResources=vis-shims/.*`."
+  ^String [shim]
+  (or (::shim-source shim)
+      (let [res (:shim/source shim)]
+        (if-let [u (io/resource res)]
+          (slurp u)
+          (throw (ex-info (str "sandbox shim source not found on classpath: " res)
+                          {:shim/name (:shim/name shim) :shim/source res}))))))
+
 (defn extension
-  "Build and validate an extension. The canonical constructor.
+  "Build and validate an extension, capturing shim source alongside host bindings.
 
    See docs/src/extensions/extension-spec.md for the full key list."
   [spec]
@@ -2137,7 +2153,12 @@
 
         (not (:ext/doctor-fn spec))
         (assoc :ext/doctor-fn (constantly [])))
-      (validate!)))
+      (validate!)
+      (cond->
+        (seq (:ext/sandbox-shims spec))
+        (update :ext/sandbox-shims
+                (fn [shims]
+                  (mapv #(assoc % ::shim-source (shim-src %)) shims))))))
 
 ;; Extension source markers
 ;; Hash + mtime primitives.
@@ -3038,27 +3059,13 @@
   "Every Python sandbox SHIM contributed across all registered extensions, in
    registration order (built-ins first). `env-python/build-agent-context`
    installs each into the model sandbox Context at creation time — wiring the
-   shim's host `:shim/bindings` onto the globals, then eval'ing its
-   `:shim/source` Python file — turning a host / JVM capability into an importable
-   module. Loads built-ins first (idempotent) so the registry is populated
+   shim's host `:shim/bindings` onto the globals, then evaluating the Python source
+   captured by `extension`, so later resource edits cannot change one side of that
+   boundary alone. Loads built-ins first (idempotent) so the registry is populated
    before we read it."
   []
   (manifest/initialize!)
   (into [] (mapcat ext-sandbox-shims) (registered-extensions)))
-
-(defn shim-src
-  "Python source of `shim`, slurped from its `:shim/source` CLASSPATH RESOURCE
-   (e.g. \"vis-shims/yaml.py\"). This is the single reader for shim source: the
-   Python source never lives in a Clojure string. Works identically in the native
-   image because build.clj embeds `vis-shims/.*` via `-H:IncludeResources`.
-   Throws when the resource is missing - a shim whose file did not make it onto
-   the classpath must fail loudly, not install a silently empty module."
-  ^String [shim]
-  (let [res (:shim/source shim)]
-    (if-let [u (io/resource res)]
-      (slurp u)
-      (throw (ex-info (str "sandbox shim source not found on classpath: " res)
-                      {:shim/name (:shim/name shim) :shim/source res})))))
 
 ;; CLI bridge -- the `vis-agent extension` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,

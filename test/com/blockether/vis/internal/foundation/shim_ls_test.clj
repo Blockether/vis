@@ -127,6 +127,32 @@
       (expect (= "True True True True\n" (out ctx code))))))
 
 (defdescribe
+  ls-shim-worker-test
+  ;; Regression: the deployed session worker must return listing rows, not a
+  ;; transport envelope that the Python shim attempts to parse as JSON.
+  (it "lists pathlib paths through the confined session worker"
+      (let [directory
+            (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+
+            roots-fn
+            (constantly [directory])]
+
+        (tpc/with-own
+          [ctx {} roots-fn
+           {:worker? true
+            :worker-policy-fn (fn []
+                                {:roots-fn roots-fn :net-enabled? false})
+            :jail-enabled? true
+            :enabled? false}]
+          (expect (= "True True True\n"
+                     (out ctx
+                          (str "from pathlib import Path\n" "text = ls(Path('.'), depth=2)\n"
+                               "batch = ls([Path('resources/vis-shims'), "
+                               "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
+                               "print('AGENTS.md  ' in text, 'vis-shims/' in text, "
+                               "'ls.py  ' in batch and 'core.clj  ' in batch)"))))))))
+
+(defdescribe
   ls-shim-failure-test
   "A failure is a Python exception, not a sentence to parse."
   (it "maps refusal / missing / file / malformed onto catchable exceptions"

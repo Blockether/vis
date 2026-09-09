@@ -123,6 +123,57 @@
         (expect (or (seq imports) (some? bindings))
                 (str name " declares neither :shim/imports nor :shim/bindings")))))
 
+(defdescribe
+  shim-source-snapshot-test
+  ;; Regression: a running JVM retained old ls bindings but read a newer Python
+  ;; resource at sandbox creation, so ls raised JSONDecodeError on a valid path.
+  (it "keeps Python source paired with its host bindings until the extension is rebuilt"
+      (manifest/initialize!)
+      (let [file
+            (File/createTempFile "vis-shim-source" ".py")
+
+            resource
+            (io/resource "vis-shims/ls.py")
+
+            slurp-source
+            slurp
+
+            spec
+            {:ext/name "shim-source-snapshot"
+             :ext/description "Test a shim source snapshot."
+             :ext/sandbox-shims [{:shim/name "snapshot"
+                                  :shim/source "vis-shims/ls.py"
+                                  :shim/globals ["snapshot"]
+                                  :shim/bindings {"__vis_snapshot_value__" (constantly "paired")}}]}
+
+            original
+            "def snapshot():\n    return __vis_snapshot_value__()\n"
+
+            changed
+            "import json\ndef snapshot():\n    return json.loads(__vis_snapshot_value__())\n"]
+
+        (try (spit file original)
+             (with-redefs [clojure.core/slurp
+                           (fn [source & opts]
+                             (apply slurp-source (if (= resource source) file source) opts))]
+               (let [ext (extension/extension spec)
+                     shims (extension/ext-sandbox-shims ext)]
+
+                 (spit file changed)
+                 (with-redefs [extension/sandbox-shims (constantly shims)]
+                   (tpc/with-own [ctx {}]
+                                 (let [result (ep/run-python-block ctx "print(snapshot())" "t1/i1")]
+                                   (expect (nil? (:error result)))
+                                   (expect (= "paired\n" (:stdout result))))))
+                 (expect (= original (extension/shim-src (first shims))))
+                 (expect (= original
+                            (extension/shim-src (first (extension/ext-sandbox-shims
+                                                         (extension/extension ext))))))
+                 (expect (= changed
+                            (extension/shim-src (first (extension/ext-sandbox-shims
+                                                         (extension/extension spec))))))))
+             (finally (.delete file))))))
+
 (defdescribe shim-resource-test
              (it "has a shim declaring every resources/vis-shims/*.py"
                  ;; The reverse direction: an orphan .py is either dead weight in the native
