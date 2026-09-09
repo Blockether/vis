@@ -1466,6 +1466,45 @@
       (expect (str/includes? workflow "actions: write"))
       (expect (zero? exit) output))))
 
+(defdescribe
+  ci-ubuntu-package-sources-test
+  (it
+    "uses only Ubuntu package sources and stops before installation if their refresh fails"
+    ;; Main CI was blocked by a hash mismatch in an unrelated Chrome repository.
+    (let
+      [workflow
+       (slurp ".github/workflows/ci.yml")
+
+       script
+       (-> (second (re-find
+                     #"(?s)- name: Install bubblewrap.*?        run: \|\n((?:          [^\n]*\n)+)"
+                     workflow))
+           (str/replace #"(?m)^          " ""))
+
+       options
+       "-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-"
+
+       mocks
+       (str
+         "sudo() {\n"
+         "  printf 'sudo %s\\n' \"$*\"\n" "  if [[ \"$1\" == apt-get ]]; then\n"
+         "    [[ \" $* \" == *' Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources '* && \" $* \" == *' Dir::Etc::sourceparts=- '* ]] || return 101\n"
+         "    if [[ \"${FAIL_UBUNTU_UPDATE}\" == 1 && \"$*\" == *' update' ]]; then return 42; fi\n"
+         "  fi\n  return 0\n}\n" "bwrap() { printf 'bwrap %s\\n' \"$*\"; }\n")]
+
+      (doseq [fail-update ["0" "1"]]
+        (let [{:keys [exit output]} (run-bash ["bash" "-e" "-c" (str mocks script)]
+                                              {"FAIL_UBUNTU_UPDATE" fail-update})
+              expected (cond-> [(str "sudo apt-get " options " update")]
+                         (= "0" fail-update)
+                         (into [(str "sudo apt-get " options " install -y bubblewrap passt")
+                                "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+                                "sudo sysctl -w kernel.unprivileged_userns_clone=1"
+                                "bwrap --unshare-all --ro-bind / / /bin/true"]))]
+
+          (expect (= (if (= "0" fail-update) 0 42) exit) output)
+          (expect (= expected (str/split-lines output)) output))))))
+
 (defdescribe ci-native-runtime-provisioning-test
              (it "provisions the Python library before the suite disables outbound downloads"
                  ;; A warm developer runtime hid the cold Linux worker failure.

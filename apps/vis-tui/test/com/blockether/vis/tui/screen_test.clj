@@ -2702,9 +2702,10 @@ therapy line 2"
           (expect (= :at (get-in @state/app-db [:scroll :mode]))
                   "the history gesture went through the real scroll event")
           (expect (< (long (:eff-scroll after-layout)) (long (:eff-scroll before-layout))))
-          (expect (= (- (long before-receipt) 3) (long before-surface))
-                  "the expanded code header and its source precede activity")
-          (expect (= (- (long after-receipt) 3) (long after-surface))
+          ;; The Activity header now leaves one blank row before its first operation.
+          (expect (= (- (long before-receipt) 4) (long before-surface))
+                  "the expanded code and Activity header margin precede the operation")
+          (expect (= (- (long after-receipt) 4) (long after-surface))
                   "scrolling preserves code before activity")
           (expect (= (- (long after-receipt) (long before-receipt))
                      (- (long after-surface) (long before-surface)))

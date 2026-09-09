@@ -1198,6 +1198,14 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   cancellation regression still requires evaluation unwind and reuse of the same session.
   Both affected documentation/shell suites pass all 146 cases; formatting, lint and
   reflection checks pass.
+- Linux CI package setup uses only official Ubuntu repositories and still stops on
+  Ubuntu index errors; an unrelated browser repository hash mismatch no longer blocks
+  jail dependencies. All 54 release-contract cases pass, including executed success
+  and failed-update paths. Workflow lint, Clojure lint and reflection checks pass.
+- The full TUI suite found a stale screen assertion after the Activity header gained
+  a blank row. The assertion now includes that margin and still verifies equal scroll
+  movement of code and operation. All 1801 standalone TUI cases pass; formatting,
+  lint and reflection checks pass. No renderer behavior changed.
 
 ---
 

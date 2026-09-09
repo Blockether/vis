@@ -99,7 +99,14 @@ jobs:
         # launches here so a denied kernel is a clear setup failure, not a
         # mysterious test failure 4 minutes later.
         run: |
-          sudo apt-get update && sudo apt-get install -y bubblewrap passt
+          set -euo pipefail
+          # Both packages come from Ubuntu, not the runner's unrelated browser repositories.
+          apt_options=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=-
+          )
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y bubblewrap passt
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
           bwrap --unshare-all --ro-bind / / /bin/true
