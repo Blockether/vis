@@ -551,18 +551,15 @@ export function VoicesPanel({
             if (!isTesting) void playSample();
           }}
         >
-          <FormLabel
-            label="Test"
-            hint={`Voice: ${selectedVoice?.label ?? selectedVoice?.id ?? "Engine default"}`}
-          >
-            <Input
-              aria-label="Text to synthesize"
-              placeholder="Type something to hear in this voice"
-              value={testText}
-              onChange={(event) => setTestText(event.target.value)}
-            />
-          </FormLabel>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+            <FormLabel label="Test">
+              <Input
+                aria-label="Text to synthesize"
+                placeholder="Type something to hear in this voice"
+                value={testText}
+                onChange={(event) => setTestText(event.target.value)}
+              />
+            </FormLabel>
             {isTesting ? (
               <Button
                 type="button"
@@ -589,12 +586,12 @@ export function VoicesPanel({
                 </span>
               </Button>
             )}
-            {isTesting && (
-              <p role="status" className="font-mono text-ui text-dialog-hint">
-                {playing.phase === "loading" ? "Synthesizing…" : "Playing…"}
-              </p>
-            )}
           </div>
+          {isTesting && (
+            <p role="status" className="font-mono text-ui text-dialog-hint">
+              {playing.phase === "loading" ? "Synthesizing…" : "Playing…"}
+            </p>
+          )}
         </form>
       )}
 

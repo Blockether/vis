@@ -149,8 +149,17 @@ export const ExistingVoice: Story = {
     await expect(forget).toHaveTextContent("Forget");
     await expect(voice).toHaveAttribute("aria-pressed", "true");
     await expect(canvas.getByRole("button", { name: "Test" })).toBeDisabled();
+    await expect(canvas.queryByText(/^Voice:/)).not.toBeInTheDocument();
   },
 };
+
+async function expectInlineTestAction(input: HTMLElement, button: HTMLElement) {
+  await input.ownerDocument.fonts.ready;
+  const field = input.getBoundingClientRect();
+  const action = button.getBoundingClientRect();
+  await expect(action.left - field.right).toBeGreaterThanOrEqual(8);
+  await expect(action.bottom).toBeCloseTo(field.bottom, 0);
+}
 
 async function startTest(canvasElement: HTMLElement) {
   const canvas = within(canvasElement);
@@ -158,7 +167,9 @@ async function startTest(canvasElement: HTMLElement) {
     name: "Text to synthesize",
   });
   await userEvent.type(input, "This is how my voice sounds in Vis.");
-  await userEvent.click(canvas.getByRole("button", { name: "Test" }));
+  const test = canvas.getByRole("button", { name: "Test" });
+  await expectInlineTestAction(input, test);
+  await userEvent.click(test);
   return { canvas, input };
 }
 
@@ -169,6 +180,7 @@ export const TestVoice: Story = {
     await expect(canvas.getByRole("status")).toHaveTextContent("Synthesizing");
     // Pointer release runs before click; Stop must not turn into a submit button between them.
     const stop = canvas.getByRole("button", { name: "Stop test" });
+    await expectInlineTestAction(input, stop);
     const box = stop.getBoundingClientRect();
     const coords = {
       clientX: box.x + box.width / 2,
