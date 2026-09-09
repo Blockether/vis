@@ -1861,22 +1861,22 @@
                      :blocks blocks
                      :answer answer-value}
                     extra-ctx)]
-     ;; Extension `:turn.answer/validate` vetoes only. An answer reply is plain
-     ;; prose with no tool calls, so it carries no tool ops to gate.
-     (some (fn [ext]
-             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
-                     (when (= :turn.answer/validate phase)
-                       (extension/with-context
-                         {:ext ext :env environment}
-                         (try (let [hit (hook-fn ctx)]
-                                (cond (extension/answer-validation-reject? hit)
-                                      (answer-validation-rejection-message hook hit)
-                                      (and (map? hit) (:reject hit))
-                                      (answer-validation-invalid-return-message ext id hit)))
-                              (catch Throwable t
-                                (answer-validation-hook-error-message ext id t))))))
-                   (or (:ext/hooks ext) [])))
-           (answer-validation-extensions environment active-extensions)))))
+     ;; Council replies and extension validators share the normal continuation path.
+     (or (council/reply-error environment)
+         (some (fn [ext]
+                 (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                         (when (= :turn.answer/validate phase)
+                           (extension/with-context
+                             {:ext ext :env environment}
+                             (try (let [hit (hook-fn ctx)]
+                                    (cond (extension/answer-validation-reject? hit)
+                                          (answer-validation-rejection-message hook hit)
+                                          (and (map? hit) (:reject hit))
+                                          (answer-validation-invalid-return-message ext id hit)))
+                                  (catch Throwable t
+                                    (answer-validation-hook-error-message ext id t))))))
+                       (or (:ext/hooks ext) [])))
+               (answer-validation-extensions environment active-extensions))))))
 
 (defn- finalize-answer!
   "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
@@ -7863,20 +7863,41 @@
             (if (current? state) (dissoc state :council) state))]
 
       (ctx-loop/set-turn-state! environment :council (assoc identity :publications []))
-      (try (let [result
-                 (f)
+      (try
+        (let [result
+              (f)
 
-                 state
-                 (first (swap-vals! (:turn-state-atom environment) detach))]
+              _
+              (when-not (::iteration-error result)
+                (council/acknowledge-input! (:db-info environment)
+                                            (str (:session-id environment))
+                                            active
+                                            iteration-key))
 
-             (when-not (current? state)
-               (tel/log! {:level :warn
-                          :id ::council-execution-superseded
-                          :data {:session-id (str (:session-id environment))}}))
-             (assoc result
-               :council-publications (when (current? state)
-                                       (get-in state [:council :publications]))))
-           (finally (ctx-loop/swap-turn-state! environment detach))))))
+              reply-error
+              (when (and (not (::iteration-error result)) (not-any? :error (:blocks result)))
+                (council/reply-error environment))
+
+              result
+              (cond-> result
+                reply-error
+                (assoc :final-result
+                  nil :blocks
+                  (conj (vec (:blocks result))
+                        {:id (count (:blocks result))
+                         :code "(council-reply-validation)"
+                         :error (op-error reply-error {:phase :vis/council-reply-validation})})))
+
+              state
+              (first (swap-vals! (:turn-state-atom environment) detach))]
+
+          (when-not (current? state)
+            (tel/log! {:level :warn
+                       :id ::council-execution-superseded
+                       :data {:session-id (str (:session-id environment))}}))
+          (assoc result
+            :council-publications (when (current? state) (get-in state [:council :publications]))))
+        (finally (ctx-loop/swap-turn-state! environment detach))))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
@@ -8562,7 +8583,7 @@
                                                    provider-base))
                                            256))))
                  council-trailer (cond-> (vec trailer-iters)
-                                   (seq (:entries council-input))
+                                   (council/input-message council-input)
                                    (conj [(inc (long iteration))
                                           {:iteration-scope (str "t" (or turn-position 1)
                                                                  "/i" (inc (long iteration)))

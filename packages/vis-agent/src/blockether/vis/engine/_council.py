@@ -30,6 +30,13 @@ class CouncilSource:
 
 
 @dataclass(frozen=True, slots=True)
+class CouncilReply:
+    session_id: str
+    state: str
+    reply_entry_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CouncilEntry:
     id: int
     thread_id: int
@@ -41,6 +48,9 @@ class CouncilEntry:
     ping: tuple[str, ...]
     title: str | None = None
     source_ref: CouncilSource | None = None
+    reply_required: bool = False
+    reply_to: int | None = None
+    replies: tuple[CouncilReply, ...] = ()
 
     @classmethod
     def from_wire(cls, data):
@@ -49,6 +59,9 @@ class CouncilEntry:
             **{
                 **data,
                 "ping": tuple(data["ping"]),
+                "replies": tuple(
+                    CouncilReply(**item) for item in data.get("replies", [])
+                ),
                 "source_ref": CouncilSource.from_wire(data["source_ref"])
                 if "source_ref" in data
                 else None,
@@ -113,12 +126,15 @@ class Council:
         title: str | None = None,
         ping: list[str] | str | None = None,
         idempotency_key: str | None = None,
+        reply_required: bool = False,
+        reply_to: int | None = None,
     ) -> CouncilEntry:
-        """Publish without waiting; explicit IDs can wake idle peers, 'all' cannot.
+        """Publish a message, optionally requiring a reply in the receiving iteration.
 
-        Targets accept a UUID or vis_session_id#UUID. Keep an explicit
-        idempotency_key when retrying uncertain IO; retries never wake again.
-        Unavailable recipients do not reject the entry; ping records delivery intent.
+        reply_to answers a required request and automatically notifies its author.
+        Explicit IDs can wake idle peers; 'all' selects active peers only. Required
+        requests report per-recipient states in replies; unavailable is not success.
+        Retry uncertain IO with the same idempotency_key; it never notifies twice.
         """
         body = {
             "content": content,
@@ -135,6 +151,10 @@ class Council:
                     "thread_id": thread_id,
                     "title": title,
                     "ping": ping,
+                    "reply_required": reply_required
+                    if reply_required is not False
+                    else None,
+                    "reply_to": reply_to,
                 }.items()
                 if value is not None
             }

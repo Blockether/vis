@@ -4822,7 +4822,7 @@
   (let [pings (when (seq rows)
                 (group-by :entry_id
                           (query! db
-                                  {:select [:entry_id :recipient_sid]
+                                  {:select [:entry_id :recipient_sid :state :reply_entry_id]
                                    :from [:council_ping]
                                    :where [:in :entry_id (mapv :id rows)]
                                    :order-by [:entry_id :recipient_sid]})))]
@@ -4835,6 +4835,18 @@
                      :created_at (:created_at row)
                      :source (:source row)
                      :ping (mapv :recipient_sid (get pings (:id row)))}
+              (= 1 (:reply_required row))
+              (assoc :reply_required
+                true :replies
+                (mapv (fn [ping]
+                        (cond-> {:session_id (:recipient_sid ping) :state (:state ping)}
+                          (:reply_entry_id ping)
+                          (assoc :reply_entry_id (:reply_entry_id ping))))
+                      (get pings (:id row))))
+
+              (:reply_to row)
+              (assoc :reply_to (:reply_to row))
+
               (:title row)
               (assoc :title (:title row))
 
@@ -4862,22 +4874,41 @@
     (fn [tx]
       (if-let [replay (db-council-replay tx (:author_sid row) (:idempotency_key row))]
         replay
-        (do (execute! tx
-                      {:insert-into :council_entry
-                       :values [(cond-> row
-                                  (:source_ref row)
-                                  (update :source_ref ->blob))]})
-            (let [id (:id (query-one! tx {:select [[[:raw "last_insert_rowid()"] :id]]}))]
-              (when (seq recipients)
-                (execute! tx
-                          {:insert-into :council_ping
-                           :values (mapv (fn [[sid activation]]
-                                           {:entry_id id
-                                            :group_id (:group_id row)
-                                            :recipient_sid sid
-                                            :activation_id activation})
-                                         recipients)}))
-              {:fingerprint (:fingerprint row) :entry (db-council-get tx id) :inserted? true}))))))
+        (let [reply-to (:reply_to row)
+              recipient (when reply-to
+                          (query-one! tx
+                                      {:select [:*]
+                                       :from [:council_ping]
+                                       :where [:and [:= :entry_id reply-to]
+                                               [:= :recipient_sid (:author_sid row)]]}))]
+
+          (when (and reply-to (:reply_entry_id recipient))
+            (throw (ex-info "This recipient already answered the request"
+                            {:error :already-replied})))
+          (when (and reply-to (nil? recipient))
+            (throw (ex-info "Reply author is not a request recipient" {:error :invalid-reply})))
+          (execute! tx
+                    {:insert-into :council_entry
+                     :values [(cond-> row
+                                (:source_ref row)
+                                (update :source_ref ->blob))]})
+          (let [id (:id (query-one! tx {:select [[[:raw "last_insert_rowid()"] :id]]}))]
+            (when (seq recipients)
+              (execute! tx
+                        {:insert-into :council_ping
+                         :values (mapv (fn [[sid activation]]
+                                         {:entry_id id
+                                          :group_id (:group_id row)
+                                          :recipient_sid sid
+                                          :activation_id activation})
+                                       recipients)}))
+            (when reply-to
+              (execute! tx
+                        {:update :council_ping
+                         :set {:state "replied" :reply_entry_id id}
+                         :where [:and [:= :entry_id reply-to]
+                                 [:= :recipient_sid (:author_sid row)]]}))
+            {:fingerprint (:fingerprint row) :entry (db-council-get tx id) :inserted? true}))))))
 
 (defn db-council-bind-wake!
   "Claim one newly published idle ping for the runtime's selected activation."
@@ -4924,16 +4955,71 @@
       (council-rows db rows))))
 
 (defn db-council-pending
-  "Seek recipient/activation/group before touching the log. This is a pure read."
+  "Normal pings are activation-scoped. Unacknowledged reply notifications survive activation changes."
   [db sid activation gid after limit]
-  (query! db
-          {:select [:e.id [[:coalesce :e.thread_id :e.id] :thread_id] :e.group_id
-                    [:e.author_sid :author_session_id] :e.created_at
-                    [[:substr :e.content 1 1025] :content]
-                    [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
-           :from [[:council_ping :p]]
-           :join [[:council_entry :e] [:= :e.id :p.entry_id]]
-           :where [:and [:= :p.recipient_sid sid] [:= :p.activation_id activation]
-                   [:= :p.group_id gid] [:> :p.entry_id after]]
-           :order-by [:p.entry_id]
-           :limit limit}))
+  (mapv (fn [row]
+          (cond-> (dissoc row :reply_required :reply_to)
+            (= 1 (:reply_required row))
+            (assoc :reply_required true)
+
+            (:reply_to row)
+            (assoc :reply_to (:reply_to row))))
+        (query! db
+                {:select [:e.id [[:coalesce :e.thread_id :e.id] :thread_id] :e.group_id
+                          [:e.author_sid :author_session_id] :e.created_at :e.reply_required
+                          :e.reply_to [[:substr :e.content 1 1025] :content]
+                          [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
+                 :from [[:council_ping :p]]
+                 :join [[:council_entry :e] [:= :e.id :p.entry_id]]
+                 :where [:and [:= :p.recipient_sid sid] [:= :p.group_id gid]
+                         [:or
+                          [:and [:= :e.reply_to nil] [:= :p.activation_id activation]
+                           [:> :p.entry_id after]]
+                          [:and [:not= :e.reply_to nil] [:= :p.state "pending"]]]]
+                 :order-by [:p.entry_id]
+                 :limit limit})))
+
+(defn db-council-unanswered
+  [db sid ids]
+  (when (seq ids)
+    (mapv :entry_id
+          (query! db
+                  {:select [:entry_id]
+                   :from [:council_ping]
+                   :where [:and [:= :recipient_sid sid] [:in :entry_id ids] [:= :reply_entry_id nil]
+                           [:in :state ["pending" "delivered"]]]}))))
+
+(defn db-council-delivered!
+  [db sid ids]
+  (when (seq ids)
+    (sqlite-write-tx! db
+                      (fn [tx]
+                        (execute! tx
+                                  {:update :council_ping
+                                   :set {:state "delivered"}
+                                   :where [:and [:= :recipient_sid sid] [:in :entry_id ids]
+                                           [:= :state "pending"]]})))))
+
+(defn db-council-interrupt!
+  [db sid activation]
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (execute! tx
+                                {:update :council_ping
+                                 :set {:state "interrupted"}
+                                 :where [:and [:= :recipient_sid sid] [:= :activation_id activation]
+                                         [:in :state ["pending" "delivered"]]
+                                         [:in :entry_id
+                                          {:select [:id]
+                                           :from [:council_entry]
+                                           :where [:= :reply_required 1]}]]}))))
+
+(defn db-council-unavailable!
+  [db sid id]
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (execute! tx
+                                {:update :council_ping
+                                 :set {:state "unavailable"}
+                                 :where [:and [:= :recipient_sid sid] [:= :entry_id id]
+                                         [:= :state "pending"]]}))))

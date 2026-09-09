@@ -10058,7 +10058,7 @@
               "assert session['id'] == '"
               aid
               "'\n"
-              "assert set(session['council']) == {'default_group_id'}\n"
+              "assert set(session['council']) == {'default_group_id', 'pending_replies'}\n"
               "session['council']['default_group_id'] = 'tampered'\n"
               "await council.publish(content='Boundary message ' + 'é' * 2000, title='API', ping=['"
               bid

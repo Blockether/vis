@@ -55,7 +55,7 @@
                               opts)))))
 
 (defn publish
-  "Publish a thread entry even without active peers. Explicit ping IDs (UUID or vis_session_id#UUID) can wake idle peers; all selects active peers only. Delivery is best-effort."
+  "Publish a thread entry. reply_required=True requires a reply in the recipient's first receiving iteration. reply_to answers that entry and automatically notifies its author. Explicit ping IDs can wake idle peers; all selects active peers only."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db
@@ -147,9 +147,10 @@
                        params)
          :description (:doc (meta v))
          :result
-         "Members: `{session_id, title, state}`. Entries: `{id, thread_id, group_id, content, author_session_id, created_at, source, ping}` plus root `title` and host `source_ref`. Pages: `{entries, after, has_more}`; thread summaries: `{thread_id, title, author_session_id, created_at}`."}))
+         "Members: `{session_id, title, state}`. Entries: `{id, thread_id, group_id, content, author_session_id, created_at, source, ping}` plus root `title`, host `source_ref`, and optional `reply_required`, `replies` or `reply_to`. Replies report `{session_id, state, reply_entry_id?}`. Pages: `{entries, after, has_more}`."}))
     [[#'members 'council.members :observation ["group_id"]]
-     [#'publish 'council.publish :mutation ["group_id" "thread_id" "title" "ping" "idempotency_key"]
+     [#'publish 'council.publish :mutation
+      ["group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"]
       ["content"]] [#'threads 'council.threads :observation ["group_id" "after" "limit"]]
      [#'read 'council.read :observation ["group_id" "thread_id" "after" "limit"]]
      [#'get 'council.get :observation ["group_id"] ["entry_id"]]]))
@@ -157,5 +158,6 @@
 (defn context
   [env]
   (when (council/enabled? env)
-    (try {"default_group_id" (council/default-group (:db-info env) (:session-id env))}
+    (try {"default_group_id" (council/default-group (:db-info env) (:session-id env))
+          "pending_replies" (wire/->wire (council/session-pending-replies env))}
          (catch Exception _ nil))))

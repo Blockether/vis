@@ -125,3 +125,45 @@ def test_entry_decoder_does_not_invent_missing_authorship():
         CouncilEntry.from_wire(
             {"id": 1, "thread_id": 1, "group_id": "G", "content": "x"}
         )
+
+
+def test_required_reply_and_automatic_return_notification():
+    publications = []
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path == "/v1/sessions/A/council":
+            return 200, {"activation_id": "active", "default_group_id": "G"}
+        request = json.loads(body)
+        publications.append(request)
+        validate("council", "publish", request)
+        entry = {
+            "id": len(publications),
+            "thread_id": 1,
+            "group_id": "G",
+            "content": request["content"],
+            "author_session_id": "A",
+            "created_at": 1,
+            "source": "sdk",
+            "ping": ["B"],
+        }
+        if request.get("reply_required"):
+            entry.update(
+                reply_required=True, replies=[{"session_id": "B", "state": "pending"}]
+            )
+        else:
+            entry["reply_to"] = request["reply_to"]
+        return 200, entry
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        council = client.session("A").council()
+        request = council.publish("Evidence?", ping=["B"], reply_required=True)
+        assert request.reply_required
+        assert request.replies[0].state == "pending"
+        reply = council.publish("Unknown", reply_to=request.id)
+        assert reply.reply_to == request.id
+        assert "ping" not in publications[1]
+        assert "thread_id" not in publications[1]
+        with pytest.raises(ValueError):
+            council.publish("Wrong", reply_required="true")

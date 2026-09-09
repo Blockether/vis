@@ -81,6 +81,13 @@
             "null"
           ],
           "minLength": 1
+        },
+        "reply_required": {
+          "type": "boolean"
+        },
+        "reply_to": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "required": [
@@ -160,10 +167,18 @@
         "default_group_id": {
           "type": "string",
           "minLength": 1
+        },
+        "pending_replies": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/pending_reply"
+          }
         }
       },
       "required": [
-        "default_group_id"
+        "default_group_id",
+        "pending_replies"
       ],
       "additionalProperties": false
     },
@@ -277,6 +292,20 @@
         },
         "source_ref": {
           "$ref": "#/$defs/source_ref"
+        },
+        "reply_required": {
+          "type": "boolean"
+        },
+        "reply_to": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replies": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/reply_state"
+          }
         }
       },
       "required": [
@@ -348,6 +377,13 @@
         },
         "truncated": {
           "type": "boolean"
+        },
+        "reply_required": {
+          "type": "boolean"
+        },
+        "reply_to": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "required": [
@@ -474,12 +510,74 @@
         },
         "has_more": {
           "type": "boolean"
+        },
+        "pending_replies": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/pending_reply"
+          }
         }
       },
       "required": [
         "entries",
         "after",
         "has_more"
+      ],
+      "additionalProperties": false
+    },
+    "reply_state": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "delivered",
+            "replied",
+            "unavailable",
+            "interrupted"
+          ]
+        },
+        "reply_entry_id": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "session_id",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "pending_reply": {
+      "type": "object",
+      "properties": {
+        "entry_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "author_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "due_iteration": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "entry_id",
+        "thread_id",
+        "author_session_id",
+        "due_iteration"
       ],
       "additionalProperties": false
     }

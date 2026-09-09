@@ -25,6 +25,7 @@ from ._council import (
     CouncilEntry,
     CouncilMember,
     CouncilPage,
+    CouncilReply,
     CouncilSource,
     CouncilThread,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "CouncilEntry",
     "CouncilMember",
     "CouncilPage",
+    "CouncilReply",
     "CouncilSource",
     "CouncilThread",
     "Event",

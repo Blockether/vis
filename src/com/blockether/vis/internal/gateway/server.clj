@@ -2861,10 +2861,11 @@
                    (:group-not-found :entry-not-found)
                    404
 
-                   (:disabled :inactive-session :invalid-recipient :idempotency-conflict)
+                   (:disabled :inactive-session :invalid-recipient
+                              :idempotency-conflict :already-replied)
                    409
 
-                   (:invalid-request :invalid-thread)
+                   (:invalid-request :invalid-thread :invalid-reply)
                    400
 
                    (throw e))]

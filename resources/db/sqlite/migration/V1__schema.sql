@@ -845,11 +845,14 @@ CREATE TABLE council_entry (
   source TEXT NOT NULL CHECK (source IN ('host', 'sdk')),
   source_ref BLOB,
   thread_id INTEGER REFERENCES council_entry(id),
+  reply_required INTEGER NOT NULL DEFAULT 0 CHECK (reply_required IN (0, 1)),
+  reply_to INTEGER REFERENCES council_entry(id),
   title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 256),
   content TEXT NOT NULL CHECK (length(CAST(content AS BLOB)) BETWEEN 1 AND 65536),
   created_at INTEGER NOT NULL,
   idempotency_key TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
+  CHECK (reply_to IS NULL OR (reply_required = 0 AND thread_id IS NOT NULL)),
   CHECK ((thread_id IS NULL AND title IS NOT NULL) OR (thread_id IS NOT NULL AND title IS NULL)),
   UNIQUE (author_sid, idempotency_key)
 );
@@ -860,6 +863,8 @@ CREATE TABLE council_ping (
   activation_id TEXT NOT NULL,
   group_id TEXT NOT NULL,
   entry_id INTEGER NOT NULL REFERENCES council_entry(id) ON DELETE CASCADE,
+  state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'delivered', 'replied', 'unavailable', 'interrupted')),
+  reply_entry_id INTEGER REFERENCES council_entry(id),
   PRIMARY KEY (recipient_sid, activation_id, group_id, entry_id)
 );
 

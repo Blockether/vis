@@ -1471,3 +1471,180 @@
              (is (= [(first ids)] @reads)))
            (finally (doseq [sid ids]
                       (drop! sid)))))))
+
+(deftest required-reply-and-return-notification-test
+  (with-council
+    (let [{:keys [db gid ids fleet] :as w}
+          (world)
+
+          [a b c]
+          ids
+
+          activation
+          (get-in @fleet [b :activation-id])
+
+          input-state
+          (atom {})
+
+          request
+          (publish w {:content "What did you find?" :ping [b] :reply_required true})
+
+          receiver
+          (assoc w :actor {:session-id b :activation-id activation :source "host"})
+
+          batch
+          (council 'prepare-input! db b activation gid input-state ["turn" 0] 8192)]
+
+      (is (true? (:reply_required request)))
+      (is (= [(:id request)] (mapv :entry_id (:pending_replies batch))))
+      (is (= 1 (:due_iteration (first (:pending_replies batch)))))
+      (is (document/valid? "council" "input_batch" batch))
+      ;; Reading or an unrelated continuation does not satisfy the obligation.
+      (page receiver {:thread_id (:id request)})
+      (publish receiver {:content "Unrelated update" :thread_id (:id request)})
+      (is (= [(:id request)] (mapv :entry_id (council 'pending-replies db b gid input-state))))
+      (is (rejected? :invalid-reply
+                     #(publish (assoc w
+                                 :actor {:session-id c
+                                         :activation-id (get-in @fleet [c :activation-id])
+                                         :source "sdk"})
+                               {:content "Not my request" :reply_to (:id request)})))
+      (swap! fleet dissoc a)
+      (let [reply (publish receiver
+                           {:content "I do not have that context."
+                            :reply_to (:id request)
+                            :idempotency_key "answer-once"})]
+        (is (= [a] (:ping reply)))
+        (is (= (:id request) (:thread_id reply) (:reply_to reply)))
+        (is (empty? (council 'pending-replies db b gid input-state)))
+        (is (= "replied"
+               (get-in (council 'get-entry db a {:entry_id (:id request)}) [:replies 0 :state])))
+        ;; The return notification survives the requesting activation ending.
+        (let [notification
+              (council 'prepare-input! db a "new-activation" gid (atom {}) ["new-turn" 0] 8192)]
+          (is (= [(:id reply)] (mapv :id (:entries notification)))))
+        (is (= reply
+               (publish receiver
+                        {:content "I do not have that context."
+                         :reply_to (:id request)
+                         :idempotency_key "answer-once"})))
+        (is (rejected? :already-replied
+                       #(publish receiver {:content "Another answer" :reply_to (:id request)})))
+        (is (= 3 (count (:entries (page w {})))))))))
+
+(deftest required-reply-validation-test
+  (with-council (let [{:keys [ids] :as w} (world)]
+                  (doseq [opts [{:reply_required true} {:reply_required true :ping []}
+                                {:reply_required "true" :ping [(second ids)]} {:reply_to 999999}]]
+                    (is (rejected? (if (:reply_to opts) :invalid-reply :invalid-request)
+                                   #(publish w (assoc opts :content "Request")))))
+                  (is (empty? (:entries (page w {})))))))
+
+(deftest required-reply-lifecycle-test
+  (with-council
+    (let [{:keys [db gid ids fleet] :as w}
+          (world)
+
+          [a b]
+          ids
+
+          active
+          (assoc (get @fleet b) :input-state (atom {}))
+
+          _
+          (swap! fleet assoc b active)
+
+          request
+          (publish w {:content "Evidence?" :ping [b] :reply_required true})
+
+          state
+          (:input-state active)
+
+          batch
+          (council 'prepare-input! db b (:activation-id active) gid state ["turn" 0] 8192)]
+
+      (is (= batch
+             (council 'prepare-input! db b (:activation-id active) gid state ["turn" 0] 8192)))
+      (council 'acknowledge-input! db b active ["turn" 0])
+      (is (= "delivered"
+             (get-in (council 'get-entry db a {:entry_id (:id request)}) [:replies 0 :state])))
+      (let [later (council 'prepare-input! db b (:activation-id active) gid state ["turn" 1] 8192)]
+        (is (empty? (:entries later)))
+        (is (= (:pending_replies batch) (:pending_replies later)))
+        (is (some? (council 'input-message later))))
+      (council 'retire-input! b state)
+      (is (= {:closed? true} @state))
+      (is (= "interrupted"
+             (get-in (council 'get-entry db a {:entry_id (:id request)}) [:replies 0 :state]))))))
+
+(deftest required-reply-idle-return-and-acknowledgement-test
+  (with-council
+    (let [{:keys [db gid ids fleet] :as w}
+          (world)
+
+          [a b]
+          ids
+
+          request
+          (publish w {:content "Evidence?" :ping [b] :reply_required true})
+
+          actor
+          {:session-id b :activation-id (get-in @fleet [b :activation-id]) :source "sdk"}
+
+          wakes
+          (atom [])]
+
+      (swap! fleet assoc-in [b :wake?] true)
+      (swap! fleet dissoc a)
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
+                       (atom {:eligible? (constantly true)
+                              :wake! (fn [_ sid entry]
+                                       (swap! wakes conj [sid (:id entry)])
+                                       true)})}
+        (fn []
+          (let [opts
+                {:content "Unknown" :reply_to (:id request) :idempotency_key "return"}
+
+                reply
+                (council 'publish! db #(deref fleet) actor opts)
+
+                state
+                (atom {})
+
+                active
+                {:activation-id "later" :group-id gid :input-state state}]
+
+            (is (= [[a (:id reply)]] @wakes))
+            (is (= reply (council 'publish! db #(deref fleet) actor opts)))
+            (is (= 1 (count @wakes)))
+            (is (rejected? :invalid-reply
+                           #(council
+                              'publish!
+                              db
+                              (fn []
+                                @fleet)
+                              actor
+                              {:content "Chain" :reply_to (:id request) :reply_required true})))
+            (council 'prepare-input! db a "later" gid state ["later" 0] 8192)
+            ;; Preparing, rendering and log reads are not notification acknowledgements.
+            (is (= [(:id reply)] (mapv :id (ps/db-council-pending db a "another" gid 999999 20))))
+            (council 'acknowledge-input! db a active ["wrong" 0])
+            (is (= 1 (count (ps/db-council-pending db a "another" gid 999999 20))))
+            (council 'acknowledge-input! db a active ["later" 0])
+            (is (empty? (ps/db-council-pending db a "another" gid 0 20)))))))))
+
+(deftest required-reply-unavailable-test
+  (with-council
+    (let [{:keys [ids fleet] :as w}
+          (world)
+
+          b
+          (second ids)]
+
+      (swap! fleet dissoc b)
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker) (atom
+                                                                                               nil)}
+        (fn []
+          (is (= "unavailable"
+                 (get-in (publish w {:content "Evidence?" :ping [b] :reply_required true})
+                         [:replies 0 :state]))))))))

@@ -684,3 +684,11 @@
 (defdelegate db-council-page [db-info gid thread roots? after limit])
 
 (defdelegate db-council-pending [db-info sid activation gid after limit])
+
+(defdelegate db-council-unanswered [db-info sid ids])
+
+(defdelegate db-council-delivered! [db-info sid ids])
+
+(defdelegate db-council-interrupt! [db-info sid activation])
+
+(defdelegate db-council-unavailable! [db-info sid id])
