@@ -732,17 +732,7 @@ export function SessionsScreen({
         .join('|'),
     [draftMessages],
   );
-  const overlayRef = useRef({ dirtyOverlay, isVisible });
-  useEffect(() => {
-    const previous = overlayRef.current;
-    overlayRef.current = { dirtyOverlay, isVisible };
-    // The visibility effect loads on return. Only a draft change made while the
-    // list remains visible needs its own read; hidden renders must never fetch.
-    if (!isVisible || !previous.isVisible || previous.dirtyOverlay === dirtyOverlay) return;
-    const controller = new AbortController();
-    void load(controller.signal).then(() => adoptRef.current());
-    return () => controller.abort();
-  }, [dirtyOverlay, isVisible, load]);
+  const overlayRef = useRef(dirtyOverlay);
 
   // Rehydrate connection metadata without refetching rows when labels, IDs or recovered
   // addresses change.
@@ -791,7 +781,13 @@ export function SessionsScreen({
       void load(controller.signal, true);
     };
 
-    void load(controller.signal);
+    void load(controller.signal).then(() => {
+      if (controller.signal.aborted || overlayRef.current === dirtyOverlay) return;
+      // Adopt this device's draft changes only after the gateway answers. Hidden
+      // renders leave the last loaded overlay intact, so returning adopts them too.
+      overlayRef.current = dirtyOverlay;
+      adoptRef.current();
+    });
     lastWindowReadAt.current = Date.now();
     // The session-list request is also the reachability check. Drop overlapping polls
     // and do not trust mobile `visibilityState` as the sole visibility signal.
@@ -811,7 +807,7 @@ export function SessionsScreen({
       stopWake();
     };
     // A connection identity change should preserve the existing frame until its data arrives.
-  }, [fleetKey, isVisible, load]);
+  }, [dirtyOverlay, fleetKey, isVisible, load]);
 
   // A fleet frame normally carries the whole answer for one row, so live and title
   // changes repaint without a window read. A SETTLED frame is the exception: metadata

@@ -1262,6 +1262,14 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   keys. The description now lists its actual persisted fields; execution is unchanged.
   The existing regression fails before the edit. All 66 affected extension/goal cases,
   formatting, lint and reflection checks pass afterwards.
+- Standalone Android CI [34413480944](https://github.com/Blockether/vis/actions/runs/34413480944)
+  exposes a separate Companion draft-order regression despite green main CI. Returning from
+  the composer loaded the correct gateway order without adopting it. Foreground loading now
+  adopts changed draft presence after the response; hidden renders neither fetch nor consume
+  that change. The original failing acceptance case and regressions for creating and clearing
+  a hidden draft pass. All 2313 unit cases pass, with two existing skips; compiler lint and
+  the production web build pass. All 210 Storybook cases and contrast checks across ten
+  themes pass. This changes main only, not the immutable v0.1.55 candidate.
 
 ---
 
