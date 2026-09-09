@@ -1657,6 +1657,29 @@
       (expect (str/includes? mobile "VIS_IOS_SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.path }}"))
       (doseq [needle ["-ios.ipa" "-android.aab"]]
         (expect (str/includes? mobile needle) needle))))
+  (it
+    "retains the signed iOS package after failed public distribution without passing the job"
+    ;; Release 34396848655 lost its attachment after Apple's review submission limit.
+    (let [mobile
+          (slurp ".github/workflows/mobile-release.yml")
+
+          attachment
+          (second (re-find
+                    #"(?s)- name: Attach signed iOS package to the draft\n(.*?)\n      - name:"
+                    mobile))]
+
+      (expect (=
+                "${{ !cancelled() && inputs.require_complete && steps.creds.outputs.ok == 'true' }}"
+                (second (re-find #"(?m)^        if: (.+)$" attachment))))
+      (expect (str/includes? attachment
+                             "packages=(build/ios/export-\"$VERSION\"-\"$BUILD\"/*.ipa)"))
+      (expect (str/includes? attachment "test \"${#packages[@]}\" = 1"))
+      (expect (str/includes? attachment "gh release upload \"$RELEASE_TAG\" \"$asset\" --clobber"))
+      (expect (not (str/includes? mobile "continue-on-error:")))
+      (expect
+        (re-find
+          #"(?m)^          npm run release:ios:store -- --audience \$\{\{ inputs.audience \|\| 'all' \}\}$"
+          mobile))))
   (it "checks main alignment before slow CI without allowing unverified artifact jobs"
       (let [jobs (into {}
                        (map (fn [[_ name body]]

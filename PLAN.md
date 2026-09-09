@@ -1270,6 +1270,13 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   a hidden draft pass. All 2313 unit cases pass, with two existing skips; compiler lint and
   the production web build pass. All 210 Storybook cases and contrast checks across ten
   themes pass. This changes main only, not the immutable v0.1.55 candidate.
+- A release regression reproduces the skipped signed-iOS attachment after public distribution
+  fails. The attachment now runs after a failed store step unless the run was cancelled;
+  it still requires complete-release mode, signing credentials and exactly one package for
+  the release version/build. Store failures remain fatal, and stable publication still needs
+  a successful mobile job. This preserves future draft artifacts; it does not recover the
+  missing immutable v0.1.55 package or remove Apple's review-submission blocker. All 55 release
+  cases, formatting, lint/reflection, YAML parsing and actionlint checks pass locally.
 
 ---
 

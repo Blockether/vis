@@ -224,8 +224,10 @@ jobs:
           export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
           npm run release:ios:store -- --audience ${{ inputs.audience || 'all' }}
 
+      # Store review can fail after export; retain the signed package on the draft.
+      # The failed distribution must still block the job and stable publication.
       - name: Attach signed iOS package to the draft
-        if: inputs.require_complete && steps.creds.outputs.ok == 'true'
+        if: ${{ !cancelled() && inputs.require_complete && steps.creds.outputs.ok == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
