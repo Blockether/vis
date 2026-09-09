@@ -51,9 +51,16 @@ export function ProviderLimitReset({ credits, isChecking = false, hasPending = f
 
   return (
     <div className="space-y-3 border-t border-dialog-edge pt-3 font-mono text-ui text-dialog-foreground" aria-label="Codex limit resets" role="group">
-      <p role="status">{summary}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p role="status" className="min-w-0">{summary}</p>
+        {!confirmAccount && (available !== null || hasPending) && (
+          <Button className="shrink-0" density="compact" variant="secondary" disabled={!canReset || isChecking || busy} onClick={() => { setNotice(null); setConfirmAccount(accountId!); }}>
+            {hasPending ? 'Check reset result…' : 'Reset limits…'}
+          </Button>
+        )}
+      </div>
       {notice && <p role={notice.error ? 'alert' : 'status'} className={notice.error ? 'text-err-ink' : 'text-dialog-foreground'}>{notice.text}</p>}
-      {confirmAccount ? (
+      {confirmAccount && (
         <div className="space-y-3" onKeyDown={event => {
           if (event.key === 'Escape') {
             event.stopPropagation();
@@ -71,12 +78,6 @@ export function ProviderLimitReset({ credits, isChecking = false, hasPending = f
               {busy ? 'Checking result…' : hasPending ? 'Retry same request' : 'Use 1 reset'}
             </Button>
           </div>
-        </div>
-      ) : (available !== null || hasPending) && (
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button density="compact" variant="secondary" disabled={!canReset || isChecking || busy} onClick={() => { setNotice(null); setConfirmAccount(accountId!); }}>
-            {hasPending ? 'Check reset result…' : 'Reset limits…'}
-          </Button>
         </div>
       )}
     </div>

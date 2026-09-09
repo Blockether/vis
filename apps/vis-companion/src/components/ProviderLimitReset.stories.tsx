@@ -22,6 +22,9 @@ export const Available: Story = {
     const status = canvas.getByRole('status');
     await expect(button.getBoundingClientRect().right).toBeCloseTo(group.getBoundingClientRect().right, 0);
     await expect(status.getBoundingClientRect().left).toBeCloseTo(group.getBoundingClientRect().left, 0);
+    const statusBox = status.getBoundingClientRect();
+    const buttonBox = button.getBoundingClientRect();
+    await expect(statusBox.top + statusBox.height / 2).toBeCloseTo(buttonBox.top + buttonBox.height / 2, 0);
   },
 };
 export const Confirmation: Story = {
