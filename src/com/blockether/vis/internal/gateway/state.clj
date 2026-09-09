@@ -3982,7 +3982,11 @@
          (or (:council entry)
              (and (not (:current-turn entry))
                   (not (:queue-paused entry))
-                  (not (contains? (bus/live-turns) (str sid))))))))
+                  ;; Local terminal state precedes journal cleanup and its cached marker.
+                  (let [live-tid (get (bus/live-turns) (str sid))]
+                    (or (nil? live-tid)
+                        (contains? #{"completed" "failed" "cancelled" "suspended"}
+                                   (get-in entry [:turns live-tid :status])))))))))
 
 (council/install-waker!
   council-wake-eligible?

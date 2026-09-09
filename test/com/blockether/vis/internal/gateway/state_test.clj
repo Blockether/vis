@@ -2443,6 +2443,29 @@
         (expect (not (contains? row "external_id")))
         (expect (not (contains? row "owner_id"))))))
 
+;; Regression: SDK reactivation could miss a ping between terminal state and journal cleanup.
+(defdescribe
+  council-wake-after-terminal-marker-test
+  (it "accepts a local terminal even while its machine-wide marker remains"
+      (doseq [status ["completed" "failed" "cancelled" "suspended"]]
+        (with-redefs-fn {#'state/registry (atom {"peer" {:turns {"ended" {:status status}}}})
+                         #'persistance/db-get-session (constantly {:id "peer"})
+                         #'bus/live-turns (constantly {"peer" "ended"})}
+          #(expect (true? (#'state/council-wake-eligible? ::db "peer")) status))))
+  (it "does not treat a different live turn or an unfinished local turn as idle"
+      (doseq [[status marker] [["completed" "elsewhere"] ["running" "ended"]]]
+        (with-redefs-fn {#'state/registry (atom {"peer" {:turns {"ended" {:status status}}}})
+                         #'persistance/db-get-session (constantly {:id "peer"})
+                         #'bus/live-turns (constantly {"peer" marker})}
+          #(expect (false? (#'state/council-wake-eligible? ::db "peer")) [status marker]))))
+  (it "still refuses a paused queue or a current local turn"
+      (doseq [held [{:queue-paused true} {:current-turn "next"}]]
+        (with-redefs-fn {#'state/registry (atom {"peer" (assoc held
+                                                          :turns {"ended" {:status "completed"}})})
+                         #'persistance/db-get-session (constantly {:id "peer"})
+                         #'bus/live-turns (constantly {"peer" "ended"})}
+          #(expect (false? (#'state/council-wake-eligible? ::db "peer")) held)))))
+
 ;; Regression, reported in this Vis session ("dalej wisi a jesteśmy przy 1h już"): the
 ;; stall watchdog failed a turn, the registry recorded `turn.failed`, but the journal
 ;; write carrying it was lost and the machine-wide liveness marker stayed. `soul`

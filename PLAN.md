@@ -1133,6 +1133,8 @@ remains available. Published version tags remain immutable, including the bootst
    Unknowns: none beyond the preceding phases.
 
 Plan state: phases 1–5 are complete for v0.1.54. Runtime v0.5.6 remains current.
+A production reactivation fix found during final main CI requires a follow-up native
+publication and verified deployment; those follow-up checks are pending.
 The complete stable release is published, and its installed native binaries passed the
 Linux end-to-end checks before the rollback-safe production replacement. The native
 FFF regression passes in the released Linux and macOS images. Earlier immutable tags
@@ -1206,6 +1208,12 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   a blank row. The assertion now includes that margin and still verifies equal scroll
   movement of code and operation. All 1801 standalone TUI cases pass; formatting,
   lint and reflection checks pass. No renderer behavior changed.
+- A real SDK check exposed a reactivation race between local terminal state and the
+  machine-wide liveness marker. Wake eligibility now accepts the matching local terminal,
+  while different live turns, paused queues and current turns remain protected. The
+  deterministic regression failed before the fix. All 199 gateway cases and 29 real
+  HTTP/stdio SDK cases pass; formatting, lint and reflection checks pass. SDK assertions
+  and fixture deadlines are unchanged.
 
 ---
 
