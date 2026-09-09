@@ -2748,10 +2748,10 @@ therapy line 2"
           (painted-bubble-grid message 3)
 
           row
-          (first (keep-indexed #(when (str/includes? %2 "COPY") %1) grid))
+          (first (keep-indexed #(when (str/includes? %2 " copy ") %1) grid))
 
           col
-          (.indexOf ^String (nth grid row) "[COPY]")
+          (.indexOf ^String (nth grid row) " copy ")
 
           regions
           (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)]
