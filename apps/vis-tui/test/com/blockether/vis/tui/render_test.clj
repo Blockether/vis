@@ -6491,8 +6491,9 @@ h = 8"
   compact-execution-group-test
   (it "groups adjacent Python source into one line before its activity receipt"
       (let [entry
-            (iteration/canonicalize {:forms [{:code "first_call()\nfirst_detail()" :success? true}
-                                             {:code "second_call()" :success? true}]})
+            (iteration/canonicalize
+              {:forms [{:code "first_call()\nfirst_detail()" :success? true :duration-ms 10}
+                       {:code "second_call()" :success? true :duration-ms 20}]})
 
             entries
             (format-iteration-entry-entries entry 80 1 {:session-id "s" :session-turn-id "t"})
@@ -6509,9 +6510,65 @@ h = 8"
         (expect (empty? receipts))
         (expect (= 1 (count code)))
         (expect (str/includes? text "CODE"))
+        ;; Regression: grouped CODE headers dropped measured execution durations.
+        (expect (str/includes? (:line (first code)) "30ms"))
         (expect (not (str/includes? text "first_detail()")))
         (expect (not (str/includes? text "PYTHON")))
         (expect (not (str/includes? text "Execution")))))
+  (it "shows <1ms on a measured sub-millisecond CODE header"
+      (let [entry
+            (iteration/canonicalize {:forms [{:code "pass" :success? true :duration-ms 0}]})
+
+            entries
+            (format-iteration-entry-entries entry 80 1 {:session-id "s" :session-turn-id "t"})
+
+            code
+            (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") entries)]
+
+        (expect (str/includes? (:line (first code)) "<1ms"))))
+  (it
+    "paints grouped and zero durations in narrow and wide terminal grids"
+    (doseq [width
+            [40 80]
+
+            durations
+            [[0] [0.5] [0.999] [1] [10 20]]]
+
+      (let [entry
+            (iteration/canonicalize {:forms
+                                     (mapv (fn [duration]
+                                             {:code "pass" :success? true :duration-ms duration})
+                                           durations)})
+
+            entries
+            (format-iteration-entry-entries entry
+                                            (- width 4)
+                                            1
+                                            {:session-id "s" :session-turn-id "t"})
+
+            captured
+            (cap/capture! {:cols width
+                           :rows 12
+                           :paint! (fn [{:keys [g]}]
+                                     (render/draw-chat-bubble! g
+                                                               {:role :assistant
+                                                                :text ""
+                                                                :prewrapped-lines (mapv :line
+                                                                                        entries)
+                                                                :line-meta (mapv :meta entries)}
+                                                               0
+                                                               0
+                                                               (- width 4)
+                                                               {:viewport-top 0 :viewport-h 12}))})
+
+            code-row
+            (some #(when (str/includes? % "CODE") %) (str/split-lines (cap/frame-text captured)))]
+
+        (expect (nil? (:error captured)))
+        (expect (some? code-row))
+        (expect (str/includes?
+                  code-row
+                  (if (< (reduce + durations) 1) "<1ms" (str (reduce + durations) "ms")))))))
   (it "hides source without hiding execution or result"
       (let [entry
             (iteration/canonicalize
@@ -6535,7 +6592,7 @@ h = 8"
 
 (defdescribe
   execution-group-integrity-test
-  (it "scopes duplicate ids and adds counts without inventing elapsed time"
+  (it "scopes duplicate ids and adds counts and measured execution times"
       (let [activity
             {:state "succeeded"
              :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
@@ -6558,7 +6615,7 @@ h = 8"
         (expect (= 2 (get-in grouped [:activity :counts :succeeded])))
         (expect (= 4 (get-in grouped [:activity :omitted :rows])))
         (expect (= 4 (get-in grouped [:activity :omitted :by-classification :observation])))
-        (expect (nil? (:duration-ms grouped)))))
+        (expect (= 1400 (:duration-ms grouped)))))
   (it "preserves every failure and keeps a live member running"
       (let [forms
             [{:code "first()" :success? false :error {:message "first error"}}

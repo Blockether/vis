@@ -422,7 +422,7 @@ export const GroupDurations: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.getByText("300ms")).toBeVisible();
-    await expect(canvas.getByText("0ms")).toBeVisible();
+    await expect(canvas.getByText("<1ms")).toBeVisible();
     await userEvent.click(
       canvas.getAllByRole("button", { name: "Expand code" })[0],
     );

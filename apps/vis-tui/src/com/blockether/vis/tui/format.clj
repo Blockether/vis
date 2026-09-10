@@ -100,9 +100,10 @@
    the JVM default locale. Coerces the input to long up-front because
    callers routinely pass a double from `(/ ns 1e6)`."
   [ms]
-  (when (and ms (pos? (double ms)))
+  (when (and (number? ms) (Double/isFinite (double ms)) (not (neg? (double ms))))
     (let [ms (long ms)]
-      (cond (< ms 1000) (str ms "ms")
+      (cond (< ms 1) "<1ms"
+            (< ms 1000) (str ms "ms")
             (< ms 60000)
             (String/format Locale/US "%.1fs" (into-array Object [(double (/ ms 1000.0))]))
             :else (let [m (quot ms 60000)

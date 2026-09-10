@@ -1827,18 +1827,18 @@ describe("compact execution groups", () => {
     expect(painted.container.textContent).toContain("first_detail()");
     expect(painted.container.textContent).toContain("second_call()");
   });
-  it("shows zero duration for a measured code execution", () => {
+  it.each([0, 0.5, 0.999])("shows <1ms for a measured sub-millisecond execution (%s)", (duration) => {
     const painted = render(
       <IterationTrace
         whole
         iterations={[
-          { position: 1, forms: [{ source: "pass", duration_ms: 0 }] },
+          { position: 1, forms: [{ source: "pass", duration_ms: duration }] },
         ]}
       />,
     );
     expect(
       painted.container.querySelector("[data-execution-code]")?.textContent,
-    ).toContain("0ms");
+    ).toContain("<1ms");
   });
 });
 

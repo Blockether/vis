@@ -6210,7 +6210,9 @@
                    true
 
                    false)
-       ;; Concurrent durations are not wall-clock elapsed time.
+       ;; Total measured execution time, not wall time across concurrent calls.
+       :duration-ms (when (every? #(some? (vis/format-duration (:duration-ms %))) forms)
+                      (reduce + 0 (map :duration-ms forms)))
        :runs (vec (mapcat :runs forms))
        :activity
        {:state (name state)

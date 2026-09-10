@@ -906,6 +906,7 @@ function applyMarks(
 function formatDuration(value?: number): string | null {
   if (value == null || !Number.isFinite(value) || value < 0) return null;
   const milliseconds = Math.trunc(value);
+  if (milliseconds < 1) return "<1ms";
   if (milliseconds < 1_000) return `${milliseconds}ms`;
   if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)}s`;
   const minutes = Math.floor(milliseconds / 60_000);
@@ -3327,7 +3328,7 @@ function TurnPhaseLine({
   const elapsed =
     startedAt === undefined
       ? null
-      : (formatDuration(Math.max(0, now - startedAt)) ?? "0ms");
+      : formatDuration(Math.max(0, now - startedAt));
 
   return (
     <>
