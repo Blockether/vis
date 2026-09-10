@@ -6,8 +6,6 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]))
 
-(def tty-out (delay System/out))
-
 (def ^:private ^java.io.File config-file
   (io/file (System/getProperty "user.home") ".vis" "tui" "config.json"))
 

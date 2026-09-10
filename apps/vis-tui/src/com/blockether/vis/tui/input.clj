@@ -1,13 +1,13 @@
 (ns com.blockether.vis.tui.input
   "Keyboard and clipboard surface for the TUI channel.
 
-   Clipboard read/write goes through OS shell helpers only: `pbcopy` /
-   `pbpaste` on macOS (always present since 10.0), `wl-copy` /
-   `wl-paste` on Wayland, `xclip` / `xsel` on X11."
+   Clipboard helpers: `pbcopy` / `pbpaste` on macOS, `wl-copy` / `wl-paste`
+   on Wayland, `xclip` / `xsel` on X11, and `clip.exe` for copying on WSL.
+   Without a working copy helper, OSC 52 goes to the controlling terminal."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.keymap :as keymap]
-            [com.blockether.vis.tui.config :as config]
+            [com.blockether.vis.tui.tty :as tty]
             [com.blockether.vis.tui.format :as fmt]
             [com.blockether.vis.tui.workspace :as workspace]
             [taoensso.telemere :as tel])
@@ -119,7 +119,8 @@
   [["pbcopy"] ;; macOS
    ["wl-copy"] ;; Wayland
    ["xclip" "-selection" "clipboard"] ;; X11
-   ["xsel" "--clipboard" "--input"]])    ;; X11 alt
+   ["xsel" "--clipboard" "--input"] ;; X11 alt
+   ["clip.exe"]]) ;; Windows clipboard via WSL interop
 
 (def ^:private paste-helpers
   ;; argv lists for clipboard-READ helpers. Helper writes payload
@@ -234,10 +235,19 @@
    clears the cache and forces a fresh probe."
   (atom nil))
 
+(defn- copy-with-helper!
+  "Send UTF-8 to Unix helpers and BOM-marked UTF-16LE to Windows clip.exe.
+   The BOM prevents clip.exe from decoding non-ASCII text using the OEM code page."
+  [cmd ^String text]
+  (:success? (run-shell-helper! cmd
+                                (if (= "clip.exe" (first cmd))
+                                  (.getBytes (str "\uFEFF" text) "UTF-16LE")
+                                  (.getBytes text "UTF-8")))))
+
 (defn- shell-clipboard-copy!
   "Copy `text` via the first working helper in `copy-helpers`. Returns the
    keyword name of the winning helper (`:pbcopy`, `:wl-copy`, `:xclip`,
-   `:xsel`) or `:none` when every candidate failed.
+   `:xsel`, `:clip.exe`) or `:none` when every candidate failed.
 
    The resolved strategy is memoized in `cached-copy-strategy` so we probe the
    helper chain ONCE: a box with no clipboard helper records `:none` and every
@@ -245,24 +255,19 @@
    single doomed process; a box where one helper works reuses that argv. A
    cached helper that unexpectedly fails clears the cache and re-probes."
   [^String text]
-  (let [bytes
-        (.getBytes text "UTF-8")
-
-        cached
-        @cached-copy-strategy]
-
+  (let [cached @cached-copy-strategy]
     (cond
       ;; Known: no shell helper works here — tell the caller to use OSC 52.
       (= cached :none) :none
       ;; Known winner — reuse it; on unexpected failure forget and re-probe.
-      (vector? cached) (if (:success? (run-shell-helper! cached bytes))
+      (vector? cached) (if (copy-with-helper! cached text)
                          (keyword (first cached))
                          (do (reset! cached-copy-strategy nil) (recur text)))
       ;; First copy (or post-invalidation): probe the whole chain once.
       :else (loop [[cmd & rest] copy-helpers]
               (if (nil? cmd)
                 (do (reset! cached-copy-strategy :none) :none)
-                (if (:success? (run-shell-helper! cmd bytes))
+                (if (copy-with-helper! cmd text)
                   (do (reset! cached-copy-strategy cmd) (keyword (first cmd)))
                   (recur rest)))))))
 
@@ -365,7 +370,7 @@
 
 (defn clipboard-copy!
   "Best-effort copy `text` onto the system clipboard. Tries the OS shell
-   helpers first (`pbcopy` / `wl-copy` / `xclip` / `xsel`); when EVERY
+   helpers first (`pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip.exe`); when EVERY
    helper is missing — a bare SSH session or a minimal Linux box with no
    `wl-clipboard`/`xclip`/`xsel` installed — falls back to the terminal's
    own OSC 52 clipboard over the controlling TTY, so copy still works with
@@ -379,7 +384,7 @@
         winner
         (if (not= helper :none)
           helper
-          (when (osc52-copy! (try (force config/tty-out) (catch Throwable _ nil)) text) :osc52))
+          (when (osc52-copy! (try (force tty/tty-out) (catch Throwable _ nil)) text) :osc52))
 
         ok?
         (some? winner)]

@@ -3,6 +3,7 @@
    clipboard integration, and attachment helpers. Lanterna owns terminal protocol decoding."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.tty :as tty]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -565,20 +566,90 @@
                    ;; Cursor lands at the start of where the token used to be.
                    (expect (= 3 (:ccol deleted))))))
 
-(defdescribe clipboard-copy-test
-             (it "clipboard-copy! returns a boolean (smoke)"
-                 ;; We can't reliably test that the SYSTEM clipboard now contains
-                 ;; the bytes - that would require a `pbcopy`/`xclip` helper on
-                 ;; $PATH on the CI box. The contract
-                 ;; we DO guarantee is that the function returns truthy on success
-                 ;; and falsy on total failure, never throws, and never blocks
-                 ;; longer than the per-helper 1s cap.
-                 (let [r (input/clipboard-copy! "vis-clip-test")]
-                   (expect (or (true? r) (false? r) (nil? r)))))
-             (it "clipboard-copy! never throws on weird input"
-                 (expect (some? (input/clipboard-copy! "")))
-                 (expect (some? (input/clipboard-copy! "line1\nline2\nline3")))
-                 (expect (some? (input/clipboard-copy! "tab\there\u00e9 \u4e2d\u6587")))))
+(defdescribe
+  clipboard-copy-test
+  ;; Regression: config/tty-out captured redirected System/out, so bare WSL
+  ;; reported success while OSC 52 went to the TUI log rather than the terminal.
+  (it "uses the same delayed controlling-terminal stream as Lanterna"
+      (let [terminal
+            (java.io.ByteArrayOutputStream.)
+
+            sent
+            (atom nil)]
+
+        (with-redefs [tty/tty-out
+                      (delay terminal)
+
+                      input/cached-copy-strategy
+                      (atom :none)
+
+                      input/osc52-copy!
+                      (fn [out text]
+                        (reset! sent [out text])
+                        true)]
+
+          (expect (not (realized? tty/tty-out)))
+          (expect (true? (input/clipboard-copy! "Zażółć 中文 😀")))
+          (expect (= [terminal "Zażółć 中文 😀"] @sent))
+          (expect (realized? tty/tty-out)))))
+  (it "returns false when neither helpers nor a controlling terminal are available"
+      (with-redefs [tty/tty-out
+                    (delay (throw (java.io.IOException. "No controlling terminal")))
+
+                    input/cached-copy-strategy
+                    (atom :none)]
+
+        (expect (false? (input/clipboard-copy! "no clipboard")))))
+  (it "probes and caches WSL clip.exe with BOM-marked UTF-16LE, not the OEM code page"
+      (let [calls
+            (atom [])
+
+            strategy
+            (atom nil)
+
+            text
+            "Zażółć gęślą jaźń\n中文 😀\tend"]
+
+        (with-redefs [input/cached-copy-strategy
+                      strategy
+
+                      input/run-shell-helper!
+                      (fn [cmd bytes]
+                        (swap! calls conj [cmd bytes])
+                        {:success? (= ["clip.exe"] cmd)})
+
+                      tty/tty-out
+                      (delay nil)]
+
+          (expect (true? (input/clipboard-copy! text)))
+          (expect (= ["clip.exe"] @strategy))
+          (expect (= text (String. ^bytes (second (first @calls)) "UTF-8")))
+          (expect (= (str "\uFEFF" text) (String. ^bytes (second (last @calls)) "UTF-16LE")))
+          (reset! calls [])
+          (expect (true? (input/clipboard-copy! "")))
+          (expect (= [["clip.exe"]] (mapv first @calls)))
+          (when-let [bytes (second (first @calls))]
+            (expect (= "\uFEFF" (String. ^bytes bytes "UTF-16LE")))))))
+  (it "re-probes a failed cached helper and then sends UTF-8 OSC 52"
+      (let [terminal
+            (java.io.ByteArrayOutputStream.)
+
+            strategy
+            (atom ["clip.exe"])]
+
+        (with-redefs [input/cached-copy-strategy
+                      strategy
+
+                      input/run-shell-helper!
+                      (fn [_ _]
+                        {:success? false})
+
+                      tty/tty-out
+                      (delay terminal)]
+
+          (expect (true? (input/clipboard-copy! "hi")))
+          (expect (= :none @strategy))
+          (expect (str/includes? (.toString terminal "UTF-8") "\u001B]52;c;aGk=\u0007"))))))
 
 (defdescribe file-mention-expand-test
              (it "replaces inline @mentions via the file-expander helper"
