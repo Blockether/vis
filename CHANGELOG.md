@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.60] - 2026-09-10
+
+### Added
+- Configure `python.tls_strict` in user or project YAML for both sandbox execution and trusted Python extensions (#185). It defaults to `true`; `false` clears only strict X.509 checks while preserving certificate trust and hostname verification. Includes runtime 0.5.9, documentation and JVM/native worker regression coverage.
+
 ## [v0.1.59] - 2026-09-10
 
 ### Fixed
