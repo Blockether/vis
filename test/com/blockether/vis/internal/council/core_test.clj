@@ -616,6 +616,109 @@
                  (doseq [child (reverse (file-seq file))]
                    (.delete ^java.io.File child)))))))
 
+(deftest existing-store-reply-column-upgrade-test
+  ;; #190: reopening an older Council schema must preserve history and repair
+  ;; nullable foreign keys before reads or publications hydrate existing pings.
+  (with-council
+    (let [file
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-council-upgrade"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          path
+          (.getPath file)
+
+          db
+          (ps/db-create-connection! path)]
+
+      (try
+        (let [{:keys [ids fleet] :as w}
+              (world db 2)
+
+              [a b]
+              ids
+
+              notice
+              (publish w {:content "Existing history" :idempotency_key "history"})
+
+              request
+              (publish w {:content "Existing request" :ping [b] :reply_required true})]
+
+          (jdbc/execute! (:datasource db) ["ALTER TABLE council_ping DROP COLUMN reply_entry_id"])
+          ;; Before required replies shipped, pings had neither of these columns.
+          (jdbc/execute! (:datasource db) ["ALTER TABLE council_ping DROP COLUMN state"])
+          (ps/db-dispose-connection! db)
+          (let [reopened (ps/db-create-connection! path)]
+            (try
+              (let [w (assoc w :db reopened)
+                    receiver (assoc w
+                               :actor {:session-id b
+                                       :activation-id (get-in @fleet [b :activation-id])
+                                       :source "host"})
+                    column (first (filter #(= "reply_entry_id" (:name %))
+                                          (jdbc/execute! (:datasource reopened)
+                                                         ["PRAGMA table_info(council_ping)"])))
+                    foreign-keys (jdbc/execute! (:datasource reopened)
+                                                ["PRAGMA foreign_key_list(council_ping)"])]
+
+                (is (= [notice request] (:entries (page w {}))))
+                (is (= {:name "reply_entry_id" :type "INTEGER" :notnull 0 :dflt_value nil}
+                       (select-keys column [:name :type :notnull :dflt_value])))
+                (is (some #(= {:from "reply_entry_id" :table "council_entry" :to "id"}
+                              (select-keys % [:from :table :to]))
+                          foreign-keys))
+                (doseq [entry [notice request]]
+                  (is (= entry (council 'get-entry reopened a {:entry_id (:id entry)}))))
+                (is (= notice (publish w {:content "Existing history" :idempotency_key "history"})))
+                (let [plain (publish w {:content "Publication without pings"})
+                      required (publish w {:content "New request" :ping [b] :reply_required true})
+                      input-state (atom {})
+                      batch (council 'prepare-input!
+                                     reopened
+                                     b
+                                     (get-in @fleet [b :activation-id])
+                                     (:gid w)
+                                     input-state
+                                     ["turn" 0]
+                                     8192)]
+
+                  (is (empty? (:ping plain)))
+                  (is (empty? (:replies plain)))
+                  (is (true? (:reply_required required)))
+                  (is (= #{(:id request) (:id required)}
+                         (set (map :entry_id (:pending_replies batch)))))
+                  (doseq [pending [request required]]
+                    (let [reply (publish receiver
+                                         {:content "Reply after upgrade" :reply_to (:id pending)})]
+                      (is (= (:id pending) (:reply_to reply) (:thread_id reply)))
+                      (is (= [a] (:ping reply)))
+                      (is (= [{:session_id b :state "replied" :reply_entry_id (:id reply)}]
+                             (:replies
+                               (council 'get-entry reopened a {:entry_id (:id pending)}))))))
+                  (is (empty? (council 'pending-replies reopened b (:gid w) input-state))))
+                (is (try (jdbc/execute!
+                           (:datasource reopened)
+                           ["UPDATE council_ping SET reply_entry_id = -1 WHERE entry_id = ?"
+                            (:id request)])
+                         false
+                         (catch java.sql.SQLException e
+                           (boolean (re-find #"FOREIGN KEY constraint failed" (.getMessage e))))))
+                (is (empty? (jdbc/execute! (:datasource reopened) ["PRAGMA foreign_key_check"])))
+                (let [entries (:entries (page w {}))
+                      schema-version (jdbc/execute! (:datasource reopened)
+                                                    ["PRAGMA schema_version"])]
+
+                  (ps/db-dispose-connection! reopened)
+                  (let [again (ps/db-create-connection! path)]
+                    (try (is (= entries (:entries (page (assoc w :db again) {}))))
+                         (is (= schema-version
+                                (jdbc/execute! (:datasource again) ["PRAGMA schema_version"])))
+                         (finally (ps/db-dispose-connection! again))))))
+              (finally (ps/db-dispose-connection! reopened)))))
+        (finally (ps/db-dispose-connection! db)
+                 (doseq [child (reverse (file-seq file))]
+                   (.delete ^java.io.File child)))))))
+
 (deftest runtime-first-input-and-mutual-pings-test
   ;; C04/C12/C13/C14/C15/C16: no waits, first input sees accepted pings, log reads are pure.
   (with-council

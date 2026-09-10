@@ -232,14 +232,24 @@
                    acc)))))))
 
 (defn- addable-column?
-  "True when SQLite accepts this column definition in `ALTER TABLE ... ADD COLUMN`:
-   no PRIMARY KEY / UNIQUE, no foreign key, and NOT NULL only with a DEFAULT."
+  "Select columns SQLite can add: no PRIMARY KEY / UNIQUE, and NOT NULL needs
+   a DEFAULT. With foreign keys enabled, REFERENCES must be nullable with an
+   implicit or explicit NULL default."
   [{:keys [^String sql]}]
-  (let [u (str/upper-case sql)]
+  (let [u
+        (str/upper-case sql)
+
+        not-null?
+        (re-find #"\bNOT\s+NULL\b" u)
+
+        default?
+        (re-find #"\bDEFAULT\b" u)]
+
     (and (not (re-find #"\bPRIMARY\s+KEY\b" u))
          (not (re-find #"\bUNIQUE\b" u))
-         (not (re-find #"\bREFERENCES\b" u))
-         (or (not (re-find #"\bNOT\s+NULL\b" u)) (boolean (re-find #"\bDEFAULT\b" u))))))
+         (or (not (re-find #"\bREFERENCES\b" u))
+             (and (not not-null?) (or (not default?) (boolean (re-find #"\bDEFAULT\s+NULL\b" u)))))
+         (or (not not-null?) (boolean default?)))))
 
 (defn- existing-columns
   "Lower-cased column names of `table`, or an empty set when it does not exist."
@@ -275,8 +285,9 @@
    diff each `CREATE TABLE` in the shipped SQL against `PRAGMA table_info` and
    `ADD COLUMN` whatever is missing, using the column's own DDL text from the SQL
    file - no schema DDL is written in Clojure. Fresh databases match already, so
-   this is a no-op for them; columns SQLite cannot add after the fact (keys,
-   foreign keys, NOT NULL without DEFAULT) are left to a new schema generation."
+   this is a no-op for them. Nullable foreign keys retain their REFERENCES
+   constraints; keys, foreign keys with non-NULL defaults, and NOT NULL without
+   DEFAULT are left to a new schema generation."
   [^DataSource ds locations]
   (let [tables (reduce merge {} (map canonical-columns (migration-sql-texts locations)))]
     (when (seq tables)

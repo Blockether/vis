@@ -55,6 +55,24 @@
                    (expect (some? project-ddl))
                    (expect (not (str/includes? (str/lower-case (second project-ddl)) "channel"))))))
 
+(defdescribe
+  additive-foreign-key-columns-test
+  ;; #190: SQLite permits nullable REFERENCES columns with a NULL default.
+  (it "accepts implicit and explicit NULL defaults without weakening other restrictions"
+      (doseq [sql ["reply_entry_id INTEGER REFERENCES council_entry(id)"
+                   "reply_to INTEGER DEFAULT NULL REFERENCES council_entry(id)"
+                   "reply_entry_id integer references council_entry(id) default null"
+                   "reply_required INTEGER NOT NULL DEFAULT 0"]]
+        (expect (#'migration/addable-column? {:sql sql}))))
+  (it "rejects keys, required references and non-NULL foreign-key defaults"
+      (doseq [sql ["id INTEGER PRIMARY KEY" "id INTEGER UNIQUE" "content TEXT NOT NULL"
+                   "reply_entry_id INTEGER NOT NULL REFERENCES council_entry(id)"
+                   "reply_entry_id INTEGER NOT NULL DEFAULT NULL REFERENCES council_entry(id)"
+                   "reply_entry_id INTEGER REFERENCES council_entry(id) DEFAULT 1"
+                   "reply_entry_id INTEGER REFERENCES council_entry(id) DEFAULT 'NULL'"
+                   "reply_entry_id INTEGER REFERENCES council_entry(id) DEFAULT NULLIF(1, 1)"]]
+        (expect (not (#'migration/addable-column? {:sql sql}))))))
+
 (defn- temp-ds
   "A file-backed store nobody else shares, with the file to delete afterwards."
   []
