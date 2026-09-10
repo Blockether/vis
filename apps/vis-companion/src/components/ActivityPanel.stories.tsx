@@ -77,6 +77,23 @@ export const ReplResults: Story = {
           within(row).getByRole("heading", { name: title }),
         ).toBeVisible();
       }
+      for (const heading of Array.from(
+        row.querySelectorAll("[data-activity-content] > h5"),
+      ).slice(1)) {
+        await expect(
+          parseFloat(getComputedStyle(heading).marginTop),
+        ).toBeGreaterThanOrEqual(12);
+      }
+      for (const code of row.querySelectorAll("pre")) {
+        await expect(
+          parseFloat(getComputedStyle(code).paddingTop),
+        ).toBeGreaterThan(0);
+        await expect(
+          parseFloat(
+            getComputedStyle(code.querySelector("code > div")!).paddingLeft,
+          ),
+        ).toBeGreaterThan(0);
+      }
       await expect(within(row).queryByRole("table")).not.toBeInTheDocument();
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
     }
@@ -478,8 +495,8 @@ export const CompactMiddle: Story = {
     const body = rows[1].querySelector<HTMLElement>("[data-activity-content]")!;
     const code = within(rows[1]).getByRole("group", { name: "text code" });
     await expect(getComputedStyle(body).marginTop).toBe("0px");
-    await expect(getComputedStyle(code).paddingTop).toBe("0px");
-    await expect(getComputedStyle(code).paddingBottom).toBe("0px");
+    await expect(getComputedStyle(code).paddingTop).toBe("8px");
+    await expect(getComputedStyle(code).paddingBottom).toBe("8px");
     await expect(code.textContent).toContain("alpha");
     await expect(code.querySelector("code")!.children).toHaveLength(3);
     await expect(body.getBoundingClientRect().top).toBe(

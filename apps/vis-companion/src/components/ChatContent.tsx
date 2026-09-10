@@ -481,7 +481,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
           {lines.map((segments, index) => (
             <div
               key={index}
-              className={`flex w-fit min-w-full whitespace-pre ${frameless ? "pr-3" : "px-3 first:pr-16"}`}
+              className={`flex w-fit min-w-full whitespace-pre ${frameless && !padded ? "pr-3" : frameless ? "px-3" : "px-3 first:pr-16"}`}
             >
               {gutter && (
                 <span

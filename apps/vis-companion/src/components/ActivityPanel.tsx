@@ -576,7 +576,10 @@ function ActivityBody({
         switch (block.type) {
           case "heading":
             return (
-              <h5 key={index} className="text-meta font-bold text-code-result">
+              <h5
+                key={index}
+                className={`text-meta font-bold text-code-result ${index > 0 ? "mt-3" : ""}`}
+              >
                 {block.text}
               </h5>
             );
@@ -607,7 +610,6 @@ function ActivityBody({
                 compact
                 bare
                 frameless
-                padded={false}
               />
             );
           case "table":

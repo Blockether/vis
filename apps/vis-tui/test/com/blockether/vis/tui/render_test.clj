@@ -34,6 +34,21 @@
 
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
 
+(defdescribe
+  activity-section-spacing-test
+  (it "separates result sections even when output has no trailing newline"
+      (let [blocks
+            [{:type "heading" :text "Program"} {:type "code" :language "python" :text "print(42)"}
+             {:type "heading" :text "Stdout"} {:type "code" :text "42"}
+             {:type "heading" :text "Result"} {:type "code" :text "None"}]
+
+            entries
+            (#'render/activity-content-entries blocks 80 2 nil {} false)]
+
+        (doseq [heading ["Stdout" "Result"]]
+          (let [idx (first (keep-indexed #(when (str/includes? (:line %2) heading) %1) entries))]
+            (expect (str/blank? (:line (nth entries (dec idx))))))))))
+
 (defdescribe repl-activity-result-test
              (it
                "renders the shared REPL fixture without transport tables at narrow and wide widths"
