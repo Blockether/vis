@@ -194,6 +194,46 @@
         (expect (not (str/includes? (text-for nil) marker))))))
 
 (defdescribe
+  core-prompt-project-style-test
+  ;; Regression: Blockether/vis#188 reported missing spacing between definitions and YAML resources.
+  ;; These assertions pin the prompt contract, not model compliance.
+  (it "makes project style and logical spacing part of editing correctness"
+      (let [text
+            (var-get #'prompt/CORE_SYSTEM_PROMPT)
+
+            edit-section
+            (second (re-find #"(?s)## 4\. Edit \+ verify\n(.*?)\n## 5\." text))]
+
+        (expect (some? edit-section))
+        (doseq
+          [rule
+           ["Treat code/config style as correctness" "project rules and formatter/linter config"
+            "consistent nearby examples, not isolated inconsistencies"
+            "naming, indentation, logical grouping"
+            "blank-line separation between definitions and configuration resources"
+            "Conciseness/minimal diffs must not collapse readable structure"
+            "Spacing must not change whitespace-sensitive values or required document separators"
+            "YAML `---`"]]
+          (expect (str/includes? (str/replace (or edit-section "") #"\s+" " ") rule) rule))))
+  (it "owns scope and verification once, separately from response style"
+      (let [text
+            (var-get #'prompt/CORE_SYSTEM_PROMPT)
+
+            edit-section
+            (second (re-find #"(?s)## 4\. Edit \+ verify\n(.*?)\n## 5\." text))]
+
+        (doseq [rule ["preserve unrelated work and formatting" "Cover changed behavior with tests"
+                      "run applicable project formatting/lint checks"
+                      "review the final diff, including edit boundaries"]]
+          (let [pattern (re-pattern (java.util.regex.Pattern/quote rule))
+                normalized (str/replace text #"\s+" " ")]
+
+            (expect (= 1 (count (re-seq pattern normalized))) rule)
+            (expect (str/includes? (str/replace (or edit-section "") #"\s+" " ") rule) rule)))
+        (expect (str/includes? text "## 7. Response and finish"))
+        (expect (not (str/includes? text "## 7. Style and finish"))))))
+
+(defdescribe
   prompt-core-test
   ;; With one tool there is no schema to be authoritative: a capability's OWN
   ;; document is the contract, and the core prompt has to say where it lives or
@@ -286,7 +326,8 @@
       ;; 6.7k → 6.8k to state that project_root_path is always available and root is not prebound.
       ;; 6.8k → 7.4k for the read/decision boundary, exact hashline endpoints and parse retries.
       ;; 7.4k → 7.7k for the ls signature, batching and hidden alias contract.
-      (expect (< (count text) 7700))
+      ;; 7.7k → 8.2k for project-style correctness (#188); scope and verification stay single-owned.
+      (expect (< (count text) 8200))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -337,7 +378,7 @@
                  (str/index-of text "`apropos(pattern)` filters SYMBOL names")))
       (doseq [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces"
                        "## 3. Inspect" "## 4. Edit + verify" "## 5. Act autonomously"
-                       "## 6. Manage context" "## 7. Style and finish"]]
+                       "## 6. Manage context" "## 7. Response and finish"]]
         (expect (str/includes? text heading)))
       (doseq [required
               ["Host project default" "`apropos(pattern)` filters SYMBOL names"
