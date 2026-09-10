@@ -773,30 +773,21 @@
     (try (vis/update-machine-config! #(assoc %
                                         "theme_name" (name theme-name)
                                         "show_python_code" show-python-code))
-         (catch Throwable _ nil))))
+         (catch Throwable _
+           (vis/notify!
+             "Terminal preferences could not be saved; changes apply only to this session."
+             :level
+             :warn)))))
 
-(defn- apply-settings-update!
-  "Persist the app-owned theme and refresh the cached toggle projection."
-  [db new-settings]
-  (render/invalidate-cache!)
-  (let [local-merged
-        (normalize-settings (merge default-settings
-                                   (select-keys (:settings db) (keys default-settings))
-                                   (select-keys new-settings (keys default-settings))))
-
-        projected
-        (merge (migrated-toggle-projection) local-merged)]
-
-    (tui-theme/apply-theme! (:theme-name local-merged))
-    ;; Re-emit OSC 11 so the emulator's window padding (the un-themed
-    ;; "outer" rim around the Lanterna grid) is recolored to the NEW
-    ;; startup applies this once; a LIVE theme switch must refresh it too, otherwise the rim
-    ;; keeps the previous theme's background.
-    (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
-      (try (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))
-           (catch Throwable _ nil)))
-    (persist-settings! local-merged)
-    (assoc db :settings projected)))
+(reg-fx :apply-settings
+        (fn [settings]
+          (render/invalidate-cache!)
+          (tui-theme/apply-theme! (:theme-name settings))
+          ;; Refresh the emulator's padding as well as the painted cells.
+          (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
+            (try (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))
+                 (catch Throwable _ nil)))
+          (persist-settings! settings)))
 
 (defn- model-entry
   [provider model]
@@ -1203,9 +1194,16 @@
               (fn [db [_ open?]]
                 (assoc db :dialog-open? (boolean open?))))
 
-(reg-event-db :update-settings
+(reg-event-fx :update-settings
               (fn [db [_ new-settings]]
-                (apply-settings-update! db new-settings)))
+                (let [local-settings (normalize-settings
+                                       (merge default-settings
+                                              (select-keys (:settings db) (keys default-settings))
+                                              (select-keys new-settings (keys default-settings))))]
+                  ;; Persist after committing: a save warning dispatches a render
+                  ;; event, which would otherwise retry this update inside swap!.
+                  {:db (assoc db :settings (merge (migrated-toggle-projection) local-settings))
+                   :fx [[:apply-settings local-settings]]})))
 
 (def ^:private render-neutral-toggle-ids
   "Toggle ids whose value NEVER changes a painted glyph.

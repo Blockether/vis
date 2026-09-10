@@ -100,16 +100,17 @@
                                    (str "127.0.0.1:" (.getPort (.getAddress server))) (or mode "")])
                             (.redirectErrorStream true)
                             (.redirectOutput ProcessBuilder$Redirect/PIPE)))]
-            (try (let [finished? (.waitFor process 55 TimeUnit/SECONDS)]
+            (try (let [finished? (.waitFor process (if (= "theme" mode) 190 55) TimeUnit/SECONDS)]
                    (expect finished? "Native TUI PTY fixture timed out")
                    (when finished?
                      (let [output (slurp (.getInputStream process))]
                        (expect (zero? (.exitValue process)) output)
-                       (expect (str/includes? output
-                                              (cond clipboard? "native clipboard verified"
-                                                    model-key
-                                                    "input responsive during slow model HTTP"
-                                                    :else "resized to 100x35"))
+                       (expect (str/includes?
+                                 output
+                                 (cond (= "theme" mode) "native theme restored after restart"
+                                       clipboard? "native clipboard verified"
+                                       model-key "input responsive during slow model HTTP"
+                                       :else "resized to 100x35"))
                                output)
                        (when model-key
                          (expect (some (fn [[method path]]
@@ -142,3 +143,8 @@
                  (check-native-tui! "osc52"))
              (it "copies Unicode bubbles and selections through WSL clip.exe with UTF-16LE"
                  (check-native-tui! "clip.exe")))
+
+(defdescribe native-tui-theme-persistence-test
+             (it
+               "keeps a selected theme in the runtime user's home through idle, repaint and restart"
+               (check-native-tui! "theme")))

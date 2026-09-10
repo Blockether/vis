@@ -5,6 +5,7 @@
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.state :as state]
+            [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.virtual :as virtual]
             [clojure.string :as str]
@@ -621,6 +622,54 @@
           (expect
             (= {"vision_memory" {"working_eye" {}} "theme_name" "vis-dark" "show_python_code" false}
                @written)))))
+  (it "reports a failed preference save instead of silently accepting it"
+      (let [notifications (atom [])]
+        (with-redefs [vis/update-machine-config! (fn [_]
+                                                   (throw (java.io.IOException. "not writable")))
+                      vis/notify! (fn [message & options]
+                                    (swap! notifications conj [message options]))]
+
+          (#'state/persist-settings! {:theme-name :vis-dark :show-python-code false})
+          (expect (=
+                    [["Terminal preferences could not be saved; changes apply only to this session."
+                      [:level :warn]]]
+                    @notifications)))))
+  (it
+    "commits the selected theme before a save warning wakes the render thread"
+    (let [saved-db
+          @state/app-db
+
+          saved-theme
+          @theme/active-theme-id
+
+          attempts
+          (atom 0)
+
+          notices
+          (atom [])]
+
+      (try (reset! state/app-db {:settings {:theme-name :vis-light} :render-version 0})
+           (with-redefs [vis/update-machine-config!
+                         (fn [_]
+                           (swap! attempts inc)
+                           (throw (java.io.IOException. "not writable")))
+
+                         vis/notify!
+                         (fn [_ & _]
+                           (swap! notices conj (get-in @state/app-db [:settings :theme-name]))
+                           ;; Production's notification listener dispatches this event.
+                           ;; Bound it to one dispatch so a regression fails, not hangs.
+                           (when (= 1 (count @notices)) (state/dispatch [:bump-render-version])))
+
+                         input/set-default-bg!
+                         (fn [& _]
+                           nil)]
+
+             (state/dispatch [:update-settings {:theme-name :vis-dark}]))
+           (expect (= 1 @attempts))
+           (expect (= [:vis-dark] @notices))
+           (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))
+           (finally (reset! state/app-db saved-db) (theme/apply-theme! saved-theme)))))
   (it "hydrates persisted enum toggles into the registry"
       ;; The persistence shape now lives under `:toggles`, not
       ;; `:tui-settings`. `state/init!` keeps the `:settings`

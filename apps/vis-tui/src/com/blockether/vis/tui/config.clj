@@ -6,15 +6,17 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]))
 
-(def ^:private ^java.io.File config-file
+(defn- config-file
+  "Resolve the runtime user's preferences path, never the native-image builder's."
+  ^java.io.File []
   (io/file (System/getProperty "user.home") ".vis" "tui" "config.json"))
 
 (def ^:private config-lock (Object.))
 
 (defn- read-file
-  []
-  (if (.isFile ^java.io.File config-file)
-    (try (let [value (json/read-json (slurp config-file))]
+  [^java.io.File file]
+  (if (.isFile file)
+    (try (let [value (json/read-json (slurp file))]
            (if (map? value) value {}))
          (catch Throwable _ {}))
     {}))
@@ -22,17 +24,20 @@
 (defn load-raw
   "Read the app-local, string-keyed JSON configuration."
   []
-  (locking config-lock (read-file)))
+  (locking config-lock (read-file (config-file))))
 
 (defn update!
   "Atomically replace app-local configuration with `(f current)`."
   [f]
   (locking config-lock
-    (let [next-value
-          (or (f (read-file)) {})
+    (let [^java.io.File file
+          (config-file)
+
+          next-value
+          (or (f (read-file file)) {})
 
           ^java.io.File parent
-          (.getParentFile ^java.io.File config-file)
+          (.getParentFile file)
 
           ^java.io.File temp
           (io/file parent (str ".config-" (random-uuid) ".json"))]
@@ -43,7 +48,7 @@
       (spit temp (str (json/write-json-str next-value :indent-str "  ") "
 "))
       (java.nio.file.Files/move (.toPath temp)
-                                (.toPath ^java.io.File config-file)
+                                (.toPath file)
                                 (into-array java.nio.file.CopyOption
                                             [java.nio.file.StandardCopyOption/REPLACE_EXISTING
                                              java.nio.file.StandardCopyOption/ATOMIC_MOVE]))

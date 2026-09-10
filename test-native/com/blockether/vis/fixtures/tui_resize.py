@@ -3,6 +3,7 @@
 import base64
 import errno
 import fcntl
+import json
 import os
 import pty
 import re
@@ -20,6 +21,8 @@ def check_resize(binary, home, gateway, mode=None):
     """Exercise production rendering and input on a controlling terminal."""
     model_key = mode if mode in ("c", "m") else None
     clipboard_mode = mode if mode in ("osc52", "clip.exe") else None
+    theme_mode = mode in ("theme", "theme-restart")
+    config_file = Path(home) / ".vis/tui/config.json"
     clipboard_file = Path(home) / "clipboard.bin"
     if clipboard_mode:
         # Deterministic helper boundary: inspect clip.exe stdin without changing
@@ -124,11 +127,18 @@ def check_resize(binary, home, gateway, mode=None):
         expected = b"\x1b]52;c;" + base64.b64encode(text.encode()) + b"\x07"
         return expected in output
 
-    def await_bottom(timeout, highlighting=False, text=None, copied=None):
+    def await_bottom(
+        timeout, highlighting=False, text=None, copied=None, background=None, idle=False
+    ):
         nonlocal pending, cursor_row, cursor_col, output
         deadline = time.monotonic() + timeout
         seen_rows = set()
         while time.monotonic() < deadline:
+            if (
+                background is not None
+                and b"\x1b]11;rgb:" + background + b"\x07" in output
+            ):
+                return
             if copied is not None and clipboard_matches(copied):
                 return
             if text is not None and any(
@@ -178,9 +188,21 @@ def check_resize(binary, home, gateway, mode=None):
                 copied is None
                 and text is None
                 and not highlighting
+                and background is None
+                and not idle
                 and rows in seen_rows
             ):
                 return
+        if idle:
+            return
+        if background is not None:
+            sent_backgrounds = re.findall(rb"\x1b]11;rgb:([^\x07]+)\x07", output)
+            raise AssertionError(
+                f"native TUI did not apply background {background!r}; "
+                f"sent={sent_backgrounds!r}; "
+                f"config={json.loads(config_file.read_text()) if config_file.exists() else None}; "
+                f"screen={screen_lines()}"
+            )
         if copied is not None:
             captured = clipboard_file.read_bytes() if clipboard_file.exists() else b""
             raise AssertionError(
@@ -203,6 +225,47 @@ def check_resize(binary, home, gateway, mode=None):
     try:
         await_bottom(20)
         print("initial 80x24 painted", flush=True)
+        if theme_mode:
+            initial_bg = b"1a/1b/26" if mode == "theme" else b"0c/0e/12"
+            await_bottom(8, background=initial_bg)
+            if mode == "theme-restart":
+                print("native theme restored after restart", flush=True)
+                return
+            output = b""
+            os.write(master, b"\x18o")
+            await_bottom(8, text=b"Settings")
+            os.write(master, b"Theme\r")
+            await_bottom(8, text=b"Themes")
+            # At 80x24 the picker has one theme per page; Vis Dark is second.
+            os.write(master, b"n")
+            await_bottom(8, text=b"Vis Dark")
+            output = b""
+            os.write(master, b"a")
+            await_bottom(8, background=b"0c/0e/12")
+            await_bottom(8, text=b"current")  # Paint completes after persistence.
+            saved = json.loads(config_file.read_text())
+            assert saved["theme_name"] == "vis-dark", saved
+            assert saved["show_python_code"] is False, saved
+            assert saved["unrelated"] == "preserved", saved
+            # Close the picker, clear Settings' search, then close Settings.
+            os.write(master, b"\x07\x07\x07theme-live-marker")
+            await_bottom(8, text=b"theme-live-marker")
+            # The reported reset occurred after a few minutes, without exiting.
+            await_bottom(125, idle=True)
+            assert json.loads(config_file.read_text())["theme_name"] == "vis-dark"
+            assert all(
+                color == b"0c/0e/12"
+                for color in re.findall(rb"\x1b]11;rgb:([^\x07]+)\x07", output)
+            ), "native theme changed while idle"
+            output = b""
+            rows, cols = 35, 100
+            fcntl.ioctl(
+                master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0)
+            )
+            await_bottom(8)
+            assert b"\x1b[48;2;12;14;18m" in output, "resize restored the old palette"
+            print("native theme persisted through idle and repaint", flush=True)
+            return
         if clipboard_mode:
             await_bottom(8, text=b"Copy:")
             # Click the actual user bubble, then drag-select its first word.
@@ -264,12 +327,24 @@ def check_resize(binary, home, gateway, mode=None):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="vis-tui-resize-") as home:
         try:
-            check_resize(
-                os.path.abspath(sys.argv[1]),
-                home,
-                sys.argv[2],
-                sys.argv[3] if len(sys.argv) > 3 else None,
-            )
+            mode = sys.argv[3] if len(sys.argv) > 3 else None
+            if mode == "theme":
+                config_file = Path(home) / ".vis/tui/config.json"
+                config_file.parent.mkdir(parents=True)
+                config_file.write_text(
+                    json.dumps(
+                        {
+                            "theme_name": "tokyonight-night",
+                            "show_python_code": False,
+                            "unrelated": "preserved",
+                        }
+                    )
+                )
+            check_resize(os.path.abspath(sys.argv[1]), home, sys.argv[2], mode)
+            if mode == "theme":
+                check_resize(
+                    os.path.abspath(sys.argv[1]), home, sys.argv[2], "theme-restart"
+                )
         except Exception:
             for log in (Path(home) / ".vis/logs").glob("*.log"):
                 print(log.read_text()[-4000:], file=sys.stderr)
