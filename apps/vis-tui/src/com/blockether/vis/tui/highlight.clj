@@ -30,10 +30,11 @@
 ;; Native availability (fail-open)
 
 (def ^:private native-ready?
-  "True once the platform native lib is selected + loaded. The require is the
-   pack's side-effecting platform loader; guarded so a JVM without the native
-   lib (bare unit tests) degrades to no color instead of throwing at load."
-  (delay (try (require 'com.blockether.tree-sitter-language-pack)
+  "True once the platform native lib is selected + loaded. JVMs use the pack's
+   Clojure resolver; native images load the platform library embedded at build
+   time through the Java loader, without runtime compilation or Maven access."
+  (delay (try (when-not (= "runtime" (System/getProperty "org.graalvm.nativeimage.imagecode"))
+                (require 'com.blockether.tree-sitter-language-pack))
               ;; Touch the FFI so a missing native lib fails HERE, not mid-render.
               (TreeSitterLanguagePack/getHighlightsQuery "clojure")
               true

@@ -44,6 +44,40 @@
     (b/compile-clj {:basis basis :src-dirs source-dirs :class-dir class-dir})
     basis))
 
+(defn- native-grammar-jars
+  "Bundle the host grammar library at exactly the binding's resolved version."
+  [basis]
+  (let [version
+        (get-in basis [:libs 'com.blockether/tree-sitter-language-pack :mvn/version])
+
+        os
+        (str/lower-case (System/getProperty "os.name"))
+
+        arch
+        (System/getProperty "os.arch")
+
+        arm?
+        (contains? #{"aarch64" "arm64"} arch)
+
+        rid
+        (cond (str/includes? os "mac") (str "macos-" (if arm? "arm64" "x86_64"))
+              (str/includes? os "linux") (str "linux-" (if arm? "aarch64" "x86_64"))
+              :else (throw (ex-info "Unsupported native TUI platform" {:os os :arch arch})))
+
+        artifact
+        (symbol "com.blockether" (str "tree-sitter-language-pack-native-" rid))]
+
+    (when-not version (throw (ex-info "Native TUI requires a pinned tree-sitter binding" {})))
+    (let [native-basis
+          (b/create-basis {:project nil :extra {:deps {artifact {:mvn/version version}}}})
+
+          jars
+          (filterv #(str/ends-with? % ".jar") (get-in native-basis [:libs artifact :paths]))]
+
+      (when (empty? jars)
+        (throw (ex-info "Native TUI grammar artifact has no jar" {:artifact artifact})))
+      jars)))
+
 (defn native
   [_]
   (assert-graal!)
@@ -51,7 +85,8 @@
         (prepare!)
 
         jars
-        (filter #(str/ends-with? % ".jar") (:classpath-roots basis))
+        (concat (filter #(str/ends-with? % ".jar") (:classpath-roots basis))
+                (native-grammar-jars basis))
 
         classpath
         (str/join java.io.File/pathSeparator (cons class-dir jars))

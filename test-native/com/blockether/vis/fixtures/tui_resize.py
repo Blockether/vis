@@ -22,6 +22,7 @@ def check_resize(binary, home, gateway):
     if pid == 0:
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         os.environ["TERM"] = "xterm-256color"
+        os.environ.pop("TSLP_NATIVE_PATH", None)
         os.execv(
             binary,
             [
@@ -31,17 +32,47 @@ def check_resize(binary, home, gateway):
                 gateway,
                 "--gateway-token",
                 "resize-test",
+                "--session-id",
+                "00000000-0000-0000-0000-000000000001",
             ],
         )
     pending = b""
     cursor_row, cursor_col = 1, 1
     sequence = re.compile(rb"\x1b\[([0-9;?]*)([ -/]*)([@-~])")
+    output = b""
 
-    def await_bottom(timeout):
-        nonlocal pending, cursor_row, cursor_col
+    def token_colors():
+        foreground = None
+        colors = {}
+        end = 0
+        for match in sequence.finditer(output):
+            text = output[end : match.start()]
+            for token in (b"vis_identifier_marker", b"vis_string_marker"):
+                if token in text:
+                    colors[token] = foreground
+            params, _, command = match.groups()
+            if command == b"m":
+                values = params.split(b";")
+                if len(values) == 5 and values[:2] == [b"38", b"2"]:
+                    foreground = tuple(values[2:])
+                elif params in (b"", b"0", b"39"):
+                    foreground = None
+            end = match.end()
+        return colors
+
+    def await_bottom(timeout, highlighting=False):
+        nonlocal pending, cursor_row, cursor_col, output
         deadline = time.monotonic() + timeout
         seen_rows = set()
         while time.monotonic() < deadline:
+            colors = token_colors()
+            if (
+                highlighting
+                and len(colors) == 2
+                and None not in colors.values()
+                and len(set(colors.values())) == 2
+            ):
+                return
             if not select.select([master], [], [], 0.1)[0]:
                 continue
             try:
@@ -57,6 +88,7 @@ def check_resize(binary, home, gateway):
                     f"native TUI closed its terminal: {pending[-2000:]!r}"
                 )
             pending += chunk
+            output = (output + chunk)[-131072:]
             consumed = 0
             for match in sequence.finditer(pending):
                 params, _, command = match.groups()
@@ -72,8 +104,12 @@ def check_resize(binary, home, gateway):
                     os.write(master, f"\x1b[{cursor_row};{cursor_col}R".encode())
                 consumed = match.end()
             pending = pending[consumed:][-4096:]
-            if rows in seen_rows:
+            if not highlighting and rows in seen_rows:
                 return
+        if highlighting:
+            raise AssertionError(
+                f"native Python syntax colors are missing or identical: {token_colors()}"
+            )
         raise AssertionError(
             f"no repaint at row {rows} after resize to {cols}x{rows}; painted rows: {sorted(seen_rows)}"
         )
@@ -90,6 +126,8 @@ def check_resize(binary, home, gateway):
             # Do not send a key: resizing alone must wake and repaint the TUI.
             await_bottom(8)
             print(f"resized to {cols}x{rows}", flush=True)
+        await_bottom(8, highlighting=True)
+        print("native Python syntax colors verified", flush=True)
     finally:
         os.close(master)
         try:

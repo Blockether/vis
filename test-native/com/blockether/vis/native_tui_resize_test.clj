@@ -38,6 +38,24 @@
                            "/v1/sessions"
                            {"id" "00000000-0000-0000-0000-000000000001"}
 
+                           "/v1/sessions/00000000-0000-0000-0000-000000000001"
+                           {"id" "00000000-0000-0000-0000-000000000001" "status" "idle"}
+
+                           "/v1/sessions/00000000-0000-0000-0000-000000000001/transcript"
+                           {"offset" 0
+                            "total" 1
+                            "has_more" false
+                            "turns" [{"turn_id" "native-highlighting"
+                                      "status" "completed"
+                                      "request" "Show Python syntax."
+                                      "content"
+                                      [{"id" "code"
+                                        "type" "prose"
+                                        "markdown"
+                                        (str "```python\n"
+                                             "vis_identifier_marker = \"vis_string_marker\"\n"
+                                             "```")}]}]}
+
                            {})
                     data (.getBytes ^String (json/write-json-str body) "UTF-8")]
 
@@ -50,7 +68,7 @@
   native-tui-resize-test
   ;; Regression: Lanterna silently discarded failure to register its reflective
   ;; WINCH handler in native-image, leaving the screen at its original size.
-  (it "repaints after growing and shrinking the terminal without keyboard input"
+  (it "resizes and syntax-highlights persisted Python in the native terminal"
       (let [binary (io/file (or (System/getenv "VIS_TUI_NATIVE_BIN")
                                 "apps/vis-tui/target/vis-tui"))]
         (expect (.canExecute binary) "Build apps/vis-tui with clojure -T:build native first")
