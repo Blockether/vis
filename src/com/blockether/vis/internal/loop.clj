@@ -12,6 +12,7 @@
     [com.blockether.vis.internal.activity.core :as activity]
     [com.blockether.vis.internal.activity.event :as activity-event]
     [com.blockether.vis.internal.attachment.core :as attachments]
+    [com.blockether.vis.internal.attachment.linked-reports :as linked-reports]
     [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.config.core :as config]
     [com.blockether.vis.internal.sandbox.policy :as security-policy]
@@ -9115,6 +9116,8 @@
                         (cond-> iteration-result
                           pick-move
                           (update :llm-routing-trace (fnil conj []) (pick-move-event pick-move)))
+                        iteration-result (linked-reports/deliver-iteration environment
+                                                                           iteration-result)
                         {:keys [thinking assistant-prose blocks final-result]} iteration-result
                         python-error (env/retired-context-error environment)
                         block (first blocks)
@@ -9163,7 +9166,7 @@
                         ;; the figure PNG is OWNED by the DB and survives a
                         ;; restart / replay (V1 only kept the temp-file path).
                         iteration-attachments
-                        (into []
+                        (into (vec (:linked-report-attachments iteration-result))
                               (mapcat (fn [b]
                                         (map #(assoc % :tool-call-id (:svar/tool-call-id b))
                                              (:attachments b))))

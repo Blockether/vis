@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -58,5 +58,42 @@ describe("an attachment link in an answer", () => {
     expect(
       screen.getByRole("dialog", { name: "mobile-preview.png" }),
     ).toBeInTheDocument();
+  });
+  // #193: a report generated in the TUI arrives as a durable session attachment.
+  it("opens a linked Markdown report using the attachment reader", async () => {
+    const reportRow = {
+      ...row,
+      content: [{
+        id: "answer",
+        type: "prose",
+        markdown: `[Report](attachment://${ATTACHMENT_ID})`,
+      }],
+      iterations: [{
+        ...row.iterations[0],
+        attachments: [{
+          ...row.iterations[0].attachments[0],
+          kind: "file",
+          filename: "report.md",
+          media_type: "text/markdown",
+        }],
+      }],
+    };
+    renderSessionScreen({
+      client: {
+        cachedTranscript: () => [reportRow],
+        transcript: () => Promise.resolve([reportRow]),
+        sessionArtifacts: () => Promise.resolve([]),
+        attachmentUrl: async () => "blob:report",
+        attachmentBlob: async () => new Blob(
+          ["# Durable report\n\nAvailable after the host file moves."],
+          { type: "text/markdown" },
+        ),
+      },
+    });
+    await userEvent.click(await screen.findByRole("link", { name: "Report" }));
+    await waitFor(() => {
+      const preview = screen.getByRole("dialog", { name: "report.md" });
+      expect(within(preview).getByText("Available after the host file moves.")).toBeInTheDocument();
+    });
   });
 });

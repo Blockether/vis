@@ -405,6 +405,27 @@
                                 "the keyless provider authenticated with a credential of its own"))
                       (finally (.stop server 0) (delete-tree! dir))))))
 
+(defdescribe native-linked-report-delivery-test
+             ;; #193: exercise CommonMark source spans and secure directory handles in the image.
+             (it "snapshots a local report in a complete native agent turn"
+                 (let [dir
+                       (temp-dir "vis-native-report")
+
+                       {:keys [server port]}
+                       (start-stub-provider! "[Report](report.md)")]
+
+                   (try (overlay! dir port)
+                        (spit (io/file dir "report.md") "# Native report\n")
+                        (let [{:keys [exit output]} (run-binary dir
+                                                                [(.getAbsolutePath (require-binary))
+                                                                 "--db" ":memory" "--raw"
+                                                                 "Link the report"]
+                                                                180)]
+                          (expect (= 0 exit) output)
+                          (expect (str/includes? output "attachment://") output)
+                          (expect (not (str/includes? output "](report.md)")) output))
+                        (finally (.stop server 0) (delete-tree! dir))))))
+
 ;; ── voice: the two directions, in the linked image ───────────────────────────
 
 (defn- plain-words
