@@ -19,7 +19,7 @@ e2e/
   <id>/
     scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?, want_forms?,
                        want_requested_route?, want_folded_prefix?, want_cache_read?,
-                       want_cache_metrics?, workspace_filesystem?}
+                       want_cache_metrics?, workspace_filesystem?, timeout_s?}
     files/          input files copied to a new git repository per run
 ```
 
@@ -54,10 +54,15 @@ VIS_MODELS=glm-5.3-flash,glm-5.3 python3 e2e/run.py
 ```
 
 Environment variables: `VIS_MODELS` (comma-separated models, default
-`VIS_MODEL`), `VIS_E2E_TIMEOUT` (seconds per scenario, default 300),
+`VIS_MODEL`), `VIS_E2E_TIMEOUT` (explicit whole-scenario budget in seconds),
 `VIS_E2E_WORKERS` (parallel runs, default 5), `VIS_E2E_TRACES` (JSON trace
 directory; multiple-model runs use `<id>__<model>.jsonl`), and
 `VIS_E2E_KEEP=1` (retain temporary working directories).
+
+Without `VIS_E2E_TIMEOUT`, each scenario uses its `timeout_s` or the 300-second
+default. These budgets include model requests and all tool calls; they do not
+change the Python execution watchdog. `extension-watchdog` uses 900 seconds to
+allow for its real 310-second extension call and model response time.
 
 ## Add a scenario
 

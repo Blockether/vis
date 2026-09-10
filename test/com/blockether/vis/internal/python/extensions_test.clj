@@ -4378,3 +4378,163 @@ vis.register(vis.Extension(
                    (expect (nil? (:error result)) (pr-str result))
                    (expect (= false (:tripped? (deref checked 3000 nil)))))
                  (finally (deref inspector 5000 nil))))))))
+
+(defdescribe
+  python-extension-watchdog-cross-validation-test
+  ;; Issue #187: exercise different worker paths and verify a disabled fix is detected.
+  (it "detects the original timeout when dispatch parking is deliberately disabled"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (with-redefs [rt/park-blocking-wall (fn [thunk]
+                                                (thunk))]
+            (let [result (watchdog-block ctx env "await watchdog_probe.poll(1.6)\n")]
+              (expect (true? (:timeout? result)) (pr-str result))
+              (expect (some? (:error result))))))))
+  (it "parks an asynchronous extension method through its await"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result (watchdog-block ctx
+                                       env
+                                       (str "import time\ntime.sleep(0.6)\n"
+                                            "observation = await watchdog_probe.poll_async(1.6)\n"
+                                            "time.sleep(0.6)\nprint(observation.count)\n"))]
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (= "2" (str/trim (or (:stdout result) ""))))))))
+  (it "keeps a sibling call parked when a concurrent operation fails"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [events
+                (atom [])
+
+                result
+                (watchdog-block
+                  ctx
+                  env
+                  (str "async def recover():\n" "    try:\n        await watchdog_probe.fail(0.2)\n"
+                       "    except Exception:\n        return 'handled'\n"
+                       "answers = await gather(recover(), watchdog_probe.poll(1.6))\n"
+                       "import time\ntime.sleep(0.6)\n" "print(answers[0], answers[1].count)\n")
+                  :tool-event-fn
+                  #(swap! events conj %))
+
+                starts
+                (filter #(= :start (:phase %)) @events)
+
+                terminals
+                (filter #(= :terminal (:phase %)) @events)]
+
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (= "handled 2" (str/trim (or (:stdout result) ""))))
+            (expect (= 2 (count starts)))
+            (expect (= (set (map :invocation-id starts)) (set (map :invocation-id terminals))))))))
+  (it "restores execution after an operation-owned TimeoutError"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result
+                (watchdog-block ctx
+                                env
+                                (str "import time\ntime.sleep(0.6)\n"
+                                     "try:\n    await watchdog_probe.expire(1.6)\n"
+                                     "except Exception as exc:\n"
+                                     "    assert 'extension observation expired' in str(exc)\n"
+                                     "    print('operation expired')\n"
+                                     "time.sleep(0.6)\nprint('resumed')\n"))
+
+                runaway
+                (watchdog-block ctx env "while True:\n    pass\n")]
+
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (not (:timeout? result)))
+            (expect (= "operation expired\nresumed" (str/trim (or (:stdout result) ""))))
+            (expect (true? (:timeout? runaway)))
+            (expect (not (worker/retired? ctx)))))))
+  (it "retires an uncooperative extension after cancellation instead of leaking work"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [token
+                (cancellation/cancellation-token)
+
+                retired
+                (atom false)
+
+                started
+                (promise)
+
+                stopper
+                (future (when (= true (deref started 5000 :timeout))
+                          (Thread/sleep 200)
+                          (cancellation/cancel! token :client-cancel-turn)))]
+
+            (try (let [cancelled (watchdog-block ctx
+                                                 (assoc env
+                                                   :cancel-token token
+                                                   :python-context-retired-atom retired)
+                                                 "await watchdog_probe.poll(30)\n"
+                                                 :tool-event-fn
+                                                 #(when (= :start (:phase %))
+                                                    (deliver started true)))]
+                   (expect (some? (:error cancelled)))
+                   (expect (not (:timeout? cancelled)))
+                   (expect (loop [remaining 100]
+                             (cond (and @retired (worker/retired? ctx)) true
+                                   (zero? remaining) false
+                                   :else (do (Thread/sleep 50) (recur (dec remaining)))))))
+                 (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil)))))))
+  (it "restores the watchdog and context after cancelling a cooperative extension"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [token
+                (cancellation/cancellation-token)
+
+                started
+                (promise)
+
+                stopper
+                (future (when (= true (deref started 5000 :timeout))
+                          (Thread/sleep 200)
+                          (cancellation/cancel! token :client-cancel-turn)))]
+
+            (try (let [cancelled
+                       (watchdog-block ctx
+                                       (assoc env :cancel-token token)
+                                       "await watchdog_probe.poll_cooperative(30)\n"
+                                       :tool-event-fn
+                                       #(when (= :start (:phase %)) (deliver started true)))
+
+                       runaway
+                       (watchdog-block ctx env "while True:\n    pass\n")
+
+                       resumed
+                       (watchdog-block ctx env "print('context reusable')\n")]
+
+                   (expect (some? (:error cancelled)))
+                   (expect (not (:timeout? cancelled)))
+                   (expect (true? (:timeout? runaway)) (pr-str runaway))
+                   (expect (nil? (:error resumed)) (pr-str resumed))
+                   (expect (= "context reusable" (str/trim (or (:stdout resumed) "")))))
+                 (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil)))))))
+  (it "keeps concurrent async calls parked until both complete"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result (watchdog-block ctx
+                                       env
+                                       (str
+                                         "answers = await gather(watchdog_probe.poll_async(0.2), "
+                                         "watchdog_probe.poll_async(1.6))\n"
+                                         "import time\ntime.sleep(0.6)\n"
+                                         "print(sorted(answer.count for answer in answers))\n"))]
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (= "[2, 3]" (str/trim (or (:stdout result) ""))))))))
+  (it "restores execution after an asynchronous extension raises"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result (watchdog-block
+                         ctx
+                         env
+                         (str "import time\ntime.sleep(0.6)\n"
+                              "try:\n    await watchdog_probe.fail_async(1.6)\n"
+                              "except Exception as exc:\n"
+                              "    assert 'asynchronous extension observation failed' in str(exc)\n"
+                              "    print('handled')\n" "time.sleep(0.6)\nprint('resumed')\n"))]
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (= "handled\nresumed" (str/trim (or (:stdout result) "")))))))))

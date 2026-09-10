@@ -336,6 +336,7 @@ def seed_files(sc, work):
 
 def run_one(job):
     sc, model, run_env, gateway_port = job
+    timeout = int(os.environ.get("VIS_E2E_TIMEOUT", sc.get("timeout_s", TIMEOUT)))
     work = tempfile.mkdtemp(prefix=f"vis_e2e_{sc['id']}_")
     local_gateway = None
     try:
@@ -379,7 +380,7 @@ def run_one(job):
                 env=run_env,
                 capture_output=True,
                 text=True,
-                timeout=TIMEOUT,
+                timeout=timeout,
             )
             out = p.stdout
             exit_code = p.returncode
@@ -471,7 +472,7 @@ def run_one(job):
                 done = True
 
         if exit_code is None:
-            errs.append(f"vis-agent timed out after {TIMEOUT}s")
+            errs.append(f"vis-agent timed out after {timeout}s")
         elif exit_code:
             suffix = f": {unparsed[0][:120]}" if unparsed else ""
             errs.append(f"vis-agent exited {exit_code}{suffix}")
@@ -678,7 +679,7 @@ def main():
     print(
         f"running {len(scs)} scenarios × {len(MODELS)} model(s) {MODELS} on {PROVIDER} "
         f"through source gateway 127.0.0.1:{gateway['port']} "
-        f"(workers={WORKERS}, timeout={TIMEOUT}s)\n"
+        f"(workers={WORKERS}, default timeout={TIMEOUT}s)\n"
     )
     results = []
     try:

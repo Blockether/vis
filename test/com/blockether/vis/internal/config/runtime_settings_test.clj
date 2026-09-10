@@ -210,3 +210,89 @@
                       (park #(reset! now 900000))
                       (reset! now 1200001)
                       (expect (= :timeout (rt/await-wall (promise) deadline :timeout))))))))
+
+(defdescribe execution-wall-cross-validation-test
+             ;; Issue #187: independently exercise reset races, ownership and duplicate cleanup.
+             (it "rechecks expiry when a complete invocation resets between clock reads"
+                 (let [{:keys [deadline park]}
+                       (rt/parkable-wall 0 300000)
+
+                       result
+                       (promise)
+
+                       first-read?
+                       (atom true)]
+
+                   (with-redefs [util/now-ms (fn ^long []
+                                               (if (compare-and-set! first-read? true false)
+                                                 (do (park #(deliver result :done)) 300001)
+                                                 900000))]
+                     (expect (= :done (rt/await-wall result deadline :timeout)))
+                     (expect (= 1200000 @deadline)))))
+             (it "does not park an unrelated execution in the same process"
+                 (with-clock
+                   (fn [now]
+                     (let [active
+                           (rt/parkable-wall 0 300000)
+
+                           unrelated
+                           (rt/parkable-wall 0 1000)
+
+                           release
+                           ((:hold active))]
+
+                       (try (reset! now 1001)
+                            (expect (nil? @(:deadline active)))
+                            (expect (= :timeout
+                                       (rt/await-wall (promise) (:deadline unrelated) :timeout)))
+                            (finally (release)))))))
+             (it "makes simultaneous cleanup of one token idempotent while another is active"
+                 (with-clock
+                   (fn [now]
+                     (let [{:keys [deadline hold]}
+                           (rt/parkable-wall 0 300000)
+
+                           release
+                           (hold)
+
+                           release-other
+                           (hold)
+
+                           gate
+                           (promise)
+
+                           cleanups
+                           (mapv (fn [_]
+                                   (future @gate
+                                           (dotimes [_ 32]
+                                             (release))))
+                                 (range 32))]
+
+                       (try (reset! now 900000)
+                            (deliver gate true)
+                            (doseq [cleanup cleanups]
+                              (expect (not= ::timeout (deref cleanup 3000 ::timeout))))
+                            (expect (nil? @deadline))
+                            (release-other)
+                            (expect (= 1200000 @deadline))
+                            (finally (deliver gate true) (release) (release-other)))))))
+             (it "unwinds a failed inner call without releasing its outer invocation"
+                 (with-clock
+                   (fn [now]
+                     (let [outer
+                           (rt/parkable-wall 0 300000)
+
+                           failure
+                           (ex-info "nested operation failed" {})]
+
+                       ((:park outer)
+                         (fn []
+                           (binding [rt/*blocking-wall-park* (:park outer)]
+                             (let [inner (rt/parkable-wall 0 1000)]
+                               (expect (identical? failure
+                                                   (try ((:park inner) #(throw failure))
+                                                        (catch Throwable t t))))
+                               (expect (= 1000 @(:deadline inner)))
+                               (expect (nil? @(:deadline outer)))
+                               (reset! now 900000)))))
+                       (expect (= 1200000 @(:deadline outer))))))))

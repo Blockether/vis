@@ -193,5 +193,55 @@ class ExtensionGatewayTest(unittest.TestCase):
                 self.assertEqual({"VIS_DB_PATH": "/tmp/shared.mdb"}, shared_env)
 
 
+class ScenarioTimeoutTest(unittest.TestCase):
+    # Issue #187: a >300s watchdog probe needs a separate whole-scenario budget.
+    def run_scenario(self, timeout_s=None, override=None, expire=False):
+        scenario = run.load_scenarios(["extension-watchdog"])[0].copy()
+        scenario.pop("timeout_s", None)
+        if timeout_s is not None:
+            scenario["timeout_s"] = timeout_s
+        env = {} if override is None else {"VIS_E2E_TIMEOUT": str(override)}
+        with (
+            tempfile.TemporaryDirectory() as traces,
+            patch.dict(os.environ, env, clear=True),
+            patch.object(run, "TIMEOUT", 300),
+            patch.object(run, "TRACES", traces),
+            patch.object(run, "source_classpath", return_value="/checkout/src"),
+            patch.object(
+                run, "start_source_gateway", return_value={"env": {}, "port": 12345}
+            ),
+            patch.object(run, "stop_source_gateway", return_value=0),
+            patch.object(run.subprocess, "run") as invoke,
+        ):
+            invoke.return_value.returncode = 0
+            invoke.return_value.stdout = ""
+            if expire:
+
+                def execute(command, **kwargs):
+                    if "--full-trace-json-stream" in command:
+                        raise run.subprocess.TimeoutExpired(command, kwargs["timeout"])
+                    return invoke.return_value
+
+                invoke.side_effect = execute
+            result = run.run_one((scenario, "test-model", {}, 12344))
+            return invoke.call_args_list[-1].kwargs["timeout"], result
+
+    def test_ordinary_scenarios_keep_the_default(self):
+        timeout, _ = self.run_scenario()
+        self.assertEqual(300, timeout)
+
+    def test_long_scenario_uses_its_own_budget(self):
+        timeout, _ = self.run_scenario(timeout_s=900)
+        self.assertEqual(900, timeout)
+
+    def test_explicit_environment_budget_wins(self):
+        timeout, _ = self.run_scenario(timeout_s=900, override=720)
+        self.assertEqual(720, timeout)
+
+    def test_timeout_reports_the_effective_budget(self):
+        _, result = self.run_scenario(timeout_s=900, expire=True)
+        self.assertIn("vis-agent timed out after 900s", result["err_msgs"])
+
+
 if __name__ == "__main__":
     unittest.main()

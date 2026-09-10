@@ -61,9 +61,12 @@ model-facing discovery but does not make it inaccessible or authorize its use.
 Every exported callable needs a nonblank docstring. `activity=None` uses the
 default presentation.
 
-Source functions can be ordinary synchronous Python. The model calls their proxies
-with `await` in `python_execution`; arguments and results remain Python values.
-Exceptions are ordinary tool failures. The [execution boundary](#filesystem-and-processes)
+Source functions can use `def` or `async def`. The model calls their proxies with
+`await` in `python_execution`. The trusted worker awaits an asynchronous result
+before returning it; execution-watchdog parking covers that wait too. Each async
+invocation uses its own event loop, so create and close loop-bound resources within
+that invocation. Arguments and completed results remain Python values. Exceptions
+are ordinary tool failures. The [execution boundary](#filesystem-and-processes)
 determines which values can cross to the sandbox.
 
 ### Return typed objects

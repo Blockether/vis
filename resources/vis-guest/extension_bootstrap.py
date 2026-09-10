@@ -27,9 +27,11 @@ to spell. Every attribute below is an op in
 # host invokes it later by that id. The seal is recursive because a spec nests
 # callables inside dicts and lists (a provider's `auth_fn`, a symbol's `fn`).
 
+import asyncio as _vis_asyncio
 import dataclasses as _vis_dataclasses
 import importlib as _vis_importlib
 import importlib.machinery as _vis_machinery
+import inspect as _vis_inspect
 import json as _vis_json
 import sys as _vis_sys
 import types as _vis_types
@@ -90,9 +92,16 @@ def __vis_unseal_host__(value):
 
 
 def __vis_call__(cid, args_json):
-    """Invoke sealed callable ``cid`` and seal its answer for the host trip."""
+    """Invoke a sealed callable, await its completion, then seal the public result."""
     args = __vis_unseal_host__(_vis_json.loads(args_json))
-    return __vis_seal__(_vis_callables[cid](*args))
+    result = _vis_callables[cid](*args)
+    if _vis_inspect.isawaitable(result):
+
+        async def resolve():
+            return await result
+
+        result = _vis_asyncio.run(resolve())
+    return __vis_seal__(result)
 
 
 def __vis_member__(op):
