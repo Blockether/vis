@@ -453,14 +453,8 @@ function fileMentionAt(head: string): { query: string; at: number } | null {
   return { query, at: head.length - query.length - 1 };
 }
 
-// Visible inline token inserted by the picker — quoted when the path has spaces,
-// matching the TUI's `format-file-mention`.
-function formatFileMention(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
-}
-
-// Splice the picked `path` over the active `@token` at the caret, returning the
-// new text and caret offset. Mirrors `file_suggest.clj` apply-mention.
+// Only a picker selection creates a file directive. Insert it visibly so drafts,
+// edits and submissions share the same text; arbitrary `@words` stay literal.
 function applyFileMention(
   text: string,
   caret: number,
@@ -471,22 +465,8 @@ function applyFileMention(
   if (!mention) return { text, caret };
   const before = text.slice(0, mention.at);
   const after = text.slice(caret);
-  const token = `${formatFileMention(path)} `;
+  const token = `[Attached File: ${path}]\nThe user attached this file. Read it (via the file tools) before answering.\n`;
   return { text: before + token + after, caret: before.length + token.length };
-}
-
-// Expand inline `@path` mentions into the SAME agent-facing read-this-file
-// directive the TUI emits (`input.clj` file-mention->prompt-block), so the model
-// knows the user attached a file. The visible transcript keeps the short `@path`
-// token; only the outbound agent text carries the directive. `@@` stays literal.
-const FILE_MENTION_EXPAND_REGEX =
-  /(?<!\S)@(?:"([^"]+)"|([A-Za-z0-9][A-Za-z0-9._/-]*))/g;
-
-function expandFileMentions(text: string): string {
-  return text.replace(FILE_MENTION_EXPAND_REGEX, (_match, quoted, bare) => {
-    const path = (quoted ?? bare) as string;
-    return `[Attached File: ${path}]\nThe user attached this file. Read it (via the file tools) before answering.`;
-  });
 }
 
 // Mirrors the TUI's content-loading treatment, but names BOTH phases of a cold
@@ -3574,7 +3554,7 @@ export function SessionScreen({
       prompt
     ).trim();
     const request =
-      expandFileMentions(expandPastePlaceholders(authoredRequest, pastes)) ||
+      expandPastePlaceholders(authoredRequest, pastes) ||
       (attachments.length ? "Please inspect the attached file(s)." : "");
     // The fallback exists only to give the model a non-blank turn. The transcript
     // shows what the human actually authored: for attachment-only turns, the media.

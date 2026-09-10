@@ -32,6 +32,12 @@ Required checks must pass, and the scoped changes must be safely separable from 
 This does not authorize unrelated changes, releases, deployments, live service restarts or history
 rewrites. For other tasks, commit and push only when explicitly requested.
 
+For issue fixes, always inform the reporter and other users on the issue after the verified fix
+is pushed: post a concise summary of the user-visible change, verification and commit. Ensure
+the issue is closed when fully resolved; a closing commit may do this automatically. Leave
+partial or blocked fixes open and state what remains. Issue-fix requests authorize this closeout;
+local-only or no-remote requests override it. Also report the fix and issue status in the final reply.
+
 When handling a Git request, capture its intended changes before verification or staging.
 For `add all`, scope is the staged, unstaged and untracked content captured at the start, not
 later work by other sessions. Recheck before staging and committing; preserve out-of-scope changes.
@@ -40,7 +46,9 @@ and report the conflict.
 
 When committing, use the configured human identity,
 not `root`, and a conventional `type(scope): imperative summary` under 72 characters, with
-`Vis-Session: <bare-uuid>` as a trailer. Keep the body to the reason the diff cannot explain.
+`Vis-Session: <bare-uuid>` as a trailer. For issue-related work, always include the issue number
+(for example, `#191`) in the commit subject. Use `Fixes #191` in the body when the commit fully
+resolves that issue. Keep any other body text to the reason the diff cannot explain.
 
 ## Repository decisions
 
