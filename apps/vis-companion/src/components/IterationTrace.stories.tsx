@@ -399,6 +399,38 @@ export const CompactGroup: Story = {
   args: { live: true, showCode: true, iterations: STORY_COMPACT_EXECUTIONS },
 };
 
+/** Measured durations survive grouping, including calls below millisecond resolution. */
+export const GroupDurations: Story = {
+  args: {
+    live: false,
+    showCode: true,
+    iterations: [
+      {
+        position: 1,
+        forms: [
+          { source: "read_files()", duration_ms: 120 },
+          { source: "check_files()", duration_ms: 180 },
+        ],
+      },
+      {
+        position: 2,
+        thinking: "Checking the result",
+        forms: [{ source: "pass", duration_ms: 0 }],
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("300ms")).toBeVisible();
+    await expect(canvas.getByText("0ms")).toBeVisible();
+    await userEvent.click(
+      canvas.getAllByRole("button", { name: "Expand code" })[0],
+    );
+    await expect(canvas.getByText("300ms")).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
+  },
+};
+
 export const GroupStages: Story = {
   ...CompactGroup,
   play: async ({ canvasElement }) => {

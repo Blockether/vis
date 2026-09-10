@@ -1819,9 +1819,26 @@ describe("compact execution groups", () => {
     expect(painted.container.textContent).not.toContain("PYTHON");
     expect(painted.container.textContent).toContain("CODE");
     expect(painted.container.textContent).not.toContain("first_detail()");
+    // Regression: compact groups discarded every member's measured duration.
+    expect(
+      painted.container.querySelector("[data-execution-code]")?.textContent,
+    ).toContain("30ms");
     fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("first_detail()");
     expect(painted.container.textContent).toContain("second_call()");
+  });
+  it("shows zero duration for a measured code execution", () => {
+    const painted = render(
+      <IterationTrace
+        whole
+        iterations={[
+          { position: 1, forms: [{ source: "pass", duration_ms: 0 }] },
+        ]}
+      />,
+    );
+    expect(
+      painted.container.querySelector("[data-execution-code]")?.textContent,
+    ).toContain("0ms");
   });
 });
 

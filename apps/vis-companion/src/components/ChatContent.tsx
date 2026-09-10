@@ -904,7 +904,7 @@ function applyMarks(
 }
 
 function formatDuration(value?: number): string | null {
-  if (value == null || !Number.isFinite(value) || value <= 0) return null;
+  if (value == null || !Number.isFinite(value) || value < 0) return null;
   const milliseconds = Math.trunc(value);
   if (milliseconds < 1_000) return `${milliseconds}ms`;
   if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)}s`;
@@ -1605,7 +1605,10 @@ function executionGroup(
   return {
     source: forms.map(formCode).filter(Boolean).join("\n\n"),
     display_language: formCodeLanguage(forms[0]),
-    // Concurrent form durations cannot be added and called elapsed time.
+    // Total measured execution time, not wall time across concurrent calls.
+    duration_ms: forms.every((form) => formatDuration(form.duration_ms) != null)
+      ? forms.reduce((total, form) => total + form.duration_ms!, 0)
+      : undefined,
     activity: { state, counts, rows, omitted },
   };
 }
