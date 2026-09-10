@@ -5373,8 +5373,10 @@
         (try (with-redefs [svar/ask-code!
                            (fn [_ _]
                              (if (<= (swap! calls inc) 4)
-                               {:blocks [{:lang "clojure" :source "(def probe 1)"}]
-                                :raw "```clojure\n(def probe 1)\n```"
+                               {:stop-reason :tool-calls
+                                :tool-calls [{:id (str "repeat-" @calls)
+                                              :name "python_execution"
+                                              :input {:code "print(1)"}}]
                                 :tokens {}}
                                {:stop-reason :end :tool-calls [] :content "finished" :tokens {}}))]
                (let [result (lp/turn! env [(svar/user "repeat if needed")] {})]

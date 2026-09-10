@@ -1789,6 +1789,6 @@ export const STORY_JOINED_ACTIVITY = Object.fromEntries(
 
 export const STORY_GOAL = {
   id: "goal-example", objective: "Implement explicit session goals and verify the SDK and phone header.",
-  status: "active" as const, token_budget: 100000, tokens_used: 12400, time_used_ms: 32000,
+  status: "active" as const, iteration_budget: 30, iterations_used: 12, tokens_used: 12400, time_used_ms: 32000,
   revision: 3, version: 1, reason: null, created_at: 1780000000000, updated_at: 1780000032000,
 };

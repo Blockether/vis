@@ -39,7 +39,9 @@
     (try
       (with-redefs
         [svar/ask-code!
-         (fn [_ _]
+         (fn [_ opts]
+           (is (str/includes? (str (:messages opts)) "update_goal"))
+           (is (str/includes? (str (:messages opts)) "iteration_budget"))
            (swap! snapshots conj (ctx-loop/session-snapshot env))
            (case (swap! requests inc)
              1
@@ -67,36 +69,119 @@
           (is (= "Verified and complete." (get-in result [:answer :answer])))
           (is (= 3 @requests))
           (is (= "complete" (get (goals/check-goal env) "status")))
-          (is (= 16 (get (goals/check-goal env) "tokens_used")))
+          (is (= 26 (get (goals/check-goal env) "tokens_used")))
+          (is (= 3 (get (goals/check-goal env) "iterations_used")))
           (is (str/includes? (str @snapshots) "Verify goal integration"))))
       (finally (lp/dispose-environment! env)))))
 
-(deftest budget-stops-tools-and-provider-continuation-test
+(deftest iteration-budget-allows-last-tools-but-no-next-request-test
   (let [env
         (environment)
 
         requests
-        (atom 0)]
+        (atom 0)
 
-    (try (with-redefs [lp/execute-code
-                       (fn [& _]
-                         (throw (AssertionError. "Budget allowed tool work")))
+        executions
+        (atom [])
 
-                       svar/ask-code!
-                       (fn [_ _]
-                         (swap! requests inc)
-                         {:stop-reason :tool-calls
-                          :api-usage {:input-tokens 10 :output-tokens 5}
-                          :tool-calls [{:id "no-work"
-                                        :name "python_execution"
-                                        :input {:code "print('must-not-execute')"}}]})]
+        execute
+        @#'lp/execute-code]
 
-           (let [result (lp/run-turn! env "/goal --budget 1 Bounded task" {})]
-             (is (= :success (:status result)))
-             (is (= 1 @requests))
-             (is (= "budget_limited" (get (goals/check-goal env) "status")))
-             (is (str/includes? (str (:answer result)) "budget reached"))))
-         (finally (lp/dispose-environment! env)))))
+    (try
+      (with-redefs [lp/execute-code
+                    (fn [& args]
+                      (swap! executions conj (second args))
+                      (apply execute args))
+
+                    svar/ask-code!
+                    (fn [_ _]
+                      (swap! requests inc)
+                      {:stop-reason :tool-calls
+                       :api-usage {:input-tokens 100000 :output-tokens 5}
+                       :tool-calls [{:id "last-tools"
+                                     :name "python_execution"
+                                     :input {:code "print('last iteration ran')"}}
+                                    {:id "more-tools"
+                                     :name "python_execution"
+                                     :input {:code "print('second tool in same iteration')"}}]})]
+
+        (let [result (lp/run-turn! env "/goal --budget 1 Bounded task" {})]
+          (is (= :success (:status result)))
+          (is (= 1 @requests))
+          (is (= 2 (count @executions)))
+          (is (= 1 (get (goals/check-goal env) "iterations_used")))
+          (is (= "budget_limited" (get (goals/check-goal env) "status")))
+          (is (str/includes? (str result) "last iteration ran"))
+          (is (str/includes? (str result) "second tool in same iteration"))
+          (is (not (str/includes? (str result) "Goal token budget")))
+          (is (str/includes? (str (:answer result)) "iteration budget reached"))))
+      (finally (lp/dispose-environment! env)))))
+
+(deftest last-iteration-can-resolve-goal-test
+  (doseq [status ["complete" "blocked"]]
+    (let [env (environment)
+          requests (atom 0)]
+
+      (try (with-redefs [svar/ask-code!
+                         (fn [_ _]
+                           (when (> (swap! requests inc) 1)
+                             (throw (AssertionError. "Exceeded iteration budget")))
+                           {:stop-reason :tool-calls
+                            :tool-calls
+                            [{:id "resolve"
+                              :name "python_execution"
+                              :input
+                              {:code
+                               (str
+                                 "g = session['goal']\nprint(update_goal(g['id'], g['version'], '"
+                                 status
+                                 "', 'Verified result or external blocker.'))")}}]})]
+             (let [result (lp/run-turn! env "/goal --budget 1 Resolve on last iteration" {})]
+               (is (= :success (:status result)))
+               (is (= 1 @requests))
+               (is (= status (get (goals/check-goal env) "status")))
+               (is (= 1 (get (goals/check-goal env) "iterations_used")))
+               (is (str/includes? (str (:answer result)) "Verified result or external blocker."))))
+           (finally (lp/dispose-environment! env))))))
+
+(deftest prose-and-empty-replies-consume-iterations-without-token-usage-test
+  (doseq [reply [{:stop-reason :end :content "Premature done"} {:stop-reason :end}]]
+    (let [env (environment)
+          requests (atom 0)]
+
+      (try (with-redefs [svar/ask-code! (fn [_ _]
+                                          (when (> (swap! requests inc) 2)
+                                            (throw (AssertionError. "Exceeded iteration budget")))
+                                          reply)]
+             (let [result (lp/run-turn! env "/goal --budget 2 Continue until verified" {})]
+               (is (= :success (:status result)))
+               (is (= 2 @requests))
+               (is (= 2 (get (goals/check-goal env) "iterations_used")))
+               (is (= 0 (get (goals/check-goal env) "tokens_used")))
+               (is (= "budget_limited" (get (goals/check-goal env) "status")))))
+           (finally (lp/dispose-environment! env))))))
+
+(deftest repeated-empty-replies-never-leave-an-active-goal-test
+  (let [limit @#'lp/CONSECUTIVE_EMPTY_REPLY_LIMIT]
+    (doseq [budget [nil limit]]
+      (let [env (environment)
+            requests (atom 0)]
+
+        (try
+          (with-redefs [svar/ask-code! (fn [_ _]
+                                         (when (> (swap! requests inc) limit)
+                                           (throw (AssertionError.
+                                                    "Repeated empty replies did not stop")))
+                                         {:stop-reason :end})]
+            (let [result (lp/run-turn!
+                           env
+                           (str "/goal " (when budget (str "--budget " budget " ")) "Verify work")
+                           {})]
+              (is (= limit @requests))
+              (is (= limit (get (goals/check-goal env) "iterations_used")))
+              (is (= (if budget "budget_limited" "paused") (get (goals/check-goal env) "status")))
+              (is (= (if budget :success :error) (:status result)))))
+          (finally (lp/dispose-environment! env)))))))
 
 (deftest ordinary-turn-does-not-create-a-goal-test
   (let [env (environment)]

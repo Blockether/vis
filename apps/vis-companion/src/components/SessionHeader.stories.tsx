@@ -45,10 +45,12 @@ export const ActiveGoal: Story = {
     await userEvent.click(button);
     const page = within(document.body);
     expect(page.getByRole("dialog", { name: "Session goal" })).toBeVisible();
+    expect(page.getByText("Iterations: 12 / 30")).toBeVisible();
+    expect(page.getByText(/tokens used \(statistic\)/)).toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Close session goal" }));
   },
 };
 export const CompletedGoal: Story = { args: { model: { ...meta.args.model, goal: { ...STORY_GOAL, status: "complete", reason: "SDK tests and header interaction checks passed." } } } };
 export const BlockedGoal: Story = { args: { model: { ...meta.args.model, goal: { ...STORY_GOAL, status: "blocked", reason: "The requested test device is unavailable." } } } };
-export const BudgetLimitedGoal: Story = { args: { model: { ...meta.args.model, goal: { ...STORY_GOAL, status: "budget_limited", tokens_used: 100050 } } } };
+export const BudgetLimitedGoal: Story = { args: { model: { ...meta.args.model, goal: { ...STORY_GOAL, status: "budget_limited", iterations_used: 30 } } } };
 export const LongGoal: Story = { args: { model: { ...meta.args.model, goal: { ...STORY_GOAL, objective: "Preserve the complete objective, including the SDK boundary, session isolation, cancellation, reconnects, accessibility, phone layouts and verification against current state." } } } };

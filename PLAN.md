@@ -1432,6 +1432,14 @@ objective. Internal completion updates remain evidence-based model declarations.
   no extra header row, preserved quota resets and unchanged goal budget behavior.
 - Unknowns: native-image and physical-terminal verification were not run.
 
+## 6. Iteration budgets and continuation safety
+- Rationale: the user sets a loop-iteration budget, not a token allowance.
+- Data: goal state, slash/SDK submission, loop boundaries, canonical schema and goal details.
+- Acceptance criteria: count prose and empty responses; allow the last iteration's tools;
+  stop before the next request; preserve completion/blockage; pause after repeated empty
+  responses; document update_goal and enforce its system-prompt exposure in boundary tests.
+- Unknowns: none in affected behavior. No token-budget compatibility alias or migration.
+
 ## Plan state
 Implemented and verified locally. The canonical session goal is exposed in API/SDK reads,
 session lists, introspection and OpenAPI, with the same status labels in Companion and TUI.
@@ -1449,8 +1457,18 @@ widths, long objectives and 130% text scaling. Native device and native-image te
 Footer follow-up: 524 affected TUI tests, 176 API/introspection/contract and goal tests,
 72 SDK tests and 44 Companion tests pass. The combined API suite exposed a fixture-order
 registration dependency; goal boundary tests now own their foundation registration.
-Formatting, lint/reflection and Companion build pass. Goal budget behavior is unchanged.
-No release, deployment or gateway restart was performed. Commit and push are user-authorized.
+Formatting, lint/reflection and Companion build pass. That follow-up did not change the budget.
+Iteration-budget follow-up: `/goal --budget` and SDK `iteration_budget` count loop responses
+and their tools, including prose, empty replies and the completion summary. The last
+allowed tools can resolve a goal; the next request cannot exceed the limit. Repeated empty
+replies pause unresolved work instead of becoming malformed-code retries or false completion.
+The model's real Python update_goal call and system-prompt instructions are boundary-tested.
+590 engine/API/contract/docs tests, 385 TUI tests and 73 SDK tests pass. Companion unit tests,
+lint, build and all 212 browser stories with contrast checks across 10 themes pass. Scoped
+formatting and lint/reflection pass. Production goal details were inspected in the HTML TUI
+and virtual-terminal PNGs, with iteration counts separate from token statistics. Physical
+terminal, native-image and native-device verification were not run.
+No release, deployment or gateway restart was performed. Commit and push are authorized.
 
 ---
 

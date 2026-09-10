@@ -2120,23 +2120,30 @@ class Session:
         )
 
     def goal(
-        self, objective: str, *, token_budget: int | None = None, **options
+        self, objective: str, *, iteration_budget: int | None = None, **options
     ) -> Turn:
         """Submit an explicit goal through /goal and return its execution Turn.
 
         No goal is inferred from ordinary messages. Read its state in read()['goal'].
         Pause/resume/cancel use send('/goal --pause'), --resume or --cancel.
-        The optional token budget is measured at provider response boundaries.
+        The optional budget counts loop iterations, including prose and empty replies.
+        The last iteration may run its tools; the limit blocks the next model request.
+        Token usage is recorded only as a statistic.
         """
         if not isinstance(objective, str) or not 1 <= len(objective.strip()) <= 8192:
             raise ValueError("objective must contain 1–8192 characters")
-        if token_budget is not None and (
-            type(token_budget) is not int or not 1 <= token_budget <= 9007199254740991
+        if iteration_budget is not None and (
+            type(iteration_budget) is not int
+            or not 1 <= iteration_budget <= 9007199254740991
         ):
             raise ValueError(
-                "token_budget must be an integer from 1 to 9007199254740991"
+                "iteration_budget must be an integer from 1 to 9007199254740991"
             )
-        budget = f"--budget {token_budget} " if token_budget is not None else ""
+        if "token_budget" in options:
+            raise TypeError(
+                "Use iteration_budget; goal budgets count iterations, not tokens"
+            )
+        budget = f"--budget {iteration_budget} " if iteration_budget is not None else ""
         return self.send(f"/goal {budget}-- {objective.strip()}", **options)
 
     def send(

@@ -17,6 +17,9 @@
     (is (nil? (goals/completion-error env)))
     (let [goal (goals/set-goal! db-info session-id "  Verify the SDK  " 100)]
       (is (document/valid-json? "gateway" "session_goal" goal))
+      (is (= 100 (get goal "iteration_budget")))
+      (is (= 0 (get goal "iterations_used")))
+      (is (not (contains? goal "token_budget")))
       (is (= goal (goals/check-goal env)))
       (is (= "Verify the SDK" (get goal "objective")))
       (is (= "active" (get goal "status")))
@@ -47,21 +50,50 @@
       (is (= "cancelled" (get (goals/control! db-info session-id :cancel) "status")))
       (is (rejected? #(goals/control! db-info session-id :resume))))))
 
-(deftest measured-budget-test
+(deftest iteration-budget-test
   (let [{:keys [db-info session-id] :as env}
         (environment)
 
         goal
-        (goals/set-goal! db-info session-id "Bounded work" 15)]
+        (goals/set-goal! db-info session-id "Bounded work" 1)]
 
     (goals/account! env goal {:input-tokens 10 :output-tokens 7 :cache-read-tokens 8} 23)
+    (is (= "active" (get (goals/check-goal env) "status")))
+    (is (nil? (goals/halt-result env goal)))
+    (is (some? (goals/request-halt-result env goal)))
     (let [limited (goals/check-goal env)]
+      (is (= 1 (get limited "iterations_used")))
       (is (= 17 (get limited "tokens_used")))
       (is (= 23 (get limited "time_used_ms")))
       (is (= "budget_limited" (get limited "status")))
       (is (nil? (goals/completion-error env)))
       (is (rejected? #(goals/control! db-info session-id :resume)))
+      (is (rejected? #(goals/update-goal env (get goal "id") 1 "complete" "Too late")))
       (is (= 1 (get limited "version"))))))
+
+(deftest iteration-usage-survives-resume-and-reset-is-explicit-test
+  (let [{:keys [db-info session-id] :as env}
+        (environment)
+
+        goal
+        (goals/set-goal! db-info session-id "Bounded" 3)]
+
+    (goals/account! env goal nil 0)
+    (goals/control! db-info session-id :pause)
+    (let [resumed (goals/control! db-info session-id :resume)]
+      (is (= 1 (get resumed "iterations_used")))
+      (is (= 3 (get resumed "iteration_budget")))
+      (goals/account! env resumed nil 0)
+      (is (= 2 (get (goals/check-goal env) "iterations_used")))
+      (is (nil? (goals/request-halt-result env resumed)))
+      (goals/account! env resumed nil 0)
+      (is (some? (goals/request-halt-result env resumed))))
+    (let [replacement (goals/set-goal! db-info session-id "New scope" nil)]
+      (is (= 0 (get replacement "iterations_used")))
+      (is (nil? (get replacement "iteration_budget")))
+      (is (not (document/valid-json? "gateway"
+                                     "session_goal"
+                                     (assoc replacement "token_budget" 100)))))))
 
 (deftest slash-parsing-test
   (let [{:keys [db-info session-id]}
@@ -74,6 +106,7 @@
 and newlines"))))
     (is (= "Keep \"quotes\"
 and newlines" (get (goals/check-goal db-info session-id) "objective")))
+    (is (= 40 (get (goals/check-goal db-info session-id) "iteration_budget")))
     (is (false? (get-in (invoke "/goal --pause") [:slash/data :goal-run?])))
     (is (true? (get-in (invoke "/goal --resume") [:slash/data :goal-run?])))
     (doseq [raw ["/goal" "/goal --budget 0 work" "/goal --budget 999999999999999999999 work"

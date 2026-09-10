@@ -1369,7 +1369,7 @@
       "active": "Active",
       "paused": "Paused",
       "blocked": "Blocked",
-      "budget_limited": "Budget limit reached",
+      "budget_limited": "Iteration limit reached",
       "complete": "Complete",
       "cancelled": "Cancelled"
     }

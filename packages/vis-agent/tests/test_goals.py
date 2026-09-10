@@ -26,7 +26,7 @@ def test_goal_uses_slash_turn(budget):
         session = client.session("s1")
         turn = session.goal(
             '  --pause "quoted"\nsecond line  ',
-            token_budget=budget,
+            iteration_budget=budget,
             idempotency_key="goal-request",
         )
         assert turn.id == "goal-turn"
@@ -53,7 +53,16 @@ def test_goal_validation_happens_before_network(objective, budget):
     client = GatewayClient("http://127.0.0.1:1")
     try:
         with pytest.raises(ValueError):
-            client.session("s1").goal(objective, token_budget=budget)
+            client.session("s1").goal(objective, iteration_budget=budget)
+    finally:
+        client.close()
+
+
+def test_removed_token_budget_is_not_silently_forwarded_as_a_turn_option():
+    client = GatewayClient("http://127.0.0.1:1")
+    try:
+        with pytest.raises(TypeError, match="iteration_budget"):
+            client.session("s1").goal("work", token_budget=100000)
     finally:
         client.close()
 
@@ -67,7 +76,8 @@ def test_goal_validation_happens_before_network(objective, budget):
             "id": "goal-fixture",
             "objective": "Verify canonical session data",
             "status": "paused",
-            "token_budget": 100000,
+            "iteration_budget": 30,
+            "iterations_used": 12,
             "tokens_used": 12400,
             "time_used_ms": 32000,
             "revision": 3,

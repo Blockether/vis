@@ -60,8 +60,19 @@ describe("SessionHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Goal: Blocked/ }));
     expect(screen.getByRole("dialog", { name: "Session goal" })).toBeInTheDocument();
     expect(screen.getByText(goal.reason)).toBeInTheDocument();
-    expect(screen.getByText(/12,400 tokens used/)).toHaveTextContent("100,000 budget");
+    expect(screen.getByText("Iterations: 12 / 30")).toBeInTheDocument();
+    expect(screen.getByText(/12,400 tokens used/)).toHaveTextContent("statistic");
+    expect(screen.queryByText(/100,000 budget/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close session goal" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("distinguishes unlimited iterations from a reached iteration limit", () => {
+    const { rerender } = render(<SessionHeader model={{ ...model, goal: { ...STORY_GOAL, iteration_budget: null } }} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Goal:/ }));
+    expect(screen.getByText("Iterations: 12 / unlimited")).toBeInTheDocument();
+    rerender(<SessionHeader model={{ ...model, goal: { ...STORY_GOAL, status: "budget_limited", iterations_used: 30 } }} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+    expect(screen.getByText("Iterations: 30 / 30")).toBeInTheDocument();
+    expect(screen.getByText("Iteration limit reached")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close session goal" }));
   });
 });

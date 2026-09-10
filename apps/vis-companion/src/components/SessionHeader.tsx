@@ -112,8 +112,10 @@ export function SessionHeader({
             <div className="space-y-3 p-4 text-body text-white">
               <p className="whitespace-pre-wrap break-words">{goal.objective}</p>
               <p className="text-ui text-dialog-hint">
-                {goal.tokens_used.toLocaleString("en-US")} tokens used
-                {goal.token_budget !== null && ` / ${goal.token_budget.toLocaleString("en-US")} budget`}
+                Iterations: {goal.iterations_used.toLocaleString("en-US")} / {goal.iteration_budget?.toLocaleString("en-US") ?? "unlimited"}
+              </p>
+              <p className="text-ui text-dialog-hint">
+                {goal.tokens_used.toLocaleString("en-US")} tokens used (statistic)
               </p>
               {goal.reason && <p className="whitespace-pre-wrap break-words">{goal.reason}</p>}
               <p className="text-ui text-dialog-hint">Use /goal --pause, --resume or --cancel in the composer.</p>

@@ -616,7 +616,7 @@
       cost-text
       (conj {:text cost-text :fg t/footer-fg-muted :bold? false :region :right :priority 3}))))
 
-(defn- goal-token-count [n] (String/format Locale/ROOT "%,d" (object-array [(long n)])))
+(defn- goal-count [n] (String/format Locale/ROOT "%,d" (object-array [(long n)])))
 
 (defn goal-detail-lines
   "Full persisted objective, state and measured usage for the existing read-only viewer."
@@ -625,10 +625,11 @@
     ["No session goal. Use /goal <objective> to create one."]
     (cond-> [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
              (get goal "objective") ""
-             (str (goal-token-count (get goal "tokens_used"))
-                  " tokens used"
-                  (when-let [budget (get goal "token_budget")]
-                    (str " / " (goal-token-count budget) " budget")))
+             (str "Iterations: " (goal-count (get goal "iterations_used"))
+                  " / " (if-let [budget (get goal "iteration_budget")]
+                          (goal-count budget)
+                          "unlimited"))
+             (str (goal-count (get goal "tokens_used")) " tokens used (statistic)")
              (str "Provider time: " (or (fmt/format-duration (get goal "time_used_ms")) "0s"))]
       (seq (get goal "reason"))
       (into ["" (get goal "reason")])

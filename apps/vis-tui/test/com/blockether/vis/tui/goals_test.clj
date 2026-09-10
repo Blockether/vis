@@ -18,7 +18,8 @@
   {"id" "goal-fixture"
    "objective" "Verify session goals across API, SDK and TUI — 界 é"
    "status" "active"
-   "token_budget" 100000
+   "iteration_budget" 30
+   "iterations_used" 12
    "tokens_used" 12400
    "time_used_ms" 32000
    "revision" 3
@@ -168,5 +169,9 @@
 
       (expect (some #{(get goal "objective")} lines))
       (expect (some #{(get blocked "reason")} lines))
+      (expect (some #{"Iterations: 12 / 30"} lines))
+      (expect (some #{"12,400 tokens used (statistic)"} lines))
+      (expect (some #{"Iterations: 12 / unlimited"}
+                    (footer/goal-detail-lines (assoc goal "iteration_budget" nil))))
       (expect (nil? (:error frame)))
       (expect (str/includes? (capture/frame-text frame) "Status: Blocked")))))

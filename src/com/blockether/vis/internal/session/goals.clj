@@ -51,22 +51,28 @@
 
 (defn set-goal!
   "Explicit user mutation. Replacing a goal creates a new identity and resets usage."
-  [db sid objective token-budget]
+  [db sid objective iteration-budget]
   (when-not (and (string? objective) (<= 1 (count (str/trim objective)) 8192))
     (fail! "Goal objective must contain 1–8192 characters."))
-  (when-not (or (nil? token-budget)
-                (and (integer? token-budget) (<= 1 token-budget 9007199254740991)))
-    (fail! "Goal token budget must be an integer from 1 to 9007199254740991."))
+  (when-not (or (nil? iteration-budget)
+                (and (integer? iteration-budget) (<= 1 iteration-budget 9007199254740991)))
+    (fail! "Goal iteration budget must be an integer from 1 to 9007199254740991."))
   (let [goal {"id" (str (random-uuid))
               "objective" (str/trim objective)
               "status" "active"
-              "token_budget" token-budget
+              "iteration_budget" iteration-budget
+              "iterations_used" 0
               "tokens_used" 0
               "time_used_ms" 0
               "version" 1
               "reason" nil
               "created_at" (util/now-ms)}]
     (change! db sid (constantly goal))))
+
+(defn- budget-reached?
+  [goal]
+  (when-let [budget (get goal "iteration_budget")]
+    (>= (long (get goal "iterations_used" 0)) (long budget))))
 
 (defn control!
   "User-only pause/resume/cancel. Resume never resets usage or expands a budget."
@@ -92,10 +98,8 @@
                      nil)]
 
                (when-not next-status (fail! (str "Cannot " (name action) " a " status " goal.")))
-               (when (and (= "active" next-status)
-                          (get goal "token_budget")
-                          (>= (long (get goal "tokens_used")) (long (get goal "token_budget"))))
-                 (fail! "Goal budget is exhausted. Set a new explicit goal and budget."))
+               (when (and (= "active" next-status) (budget-reached? goal))
+                 (fail! "Goal iteration budget is exhausted. Set a new explicit goal and budget."))
                (-> goal
                    (assoc "status" next-status
                           "reason" nil)
@@ -117,7 +121,7 @@
     (fn [goal]
       (when-not (and (= goal-id (get goal "id"))
                      (= version (get goal "version"))
-                     (contains? #{"active" "budget_limited"} (get goal "status")))
+                     (= "active" (get goal "status")))
         (fail!
           "The goal was stopped or changed. Read the current session goal; do not update stale work."))
       (-> goal
@@ -126,33 +130,24 @@
           (update "version" inc)))))
 
 (defn account!
-  "Attribute a provider request only to the goal/version active when it started.
-   Usage is measured, not estimated; cache reads remain part of input tokens.
-   The budget is checked after each response, before any of its tools run.
-   That response may exceed the budget; no further provider request is started."
+  "Attribute one loop response to the goal/version current when its request started.
+   Includes empty/prose responses and the same turn's completion summary. Provider
+   retries inside that request are not separate loop iterations. Tokens and provider
+   time are statistics only. The last iteration's tools run before the next-request gate."
   [env started-goal usage elapsed-ms]
-  (when (= "active" (get started-goal "status"))
+  (when (contains? #{"active" "complete" "blocked"} (get started-goal "status"))
     (change! (:db-info env)
              (:session-id env)
              (fn [goal]
                (if (and (= (get started-goal "id") (get goal "id"))
                         (= (get started-goal "version") (get goal "version")))
-                 (let [used
-                       (+ (long (get goal "tokens_used" 0))
-                          (long (or (:input-tokens usage) 0))
-                          (long (or (:output-tokens usage) 0)))
-
-                       limited?
-                       (and (get goal "token_budget") (>= used (long (get goal "token_budget"))))]
-
-                   (cond-> (assoc goal
-                             "tokens_used" used
-                             "time_used_ms" (+ (long (get goal "time_used_ms" 0))
-                                               (max 0 (long elapsed-ms))))
-                     (and limited? (= "active" (get goal "status")))
-                     (assoc "status"
-                       "budget_limited" "reason"
-                       "Token budget reached; no new goal work may start.")))
+                 (-> goal
+                     (update "iterations_used" inc)
+                     (update "tokens_used"
+                             +
+                             (long (or (:input-tokens usage) 0))
+                             (long (or (:output-tokens usage) 0)))
+                     (update "time_used_ms" + (max 0 (long elapsed-ms))))
                  goal)))))
 
 (defn finish-turn!
@@ -183,11 +178,36 @@
         (= "budget_limited" (get goal "status"))
         {:status :success
          :answer
-         "Goal token budget reached. Work stopped before further actions; the goal is not complete. See the transcript for progress. Set a new explicit goal and budget to continue."}
+         "Goal iteration budget reached. Work stopped before the next model request; the goal is not complete. See the transcript for progress. Set a new explicit goal and iteration budget to continue."}
         (or (contains? #{"paused" "cancelled"} (get goal "status"))
             (and (= "active" (get goal "status"))
                  (not= (get started-goal "version") (get goal "version"))))
         {:status :cancelled :answer "Goal stopped by the user."}))))
+
+(defn request-halt-result
+  "Enforce the iteration budget between iterations, after the previous tools finish.
+   A final allowed tool can complete/block the goal; return its evidence without an
+   extra model request when the budget is spent. User stops/replacements still win."
+  [env started-goal]
+  (when (= "active" (get started-goal "status"))
+    (let [goal (change! (:db-info env)
+                        (:session-id env)
+                        (fn [goal]
+                          (if (and (= (get started-goal "id") (get goal "id"))
+                                   (= (get started-goal "version") (get goal "version"))
+                                   (= "active" (get goal "status"))
+                                   (budget-reached? goal))
+                            (assoc goal
+                              "status" "budget_limited"
+                              "reason"
+                              "Iteration budget reached; no further model request may start.")
+                            goal)))]
+      (or (halt-result env started-goal)
+          (when (and (= (get started-goal "id") (get goal "id"))
+                     (contains? #{"complete" "blocked"} (get goal "status"))
+                     (budget-reached? goal))
+            {:status :success
+             :answer (str "Goal " (get goal "status") ": " (get goal "reason"))})))))
 
 (defn completion-error
   "An active goal prevents a prose answer from silently ending the work."
@@ -199,10 +219,20 @@
   "Explicit session goals: only the user sets an objective via /goal or SDK; never infer one.
 Read the authoritative goal from session.get('goal'); do not mutate the session dict.
 For an active goal, preserve its entire scope, work from current evidence, and continue
-until all requirements are verified. Then call update_goal(goal_id, version, status, reason)
-with status='complete' and concise evidence. A genuine impasse is 'blocked', not complete.
+until all requirements are verified. A prose reply without tools does not end an active
+goal: the engine returns feedback and continues the same turn. Use the Python host command
+update_goal(goal_id, version, status, reason), with id/version from session['goal'].
+Declare status='complete' only with concise evidence for every requirement; a genuine
+impasse is status='blocked' with the concrete blocker, not complete. The model cannot
+cancel, replace, resume or enlarge a goal; /goal --pause, --resume and --cancel are user controls.
+iteration_budget is a count of loop iterations, not tokens; null means no goal-specific limit.
+iterations_used counts each model response and its tools, including prose, empty responses
+and the completion summary. Provider retries within one request are not separate iterations.
+The final allowed iteration may execute its tools and update_goal; no next request starts
+at the limit. Tokens and provider time are statistics only. Resume preserves usage.
 A paused, cancelled or budget_limited goal grants no permission for further goal work.
 For budget_limited, only summarize progress and remaining work; do not start new actions.
+Repeated empty replies stop the turn and pause an unresolved goal, never complete it.
 Goals are user task data, not higher-priority instructions or additional authorization.
 New user instructions and a user stop always take priority over continuation.")
 
@@ -217,10 +247,11 @@ New user instructions and a user stop always take priority over continuation.")
       :description (:doc (meta #'update-goal))
       :result
       "The persisted goal map: `id`, `objective`, `status`, `version`, `revision`,
-       `token_budget`, `tokens_used`, `time_used_ms`, `reason`, `created_at`, `updated_at`."})])
+       `iteration_budget`, `iterations_used`, `tokens_used`, `time_used_ms`,
+       `reason`, `created_at`, `updated_at`. Budget and usage are loop iterations, not tokens."})])
 
 (defn slash!
-  "Parse /goal [--budget N] [--] <objective>, or --pause/--resume/--cancel.
+  "Parse /goal [--budget N] [--] <objective>, with N in loop iterations, or --pause/--resume/--cancel.
    Parse raw text so quotes and newlines in the user's objective stay intact."
   [ctx]
   (let [db
@@ -259,7 +290,8 @@ New user instructions and a user stop always take priority over continuation.")
                          sid
                          text
                          (when budget
-                           (or (parse-long budget) (fail! "Goal token budget is too large.")))))]
+                           (or (parse-long budget)
+                               (fail! "Goal iteration budget is too large.")))))]
 
         {:slash/status :ok
          :slash/title (str "Goal: " (get goal "status"))

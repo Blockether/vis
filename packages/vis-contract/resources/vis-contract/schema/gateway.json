@@ -627,13 +627,14 @@
             "cancelled"
           ]
         },
-        "token_budget": {
+        "iteration_budget": {
           "type": [
             "integer",
             "null"
           ],
           "minimum": 1,
-          "maximum": 9007199254740991
+          "maximum": 9007199254740991,
+          "description": "Maximum loop iterations for this goal; null means unlimited. Tokens are not a budget unit."
         },
         "tokens_used": {
           "type": "integer",
@@ -665,13 +666,19 @@
         "updated_at": {
           "type": "integer",
           "minimum": 0
+        },
+        "iterations_used": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Completed model responses and their tools, including prose, empty responses and the completion summary. Provider retries within one request are not separate iterations."
         }
       },
       "required": [
         "id",
         "objective",
         "status",
-        "token_budget",
+        "iteration_budget",
+        "iterations_used",
         "tokens_used",
         "time_used_ms",
         "revision",

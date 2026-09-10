@@ -711,8 +711,8 @@ function sessionGoalFromWire(raw: unknown): SessionGoal | null {
       !g.objective.trim() || g.objective.length > goalContract.session_goal.max_objective_chars ||
       typeof g.status !== "string" || !goalContract.session_goal.statuses.includes(g.status) ||
       !(g.reason === null || (typeof g.reason === "string" && g.reason.length <= goalContract.session_goal.max_reason_chars)) ||
-      !(g.token_budget === null || (Number.isSafeInteger(g.token_budget) && (g.token_budget as number) > 0)) ||
-      !["tokens_used", "time_used_ms", "created_at", "updated_at"].every(k => Number.isSafeInteger(g[k]) && (g[k] as number) >= 0) ||
+      !(g.iteration_budget === null || (Number.isSafeInteger(g.iteration_budget) && (g.iteration_budget as number) > 0)) ||
+      !["iterations_used", "tokens_used", "time_used_ms", "created_at", "updated_at"].every(k => Number.isSafeInteger(g[k]) && (g[k] as number) >= 0) ||
       !["revision", "version"].every(k => Number.isSafeInteger(g[k]) && (g[k] as number) >= 1)) return null;
   return g as unknown as SessionGoal;
 }

@@ -1202,6 +1202,12 @@ describe('session goal revisions', () => {
     expect((await client.session('s1')).goal).toEqual(live);
     expect(client.noteSessionGoal('s1', STORY_GOAL)?.goal).toEqual(live);
     expect(client.noteSessionGoal('s1', { ...live, revision: 11, status: 'invalid' })?.goal).toEqual(live);
+    for (const invalid of [
+      { ...live, revision: 11, iteration_budget: 0 },
+      { ...live, revision: 11, iterations_used: -1 },
+      { ...live, revision: 11, iterations_used: 1.5 },
+      { ...live, revision: 11, iterations_used: undefined },
+    ]) expect(client.noteSessionGoal("s1", invalid)?.goal).toEqual(live);
     const pending = client.session('s1');
     const replacement = { ...STORY_GOAL, id: 'replacement', revision: 12 };
     client.noteSessionGoal('s1', replacement);

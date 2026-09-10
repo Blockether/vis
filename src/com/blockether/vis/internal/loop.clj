@@ -5088,7 +5088,8 @@
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages &
    [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
-            llm-headers active-extensions answer-validation-context request-context on-response]}]]
+            llm-headers active-extensions answer-validation-context request-context on-response
+            goal-at-turn-start]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
@@ -5206,7 +5207,11 @@
           ;; gateway's last-resort watchdog can cancel the entire turn.
           provider-watchdog-timeouts (assoc provider-deadlines
                                        :first-output-timeout-ms (+ first-output-timeout-ms 10000))
-          goal-at-request-start (goals/check-goal environment)
+          goal-at-request-start (let [goal (goals/check-goal environment)]
+                                  (when (or (= "active" (get goal "status"))
+                                            (and (= "active" (get goal-at-turn-start "status"))
+                                                 (= (get goal "id") (get goal-at-turn-start "id"))))
+                                    goal))
           provider-started-at-ms (util/now-ms)
           _ (when on-chunk
               (on-chunk (provider-call-chunk iteration-position
@@ -5445,7 +5450,8 @@
                             :vis/tool-name (:name tc)})
                          tool-calls))
           preflight-start-ns (System/nanoTime)
-          preflight-result (if answer-md
+          ;; No tool call is not malformed Python: let the bounded empty-reply path handle it.
+          preflight-result (if (empty? blocks)
                              {:code-entries [] :normalized-code "" :raw-fence-preflight-error nil}
                              (code-entries-preflight iteration-position blocks))
           preflight-duration-ms (elapsed-ms preflight-start-ns)
@@ -8498,7 +8504,7 @@
                                  (when (seq seeded-trailer-iters)
                                    {:trailer-iters seeded-trailer-iters}))]
           (let [{:keys [iteration trace trailer-iters llm-provider]} loop-state
-                goal-halt (goals/halt-result environment goal-at-turn-start)]
+                goal-halt (goals/request-halt-result environment goal-at-turn-start)]
 
             (ctx-loop/set-turn-state! environment :iteration (inc (long iteration)))
             (cond
@@ -8706,6 +8712,7 @@
                               attempt-env
                               @effective-messages-atom
                               {:iteration iteration
+                               :goal-at-turn-start goal-at-turn-start
                                :request-context request-context
                                :reasoning-level reasoning-level
                                :reasoning-effort reasoning-effort
@@ -9342,11 +9349,20 @@
                             ;; Too many consecutive empty replies — finalize on the
                             ;; best sticky answer (give-up text if none) instead of
                             ;; re-invoking forever. Mirrors the forced-finalize shape.
-                            (let [answer (or (some-> (:turn-state-atom environment)
+                            (let [goal-halt (goals/request-halt-result environment
+                                                                       goal-at-turn-start)
+                                  active-goal? (= "active"
+                                                  (get (goals/check-goal environment) "status"))
+                                  status (or (:status goal-halt) (if active-goal? :error :success))
+                                  answer (or (when goal-halt {:answer (:answer goal-halt)})
+                                             (when active-goal?
+                                               {:answer empty-replies-give-up-text})
+                                             (some-> (:turn-state-atom environment)
                                                      deref
                                                      :best-answer
                                                      :value)
                                              {:answer empty-replies-give-up-text})]
+
                               (log-stage! :final
                                           iteration
                                           {:reason :empty-replies
@@ -9360,9 +9376,11 @@
                                            :attachment-count (count iteration-attachments)
                                            :final {:answer answer
                                                    :iteration-count (inc (long iteration))
-                                                   :status :success}
+                                                   :status status}
                                            :done? true}))
                               (-> (merge {:answer answer
+                                          :status status
+                                          :status-id (status->id status)
                                           :trace (conj trace trace-entry)
                                           :iteration-count (inc (long iteration))
                                           :utilization

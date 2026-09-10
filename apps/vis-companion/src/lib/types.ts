@@ -41,7 +41,8 @@ export interface SessionGoal {
   id: string;
   objective: string;
   status: "active" | "paused" | "blocked" | "budget_limited" | "complete" | "cancelled";
-  token_budget: number | null;
+  iteration_budget: number | null;
+  iterations_used: number;
   tokens_used: number;
   time_used_ms: number;
   revision: number;
