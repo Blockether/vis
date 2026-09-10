@@ -3,7 +3,6 @@
    All storage and dependency indexes are test-owned. No live gateway or PyPI."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.extensions-test :as fixtures]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -59,7 +58,7 @@
            {:dirs [(str (io/file ext-dir "extensions"))]}
 
            calls
-           (atom 0)
+           (atom [])
 
            diagnostics
            (atom [])
@@ -69,19 +68,22 @@
 
            run-uv
            (fn [project args]
-             (let [process
-                   (.start (doto (ProcessBuilder. ^java.util.List args)
+             (let [builder (doto (ProcessBuilder. ^java.util.List args)
                              (.directory project)
-                             (.redirectErrorStream true)))
+                             (.redirectErrorStream true))]
+               ;; Upstream uv reads its own settings, not Vis pip configuration.
+               (.put (.environment builder)
+                     "UV_DEFAULT_INDEX"
+                     (str "http://127.0.0.1:" (.getPort (.getAddress index)) "/simple"))
+               (.put (.environment builder) "UV_CACHE_DIR" (str (io/file ext-dir "uv-cache")))
+               (.put (.environment builder) "UV_PYTHON_DOWNLOADS" "never")
+               (let [process (.start builder)
+                     output (slurp (.getInputStream process))
+                     exit (.waitFor process)]
 
-                   output
-                   (slurp (.getInputStream process))
-
-                   exit
-                   (.waitFor process)]
-
-               (swap! diagnostics conj {:exit exit :output output})
-               (when-not (zero? exit) (throw (ex-info "Fixture uv failed" {})))))]
+                 (swap! diagnostics conj {:exit exit :output output})
+                 (when-not (zero? exit) (throw (ex-info "Fixture uv failed" {})))
+                 output)))]
 
           (.createContext
             index
@@ -139,28 +141,24 @@
                                                :subdirectory "plugins/greeting"
                                                :directory (first (:dirs opts))})
                         "mode")))
-            (with-redefs [config/load-config-raw
-                          (constantly {"python" {"index_url" (str "http://127.0.0.1:"
-                                                                  (.getPort (.getAddress index))
-                                                                  "/simple")}})
-
-                          python-runtime/run-uv!
-                          (fn [project args]
-                            (swap! calls inc)
-                            (run-uv project args))]
-
+            (with-redefs [python-runtime/run-uv! (fn [project args]
+                                                   (swap! calls conj args)
+                                                   (run-uv project args))]
               (let [invoke #(:result ((#'fixtures/symbol-fn
                                        (#'fixtures/registered "vis-center-greeter")
                                        'greet)))]
                 (is (not (.exists (io/file source "uv.lock"))))
-                (is (= 0 (:failed (pyx/reload-python-extensions! opts)))
-                    (pr-str {:failures (pyx/load-failures) :uv @diagnostics}))
+                (let [result (pyx/reload-python-extensions! opts)]
+                  (is (= 0 (:failed result))
+                      (pr-str {:failures (pyx/load-failures) :uv @diagnostics})))
                 (is (= 42 (invoke)))
                 (is (.isFile (io/file source "uv.lock")))
-                (is (not (.exists (io/file source ".venv"))))
-                (is (= 3 @calls) "Resolve, export, install; no separate manual command")
-                (pyx/reload-python-extensions! opts)
-                (is (= 3 @calls) "An unchanged project skips installation")
+                (is (.isDirectory (io/file source ".venv")))
+                (is (= ["sync" "run"] (mapv second @calls))
+                    "Sync then query the project environment; no separate manual command")
+                (is (= 0 (:failed (pyx/reload-python-extensions! opts))))
+                (is (= ["sync" "run" "sync" "run"] (mapv second @calls))
+                    "uv owns checking whether an unchanged environment needs updating")
                 (spit (io/file source "src/center_logic.py")
                       (str/replace code
                                    "return vis_center_dep.VALUE"
@@ -168,7 +166,7 @@
                 (is (= 42 (invoke)))
                 (is (= 0 (:failed (pyx/reload-python-extensions! opts))))
                 (is (= 43 (invoke)))
-                (is (= 3 @calls))
+                (is (= ["sync" "run" "sync" "run" "sync" "run"] (mapv second @calls)))
                 (spit (io/file source "extension.py") "raise ValueError('broken edit')\n")
                 (is (= 1 (:failed (pyx/reload-python-extensions! opts))))
                 (is (= 43 (invoke)))))
