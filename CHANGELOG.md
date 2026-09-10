@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.58] - 2026-09-10
+
+### Fixed
+- Copy TUI text through the controlling terminal or Windows `clip.exe`, including Unicode; keep native bubble-copy and drag-selection regressions separate from double-click line selection.
+- Verify native editable packages in their upstream `uv` project environments and run the development guide's tests through that environment.
+- Persist TUI themes in the runtime user's home, apply the configured package index to `uv`, and restore the per-launch JVM override.
+
 ## [v0.1.57] - 2026-09-10
 
 ### Fixed
@@ -6170,7 +6177,8 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.57...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.58...HEAD
+[v0.1.58]: https://github.com/Blockether/vis/compare/v0.1.57...v0.1.58
 [v0.1.57]: https://github.com/Blockether/vis/compare/v0.1.56...v0.1.57
 [v0.1.56]: https://github.com/Blockether/vis/compare/v0.1.55...v0.1.56
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
