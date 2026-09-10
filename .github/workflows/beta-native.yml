@@ -15,13 +15,8 @@ permissions:
   actions: read
 
 concurrency:
-  group: beta-native
-  cancel-in-progress: >-
-    ${{ github.event_name == 'workflow_dispatch' ||
-        (github.event.workflow_run.conclusion == 'success' &&
-         github.event.workflow_run.event == 'push' &&
-         github.event.workflow_run.head_branch == 'main' &&
-         github.event.workflow_run.head_repository.full_name == github.repository) }}
+  group: beta-native-pick-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
 
 jobs:
   pick:
@@ -46,12 +41,18 @@ jobs:
           EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          main="$(gh api "repos/$REPO/commits/main" -q .sha)"
-          sha="${EVENT_SHA:-$main}"
-          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::Invalid commit'; exit 1; }
-          if [ "$sha" != "$main" ]; then
+          green_main="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
+            -q '.workflow_runs[0].head_sha // empty')"
+          if [ -z "$green_main" ]; then
             echo 'build=false' >> "$GITHUB_OUTPUT"
-            echo '::notice::A newer main commit superseded this CI run'
+            echo '::notice::No successful main CI exists'
+            exit 0
+          fi
+          sha="${EVENT_SHA:-$green_main}"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::Invalid commit'; exit 1; }
+          if [ "$sha" != "$green_main" ]; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::A newer successful main CI superseded this run'
             exit 0
           fi
           green="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=100" \
@@ -85,6 +86,9 @@ jobs:
           printf 'sha=%s\ntag=%s\nbuild=true\n' "$sha" "$tag" >> "$GITHUB_OUTPUT"
 
   native:
+    concurrency:
+      group: beta-native-builds
+      cancel-in-progress: true
     needs: pick
     if: needs.pick.outputs.build == 'true'
     uses: ./.github/workflows/native-release.yml
@@ -114,8 +118,10 @@ jobs:
         run: |
           set -euo pipefail
           [ "$(gh api "repos/$REPO/commits/$TAG" -q .sha)" = "$SHA" ]
-          if [ "$(gh api "repos/$REPO/commits/main" -q .sha)" != "$SHA" ]; then
-            echo '::notice::A newer main commit superseded this beta; leaving its draft unpublished'
+          green_main="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
+            -q '.workflow_runs[0].head_sha // empty')"
+          if [ "$green_main" != "$SHA" ]; then
+            echo '::notice::A newer successful main CI superseded this beta; leaving its draft unpublished'
             exit 0
           fi
           python3 - <<'PY'

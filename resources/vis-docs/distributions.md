@@ -62,8 +62,9 @@ To run local repository edits independently of installed tracks, use
 ## Automatic native betas
 
 The Beta Native workflow starts after successful push CI on `main`. It verifies
-that CI passed for the exact commit in this repository and ignores superseded runs.
-A newer successful main run cancels an older beta build.
+that CI passed for the exact commit in this repository and selects the latest
+successful main run. A newer successful run cancels an older beta build. New
+commits whose CI is pending or failed do not block publication of a green beta.
 
 Beta uses the same native build and test workflow as stable releases on Linux
 x86-64, Linux ARM64 and macOS ARM64. Each build has an immutable `beta-<commit>` tag.

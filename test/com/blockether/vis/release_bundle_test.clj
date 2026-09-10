@@ -1147,8 +1147,10 @@
          (run-bash
            ["bash" "-c"
             (str
-              "gh() {\ncase \"$*\" in\n" " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
-              " *'/actions/workflows/ci.yml/runs?'*) printf '%s' \"$TEST_GREEN\" ;;\n"
+              "gh() {\ncase \"$*\" in\n"
+              " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
+              " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*) printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
+              " *'/actions/workflows/ci.yml/runs?head_sha='*) printf '%s' \"$TEST_GREEN\" ;;\n"
               " *'/releases?per_page=100'*) printf '%s' \"$TEST_DRAFT\" ;;\n"
               " *'/git/ref/tags/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] ;;\n"
               " 'api --method POST '*'/git/refs '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; : > \"$TEST_TAG_CREATED\" ;;\n"
@@ -1160,6 +1162,7 @@
                    "SHA" sha
                    "TAG" (str "beta-" sha)
                    "TEST_MAIN" sha
+                   "TEST_GREEN_MAIN" sha
                    "TEST_TAG_SHA" sha
                    "TEST_TAG_EXISTS" "1"
                    "TEST_TAG_CREATED" (.getAbsolutePath (io/file dir "created-tag"))
@@ -1176,11 +1179,13 @@
 
 (defdescribe
   automatic-beta-gate-test
-  (it "creates drafts only for green current main, and never rebuilds a published beta"
+  (it "uses the latest green main commit even when main advances before its CI passes"
       (doseq [[overrides build? create?]
               [[{} true true] [{"EVENT_SHA" ""} true true] [{"TEST_GREEN" "0"} false false]
-               [{"TEST_MAIN" (apply str (repeat 40 "b"))} false false]
-               [{"TEST_DRAFT" "false"} false false] [{"TEST_DRAFT" "true"} true false]]]
+               [{"TEST_MAIN" (apply str (repeat 40 "b"))} true true]
+               [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} false false]
+               [{"TEST_GREEN_MAIN" ""} false false] [{"TEST_DRAFT" "false"} false false]
+               [{"TEST_DRAFT" "true"} true false]]]
         (let [{:keys [exit output outputs calls]} (run-beta-job "pick" overrides {})]
           (expect (zero? exit) output)
           (expect (str/includes? outputs (str "build=" build?)) outputs)
@@ -1200,7 +1205,7 @@
         (let [{:keys [exit output calls]} (run-beta-job "pick" overrides {})]
           (expect (not (zero? exit)) output)
           (expect (empty? calls) calls))))
-  (it "publishes only a complete immutable six-asset draft still at main"
+  (it "publishes a complete immutable draft until a newer green main commit supersedes it"
       (let [sha
             (apply str (repeat 40 "a"))
 
@@ -1217,7 +1222,8 @@
             {:tag_name (str "beta-" sha) :draft true :prerelease true :assets assets}]
 
         (doseq [[overrides changes exit-ok? publish?]
-                [[{} {} true true] [{"TEST_MAIN" (apply str (repeat 40 "b"))} {} true false]
+                [[{} {} true true] [{"TEST_MAIN" (apply str (repeat 40 "b"))} {} true true]
+                 [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} {} true false]
                  [{} {:assets (pop assets)} false false]
                  [{} {:assets (assoc-in assets [0 :size] 0)} false false]
                  [{} {:assets (assoc-in assets [0 :state] "new")} false false]
