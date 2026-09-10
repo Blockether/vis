@@ -4001,7 +4001,9 @@
      (help-row "--persist" "Persist as a :cli session.")
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
-     (help-row "--help, -h" "Show help.") "" "GATEWAY (WHICH DAEMON RUNS THE WORK)"
+     (help-row "--help, -h" "Show help.") "" "RUNTIME"
+     (help-row "--jvm" "Run on the JVM once, without changing the installed track.") ""
+     "GATEWAY (WHICH DAEMON RUNS THE WORK)"
      (help-row "--gateway HOST[:PORT]|URL" "Drive another machine's gateway (VIS_GATEWAY_URL).")
      (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
      "UPDATES" (help-row "vis-agent update" "Install the latest complete native release (default).")
@@ -4222,7 +4224,7 @@
 (def ^:private launcher-owned-args
   ;; `bin/vis-agent` normally consumes these before invoking Clojure, but keep
   ;; the JVM entry point tolerant too (e.g. `clojure -M:vis-agent channels --jfr --help`).
-  ;; No runtime selector belongs here: what runs is decided by what is installed.
+  ;; Runtime selection belongs to the launcher, not the engine.
   #{"--jfr" "--stream-trace"})
 
 (defn- global-arg? [arg] (or (measure-arg? arg) (contains? launcher-owned-args arg)))

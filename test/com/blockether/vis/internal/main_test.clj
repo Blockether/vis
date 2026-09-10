@@ -54,12 +54,12 @@
         (expect (nil? (re-find #"(?m)^ {3,}\S" help)))
         (expect (= 1 (count (gutter-columns (subs help 0 commands-at)))))
         (expect (= 1 (count (gutter-columns (subs help commands-at)))))))
-  (it "documents one update selector and no retired runtime commands"
+  (it "documents the per-launch JVM override separately from update tracks"
       (let [^String help (commandline/render-tree (#'main/root-command))]
         (expect (.contains help "UPDATES"))
-        (doseq [row ["vis-agent update" "--track release|beta|dev" "default"]]
+        (doseq [row ["vis-agent update" "--track release|beta|dev" "default" "--jvm" "RUNTIME"]]
           (expect (.contains help row)))
-        (doseq [gone ["--native" "--jvm" "--dev" "VIS_RUNTIME" "vis-agent runtime" "--rebuild"]]
+        (doseq [gone ["--native" "--dev" "VIS_RUNTIME" "vis-agent runtime" "--rebuild"]]
           (expect (not (str/includes? help gone)) gone))))
   (it "points at the configuration a run reads"
       (let [^String help (commandline/render-tree (#'main/root-command))]

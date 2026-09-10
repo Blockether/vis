@@ -76,12 +76,32 @@ Use `--install-dir PATH` if Vis was installed somewhere other than `~/.local/bin
 Dev requires Git and JDK 25+. This replaces the launcher and installs main source;
 it does not erase your sessions or configuration.
 
+## One-launch JVM override
+
+Use `--jvm` to run on the JVM without changing the installed track:
+
+```bash
+vis-agent tui --jvm
+# Equivalent:
+vis-agent --jvm tui
+```
+
+The flag applies to this launch only and is consumed by the launcher, not the
+terminal client. It uses the managed source in `~/.vis/install/src`. If no managed
+source exists, a checkout-owned launcher uses its own source tree:
+`./bin/vis-agent tui --jvm`. An installed launcher with no source reports how to
+install it with `vis-agent update --track dev`; it does not download source or
+change tracks automatically. JVM execution requires JDK 25+.
+
+`--jvm` is not an update option. Use `--track dev` to install or update JVM source.
+Arguments after `--` or `python uv` are passed through unchanged.
+
 ## Terminal gateway lifecycle
 
 `vis-agent tui` discovers the local gateway and starts one when none is running.
-A native installation starts a native gateway; dev starts it with the same JVM
-and engine classpath. A compatible gateway already serving other clients is
-reused, never killed to change its runtime.
+A native installation starts a native gateway; dev or an explicit `--jvm` launch
+starts it with the same JVM and engine classpath. A compatible gateway already
+serving other clients is reused, never killed to change its runtime.
 
 The launcher holds a client lease until the TUI exits. The TUI also registers its
 local PID so crashed clients and their event streams can be reaped. A managed

@@ -7,6 +7,7 @@
 #
 # Release and beta install native engine, Python and TUI bundles. Dev follows main
 # on the JVM. `update` defaults to release; only --track selects beta or dev.
+# --jvm selects source for one launch without changing the installed track.
 #
 # Managed source and installation state live under ~/.vis:
 #   install/vis-agent-native   native engine for a checkout-owned launcher
@@ -95,6 +96,7 @@ fi
 
 # ── Arguments the wrapper owns ───────────────────────────────────────────────
 jfr=0
+jvm_requested=0
 args=()
 end_of_flags=0
 for arg in "$@"; do
@@ -108,6 +110,7 @@ for arg in "$@"; do
     --)        end_of_flags=1; args+=("$arg") ;;
     --measure) export VIS_MEASURE=1 ;;
     --jfr)     jfr=1 ;;
+    --jvm)     jvm_requested=1 ;;
     --stream-trace) export VIS_STREAM_TRACE=1 ;;
     *) args+=("$arg") ;;
   esac
@@ -970,6 +973,8 @@ case "${1:-}" in
   runtime) die "unknown command: runtime" "Run: vis-agent update --help" ;;
   update)
     shift
+    (( ! jvm_requested )) || die "update: --jvm selects a launch runtime, not an update track" \
+      "Use: vis-agent update --track dev"
     # Git and curl need the same corporate roots as the runtime they update.
     configure_system_trust "$(runtime_effective)" 1
     vis_do_update "$@"
@@ -978,6 +983,7 @@ esac
 
 # ── Launch ───────────────────────────────────────────────────────────────────
 runtime="$(runtime_effective)"
+if (( jvm_requested )); then runtime=jvm; fi
 
 # A native terminal client is deliberately a sibling process, not code linked
 # into the engine image. Native tracks use it; dev launches the app from the same
@@ -1050,8 +1056,8 @@ case "$runtime" in
   jvm)
     source_root="$(find_jvm_source 2>/dev/null || true)"
     if [[ -z "$source_root" ]]; then
-      die "no Vis runtime is installed" \
-          "Install it:  vis-agent update"
+      die "the JVM source runtime is not installed" \
+          "Install it:  vis-agent update --track dev"
     fi
     if ! ensure_java_runtime; then
       die "the source runtime needs JDK 25+ (any distribution)" \
@@ -1081,7 +1087,7 @@ absolute_project_classpath() {
 if (( tui_requested )); then
   tui_root="$source_root/apps/vis-tui"
   [[ -f "$tui_root/deps.edn" ]] || die "the terminal UI is not installed" \
-    "Run:  vis-agent update"
+    "Run:  vis-agent update --track dev"
   measure_log "JVM TUI → $tui_root"
   cd "$tui_root"
   tui_classpath="$(absolute_project_classpath "$tui_root" -Spath -M:run)" || exit 1

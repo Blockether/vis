@@ -1567,6 +1567,86 @@
                (expect (str/includes? output (str "<" (last args) ">")) output)))
            (finally (delete-tree! root))))))
 
+(defdescribe
+  jvm-launcher-override-test
+  ;; Regression: `vis-agent tui --jvm` reached the terminal as an unknown flag.
+  (it
+    "selects JVM for one launch without changing the installed track or child arguments"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-jvm-override-" (make-array FileAttribute 0)))
+
+          home
+          (doto (io/file root "home") .mkdirs)
+
+          bin
+          (doto (io/file root "bin") .mkdirs)
+
+          install
+          (doto (io/file home ".vis/install") .mkdirs)
+
+          source
+          (doto (io/file install "src/apps/vis-tui") .mkdirs)
+
+          track-file
+          (io/file install "track")
+
+          launcher
+          (io/file bin "vis-agent")
+
+          env
+          {"HOME" (.getAbsolutePath home)
+           "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
+           "VIS_GATEWAY_URL" ""
+           "VIS_NO_AUTO_INSTALL" "1"
+           "PATH" (str (.getAbsolutePath bin) ":" (System/getenv "PATH"))}]
+
+      (try
+        (io/copy (io/file "bin/vis-agent") launcher)
+        (spit (io/file install "src/deps.edn") "{}")
+        (spit (io/file source "deps.edn") "{}")
+        (write-executable! (io/file bin "vis-agent-native")
+                           "#!/usr/bin/env bash\nprintf 'native<%s>' \"$@\"\n")
+        (write-executable! (io/file bin "vis-tui")
+                           "#!/usr/bin/env bash\nprintf 'native-tui<%s>' \"$@\"\n")
+        (write-executable!
+          (io/file bin "clojure")
+          (str
+            "#!/usr/bin/env bash\n"
+            "for arg in \"$@\"; do if [[ \"$arg\" == -Spath ]]; then printf src:resources; exit 0; fi; done\n"
+            "printf '<%s>' \"$@\"\n"))
+        (doseq [track
+                ["release" "beta" "dev"]
+
+                [args expected]
+                [[["tui" "--jvm" "--continue"] "<-M:vis><gateway><tui><-->"]
+                 [["--jvm" "tui" "--continue"] "<-M:vis><gateway><tui><-->"]
+                 [["tui" "--jvm" "--gateway" "gateway.example.com" "--continue"]
+                  "<-M:run><--gateway><gateway.example.com><--continue>"]
+                 [["tui" "--jvm" "--help"] "<-M:run><--help>"]
+                 [["--jvm" "--version"] "<-M:vis><--version>"]]]
+
+          (spit track-file (str track "\n"))
+          (let [{:keys [exit output]} (run-bash (into ["bash" (.getAbsolutePath launcher)] args)
+                                                env)]
+            (expect (zero? exit) output)
+            (expect (str/includes? output expected) output)
+            (expect (not (str/includes? output "<--jvm>")) output)
+            (expect (not (str/includes? output "native<")) output)
+            (expect (= (str track "\n") (slurp track-file)))))
+        (spit track-file "release\n")
+        (doseq [args [["--" "--jvm"] ["python" "uv" "run" "python" "--jvm"]]]
+          (let [{:keys [exit output]} (run-bash (into ["bash" (.getAbsolutePath launcher)] args)
+                                                env)]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "native<--jvm>") output)))
+        (delete-tree! (io/file install "src"))
+        (let [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "tui" "--jvm"]
+                                              env)]
+          (expect (not (zero? exit)) output)
+          (expect (str/includes? output "vis-agent update --track dev") output)
+          (expect (= "release\n" (slurp track-file))))
+        (finally (delete-tree! root))))))
+
 ;; Regression: source launches accepted old Java and coupled users to the native-build pin.
 (defdescribe
   java-runtime-selection-test
