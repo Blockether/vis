@@ -62,6 +62,48 @@ export const SingleStep: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED.slice(0, 1) },
 };
 
+/** Regression #181: diagnostic details expand without opening the submitted source. */
+export const CollapsedToolError: Story = {
+  args: {
+    live: false,
+    showCode: true,
+    iterations: [
+      {
+        id: "tool-error",
+        position: 1,
+        forms: [
+          {
+            source: "reports = query_reports()\nprint(reports)",
+            error: {
+              message:
+                "ToolError: " +
+                "Report service unavailable. Retry the query. ".repeat(40),
+            },
+            duration_ms: 29,
+          },
+        ],
+      },
+    ],
+  },
+  play: async ({ canvas }) => {
+    const toggle = canvas.getByRole("button", { name: "Expand error details" });
+    await expect(toggle).toHaveTextContent("Failed");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(canvas.queryByText(/Report service unavailable/)).toBeNull();
+    toggle.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(canvas.getByText(/Report service unavailable/)).toBeVisible();
+    await expect(canvas.queryByRole("button", { name: "Collapse code" })).toBeNull();
+    await userEvent.keyboard(" ");
+    await expect(canvas.queryByText(/Report service unavailable/)).toBeNull();
+    await userEvent.click(toggle);
+    await expect(canvas.getByText(/Report service unavailable/)).toBeVisible();
+    await userEvent.click(toggle);
+    await expect(canvas.queryByText(/Report service unavailable/)).toBeNull();
+  },
+};
+
 /** Opening narration uses the role label's gap, without an extra block inset. */
 export const OpeningProse: Story = {
   args: {

@@ -315,7 +315,7 @@
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
   (it
-    "keeps failed source compact while its error remains visible below CODE"
+    "keeps failed source and diagnostic details independently collapsed"
     (let [code
           (str "first = 1\n"
                "second = 2\n" "third = 3\n"
@@ -355,12 +355,13 @@
       (expect (str/includes? shut (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
       (expect (not (str/includes? shut "x = 1/0")))
       (expect (not (str/includes? shut "PYCODEMARKER")))
-      (expect (= 1 (count (re-seq #"ZeroDivisionError" shut))))
-      (expect (< (.indexOf ^String shut "CODE") (.indexOf ^String shut "ZeroDivisionError")))
+      (expect (not (str/includes? shut "ZeroDivisionError")))
+      (expect (str/includes? shut "Failed"))
+      (expect (< (.indexOf ^String shut "CODE") (.indexOf ^String shut "Failed")))
       (expect (not (str/includes? open "RUNTIME_EXCERPT_ONLY")))
       (expect (str/includes? open "PYCODEMARKER"))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" open))))))
-  (it "defaults a long failed program collapsed without hiding the error"
+  (it "defaults a long failed program collapsed without hiding failure status"
       (let [code
             (str "first = 1\nsecond = 2\nthird = 3\nfourth = 4\nfifth = 5\n"
                  "sixth = 6\nseventh = 7\neighth = 8\nx = 1/0")
@@ -388,7 +389,220 @@
         (expect (not (str/includes? txt "first = 1")))
         (expect (not (str/includes? txt "sixth = 6")))
         (expect (not (str/includes? txt "x = 1 / 0")))
-        (expect (str/includes? txt "ZeroDivisionError")))))
+        (expect (str/includes? txt "Failed"))
+        (expect (not (str/includes? txt "ZeroDivisionError"))))))
+
+(defdescribe
+  tool-error-disclosure-test
+  ;; Regression #181: verbose tool diagnostics must not bypass collapsed source.
+  (it
+    "folds long and grouped errors independently without changing evidence"
+    (doseq [width
+            [40 80 160]
+
+            show-code?
+            [true false]
+
+            grouped?
+            [true false]]
+
+      (let [message
+            (str "DIAGNOSTIC_MARKER " (apply str (repeat 40 "recovery details ")))
+
+            forms
+            (cond-> [{:code "print(PRIVATE_SOURCE)"
+                      :success? false
+                      :duration-ms 29
+                      :error {:message message}}]
+              grouped?
+              (conj {:code "next_call()"
+                     :success? false
+                     :duration-ms 0
+                     :error {:message "SECOND_FAILURE"}}))
+
+            entry
+            (iteration/canonicalize {:forms forms})
+
+            original
+            (pr-str entry)
+
+            paint
+            (fn [expansions]
+              (format-iteration-entry-entries entry
+                                              width
+                                              1
+                                              {:session-id "s"
+                                               :session-turn-id "t"
+                                               :show-python-code? show-code?
+                                               :detail-expansions expansions}))
+
+            text-of
+            (fn [entries]
+              (str/join "\n" (map (comp strip-sentinels strip-ansi :line) entries)))
+
+            closed
+            (paint {})
+
+            node
+            (fn [kind]
+              (some #(when (str/ends-with? (str (get-in % [:meta :node-id])) kind)
+                       (get-in % [:meta :node-id]))
+                    closed))
+
+            error-id
+            (node ":error")
+
+            code-id
+            (node ":code")
+
+            opened
+            (paint {["s" error-id] true})]
+
+        (expect (some? error-id))
+        (expect (str/includes? (text-of closed) "Failed"))
+        (expect (not (str/includes? (text-of closed) "DIAGNOSTIC_MARKER")))
+        (expect (not (str/includes? (text-of closed) "SECOND_FAILURE")))
+        (expect (not (str/includes? (text-of closed) "PRIVATE_SOURCE")))
+        (expect (str/includes? (text-of opened) "DIAGNOSTIC_MARKER"))
+        (expect (= grouped? (str/includes? (text-of opened) "SECOND_FAILURE")))
+        (expect (not (str/includes? (text-of opened) "PRIVATE_SOURCE")))
+        (when show-code?
+          (let [code-only (text-of (paint {["s" code-id] true}))]
+            (expect (str/includes? code-only "PRIVATE_SOURCE"))
+            (expect (not (str/includes? code-only "DIAGNOSTIC_MARKER")))))
+        (expect (= (text-of closed) (text-of (paint {["s" error-id] false}))))
+        (expect (str/includes? (text-of closed) "29ms"))
+        (expect (= original (pr-str entry))))))
+  (it "does not format diagnostic bodies until opened"
+      (let [calls
+            (atom 0)
+
+            headline
+            @#'render/form-error-headline
+
+            entry
+            (iteration/canonicalize {:forms [{:code "fail()"
+                                              :error {:message "DIAGNOSTIC_MARKER"}}]})
+
+            options
+            {:session-id "s" :session-turn-id "t"}]
+
+        (with-redefs [render/form-error-headline (fn [error]
+                                                   (swap! calls inc)
+                                                   (headline error))]
+          (format-iteration-entry-entries entry 80 1 options)
+          (expect (zero? @calls))
+          (format-iteration-entry-entries
+            entry
+            80
+            1
+            (assoc options :detail-expansions {:vis.channel-tui/expand-all-details? true}))
+          (expect (= 1 @calls)))))
+  (it "retains diagnostic output without an interactive session"
+      (let [entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize
+                {:forms [{:code "fail()" :duration-ms 29 :error {:message "DIAGNOSTIC_MARKER"}}]})
+              80
+              1
+              {})
+
+            text
+            (str/join "\n" (map :line entries))]
+
+        (expect (str/includes? text "DIAGNOSTIC_MARKER"))
+        (expect (str/includes? text "29ms"))
+        (expect (not-any? #(= :toggle-details (get-in % [:meta :kind])) entries)))))
+
+(defdescribe
+  tool-error-disclosure-grid-test
+  ;; Regression #181: the visible failure must remain a real, styled hit target.
+  (it
+    "paints and toggles error details at narrow and wide terminal sizes"
+    (doseq [width
+            [40 80 160]
+
+            show-code?
+            [true false]
+
+            expanded?
+            [false true]]
+
+      (let [entry
+            (iteration/canonicalize
+              {:forms [{:code "print(PRIVATE_SOURCE)"
+                        :duration-ms 29
+                        :error {:message (str "DIAGNOSTIC_MARKER "
+                                              (apply str (repeat 4 "recovery details ")))}}
+                       {:code "next_call()" :error {:message "SECOND_FAILURE"}}]})
+
+            options
+            {:session-id "s" :session-turn-id "t" :show-python-code? show-code?}
+
+            closed
+            (format-iteration-entry-entries entry (- width 8) 1 options)
+
+            node-id
+            (some #(when (str/ends-with? (str (get-in % [:meta :node-id])) ":error")
+                     (get-in % [:meta :node-id]))
+                  closed)
+
+            entries
+            (format-iteration-entry-entries entry
+                                            (- width 8)
+                                            1
+                                            (assoc options
+                                              :detail-expansions {["s" node-id] expanded?}))
+
+            _
+            (.reset interactions/hit-map)
+
+            _
+            (.beginFrame interactions/hit-map)
+
+            captured
+            (cap/capture! {:cols width
+                           :rows 40
+                           :paint! (fn [{:keys [g]}]
+                                     (render/draw-chat-bubble! g
+                                                               {:role :assistant
+                                                                :text ""
+                                                                :prewrapped-lines (mapv :line
+                                                                                        entries)
+                                                                :line-meta (mapv :meta entries)}
+                                                               0
+                                                               0
+                                                               (- width 4)
+                                                               {:viewport-top 0 :viewport-h 40}))})
+
+            _
+            (.commitFrame interactions/hit-map)
+
+            text
+            (cap/frame-text captured)
+
+            lines
+            (str/split-lines text)
+
+            row
+            (first (keep-indexed #(when (str/includes? %2 "Failed") %1) lines))]
+
+        (expect (nil? (:error captured)))
+        (expect (some? row))
+        (expect (= expanded? (str/includes? text "DIAGNOSTIC_MARKER")))
+        (expect (= expanded? (str/includes? text "SECOND_FAILURE")))
+        (expect (not (str/includes? text "PRIVATE_SOURCE")))
+        (let [col
+              (.indexOf ^String (nth lines row) "Failed")
+
+              region
+              (.lookup interactions/hit-map col row)]
+
+          (expect (= :toggle-details (:kind region)))
+          (expect (= node-id (:node-id region)))
+          (expect (= (not expanded?) (:collapsed? region)))
+          (expect (= node-id
+                     (:node-id (second (first (interactions/assign-labels [region])))))))))))
 
 (defdescribe
   failed-code-band-name-test
@@ -421,9 +635,10 @@
         (expect (str/includes? header (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
         (expect (not (str/includes? header "NameError")))
         (expect (not (str/includes? header " · ")))
-        ;; The error stays visible below the independent source disclosure.
-        (expect (str/includes? txt "NameError"))
-        (expect (< (.indexOf ^String txt "CODE") (.indexOf ^String txt "NameError")))))
+        ;; Failure status stays visible below the independent source disclosure.
+        (expect (not (str/includes? txt "NameError")))
+        (expect (str/includes? txt "Failed"))
+        (expect (< (.indexOf ^String txt "CODE") (.indexOf ^String txt "Failed")))))
   (it "keeps the CODE name plain when the form succeeded"
       (let [header
             (some #(when (str/includes? (str %) "CODE") (str %))

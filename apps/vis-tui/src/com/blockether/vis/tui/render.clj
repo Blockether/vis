@@ -6816,24 +6816,46 @@
                       ;; the figure and nothing else, matching the companion's bodyless card.
                       duration-stamp [duration-stamp])
 
-                ;; The FAILURE row of a call. Code bands stay status-neutral, so this line
-                ;; is the only place a failed tool can read as failed: it wears the error
-                ;; marker (red `code-error-result-fg`), never the quiet code foreground —
-                ;; otherwise a failed `shell`/`python_execution` looks exactly like output.
+                ;; Failure status stays visible; diagnostics have an independent disclosure.
                 inline-error-message-lines
                 (when error
-                  (mapv #(line-entry (str err-result-marker %))
-                        ;; A failed call is where the terminal was most silent: the
-                        ;; companion bands it `Failed` and still paints the figure, so
-                        ;; the error headline carries it, right-aligned at the same text edge,
-                        ;; and never when a card head already wears it.
-                        (cond-> (mapcat #(wrap-text (form-error-headline %) fill-w)
-                                        (or (:group-errors form) [error]))
-                          (and (nil? card)
-                               (not (and code-node-id (seq c-lines)))
-                               (some? result-duration-ms))
-                          (with-right-suffix (vis/format-duration result-duration-ms)
-                                             (max 1 (long fill-w))))))
+                  (let [node-id
+                        (when session-id
+                          (detail-node-id {:session-turn-id session-turn-id
+                                           :iteration-number iteration-number
+                                           :block-number block-number
+                                           :section :iteration
+                                           :kind :error}))
+
+                        expanded?
+                        (or (nil? node-id)
+                            (detail-expanded? detail-expansions session-id node-id false))
+
+                        duration
+                        (when (and (nil? card) (not (and code-node-id (seq c-lines))))
+                          result-duration-ms)
+
+                        ;; Do not format or wrap a hidden diagnostic, including grouped errors.
+                        details
+                        (when expanded?
+                          (mapcat #(wrap-text (form-error-headline %) fill-w)
+                                  (or (:group-errors form) [error])))]
+
+                    (if node-id
+                      (vec (concat (detail-summary-entries {:marker err-result-marker
+                                                            :max-w fill-w
+                                                            :summary "Failed"
+                                                            :collapsed? (not expanded?)
+                                                            :session-id session-id
+                                                            :node-id node-id
+                                                            :duration-ms duration})
+                                   (map #(line-entry (str err-result-marker %)) details)))
+                      ;; Noninteractive output cannot offer a toggle: retain all diagnostics.
+                      (mapv #(line-entry (str err-result-marker %))
+                            (cond-> details
+                              (some? duration)
+                              (with-right-suffix (vis/format-duration duration)
+                                                 (max 1 (long fill-w))))))))
 
                 code-block
                 (vec c-lines)

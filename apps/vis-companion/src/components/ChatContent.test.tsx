@@ -1142,7 +1142,67 @@ describe("Activity follows the combined Python source", () => {
     expect(painted.container.textContent).not.toContain("Loading Activity");
   });
 
-  it("keeps mixed outcomes nested while the failure stays visible", () => {
+  // Regression #181: diagnostics stay available independently of source and stdout.
+  it.each([true, false])(
+    "folds verbose grouped errors with showCode=%s",
+    (showCode) => {
+      const message =
+        "ToolError: " + "Diagnostic details for the agent. ".repeat(40);
+      const trace = "Traceback: diagnostic evidence";
+      const turn = turnOf([
+        {
+          source: "print(private_result)",
+          duration_ms: 29,
+          error: { message, trace },
+        },
+        {
+          source: "next_call()",
+          duration_ms: 0,
+          error: { message: "SECOND_FAILURE" },
+        },
+      ]);
+      const original = JSON.stringify(turn);
+      const painted = render(
+        <IterationTrace
+          iterations={turn.iterations ?? []}
+          showCode={showCode}
+          whole
+        />,
+      );
+      const toggles = painted.getAllByRole("button", {
+        name: "Expand error details",
+      });
+      expect(toggles).toHaveLength(2);
+      expect(toggles[0]).toHaveTextContent("Failed");
+      expect(toggles[0]).toHaveAttribute("aria-expanded", "false");
+      expect(painted.container.textContent).toContain("29ms");
+      expect(painted.container.textContent).not.toContain(message);
+      expect(painted.container.textContent).not.toContain(trace);
+      expect(painted.container.textContent).not.toContain("SECOND_FAILURE");
+      expect(painted.container.textContent).not.toContain("print(private_result)");
+      if (showCode) {
+        fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
+        expect(painted.container.textContent).not.toContain(message);
+        fireEvent.click(painted.getByRole("button", { name: "Collapse code" }));
+      }
+      fireEvent.click(toggles[0]);
+      expect(toggles[0]).toHaveAttribute("aria-expanded", "true");
+      expect(painted.container.textContent).toContain(message);
+      expect(painted.container.textContent).toContain(trace);
+      expect(painted.container.textContent).not.toContain("print(private_result)");
+      expect(painted.container.textContent).not.toContain("SECOND_FAILURE");
+      fireEvent.click(toggles[1]);
+      expect(painted.container.textContent).toContain("SECOND_FAILURE");
+      fireEvent.click(toggles[0]);
+      fireEvent.click(toggles[1]);
+      expect(painted.container.textContent).not.toContain(message);
+      expect(painted.container.textContent).not.toContain(trace);
+      expect(painted.container.textContent).not.toContain("SECOND_FAILURE");
+      expect(JSON.stringify(turn)).toBe(original);
+    },
+  );
+
+  it("keeps mixed outcomes independently collapsible", () => {
     const painted = render(
       <AssistantMessage
         turn={turnOf([
@@ -1151,11 +1211,19 @@ describe("Activity follows the combined Python source", () => {
         ])}
       />,
     );
+    expect(
+      painted.getByRole("button", { name: "Expand error details" }),
+    ).toHaveTextContent("Failed");
+    expect(painted.queryByText(/Operation failed/)).toBeNull();
+    fireEvent.click(painted.getByRole("button", { name: "Expand error details" }));
     expect(painted.getByText(/Operation failed/)).toBeVisible();
+    fireEvent.click(painted.getByRole("button", { name: "Collapse error details" }));
+    expect(painted.queryByText(/Operation failed/)).toBeNull();
     expect(painted.queryByRole("button", { name: "Expand result" })).toBeNull();
     fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     fireEvent.click(painted.getByRole("button", { name: "Expand result" }));
     expect(painted.getByText("Successful output")).toBeVisible();
+    expect(painted.queryByText(/Operation failed/)).toBeNull();
   });
 
   // Regression, issue td-f9035e: Python, Result, and Activity each painted an

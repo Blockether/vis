@@ -1218,20 +1218,20 @@ const ToolCard = memo(function ToolCard({
       : running
         ? "text-code-result"
         : "text-accent-ink";
-  // RESULT has its own fold inside CODE; failures remain visible without expanding source.
+  // Failure status stays visible; diagnostic bodies require explicit expansion.
   const [resultOpen, setResultOpen] = useState(false);
   // The tally counts what the reader would see: fence rows around a stdout block are not output.
   const resultLines = body
     ? body.split("\n").filter((line) => !line.startsWith("```")).length
     : 0;
-  const resultShown = failed || interrupted || resultOpen;
+  const resultShown = interrupted || resultOpen;
   if (embedded)
     return (
       <div
         data-code-result
         className="min-w-0 bg-result py-1 text-meta text-code-result"
       >
-        {failed || interrupted ? (
+        {interrupted ? (
           <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
         ) : (
           <Disclosure
@@ -1239,12 +1239,20 @@ const ToolCard = memo(function ToolCard({
             tone="execution"
             inlineChevron
             className="min-w-0"
-            aria-label={resultOpen ? "Collapse result" : "Expand result"}
+            aria-label={
+              failed
+                ? resultOpen
+                  ? "Collapse error details"
+                  : "Expand error details"
+                : resultOpen
+                  ? "Collapse result"
+                  : "Expand result"
+            }
             onClick={() => setResultOpen((open) => !open)}
           >
             <BandLabel tone={stateTone}>
-              RESULT
-              {!resultOpen && resultLines > 0 && (
+              {failed ? "Failed" : "RESULT"}
+              {!failed && !resultOpen && resultLines > 0 && (
                 <BandTally> +{resultLines} more</BandTally>
               )}
             </BandLabel>
