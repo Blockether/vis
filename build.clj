@@ -1062,6 +1062,9 @@
         (mapv #(str "-J" %) (truststore-properties nil))]
 
     (cond-> ["-cp" (native-classpath basis) "-o" native-bin
+             ;; Unsafe caches its memory-access policy during image initialization.
+             ;; Set it in the builder JVM; runtime launcher flags cannot change it.
+             "-J--sun-misc-unsafe-memory-access=allow"
              ;; Restricted native access (java.lang.foreign): rift and the embedded
              ;; CPython bridge both use downcalls. A future JDK blocks them unless the
              ;; application opts in explicitly.
