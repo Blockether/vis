@@ -2702,7 +2702,9 @@
    directly (`page[-4000:]`). It remembers the whole read: `next(page)` gets the next
    ready page and `page.pages(max_pages=…)` lazily includes this page plus those after
    it, bounded to ten pages by default. Paging stops at the current snapshot's EOF
-   the process is live; call `sh.logs()` later to read output written later."
+   the process is live; call `sh.logs()` later to read output written later.
+   `out` is normalized text: terminal colours and controls are handled automatically.
+   `log_path` preserves raw terminal bytes, not the text view used for parsing."
   {:arglists '([id] [id opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
@@ -2870,7 +2872,9 @@
        "continuation notices. Every field remains accessible by key or `dict(sh)`/`json.dumps(sh)`. "
        "A fresh run has `exit=None`; nonzero exit is data. "
        "`out` is the pty's ONE stream: stdout and stderr are the same channel there, so whatever "
-       "the command wrote to either is IN it, in order — one name, and no `stderr` key.")
+       "the command wrote to either is IN it, in order — one name, and no `stderr` key. "
+       "`out` automatically normalizes terminal colours and controls; parse this text view. "
+       "`log_path` preserves the raw terminal stream, including ANSI sequences.")
      :description
      (str
        "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
@@ -2886,7 +2890,7 @@
        "twice. NEVER trim inside the command: `| head`, "
        "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
        "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
-       "then tail-clip a log page directly (`sh.logs()[-4000:]`) or filter `log_path` in Python. "
+       "then tail-clip a log page directly (`sh.logs()[-4000:]`) or filter its `out` in Python. "
        "`env` carries THIS run's variables over the project's — a literal for a switch, a "
        "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\": …} or "
        "{\"command\": [\"executable\", \"arg\", …]}; command is an argv list, never a shell string), "

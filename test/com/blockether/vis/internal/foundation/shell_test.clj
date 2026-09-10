@@ -312,6 +312,35 @@
               (expect (= "coloured\nlast" (str/trim (get r "out"))))
               (expect (not (str/includes? (get r "out") "\u001b")))))))))
 
+;; Regression: parsing log_path skipped coloured +++ headers and raised KeyError.
+;; Every programmatic shell read must expose the same plain diff while the file
+;; retains the terminal bytes; callers need no colour-disabling flags.
+(defdescribe
+  shell-coloured-diff-test
+  (it "normalizes coloured diff headers in run, logs and wait without changing raw logs"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid "shell-coloured-diff"
+              env {:session-id sid}
+              command "git --no-pager diff --no-index --color=always -- /dev/null AGENTS.md"
+              plain (get (shell-run*
+                           env
+                           "git --no-pager diff --no-index --color=never -- /dev/null AGENTS.md")
+                         "out")
+              sync (shell-run* env command)]
+
+          (try (shell-bg* env "diff" command)
+               (let [waited (wait* env "diff")
+                     logged (:result (shell-logs* env "diff" {:offset 0}))
+                     raw (slurp (get logged "log_path"))]
+
+                 (expect (= 1 (get waited "exit")))
+                 (expect (str/includes? raw "\u001b["))
+                 (doseq [result [sync waited logged]]
+                   (expect (= plain (get result "out")))
+                   (expect (re-find #"(?m)^\+\+\+ b/AGENTS\.md\r?$" (get result "out")))
+                   (expect (not (str/includes? (get result "out") "\u001b")))))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
+
 ;; Regression: a `git push` came back as 28 lines of `Counting objects: N%` and 11
 ;; more of `Compressing objects: N%`, because every bare carriage return was expanded
 ;; into a newline. The animation filled the capped capture window, so the rendered
