@@ -10,6 +10,8 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.attachment-intake-test :as intake-fixture]
+            [com.blockether.vis.tui.file-picker :as picker]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.live-view-test :as live-fixture]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -31,6 +33,90 @@
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
+
+(defdescribe
+  attachment-picker-gateway-test
+  ;; Regression: /pick-file reported no supported files after the standalone TUI split.
+  (it
+    "lists and stages files from the active tab beyond the mention result limit"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-picker"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          pdf
+          (io/file dir "report.pdf")
+
+          sid
+          "11111111-1111-1111-1111-111111111111"
+
+          rows
+          (mapv (fn [name]
+                  {"name" name "size" "9B" "age" "now" "status" "clean"})
+                (concat (map #(str "source-" % ".clj") (range 25)) ["report.pdf"]))]
+
+      (try
+        (spit pdf "%PDF-1.7\n")
+        (doseq [[keys expected-count] [[[\space :enter] 1] [[:esc] 0]]]
+          (let [db (atom {:session {:id sid}
+                          :workspace {:root (.getCanonicalPath dir)}
+                          :workspace/root (.getCanonicalPath dir)
+                          :attachment-capabilities intake-fixture/capabilities
+                          :attachments []})
+                requests (atom [])
+                notices (atom [])]
+
+            (with-redefs-fn {#'state/app-db db
+                             #'vis/send-json! (fn [method path & _]
+                                                (swap! requests conj [method path])
+                                                (let [limit (or (some-> (re-find #"limit=(\d+)"
+                                                                                 path)
+                                                                        second
+                                                                        parse-long)
+                                                                20)]
+                                                  (vec (take limit rows))))
+                             #'vis/notify! (fn [& args]
+                                             (swap! notices conj args))
+                             #'screen/with-dialog-lock (fn [f]
+                                                         (f))}
+              (fn []
+                (let [capture (cap/capture! {:cols 160
+                                             :rows 12
+                                             :keys keys
+                                             :paint! (fn [{:keys [screen]}]
+                                                       (#'screen/pick-attachments! screen))})]
+                  (expect (nil? (:error capture)))
+                  (expect (= [["GET" (str "/v1/sessions/" sid "/suggest?kind=file&q=&limit=1000")]]
+                             @requests))
+                  (expect (str/includes? (cap/frame-text capture) "Space toggle"))
+                  (expect (str/includes? (cap/frame-text capture) "report.pdf"))
+                  (expect (empty? @notices))
+                  (expect (= expected-count (count (:attachments @db))))
+                  (when (pos? expected-count)
+                    (expect (= (.getCanonicalPath pdf) (get-in @db [:attachments 0 :path])))
+                    (expect (= "application/pdf" (get-in @db [:attachments 0 :media-type])))))))))
+        (finally (.delete pdf) (.delete dir)))))
+  (it "uses each tab's session and converts gateway rows for @ mentions"
+      (let [requests (atom [])]
+        (with-redefs-fn {#'picker/index-warm? (constantly true)
+                         #'vis/send-json!
+                         (fn [method path & _]
+                           (swap! requests conj [method path])
+                           [{"name" "report.pdf" "size" "9B" "age" "now" "status" "modified"}])}
+          (fn []
+            (doseq [sid ["tab-a" "tab-b"]]
+              (let [db {:session {:id sid}
+                        :input (input/paste-text (input/empty-input) "@report")
+                        :slash-command-index 0}
+                    rows (#'screen/slash-suggestions-for-db nil db)]
+
+                (expect (= ["report.pdf"] (mapv :file/path rows)))
+                (expect (= "9B · now · M" (:label (first rows))))))
+            (expect (= ["GET" "GET"] (mapv first @requests)))
+            (expect (str/starts-with? (str (second (first @requests)))
+                                      "/v1/sessions/tab-a/suggest?"))
+            (expect (str/starts-with? (str (second (second @requests)))
+                                      "/v1/sessions/tab-b/suggest?")))))))
 
 (defn- await-pred
   [pred timeout-ms]

@@ -10,6 +10,7 @@
             [com.blockether.vis.tui.command-suggest :as slash]
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.file-suggest :as file-suggest]
+            [com.blockether.vis.tui.file-picker :as file-picker]
             [com.blockether.vis.tui.footer :as footer]
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.header :as header]
@@ -1131,7 +1132,8 @@
    on top of the recalled line re-arms it (`:update-input` in state.clj)."
   [screen db]
   (when-not (:slash-command-hidden? db)
-    (slash-suggestions-for-input screen (:input db) (:slash-command-index db))))
+    (binding [file-picker/*session-id* (get-in db [:session :id])]
+      (slash-suggestions-for-input screen (:input db) (:slash-command-index db)))))
 
 (defn- input-state-from-text [text] (input/paste-text (input/empty-input) (or text "")))
 
@@ -2145,22 +2147,23 @@
 
 (defn- pick-attachments!
   [screen]
-  (if-let [capabilities (attachment-capabilities!)]
-    (let [workspace-root (try (str (workspace/cwd)) (catch Throwable _ nil))
-          files (attachment-intake/workspace-picker-files capabilities workspace-root)]
+  (let [db @state/app-db]
+    (binding [file-picker/*session-id* (get-in db [:session :id])]
+      (if-let [capabilities (attachment-capabilities!)]
+        (let [workspace-root (or (:workspace/root db) (workspace/workspace-root (:workspace db)))
+              files (attachment-intake/workspace-picker-files capabilities workspace-root)]
 
-      (if (seq files)
-        (when-let [selected (with-dialog-lock
-                              #(dlg/multi-select-dialog! screen "Attach Files" files))]
-          (apply-attachment-intake! (attachment-intake/picker-selection capabilities
-                                                                        (:attachments @state/app-db)
-                                                                        selected)))
-        (vis/notify! "No gateway-supported files were found in this workspace."
+          (if (seq files)
+            (when-let [selected (with-dialog-lock
+                                  #(dlg/multi-select-dialog! screen "Attach Files" files))]
+              (apply-attachment-intake!
+                (attachment-intake/picker-selection capabilities (:attachments db) selected)))
+            (vis/notify! "No gateway-supported files were found in this workspace."
+                         :level :warn
+                         :ttl-ms status-error-ttl-ms)))
+        (vis/notify! "Attachment capabilities are unavailable from the gateway."
                      :level :warn
-                     :ttl-ms status-error-ttl-ms)))
-    (vis/notify! "Attachment capabilities are unavailable from the gateway."
-                 :level :warn
-                 :ttl-ms status-error-ttl-ms)))
+                     :ttl-ms status-error-ttl-ms)))))
 
 (defn- band-top-row
   "First screen row a session band for `spec` will paint on, at the anchor the

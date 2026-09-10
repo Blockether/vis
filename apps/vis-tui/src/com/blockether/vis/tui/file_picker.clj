@@ -14,6 +14,8 @@
   [query {:keys [limit] :or {limit 20}}]
   (if-not *session-id*
     []
-    (let [rows (client/suggest-files *session-id* query)]
+    (let [rows (client/suggest-files *session-id* query {:limit limit})]
       (reset! warm? true)
-      (vec (take limit rows)))))
+      (mapv (fn [{:strs [name size age status]}]
+              {:path name :label name :size-label size :age-label age :status-label status})
+            (take limit rows)))))

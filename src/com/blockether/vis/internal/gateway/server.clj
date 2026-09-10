@@ -28,6 +28,7 @@
             [com.blockether.vis.internal.docs.core :as docs]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.channel.file-picker :as file-picker]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
@@ -3982,28 +3983,25 @@
 (defn- speech-job-events-handler [request] (job-events-handler :synthesize request))
 
 (defn- suggest-handler
-  "GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy suggestion
-   service behind every composer sigil (the `@` file picker today). It is a
-   pure query: given `q`, return the ranked index. The *trigger* smarts —
-   when `@` means pick-a-file, `@@` escaping to a literal `@` — live in each
-   client (web/TUI), NEVER here, so writing a literal `@` can never be
-   endangered by the backend. Row shape is `{:name :size :age :status}`, the
-   same rows the web + TUI pickers render."
+  "GET /v1/sessions/:sid/suggest?kind=file&q=&limit=20. Search the session's
+   workspace, not the daemon's working directory. Returns wire rows
+   {:name :size :age :status}; limit is clamped to 1–1000 so attachment pickers
+   can request more candidates than the inline @ overlay. Trigger handling
+   and attachment admission remain client-side."
   [request]
-  (if-not (some-> (path-sid request)
-                  state/soul)
-    (session-404 (get-in request [:path-params :sid]))
-    (let [kind
-          (or (not-empty (get-in request [:query-params "kind"])) "file")
+  (let [sid (path-sid request)]
+    (if-not (and sid (state/soul sid))
+      (session-404 (get-in request [:path-params :sid]))
+      (let [kind (or (query-str request "kind") "file")
+            q (or (query-str request "q") "")
+            limit (max 1 (min 1000 (long (or (query-long request "limit") 20))))]
 
-          q
-          (str (get-in request [:query-params "q"]))]
-
-      (case kind
-        "file"
-        (json-response (file-picker/suggest-file-rows q {:limit 20}))
-
-        (error-response 400 :invalid-request (str "unknown suggest kind: " kind))))))
+        (if (= "file" kind)
+          (if-let [workspace-root (get (state/session-workspace-info sid) "root")]
+            (binding [workspace/*workspace-root* workspace-root]
+              (json-response (file-picker/suggest-file-rows q {:limit limit})))
+            (error-response 409 :workspace-unavailable "Session workspace is unavailable."))
+          (error-response 400 :invalid-request (str "unknown suggest kind: " kind)))))))
 
 ;; Router and middleware
 

@@ -2015,15 +2015,12 @@
   (terminal-event->result (read-events-until! sid 0 tid on-event) tid))
 
 (defn suggest-files
-  "Rank file rows in the gateway workspace of `sid`."
-  [sid query]
-  (let [path
-        (str "/v1/sessions/" (enc sid) "/suggest?kind=file&q=" (enc (or query "")))
-
-        body
-        (send-json! "GET" path)]
-
-    (vec (or (get body "items") (get body "rows") body []))))
+  "Rank wire file rows in the gateway workspace of `sid`, capped at `limit`."
+  [sid query {:keys [limit] :or {limit 20}}]
+  (send-json! "GET"
+              (str "/v1/sessions/" (enc sid)
+                   "/suggest?kind=file&q=" (enc (or query ""))
+                   "&limit=" (long limit))))
 
 ;; Names consumed by the terminal application. The transport API itself keeps route-oriented names.
 (def gateway-assign-project! assign-project!)

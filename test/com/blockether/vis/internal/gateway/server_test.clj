@@ -19,6 +19,7 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.channel.slash :as slash]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.channel.file-picker :as file-picker]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.speech.core :as speech]
             [com.blockether.vis.internal.loop :as lp]
@@ -26,6 +27,54 @@
             [ring.adapter.jetty9 :as jetty]
             [ring.core.protocols :as ring-protocols]
             [ring.middleware.params :as ring-params]))
+
+(deftest file-suggestions-use-the-session-workspace-and-requested-limit
+  ;; /pick-file needs more candidates than the inline @ overlay, in the same workspace.
+  (let [sid
+        (random-uuid)
+
+        calls
+        (atom [])
+
+        handler
+        (ns-resolve 'com.blockether.vis.internal.gateway.server 'suggest-handler)]
+
+    (with-redefs [state/soul
+                  (fn [id]
+                    (when (= sid id) {"id" (str sid)}))
+
+                  state/session-workspace-info
+                  (fn [id]
+                    (when (= sid id) {"root" "/tmp/session-files"}))
+
+                  file-picker/fuzzy-file-rows
+                  (fn [q opts]
+                    (swap! calls conj [(str (workspace/cwd)) q (:limit opts)])
+                    [{:path "report.pdf" :size-label "9B" :age-label "now" :status-label "clean"}])]
+
+      (doseq [[limit expected] [[nil 20] ["1000" 1000] ["5000" 1000] ["0" 1] ["bad" 20]]]
+        (let [response (handler {:path-params {:sid (str sid)}
+                                 :query-params (cond-> {"kind" "file" "q" "report"}
+                                                 limit
+                                                 (assoc "limit" limit))})]
+          (is (= 200 (:status response)))
+          (is (= ["/tmp/session-files" "report" expected] (last @calls)))
+          (is (str/includes? (:body response) "\"name\":\"report.pdf\""))))
+      (reset! calls [])
+      (is (= 404 (:status (handler {:path-params {:sid (str (random-uuid))}})))))
+    (with-redefs [state/soul
+                  (constantly {"id" (str sid)})
+
+                  state/session-workspace-info
+                  (constantly nil)
+
+                  file-picker/fuzzy-file-rows
+                  (fn [& _]
+                    (swap! calls conj :unexpected-scan)
+                    [])]
+
+      (is (= 409 (:status (handler {:path-params {:sid (str sid)}})))))
+    (is (empty? @calls))))
 
 (defn- rv
   "Resolve a (possibly private) var in the server namespace for with-redefs-fn."
