@@ -307,7 +307,7 @@
    call; every other capability is a Python name whose `doc(name)` text owns its
    own inputs and preconditions."
   (str
-    "You are vis. Complete the task autonomously.\n\n"
+    "Complete the task autonomously.\n\n"
     "When the user asks a question, answer the question. Do not start coding. "
     "Use tools or scripts only when you need more information for the answer.\n"
     "If asked only for analysis or a diff preview, do not apply changes.\n\n"
@@ -467,7 +467,7 @@
    `~/.vis/SYSTEM.md` > config `:system-prompt` map with `:replace? true` >
    `CORE_SYSTEM_PROMPT`. When a file/config replaces the base, addenda and
    append files are still appended after it."
-  [{:keys [system-prompt]}]
+  [{:keys [system-prompt workspace-root]}]
   (let [addendum
         (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
 
@@ -487,7 +487,11 @@
         (when (and cfg (not (:is-replace cfg))) (:text cfg))
 
         base
-        (or file-replace (when cfg-replace? (:text cfg)) CORE_SYSTEM_PROMPT)
+        (or file-replace
+            (when cfg-replace? (:text cfg))
+            (str "You are "
+                 (if workspace-root (config/agent-name workspace-root) (config/agent-name))
+                 ". " CORE_SYSTEM_PROMPT))
 
         extras
         (into []
@@ -820,7 +824,10 @@
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
                     {:type :vis/missing-active-extensions})))
   (let [core-block
-        (prompt-block "system-prompt" (build-system-prompt {:system-prompt system-prompt}))
+        (prompt-block "system-prompt"
+                      (build-system-prompt {:system-prompt system-prompt
+                                            :workspace-root (get-in environment
+                                                                    [:workspace :root])}))
 
         ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
         ;; human can approve a one-shot run. Stable per session (channel never

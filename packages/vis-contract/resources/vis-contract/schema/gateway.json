@@ -705,6 +705,12 @@
               "$ref": "#/$defs/session_goal"
             }
           ]
+        },
+        "agent_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Coding-agent name resolved by the gateway from the session workspace configuration."
         }
       },
       "required": [

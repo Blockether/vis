@@ -13,6 +13,25 @@ For API keys, local models and custom endpoints, see
 [Providers and models](#providers-and-models). For project instructions, see
 [Project instructions](context-and-prompts.md).
 
+## Coding-agent name
+
+Set `agent_name` in the project's `vis.yml`:
+
+```yaml
+agent_name: Ada
+```
+
+The default is `Vis`. Names must contain non-whitespace text, be at most 80
+characters long and contain no control characters. Surrounding spaces are trimmed.
+The global files and project overlay follow the precedence below.
+
+The gateway resolves the name from each session's workspace and returns
+`agent_name` on `GET /v1/sessions/:sid` and inside the workspace response.
+The TUI and Companion use that value, including remote clients. Reopen the
+session to refresh its displayed name after editing YAML. The JVM uses the same
+name when assembling the default system prompt; a full custom system-prompt
+replacement retains its own identity. Product branding and session titles do not change.
+
 ## Configuration files
 
 Files are read in this order. Later files override earlier ones; nested maps

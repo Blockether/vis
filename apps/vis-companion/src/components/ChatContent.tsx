@@ -3273,23 +3273,23 @@ function fallbackAnswer(turn: TranscriptTurn): string {
   return "";
 }
 
-function runningTurnPhase(turn: TranscriptTurn): string {
+function runningTurnPhase(turn: TranscriptTurn, agentName: string): string {
   const iterations = turn.iterations ?? [];
   const iteration = iterations.length;
   const request = (turn.request ?? "").trim();
   if (iteration === 0) {
-    if (request.startsWith("!&")) return "Vis is starting a command";
-    if (request.startsWith("!")) return "Vis is running a command";
+    if (request.startsWith("!&")) return `${agentName} is starting a command`;
+    if (request.startsWith("!")) return `${agentName} is running a command`;
     if (request.startsWith("/"))
-      return `Vis is running: ${request.split(/\s+/, 1)[0]}`;
-    return "Vis is waiting for an update";
+      return `${agentName} is running: ${request.split(/\s+/, 1)[0]}`;
+    return `${agentName} is waiting for an update`;
   }
   const last = iterations.at(-1);
   const suffix = `(iter ${iteration})`;
-  if (last?.error != null) return `Vis is retrying ${suffix}`;
-  if (last?.forms?.length) return `Vis is running code ${suffix}`;
-  if (last?.thinking?.trim()) return `Vis is thinking ${suffix}`;
-  return `Vis is working ${suffix}`;
+  if (last?.error != null) return `${agentName} is retrying ${suffix}`;
+  if (last?.forms?.length) return `${agentName} is running code ${suffix}`;
+  if (last?.thinking?.trim()) return `${agentName} is thinking ${suffix}`;
+  return `${agentName} is working ${suffix}`;
 }
 
 /**
@@ -3626,6 +3626,7 @@ function useMeasuredPaintSkip(live: boolean) {
 
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
+  agentName = "Vis",
   streaming = false,
   progressLabel,
   pending,
@@ -3640,6 +3641,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   isForking = false,
 }: {
   turn: TranscriptTurn;
+  agentName?: string;
   streaming?: boolean;
   progressLabel?: string;
   /** A settled running-turn bubble is waiting for its authoritative transcript row. */
@@ -3713,7 +3715,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       <div
         className={`mb-1 flex items-center justify-between gap-2 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
-        <span>Vis</span>
+        <span>{agentName}</span>
         {onFork && (
           // Reserve the action's space; reveal it on answer hover or keyboard focus.
           <span className="-my-1 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
@@ -3763,7 +3765,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         {liveViewPanel}
         {streaming ? (
           <TurnPhaseLine
-            phase={progressLabel ?? "Vis is working"}
+            phase={progressLabel ?? `${agentName} is working`}
             startedAt={startedAt}
           />
         ) : cancelled ? (
@@ -3776,7 +3778,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           // made a finished turn look alive), the words stay. Rendering nothing
           // here left the reader a bare "Vis" for the whole turn.
           <TurnPhaseLine
-            phase={runningTurnPhase(turn)}
+            phase={runningTurnPhase(turn, agentName)}
             startedAt={turn.created_at}
             still={settled}
           />

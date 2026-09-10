@@ -10,6 +10,9 @@
 # children unconfined — full filesystem, open network.
 
 
+# Coding-agent name shared by the JVM prompt, TUI and Companion through the gateway.
+# agent_name: Vis
+
 # ── Workspace filesystem catalog ─────────────────────────────────────────────
 # One documented list of every filesystem root Vis knows about. Each entry:
 #   id          stable handle referenced by jail.filesystem.allow

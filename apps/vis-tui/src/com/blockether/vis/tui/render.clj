@@ -1787,7 +1787,8 @@
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
   [^TextGraphics g {:keys [role text timestamp status slash?] :as message} start-row left max-w &
-   [{:keys [viewport-top viewport-h] :or {viewport-top 0 viewport-h 0}}]]
+   [{:keys [viewport-top viewport-h agent-name]
+     :or {viewport-top 0 viewport-h 0 agent-name "Vis"}}]]
   (let [user?
         (= role :user)
 
@@ -1821,7 +1822,7 @@
         label
         (cond queued? "Queued"
               user? "You"
-              :else "Vis")
+              :else agent-name)
 
         bubble-w
         max-w
@@ -1933,7 +1934,15 @@
     (let [label-row (+ (long start-row) (long top-sep-h))]
       (p/clear-styles! g)
       (p/set-colors! g role-fg t/terminal-bg)
-      (p/styled g [p/BOLD] (p/put-str! g bx label-row label))
+      (p/styled g
+                [p/BOLD]
+                (p/put-str!
+                  g
+                  bx
+                  label-row
+                  (p/ellipsize
+                    label
+                    (max 0 (- (long bubble-w) (if time-str (+ 1 (p/display-width time-str)) 0))))))
       (when time-str
         (let [right-edge (+ (long bx) (long bubble-w))
               time-w (p/display-width time-str)
@@ -7013,8 +7022,11 @@
    A `!`/`!&` bang turn carries `{:activity :shell-run|:shell-bg}` and
    `:shell/cmd` on its single iteration; the shell branches read those
    so the bubble says `Vis is running: <cmd>` while the shell blocks."
-  [iterations cancelling? command-label live-title]
-  (let [n
+  [iterations cancelling? command-label live-title & [agent-name]]
+  (let [agent-name
+        (or agent-name "Vis")
+
+        n
         (count iterations)
 
         last-iteration
@@ -7095,34 +7107,40 @@
                 (> (count s) 64) (str (subs s 0 61) "…")
                 :else s))]
 
-    (cond cancelling? "Vis is cancelling"
-          errored? "Vis is retrying"
-          (zero? n) (or command-label "Vis is calling the provider")
-          live-label (str "Vis is showing " live-label " — live (iter " n ")")
-          (= :shell-run activity) (str "Vis is running: " shell-label)
-          (= :shell-bg activity) (str "Vis is starting: " shell-label)
-          (= :slash activity) (str "Vis is running: " slash-label)
+    (cond cancelling? (str agent-name " is cancelling")
+          errored? (str agent-name " is retrying")
+          (zero? n) (or command-label (str agent-name " is calling the provider"))
+          live-label (str agent-name " is showing " live-label " — live (iter " n ")")
+          (= :shell-run activity) (str agent-name " is running: " shell-label)
+          (= :shell-bg activity) (str agent-name " is starting: " shell-label)
+          (= :slash activity) (str agent-name " is running: " slash-label)
           (= :provider-call activity)
           (case activity-reason
             :tool-result
-            (str "Vis is continuing after tool results (iter " n ")")
+            (str agent-name " is continuing after tool results (iter " n ")")
 
             :user-submit
-            (str "Vis is calling " (or activity-model "the provider") " (user submit, iter " n ")")
+            (str agent-name
+                 " is calling "
+                 (or activity-model "the provider")
+                 " (user submit, iter "
+                 n
+                 ")")
 
-            (str "Vis is calling " (or activity-model "the provider") " (iter " n ")"))
-          (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
+            (str agent-name " is calling " (or activity-model "the provider") " (iter " n ")"))
+          (= :response-parse activity) (str agent-name " is parsing model response (iter " n ")")
           (= :tool-call activity) (if tool-phrase
-                                    (str "Vis is " tool-phrase " (iter " n ")")
-                                    (str "Vis is running: "
+                                    (str agent-name " is " tool-phrase " (iter " n ")")
+                                    (str agent-name
+                                         " is running: "
                                          (or tool-op "tool")
                                          (when activity-label (str " " activity-label))
                                          " (iter "
                                          n
                                          ")"))
-          thinking? (str "Vis is thinking (iter " n ")")
-          executing? (str "Vis is running code (iter " n ")")
-          :else (str "Vis is working (iter " n ")"))))
+          thinking? (str agent-name " is thinking (iter " n ")")
+          executing? (str agent-name " is running code (iter " n ")")
+          :else (str agent-name " is working (iter " n ")"))))
 
 (defn- coalesce-bubble-blanks
   "Collapse adjacent SAME-FAMILY blank rows down to ONE; preserve
@@ -7526,7 +7544,7 @@
          (max 10 (- (long bubble-w) 4))
 
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-                 viewport-rows pending-sends command-label queue-paused live-title runs]}
+                 viewport-rows pending-sends command-label queue-paused live-title runs agent-name]}
          extra
 
          now-ms
@@ -7581,7 +7599,7 @@
                 "  Send a message to continue.")
            (str (spinner-frame now-ms)
                 "  "
-                (progress-phase iterations cancelling? command-label live-title)
+                (progress-phase iterations cancelling? command-label live-title agent-name)
                 "...  "
                 elapsed-str
                 (or (progress-error-segment iterations) "")
@@ -8029,7 +8047,7 @@
    generous side gutters. The right gutter doubles as scrollbar space
    when the session overflows. The session title (if any) is
    surfaced via the input-box bottom status line, not here."
-  [^TextGraphics g layout box-top box-bottom cols]
+  [^TextGraphics g layout box-top box-bottom cols & [agent-name]]
   (let [box-top
         (long box-top)
 
@@ -8069,12 +8087,13 @@
     (.beginFrame interactions/hit-map)
     (let [clip (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))]
       (doseq [{:keys [^long top projected]} visible]
-        (draw-chat-bubble! clip
-                           projected
-                           top
-                           MESSAGE_MARGIN_LEFT
-                           bubble-w
-                           {:viewport-top text-top :viewport-h inner-h}))
+        (draw-chat-bubble!
+          clip
+          projected
+          top
+          MESSAGE_MARGIN_LEFT
+          bubble-w
+          {:viewport-top text-top :viewport-h inner-h :agent-name (or agent-name "Vis")}))
       (let [bar-top box-top
             track-h (max 0 (- box-bottom box-top))]
 

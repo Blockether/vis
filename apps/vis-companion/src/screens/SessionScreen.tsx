@@ -307,16 +307,16 @@ function compactLabel(value: string, fallback: string): string {
   return label.length > 64 ? `${label.slice(0, 61)}…` : label;
 }
 
-function commandPhase(request: string): string | null {
+function commandPhase(request: string, agentName: string): string | null {
   const text = request.trim();
   if (text.startsWith("!&")) {
-    return `Vis is starting: ${compactLabel(text.slice(2), "…")}`;
+    return `${agentName} is starting: ${compactLabel(text.slice(2), "…")}`;
   }
   if (text.startsWith("!")) {
-    return `Vis is running: ${compactLabel(text.slice(1), "…")}`;
+    return `${agentName} is running: ${compactLabel(text.slice(1), "…")}`;
   }
   if (text.startsWith("/")) {
-    return `Vis is running: ${compactLabel(text.split(/\s+/, 1)[0], "command")}`;
+    return `${agentName} is running: ${compactLabel(text.split(/\s+/, 1)[0], "command")}`;
   }
   return null;
 }
@@ -347,9 +347,10 @@ function runningTurnPhase(
   connected: boolean,
   workspaceRoots: readonly (string | null | undefined)[],
   watching: string | null,
+  agentName: string,
 ): string {
   if (!connected) return "Reconnecting — checking turn status";
-  if (turn.cancelling) return "Vis is cancelling";
+  if (turn.cancelling) return `${agentName} is cancelling`;
 
   const last = turn.iterations.at(-1);
   const progress = turn.progress;
@@ -359,48 +360,48 @@ function runningTurnPhase(
     progress?.iteration == null ? 0 : progress.iteration,
   );
 
-  if (last?.error != null) return "Vis is retrying";
+  if (last?.error != null) return `${agentName} is retrying`;
   // Nothing has arrived from the engine yet. The message IS sent — that is the
   // one thing this screen knows for certain — and the clock beside this line
-  // says how long ago. "Vis is waiting for an update" put the waiting on Vis
+  // says how long ago. `${agentName} is waiting for an update` put the waiting on Vis
   // while the request was still in flight, and read as a hang from the first
   // second (measured: no turn on this machine reaches its first token in under
   // one second; the median is 6.4s).
   if (iteration === 0)
-    return commandPhase(turn.request) ?? "Vis sent your message";
+    return commandPhase(turn.request, agentName) ?? `${agentName} sent your message`;
 
   const suffix = `(iter ${iteration})`;
 
   // A run SHOWING its work is not thinking: the panel under this row is live and
-  // yours to stop. "Vis is thinking (iter 30)... 10m 1s" over an open CI run read
+  // yours to stop. `${agentName} is thinking (iter 30)... 10m 1s` over an open CI run read
   // as a hang for as long as the run took, with the answer already on screen.
-  if (watching) return `Vis is showing ${compactLabel(watching, "a live view")} — live ${suffix}`;
+  if (watching) return `${agentName} is showing ${compactLabel(watching, "a live view")} — live ${suffix}`;
   switch (progress?.kind) {
     case "shell-run":
-      return `Vis is running: ${compactLabel(progress.command ?? "", "…")}`;
+      return `${agentName} is running: ${compactLabel(progress.command ?? "", "…")}`;
     case "shell-bg":
-      return `Vis is starting: ${compactLabel(progress.command ?? "", "…")}`;
+      return `${agentName} is starting: ${compactLabel(progress.command ?? "", "…")}`;
     case "slash":
-      return `Vis is running: ${compactLabel(progress.command ?? "", "command")}`;
+      return `${agentName} is running: ${compactLabel(progress.command ?? "", "command")}`;
     case "provider-call":
       // Naming the model is what makes this line change during the longest
       // silence of the turn: "sent" -> "calling claude-opus-5" -> "thinking".
-      return `Vis is calling ${progress.model ?? "the provider"} ${suffix}`;
+      return `${agentName} is calling ${progress.model ?? "the provider"} ${suffix}`;
     case "response-parse":
-      return `Vis is parsing model response ${suffix}`;
+      return `${agentName} is parsing model response ${suffix}`;
     case "tool":
     case "tool-call": {
-      if (progress.phrase) return `Vis is ${progress.phrase} ${suffix}`;
+      if (progress.phrase) return `${agentName} is ${progress.phrase} ${suffix}`;
       const label = workspaceRelativePath(progress.label, workspaceRoots);
-      return `Vis is running: ${progress.operation || "tool"}${label ? ` ${compactLabel(label, "")}` : ""} ${suffix}`;
+      return `${agentName} is running: ${progress.operation || "tool"}${label ? ` ${compactLabel(label, "")}` : ""} ${suffix}`;
     }
     default:
       break;
   }
 
-  if (last?.thinking?.trim()) return `Vis is thinking ${suffix}`;
-  if (last?.forms?.length) return `Vis is running code ${suffix}`;
-  return `Vis is working ${suffix}`;
+  if (last?.thinking?.trim()) return `${agentName} is thinking ${suffix}`;
+  if (last?.forms?.length) return `${agentName} is running code ${suffix}`;
+  return `${agentName} is working ${suffix}`;
 }
 
 
@@ -4208,6 +4209,7 @@ export function SessionScreen({
               </UserMessage>
             )}
             <AssistantMessage
+              agentName={session?.agent_name}
               turn={turn}
               onFork={
                 turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined
@@ -4276,6 +4278,7 @@ export function SessionScreen({
           </UserMessage>
         )}
         <AssistantMessage
+          agentName={session?.agent_name}
           turn={{
             turn_id: runningTurn.id ?? "live",
             request: runningTurn.request,
@@ -4299,6 +4302,7 @@ export function SessionScreen({
             connected,
             workspaceRoots,
             watching,
+            session?.agent_name ?? "Vis",
           )}
           startedAt={runningTurn.startedAt}
           client={client}
@@ -4761,7 +4765,7 @@ export function SessionScreen({
                   ) : voiceSpeaking ? (
                     <>Voice conversation · Speaking · tap the microphone to stop</>
                   ) : voiceConversation && running ? (
-                    <>Voice conversation · Vis is working</>
+                    <>Voice conversation · {session?.agent_name ?? "Vis"} is working</>
                   ) : voiceConversation ? (
                     <>Voice conversation · Ready · tap the microphone to speak</>
                   ) : voiceModel?.status === "downloading" ? (
@@ -4816,10 +4820,10 @@ export function SessionScreen({
                     voicePhase === "recording"
                       ? "Listening…"
                       : running
-                        ? "Message Vis — queues next"
-                        : "Message Vis or type / or @"
+                        ? `Message ${session?.agent_name ?? "Vis"} — queues next`
+                        : `Message ${session?.agent_name ?? "Vis"} or type / or @`
                   }
-                  aria-label="Message Vis"
+                  aria-label={`Message ${session?.agent_name ?? "Vis"}`}
                   // Both completion menus are anchored to this textarea and are mutually
                   // exclusive (`fileMention` is only computed while the slash menu is shut),
                   // so the announced popup must name whichever one is actually open.

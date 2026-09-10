@@ -1308,6 +1308,39 @@
         (reset! config-raw-cache {:stamp stamp :value value})
         value))))
 
+(defn- configured-agent-name
+  [raw]
+  (let [value (get raw "agent_name")]
+    (if (and (string? value)
+             (not (str/blank? value))
+             (<= (count value) 80)
+             (not (re-find #"[\x00-\x1f\x7f-\x9f]" value)))
+      (str/trim value)
+      "Vis")))
+
+(defn agent-name
+  "Coding-agent identity from merged YAML, defaulting to Vis. With a workspace
+   root, read that project's tiers rather than the gateway process's cwd.
+   Invalid values from lenient config loading fall back to the default."
+  ([] (configured-agent-name (load-config-raw)))
+  ([workspace-root]
+   (let [project
+         (when workspace-root
+           (some read-yaml-config-map-lenient
+                 (map #(str (io/file workspace-root %)) ["vis.yml" "vis.yaml"])))
+
+         overlay
+         (when (and workspace-root
+                    (not= (.getCanonicalPath (io/file workspace-root ".vis"))
+                          (.getCanonicalPath (io/file (config-dir)))))
+           (some read-yaml-config-map-lenient
+                 (map #(str (io/file workspace-root ".vis" %)) ["config.yml" "config.yaml"])))
+
+         raw
+         (merge (load-global-yaml-config-raw) (load-global-config-raw) project overlay)]
+
+     (configured-agent-name raw))))
+
 (defn config-problems
   "Model-readable, per-top-level-key reasons the currently merged live config
    fails the contract (`config-validation/explain-problems` over `load-config-raw`),

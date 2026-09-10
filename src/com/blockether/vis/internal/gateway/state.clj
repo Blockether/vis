@@ -13,6 +13,7 @@
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
@@ -1126,6 +1127,12 @@
       (some->> (:workspace/id (live-env sid))
                (persistance/db-workspace-get db))))
 
+(defn session-agent-name
+  "Resolve identity on the gateway from this session's workspace, never a client's cwd."
+  [sid]
+  (config/agent-name (when-let [db (lp/db-info)]
+                       (:root (resolve-workspace db sid)))))
+
 (defn session-workspace-info
   "Workspace state for a channel surface (the web footer AND the TUI
    directory picker), in THE canonical string-keyed wire shape:
@@ -1137,22 +1144,23 @@
   (try (when-let [db (lp/db-info)]
          (when-let [ws (resolve-workspace db sid)]
            (let [draft? (workspace/draft? ws)]
-             (wire/canonical (cond-> {:id (:id ws)
-                                      :draft? draft?
-                                      :root (:root ws)
-                                      :repo-root (:repo-root ws)
-                                      :label (:label ws)
-                                      :fork-ms (:fork-ms ws)
-                                      ;; Git working-tree status resolved HERE, in the gateway/daemon
-                                      ;; that owns the repo on disk — streamed to channels as a cached
-                                      ;; session fact instead of each client re-walking git locally (a
-                                      ;; remote TUI has no access to the repo's filesystem, and even
-                                      ;; colocated it stops every tab switch from recomputing). Cached
-                                      ;; per repo root, so repeated fetches never re-walk a warm root.
-                                      :git (git/workspace-status (:root ws))}
-                               draft?
-                               (merge (select-keys (drafts/status ws)
-                                                   [:backend :branch :ahead])))))))
+             (wire/canonical
+               (cond-> {:id (:id ws)
+                        :draft? draft?
+                        :root (:root ws)
+                        :agent-name (config/agent-name (:root ws))
+                        :repo-root (:repo-root ws)
+                        :label (:label ws)
+                        :fork-ms (:fork-ms ws)
+                        ;; Git working-tree status resolved HERE, in the gateway/daemon
+                        ;; that owns the repo on disk — streamed to channels as a cached
+                        ;; session fact instead of each client re-walking git locally (a
+                        ;; remote TUI has no access to the repo's filesystem, and even
+                        ;; colocated it stops every tab switch from recomputing). Cached
+                        ;; per repo root, so repeated fetches never re-walk a warm root.
+                        :git (git/workspace-status (:root ws))}
+                 draft?
+                 (merge (select-keys (drafts/status ws) [:backend :branch :ahead])))))))
        (catch Throwable _ nil)))
 
 (defn- usage-percent
@@ -4005,7 +4013,7 @@
                    {:request
                     (str
                       "Council wake — " (if (:reply_to entry)
-                                          "a peer replied to your required request. "
+                                          "a peer replied to your request. "
                                           "a peer session has asked for your knowledge. ")
                       "Read the attributed Council input; if absent, use council.get(" (:id entry)
                       "). "
@@ -4561,6 +4569,7 @@
         (cond-> {:id (str (:id session))
                  :channel (some-> (:channel session)
                                   name)
+                 :agent-name (session-agent-name sid)
                  :title (:title session)
                  :goal (:goal session)
                  :model (:model session) ; the state's ROOT model, NOT the pin below

@@ -55,6 +55,8 @@ export interface SessionGoal {
 export interface Session {
   id: string;
   title?: string;
+  /** Gateway-resolved coding-agent identity for this session. */
+  agent_name?: string;
   channel?: string;
   /** Explicit objective; null means this session has no goal. */
   goal?: SessionGoal | null;

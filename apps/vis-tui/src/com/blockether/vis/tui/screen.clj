@@ -2658,7 +2658,8 @@
         ;; iterations collapse under the existing `PROGRESS HISTORY`
         ;; toggle; clicking it expands the full trace on demand.
         progress-extra
-        {:now-ms now-ms
+        {:agent-name (get-in db [:workspace "agent_name"])
+         :now-ms now-ms
          :turn-start-ms turn-start-ms
          :cancelling? (boolean cancelling?)
          :viewport-rows inner-h
@@ -2766,25 +2767,30 @@
           (volatile! nil)
 
           _
-          (vreset!
-            paint-context
-            {:transcript
-             (fn [graphics _]
-               (binding [render/*image-placements* image-sink]
-                 (render/draw-messages-area! graphics layout messages-top messages-bottom cols))
-               (when (tab-content-loading? db)
-                 (paint-content-loading! graphics cols messages-top messages-bottom now-ms)))
-             :header (fn [graphics _]
-                       (header/draw-header! graphics db header-top cols))
-             :attachments (fn [graphics _]
-                            (paint-attachment-rail! graphics db rail-top cols))
-             :composer (fn [graphics _]
-                         (let [[cx cy] (paint-composer! graphics input input-top text-rows cols)]
-                           (vreset! cursor-position (TerminalPosition. cx cy))))
-             :echo (fn [graphics _]
-                     (footer/draw-echo-area! graphics db echo-row cols now-ms))
-             :footer (fn [graphics _]
-                       (footer/draw-footer! graphics db footer-row cols now-ms))})
+          (vreset! paint-context
+                   {:transcript
+                    (fn [graphics _]
+                      (binding [render/*image-placements* image-sink]
+                        (render/draw-messages-area! graphics
+                                                    layout
+                                                    messages-top
+                                                    messages-bottom
+                                                    cols
+                                                    (get-in db [:workspace "agent_name"])))
+                      (when (tab-content-loading? db)
+                        (paint-content-loading! graphics cols messages-top messages-bottom now-ms)))
+                    :header (fn [graphics _]
+                              (header/draw-header! graphics db header-top cols))
+                    :attachments (fn [graphics _]
+                                   (paint-attachment-rail! graphics db rail-top cols))
+                    :composer (fn [graphics _]
+                                (let [[cx cy]
+                                      (paint-composer! graphics input input-top text-rows cols)]
+                                  (vreset! cursor-position (TerminalPosition. cx cy))))
+                    :echo (fn [graphics _]
+                            (footer/draw-echo-area! graphics db echo-row cols now-ms))
+                    :footer (fn [graphics _]
+                              (footer/draw-footer! graphics db footer-row cols now-ms))})
 
           ;; Messages paint first because they start click-region staging. Every
           ;; surface is nevertheless invoked through its laid-out GUI2 component.
@@ -3354,7 +3360,8 @@
         (- rows 2)
 
         progress-extra
-        {:now-ms now-ms
+        {:agent-name (get-in db [:workspace "agent_name"])
+         :now-ms now-ms
          :turn-start-ms turn-start-ms
          :cancelling? (boolean cancelling?)
          :viewport-rows inner-h
@@ -3469,7 +3476,12 @@
         ;; Follow mode shifts every bubble, so repaint the message band and republish
         ;; all click regions at their new rows.
         (do (binding [render/*image-placements* image-sink]
-              (render/draw-messages-area! g layout messages-top messages-bottom cols))
+              (render/draw-messages-area! g
+                                          layout
+                                          messages-top
+                                          messages-bottom
+                                          cols
+                                          (get-in db [:workspace "agent_name"])))
             ;; Carry only chrome regions OUTSIDE the messages band; the
             ;; in-band ones were just re-registered fresh above.
             (doseq [r (.current interactions/hit-map)]
@@ -3687,7 +3699,8 @@
         (+ messages-top (long render/MESSAGE_MARGIN_TOP))
 
         progress-extra
-        {:now-ms now-ms
+        {:agent-name (get-in db [:workspace "agent_name"])
+         :now-ms now-ms
          :turn-start-ms (:turn-start-ms db)
          :cancelling? false
          :viewport-rows inner-h
@@ -3726,7 +3739,12 @@
       (state/dispatch [:reanchor-scroll anchored-scroll
                        (- (long anchored-scroll) (long messages-scroll))]))
     (binding [render/*image-placements* image-sink]
-      (render/draw-messages-area! g layout messages-top messages-bottom cols))
+      (render/draw-messages-area! g
+                                  layout
+                                  messages-top
+                                  messages-bottom
+                                  cols
+                                  (get-in db [:workspace "agent_name"])))
     ;; Carry over chrome click regions (rows OUTSIDE the messages band). The
     ;; transcript regions in-band were just re-registered by draw-messages-area!
     ;; at their new scrolled rows, so they are deliberately NOT carried.

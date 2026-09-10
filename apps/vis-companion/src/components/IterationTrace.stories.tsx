@@ -816,3 +816,25 @@ export const ProseAlignment: Story = {
     await expect(canvasElement.querySelector("[data-step-node]")).toBeNull();
   },
 };
+
+/** The session API supplies identity; no client-local rename is needed. */
+export const CustomAgentName: Story = {
+  render: () => (
+    <AssistantMessage
+      agentName="Ada"
+      turn={{
+        turn_id: "named-agent",
+        request: "Inspect the configuration",
+        status: "running",
+        iterations: STORY_TURN_ITERATIONS_SETTLED,
+      }}
+      settled
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Ada", { exact: true })).toBeVisible();
+    await expect(canvas.queryByText("Vis", { exact: true })).toBeNull();
+    await expect(canvas.getByRole("status")).toHaveTextContent("Ada is");
+  },
+};
