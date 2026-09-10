@@ -335,3 +335,27 @@
 
           (expect (contains? globs "vis-contract/*.json"))
           (expect (contains? globs "vis-contract/schema/*.json"))))))
+
+(defdescribe
+  native-tui-resize-registration-test
+  ;; UnixLikeTTYTerminal catches Throwable around this reflective registration.
+  ;; Missing metadata leaves native terminals at their startup dimensions.
+  (it
+    "registers Lanterna's WINCH handler and its dynamic proxy"
+    (let
+      [metadata
+       (charred/read-json
+         (slurp
+           "apps/vis-tui/resources/META-INF/native-image/com.blockether/vis-tui/reachability-metadata.json"))
+
+       entries
+       (get metadata "reflection")]
+
+      (expect (registered-constructor? entries "sun.misc.Signal" ["java.lang.String"]))
+      (expect (registered-method? entries
+                                  "sun.misc.Signal"
+                                  "handle"
+                                  ["sun.misc.Signal" "sun.misc.SignalHandler"]))
+      (expect (some #(and (= "sun.misc.Signal" (get % "type")) (true? (get % "allDeclaredMethods")))
+                    entries))
+      (expect (registered-type? entries {"proxy" ["sun.misc.SignalHandler"]})))))
