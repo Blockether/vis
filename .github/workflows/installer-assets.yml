@@ -40,7 +40,7 @@ jobs:
       - name: Refresh both bootstrap assets without moving a tag
         run: |
           set -euo pipefail
-          notes="Bootstrap scripts from complete stable release $RELEASE_TAG. Installs the native engine, Python runtime and terminal client; source development requires --jvm."
+          notes="Bootstrap scripts from complete stable release $RELEASE_TAG. Installs the native engine, Python worker and terminal client; --track beta selects native betas, --track dev selects JVM source."
           if gh release view installer >/dev/null 2>&1; then
             gh release upload installer bin/install-vis-agent bin/vis-agent --clobber
             gh release edit installer --prerelease --latest=false --title 'Installer (stable)' --notes "$notes"

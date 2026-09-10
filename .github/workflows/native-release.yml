@@ -10,8 +10,8 @@ name: Native Release
 # Speech models download on first use. Each artifact carries only its build host's
 # native libraries. No JVM uberjar is published; libraries still go to Clojars.
 #
-# Stable publication is owned by release.yml. Its draft stays unpublished until
-# all native tests, SDK checks, terminal clients and companion builds pass.
+# Stable publication is owned by release.yml; beta publication by beta-native.yml.
+# Both callers keep drafts unpublished until every required build and check passes.
 # Manual branch dispatches remain dry runs; tag recovery may only update a draft.
 on:
   workflow_call:
@@ -52,7 +52,7 @@ permissions:
   contents: write          # upload assets to the release
 
 concurrency:
-  group: native-release-${{ github.ref }}-${{ inputs.only }}-${{ inputs.builder_heap }}-${{ inputs.native_args }}
+  group: native-release-${{ inputs.tag || github.ref }}-${{ inputs.only }}-${{ inputs.builder_heap }}-${{ inputs.native_args }}
   cancel-in-progress: false
 
 jobs:
@@ -142,8 +142,12 @@ jobs:
         run: |
           ref='${{ inputs.tag || github.ref_name }}'
           case "$ref" in
-            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
-            *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: building and testing, publishing nothing" ;;
+            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo 'track=release' >> "$GITHUB_OUTPUT" ;;
+            beta-*)
+              [[ "$ref" =~ ^beta-[0-9a-f]{40}$ ]] || exit 1
+              echo 'publish=true' >> "$GITHUB_OUTPUT"; echo 'track=beta' >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo 'track=dry-run' >> "$GITHUB_OUTPUT" ;;
           esac
       # Tag recovery builds the immutable tag's source and may update only its draft.
       - uses: actions/checkout@v7
@@ -202,12 +206,8 @@ jobs:
           # setup-graalvm-25 installed the locked pin. A mismatch here means
           # the setup step is broken; fail fast rather than SDKMAN-installing a JDK
           # in the middle of a 2 h release build.
-          # Which distribution TRACK this binary belongs to, stamped INTO the
-          # image and beside it (build.clj `build-stamp`). A tag build IS the
-          # stable track; a branch dispatch publishes nothing, so it is marked
-          # `dry-run` and can never pass for a shipped beta (the beta track has
-          # its own workflow, beta-native.yml).
-          VIS_RELEASE_TRACK: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'dry-run' }}
+          # The same build path stamps release, beta and unpublished experiments.
+          VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -X:deps prep && clojure -T:build native
       # ONE definition of a release bundle, shared with `bin/release-native` so a
@@ -275,6 +275,7 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
           draft: true
+          prerelease: ${{ steps.target.outputs.track == 'beta' }}
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
   # Self-hosted ARM64 macOS participates in the same complete-release gate.
@@ -293,23 +294,19 @@ jobs:
           mkdir -p "$RUNNER_TEMP/vis-native-home"
           echo "HOME=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
-      # WHERE this build lands, decided once and read by the attach step.
-      # A v* ref (a tag push, or a dispatch naming an existing tag) PUBLISHES:
-      # the asset is attached to that tag's release, so a CI-only fix can still
-      # reach a release already cut. A dispatch from a BRANCH is a DRY RUN — it
-      # builds, stages and runs every smoke test, and publishes nothing. That
-      # split is what makes the release build verifiable without spending a tag
-      # on it; without it `tag_name` falls back to `main` and softprops CREATES
-      # a release called main (walked into exactly that while proving the
-      # runner gate).
+      # Release and beta tags attach only to drafts; branches remain dry runs.
       - name: Decide where this build lands
         id: target
         shell: bash
         run: |
           ref='${{ inputs.tag || github.ref_name }}'
           case "$ref" in
-            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
-            *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: building and testing, publishing nothing" ;;
+            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo 'track=release' >> "$GITHUB_OUTPUT" ;;
+            beta-*)
+              [[ "$ref" =~ ^beta-[0-9a-f]{40}$ ]] || exit 1
+              echo 'publish=true' >> "$GITHUB_OUTPUT"; echo 'track=beta' >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo 'track=dry-run' >> "$GITHUB_OUTPUT" ;;
           esac
       # The builder's own numbers, and the heap sized FROM them, are printed
       # before anything is downloaded so a failed run is diagnosable immediately.
@@ -372,12 +369,8 @@ jobs:
           restore-keys: deps-${{ runner.os }}-
       - name: Build native image
         env:
-          # Which distribution TRACK this binary belongs to, stamped INTO the
-          # image and beside it (build.clj `build-stamp`). A tag build IS the
-          # stable track; a branch dispatch publishes nothing, so it is marked
-          # `dry-run` and can never pass for a shipped beta (the beta track has
-          # its own workflow, beta-native.yml).
-          VIS_RELEASE_TRACK: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'dry-run' }}
+          # The same build path stamps release, beta and unpublished experiments.
+          VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -X:deps prep && clojure -T:build native
       - name: Stage wrapper bundle
@@ -432,6 +425,7 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
           draft: true
+          prerelease: ${{ steps.target.outputs.track == 'beta' }}
 
   # ── macOS runner pickup guard ──────────────────────────────────────────────
   # An offline or busy runner, or a label no machine

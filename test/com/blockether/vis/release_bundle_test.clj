@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.runtime :as protocol]
+            [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.net URL URLClassLoader]
            [java.nio.file Files]
@@ -45,7 +46,7 @@
 
 (defn- with-source-update-fixture
   "Run one source update between two fixture commits with fetch failures or damaged packs."
-  [{:keys [fetch-failures keep-gateway? pack-index corrupt-pack?]} f]
+  [{:keys [fetch-failures keep-gateway? pack-index corrupt-pack? installer?]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-source-update-test-" (make-array FileAttribute 0)))
 
@@ -139,7 +140,11 @@
                                (str/replace (.getPath ^java.io.File index) #"\.idx$" ".pack"))]
                     (io/delete-file pack)
                     (spit pack "invalid pack\n"))))))
+          (spit (io/file install-dir "track") "dev\n")
           (spit (io/file install-dir "ref") (str old-commit "\n"))
+          ;; Dev must ignore a native binary retained from an earlier installation.
+          (write-executable! (io/file launcher-dir "vis-agent-native")
+                             "#!/usr/bin/env bash\necho unexpected-native >&2\nexit 77\n")
           (io/copy (io/file "bin/vis-agent") launcher)
           (.setExecutable ^java.io.File launcher true)
           (write-executable!
@@ -168,9 +173,12 @@
                 "    exit 128\n" "  fi\n"
                 "fi\n" "exec \"$VIS_TEST_REAL_GIT\" \"$@\"\n")))
           (let [{:keys [exit output]}
-                (run-bash (cond-> ["bash" (.getAbsolutePath launcher) "update"]
-                            keep-gateway?
-                            (conj "--keep-gateway"))
+                (run-bash (if installer?
+                            ["bash" (.getAbsolutePath (io/file "bin/install-vis-agent"))
+                             "--install-dir" (.getAbsolutePath launcher-dir) "--track" "dev"]
+                            (cond-> ["bash" (.getAbsolutePath launcher) "update" "--track" "dev"]
+                              keep-gateway?
+                              (conj "--keep-gateway")))
                           {"HOME" (.getAbsolutePath home)
                            "VIS_HOME" (.getAbsolutePath vis-home)
                            "VIS_REPO_SLUG" "local/vis"
@@ -183,6 +191,7 @@
                            "VIS_TEST_FAILED_FETCH" (.getAbsolutePath failed-fetch)
                            "VIS_TEST_FETCH_FAILURES" (or fetch-failures 0)
                            "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))})]
+            (expect (= "dev\n" (slurp (io/file install-dir "track"))))
             (f {:exit exit
                 :output output
                 :old-commit old-commit
@@ -194,7 +203,7 @@
 
 (defn- with-native-install-fixture
   "Exercise installed commands with local release archives and no Git/JVM access."
-  [{:keys [installer? installed? missing-worker? missing-tui?]} f]
+  [{:keys [installer? installed? missing-worker? missing-tui? track previous-track]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -231,7 +240,6 @@
         env
         {"HOME" (.getAbsolutePath home)
          "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
-         "VIS_JVM" "0"
          "VIS_INSTALL_DIR" (.getAbsolutePath bin)
          "PATH" (str (.getAbsolutePath tools) ":" (.getAbsolutePath bin) ":" (System/getenv "PATH"))
          "VIS_TEST_URLS" (.getAbsolutePath urls)
@@ -239,13 +247,18 @@
          "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)}]
 
     (try
+      (when previous-track
+        (let [track-file (io/file (get env "VIS_HOME") "install" "track")]
+          (io/make-parents track-file)
+          (spit track-file (str previous-track "\n"))))
       (doseq [file [launcher (io/file payload "vis-agent")]]
         (io/copy (io/file "bin/vis-agent") file)
         (.setExecutable ^java.io.File file true))
       (when installed? (write-executable! native "#!/usr/bin/env bash\necho old-runtime\n"))
       (write-executable! (io/file payload "vis-agent-native")
                          "#!/usr/bin/env bash\necho new-runtime\n")
-      (spit (io/file payload "vis-agent-native.build") "9.9.9 abc123 stable now\n")
+      (spit (io/file payload "vis-agent-native.build")
+            (str "9.9.9 abc123 " (or track "release") " now\n"))
       (when-not missing-worker?
         (.mkdirs (io/file payload "vis-agent-python/python"))
         (spit (io/file payload "vis-agent-python/libvispython.so") "runtime"))
@@ -267,17 +280,35 @@
         (str
           "#!/usr/bin/env bash\nset -euo pipefail\nurl=''; dest=''\n"
           "while (( $# )); do case $1 in -o) dest=$2; shift;; https:*) url=$1;; esac; shift; done\n"
-          "printf '%s\\n' \"$url\" >> \"$VIS_TEST_URLS\"\n" "case $url in\n"
+          "printf '%s\\n' \"$url\" >> \"$VIS_TEST_URLS\"\n"
+          "case $url in\n"
+          (when (= track "beta")
+            (str
+              "  *'releases?per_page=100&page=1') echo '[{\"tag_name\":\"v9.9.9\"}]' ;;\n"
+              "  *'releases?per_page=100&page=2'|*/releases/tags/beta-*) printf '%s' '"
+              "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
+              (apply str (repeat 40 "a"))
+              "/vis-agent-linux-x64.tar.gz\"},"
+              "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
+              (apply str (repeat 40 "a"))
+              "/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"))
           "  */releases/latest|*/releases/tags/v9.9.9) printf '%s' '"
           "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz\"},"
           "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"
           "  */vis-agent-linux-x64.tar.gz) cp \"$VIS_TEST_ARCHIVE\" \"$dest\" ;;\n"
           "  */vis-tui-linux-x64.tar.gz) cp \"$VIS_TEST_TUI_ARCHIVE\" \"$dest\" ;;\n"
           "  *) echo 'unexpected release URL' >&2; exit 22 ;;\nesac\n"))
-      (let [result (run-bash (if installer?
-                               ["bash" "bin/install-vis-agent"]
-                               ["bash" (.getAbsolutePath launcher) "update" "--keep-gateway"])
-                             env)]
+      (let [args
+            (if installer?
+              ["bash" "bin/install-vis-agent"]
+              ["bash" (.getAbsolutePath launcher) "update" "--keep-gateway"])
+
+            result
+            (run-bash (cond-> args
+                        track
+                        (into ["--track" track]))
+                      env)]
+
         (f (assoc result
              :bin bin
              :native native
@@ -297,8 +328,8 @@
           (expect (str/includes? urls "/releases/latest") urls)
           (expect (.isDirectory (io/file bin "vis-agent-python/python")))
           (expect (.canExecute (io/file bin "vis-tui")))
-          (let [runtime (run-bash ["bash" (.getAbsolutePath launcher) "runtime"] env)]
-            (expect (str/includes? (:output runtime) "native") (:output runtime))))))
+          (let [runtime (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env)]
+            (expect (str/includes? (:output runtime) "new-runtime") (:output runtime))))))
   (it "acquires native releases when a standalone wrapper has no runtime yet"
       (with-native-install-fixture {}
                                    (fn [{:keys [exit output urls]}]
@@ -497,88 +528,31 @@
                              set))))
            (finally (delete-tree! root))))))
 
-;; Regression, issue #148: `vis-agent runtime` printed the SOURCE pin beside a
-;; native runtime built from an entirely different commit, so a binary from
-;; before a fix looked like the pinned one and its crash was filed all over
-;; again. Nothing recorded which commit an installed runtime came from.
-(defdescribe
-  native-build-stamp-test
-  (it
-    "dates the installed runtime from its stamp and calls out one older than the pin"
-    (let [root
-          (.toFile (Files/createTempDirectory "vis-build-stamp-test-" (make-array FileAttribute 0)))
+;; Regression #148: keep build provenance in the bundle, not a second CLI surface.
+(defdescribe native-build-stamp-test
+             (it "rejects the removed runtime command without starting an engine"
+                 (let [source
+                       (slurp "bin/vis-agent")
 
-          home
-          (doto (io/file root "home") .mkdirs)
+                       {:keys [exit output]}
+                       (run-bash ["bash" "bin/vis-agent" "runtime"] {})]
 
-          bin-dir
-          (doto (io/file root "bin") .mkdirs)
+                   (expect (not (zero? exit)) output)
+                   (expect (str/includes? output "unknown command") output)
+                   (expect (not (str/includes? source "vis_runtime()")))
+                   (expect (not (str/includes? source "vis_runtime_usage()")))))
+             (it "writes that stamp from the build — into the image and beside the binary"
+                 (let [build-clj
+                       (slurp "build.clj")
 
-          launcher
-          (io/file bin-dir "vis-agent")
+                       stage
+                       (slurp "bin/stage-release-bundle")]
 
-          runtime!
-          (fn []
-            (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
-                      {"HOME" (.getAbsolutePath home)}))]
-
-      (try (io/copy (io/file "bin/vis-agent") launcher)
-           (.setExecutable ^java.io.File launcher true)
-           (write-executable! (io/file bin-dir "vis-agent-native") "#!/usr/bin/env bash\nexit 0\n")
-           ;; No stamp means a runtime built before stamps existed — say so instead
-           ;; of letting it pass for current.
-           (let [{:keys [exit output]} (runtime!)]
-             (expect (= 0 exit) output)
-             (expect (str/includes? output "predates build stamps") output))
-           (spit (io/file bin-dir "vis-agent-native.build")
-                 "0.1.28 4c1f2a9dabc beta 2026-08-17T10:22:31.123Z\n")
-           (let [{:keys [exit output]} (runtime!)]
-             (expect (= 0 exit) output)
-             (expect (str/includes? output "Built:        0.1.28 4c1f2a9dabc beta") output)
-             (expect (not (str/includes? output "STALE")) output))
-           ;; The reported situation: source pinned at one commit, native built from
-           ;; another. The stamp is read as a file — the binary is never run, because
-           ;; the one whose provenance matters is the one that aborts on every call.
-           (let [src
-                 (doto (io/file home ".vis" "install" "src") .mkdirs)
-
-                 _
-                 (run-bash
-                   ["bash" "-c"
-                    (str "cd "
-                         (.getAbsolutePath src)
-                         " && git init -q"
-                         " && printf '{}' > deps.edn && git add -A"
-                         " && git -c user.email=ci@example.com -c user.name=ci commit -qm init")]
-                   {})
-
-                 head-sha
-                 (str/trim (:output (run-bash ["git" "-C" (.getAbsolutePath src) "rev-parse" "HEAD"]
-                                              {})))]
-
-             (spit (io/file home ".vis" "install" "ref") (str head-sha "\n"))
-             (let [{:keys [exit output]} (runtime!)]
-               (expect (= 0 exit) output)
-               (expect (str/includes? output "STALE") output)
-               (expect (str/includes? output head-sha) output))
-             (spit (io/file bin-dir "vis-agent-native.build")
-                   (str "0.1.28 " head-sha " stable 2026-08-17T10:22:31.123Z\n"))
-             (let [{:keys [exit output]} (runtime!)]
-               (expect (= 0 exit) output)
-               (expect (not (str/includes? output "STALE")) output)))
-           (finally (delete-tree! root)))))
-  (it "writes that stamp from the build — into the image and beside the binary"
-      (let [build-clj
-            (slurp "build.clj")
-
-            stage
-            (slurp "bin/stage-release-bundle")]
-
-        (expect (str/includes? build-clj "(spit (str native-bin \".build\")") build-clj)
-        (expect (str/includes? build-clj "\"-H:IncludeResources=vis/BUILD\"") build-clj)
-        ;; Provenance, never a version: `--version` still reports VIS_VERSION alone.
-        (expect (str/includes? build-clj "(spit vfile version)") build-clj)
-        (expect (str/includes? stage "vis-agent-native.build") stage))))
+                   (expect (str/includes? build-clj "(spit (str native-bin \".build\")") build-clj)
+                   (expect (str/includes? build-clj "\"-H:IncludeResources=vis/BUILD\"") build-clj)
+                   ;; Provenance, never a version: `--version` still reports VIS_VERSION alone.
+                   (expect (str/includes? build-clj "(spit vfile version)") build-clj)
+                   (expect (str/includes? stage "vis-agent-native.build") stage))))
 
 (defn- fake-tools!
   "A PATH directory whose `uname` claims `os`/`arch`, plus a container engine that
@@ -633,7 +607,7 @@
                    (expect (= 0 exit) output)
                    (expect (= asset output))
                    (expect (str/includes? stable asset) asset)
-                   (when (= os "Linux") (expect (str/includes? beta asset) asset)))
+                   (expect (str/includes? beta "uses: ./.github/workflows/native-release.yml")))
                  (finally (delete-tree! dir)))))))
   (it "has no distribution-profile selector in the build"
       (let [build (slurp "build.clj")]
@@ -857,102 +831,88 @@
                (expect (not= 0 exit) output))
              (finally (delete-tree! mac))))))
 
-;; The distribution TRACK: `stable` (release tags) or `beta` (the rolling
-;; per-commit prerelease). It is deliberately not called a channel — a channel
-;; in Vis is a user interface an extension registers (TUI, web, Telegram) — and
-;; the two must never share a word in build, wrapper or workflow.
+;; Update defaults are independent of the last installed track.
 (defdescribe
   distribution-track-test
-  (it
-    "remembers the track, and never moves it without being told to"
-    (let [root
-          (.toFile (Files/createTempDirectory "vis-track-test-" (make-array FileAttribute 0)))
+  (it "installs dev through the installer without selecting a leftover native executable"
+      (with-source-update-fixture {:installer? true}
+                                  (fn [{:keys [exit output new-commit managed-src]}]
+                                    (expect (zero? exit) output)
+                                    (expect (= new-commit (git! managed-src "rev-parse" "HEAD"))))))
+  (it "installs a complete immutable beta through either entry point without Git or JVM"
+      (doseq [installer? [false true]]
+        (with-native-install-fixture
+          {:track "beta" :previous-track "dev" :installer? installer?}
+          (fn [{:keys [exit output launcher env urls bin]}]
+            (expect (zero? exit) output)
+            (expect (str/includes? urls "releases?per_page=100&page=2") urls)
+            (expect (str/includes? urls (str "/releases/tags/beta-" (apply str (repeat 40 "a"))))
+                    urls)
+            (expect (= "beta\n" (slurp (io/file (get env "VIS_HOME") "install" "track"))))
+            (let [engine (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env)
+                  tui (run-bash ["bash" (.getAbsolutePath launcher) "tui" "--version"] env)]
 
-          home
-          (doto (io/file root "home") .mkdirs)
+              (expect (zero? (:exit engine)) (:output engine))
+              (expect (str/includes? (:output engine) "new-runtime") (:output engine))
+              (expect (str/includes? (:output tui) "native-tui") (:output tui)))
+            (expect (.isDirectory (io/file bin "vis-agent-python/python")))))))
+  (it "defaults every plain update to release, including after dev or beta"
+      (doseq [previous ["beta" "dev"]]
+        (with-native-install-fixture
+          {}
+          (fn [{:keys [launcher env]}]
+            (let [track-file (io/file (get env "VIS_HOME") "install" "track")]
+              (io/make-parents track-file)
+              (spit track-file (str previous "\n"))
+              (let [{:keys [exit output]}
+                    (run-bash ["bash" (.getAbsolutePath launcher) "update" "--keep-gateway"] env)]
+                (expect (zero? exit) output)
+                (expect (str/includes? output "/releases/latest") output)
+                (expect (= "release\n" (slurp track-file)))))))))
+  (it "rejects retired selectors and version pins outside release without changing selection"
+      (with-native-install-fixture
+        {}
+        (fn [{:keys [launcher env]}]
+          (let [track-file (io/file (get env "VIS_HOME") "install" "track")]
+            (doseq [args [["--track" "stable"] ["--track" "nightly"] ["--track" "dry-run"]
+                          ["--track="] ["--track"] ["--rebuild"] ["--jvm"]
+                          ["--track" "beta" "v1.2.3"] ["--track" "dev" "v1.2.3"]]]
+              (let [{:keys [exit output]} (run-bash (into ["bash" (.getAbsolutePath launcher)
+                                                           "update" "--keep-gateway"]
+                                                          args)
+                                                    env)]
+                (expect (not (zero? exit)) output)
+                (expect (= "release\n" (slurp track-file)) output)))))))
+  (it "does not change the installed selection after an unavailable beta"
+      (with-native-install-fixture {}
+                                   (fn [{:keys [launcher env]}]
+                                     (let [track-file
+                                           (io/file (get env "VIS_HOME") "install" "track")
 
-          bin-dir
-          (doto (io/file root "bin") .mkdirs)
+                                           {:keys [exit output]}
+                                           (run-bash ["bash" (.getAbsolutePath launcher) "update"
+                                                      "--track" "beta" "--keep-gateway"]
+                                                     env)]
 
-          path-dir
-          (doto (io/file root "path") .mkdirs)
+                                       (expect (not (zero? exit)) output)
+                                       (expect (= "release\n" (slurp track-file)) output)))))
+  (it "always launches dev on JVM and never falls back from a native track to source"
+      (let [body (re-find #"(?ms)^runtime_effective\(\) \{.*?^\}\n" (slurp "bin/vis-agent"))]
+        (doseq [[track expected] [["dev" "jvm"] ["beta" "native"] ["release" "native"]]
+                native-status [0 1]]
 
-          launcher
-          (io/file bin-dir "vis-agent")
-
-          track-file
-          (io/file home ".vis" "install" "track")
-
-          update!
-          (fn [& args]
-            (run-bash (into ["bash" (.getAbsolutePath launcher) "update"] args)
-                      {"HOME" (.getAbsolutePath home)
-                       "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))}))]
-
-      (try
-        (io/copy (io/file "bin/vis-agent") launcher)
-        (.setExecutable ^java.io.File launcher true)
-        (write-executable! (io/file bin-dir "vis-agent-native") "#!/usr/bin/env bash\nexit 0\n")
-        ;; A curl that resolves nothing stops the update at the endpoint it
-        ;; CHOSE — which is the whole question here. No network, no download.
-        (write-executable! (io/file path-dir "curl") "#!/usr/bin/env bash\nexit 22\n")
-        (let [{:keys [exit output]} (update! "--track" "beta")]
-          (expect (not= 0 exit) output)
-          (expect (str/includes? output "releases/tags/beta") output))
-        (expect (= "beta\n" (slurp track-file)))
-        ;; The next plain `update` must stay on beta: a tester silently
-        ;; dropped back to stable files bugs against a build never running.
-        (let [{:keys [exit output]} (update!)]
-          (expect (not= 0 exit) output)
-          (expect (str/includes? output "releases/tags/beta") output))
-        ;; Naming a version is a one-off, not a track switch.
-        (let [{:keys [exit output]} (update! "v9.9.9")]
-          (expect (not= 0 exit) output)
-          (expect (str/includes? output "releases/tags/v9.9.9") output))
-        (expect (= "beta\n" (slurp track-file)))
-        (let [{:keys [exit output]} (update! "--track" "stable")]
-          (expect (not= 0 exit) output)
-          (expect (str/includes? output "releases/latest") output))
-        (expect (= "stable\n" (slurp track-file)))
-        ;; The beta track has one moving tag and no versions at all.
-        (let [{:keys [exit output]} (update! "--track" "beta" "v1.2.3")]
-          (expect (not= 0 exit) output)
-          (expect (str/includes? output "has no versions") output))
-        (let [{:keys [exit output]} (update! "--track" "nightly")]
-          (expect (not= 0 exit) output)
-          (expect (str/includes? output "unknown track") output))
-        ;; `dev` is NOT unknown: it is the stamp every build of your own
-        ;; carries, and no endpoint serves it. Refuse it by name, say what it
-        ;; is, and leave the followed track exactly where it was.
-        (doseq [t ["dev" "dry-run"]]
-          (let [{:keys [exit output]} (update! "--track" t)]
-            (expect (not= 0 exit) output)
-            (expect (str/includes? output "is not a distribution track") output)
-            (expect (str/includes? output "--rebuild") output)))
-        (expect (= "stable\n" (slurp track-file)))
-        ;; `runtime` reports the followed track, and says when the installed
-        ;; binary was built for a different one.
-        (spit (io/file bin-dir "vis-agent-native.build")
-              "0.1.28 4c1f2a9dabc beta 2026-08-17T10:22:31.123Z\n")
-        (let [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
-                                              {"HOME" (.getAbsolutePath home)})]
-          (expect (= 0 exit) output)
-          (expect (str/includes? output "Track:        stable") output)
-          (expect (str/includes? output "built on the beta track") output))
-        ;; A runtime built here is the everyday state of a workstation, not a
-        ;; discrepancy with a track it never claimed: `dev` and `dry-run` are
-        ;; published by nothing, so name what they are instead.
-        (doseq [[stamp-track phrase] [["dev" "built from source here"]
-                                      ["dry-run" "never published"]]]
-          (spit (io/file bin-dir "vis-agent-native.build")
-                (str "0.1.28 4c1f2a9dabc " stamp-track " 2026-08-17T10:22:31.123Z\n"))
-          (let [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
-                                                {"HOME" (.getAbsolutePath home)})]
-            (expect (= 0 exit) output)
-            (expect (str/includes? output phrase) output)
-            (expect (not (str/includes? output (str "built on the " stamp-track " track")))
-                    output)))
-        (finally (delete-tree! root)))))
+          (let [{:keys [exit output]} (run-bash
+                                        ["bash" "-c"
+                                         (str "read_state() { printf '%s' \"$TEST_TRACK\"; }; "
+                                              "find_native() { return "
+                                              native-status
+                                              "; }; find_jvm_source() { return 0; }; "
+                                              "launcher_is_git_owned=0; vis_track_file=unused; "
+                                              body
+                                              "runtime_effective")]
+                                        {"TEST_TRACK" track})]
+            (expect (zero? exit) output)
+            (expect (= expected (str/trim output)) output)))))
   ;; The stamp is ONE space-separated line, so its track field is a closed
   ;; vocabulary or it is a parsing hazard: VIS_RELEASE_TRACK took any string at
   ;; all, and a typo — or a value with a space in it — shipped a build whose
@@ -979,7 +939,7 @@
                vec)]
 
       ;; Both ends of the axis, and both marks for a build nobody publishes.
-      (expect (= #{"stable" "beta" "dev" "dry-run"} tracks) tracks)
+      (expect (= #{"release" "beta" "dev" "dry-run"} tracks) tracks)
       ;; The stamp reads the environment THROUGH that vocabulary, and an
       ;; unlabelled build is a build of your own.
       (expect (str/includes? build-clj "(release-track)") build-clj)
@@ -1111,65 +1071,166 @@
         (expect (str/includes? stable "[ -z \"$args\" ] && [ -z \"$heap\" ] && [ \"$gib\" -lt 16 ]")
                 stable)
         ;; And two experiments on one branch do not serialize behind each other.
-        (expect (str/includes? stable "group: native-release-${{ github.ref }}-${{ inputs.only }}")
+        (expect (str/includes?
+                  stable
+                  "group: native-release-${{ inputs.tag || github.ref }}-${{ inputs.only }}")
                 stable)
         ;; `natural` means NEITHER -J flag: an explicit ceiling is exactly what
         ;; the measurement is trying to remove.
         (expect (str/includes? build "(System/getenv \"VIS_NATIVE_BUILDER_HEAP\")") build)
         (expect (re-find #"\(not natural-heap\?\)\s+\(conj \(str \"-J-Xmx\"" build) build)))
-  (it
-    "builds the beta track on free runners only, off a commit CI already passed"
-    (let [beta
-          (slurp ".github/workflows/beta-native.yml")
+  ;; Releases #39/#40 failed native builds; green source CI alone must not publish a beta.
+  (it "automatically builds immutable native betas only after successful main CI"
+      (let [beta
+            (slurp ".github/workflows/beta-native.yml")
 
-          stable
-          (slurp ".github/workflows/native-release.yml")
+            native
+            (slurp ".github/workflows/native-release.yml")]
 
-          directives
-          (->> (str/split-lines beta)
-               (remove #(str/starts-with? (str/triml %) "#"))
-               (str/join "\n")
-               str/lower-case)]
+        (doseq [contract ["workflow_run:" "workflows: [CI]" "branches: [main]" "types: [completed]"
+                          "workflow_run.conclusion == 'success'" "workflow_run.event == 'push'"
+                          "workflow_run.head_branch == 'main'"
+                          "workflow_run.head_repository.full_name == github.repository"
+                          "actions/workflows/ci.yml/runs?head_sha="
+                          "uses: ./.github/workflows/native-release.yml" "needs: [pick, native]"
+                          "require-draft-release" "--draft --prerelease --latest=false"
+                          "--draft=false --prerelease --latest=false"]]
+          (expect (str/includes? beta contract) contract))
+        (expect (str/includes? beta "tag=\"beta-$sha\""))
+        (expect (not (str/includes? beta "git push -f")))
+        (expect (not (str/includes? beta "softprops/action-gh-release")))
+        (doseq [contract ["track=release" "track=beta" "track=dry-run"
+                          "VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}"
+                          "clojure -M:test-native" "test-native-python-sdk" "draft: true"]]
+          (expect (str/includes? native contract) contract))
+        (expect (not (str/includes? native "tags: ['v[0-9]*']"))))))
 
-      ;; A beta must never take the workstation-class Apple-silicon builder the
-      ;; stable macOS asset needs: a build pins every core and ~15 GiB, and one
-      ;; every few hours takes the machine away from the person using it.
-      (expect (not (str/includes? directives "macos-")) directives)
-      (expect (not (str/includes? directives "self-hosted")) directives)
-      (expect (not (str/includes? directives "vis_macos_arm64_runner")) directives)
-      (doseq [runner ["ubuntu-latest" "ubuntu-24.04-arm"]]
-        (expect (str/includes? beta runner) runner))
-      ;; Regression, releases v0.1.39 and v0.1.40: every native platform is
-      ;; broken (hosted macOS timeout, linux-arm64 OutOfMemoryError, linux-x64
-      ;; failing its own binary test), so the 6-hourly cron only burned the
-      ;; runner pool. The beta track is dispatch-only until one is green.
-      (expect (not (str/includes? beta "cron:")) beta)
-      (expect (str/includes? beta "workflow_dispatch:") beta)
-      ;; Gated on a green CI run for that exact commit, and stamped.
-      (expect (str/includes? beta "actions/workflows/ci.yml/runs?head_sha=") beta)
-      (expect (str/includes? beta "VIS_RELEASE_TRACK: beta") beta)
-      (expect (str/includes? (slurp "build.clj") "(System/getenv \"VIS_RELEASE_TRACK\")")
-              "build.clj")
-      (expect (str/includes? beta "prerelease: true") beta)
-      ;; The rolling tag is not a v* tag: a beta must never look like a stable
-      ;; release to any workflow that keys off `v*`.
-      (expect (str/includes? beta "VIS_BETA_TAG: beta") beta)
-      ;; Regression, releases v0.1.39 and v0.1.40: stable tags published without
-      ;; native assets. The complete release workflow now calls native builds;
-      ;; a second independent tag trigger could publish outside that gate.
-      (expect (str/includes? stable "workflow_call:") stable)
-      (expect (not (str/includes? stable "tags: ['v[0-9]*']")) stable)
-      (expect (str/includes? (slurp ".github/workflows/release.yml") "tags: ['v[0-9]*']")
-              "release.yml")
-      (expect (str/includes? stable "VIS_RELEASE_TRACK:") stable)
-      ;; One word, one axis: `channel` belongs to the TUI/web/Telegram adapters.
-      (doseq [[what source] {"build.clj" (slurp "build.clj")
-                             "bin/vis-agent" (slurp "bin/vis-agent")
-                             "beta-native.yml" beta
-                             "native-release.yml" stable}]
-        (expect (not (str/includes? source "VIS_CHANNEL")) what)))))
+(defn- beta-job-script
+  "Read the production inline shell of one beta workflow job for isolated execution."
+  [job]
+  (->> (str/split-lines (slurp ".github/workflows/beta-native.yml"))
+       (drop-while #(not= % (str "  " job ":")))
+       (drop-while #(not= % "        run: |"))
+       rest
+       (take-while #(or (str/blank? %) (str/starts-with? % "          ")))
+       (map #(if (str/blank? %) "" (subs % 10)))
+       (str/join "\n")))
 
-;; Regression: `vis-agent --jvm` run from any directory other than the checkout
+(defn- run-beta-job
+  "Execute a workflow job against a fake GitHub CLI; no live requests or publication."
+  [job overrides metadata]
+  (let [dir
+        (.toFile (Files/createTempDirectory "vis-beta-gate-" (make-array FileAttribute 0)))
+
+        outputs
+        (io/file dir "outputs")
+
+        calls
+        (io/file dir "calls")
+
+        data
+        (io/file dir "release.json")
+
+        sha
+        (apply str (repeat 40 "a"))
+
+        script
+        (beta-job-script job)]
+
+    (try
+      (expect (not (str/blank? script)))
+      (spit outputs "")
+      (spit calls "")
+      (spit data (wire/json-str metadata))
+      (let
+        [result
+         (run-bash
+           ["bash" "-c"
+            (str
+              "gh() {\ncase \"$*\" in\n" " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
+              " *'/actions/workflows/ci.yml/runs?'*) printf '%s' \"$TEST_GREEN\" ;;\n"
+              " *'/releases?per_page=100'*) printf '%s' \"$TEST_DRAFT\" ;;\n"
+              " *'/git/ref/tags/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] ;;\n"
+              " 'api --method POST '*'/git/refs '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; : > \"$TEST_TAG_CREATED\" ;;\n"
+              " *'/commits/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] || return 1; printf '%s' \"$TEST_TAG_SHA\" ;;\n"
+              " 'release create '*|'release edit '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
+              " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
+           (merge {"REPO" "example/vis"
+                   "EVENT_SHA" sha
+                   "SHA" sha
+                   "TAG" (str "beta-" sha)
+                   "TEST_MAIN" sha
+                   "TEST_TAG_SHA" sha
+                   "TEST_TAG_EXISTS" "1"
+                   "TEST_TAG_CREATED" (.getAbsolutePath (io/file dir "created-tag"))
+                   "TEST_GREEN" "1"
+                   "TEST_DRAFT" ""
+                   "GITHUB_OUTPUT" (.getAbsolutePath outputs)
+                   "TEST_CALLS" (.getAbsolutePath calls)
+                   "METADATA" (.getAbsolutePath data)}
+                  overrides))]
+        (assoc result
+          :outputs (slurp outputs)
+          :calls (slurp calls)))
+      (finally (delete-tree! dir)))))
+
+(defdescribe
+  automatic-beta-gate-test
+  (it "creates drafts only for green current main, and never rebuilds a published beta"
+      (doseq [[overrides build? create?]
+              [[{} true true] [{"EVENT_SHA" ""} true true] [{"TEST_GREEN" "0"} false false]
+               [{"TEST_MAIN" (apply str (repeat 40 "b"))} false false]
+               [{"TEST_DRAFT" "false"} false false] [{"TEST_DRAFT" "true"} true false]]]
+        (let [{:keys [exit output outputs calls]} (run-beta-job "pick" overrides {})]
+          (expect (zero? exit) output)
+          (expect (str/includes? outputs (str "build=" build?)) outputs)
+          (expect (= create? (str/includes? calls "release create")) calls)
+          (expect (not (str/includes? calls "release edit")) calls))))
+  (it "creates a missing git tag before a draft is used for native checkout"
+      ;; A draft release alone does not provide a checkoutable Git ref.
+      (doseq [draft ["" "true"]]
+        (let [{:keys [exit output outputs calls]}
+              (run-beta-job "pick" {"TEST_TAG_EXISTS" "0" "TEST_DRAFT" draft} {})]
+          (expect (zero? exit) output)
+          (expect (str/includes? outputs "build=true") outputs)
+          (expect (str/includes? calls "/git/refs -f ref=refs/tags/beta-") calls))))
+  (it "refuses invalid commit identities and a tag pointing at different source"
+      (doseq [overrides [{"EVENT_SHA" "main"}
+                         {"TEST_DRAFT" "true" "TEST_TAG_SHA" (apply str (repeat 40 "b"))}]]
+        (let [{:keys [exit output calls]} (run-beta-job "pick" overrides {})]
+          (expect (not (zero? exit)) output)
+          (expect (empty? calls) calls))))
+  (it "publishes only a complete immutable six-asset draft still at main"
+      (let [sha
+            (apply str (repeat 40 "a"))
+
+            assets
+            (vec (for [name
+                       ["vis-agent" "vis-tui"]
+
+                       platform
+                       ["linux-x64" "linux-arm64" "macos-arm64"]]
+
+                   {:name (str name "-" platform ".tar.gz") :size 123 :state "uploaded"}))
+
+            metadata
+            {:tag_name (str "beta-" sha) :draft true :prerelease true :assets assets}]
+
+        (doseq [[overrides changes exit-ok? publish?]
+                [[{} {} true true] [{"TEST_MAIN" (apply str (repeat 40 "b"))} {} true false]
+                 [{} {:assets (pop assets)} false false]
+                 [{} {:assets (assoc-in assets [0 :size] 0)} false false]
+                 [{} {:assets (assoc-in assets [0 :state] "new")} false false]
+                 [{} {:assets (assoc assets 0 (last assets))} false false]
+                 [{} {:draft false} false false] [{} {:prerelease false} false false]
+                 [{} {:tag_name "v9.9.9"} false false]]]
+          (let [{:keys [exit output calls]}
+                (run-beta-job "publish" overrides (merge metadata changes))]
+            (expect (= exit-ok? (zero? exit)) output)
+            (expect (= publish? (str/includes? calls "--draft=false --prerelease --latest=false"))
+                    calls))))))
+
+;; Regression: a source run from any directory other than the checkout
 ;; died with "Could not locate com/blockether/vis/core". tools.deps caches the
 ;; project roots RELATIVELY and the JVM resolves them against `user.dir`, which
 ;; the launcher points at the invocation directory on purpose.
@@ -1227,7 +1288,7 @@
             "  if [[ \"$arg\" == -Spath ]]; then printf src:resources; exit 0; fi\n"
             "done\nprintf '<%s>' \"$@\"\n"))
         (let [{:keys [exit output]}
-              (run-bash ["bash" "bin/vis-agent" "--jvm" "python" "-c" "pass"]
+              (run-bash ["bash" "bin/vis-agent" "python" "-c" "pass"]
                         {"HOME" (.getAbsolutePath home)
                          "VIS_HOME" (.getAbsolutePath vis-home)
                          "VIS_NO_AUTO_INSTALL" "1"
@@ -1261,7 +1322,7 @@
                                      "    exit 0\n" "  fi\n"
                                      "done\n" "printf '<%s>' \"$@\"\n"))
              (let [{:keys [exit output]}
-                   (run-bash ["bash" "bin/vis-agent" "tui" "--jvm" "--help"]
+                   (run-bash ["bash" "bin/vis-agent" "tui" "--help"]
                              {"HOME" (.getAbsolutePath home)
                               "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
                               "VIS_NO_AUTO_INSTALL" "1"

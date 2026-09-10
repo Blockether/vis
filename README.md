@@ -30,8 +30,9 @@ vis-agent help
 ```
 
 ```bash
-vis-agent runtime           # show the active runtime and its location
-vis-agent update            # update the command and runtime
+vis-agent update                 # latest complete native release (default)
+vis-agent update --track beta    # native beta from green main CI
+vis-agent update --track dev     # newest main source, always JVM
 ```
 
 **Clojure library:**
@@ -44,11 +45,16 @@ vis-agent update            # update the command and runtime
 ## Quick start
 
 ```bash
-vis-agent tui --jvm                                 # interactive terminal UI
-vis-agent gateway start --host 0.0.0.0 --pair --jvm # gateway for the phone app; prints the pairing QR
+vis-agent tui                                      # interactive terminal UI
+vis-agent gateway start --host 10.0.0.5 --pair       # phone app gateway; prints a pairing QR
 ```
 
-`vis-agent tui` opens the terminal UI and starts a local gateway if needed. `--jvm` uses Vis's managed source checkout instead of an installed native binary; `VIS_JVM=1` has the same effect. A non-loopback `--host` requires a bearer token. `--pair` prints a QR code containing the address and token. See [Remote access and the Companion app](resources/vis-docs/gateway.md).
+`vis-agent tui` opens the terminal UI and starts a local gateway if needed.
+Release and beta use native binaries; dev uses the managed main checkout on the JVM.
+Every plain `vis-agent update` selects release; name beta or dev when updating those
+tracks. See [Runtime distributions](resources/vis-docs/distributions.md).
+A non-loopback `--host` requires a bearer token. `--pair` prints a QR code containing
+the address and token. See [Remote access and the Companion app](resources/vis-docs/gateway.md).
 
 ## Companion app (iPhone / Android)
 

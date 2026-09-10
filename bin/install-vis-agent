@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Install the stable native engine, Python runtime and terminal client.
-# The launcher acquires matching release assets. Source development is an explicit
-# --jvm opt-in; a missing native asset never falls back to a source checkout.
+# Install matching native release/beta bundles, or explicit JVM development.
+# An unavailable native asset never falls back to a source checkout.
 # Bootstrap scripts use GitHub release assets, not raw.githubusercontent.com.
 
 set -euo pipefail
@@ -10,10 +9,10 @@ repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
 install_dir="${VIS_INSTALL_DIR:-$HOME/.local/bin}"
 vis_home="${VIS_HOME:-$HOME/.vis}"
 
-jvm=0
+track=release
 usage() {
   cat <<EOF
-Usage: install-vis-agent [--install-dir PATH] [--jvm]
+Usage: install-vis-agent [--install-dir PATH] [--track release|beta|dev]
 
 Installs the latest complete stable release:
   $install_dir/vis-agent          command and native engine
@@ -21,8 +20,9 @@ Installs the latest complete stable release:
   $install_dir/vis-tui            native terminal client
 
 No JDK or Clojure installation is required.
-  --jvm    opt into source development on main instead (git and JDK 25+);
-           run it with vis-agent --jvm, update with vis-agent --jvm update.
+  --track release  latest complete stable native release (default)
+  --track beta     latest complete native beta from green main CI
+  --track dev      main source, always JVM (Git and JDK 25+)
 Environment overrides:
   VIS_INSTALL_DIR    command directory (default: ~/.local/bin)
   VIS_HOME           state directory (default: ~/.vis)
@@ -37,10 +37,12 @@ while [[ $# -gt 0 ]]; do
       install_dir="$2"
       shift 2
       ;;
-    --jvm)
-      jvm=1
-      shift
+    --track)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --track requires a name" >&2; exit 2; }
+      track="$2"
+      shift 2
       ;;
+    --track=*) track="${1#*=}"; shift ;;
     -h|--help)
       usage
       exit 0
@@ -53,16 +55,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$track" in
+  release|beta|dev) ;;
+  *) echo "vis-agent install: unknown track '$track' (release, beta or dev)" >&2; exit 2 ;;
+esac
+
 # Only source development needs Git. Native bundles need curl and tar.
 required=(curl tar)
-if (( jvm )); then required=(curl git); fi
+if [[ "$track" == dev ]]; then required=(curl git); fi
 missing=()
 for cmd in "${required[@]}"; do
   command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 done
 if (( ${#missing[@]} > 0 )); then
   echo "vis-agent install: missing required command(s): ${missing[*]}" >&2
-  echo "  Native installation needs curl and tar; --jvm also needs git and JDK 25+." >&2
+  echo "  Native installation needs curl and tar; dev needs git and JDK 25+." >&2
   exit 1
 fi
 
@@ -130,10 +137,8 @@ if (( ! path_configured )); then
   echo "vis-agent install: added $install_dir to PATH in $profile"
 fi
 
-# ── 2. vis-agent acquires its own runtime ───────────────────────────────────
-runtime_args=(update --track stable)
-if (( jvm )); then runtime_args=(--jvm update); fi
-if ! ( VIS_JVM=0 VIS_HOME="$vis_home" "$install_dir/vis-agent" "${runtime_args[@]}" ); then
+# The launcher owns acquisition and records the selected track after success.
+if ! ( VIS_HOME="$vis_home" "$install_dir/vis-agent" update --track "$track" ); then
   if (( ! path_configured )); then
     cat >&2 <<EOF
 
@@ -143,15 +148,13 @@ EOF
   exit 1
 fi
 
-if (( jvm )); then
-  echo "Vis Agent source development installed at $vis_home/install/src."
-  echo "Run: vis-agent --jvm help (requires JDK 25+)."
-  echo "Update source: vis-agent --jvm update"
-else
-  echo "Vis Agent stable native release installed in $install_dir."
-  echo "Run: vis-agent help; vis-agent tui; vis-agent runtime"
-  echo "Update to the next complete stable release: vis-agent update"
+echo "Vis Agent $track installed in $install_dir."
+echo "Run: vis-agent help; vis-agent tui"
+if [[ "$track" == dev ]]; then
+  echo "Source: $vis_home/install/src (requires JDK 25+)."
 fi
+echo "Update this track: vis-agent update --track $track"
+echo "Return to the latest complete stable release: vis-agent update"
 
 if (( ! path_configured )); then
   cat <<EOF

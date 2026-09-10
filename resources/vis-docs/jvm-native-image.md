@@ -12,8 +12,7 @@ see [Runtime distributions](distributions.md).
   `eval "$(bin/require-graalvm --export)"` to set `JAVA_HOME`. The build rejects
   Oracle GraalVM and mismatched versions before starting `native-image`.
 - A source checkout. Run `clojure -T:build native` there to build local changes.
-  `vis-agent update --rebuild` instead updates and builds Vis's managed source
-  checkout.
+  `vis-agent update --track dev` updates managed JVM source; it does not build native images.
 
 ## Native-image configuration
 

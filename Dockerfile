@@ -392,7 +392,7 @@ RUN set -eux; \
     python3 --version; node --version; \
     ffmpeg -version | head -1; git --version; ssh -V; \
     vis-agent --version; \
-    vis-agent runtime | grep -Eq '^Runtime: +native'; \
+    test "$(od -An -tx1 -N4 /opt/vis/agent/vis-agent-native | tr -d ' \n')" = '7f454c46'; \
     test -x /opt/vis/agent/vis-agent-native; \
     test -d /opt/vis/agent/vis-agent-python; \
     vis-agent python -c "import ast, json, os; print('py-ok')" | grep -qx 'py-ok'; \

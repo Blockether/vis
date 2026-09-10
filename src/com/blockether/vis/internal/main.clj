@@ -3996,10 +3996,9 @@
      (help-row "--help, -h" "Show help.") "" "GATEWAY (WHICH DAEMON RUNS THE WORK)"
      (help-row "--gateway HOST[:PORT]|URL" "Drive another machine's gateway (VIS_GATEWAY_URL).")
      (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
-     "RUNTIME (WHAT RUNS)"
-     (help-row "vis-agent runtime" "Name the runtime installed, and where it lives.")
-     (help-row "vis-agent update" "Update vis-agent and that runtime together.") "" "CONFIGURATION"
-     (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
+     "UPDATES" (help-row "vis-agent update" "Install the latest complete native release (default).")
+     (help-row "--track release|beta|dev" "Release, green-CI native beta, or main on JVM.") ""
+     "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
      (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"

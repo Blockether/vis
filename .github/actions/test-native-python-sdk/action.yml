@@ -22,7 +22,7 @@ runs:
         binary = root / 'target/release-bundle/vis-agent'
         assert binary.is_file(), 'Stage the release before testing its SDK'
         env = {**os.environ, 'VIS_TEST_INSTALLED': '1',
-               'VIS_TEST_LOCAL_COMMAND': shlex.join([str(binary)]), 'VIS_JVM': '0'}
+               'VIS_TEST_LOCAL_COMMAND': shlex.join([str(binary)])}
         env.pop('VIS_PYTHON_NATIVE_PATH', None)  # exercise the bundled worker, not an override
         subprocess.run([sys.executable, '-m', 'pytest', str(root / 'packages/vis-agent/tests/test_engine.py'),
                         str(root / 'packages/vis-agent/tests/test_local.py'), '-q'],

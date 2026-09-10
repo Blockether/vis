@@ -54,15 +54,12 @@
         (expect (nil? (re-find #"(?m)^ {3,}\S" help)))
         (expect (= 1 (count (gutter-columns (subs help 0 commands-at)))))
         (expect (= 1 (count (gutter-columns (subs help commands-at)))))))
-  (it "documents the runtime, and offers nothing to select"
+  (it "documents one update selector and no retired runtime commands"
       (let [^String help (commandline/render-tree (#'main/root-command))]
-        (expect (.contains help "RUNTIME (WHAT RUNS)"))
-        (doseq [row ["vis-agent runtime" "vis-agent update"]]
+        (expect (.contains help "UPDATES"))
+        (doseq [row ["vis-agent update" "--track release|beta|dev" "default"]]
           (expect (.contains help row)))
-        ;; There is no runtime SELECTOR any more: vis-agent installs under
-        ;; ~/.vis, what is installed is what runs, and help must not advertise
-        ;; a switch that no longer exists.
-        (doseq [gone ["--native" "--jvm" "--dev" "VIS_RUNTIME" "runtime use" "dev|auto"]]
+        (doseq [gone ["--native" "--jvm" "--dev" "VIS_RUNTIME" "vis-agent runtime" "--rebuild"]]
           (expect (not (str/includes? help gone)) gone))))
   (it "points at the configuration a run reads"
       (let [^String help (commandline/render-tree (#'main/root-command))]
@@ -484,11 +481,11 @@
                        (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
                    (doseq [nm ["runtime" "update"]]
                      (expect (nil? (get by-name nm))))))
-             (it "still documents them where the launcher owns them: the RUNTIME help section"
+             (it "documents the launcher-owned update track in help"
                  (let [^String help (commandline/render-tree (#'main/root-command))]
-                   (expect (str/includes? help "RUNTIME (WHAT RUNS)"))
-                   (doseq [row ["vis-agent runtime" "vis-agent update"]]
-                     (expect (str/includes? help row))))))
+                   (expect (str/includes? help "UPDATES"))
+                   (expect (str/includes? help "vis-agent update"))
+                   (expect (not (str/includes? help "vis-agent runtime"))))))
 
 ;;; ── `vis-agent projects` ──────────────────────────────────────────────────────
 ;;

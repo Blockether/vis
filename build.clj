@@ -41,23 +41,13 @@
        (catch Exception _ nil)))
 
 (def release-tracks
-  "The closed DISTRIBUTION vocabulary — every value `VIS_RELEASE_TRACK` may take,
-   and the axis `vis-agent update --track` moves along:
+  "Native build provenance accepted by VIS_RELEASE_TRACK.
 
-     stable   built from a release tag; the assets on `releases/latest`
-     beta     the rolling per-commit prerelease (beta-native.yml), Linux only
-     dev      a build of your own — `clojure -T:build native`, or
-              `vis-agent update --rebuild`. The DEFAULT, because a build no CI
-              labelled happened on somebody's workstation
-     dry-run  a CI build that publishes nothing (a branch dispatch of
-              native-release.yml), so it can never pass for a shipped beta
-
-   Only `stable` and `beta` are FOLLOWED: nothing publishes the other two, and a
-   runtime stamped with one is replaced by rebuilding it, not by updating.
-   Deliberately NOT called a channel — in Vis a channel is a user interface an
-   extension registers (TUI, web, Telegram), and one word for two unrelated axes
-   is how a build lands on the wrong one."
-  #{"stable" "beta" "dev" "dry-run"})
+   release: a stable version tag; beta: an immutable beta tag from green main CI.
+   dev: an unlabelled local build; dry-run: an unpublished workflow experiment.
+   These build stamps do not select how an installed command runs: the dev update
+   track always runs source on the JVM, even when a local native build exists."
+  #{"release" "beta" "dev" "dry-run"})
 
 (defn- release-track
   "VIS_RELEASE_TRACK, refused unless it names a `release-tracks` entry. The stamp
@@ -364,10 +354,8 @@
 (def ^:private native-bin "target/vis")
 
 (defn- write-build-stamp!
-  "Records this build's identity beside the binary as `target/vis.build` — the
-   file `bin/stage-release-bundle` ships and `vis-agent runtime` reads. Beside
-   and not only inside, because the runtime whose provenance matters most is the
-   one that aborts before it can be asked anything."
+  "Records the build identity beside the binary as target/vis.build.
+   bin/stage-release-bundle ships it for inspection without starting the image."
   []
   (spit (str native-bin ".build") (str @build-stamp "\n"))
   (println "-> stamped" (str native-bin ".build") (str "(" @build-stamp ")")))

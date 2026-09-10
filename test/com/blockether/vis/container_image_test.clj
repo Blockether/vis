@@ -90,7 +90,8 @@
                 text)))
   (it "proves the runtime while building, not in production"
       (let [stage (runtime-stage)]
-        (expect (str/includes? stage "vis-agent runtime | grep -Eq '^Runtime: +native'") stage)
+        (expect (str/includes? stage "od -An -tx1 -N4 /opt/vis/agent/vis-agent-native") stage)
+        (expect (str/includes? stage "7f454c46") stage)
         (expect (str/includes? stage "test -x /opt/vis/agent/vis-agent-native") stage)
         ;; The embedded CPython ships BESIDE the binary; without it every Python
         ;; tool dies with a library-not-found.
@@ -164,21 +165,15 @@
         (try (.mkdirs bundle)
              (io/copy (io/file "bin" "vis-agent") wrapper)
              (.setExecutable wrapper true false)
-             (spit native "#!/bin/sh\nexit 0\n")
+             (spit native "#!/bin/sh\nprintf 'NATIVE=%s\\n' \"$0\"\n")
              (.setExecutable native true false)
              (Files/createSymbolicLink (.toPath link)
                                        ^Path (.toPath wrapper)
                                        (make-array FileAttribute 0))
              (let [{:keys [exit output]}
-                   (run-wrapper link {"HOME" (.getAbsolutePath tmp)} ["runtime"])]
+                   (run-wrapper link {"HOME" (.getAbsolutePath tmp)} ["--version"])]
                (expect (zero? exit) output)
-               (expect (re-find #"(?m)^Runtime: +native$" output) output)
-               (expect (re-find (re-pattern (str "(?m)^Native: +"
-                                                 (java.util.regex.Pattern/quote (.getCanonicalPath
-                                                                                  native))
-                                                 "$"))
-                                output)
-                       output))
+               (expect (str/includes? output (str "NATIVE=" (.getCanonicalPath native))) output))
              (finally (doseq [file (reverse (file-seq tmp))]
                         (io/delete-file file true)))))))
 
@@ -209,20 +204,23 @@
              (.setExecutable wrapper true false)
              (spit native "#!/bin/sh\nexit 0\n")
              (.setExecutable native true false)
-             (let [{:keys [exit output]} (run-wrapper wrapper
-                                                      {"HOME" (.getAbsolutePath tmp)
-                                                       "VIS_HOME" (.getAbsolutePath
-                                                                    (io/file tmp "state"))}
-                                                      ["runtime"])]
+             (let [clojure (io/file checkout "bin" "clojure")]
+               (spit clojure
+                     (str "#!/bin/sh\n"
+                          "if [ \"$1\" = -Spath ]; then echo src; exit 0; fi\n"
+                          "printf 'SOURCE=%s\\n' \"$PWD\"\n"))
+               (.setExecutable clojure true false))
+             (let [{:keys [exit output]} (run-wrapper
+                                           wrapper
+                                           {"HOME" (.getAbsolutePath tmp)
+                                            "VIS_HOME" (.getAbsolutePath (io/file tmp "state"))
+                                            "VIS_NO_AUTO_INSTALL" "1"
+                                            "PATH" (str (.getAbsolutePath (io/file checkout "bin"))
+                                                        ":"
+                                                        (System/getenv "PATH"))}
+                                           ["--version"])]
                (expect (zero? exit) output)
-               (expect (re-find #"(?m)^Runtime: +jvm$" output) output)
-               (expect (re-find #"(?m)^Native: +not installed$" output) output)
-               (expect (re-find (re-pattern (str "(?m)^Source: +"
-                                                 (java.util.regex.Pattern/quote (.getCanonicalPath
-                                                                                  checkout))
-                                                 "$"))
-                                output)
-                       output))
+               (expect (str/includes? output (str "SOURCE=" (.getCanonicalPath checkout))) output))
              (finally (doseq [file (reverse (file-seq tmp))]
                         (io/delete-file file true)))))))
 
@@ -320,7 +318,6 @@
                  (run-wrapper wrapper
                               {"HOME" (.getAbsolutePath tmp)
                                "VIS_HOME" (.getAbsolutePath (io/file tmp "state"))
-                               "VIS_JVM" "1"
                                "VIS_NO_AUTO_INSTALL" "1"
                                "PATH" (str (.getAbsolutePath fake-path) ":" (System/getenv "PATH"))
                                "JAVA_TOOL_OPTIONS" ""
@@ -620,7 +617,7 @@ printf '%s' '" refreshed-pem "'
                                                      "VIS_SYSTEM_CA_CERT" ""
                                                      "VIS_SYSTEM_TRUSTSTORE" ""
                                                      "SSL_CERT_FILE" (.getAbsolutePath host-bundle)}
-                                                    ["--jvm" "update" "--keep-gateway"])]
+                                                    ["update" "--track" "dev" "--keep-gateway"])]
              (expect (zero? exit) output)
              (expect (= replacement (slurp installed)))
              (expect (str/includes? (slurp managed-bundle) refreshed-pem)

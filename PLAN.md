@@ -1451,3 +1451,50 @@ Footer follow-up: 524 affected TUI tests, 176 API/introspection/contract and goa
 registration dependency; goal boundary tests now own their foundation registration.
 Formatting, lint/reflection and Companion build pass. Goal budget behavior is unchanged.
 No release, deployment or gateway restart was performed. Commit and push are user-authorized.
+
+---
+
+# Unified agent update tracks
+
+One update command selects release, beta or JVM development.
+
+## Context
+
+`bin/vis-agent` and `bin/install-vis-agent` currently combine remembered stable/beta
+tracks with a JVM override, a rebuild option and a separate runtime command.
+`.github/workflows/beta-native.yml` is manual and replaces a published moving tag.
+The requested interface is `update --track release|beta|dev`, defaulting to release.
+Old selectors will be removed, not retained as aliases. Published beta tags must
+remain immutable; incomplete native builds must not replace the available beta.
+
+## 1. Consolidate installation and update selection
+- Rationale: one public selector defines the installed execution mode.
+- Data: launcher, installer, help, container checks and release-bundle fixtures.
+- Acceptance criteria: plain update selects release even after beta/dev; dev fetches
+  main and always launches JVM; release/beta use native engine, worker and TUI;
+  failed updates retain the previous selection; runtime and old selectors are absent.
+- Unknowns: none after inspecting the existing source and native update paths.
+
+## 2. Publish native betas after successful CI
+- Rationale: beta must represent a tested main commit, not an incomplete build.
+- Data: CI completion event, reusable native builds and draft-release validation.
+- Acceptance criteria: only successful same-repository main CI can trigger a beta;
+  superseded work is cancelled; all three supported native targets and SDK checks
+  pass before six nonempty engine/TUI assets are published as an immutable prerelease.
+- Unknowns: the first automatic build and publication require live CI verification.
+
+## 3. Document and verify the public contract
+- Rationale: help, installation instructions and implementation must agree.
+- Data: distributions and index docs, affected Lazytest suites and workflow lint.
+- Acceptance criteria: affected tests, formatting, lint/reflection, workflow checks
+  and current-main CI pass; observe the automatic beta build through publication.
+- Unknowns: runner availability and external build failures, if any.
+
+## Plan state
+
+Implementation and documentation are complete. All 157 affected tests pass, including
+installer entry points, default-release selection, JVM-only dev, native beta bundles
+and executable beta workflow gates. Clojure formatting and lint/reflection, Bash
+syntax, ShellCheck, actionlint, 45 local documentation links and diff checks pass.
+Current-main CI and automatic native beta publication remain to be observed after push.
+No local or production gateway restart is part of this change.
