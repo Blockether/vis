@@ -181,8 +181,14 @@ export const SearchableLog: Story = {
   },
   play: async ({ canvas }) => {
     const search = canvas.getByRole('searchbox', { name: 'Search Build log' });
-    const minimum = matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44;
-    await expect(search.getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const box = search.getBoundingClientRect();
+    await expect(box.height).toBe(canvas.getByRole('button', { name: 'Search' }).getBoundingClientRect().height);
+    // The shared compact face keeps its larger touch target outside the native field.
+    const reach = box.height + (pointer ? 0
+      : parseFloat(getComputedStyle(search.parentElement!, '::before').height)
+        + parseFloat(getComputedStyle(search.parentElement!, '::after').height));
+    await expect(reach).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     await userEvent.type(search, 'error');
     await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
     await expect(await canvas.findByText(/2 matches.*503 recorded lines/)).toBeVisible();

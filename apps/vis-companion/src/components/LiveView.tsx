@@ -386,11 +386,11 @@ function LogRows({
   return (
     <div className="min-w-0">
       <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); void find(draft); }}>
-        <Input ref={searchInput} type="search" density="comfortable" className="min-w-0 flex-1"
+        <Input ref={searchInput} type="search" className="min-w-0 flex-1"
           aria-label={`Search ${node.label || 'Output'}`} placeholder="Search log…" value={draft}
           onChange={event => setDraft(event.target.value)}
           onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); clearSearch(); } }} />
-        <Button type="submit" variant="secondary" density="comfortable">Search</Button>
+        <Button type="submit" variant="secondary" density="panel">Search</Button>
       </form>
       {search && <div className="mt-2 space-y-2">
         <p role="status" className="break-words font-mono text-ui text-dialog-hint">

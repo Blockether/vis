@@ -93,7 +93,7 @@ export const Button = forwardRef<
      * the incoherence this app was reported for. Touch is untouched — a finger
      * still gets the full box.
      *
-     * `panel` is a settings action: a content-width 32px face with an 11px label.
+     * `panel` is a settings action: a content-width 32px touch / 28px pointer face.
      * Its invisible extension preserves a 44px touch target without filling the
      * panel. Owners provide padding and at least 8px between adjacent targets.
      *
@@ -222,7 +222,7 @@ export const Button = forwardRef<
     compact:
       'relative min-h-7 h-8 px-2.5 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] sm:min-h-8 sm:px-3 sm:text-ui mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none',
     panel:
-      'relative min-h-8 px-3 font-mono text-ui after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] mouse:after:content-none',
+      'relative min-h-8 px-3 font-mono text-ui after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] mouse:min-h-7 mouse:after:content-none',
   }[density];
   const joined = isJoined ? 'border-x-0' : '';
   // THE DISC IS THE BOX THAT NEVER LEARNED A WORD. It keeps the header's own 32px
@@ -1771,26 +1771,48 @@ export function BandButton({
   );
 }
 
+/**
+ * A single-line form field: one 32px touch / 28px pointer face in every location.
+ * The wrapper extends touch reach to 44px without intercepting native caret placement.
+ * Optional icon/action slots share this geometry; className only positions the field.
+ * Chat composers and inline title editing keep their separate controls.
+ */
 export const Input = forwardRef<
   HTMLInputElement,
-  InputHTMLAttributes<HTMLInputElement> & {
-    /** Default: 32px touch / 28px pointer; panel: 32px; comfortable: 44px / 28px. */
-    density?: 'default' | 'panel' | 'comfortable';
-  }
->(function Input({ className = '', density = 'default', ...props }, ref) {
+  InputHTMLAttributes<HTMLInputElement> & { icon?: ReactNode; action?: ReactNode }
+>(function Input({ className = '', icon, action, ...props }, ref) {
   // Keep password mask dots distinct without changing plain-text spacing.
   const masked = props.type === 'password' ? 'tracking-[0.15em]' : '';
-  const size = {
-    default: 'min-h-8 sm:px-3 mouse:min-h-7',
-    panel: 'min-h-8 sm:px-3',
-    comfortable: 'min-h-11 mouse:min-h-7',
-  }[density];
   return (
-    <input
-      ref={ref}
-      className={`w-full rounded-control border border-edge bg-input px-2.5 py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none ${size} ${masked} ${className}`}
-      {...props}
-    />
+    <span
+      className={`relative block w-full min-w-0 self-center before:absolute before:inset-x-0 before:-top-1.5 before:h-1.5 before:content-[''] after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-[''] mouse:before:content-none mouse:after:content-none ${className}`}
+      onPointerDown={(event) => {
+        // Only the outer hit strips focus here; native text and action presses pass through.
+        if (event.target === event.currentTarget) {
+          event.preventDefault();
+          event.currentTarget.querySelector('input')?.focus();
+        }
+      }}
+    >
+      <input
+        ref={ref}
+        className={`block h-8 w-full rounded-control border border-edge bg-input py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none mouse:h-7 ${icon ? 'pl-8 sm:pl-9' : 'pl-2.5 sm:pl-3'} ${action ? 'pr-10 mouse:pr-8 [&::-webkit-search-cancel-button]:hidden' : 'pr-2.5 sm:pr-3'} ${masked}`}
+        {...props}
+      />
+      {icon && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-dialog-hint sm:left-3"
+        >
+          {icon}
+        </span>
+      )}
+      {action && (
+        <span className="absolute inset-y-0 right-0 flex items-center text-white">
+          {action}
+        </span>
+      )}
+    </span>
   );
 });
 

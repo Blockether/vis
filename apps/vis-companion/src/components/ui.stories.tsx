@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent } from "storybook/test";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { STORY_MACHINES, STORY_SESSION } from "../dev/story-data";
 import { HUMAN_INPUT_CHOICE_MARKS } from "../lib/human-input";
 import { Markdown } from "./ChatContent";
@@ -12,6 +12,7 @@ import {
   PlusIcon,
   RefreshIcon,
   SendIcon,
+  SearchIcon,
   SettingsIcon,
   StopIcon,
 } from "./icons";
@@ -284,6 +285,32 @@ function SwitchDemo() {
   );
 }
 
+function SearchFieldDemo() {
+  const [value, setValue] = useState("timeout");
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <Input
+      ref={input}
+      type="search"
+      aria-label="Search output"
+      placeholder="Search output"
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+      className="flex-1"
+      icon={<SearchIcon className="size-3" />}
+      action={value ? (
+        <CloseButton
+          label="Clear search"
+          onClick={() => {
+            setValue("");
+            input.current?.focus();
+          }}
+        />
+      ) : null}
+    />
+  );
+}
+
 export const Fields: Story = {
   render: () => (
     <Sheet>
@@ -298,9 +325,8 @@ export const Fields: Story = {
         </IconButton>
         <Button variant="secondary">Create</Button>
       </Group>
-      <Group of="Panel input">
+      <Group of="Voice settings input">
         <Input
-          density="panel"
           aria-label="Voice name"
           placeholder="Voice name"
           className="min-w-0 flex-1"
@@ -309,16 +335,31 @@ export const Fields: Story = {
           Save voice
         </Button>
       </Group>
-      <Group of="Comfortable input">
-        <Input
-          density="comfortable"
-          aria-label="Search output"
-          placeholder="Search output"
-          className="min-w-0 flex-1"
-        />
-        <Button variant="secondary" density="comfortable">
+      <Group of="Search input">
+        <SearchFieldDemo />
+        <Button variant="secondary" density="panel">
           Find
         </Button>
+      </Group>
+      <Group of="Password, read-only and disabled inputs">
+        <Input
+          type="password"
+          aria-label="API key"
+          defaultValue="example-key"
+          className="flex-1"
+        />
+        <Input
+          aria-label="Machine address"
+          defaultValue="127.0.0.1"
+          readOnly
+          className="flex-1"
+        />
+        <Input
+          aria-label="Unavailable voice"
+          placeholder="Voice unavailable"
+          disabled
+          className="flex-1"
+        />
       </Group>
       <Group of="Switch">
         <SwitchDemo />
@@ -333,9 +374,16 @@ export const Fields: Story = {
       ["Project name", ["Add project", "Create"]],
       ["Voice name", ["Save voice"]],
       ["Search output", ["Find"]],
+      ["API key", []],
+      ["Machine address", []],
+      ["Unavailable voice", []],
     ] as const) {
-      const fieldInput = canvas.getByRole("textbox", { name: fieldName });
+      const fieldInput = canvas.getByLabelText(fieldName);
       const field = fieldInput.getBoundingClientRect();
+      // Regression: form inputs must match across locations, not only their own action.
+      await expect(field.height).toBeCloseTo(
+        input.getBoundingClientRect().height, 0,
+      );
       for (const name of actionNames) {
         const button = canvas.getByRole("button", { name });
         const action = button.getBoundingClientRect();
@@ -350,6 +398,28 @@ export const Fields: Story = {
     }
     await userEvent.type(input, "Companion");
     await expect(input).toHaveValue("Companion");
+    const search = canvas.getByRole("searchbox", { name: "Search output" });
+    await userEvent.click(canvas.getByRole("button", { name: "Clear search" }));
+    await expect(search).toHaveValue("");
+    await expect(search).toHaveFocus();
+    await userEvent.type(search, "gateway");
+    await expect(search).toHaveValue("gateway");
+    await userEvent.type(canvas.getByLabelText("Machine address"), "changed");
+    await expect(canvas.getByLabelText("Machine address")).toHaveValue("127.0.0.1");
+    await expect(canvas.getByLabelText("Unavailable voice")).toBeDisabled();
+    if (!matchMedia("(min-width: 640px) and (pointer: fine)").matches) {
+      const box = input.getBoundingClientRect();
+      const strip = input.ownerDocument.elementFromPoint(
+        box.left + box.width / 2, box.bottom + 5,
+      );
+      await expect(strip).toBe(input.parentElement);
+      await userEvent.click(strip!);
+      await expect(input).toHaveFocus();
+      const upperStrip = input.ownerDocument.elementFromPoint(
+        box.left + box.width / 2, box.top - 5,
+      );
+      await expect(upperStrip).toBe(input.parentElement);
+    }
     const notifications = canvas.getByRole("switch", {
       name: /^Notify on this machine/,
     });

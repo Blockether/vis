@@ -24,8 +24,15 @@ type Story = StoryObj<typeof meta>;
 export const Default: Story = {
   play: async ({ canvasElement }) => {
     const field = within(canvasElement).getByRole("textbox", { name: "Agent name" });
-    const minimum = matchMedia("(min-width: 640px) and (pointer: fine)").matches ? 28 : 44;
-    await expect(field.getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+    const pointer = matchMedia("(min-width: 640px) and (pointer: fine)").matches;
+    const box = field.getBoundingClientRect();
+    const save = within(canvasElement).getByRole("button", { name: "Save" });
+    await expect(box.height).toBe(save.getBoundingClientRect().height);
+    // Visible fields match across forms without reducing their effective touch reach.
+    const reach = box.height + (pointer ? 0
+      : parseFloat(getComputedStyle(field.parentElement!, "::before").height)
+        + parseFloat(getComputedStyle(field.parentElement!, "::after").height));
+    await expect(reach).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     await expect(field).toHaveValue("Ada");
   },
 };

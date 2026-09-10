@@ -1707,55 +1707,26 @@ describe("running prose has one justified rule", () => {
   });
 });
 
-// Regression, user report ("it should be this search more subtle and looking more
-// connected to our designs"): the search box was rounder, taller and whiter than the
-// controls it sat beside — a white slab on paper that carries no other box at rest.
+// Regression: header search and form fields used independent height and type rules.
 describe("HeaderSearchField", () => {
   const field = appSource.slice(
     appSource.indexOf("function HeaderSearchField"),
     appSource.indexOf("export function Header"),
   );
-  const box = (/className={`([^`]*)`}/.exec(field)?.[1] ?? "").split(/\s+/);
 
-  it("wears Button's own face and only lights up when focused", () => {
-    expect(appSource).toContain("function HeaderSearchField");
-    expect(field).not.toContain("rounded-none");
-    expect(field).toContain("focus-within:bg-input");
-    expect(field).toContain("focus-within:border-accent");
+  it("uses the same Input component as settings and forms", () => {
+    expect(field).toContain("<Input");
+    expect(field).not.toContain("<input");
+    expect(field).not.toContain("rounded-control");
+    expect(field).not.toContain("mouse:h-");
   });
 
-  // Regression, user report ("search HEIGHT still too big taking into account the
-  // other buttons"): the field stood 44px on the bar while `Preferences` next to it
-  // stands 32px (24px for a mouse), so the one framed box up there was 12px taller
-  // than every control it shares the row with. A `Button` already answers this: it
-  // paints a 32px face and reaches the finger's 44px through invisible slop. The
-  // field does the same, split into TWO strips so the face itself stays the input's
-  // own — a press in the middle of the text still places a caret where it landed.
-  it("wears the bar’s own face and reaches the touch step around it", () => {
-    expect(box).not.toContain("h-11");
-    // A mouse needs no slop, and the strips would only eat the rows around it.
-    expect(box).toContain("mouse:before:content-none");
-    expect(box).toContain("mouse:after:content-none");
-  });
-
-  // Same report: Clear was a 12px glyph centred in its own 28px box sitting INSIDE
-  // the field's inset, so the ✕ ink stopped about 20px short of the border while the
-  // placeholder started 10px in — the asymmetry an eye reads as "far from right".
-  it("lets Clear absorb the field’s own trailing inset", () => {
-    // The field gives back the inset the ✕ would otherwise sit inside, so the square
-    // runs to the border and centres its mark there, and both inks agree.
-    expect(field).toMatch(/<CloseButton[\s\S]*?className="-me-3 sm:-me-4"/);
-  });
-
-  // Regression, user report (paraphrased: the second band looked worse — put search
-  // back on the header): a search box is recognised by the magnifying glass INSIDE the
-  // open field, and this one carried no mark at all, so a bare framed box on the bar
-  // read as "some input" rather than "search".
-  it("carries the magnifying glass inside the open field", () => {
-    expect(field).toContain("<SearchIcon");
-    // Leading, before the input: the mark introduces the field, it does not end it.
-    expect(field.indexOf("<SearchIcon")).toBeLessThan(field.indexOf("<input"));
-    expect(appSource).toContain("SearchIcon");
+  it("keeps its search icon and clear action inside the shared field", () => {
+    expect(field).toContain("icon={<SearchIcon");
+    expect(field).toContain("<CloseButton");
+    expect(field).toContain('label="Clear search"');
+    expect(field).toContain("onValue('')");
+    expect(field).toContain("inputRef.current?.focus()");
   });
 
   // It is a SEARCH field, so the phone keyboard says so and nothing autocorrects a
@@ -3774,6 +3745,36 @@ describe("Input", () => {
   const mark = (props: { type?: string }) =>
     renderToStaticMarkup(<Input defaultValue="sk-test-key-123" {...props} />);
 
+  it("forwards native field semantics instead of applying them to the touch wrapper", () => {
+    const html = renderToStaticMarkup(
+      <Input
+        id="voice-name"
+        name="voice"
+        aria-label="Voice name"
+        aria-invalid
+        required
+        disabled
+        readOnly
+        defaultValue="My voice"
+        className="flex-1"
+      />,
+    );
+    const native = /<input[^>]*>/.exec(html)?.[0] ?? "";
+    for (const attribute of [
+      'id="voice-name"',
+      'name="voice"',
+      'aria-label="Voice name"',
+      'aria-invalid="true"',
+      'required=""',
+      'disabled=""',
+      'readOnly=""',
+      'value="My voice"',
+    ]) {
+      expect(native).toContain(attribute);
+    }
+    expect(native).not.toContain("flex-1");
+    expect(html).toContain("flex-1");
+  });
   it("gives a masked field tracking between its dots", () => {
     const html = mark({ type: "password" });
     expect(html).toContain('type="password"');

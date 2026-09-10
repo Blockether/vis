@@ -63,7 +63,7 @@ import {
 import { discardSharedFiles } from "./lib/share-files";
 import { applyTheme, resolveTheme } from "./lib/theme";
 import { getThemePref } from "./lib/storage";
-import { BackButton, CloseButton, IconButton } from "./components/ui";
+import { BackButton, CloseButton, IconButton, Input } from "./components/ui";
 import { SearchIcon, SettingsIcon } from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
@@ -1254,34 +1254,29 @@ function HeaderSearchField({
   className?: string;
 }) {
   return (
-    <label
-      className={`relative flex h-8 min-w-0 items-center gap-2 self-center rounded-control border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 before:absolute before:inset-x-0 before:-top-1.5 before:h-1.5 before:content-[''] after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-[''] focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-6 mouse:before:content-none mouse:after:content-none sm:px-4 ${className}`}
-    >
-      <SearchIcon className="size-3.5 shrink-0 text-dialog-hint" />
-      <input
-        ref={inputRef}
-        value={value}
-        onChange={(event) => onValue(event.target.value)}
-        type="search"
-        enterKeyHint="search"
-        autoCorrect="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        className="min-w-0 flex-1 appearance-none bg-transparent font-mono text-ui text-white outline-none placeholder:text-dialog-hint mouse:text-meta [&::-webkit-search-cancel-button]:hidden"
-        placeholder={placeholder}
-        aria-label={label}
-      />
-      {value ? (
+    <Input
+      ref={inputRef}
+      value={value}
+      onChange={(event) => onValue(event.target.value)}
+      type="search"
+      enterKeyHint="search"
+      autoCorrect="off"
+      autoCapitalize="none"
+      spellCheck={false}
+      className={className}
+      placeholder={placeholder}
+      aria-label={label}
+      icon={<SearchIcon className="size-3" />}
+      action={value ? (
         <CloseButton
           label="Clear search"
-          className="-me-3 sm:-me-4"
           onClick={() => {
             onValue('');
             inputRef.current?.focus();
           }}
         />
       ) : null}
-    </label>
+    />
   );
 }
 export function Header({
