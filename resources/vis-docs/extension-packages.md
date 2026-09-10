@@ -80,7 +80,7 @@ and portable dependency paths inside the selected project, within the limits of
 | --- | --- |
 | Edit an entry, helper module, declared source root or bundled skill | `/reload`; call the tool on the next turn |
 | Change a package's dependencies | Deliberately update `uv.lock` if needed, then `/reload` |
-| Change a manually prepared editable project's dependencies | Follow the [explicit sync workflow](extension-development.md#prepare-the-vis-environment) |
+| Change a manually prepared editable project's dependencies | Follow the [explicit sync workflow](extension-development.md#prepare-the-project-environment) |
 | Replace an installed GitHub revision | Preserve any local work, remove the installed directory, install the reviewed revision, then `/reload` |
 | Uninstall | Remove only the installed link or directory, then `/reload`; do not delete a linked development checkout |
 
@@ -148,17 +148,16 @@ Keep the implementation under the selected package directory. Do not put a PEP 7
 block in this package's `extension.py`. See [Extension design](extension-design.md#keep-the-entrypoint-small)
 for the complete registration and implementation.
 
-At startup and `/reload`, Vis uses uv to prepare these packages. It creates a lock
-if absent, respects an existing lock, and skips work when the readiness record still
-matches the project, runtime, index and installed distributions. A stale supplied
-lock is an error: update it with `uv lock` rather than expecting reload to rewrite it.
-Set the default package index with `python.index_url`.
+At startup and `/reload`, Vis runs bundled upstream `uv sync` for these packages,
+selecting the gateway's embedded Python with `--python`. uv manages the project's
+lock and environment, including default dependency groups and removal of extraneous
+packages. It can update an existing lock. Configure indexes through uv's own project
+configuration, environment or CLI; `python.index_url` applies only to pip.
 
-Dependencies share `~/.vis/python/packages` with other extensions and sandbox imports;
-they are not isolated per extension or project. A failed load cannot roll back shared
-package changes. Source-only edits need reload, not dependency installation. Build
-backends and executable `.pth` files are trusted code. Imports in `python_execution`
-never install packages, and its view of the shared package directory is read-only.
+Each loaded project uses its own trusted worker and imports dependencies from its uv
+environment, normally `.venv`. These dependencies are not installed into shared sandbox
+packages. Source-only edits need reload. Build backends and executable `.pth` files are
+trusted code. Imports in `python_execution` never install packages.
 
 ## Bundled skills
 

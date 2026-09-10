@@ -706,7 +706,9 @@
        (swap! context-workers dissoc ctx)
        (try (python-host/forget-session! ctx) (catch Throwable _ nil))
        (when (and close-in-worker? (pyext/worker-live? worker))
-         (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))))
+         (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))
+       (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
+         (pyext/stop-worker! worker))))
    nil))
 
 (defn- initialize-extension-context!
@@ -714,9 +716,11 @@
    `entry-path` is the canonical source entry file exposed through Python's
    conventional module globals. Returns the unsealed registration without
    touching the Clojure registry."
-  [worker label ^File snap entry-path source]
+  [worker label ^File snap entry-path source packages]
   (let [ctx
-        (build-context worker label)
+        (build-context
+          (if packages (pyext/extension-worker-key [worker (.getCanonicalPath snap)]) worker)
+          label)
 
         frozen-home
         (.getCanonicalPath (.getParentFile snap))]
@@ -734,13 +738,19 @@
                   "__vis_frozen_home__ = "
                   (python-string-literal frozen-home)
                   "\n"
-                  "__file__ = " (python-string-literal entry-path)
-                  "\n" "__cached__ = None\n"
+                  "__file__ = "
+                  (python-string-literal entry-path)
+                  "\n"
+                  "__cached__ = None\n"
                   "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                   "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
-                  "__vis_packages__ = " (python-string-literal (runtime/packages-dir))
-                  "\nif __vis_packages__ not in __vis_pathsys__.path:\n"
-                  "    __vis_pathsys__.path.insert(1, __vis_packages__)\n"
+                  "__vis_packages__ = "
+                  (python-string-literal (or packages (runtime/packages-dir)))
+                  "\nimport package_paths as __vis_package_paths__\n"
+                  "__vis_package_paths__.refresh(__vis_packages__, reload=True)\n"
+                  "if __vis_packages__ in __vis_pathsys__.path:\n"
+                  "    __vis_pathsys__.path.remove(__vis_packages__)\n"
+                  "__vis_pathsys__.path.insert(1, __vis_packages__)\n"
                   "import importlib as __vis_importlib__\n"
                   "__vis_importlib__.invalidate_caches()\n"
                   "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
@@ -791,7 +801,8 @@
                                                                      (str ext-name)
                                                                      (io/file (:snapshot entry))
                                                                      (:path entry)
-                                                                     (:source entry))
+                                                                     (:source entry)
+                                                                     (:packages entry))
                                 row (assoc fresh :source-context source-ctx)]
 
                             (swap! session-contexts assoc cache-key row)
@@ -1923,35 +1934,27 @@
   "Snapshot source roots and prepare declared dependencies before evaluating any entry."
   [{:keys [roots dependencies project automatic? package-metadata sync-projects?]}]
   (let [frozen (freeze-root! roots)]
-    (try
-      (when (or project (seq dependencies))
-        (let
-          [result
-           (try
-             (if project
-               (do ((if (or automatic? sync-projects?)
-                      python-runtime/ensure-project!
-                      python-runtime/prepared-project)
-                     project)
-                   {:exit 0})
-               (python-runtime/pip-install! {:target (runtime/packages-dir) :upgrade? true}
-                                            dependencies))
-             (catch Throwable t
-               (if project
-                 (throw t)
-                 (throw
-                   (ex-info
-                     "Extension dependency preparation failed; check index and Python compatibility"
-                     {:type ::dependency-install-failed})))))]
-          (when-not (zero? (long (or (:exit result) 1)))
-            (throw
-              (ex-info
-                "Extension dependency installation failed; check python.index_url and wheel availability"
-                {:type ::dependency-install-failed :exit (:exit result)})))))
-      (assoc frozen
-        :roots roots
-        :package-metadata package-metadata)
-      (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
+    (try (let [packages (when project
+                          (str ((if (or automatic? sync-projects?)
+                                  python-runtime/ensure-project!
+                                  python-runtime/prepared-project)
+                                 project)))]
+           (when (and (not project) (seq dependencies))
+             (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
+                                                             :upgrade? true}
+                                                            dependencies)
+                               (catch Throwable t
+                                 (throw (python-runtime/installer-error "pip"
+                                                                        :install
+                                                                        (assoc (ex-data t)
+                                                                          :out (.getMessage t))))))]
+               (when-not (zero? (long (or (:exit result) 1)))
+                 (throw (python-runtime/installer-error "pip" :install result)))))
+           (assoc frozen
+             :roots roots
+             :packages packages
+             :package-metadata package-metadata))
+         (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
 
 (defn ^:no-doc close-context!
   "Tear down an extension session this namespace owns: its host bindings go, then
@@ -1981,6 +1984,8 @@
                      (filter (fn [[[k _] _]]
                                (= worker k)))
                      @session-contexts)]
+    (doseq [extension-worker (distinct (map #(worker-for (:context (second %))) locals))]
+      (pyext/stop-worker! extension-worker))
     (when (seq locals)
       (swap! session-contexts #(apply dissoc % (map first locals)))
       (doseq [[_ row] locals]
@@ -2021,43 +2026,50 @@
          (util/sha256-hex source)
 
          initialized
-         (initialize-extension-context! pyext/shared-key (.getName f) snap path source)
+         (initialize-extension-context! pyext/shared-key
+                                        (.getName f)
+                                        snap
+                                        path
+                                        source
+                                        (:packages frozen))
 
          ctx
          (:context initialized)]
 
-     (try (let [reg (:registration initialized)]
-            (when (nil? reg)
-              (throw (ex-info (str (.getName f) " never called vis.register(vis.Extension(...))")
-                              {:type ::no-registration :file path})))
-            (let [metadata (:package-metadata frozen)
-                  spec (registration->spec ctx reg)
-                  _ (when (and metadata (not= (get metadata "name") (:ext/name spec)))
-                      (throw (ex-info "Extension name must match normalized project.name" {})))
-                  spec (if metadata
-                         (assoc spec
-                           :ext/version (get metadata "version")
-                           :ext/kind (get metadata "category")
-                           :ext/description (get metadata "description")
-                           :ext/skills (discovery/read-package-skills snap metadata))
-                         spec)
-                  validated (extension/register-extension! spec)]
+     (try
+       (let [reg (:registration initialized)]
+         (when (nil? reg)
+           (throw (ex-info (str (.getName f) " never called vis.register(vis.Extension(...))")
+                           {:type ::no-registration :file path})))
+         (let [metadata (:package-metadata frozen)
+               spec (registration->spec ctx reg)
+               _ (when (and metadata (not= (get metadata "name") (:ext/name spec)))
+                   (throw (ex-info "Extension name must match normalized project.name" {})))
+               spec (if metadata
+                      (assoc spec
+                        :ext/version (get metadata "version")
+                        :ext/kind (get metadata "category")
+                        :ext/description (get metadata "description")
+                        :ext/skills (discovery/read-package-skills snap metadata))
+                      spec)
+               validated (extension/register-extension! spec)]
 
-              (tel/log! {:level :info
-                         :id ::loaded
-                         :data {:file path :ext (:ext/name spec)}
-                         :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
-              {:path path
-               :sha sha
-               :code-sha (:code-sha frozen)
-               :roots (:roots frozen)
-               :package-metadata (:package-metadata frozen)
-               :snapshot (.getCanonicalPath snap)
-               :source source
-               :ext-name (:ext/name spec)
-               :ext validated
-               :context ctx}))
-          (catch Throwable t (close-context! ctx) (throw t))))))
+           (tel/log! {:level :info
+                      :id ::loaded
+                      :data {:file path :ext (:ext/name spec)}
+                      :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
+           {:path path
+            :sha sha
+            :code-sha (:code-sha frozen)
+            :roots (:roots frozen)
+            :packages (:packages frozen)
+            :package-metadata (:package-metadata frozen)
+            :snapshot (.getCanonicalPath snap)
+            :source source
+            :ext-name (:ext/name spec)
+            :ext validated
+            :context ctx}))
+       (catch Throwable t (close-context! ctx) (throw t))))))
 
 (defn- live-symbol-fn
   "The CURRENTLY registered fn for `[ext-name sym]`, after `dead-ctx` was torn
@@ -2106,6 +2118,7 @@
                                               {:dir snap
                                                :code-sha (:code-sha entry)
                                                :roots (:roots entry)
+                                               :packages (:packages entry)
                                                :package-metadata (:package-metadata entry)})))]
                   (swap! loaded assoc path (dissoc rebuilt :path))
                   (close-context! dead-ctx)

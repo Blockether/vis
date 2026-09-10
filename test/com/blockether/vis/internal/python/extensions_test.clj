@@ -159,19 +159,6 @@
                   (doseq [file (reverse (file-seq home))]
                     (io/delete-file file true))))))
 
-(defn- run-fixture-uv!
-  "Retain uv diagnostics only for the local test registry and fixture projects."
-  [project command]
-  (let [process
-        (.start (doto (ProcessBuilder. ^java.util.List command)
-                  (.directory project)
-                  (.redirectErrorStream true)))
-
-        output
-        (slurp (.getInputStream process))]
-
-    (expect (zero? (.waitFor process)) output)))
-
 (defn- registered
   [ext-name]
   (some #(when (= ext-name (:ext/name %)) %) (extension/registered-extensions)))
@@ -180,6 +167,37 @@
   [ext sym]
   (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/fn %))
         (get-in ext [:ext/engine :ext.engine/symbols])))
+
+(defdescribe
+  dependency-errors-keep-safe-diagnostics-test
+  (it
+    "keeps pip failure output and thrown causes without credentials (#183)"
+    (doseq [throws? [false true]]
+      (let
+        [dir (temp-dir)
+         output
+         "PIP_MARKER: no matching wheel at https://user:fixture-secret@gateway.example.com/simple?auth=fixture-query"]
+
+        (try (with-redefs-fn {#'pyx/freeze-root! (fn [_]
+                                                   {:dir dir})
+                              #'python-runtime/pip-install!
+                              (fn [& _]
+                                (if throws?
+                                  (throw (ex-info output {:exit 19 :timeout? true}))
+                                  {:exit 19 :out output :command ["private raw command"]}))}
+               (fn []
+                 (let [error (try (#'pyx/prepare-root! {:roots [] :dependencies ["fixture"]})
+                                  nil
+                                  (catch Exception e e))
+                       text (str error (pr-str (ex-data error)))]
+
+                   (expect (= 19 (:exit (ex-data error))))
+                   (expect (= throws? (:timeout? (ex-data error))))
+                   (expect (str/includes? text "PIP_MARKER"))
+                   (doseq [secret ["fixture-secret" "fixture-query" "private raw command"]]
+                     (expect (not (str/includes? text secret)))))))
+             (finally (doseq [f (reverse (file-seq dir))]
+                        (io/delete-file f true))))))))
 
 (defdescribe
   cached-registration-helper-reload-test
@@ -1803,7 +1821,8 @@ vis.register(vis.Extension(
                         (fn [opts specs]
                           (swap! installs conj specs)
                           (if @fail?
-                            {:exit 1 :out "private installer diagnostics must not be logged"}
+                            {:exit 1
+                             :out "INSTALL_FAILURE_MARKER: no matching wheel; token=fixture-secret"}
                             (do (write-ext! (io/file (:target opts))
                                             "vis_einmal_dependency_fixture.py"
                                             "VALUE = 42\n")
@@ -1832,8 +1851,10 @@ vis.register(vis.Extension(
                   (expect (= {:loaded 1 :failed 1 :changed? true}
                              (pyx/reload-python-extensions! opts)))
                   (expect (= 43 (invoke)))
-                  (expect (not (str/includes? (:error (first (pyx/load-failures)))
-                                              "private installer diagnostics"))))))))))))
+                  ;; #183: retain useful installer errors, redact only the credential.
+                  (let [error (:error (first (pyx/load-failures)))]
+                    (expect (str/includes? error "INSTALL_FAILURE_MARKER"))
+                    (expect (not (str/includes? error "fixture-secret")))))))))))))
 
 (defdescribe
   extension-metadata-validation-test
@@ -1965,17 +1986,13 @@ vis.register(vis.Extension(
                                     (.close exchange)))))
             (.start server)
             (try
-              (with-redefs [python-runtime/run-uv!
-                            run-fixture-uv!
-
-                            runtime/pip-install!
-                            (fn [opts specs]
-                              (swap! installs inc)
-                              (install! opts
-                                        (into (vec specs)
-                                              ["--isolated" "--proxy" "" "--retries" "0" "--timeout"
-                                               "3" "--no-cache-dir"])))]
-
+              (with-redefs [runtime/pip-install! (fn [opts specs]
+                                                   (swap! installs inc)
+                                                   (install! opts
+                                                             (into (vec specs)
+                                                                   ["--isolated" "--proxy" ""
+                                                                    "--retries" "0" "--timeout" "3"
+                                                                    "--no-cache-dir"])))]
                 (with-fresh-loaded
                   {"einmal/vis_einmal_fixture/__init__.py"
                    "import vis_einmal_dependency_fixture as dep\ndef answer():\n    return {'value': dep.VALUE, 'path': dep.__file__}\n"
@@ -2042,12 +2059,14 @@ vis.register(vis.Extension(
                                 "[[tool.uv.index]]\nname = 'fixture'\nurl = '"
                                 (get-in (config/load-config-raw) ["python" "index_url"])
                                 "'\nexplicit = true\n")
-                              :else "")))
+                              :else (str "[[tool.uv.index]]\nurl = '"
+                                         (get-in (config/load-config-raw) ["python" "index_url"])
+                                         "'\ndefault = true\n"))))
                         (let [p (.start
                                   (doto (ProcessBuilder.
                                           ^java.util.List
-                                          ["uv" "lock" "--project" (str (io/file ext-dir "einmal"))
-                                           "--python"
+                                          [(runtime/uv-executable) "lock" "--project"
+                                           (str (io/file ext-dir "einmal")) "--python"
                                            (com.blockether.vispython.Interpreter/pythonExecutable)
                                            "--default-index"
                                            (get-in (config/load-config-raw) ["python" "index_url"])
@@ -2060,10 +2079,13 @@ vis.register(vis.Extension(
                         (expect (= {:loaded 0 :failed 1 :changed? true}
                                    (pyx/reload-python-extensions!
                                      {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
-                        (python-runtime/uv-command! ["sync" "--project"
-                                                     (str (io/file ext-dir "einmal")) "--locked"]))
+                        (expect (zero?
+                                  (python-runtime/uv-command!
+                                    ["sync" "--project" (str (io/file ext-dir "einmal")) "--locked"
+                                     "--python"
+                                     (com.blockether.vispython.Interpreter/pythonExecutable)]))))
                       (expect (= {:loaded 1 :failed 0 :changed? true}
-                                 (with-redefs [python-runtime/uv-sync!
+                                 (with-redefs [python-runtime/ensure-project!
                                                (fn [& _]
                                                  (throw (ex-info "Loader must not sync" {})))]
                                    (pyx/reload-python-extensions!
@@ -2071,7 +2093,7 @@ vis.register(vis.Extension(
                       (when-not local?
                         (expect (some #{"/simple/vis-einmal-dependency-fixture/"} @requests))
                         (expect (some #{(str "/files/" wheel-name)} @requests)))
-                      (when uv? (expect (not (.exists (io/file ext-dir "einmal/.venv")))))
+                      (when uv? (expect (.isDirectory (io/file ext-dir "einmal/.venv"))))
                       (let [ext (registered "einmal-declared")
                             made (ep/create-python-context {}
                                                            (fn []
@@ -2091,17 +2113,23 @@ vis.register(vis.Extension(
 
                         (try
                           (lp/sync-active-extension-symbols! env [ext])
-                          (let [result (ep/run-python-block
-                                         ctx
-                                         (str "from pathlib import Path\n"
-                                              "import vis_einmal_dependency_fixture as dep\n"
-                                              "result = await einmal_answer()\n"
-                                              "assert result['path'] == dep.__file__\n"
-                                              "assert Path(dep.__file__).parent == Path("
-                                              (pr-str (str (if local?
-                                                             (io/file ext-dir "dependency")
-                                                             packages)))
-                                              ")\n" "print(result['value'])"))]
+                          (let
+                            [result
+                             (ep/run-python-block
+                               ctx
+                               (str
+                                 "from pathlib import Path\n"
+                                 (if uv?
+                                   "import importlib.util; assert importlib.util.find_spec('vis_einmal_dependency_fixture') is None\n"
+                                   "import vis_einmal_dependency_fixture as dep\n")
+                                 "result = await einmal_answer()\n"
+                                 (when-not uv? "assert result['path'] == dep.__file__\n")
+                                 "assert Path(result['path']).parent == Path("
+                                 (pr-str (str (cond local? (io/file ext-dir "dependency")
+                                                    uv? (python-runtime/prepared-project
+                                                          (io/file ext-dir "einmal"))
+                                                    :else packages)))
+                                 ")\n" "print(result['value'])"))]
                             (expect (nil? (:error result)))
                             (expect (= "42" (str/trim (:stdout result)))))
                           (expect (= (if uv? 0 1) @installs))
@@ -3807,7 +3835,8 @@ vis.register(vis.Extension(
       (with-redefs [python-runtime/ensure-project!
                     (fn [_]
                       (swap! prepares inc)
-                      (when @fail? (throw (ex-info "fixture preparation failure" {}))))]
+                      (when @fail? (throw (ex-info "fixture preparation failure" {})))
+                      (io/file (runtime/packages-dir)))]
         (with-fresh-loaded
           {"greeter/pyproject.toml"
            (str
@@ -3963,7 +3992,8 @@ vis.register(vis.Extension(
   ;; Issue #176: package procedures follow the same successful reload as code.
   (it
     "discovers qualified skills with resources and retains last-good on failure"
-    (with-redefs [python-runtime/ensure-project! (constantly nil)]
+    (with-redefs [python-runtime/ensure-project! (fn [_]
+                                                   (io/file (runtime/packages-dir)))]
       (with-fresh-loaded
         {"skillpack/pyproject.toml"
          (str "[project]\nname='vis-skillpack'\nversion='1.0.0'\n"
@@ -4030,32 +4060,33 @@ vis.register(vis.Extension(
 (defdescribe
   authoring-example-test
   ;; #176: load the documented package itself, not a second copy of its snippets.
-  (it
-    "loads the one-file tutorial and calls its documented defaults in the sandbox"
-    (let [source (second (re-find #"(?s)```python\n# \.vis/extensions/greeting_tools\.py\n(.*?)\n```"
-                                  (slurp (io/resource "vis-docs/extending.md"))))]
-      (expect (some? source))
-      (with-fresh-loaded
-        {"greeting_tools.py" source}
-        (fn [result _]
-          (expect (= 1 (:loaded result)) (pr-str result))
-          (let [ext (registered "greeting")
-                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
-                env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
-            (try
-              (lp/sync-active-extension-symbols! env [ext])
-              (let [answer (ep/run-python-block
-                             ctx
-                             (str "hits = apropos(r'^hello$')\n"
-                                  "assert len(hits) == 1, repr(hits)\n"
-                                  "assert 'uppercase defaults to False' in doc(hits[0])\n"
-                                  "assert hello.contract['parameters'][1]['has_default']\n"
-                                  "assert await hello('Ada') == 'Hello, Ada!'\n"
-                                  "assert await hello('Ada', uppercase=True) == 'HELLO, ADA!'\n"
-                                  "print('tutorial verified')"))]
-                (expect (nil? (:error answer)) (pr-str answer))
-                (expect (str/includes? (or (:stdout answer) "") "tutorial verified")))
-              (finally (ep/dispose-python-context! ctx))))))))
+  (it "loads the one-file tutorial and calls its documented defaults in the sandbox"
+      (let [source (second (re-find
+                             #"(?s)```python\n# \.vis/extensions/greeting_tools\.py\n(.*?)\n```"
+                             (slurp (io/resource "vis-docs/extending.md"))))]
+        (expect (some? source))
+        (with-fresh-loaded
+          {"greeting_tools.py" source}
+          (fn [result _]
+            (expect (= 1 (:loaded result)) (pr-str result))
+            (let [ext (registered "greeting")
+                  ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                  env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+              (try (lp/sync-active-extension-symbols! env [ext])
+                   (let [answer (ep/run-python-block
+                                  ctx
+                                  (str
+                                    "hits = apropos(r'^hello$')\n"
+                                    "assert len(hits) == 1, repr(hits)\n"
+                                    "assert 'uppercase defaults to False' in doc(hits[0])\n"
+                                    "assert hello.contract['parameters'][1]['has_default']\n"
+                                    "assert await hello('Ada') == 'Hello, Ada!'\n"
+                                    "assert await hello('Ada', uppercase=True) == 'HELLO, ADA!'\n"
+                                    "print('tutorial verified')"))]
+                     (expect (nil? (:error answer)) (pr-str answer))
+                     (expect (str/includes? (or (:stdout answer) "") "tutorial verified")))
+                   (finally (ep/dispose-python-context! ctx))))))))
   (it
     "exposes its contract, result, documentation and packaged skill in a real session"
     (let [example
@@ -4071,7 +4102,8 @@ vis.register(vis.Extension(
                        [(str "greeter/" path) (slurp (io/file example path))]))
                 files)]
 
-      (with-redefs [python-runtime/ensure-project! (constantly nil)]
+      (with-redefs [python-runtime/ensure-project! (fn [_]
+                                                     (io/file (runtime/packages-dir)))]
         (with-fresh-loaded
           sources
           (fn [result _]

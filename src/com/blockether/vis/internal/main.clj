@@ -3284,12 +3284,9 @@
           :uv
           (try (when (or (not network?) (not inherit-env?) (seq env-overrides))
                  (throw (ex-info
-                          "Python sandbox options do not apply to uv sync; use --offline after sync"
+                          "Python sandbox options do not apply to uv; put uv directly after python"
                           {})))
-               (env/ensure-interpreter!)
-               (let [result (python-runtime/uv-command! argv)]
-                 (stdout! (str "Prepared Vis packages: " (:packages result)))
-                 (:exit result))
+               (python-runtime/uv-command! argv)
                (catch Throwable t (stderr! (.getMessage t)) 1))
 
           :code
@@ -3388,7 +3385,8 @@
      "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] gateway <start|status|stop|pair> [--db PATH]"
      :cmd/subcommands #(registry/registered-under ["gateway"])}
     {:cmd/name "python"
-     :cmd/doc "Run embedded Python, or explicitly prepare extension dependencies with uv sync."
+     :cmd/doc
+     "Run embedded Python, or pass commands unchanged to bundled uv: vis-agent python uv [ARGS...]"
      :cmd/usage "vis-agent python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples
      ["vis-agent python -c \"import requests; print(requests.__version__)\""
@@ -4364,6 +4362,9 @@
    the generic dispatcher stays a pure command tree while the binary owns
    CLI ergonomics (`vis-agent fix this`, `vis-agent --json summarize`)."
   [& raw-args]
+  ;; uv owns every following token, including help, version and child-program flags.
+  (when (= ["python" "uv"] (take 2 raw-args))
+    (System/exit (python-runtime/uv-command! (drop 2 raw-args))))
   (system-trust/install!)
   (let [main-started
         (System/nanoTime)

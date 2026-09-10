@@ -18,7 +18,6 @@
    execute bits that no jar or zip round-trips."
   (:require [babashka.http-client :as http]
             [charred.api :as json]
-            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
@@ -158,240 +157,176 @@
         [flag index])
       [])))
 
+(def ^:private diagnostic-limit 16384)
+
+(defn- redact-installer-text
+  [text]
+  (-> (str text)
+      (str/replace #"\u001b\[[0-?]*[ -/]*[@-~]" "")
+      (str/replace #"[\p{Cntrl}&&[^\n\t]]" "")
+      (util/redact-secret-text (keep (fn [[k v]]
+                                       (when (util/secret-key? k) v))
+                                     (System/getenv)))
+      (str/replace #"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>\"']+"
+                   (fn [url]
+                     (-> url
+                         (str/replace #"(://)[^/?#]*@" "$1[REDACTED]@")
+                         (str/replace #"[?#].*" "?[REDACTED]"))))))
+
+(defn- capture-diagnostics!
+  "Keep a bounded, redacted tail. Discard oversized lines whole, never expose a
+   credential fragment created by truncation. Also flush a final partial line."
+  [^java.io.Reader reader tail]
+  (let [line
+        (StringBuilder.)
+
+        private-key?
+        (volatile! false)
+
+        emit!
+        (fn [overflow?]
+          (let [raw
+                (str line)
+
+                hidden?
+                (or @private-key? (re-find #"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----" raw))
+
+                text
+                (cond hidden? "[REDACTED]"
+                      overflow? "[installer output line exceeded limit; omitted]"
+                      :else (redact-installer-text raw))]
+
+            (vreset! private-key?
+                     (and (boolean hidden?)
+                          (not (re-find #"-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----" raw))))
+            (swap! tail (fn [previous]
+                          (let [text (str previous text "\n")]
+                            (subs text (max 0 (- (count text) (long diagnostic-limit)))))))
+            (.setLength line 0)))]
+
+    (with-open [reader (java.io.BufferedReader. reader)]
+      (loop [overflow? false]
+        (let [c (.read reader)]
+          (cond (= -1 c) (when (or overflow? (pos? (.length line))) (emit! overflow?))
+                (= 10 c) (do (emit! overflow?) (recur false))
+                :else (if (or overflow? (>= (.length line) diagnostic-limit))
+                        (recur true)
+                        (do (.append line (char c)) (recur false)))))))
+    @tail))
+
+(defn installer-error
+  "A safe installation failure for CLI/UI boundaries. Keep only the verdict and
+   a bounded, redacted diagnostic tail, never a raw command or exception cause."
+  ^clojure.lang.ExceptionInfo [installer phase {:keys [exit timeout? diagnostics out]}]
+  (let [diagnostics
+        (capture-diagnostics! (java.io.StringReader. (str (or diagnostics out))) (atom ""))
+
+        exit
+        (when (integer? exit) exit)
+
+        data
+        {:type ::installer-failed
+         :installer installer
+         :phase phase
+         :exit exit
+         :timeout? (boolean timeout?)
+         :diagnostics (str/trim diagnostics)}]
+
+    (ex-info (str installer
+                  " "
+                  (name phase)
+                  (if timeout? " timed out" " failed")
+                  (when exit (str " (exit " exit ")"))
+                  (when-not (str/blank? diagnostics) (str ":\n" (str/trim diagnostics))))
+             data)))
+
+(defn- bundled-uv!
+  []
+  (ensure-library!)
+  (or (runtime/uv-executable)
+      (throw (ex-info "Bundled uv is missing or not executable; reinstall the Vis Python runtime"
+                      {:type ::bundled-uv-missing}))))
+
+(defn- kill-installer!
+  [^Process process]
+  (with-open [children (.descendants process)]
+    (.forEach children
+              (reify
+                java.util.function.Consumer
+                  (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
+  (.destroyForcibly process)
+  (.waitFor process 5 TimeUnit/SECONDS))
+
 (defn- run-uv!
-  "Run uv without exposing registry diagnostics, which can contain credentials."
-  [^File project command]
-  (let [process (.start (doto (ProcessBuilder. ^java.util.List command)
-                          (.directory project)
-                          (.redirectErrorStream true)
-                          (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)))]
-    (try
-      (when-not (.waitFor process 180 TimeUnit/SECONDS)
-        (throw (ex-info "uv dependency preparation timed out" {})))
-      (when-not (zero? (.exitValue process))
-        (throw
-          (ex-info
-            "uv dependency preparation failed; check uv.lock, project sources, python.index_url and Python compatibility"
-            {:exit (.exitValue process)})))
-      (finally (when (.isAlive process)
-                 (with-open [children (.descendants process)]
-                   (.forEach children
-                             (reify
-                               java.util.function.Consumer
-                                 (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
-                 (.destroyForcibly process))))))
+  "Run bundled uv. Failure and timeout retain phase, exit and safe diagnostics."
+  ([project command] (run-uv! project command {}))
+  ([^File project command {:keys [timeout-ms] :or {timeout-ms 180000}}]
+   (let [phase
+         (if (= "pip" (second command)) :install (keyword (second command)))
 
-(defn- locked-distributions
-  "Read exported distribution names with the embedded Python's standard TOML parser."
-  [^File lock-file]
-  (let [command
-        [(Interpreter/pythonExecutable) "-I" "-S" "-c"
-         (str "import json, re, sys, tomllib\n"
-              "with open(sys.argv[1], 'rb') as f: lock = tomllib.load(f)\n"
-              "print(json.dumps(sorted({re.sub(r'[-_.]+', '-', p['name']).lower() "
-              "for p in lock.get('packages', [])})))") (str lock-file)]
+         process
+         (try (.start (doto (ProcessBuilder. ^java.util.List command)
+                        (.directory project)
+                        (.redirectErrorStream true)))
+              (catch java.io.IOException e
+                (throw (installer-error "uv" phase {:out (.getMessage e)}))))
 
-        process
-        (.start (doto (ProcessBuilder. ^java.util.List command)
-                  (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))
+         tail
+         (atom "")
 
-        output
-        (future (slurp (.getInputStream process)))]
+         output
+         (future (capture-diagnostics! (io/reader (.getInputStream ^Process process)) tail))]
 
-    (try (when-not (and (.waitFor process 30 TimeUnit/SECONDS) (zero? (.exitValue process)))
-           (throw (ex-info "Could not read the exported Python distribution names" {})))
-         (set (json/read-json @output))
-         (finally (when (.isAlive process) (.destroyForcibly process)) (future-cancel output)))))
+     (try (.close (.getOutputStream ^Process process))
+          (let [finished? (.waitFor ^Process process (long timeout-ms) TimeUnit/MILLISECONDS)]
+            (when-not finished? (kill-installer! process))
+            (let [capture-error (try (when (= ::unfinished (deref output 2000 ::unfinished))
+                                       "Installer output did not close")
+                                     (catch Exception e (redact-installer-text (.getMessage e))))
+                  exit (when finished? (.exitValue ^Process process))]
 
-(defn uv-sync!
-  "Install a locked uv project into the shared packages directory.
-   uv exports its resolved sources and artifact hashes to pylock.toml, then installs
-   that lock with its target-directory installer, preserving editable local sources.
-   Unrelated packages are retained.
-   Builds are allowed for explicitly selected trusted projects. No project .venv
-   or private dependency copy is created. Requires uv on PATH."
-  ([project packages] (uv-sync! project packages []))
-  ([^File project ^File packages options]
-   (let [python (Interpreter/pythonExecutable)]
-     (when-not python (throw (ex-info "uv requires the embedded Python executable" {})))
-     (.mkdirs packages)
-     ;; uv exports local source paths relative to the project, not --output-file.
-     (let [lock-file (.toFile (Files/createTempFile
-                                (.toPath project)
-                                "pylock.vis-"
-                                ".toml"
-                                (make-array java.nio.file.attribute.FileAttribute 0)))
-           common (concat ["--python" python "--no-python-downloads"]
-                          (index-args "--default-index")
-                          options)]
+              (when (or (not finished?) (not= 0 exit) capture-error)
+                (throw (installer-error "uv"
+                                        phase
+                                        {:exit exit
+                                         :timeout? (not finished?)
+                                         :diagnostics (str @tail capture-error)})))
+              @tail))
+          (finally (when (.isAlive ^Process process) (kill-installer! process))
+                   (future-cancel output))))))
 
-       (try (run-uv! project
-                     (into ["uv" "export" "--locked" "--no-default-groups" "--format" "pylock.toml"
-                            "--project" (str project) "--output-file" (str lock-file)]
-                           common))
-            (run-uv! project
-                     (into ["uv" "pip" "install" "--target" (str packages) "--requirements"
-                            (str lock-file) "--no-deps"]
-                           common))
-            {:exit 0 :distributions (locked-distributions lock-file)}
-            (finally (Files/deleteIfExists (.toPath lock-file))))))))
-
-(defn- project-inputs
-  "Credential-free fingerprints of each dependency readiness input, never Python source."
-  [^File project]
-  (into (sorted-map)
-        (map (fn [[key value]]
-               [key (util/sha256-hex (pr-str value))]))
-        {:project (.getCanonicalPath project)
-         :runtime runtime/version
-         :interpreter (Interpreter/pythonExecutable)
-         :packages (.getCanonicalPath (io/file (runtime/packages-dir)))
-         :pyproject (let [f (io/file project "pyproject.toml")]
-                      (when (.isFile f) (slurp f)))
-         :lock (let [f (io/file project "uv.lock")]
-                 (when (.isFile f) (slurp f)))
-         :index (index-args "--default-index")}))
-
-(defn- project-home
+(defn- project-packages
+  "Ask uv's project interpreter for its site-packages; do not guess workspace paths."
   ^File [^File project]
-  (io/file (System/getProperty "user.home")
-           ".vis" "python"
-           "projects" (util/sha256-hex (.getCanonicalPath project))))
+  (let
+    [output
+     (run-uv!
+       project
+       [(bundled-uv!) "run" "--no-sync" "python" "-I" "-c"
+        "import json, sysconfig; print('VIS_PROJECT_SITE=' + json.dumps(sysconfig.get_path('purelib')))"])
 
-(defn- package-metadata
-  "Record installed distribution metadata so a later conflicting install invalidates readiness."
-  [^File packages]
-  (reduce (fn [installed ^File dir]
-            (let [name
-                  (.getName dir)
+     path
+     (some #(when (str/starts-with? % "VIS_PROJECT_SITE=")
+              (json/read-json (subs % (count "VIS_PROJECT_SITE="))))
+           (str/split-lines output))]
 
-                  metadata
-                  (io/file dir "METADATA")
-
-                  record
-                  (io/file dir "RECORD")]
-
-              (if (and (.endsWith name ".dist-info") (.isFile metadata))
-                (let [distribution (-> (first (str/split name #"-" 2))
-                                       str/lower-case
-                                       (str/replace #"[_.]+" "-"))]
-                  (assoc-in installed
-                    [distribution name]
-                    (util/sha256-hex
-                      (str (slurp metadata) "\n" (when (.isFile record) (slurp record))))))
-                installed)))
-          (sorted-map)
-          (.listFiles packages)))
+    (when-not (and (string? path) (.isDirectory (io/file path)))
+      (throw (ex-info "uv project interpreter did not report an existing site-packages directory"
+                      {})))
+    (.getCanonicalFile (io/file path))))
 
 (defn prepared-project
-  "Validate a manually prepared project and return the shared packages directory.
-   Never installs dependencies. Refusals name changed inputs and locked distributions;
-   unrelated installed packages and editable source changes do not invalidate readiness."
+  "Validate a manually prepared environment with uv sync --check; never install."
   ^File [^File project]
-  (let [pointer
-        (io/file (project-home project) "environment.ready")
-
-        packages
-        (.getCanonicalFile (io/file (runtime/packages-dir)))
-
-        inputs
-        (project-inputs project)
-
-        ready
-        (when (.isFile pointer) (try (edn/read-string (slurp pointer)) (catch Exception _ nil)))
-
-        valid?
-        (and (map? (:inputs ready)) (map? (:metadata ready)))
-
-        installed
-        (package-metadata packages)
-
-        changed
-        (cond-> (if valid?
-                  (vec (for [[key value]
-                             inputs
-
-                             :when (not= value (get-in ready [:inputs key]))]
-
-                         key))
-                  [:readiness])
-          (not (.isDirectory packages))
-          (conj :packages))
-
-        distributions
-        (when valid?
-          (vec (sort (for [[name digest]
-                           (:metadata ready)
-
-                           :when (not= digest (get installed name))]
-
-                       name))))
-
-        reasons
-        (concat (map #(str (get {:pyproject "pyproject.toml"
-                                 :lock "uv.lock"
-                                 :packages "packages directory"
-                                 :project "project location"
-                                 :runtime "runtime version"
-                                 :interpreter "interpreter path"
-                                 :index "default index"
-                                 :readiness "readiness record"}
-                                %)
-                           " changed or missing")
-                     (distinct changed))
-                (when (seq distributions)
-                  [(str "installed distributions changed: " (str/join ", " distributions))]))]
-
-    (when (seq reasons)
-      (throw (ex-info (str "Missing or stale Vis environment: "
-                           (str/join "; " reasons)
-                           ". After reviewing dependency changes, use /reload --sync, or run: "
-                           "vis-agent python uv sync --project "
-                           (pr-str (.getCanonicalPath project))
-                           " --locked, then /reload")
-                      {:type ::project-sync-required
-                       :changed-inputs (vec (distinct changed))
-                       :changed-distributions (vec distributions)})))
-    packages))
-
-(defn sync-project!
-  "Explicitly install a trusted uv project into the one shared packages directory.
-   Publish readiness only after success; never remove unrelated installed packages."
-  [^File project options]
-  (when-not (every? #{"--offline" "--no-cache"} options)
-    (throw (ex-info "Supported uv sync options: --project PATH, --locked, --offline, --no-cache"
-                    {})))
-  (let [project
-        (.getCanonicalFile project)
-
-        inputs
-        (project-inputs project)
-
-        home
-        (project-home project)
-
-        packages
-        (.getCanonicalFile (io/file (runtime/packages-dir)))
-
-        pointer
-        (io/file home (str (java.util.UUID/randomUUID) ".ready"))]
-
-    (.mkdirs home)
-    (try (let [{:keys [distributions]} (uv-sync! project packages options)]
-           (when-not (set? distributions)
-             (throw (ex-info "Python sync did not report its locked distributions" {})))
-           (when-not (= inputs (project-inputs project))
-             (throw (ex-info "Project changed during sync; run sync again" {})))
-           (spit pointer
-                 (pr-str {:inputs inputs
-                          :metadata (select-keys (package-metadata packages) distributions)}))
-           (Files/move (.toPath pointer)
-                       (.toPath (io/file home "environment.ready"))
-                       (into-array CopyOption
-                                   [StandardCopyOption/ATOMIC_MOVE
-                                    StandardCopyOption/REPLACE_EXISTING])))
-         {:exit 0 :packages (str packages)}
-         (finally (.delete pointer)))))
+  (try (run-uv! project [(bundled-uv!) "sync" "--check"])
+       (project-packages project)
+       (catch clojure.lang.ExceptionInfo e
+         (throw (ex-info (str (.getMessage e)
+                              "\nRun vis-agent python uv sync --project "
+                              (pr-str (.getCanonicalPath project))
+                              ", then /reload; or use /reload --sync.")
+                         (assoc (ex-data e) :type ::project-sync-required)
+                         e)))))
 
 (defonce ^:private preparation (atom {}))
 
@@ -410,64 +345,37 @@
     (.flush config/original-stderr)))
 
 (defn ensure-project!
-  "Automatically prepare a trusted package, reusing readiness when unchanged.
-   Resolve a missing lock, never rewrite a supplied lock. Installer diagnostics
-   stay private because index credentials may be present in them."
+  "Prepare an extension with upstream uv sync and the worker's embedded Python.
+   uv owns lock updates, dependency groups and the project environment."
   [^File project]
   (locking preparation-lock
-    (try
-      (when-not (.isFile (io/file project "uv.lock"))
-        (preparation-stage! project "resolving")
-        (run-uv! project
-                 (into ["uv" "lock" "--project" (str project) "--python"
-                        (Interpreter/pythonExecutable) "--no-python-downloads"]
-                       (index-args "--default-index"))))
-      (let [ready? (try (prepared-project project)
-                        true
-                        (catch clojure.lang.ExceptionInfo e
-                          (if (= ::project-sync-required (:type (ex-data e))) false (throw e))))]
-        (when-not ready? (preparation-stage! project "installing") (sync-project! project []))
-        (preparation-stage! project "ready")
-        (prepared-project project))
-      (catch Throwable _
-        (preparation-stage! project "failed")
-        (throw
-          (ex-info
-            "Extension preparation failed; check uv availability, Python compatibility and indexes. If pyproject.toml changed, update uv.lock and /reload."
-            {:type ::project-preparation-failed}))))))
+    (try (preparation-stage! project "installing")
+         (run-uv! project [(bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
+         (let [packages (project-packages project)]
+           (preparation-stage! project "ready")
+           packages)
+         (catch Throwable t
+           (preparation-stage! project "failed")
+           (let [data
+                 (ex-data t)
+
+                 cause
+                 (installer-error "uv"
+                                  (or (:phase data) :prepare)
+                                  (assoc data
+                                    :diagnostics (or (:diagnostics data) (.getMessage t))))]
+
+             (throw (ex-info (str "Extension preparation failed: " (.getMessage cause))
+                             (assoc (ex-data cause) :type ::project-preparation-failed)
+                             cause)))))))
 
 (defn uv-command!
-  "Handle the explicit `python uv sync` command; refuse environment/interpreter overrides."
+  "Run the bundled upstream uv with unchanged arguments, environment and stdio.
+   Return its exit code. No Vis config, sandbox or installer policy applies."
   [args]
-  (when-not (= "sync" (first args))
-    (throw (ex-info
-             "Usage: vis-agent python uv sync --project PATH --locked [--offline] [--no-cache]"
-             {})))
-  (loop [args
-         (next args)
-
-         project
-         (io/file (System/getProperty "user.dir"))
-
-         options
-         []]
-
-    (case (first args)
-      nil
-      (sync-project! project options)
-
-      "--project"
-      (if-let [path (second args)]
-        (recur (nnext args) (io/file path) options)
-        (throw (ex-info "--project requires a directory" {})))
-
-      "--locked"
-      (recur (next args) project options)
-
-      (if (#{"--offline" "--no-cache"} (first args))
-        (recur (next args) project (conj options (first args)))
-        (throw (ex-info "Unsupported uv sync option; Vis owns the interpreter and environment"
-                        {}))))))
+  (.waitFor (.start (doto (ProcessBuilder. ^java.util.List (into [(bundled-uv!)] args))
+                      (.directory (io/file (System/getProperty "user.dir")))
+                      (.inheritIO)))))
 
 (defn pip-install!
   "Install `specs` with pip and make what landed importable in THIS process,

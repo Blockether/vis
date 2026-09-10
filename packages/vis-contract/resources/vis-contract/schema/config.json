@@ -698,7 +698,7 @@
         "index_url": {
           "type": "string",
           "pattern": "^https?://[^\\s/?#@]+(?:/[^\\s?#@]*)?$",
-          "description": "Primary index for Vis-managed pip installs and default index for uv extension projects. Credentials, query strings and fragments are not accepted; configure authentication outside committed YAML."
+          "description": "Primary index for Vis-managed pip installs. Does not configure uv. Credentials, query strings and fragments are not accepted; configure authentication outside committed YAML."
         },
         "source_paths": {
           "type": "array",

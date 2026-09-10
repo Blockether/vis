@@ -7,15 +7,13 @@ and [automatically prepared packages](extension-packages.md#package-manifest).
 
 ## Before you start
 
-You need Vis, uv, a reviewed Python project and a committed `uv.lock`. Run preparation
-as the same OS user and with the same runtime and package-directory settings as the
-gateway. Put uv on the sync command's `PATH`, or on the gateway's `PATH` when using
-`/reload --sync`.
+You need Vis and a reviewed Python project. Vis bundles upstream uv; no separate
+uv installation or `PATH` entry is required. `vis-agent python uv` passes every
+following argument directly to that executable, with inherited environment and stdio.
 
-An ordinary `uv sync` prepares the project's environment, not Vis's embedded Python.
-This workflow uses `vis-agent python uv sync` instead. It runs trusted build backends
-and installs into the shared Vis package directory. Do not use it merely to try the
-standard-library tutorial.
+`uv sync` and `vis-agent python uv sync` both prepare the project's environment,
+normally `.venv`. Vis loads project dependencies from that environment in a separate
+trusted extension worker. Build backends run with your OS user's permissions.
 
 ## Declare the editable project
 
@@ -94,14 +92,14 @@ That sibling needs packaging metadata too. A path dependency without
 `editable = true` is not a promise of live imports. Published wheels are ordinary
 installed dependencies, not editable source trees.
 
-## Prepare the Vis environment
+## Prepare the project environment
 
 From `project/`:
 
 1. Generate or deliberately update the lock, review it and commit it:
 
    ```bash
-   uv lock --project ./einmal
+   vis-agent python uv lock --project ./einmal
    ```
 
 2. Install the locked project for Vis:
@@ -113,7 +111,7 @@ From `project/`:
 3. Verify both the import and its source location:
 
    ```bash
-   vis-agent python -c "import einmal; print(einmal.status(), einmal.__file__)"
+   vis-agent python uv run --project ./einmal --no-sync python -c "import einmal; print(einmal.status(), einmal.__file__)"
    ```
 
    Expect `ready` and this checkout's `einmal/src/einmal/__init__.py`, not a copied
@@ -123,27 +121,31 @@ From `project/`:
    `doc("status")` and call `await status()`. The tool returns `ready`.
    `vis-agent extension list` checks registration only.
 
-After reviewing dependency changes, `/reload --sync` can prepare projects declared
-by configured extensions and retry loading them. It uses the gateway's user,
-interpreter and package directory, even when assistant shell access is disabled.
-It respects supplied locks; update a stale lock before retrying. Plain `/reload`,
-startup and imports never install manually selected uv projects.
+After reviewing dependency changes, `/reload --sync` runs upstream `uv sync` for
+projects declared by configured extensions. This host-owned invocation selects the
+gateway's embedded Python with `--python` so compiled dependencies match the worker.
+It can update `uv.lock`. Plain `/reload`, startup and imports never install manually
+selected uv projects; they check them with `uv sync --check`.
 
 ### What preparation installs
 
-The command uses the embedded Python and exports the lock with
-`uv export --locked --no-default-groups --format pylock.toml`, then installs it
-with `uv pip install --target`. It preserves editable local sources, dependency
-versions, artifact hashes and named indexes while retaining unrelated packages.
-Python downloads are disabled; the temporary export is removed. `uv.lock` and the
-project's `.venv` are unchanged by this sync.
+uv owns interpreter selection, lock generation and updates, dependency groups,
+extras, editable installs, indexes and environment cleanup. `--locked` rejects lock
+changes; omitting it permits updates. Default groups are included according to uv's
+configuration, and normal sync removes extraneous packages from the project environment.
+`--project`, `--directory`, `--python`, `--frozen`, `--no-dev` and other uv options keep
+their upstream meaning. `vis-agent python uv sync --help` is uv's own help.
 
-Default dependency groups and optional extras are not installed. `--offline` and
-`--no-cache` are supported; other uv sync options are rejected. `python.index_url`
-supplies the default index without replacing named source indexes. Keep credentials
-in uv's credential configuration or the sync process's environment, not committed
-URLs. Installer diagnostics are suppressed because they may contain credentials.
-Loading an already prepared project does not require uv on the gateway's `PATH`.
+Configure uv through `pyproject.toml`, `uv.toml`, its environment variables or CLI
+options. Vis's `python.index_url` applies to pip, not uv. Keep credentials in uv's
+credential configuration or environment, never committed URLs. CLI output and exit
+status are unchanged; automatic extension preparation reports bounded, credential-
+redacted diagnostics and the uv exit status or timeout.
+
+The CLI does not force embedded Python. When selecting Python yourself, use a version
+compatible with the gateway's embedded interpreter for compiled extension dependencies.
+Project dependencies are not installed into `~/.vis/python/packages` and do not become
+sandbox imports merely because an extension uses them.
 
 ## Reload after changes
 
@@ -152,13 +154,11 @@ Loading an already prepared project does not require uv on the gateway's `PATH`.
 | Edit existing editable Python source or the entry file | `/reload`; no reinstall or gateway restart |
 | Change dependencies or packaging metadata | Review/update the lock, sync again, then `/reload` |
 | Move the checkout | Sync from the new location, then `/reload` |
-| Change Vis runtime, package directory or default index | Sync with the intended runtime and settings, then load the extension |
+| Change Vis runtime or the project interpreter | Sync with a compatible interpreter, then reload |
 | Replace compiled extension code | Rebuild and install it, then use a fresh Vis process |
 
-Readiness checks identify changed inputs: project location, manifest, lock, runtime,
-interpreter, package directory, default index or installed distribution metadata.
-Only distributions named in the exported lock are tracked. Editing existing editable
-Python source or updating an unrelated shared package does not require sync.
+Readiness is checked by `uv sync --check`, not a Vis fingerprint or readiness file.
+Editing existing editable Python source does not require another sync.
 
 Reload switches live sessions at the next turn boundary; in-flight calls can finish
 with old code. A failed reload retains last-good tools and docs as stale, with source

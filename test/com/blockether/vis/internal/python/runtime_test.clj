@@ -184,160 +184,55 @@
                   (doseq [f (reverse (file-seq dir))]
                     (io/delete-file f true))))))
 
-(deftest manual-uv-publication-test
-  (python-runtime/ensure-library!)
-  (let [dir
+(deftest manual-project-uses-uv-check-test
+  ;; #183: readiness belongs to uv, not Vis fingerprints or a shared-package marker.
+  (let [project
         (temp-dir "vis-manual-uv")
 
-        project
-        (doto (io/file dir "project") .mkdirs)
-
-        home
-        (io/file dir "prepared")
-
         packages
-        (.getCanonicalFile (io/file dir ".vis/python/packages"))
-
-        failed?
-        (atom false)
-
-        calls
-        (atom [])
-
-        args
-        ["sync" "--project" (str project) "--locked" "--offline"]
-
-        readiness-error
-        (fn []
-          (try (python-runtime/prepared-project project)
-               nil
-               (catch clojure.lang.ExceptionInfo e e)))
-
-        sync-required?
-        #(= :com.blockether.vis.internal.python.runtime/project-sync-required
-            (:type (ex-data (readiness-error))))]
-
-    (spit (io/file project "pyproject.toml") "[project]\nname='fixture'\nversion='1'\n")
-    (spit (io/file project "uv.lock") "version = 1\n")
-    (.mkdirs packages)
-    (spit (io/file packages "unrelated.py") "VALUE = 7\n")
-    ;; Regression #178: shared packages unrelated to this project must not stale it.
-    (let [metadata (io/file packages "unrelated-1.dist-info/METADATA")]
-      (io/make-parents metadata)
-      (spit metadata "Name: unrelated\nVersion: 1\n"))
-    (try
-      (with-redefs-fn {#'python-runtime/project-home (fn [_]
-                                                       home)
-                       #'runtime/packages-dir (constantly (str packages))
-                       #'config/load-config-raw (constantly {})
-                       #'python-runtime/uv-sync!
-                       (fn [p target options]
-                         (swap! calls conj [p target options])
-                         (when @failed? (throw (ex-info "simulated sync failure" {})))
-                         (spit (io/file target "value.py") "VALUE = 42")
-                         (let [metadata (io/file target "fixture-1.dist-info/METADATA")]
-                           (io/make-parents metadata)
-                           (spit metadata "Name: fixture\nVersion: 1\n"))
-                         {:exit 0 :distributions #{"fixture"}})}
-        (fn []
-          (is (sync-required?))
-          (is (= {:exit 0 :packages (str packages)} (python-runtime/uv-command! args)))
-          (is (= packages (python-runtime/prepared-project project))
-              "uv and both workers use the one shared packages directory")
-          (is (= [[(.getCanonicalFile project) packages ["--offline"]]] @calls))
-          (is (not (.exists (io/file project ".venv"))))
-          (reset! failed? true)
-          (is (= "simulated sync failure"
-                 (try (python-runtime/uv-command! args) nil (catch Exception e (.getMessage e)))))
-          (is (= packages (python-runtime/prepared-project project)))
-          (reset! failed? false)
-          (python-runtime/uv-command! args)
-          (is (= packages (python-runtime/prepared-project project)))
-          (is (.isFile (io/file packages "value.py")))
-          (is (.isFile (io/file packages "unrelated.py")))
-          (is (not-any? #(.isDirectory ^java.io.File %) (.listFiles home)))
-          (spit (io/file packages "unrelated-1.dist-info/METADATA") "Name: unrelated\nVersion: 2\n")
-          (is (= packages (python-runtime/prepared-project project))
-              "An unrelated shared distribution update does not require another sync")
-          (let [inputs
-                @#'python-runtime/project-inputs
-
-                before
-                @calls]
-
-            (doseq [key [:project :pyproject :lock :runtime :interpreter :packages :index]]
-              (with-redefs-fn {#'python-runtime/project-inputs #(assoc (inputs %) key "changed")}
-                (fn []
-                  (let [error (readiness-error)]
-                    (is (= [key] (:changed-inputs (ex-data error))))
-                    (is (.contains (ex-message error) (name key)))
-                    (is (.contains (ex-message error) "/reload --sync"))))))
-            (is (= before @calls) "Readiness checks never install dependencies"))
-          (spit (io/file project "source.py") "def answer(): return 42\n")
-          (is (= packages (python-runtime/prepared-project project)))
-          (let [pointer
-                (io/file home "environment.ready")
-
-                before
-                (slurp pointer)]
-
-            (spit pointer "{")
-            (is (= [:readiness] (:changed-inputs (ex-data (readiness-error)))))
-            (spit pointer before))
-          (let [extra (io/file packages "fixture-2.dist-info/METADATA")]
-            (io/make-parents extra)
-            (spit extra "Name: fixture\nVersion: 2\n")
-            (is (sync-required?) "A second installed version must not preserve stale readiness")
-            (io/delete-file extra)
-            (io/delete-file (.getParentFile extra)))
-          (spit (io/file packages "fixture-1.dist-info/METADATA") "Name: fixture\nVersion: 2\n")
-          (is (sync-required?) "A conflicting shared install invalidates the prepared project")
-          (is (= ["fixture"] (:changed-distributions (ex-data (readiness-error)))))
-          (python-runtime/uv-command! args)
-          (spit (io/file project "uv.lock") "version = 2\n")
-          (is (sync-required?))
-          (let [before @calls]
-            (doseq [invalid [["pip" "install" "x"] ["sync" "--python" "other"] ["sync" "--active"]
-                             ["sync" "--project"]]]
-              (is (try (python-runtime/uv-command! invalid)
-                       false
-                       (catch clojure.lang.ExceptionInfo _ true))))
-            (is (= before @calls)))))
-      (finally (doseq [file (reverse (file-seq dir))]
-                 (io/delete-file file true))))))
-
-(deftest automatic-project-preparation-test
-  (let [project
-        (temp-dir "vis-auto-project")
-
-        ready?
-        (atom false)
+        (doto (io/file project "custom-env/site-packages") .mkdirs)
 
         calls
         (atom [])]
 
-    (try (with-redefs-fn
-           {#'python-runtime/run-uv! (fn [_ args]
-                                       (swap! calls conj :resolve)
-                                       (is (= ["uv" "lock"] (vec (take 2 args))))
-                                       (spit (io/file project "uv.lock") "version = 1"))
-            #'python-runtime/prepared-project
-            (fn [_]
-              (if @ready?
-                project
-                (throw (ex-info
-                         "not ready"
-                         {:type
-                          :com.blockether.vis.internal.python.runtime/project-sync-required}))))
-            #'python-runtime/sync-project! (fn [_ _]
-                                             (swap! calls conj :install)
-                                             (reset! ready? true))}
+    (try (with-redefs-fn {#'python-runtime/bundled-uv! (constantly "/bundled/uv")
+                          #'python-runtime/run-uv!
+                          (fn [cwd args]
+                            (is (= project cwd))
+                            (swap! calls conj args)
+                            (when (= "run" (second args))
+                              (str "VIS_PROJECT_SITE=" (pr-str (str packages)) "\n")))}
            (fn []
-             (is (= project (python-runtime/ensure-project! project)))
-             (is (= [:resolve :install] @calls))
-             (is (= project (python-runtime/ensure-project! project)))
-             (is (= [:resolve :install] @calls) "An unchanged project never runs an installer")
-             (is (= "version = 1" (slurp (io/file project "uv.lock"))))
+             (is (= (.getCanonicalFile packages) (python-runtime/prepared-project project)))
+             (is (= ["/bundled/uv" "sync" "--check"] (first @calls)))
+             (is (= ["/bundled/uv" "run" "--no-sync" "python" "-I" "-c"]
+                    (vec (take 6 (second @calls)))))
+             (is (= 2 (count @calls)))))
+         (finally (doseq [file (reverse (file-seq project))]
+                    (io/delete-file file true))))))
+
+(deftest automatic-project-preparation-test
+  (python-runtime/ensure-library!)
+  (let [project
+        (temp-dir "vis-auto-project")
+
+        calls
+        (atom [])]
+
+    (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                     (swap! calls conj args))
+                          #'python-runtime/project-packages (constantly project)
+                          #'config/load-config-raw
+                          (fn []
+                            (throw (ex-info "uv must not inherit Vis pip configuration" {})))}
+           (fn []
+             (dotimes [_ 2]
+               (is (= project (python-runtime/ensure-project! project))))
+             (is (= 2 (count @calls)) "uv decides whether the environment needs updating")
+             (doseq [args @calls]
+               (is (.isAbsolute (io/file (first args))))
+               (is (= ["sync" "--python" (com.blockether.vispython.Interpreter/pythonExecutable)]
+                      (vec (rest args)))))
              (is (= "ready"
                     (:stage (first (filter #(= (.getName project) (:name %))
                                            (python-runtime/preparation-status))))))))

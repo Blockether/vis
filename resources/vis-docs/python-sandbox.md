@@ -56,18 +56,20 @@ Host functions exposed from Clojure apply their own permission checks. See
 
 ## Packages
 
-Both `python_execution` and trusted Python extension workers import packages from
-**`~/.vis/python/packages`**. They use the same installed files and versions, but
-separate interpreters, module caches and permissions. This directory is shared
-across sessions and read-only to sandbox code.
+`python_execution` imports explicitly installed shared packages from
+**`~/.vis/python/packages`**, which is read-only to sandbox code. Extensions without
+a uv project also use that directory. Project extensions instead use dependencies
+from their uv environment in separate trusted workers.
 
-Imports do not install packages. Prepare a locked project explicitly with
-`vis-agent python uv sync --project PATH --locked`, or install a wheel with
-`vis-agent python -m pip install <package>`. These commands use the same directory;
-`vis-agent python -m <module>` runs against it. Missing imports raise
-`ModuleNotFoundError`. Sharing installed files does not relax sandbox restrictions:
-a package that requires refused native operations may work only in an extension.
-After updating installed packages, use `/reload` to rebuild session workers.
+Imports do not install packages. Use `vis-agent python -m pip install <package>` for
+shared sandbox packages; `vis-agent python -m <module>` runs against that directory.
+`vis-agent python uv sync --project PATH` is upstream uv: it prepares the project's
+environment, normally `.venv`, not shared sandbox packages. Use `vis-agent python uv
+run --project PATH python -m <module>` to run against that project environment.
+
+Missing imports raise `ModuleNotFoundError`. Sharing installed files does not relax
+sandbox restrictions: a package requiring refused native operations may work only
+in an extension. After updating shared packages, use `/reload` to rebuild session workers.
 
 A locked uv project can install its own package and local dependencies editably.
 Their `.pth` files or backend import hooks resolve imports to the source checkout.

@@ -502,13 +502,29 @@
              (expect (str/includes? output "vis-agent-native.build") output)
              (expect (not (.isFile asset)) "no asset may survive a rejected bundle"))
            (spit (io/file from-dir "vis-agent-native.build") stamp)
+           ;; Vis #183: a Python directory alone does not prove uv was packaged.
+           (let [{:keys [exit output]} (stage!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "python/bin/uv") output)
+             (expect (not (.isFile asset)) "no asset may survive a rejected bundle"))
+           (.mkdirs (io/file from-dir "vis-agent-python/python/bin"))
+           (write-executable! (io/file from-dir "vis-agent-python/python/bin/uv")
+                              "#!/bin/sh\nexit 0\n")
+           (let [{:keys [exit output]} (stage!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "uv-LICENSE") output))
+           (doseq [license ["uv-LICENSE-APACHE" "uv-LICENSE-MIT"]]
+             (let [file (io/file from-dir "vis-agent-python/licenses" license)]
+               (io/make-parents file)
+               (spit file "license\n")))
            (let [{:keys [exit output]} (stage!)]
              (expect (= 0 exit) output)
              (expect (.isFile asset) output)
              (expect (= "stdlib\n" (slurp (io/file bundle-dir "vis-agent-python/python/marker"))))
              (expect (= stamp (slurp (io/file bundle-dir "vis-agent-native.build"))))
              (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"]]
-               (expect (.canExecute (io/file bundle-dir entry)) entry)))
+               (expect (.canExecute (io/file bundle-dir entry)) entry))
+             (expect (.canExecute (io/file bundle-dir "vis-agent-python/python/bin/uv"))))
            (finally (delete-tree! root))))))
 
 (defdescribe

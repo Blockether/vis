@@ -395,15 +395,14 @@ python:
   index_url: https://gateway.example.com/simple
 ```
 
-This setting applies to Vis-managed pip installs and to extension projects selected
-with [`tool.vis.project`](extension-development.md). Vis passes it as uv's
-`--default-index`; named indexes and `[tool.uv.sources]` retain uv semantics.
-It is read from merged configuration for each install. It does not change a
-project's own `.venv` or configure uv commands run outside Vis.
+This setting applies to Vis-managed pip installs and is read from merged
+configuration for each install. It does not configure uv, including
+`vis-agent python uv` and automatic extension project preparation. Configure uv
+through its project files, environment variables or command-line options.
 
 `index_url` overrides pip's primary index from `PIP_INDEX_URL` or `pip.conf`.
-When absent, each installer keeps its inherited settings. Other pip settings,
-including extra indexes, proxies and certificates, remain unchanged. Prefer one
+When absent, pip keeps its inherited settings. Other pip settings, including
+extra indexes, proxies and certificates, remain unchanged. Prefer one
 company virtual index serving both private and public packages; extra indexes
 are not ordered fallback sources and can introduce dependency confusion.
 

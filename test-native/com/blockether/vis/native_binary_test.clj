@@ -940,7 +940,7 @@
   ;; Manual sync must prepare packages that perform real work through extension tools.
   ;; Trusted native calls run outside the model sandbox, without changing its policy.
   (it
-    "imports the same native wheels from one directory in the CLI and both worker processes"
+    "imports project native wheels through uv and isolated JVM/native extension workers"
     (let [dir
           (temp-dir "vis-native-packages")
 
@@ -996,11 +996,12 @@
             "description='Native package compatibility', "
             "symbols=[vis.Symbol(packages_check), vis.Symbol(packages_status)]))\n"))
         (let [locked (run-binary dir
-                                 ["uv" "lock" "--project" (str project) "--python"
-                                  (com.blockether.vispython.Locations/pythonExecutable
-                                    (str (io/file (.getParentFile library) "python")))
-                                  "--no-python-downloads" "--default-index"
-                                  "https://pypi.org/simple"]
+                                 (into cli
+                                       ["python" "uv" "lock" "--project" (str project) "--python"
+                                        (com.blockether.vispython.Locations/pythonExecutable
+                                          (str (io/file (.getParentFile library) "python")))
+                                        "--no-python-downloads" "--default-index"
+                                        "https://pypi.org/simple"])
                                  120)]
           (expect (= 0 (:exit locked)) (:output locked)))
         (let [lock-before
@@ -1008,42 +1009,47 @@
 
               synced
               (run-binary dir
-                          (into cli ["python" "uv" "sync" "--project" (str project) "--locked"])
+                          (into cli
+                                ["python" "uv" "sync" "--project" (str project) "--locked"
+                                 "--python"
+                                 (com.blockether.vispython.Locations/pythonExecutable
+                                   (str (io/file (.getParentFile library) "python")))
+                                 "--default-index" "https://pypi.org/simple"])
                           240)]
 
           (expect (= 0 (:exit synced)) (:output synced))
           (System/setProperty "user.home" (.getAbsolutePath dir))
           (binding [extension/*current-environment* {:db-info store}]
             (with-redefs [config/load-config-raw (constantly index)
-                          python-runtime/uv-sync! (fn [& _]
-                                                    (throw (ex-info "Unexpected sync" {})))
+                          python-runtime/ensure-project! (fn [& _]
+                                                           (throw (ex-info "Unexpected sync" {})))
                           python-runtime/pip-install! (fn [& _]
                                                         (throw (ex-info "Unexpected pip" {})))]
 
               (let [packages (python-runtime/prepared-project project)
-                    shared-package? (fn [{:keys [status path]}]
-                                      (and (= "ok" status)
-                                           path
-                                           (.startsWith (.toPath (io/file path))
-                                                        (.toPath ^File packages))))
-                    baseline (run-binary
-                               dir
-                               (into cli
-                                     ["python" "-c"
-                                      (str
-                                        "import sys, json\nsys.path[:0] = ["
-                                        (pr-str (str source))
-                                        "]\n"
-                                        "from package_checks import packages_check\n"
-                                        "print('PACKAGE_CHECK ' + json.dumps(packages_check()))")])
-                               120)
+                    project-package? (fn [{:keys [status path]}]
+                                       (and (= "ok" status)
+                                            path
+                                            (.startsWith (.toPath (io/file path))
+                                                         (.toPath ^File packages))))
+                    baseline
+                    (run-binary
+                      dir
+                      (into cli
+                            ["python" "uv" "run" "--project" (str project) "--no-sync" "python" "-c"
+                             (str "import sys, json\nsys.path[:0] = ["
+                                  (pr-str (str source))
+                                  "]\n"
+                                  "from package_checks import packages_check\n"
+                                  "print('PACKAGE_CHECK ' + json.dumps(packages_check()))")])
+                      120)
                     report (package-check-result (:output baseline))]
 
-                (expect (= (.getCanonicalFile (io/file (runtime/packages-dir))) packages))
+                (expect (not= (.getCanonicalFile (io/file (runtime/packages-dir))) packages))
                 (expect (= 0 (:exit baseline)) (:output baseline))
                 (expect (= #{:numpy :scipy :pydantic :cryptography} (set (keys (:packages report))))
                         (:output baseline))
-                (expect (every? shared-package? (vals (:packages report))) (pr-str report))
+                (expect (every? project-package? (vals (:packages report))) (pr-str report))
                 (expect (= {:loaded 1 :failed 0 :changed? true}
                            (pyx/reload-python-extensions! {:dirs [(str entries)]})))
                 (let [jvm-worker @#'worker/child-argv
@@ -1082,16 +1088,12 @@
                                  ctx
                                  (str
                                    "import json, dataclasses, importlib.util\n"
-                                   "from pathlib import Path\n" "import numpy as np\n"
-                                   "assert np.dot([2, 3], [4, 5]) == 23\n"
-                                   "package_paths = {name: str(Path(importlib.util.find_spec(name).origin).resolve()) "
-                                   "for name in ('numpy', 'scipy', 'pydantic', 'cryptography')}\n"
+                                   "assert all(importlib.util.find_spec(name) is None "
+                                   "for name in ('numpy', 'scipy', 'pydantic', 'cryptography'))\n"
                                    "status = await packages_status()\n"
                                    "assert type(status).__name__ == 'PackageStatus' and status.state == 'ready'\n"
                                    "assert dataclasses.is_dataclass(status)\n"
                                    "report = await packages_check()\n"
-                                   "assert all(report['packages'][name]['path'] == path "
-                                   "for name, path in package_paths.items())\n"
                                    "print('PACKAGE_CHECK ' + json.dumps(report))"))
                                report (package-check-result (:stdout answer))
                                statuses (into {}
@@ -1102,20 +1104,23 @@
 
                               (expect (nil? (:error answer)) (pr-str answer))
                               (expect (not= (.pid process) (:pid report)))
-                              (expect (= (.pid ^Process
-                                               (:process (get @@#'worker/workers
-                                                              (worker/extension-worker-key ctx))))
-                                         (:pid report)))
+                              (let [trusted-context (:context (get @@#'pyx/session-contexts
+                                                                   [ctx "package-check"]))
+                                    trusted-worker (#'pyx/worker-for trusted-context)]
+
+                                (expect (= (.pid ^Process
+                                                 (:process (get @@#'worker/workers trusted-worker)))
+                                           (:pid report))))
                               (expect (= {:numpy "ok" :scipy "ok" :pydantic "ok" :cryptography "ok"}
                                          statuses)
                                       (pr-str report))
-                              (expect (every? shared-package? (vals (:packages report))))
+                              (expect (every? project-package? (vals (:packages report))))
                               (println "PACKAGE_COMPATIBILITY"
                                        (if native? :native :jvm)
                                        (pr-str statuses)))
                             (finally (ep/dispose-python-context! ctx)))))))))))
           (expect (= lock-before (slurp (io/file project "uv.lock"))))
-          (expect (not (.exists (io/file project ".venv"))))
+          (expect (.isDirectory (io/file project ".venv")))
           (expect (.isDirectory (io/file dir ".vis/python/packages")))
           (expect (not-any? #(= ".vis-packages" (.getName ^File %)) (file-seq dir))))
         (catch Exception error

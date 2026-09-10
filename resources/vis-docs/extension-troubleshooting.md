@@ -32,7 +32,7 @@ and the failure. A successful retry clears the warning at the next turn boundary
 
 Check the import's origin. An ordinary wheel needs another install after rebuilding;
 editable source and declared `source_paths` need reload. Moving a checkout or changing
-its dependencies needs [preparation](extension-development.md#prepare-the-vis-environment)
+its dependencies needs [preparation](extension-development.md#prepare-the-project-environment)
 again. In-flight calls may finish using old imports.
 
 The built-in guide returned by `doc("extending")` is bundled with the running Vis
@@ -56,12 +56,12 @@ alter `sys.path` to hide a collision. See [entrypoint design](extension-design.m
 | Symptom | Check and next action |
 | --- | --- |
 | Circular import or partially initialized module | Give the entry a different filename from the package it imports |
-| Missing package | Check the build backend, dependency mode and `package.__file__`; sync must target the gateway's user, interpreter and package directory |
-| Missing/stale manual uv environment | Review the reported readiness inputs; update the lock if needed, then `/reload --sync`, or explicit sync followed by `/reload` |
-| Automatic package preparation fails | Put uv on the gateway's `PATH`; respect supplied locks and review the actual preparation error |
+| Missing package | Check the build backend, dependency mode and `package.__file__`; project extensions use the environment selected by uv |
+| Missing/stale manual uv environment | Read the `uv sync --check` diagnostic, then sync followed by `/reload`, or use `/reload --sync` |
+| Automatic package preparation fails | Read the reported uv phase and diagnostics. Vis bundles uv; reinstall the runtime if its executable is missing |
 | PEP 723 dependency has no wheel | This mode installs wheels only; it does not fall back to a source build |
-| Import works in a development `.venv` but not Vis | Prepare the Vis environment; ordinary `uv sync` does not install for Vis |
-| Import works in the extension but not the sandbox | Check [filesystem access](jail.md#filesystem-access) and native operations; editable installation does not widen sandbox policy |
+| Import works in a project environment but not Vis | Point `tool.vis.project` at that project; check interpreter compatibility and reload |
+| Import works in the extension but not the sandbox | Project dependencies belong to the extension's environment, not shared sandbox packages; installation does not widen [filesystem access](jail.md#filesystem-access) |
 
 Do not combine package manifests, script dependencies and `tool.vis.project` in one
 entry. [Choose a layout](extension-packages.md#choose-a-layout), then follow that

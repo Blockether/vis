@@ -125,6 +125,13 @@
         (binding [*out* out]
           (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
         (expect (.contains (str out) "vis-agent providers"))))
+  (it "documents transparent bundled uv invocation through Python help (#183)"
+      (let [out (java.io.StringWriter.)]
+        (binding [*out* out]
+          (expect (= :help
+                     (:status (commandline/dispatch! (#'main/root-command)
+                                                     ["vis-agent" "python" "--help"])))))
+        (expect (str/includes? (str out) "pass commands unchanged to bundled uv"))))
   (it "loads channels before rendering channels parent help"
       (let [out
             (java.io.StringWriter.)

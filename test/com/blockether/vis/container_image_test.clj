@@ -165,7 +165,7 @@
         (try (.mkdirs bundle)
              (io/copy (io/file "bin" "vis-agent") wrapper)
              (.setExecutable wrapper true false)
-             (spit native "#!/bin/sh\nprintf 'NATIVE=%s\\n' \"$0\"\n")
+             (spit native "#!/bin/sh\nprintf 'NATIVE=%s\\n' \"$0\"\nprintf 'ARG=%s\\n' \"$@\"\n")
              (.setExecutable native true false)
              (Files/createSymbolicLink (.toPath link)
                                        ^Path (.toPath wrapper)
@@ -174,6 +174,20 @@
                    (run-wrapper link {"HOME" (.getAbsolutePath tmp)} ["--version"])]
                (expect (zero? exit) output)
                (expect (str/includes? output (str "NATIVE=" (.getCanonicalPath native))) output))
+             ;; #183: launcher flags inside uv's child argv must remain opaque.
+             (let [args
+                   ["python" "uv" "run" "python" "--measure" "--jfr" "--stream-trace"]
+
+                   {:keys [exit output]}
+                   (run-wrapper link {"HOME" (.getAbsolutePath tmp)} args)]
+
+               (expect (zero? exit) output)
+               (expect (= args
+                          (->> (str/split-lines output)
+                               (filter #(str/starts-with? % "ARG="))
+                               (map #(subs % 4))
+                               (remove #(str/starts-with? % "-D"))
+                               vec))))
              (finally (doseq [file (reverse (file-seq tmp))]
                         (io/delete-file file true)))))))
 

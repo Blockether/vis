@@ -88,5 +88,12 @@ else
   install -m 0644 "$native.build" "$bundle/vis-agent-native.build"
 fi
 
+[[ -x "$bundle/vis-agent-python/python/bin/uv" ]] || \
+  die "sidecar is missing executable python/bin/uv; rebuild with the released Python runtime."
+for license in uv-LICENSE-APACHE uv-LICENSE-MIT; do
+  [[ -f "$bundle/vis-agent-python/licenses/$license" ]] || \
+    die "sidecar is missing licenses/$license"
+done
+
 tar -C "$bundle" -czf "$asset" .
 printf 'stage-release-bundle: %s (%s)\n' "$asset" "$(du -sh "$asset" | cut -f1)"
