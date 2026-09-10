@@ -86,6 +86,17 @@
 
         ;; gitignored entries are never listed, on either axis
         (expect (= "True True True False False\n" (out ctx code)))))
+  (it "accepts hidden as a keyword alias, overriding is_hidden when supplied"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "plain = ls('.')\n" "shown = ls('.', is_hidden=True)\n"
+                 "print(ls('.', hidden=True) == shown,\n" "      ls('.', hidden=False) == plain,\n"
+                 "      ls('.', is_hidden=True, hidden=False) == plain,\n"
+                 "      ls(['.'], hidden=True) == shown) \n")]
+
+        (expect (= "True True True True\n" (out ctx code)))))
   (it "sizes a file in at most four characters"
       (let [ctx
             (sandbox)

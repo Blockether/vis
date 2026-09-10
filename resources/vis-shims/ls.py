@@ -63,7 +63,7 @@ def __vis_install_ls__():
         _render(entries, "", out)
         return "\n".join(out)
 
-    def ls(paths=".", depth=1, is_hidden=False):
+    def ls(paths=".", depth=1, is_hidden=False, *, hidden=None):
         """Map a tree through the host's ignore-aware walk, as a compact STRING.
 
         ls(dir) returns a ready-to-print tree: a `path  Nd Nf` header, then one
@@ -77,11 +77,14 @@ def __vis_install_ls__():
         path is a str or any os.PathLike, so pathlib.Path works wherever a
         string does.
 
-        Dotfiles need is_hidden=True; gitignored entries are never listed.
+        Dotfiles need is_hidden=True (alias: hidden=True). If supplied, hidden
+        overrides is_hidden; gitignored entries are never listed.
         Start at a known parent and batch only confirmed directories. A missing,
         protected or non-directory path fails the batch with a host tool error.
         A missing path names its nearest existing parent; read files with cat.
         """
+        if hidden is not None:
+            is_hidden = hidden
         bridge = globals().get("__vis_list_directories__")
         if bridge is None:
             raise RuntimeError("ls: listing bridge not bound in this sandbox")
@@ -106,14 +109,15 @@ def __vis_install_ls__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["ls"] = (
-        "ls(paths='.', depth=1, is_hidden=False): directory contents from the "
+        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None): directory contents from the "
         "host's ignore-aware walk, rendered as a compact printable STRING. "
         "ls(dir) -> a `path  Nd Nf` header then one tree line per entry, "
         "directories first then alphabetical: a directory is `name/` (with its "
         "child count once depth expanded it), a file is `name  size` "
         "(`812`, `7.2k`, `2.1M`); ls([dir, ...]) -> one such section per "
         "directory in request order, blank-line separated. Dotfiles need "
-        "is_hidden=True and gitignored entries are never listed. Start at a known "
+        "is_hidden=True (alias: hidden=True). When not None, hidden overrides "
+        "is_hidden; gitignored entries are never listed. Start at a known "
         "parent; batch only confirmed directories. One missing, protected or "
         "non-directory path fails the batch with a host tool error; a missing path "
         "names the nearest existing directory. Read files with cat. A path is a "
