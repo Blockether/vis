@@ -135,6 +135,7 @@ the retained record, including lines outside `window_lines` and closed views.
 Results include original one-based line numbers and are paged in groups of 200.
 They are a snapshot: **Refresh results** includes new output. Clearing a log
 resets its searchable history. Search never sends an action to the producer.
+
 In Companion, **Clear search** or Escape in the search field restores normal output; `/` while the
 output is focused moves focus to search. Without a record loader, the panel
 explicitly limits search to loaded lines. In the TUI, an empty query browses the

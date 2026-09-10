@@ -2,7 +2,8 @@
   "Closed semantic presenter registry for Activity rows. Presenters return data,
    never channel markup, and never inspect Python source."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.activity :as contract]))
+            [com.blockether.vis.contract.activity :as contract]
+            [com.blockether.vis.internal.util :as util]))
 
 (def presenters contract/presenters)
 
@@ -191,7 +192,7 @@
         (or (true? (field value "timed_out")) (contains? statuses "timeout"))
 
         error-text
-        (some #(let [v (field value %)] (when (and (string? v) (not (str/blank? v))) v))
+        (some #(let [v (field value %)] (when (util/non-blank-string? v) v))
               ["exc" "error_message" "ex" "root_ex"])
 
         error?
@@ -208,7 +209,7 @@
 
         section
         (fn [title text syntax]
-          (when (and (string? text) (not (str/blank? text)))
+          (when (util/non-blank-string? text)
             [{"type" "heading" "text" title}
              (cond-> {"type" "code" "text" text}
                syntax
