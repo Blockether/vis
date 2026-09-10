@@ -29,10 +29,16 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 vis-agent help
 ```
 
+Tracks choose which version of Vis you install:
+
+- `release` (default) installs the latest stable version and does not need Java.
+- `beta` installs the latest published preview that passed automated checks and does not need Java.
+- `dev` runs the latest code from `main` on the JVM and needs Git and JDK 25+.
+
 ```bash
-vis-agent update                 # latest complete native release (default)
-vis-agent update --track beta    # native beta from green main CI
-vis-agent update --track dev     # newest main source, always JVM
+vis-agent update
+vis-agent update --track beta
+vis-agent update --track dev
 ```
 
 **Clojure library:**
@@ -50,7 +56,6 @@ vis-agent gateway start --host 10.0.0.5 --pair       # phone app gateway; prints
 ```
 
 `vis-agent tui` opens the terminal UI and starts a local gateway if needed.
-Release and beta use native binaries; dev uses the managed main checkout on the JVM.
 Every plain `vis-agent update` selects release; name beta or dev when updating those
 tracks. See [Runtime distributions](resources/vis-docs/distributions.md).
 A non-loopback `--host` requires a bearer token. `--pair` prints a QR code containing

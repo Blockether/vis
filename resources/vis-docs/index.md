@@ -22,7 +22,12 @@ Public beta apps. Connect them to your Vis gateway: [pairing instructions](gatew
 You can [read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent)
 before running it. It installs the stable native engine, bundled Python and terminal
 client in `~/.local/bin`. Installation requires `curl` and `tar`, not Java or Git.
-Use `--track dev` only for source development on the JVM.
+
+Tracks choose which version of Vis you install:
+
+- `release` (default) installs the latest stable version and does not need Java.
+- `beta` installs the latest published preview that passed automated checks and does not need Java.
+- `dev` runs the latest code from `main` on the JVM and needs Git and JDK 25+.
 
 For runtime options and manual setup, see [Runtime distributions](distributions.md).
 
@@ -60,9 +65,9 @@ network permissions.
 vis-agent update
 ```
 
-`vis-agent update` selects the latest complete native release. Use
-`vis-agent update --track beta` for tested native betas, or `--track dev` for main
-source on the JVM. See [Runtime distributions](distributions.md).
+`vis-agent update` always selects `release`; use `vis-agent update --track beta`
+or `vis-agent update --track dev` for the other tracks. See
+[Runtime distributions](distributions.md).
 
 ## Learn more
 
