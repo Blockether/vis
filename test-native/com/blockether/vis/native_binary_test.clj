@@ -573,6 +573,31 @@
            (expect (re-find #"\"v\": \[3, \d+\]" output)
                    (str "no CPython 3 in the binary:\n" output))
            (finally (delete-tree! dir)))))
+  (it
+    "loads secrets from the bundled standard library without installed packages"
+    ;; SciPy imports secrets; verify that dependency in a clean native CLI process.
+    (let [dir (temp-dir "vis-native-secrets")]
+      (try
+        (let
+          [{:keys [exit output]}
+           (run-binary
+             dir
+             [(.getAbsolutePath (require-binary)) (str "-Duser.home=" (.getAbsolutePath dir))
+              "python" "--no-env" "--no-network" "-c"
+              (str
+                "import secrets, sysconfig\n" "from pathlib import Path\n"
+                "assert Path(secrets.__file__).resolve().parent == Path(sysconfig.get_path('stdlib')).resolve()\n"
+                "assert len(secrets.token_bytes(32)) == 32\n"
+                "assert len(secrets.token_hex(32)) == 64\n"
+                "assert len(secrets.token_urlsafe(32)) == 43\n"
+                "assert 0 <= secrets.randbelow(128) < 128\n"
+                "assert secrets.compare_digest(b'native-check', b'native-check')\n"
+                "assert not secrets.compare_digest(b'native-check', b'other-check')\n"
+                "print('NATIVE_SECRETS_READY')\n")]
+             60)]
+          (expect (= 0 exit) output)
+          (expect (str/includes? output "NATIVE_SECRETS_READY") output))
+        (finally (delete-tree! dir)))))
   (it "reads a file through the guarded filesystem door"
       ;; Reading is the audit hook's happy path: the block's own directory is a
       ;; session root, and an interpreter whose confinement policy failed to install
