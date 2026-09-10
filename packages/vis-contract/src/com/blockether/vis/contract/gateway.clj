@@ -205,7 +205,8 @@
 
 (defn subscription-ready-event
   "Build the canonical first frame for one session subscription."
-  [{:keys [session-id cursor current-turn-id is-live server-time-ms latest-iteration goal]}]
+  [{:keys [session-id cursor current-turn-id is-live server-time-ms latest-iteration goal
+           agent-name]}]
   (let [required
         subscription-ready-required-keys
 
@@ -220,6 +221,9 @@
              (get required :is-live) (boolean is-live)
              (get required :server-time-ms) server-time-ms
              (get required :goal) goal}
+      (some? agent-name)
+      (assoc (get optional :agent-name) agent-name)
+
       (some? latest-iteration)
       (assoc (get optional :latest-iteration) latest-iteration))))
 

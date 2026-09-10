@@ -848,6 +848,9 @@
   (let [tid
         (state/current-turn-id sid)
 
+        session
+        (state/soul sid)
+
         latest-iteration
         (latest-replay-iteration replay tid)
 
@@ -857,7 +860,8 @@
                                                     :current-turn-id tid
                                                     :is-live (some? tid)
                                                     :server-time-ms (util/now-ms)
-                                                    :goal (get (state/soul sid) "goal")
+                                                    :goal (get session "goal")
+                                                    :agent-name (get session "agent_name")
                                                     :latest-iteration (when (pos? latest-iteration)
                                                                         latest-iteration)})]
 
@@ -1775,9 +1779,29 @@
       (empty? choices)
       (assoc :enabled (boolean (try (toggles/enabled? id) (catch Throwable _ false)))))))
 
+(defn- agent-name-setting
+  []
+  {:id "agent_name"
+   :label "Agent name"
+   :description "Shared by all clients of this gateway. Overrides project names."
+   :type "string"
+   :value (config/agent-name)
+   :max-length 80})
+
+(defn- set-agent-name-setting
+  [action given]
+  (if (not= action "value")
+    (error-response 400 :invalid-setting-action "Agent name takes the value action.")
+    (try (state/set-agent-name! (:raw given))
+         (json-response (agent-name-setting))
+         (catch clojure.lang.ExceptionInfo e
+           (if (= :config/invalid-agent-name (:type (ex-data e)))
+             (error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
+             (throw e))))))
+
 (defn- list-settings-handler
-  "GET /v1/settings[?channel=web|all] — the feature-toggle registry every
-   channel renders (web dialog, TUI pane, mobile app) as grouped JSON.
+  "GET /v1/settings[?channel=web|all] — the gateway identity and feature toggles
+   rendered by every channel (web dialog, TUI pane, mobile app) as grouped JSON.
    `channel` scopes rows exactly like `toggles-for-channel`; `all` (or
    `*`, or omitting the param) ships every visible toggle regardless of
    channel — the cross-channel view a remote companion wants."
@@ -1794,7 +1818,7 @@
         grouped
         (sort-by (comp str key) (group-by #(or (:group %) :other) specs))]
 
-    (json-response {:groups (into []
+    (json-response {:groups (into [{:id "agent" :title "Agent" :toggles [(agent-name-setting)]}]
                                   (map (fn [[group group-specs]]
                                          {:id (name group)
                                           :title (str/capitalize
@@ -1803,7 +1827,7 @@
                                   grouped)})))
 
 (defn- get-setting-handler
-  "GET /v1/settings/:id — ONE registered toggle row, INCLUDING the ids
+  "GET /v1/settings/:id — the agent name or ONE registered toggle row, INCLUDING the ids
    `list-settings-handler` hides. `reasoning_level` is registered
    `:settings? false` because every channel drives it from its own dedicated
    control (TUI Ctrl+R, the companion's model dialog) rather than the Settings
@@ -1821,16 +1845,18 @@
 
     (cond (not (toggle-contract/toggle-id? id))
           (error-response 400 :bad-setting-id "settings id must be a snake_case string")
+          (= id "agent_name") (json-response (agent-name-setting))
           (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
           :else (json-response (toggle-json spec)))))
 
 (defn- set-setting-handler
   "POST /v1/settings {id, action} — flip (`toggle`, the default), `cycle` an
    enum, or set an exact value (`value` action with `{value}`) on one registered
-   toggle; answers with the refreshed row. JSON body or query params both work.
+   toggle or the agent name; answers with the refreshed row. JSON body or query params both work.
 
    A `value` the setting's own type cannot name is a 400, never a silent 200:
-   booleans take true/false (on/off, yes/no, 1/0), enums take a choice name."
+   booleans take true/false (on/off, yes/no, 1/0), enums take a choice name, and
+   agent_name takes a nonblank string of at most 80 characters without control characters."
   [request]
   (let [body
         (try (body-json request) (catch Throwable _ nil))
@@ -1858,6 +1884,7 @@
     (cond
       (not (toggle-contract/toggle-id? id))
       (error-response 400 :bad-setting-id "settings id must be a snake_case string")
+      (= id "agent_name") (set-agent-name-setting action given)
       (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
       (= action "value")
       (if-let [chosen (when given (toggles/wire-value id (:raw given)))]

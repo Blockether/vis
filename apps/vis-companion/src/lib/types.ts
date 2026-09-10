@@ -221,7 +221,7 @@ export interface Project {
   [k: string]: unknown;
 }
 
-export type ToggleType = "boolean" | "enum";
+export type ToggleType = "boolean" | "enum" | "string";
 
 export interface Toggle {
   id: string;
@@ -231,6 +231,7 @@ export interface Toggle {
   enabled?: boolean;
   value?: string;
   choices?: string[];
+  max_length?: number;
 }
 
 export interface ToggleGroup {

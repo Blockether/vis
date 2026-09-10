@@ -80,6 +80,43 @@ export function EnumSetting({
   );
 }
 
+/** Gateway-backed text setting. Drafts remain local until explicit Save/Enter. */
+export function StringSetting({ toggle, busy, onSave }: {
+  toggle: Toggle;
+  busy: boolean;
+  onSave: (value: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState(toggle.value ?? "");
+  const changed = draft !== (toggle.value ?? "");
+  return (
+    <form
+      className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!busy && changed && draft.trim()) {
+          void onSave(draft).then((saved) => { if (saved) setDraft(draft.trim()); });
+        }
+      }}
+    >
+      <div>
+        <p className="font-mono text-ui font-bold text-white">{toggle.label}</p>
+        {toggle.description && (
+          <p className="mt-0.5 font-mono text-ui text-dialog-hint">{toggle.description}</p>
+        )}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <Input aria-label={toggle.label} value={draft} maxLength={toggle.max_length}
+          disabled={busy} required className="flex-1 min-h-11 sm:min-h-11 mouse:min-h-7 sm:mouse:min-h-8"
+          onChange={(event) => setDraft(event.target.value)} />
+        <Button type="submit" density="panel" disabled={busy || !changed || !draft.trim()}
+          aria-busy={busy}>{busy ? "Saving…" : "Save"}</Button>
+        {changed && <Button type="button" variant="secondary" density="panel" disabled={busy}
+          onClick={() => setDraft(toggle.value ?? "")}>Cancel</Button>}
+      </div>
+    </form>
+  );
+}
+
 /**
  * ONE MACHINE'S OWN SETTINGS, standing under that machine's own row in `SettingsDialog`.
  *
@@ -190,8 +227,10 @@ export function MachineSettings({
     setPending(toggle.id);
     try {
       patch(await client.setSetting(toggle.id, "value", value));
+      return true;
     } catch (e) {
       setErr((e as Error).message);
+      return false;
     } finally {
       setPending(null);
     }
@@ -294,6 +333,10 @@ export function MachineSettings({
             <div className="divide-y divide-dialog-edge">
               {group.toggles.map((toggle) => {
                 const busy = pending === toggle.id;
+                if (toggle.type === "string") return (
+                  <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy}
+                    onSave={(value) => pick(toggle, value)} />
+                );
                 // Regression, user report (paraphrased: now that the row ends in a
                 // real toggle, what is the mark on the left for): the row said its
                 // state twice — a ticked ring in one alphabet and, a column away, the

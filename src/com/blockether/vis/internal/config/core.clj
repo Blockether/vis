@@ -1319,10 +1319,11 @@
       "Vis")))
 
 (defn agent-name
-  "Coding-agent identity from merged YAML, defaulting to Vis. With a workspace
-   root, read that project's tiers rather than the gateway process's cwd.
-   Invalid values from lenient config loading fall back to the default."
-  ([] (configured-agent-name (load-config-raw)))
+  "Coding-agent identity, defaulting to Vis. The gateway setting in state.yml
+   overrides every project; otherwise merged YAML supplies the default. With a
+   workspace root, read that project rather than the gateway process cwd.
+   Invalid values from lenient loading fall back to Vis."
+  ([] (configured-agent-name (merge (load-config-raw) (load-global-config-raw))))
   ([workspace-root]
    (let [project
          (when workspace-root
@@ -1337,7 +1338,7 @@
                  (map #(str (io/file workspace-root ".vis" %)) ["config.yml" "config.yaml"])))
 
          raw
-         (merge (load-global-yaml-config-raw) (load-global-config-raw) project overlay)]
+         (merge (load-global-yaml-config-raw) project overlay (load-global-config-raw))]
 
      (configured-agent-name raw))))
 
@@ -1639,6 +1640,17 @@
                          :data {:path (str lock-path) :error (ex-message t)}}
                         "Writing the machine store without a file lock")
               (apply-update!)))))))
+
+(defn set-agent-name!
+  "Persist the gateway-wide coding-agent name in state.yml, preserving other keys.
+   Reject invalid input before writing; return the normalized name."
+  [value]
+  (when-not (config-validation/valid? {"agent_name" value})
+    (throw (ex-info "Agent name must be 1–80 characters, with no control characters."
+                    {:type :config/invalid-agent-name})))
+  (let [value (str/trim value)]
+    (update-machine-config! #(assoc % "agent_name" value))
+    value))
 
 (defn save-toggles!
   "Persist a `{id value}` feature-toggle snapshot into the MACHINE store, folding

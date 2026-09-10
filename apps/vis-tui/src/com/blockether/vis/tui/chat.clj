@@ -1318,6 +1318,9 @@
       "session.model_updated"
       {:phase :model-sync :provider (event-get event :provider) :model (event-get event :model)}
 
+      "session.agent_name_updated"
+      {:phase :agent-name-sync :agent-name (event-get event :agent-name)}
+
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 
@@ -1362,6 +1365,9 @@
       (cond-> {:phase :gateway-ready
                :gateway-turn-id (event-get event :current-turn-id)
                :is-state-known (some? (event-get event :is-live))}
+        (some? (event-get event :agent-name))
+        (assoc :agent-name (event-get event :agent-name))
+
         (some? (event-get event :goal))
         (assoc :goal (event-get event :goal)))
 

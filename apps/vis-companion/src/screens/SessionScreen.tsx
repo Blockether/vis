@@ -1946,6 +1946,11 @@ export function SessionScreen({
         if (event.type !== "subscription.ready" || typeof event.is_live !== "boolean") return;
         const nextSession = client.noteSessionGoal(sid, event.goal);
         if (nextSession) setSession(nextSession);
+        const agentName = eventString(event, "agent_name");
+        if (agentName) {
+          client.noteSessionAgentName(sid, agentName);
+          setSession((current) => current ? { ...current, agent_name: agentName } : current);
+        }
         const currentRunningTurn = runningTurnRef.current;
         const painted =
           currentRunningTurn?.status === "running" ? currentRunningTurn.id : "";
@@ -2609,6 +2614,14 @@ export function SessionScreen({
               }),
             );
             break;
+          case "session.agent_name_updated": {
+            const agentName = eventString(event, "agent_name");
+            if (agentName) {
+              client.noteSessionAgentName(sid, agentName);
+              setSession((current) => current ? { ...current, agent_name: agentName } : current);
+            }
+            break;
+          }
           case "session.goal_updated": {
             const row = client.noteSessionGoal(sid, event.goal);
             if (row) setSession(row);
@@ -4239,6 +4252,7 @@ export function SessionScreen({
       openLinkedArtifact,
       forkThrough,
       forkingTurnId,
+      session?.agent_name,
     ],
   );
 
@@ -4329,6 +4343,7 @@ export function SessionScreen({
     watching,
     liveViews,
     openLinkedArtifact,
+    session?.agent_name,
   ]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
   // has to do: the anchor observer holds the reader's line for every mutation.

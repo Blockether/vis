@@ -1133,6 +1133,15 @@
   (config/agent-name (when-let [db (lp/db-info)]
                        (:root (resolve-workspace db sid)))))
 
+(defn set-agent-name!
+  "Save the gateway identity before notifying every open session. Reconnects read
+   the current identity from session metadata, not stale replayed rename events."
+  [value]
+  (let [agent-name (config/set-agent-name! value)]
+    (doseq [sid (other-session-ids nil)]
+      (append-event! sid "session.agent_name_updated" {:agent-name agent-name} {:store? false}))
+    agent-name))
+
 (defn session-workspace-info
   "Workspace state for a channel surface (the web footer AND the TUI
    directory picker), in THE canonical string-keyed wire shape:

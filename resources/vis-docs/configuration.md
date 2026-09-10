@@ -23,19 +23,30 @@ agent_name: Ada
 
 The default is `Vis`. Names must contain non-whitespace text, be at most 80
 characters long and contain no control characters. Surrounding spaces are trimmed.
-The global files and project overlay follow the precedence below.
+In Companion, open Settings, expand the gateway, then Agent. In the TUI, open
+Settings and select Agent → Agent name. Save writes `agent_name` to the gateway's
+`~/.vis/state.yml`, not the client's disk. This gateway-wide choice overrides
+project names; remove the key from `state.yml` to use YAML defaults again.
 
 The gateway resolves the name from each session's workspace and returns
 `agent_name` on `GET /v1/sessions/:sid` and inside the workspace response.
-The TUI and Companion use that value, including remote clients. Reopen the
-session to refresh its displayed name after editing YAML. The JVM uses the same
-name when assembling the default system prompt; a full custom system-prompt
-replacement retains its own identity. Product branding and session titles do not change.
+The TUI and Companion use that value, including remote clients. Changes made in
+Settings update open sessions immediately, and reconnecting clients receive the
+current name. After manually editing YAML, reopen the session to refresh it.
+The JVM uses the name when assembling the next default system prompt; a full
+custom system-prompt replacement retains its own identity. Product branding and
+session titles do not change.
+
+The shared API is `GET /v1/settings/agent_name` and
+`POST /v1/settings` with `{"id":"agent_name","action":"value","value":"Ada"}`.
+The settings list exposes a `string` row in the Agent group. Invalid names return
+400 without changing the saved name.
 
 ## Configuration files
 
 Files are read in this order. Later files override earlier ones; nested maps
-merge, scalars and lists are replaced.
+merge, scalars and lists are replaced. The gateway-wide `agent_name` saved in
+`state.yml` is an exception: it overrides the project tiers.
 
 | File | Purpose |
 | --- | --- |

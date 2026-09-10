@@ -37,7 +37,7 @@
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= {:json 116 :resource 2 :sse 5 :empty 3 :binary 4 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= 33 (count contract/event-types)))
+    (expect (= 34 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
     (expect (= ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback" "llm_routing_trace"
                 "tokens" "cost" "confidence" "eval" "duration_ms" "utilization"]
@@ -130,12 +130,14 @@
                   "is_live" true
                   "server_time_ms" 9
                   "goal" nil
+                  "agent_name" "Ada"
                   "latest_iteration" 4}
                  (contract/subscription-ready-event {:session-id "s1"
                                                      :cursor 7
                                                      :current-turn-id "t1"
                                                      :is-live true
                                                      :server-time-ms 9
+                                                     :agent-name "Ada"
                                                      :latest-iteration 4}))))
   (it "exports generated View event constants"
       (expect (= {:open contract/view-open-event

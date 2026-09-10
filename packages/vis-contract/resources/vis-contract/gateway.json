@@ -1236,6 +1236,7 @@
       "provider.retry",
       "queue.paused",
       "queue.resumed",
+      "session.agent_name_updated",
       "session.goal_updated",
       "session.model_updated",
       "session.status",
@@ -1335,6 +1336,7 @@
     "subscription_ready": {
       "event": "subscription.ready",
       "optional_keys": {
+        "agent_name": "agent_name",
         "latest_iteration": "latest_iteration"
       },
       "required_keys": {

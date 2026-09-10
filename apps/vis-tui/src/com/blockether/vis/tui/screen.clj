@@ -4605,6 +4605,9 @@
                   :model-sync
                   (state/dispatch [:sync-session-model tab-id chunk])
 
+                  :agent-name-sync
+                  (state/dispatch [:sync-agent-name tab-id chunk])
+
                   :goal-sync
                   (state/dispatch [:sync-session-goal tab-id chunk])
 
@@ -4648,7 +4651,8 @@
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
                   :gateway-ready
-                  (state/dispatch [:sync-gateway-ready tab-id chunk])
+                  (do (state/dispatch [:sync-agent-name tab-id chunk])
+                      (state/dispatch [:sync-gateway-ready tab-id chunk]))
 
                   nil))))
           (catch Throwable _

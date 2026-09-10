@@ -386,8 +386,13 @@
   [id]
   (send-json! "POST" "/v1/settings" {:id id :action "toggle"}))
 
+(defn setting
+  "Read one gateway-owned setting, including its current value."
+  [id]
+  (send-json! "GET" (str "/v1/settings/" (enc id))))
+
 (defn set-setting-value!
-  "Set an explicit enum value in the gateway and return its refreshed settings row."
+  "Set an explicit enum or string value in the gateway and return its refreshed row."
   [id value]
   (send-json! "POST" "/v1/settings" {:id id :action "value" :value value}))
 

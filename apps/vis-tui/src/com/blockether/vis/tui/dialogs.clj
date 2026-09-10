@@ -2866,6 +2866,13 @@
                   :label "Add MCP server…"
                   :description "Register a new one with the gateway"}])))))
 
+(defonce ^:private agent-name-setting (atom nil))
+
+(defn- load-agent-name!
+  []
+  (reset! agent-name-setting (try (vis/setting "agent_name")
+                                  (catch Exception e {"error" (ex-message e)}))))
+
 (defn- mark-inventories-loading!
   "Arm both gateway-backed inventories for a refresh WITHOUT clearing what they
    already hold: a re-opened Settings shows the fleet it last read and refreshes
@@ -2876,13 +2883,13 @@
   (swap! mcp-inventory assoc :status :loading))
 
 (defn- load-inventories!
-  "Read both gateway inventories, in PARALLEL: the MCP list and the provider
-   fleet are independent round trips, so one open costs the SLOWER of the two
-   instead of their sum. Called only AFTER the settings frame is on the
-   terminal."
+  "Read the gateway name, MCP inventory and provider fleet in parallel. Called
+   only AFTER the settings frame is on the terminal."
   []
   (let [mcp (vis/worker-future "vis-tui-settings-mcp-inventory" load-mcp-inventory!)]
-    (load-provider-inventory!)
+    (let [agent (vis/worker-future "vis-tui-settings-agent-name" load-agent-name!)]
+      (load-provider-inventory!)
+      @agent)
     @mcp
     nil))
 
@@ -2892,6 +2899,11 @@
   []
   (vec (concat [{:type :section :label "Terminal UI"}]
                (settings-ui-options)
+               [{:type :section :label "Agent"}
+                {:type :agent-name
+                 :label "Agent name"
+                 :description (or (get @agent-name-setting "error")
+                                  "Shared by all gateway clients. Overrides project names.")}]
                (or (registry-toggle-rows) [])
                (or (provider-settings-rows) [])
                (or (mcp-settings-rows) []))))
@@ -2899,6 +2911,9 @@
 (defn- settings-option-label
   [{:keys [key label type choices toggle-id]} values]
   (case type
+    :agent-name
+    (str label ": " (or (get @agent-name-setting "value") "unavailable — Enter to retry"))
+
     :choice
     (str label ": " (clojure.core/name (or (get values key) (first choices))))
 
@@ -2948,6 +2963,9 @@
 
       :env-var
       [" " t/dialog-fg]
+
+      :agent-name
+      val
 
       :choice
       val
@@ -3074,7 +3092,8 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :set-toggle :registry-toggle :mcp :provider} type))
+  (contains? #{:toggle :choice :action :agent-name :set-toggle :registry-toggle :mcp :provider}
+             type))
 
 (defn- first-selectable-index
   [rows]
@@ -3259,6 +3278,18 @@
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
+    :agent-name
+    (let [region (host-band-region screen region)]
+      (try (let [current (vis/setting "agent_name")]
+             (reset! agent-name-setting current)
+             (when-let [value (mini-read! screen
+                                          g
+                                          region
+                                          "Agent name (all gateway clients):"
+                                          {:initial (get current "value")})]
+               (reset! agent-name-setting (vis/set-setting-value! "agent_name" value))))
+           (catch Exception e (mini-note! screen g region "Agent name not saved" (ex-message e)))))
+
     :registry-toggle
     (let [enum?
           (= :enum (:type (vis/toggle-spec (:toggle-id row))))

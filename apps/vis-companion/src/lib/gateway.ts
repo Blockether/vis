@@ -3406,6 +3406,12 @@ export class GatewayClient {
     return merged;
   }
 
+  /** Apply the gateway's current identity to the open session and its cached row. */
+  noteSessionAgentName(sid: string, agentName: string): void {
+    const previous = this.cachedSession(sid);
+    if (previous) this.absorbSessionRow(sid, { ...previous, agent_name: agentName });
+  }
+
   /** Apply a live goal without allowing replay or an older HTTP snapshot to rewind it. */
   noteSessionGoal(sid: string, raw: unknown): Session | null {
     const previous = this.cachedSession(sid);

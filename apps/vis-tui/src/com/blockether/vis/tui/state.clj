@@ -1390,6 +1390,12 @@
                                   :session-model-pref {:provider (str provider) :model (str model)})
                                 (dissoc w :session-model-pref))))))
 
+(reg-event-db :sync-agent-name
+              (fn [db [_ tab-id {:keys [agent-name]}]]
+                (if (and (string? agent-name) (not (str/blank? agent-name)))
+                  (update-tab db tab-id #(assoc-in % [:workspace "agent_name"] agent-name))
+                  db)))
+
 (defn- sync-session-goal
   [db tab-id {:keys [session-id goal]}]
   (update-tab db

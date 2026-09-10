@@ -2,6 +2,10 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.client :as client]
+            [com.blockether.vis.tui.dialogs :as dialogs]
+            [com.blockether.vis.tui.state :as state]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (deftest gateway-name-paints-the-transcript
@@ -55,3 +59,96 @@
                         {:agent-name "Ada" :now-ms 1000 :turn-start-ms 0}))]
       (is (str/includes? text "Ada is"))
       (is (not (str/includes? text "Vis is"))))))
+
+(defn settings-fixture
+  "Production settings dialog; only the gateway boundary is an in-memory fixture."
+  [cols keys save-error]
+  (let [saved
+        (atom "Vis")
+
+        requests
+        (atom [])
+
+        errors
+        (atom [])]
+
+    (with-redefs [client/setting
+                  (fn [id]
+                    (is (= "agent_name" id))
+                    {"id" id "type" "string" "value" @saved})
+
+                  client/set-setting-value!
+                  (fn [id value]
+                    (swap! requests conj [id value])
+                    (when save-error (throw (ex-info save-error {})))
+                    (reset! saved (str/trim value))
+                    {"id" id "value" @saved})]
+
+      (with-redefs-fn {#'dialogs/agent-name-setting (atom nil)
+                       #'dialogs/provider-inventory (atom {:status :unloaded})
+                       #'dialogs/mcp-inventory (atom {:status :unloaded})
+                       #'dialogs/mark-inventories-loading! (constantly nil)
+                       #'dialogs/load-inventories! #'dialogs/load-agent-name!
+                       #'dialogs/mini-note! (fn [_ _ _ _ text]
+                                              (swap! errors conj text))}
+        (fn []
+          {:capture (cap/capture!
+                      {:cols cols
+                       :rows 20
+                       :keys keys
+                       :paint! (fn [{:keys [screen]}]
+                                 (dialogs/settings-dialog! screen {} {:focus-section "Agent"}))})
+           :saved @saved
+           :requests @requests
+           :errors @errors})))))
+
+(deftest settings-edit-saves-through-the-gateway
+  (doseq [cols [40 100]]
+    (let [{:keys [capture saved requests]} (settings-fixture cols
+                                                             [:enter :backspace :backspace
+                                                              :backspace \A \d \a :enter :esc]
+                                                             nil)]
+      (is (nil? (:error capture)))
+      (is (= "Ada" saved))
+      (is (= [["agent_name" "Ada"]] requests))
+      (is (str/includes? (cap/frame-text capture) "Agent name: Ada")))))
+
+(deftest settings-cancel-and-save-failure-preserve-the-name
+  (let [{:keys [capture saved requests]} (settings-fixture 40 [:enter \x :esc :esc] nil)]
+    (is (nil? (:error capture)))
+    (is (= "Vis" saved))
+    (is (empty? requests)))
+  (let [{:keys [capture saved errors]} (settings-fixture 40 [:enter \x :enter :esc] "Write failed")]
+    (is (nil? (:error capture)))
+    (is (= "Vis" saved))
+    (is (= ["Write failed"] errors))))
+
+(deftest gateway-rename-and-reconnect-update-the-owning-tab
+  (let [before @state/app-db]
+    (try (reset! state/app-db {:active-tab-id "a"
+                               :tabs [{:id "a"} {:id "b"}]
+                               :render-version 0
+                               :workspace {"agent_name" "Vis"}
+                               :tab-locals {"b" {:workspace {"agent_name" "Vis"}}}})
+         (doseq [event [{"type" "session.agent_name_updated" "agent_name" "Ada"}
+                        {"type" "subscription.ready" "is_live" false "agent_name" "助手"}]]
+           (let [chunk (#'chat/gateway-event->chunk event)]
+             (is (= (get event "agent_name") (:agent-name chunk)))
+             (state/dispatch [:sync-agent-name "b" chunk])
+             (is (= (get event "agent_name")
+                    (get-in @state/app-db [:tab-locals "b" :workspace "agent_name"])))
+             (is (= "Vis" (get-in @state/app-db [:workspace "agent_name"])))
+             (state/dispatch [:sync-agent-name "a" chunk])
+             (is (= (get event "agent_name") (get-in @state/app-db [:workspace "agent_name"])))
+             (state/dispatch [:sync-agent-name "a" {:agent-name "Vis"}])))
+         (finally (reset! state/app-db before)))))
+
+(deftest setting-client-uses-shared-endpoints
+  (let [requests (atom [])]
+    (with-redefs-fn {#'client/send-json! (fn [& args]
+                                           (swap! requests conj args)
+                                           {})}
+      #(do (client/setting "agent_name") (client/set-setting-value! "agent_name" "Ada")))
+    (is (= [(list "GET" "/v1/settings/agent_name")
+            (list "POST" "/v1/settings" {:id "agent_name" :action "value" :value "Ada"})]
+           @requests))))
