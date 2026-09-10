@@ -36,6 +36,12 @@
 
 (defdescribe
   direct-activity-result-test
+  (it "does not offer disclosures for technical resource IDs"
+      (expect (false? (#'render/activity-row-openable?
+                       {:summary "Review"
+                        :presentation {"content" []}
+                        :resources [{:type "council-thread" :id "258"}
+                                    {:type "shell-handle" :id "opaque"}]}))))
   (it "opens the retained patch directly rather than a second diff disclosure"
       (let [entries (#'render/activity-detail-entries
                      {:node-id "activity"

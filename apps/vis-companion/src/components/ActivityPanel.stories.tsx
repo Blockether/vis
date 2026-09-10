@@ -83,10 +83,7 @@ export const ResultFirst: Story = {
       await expect(row.textContent).not.toMatch(/12:abc|13:def|\["src\/com/);
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
     }
-    for (const [index, heading] of [
-      [4, "Message"],
-      [5, "Metric"],
-    ] as const) {
+    for (const [index, heading] of [[5, "Metric"]] as const) {
       const table = within(rows[index]);
       await expect(
         table.getByRole("columnheader", { name: heading }),
@@ -95,6 +92,8 @@ export const ResultFirst: Story = {
         table.getByRole("columnheader", { name: "Result" }),
       ).toBeVisible();
     }
+    await expect(rows[4].textContent).not.toMatch(/Thread id|Title|42/);
+    await expect(rows[5].textContent).not.toContain("Is pass");
     await expect(
       canvas.queryByRole("columnheader", { name: "Field" }),
     ).not.toBeInTheDocument();

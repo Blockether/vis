@@ -3,6 +3,7 @@
   (:refer-clojure :exclude [read get])
   (:require [clojure.walk :as walk]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -27,11 +28,8 @@
                                (keep #(when-let [id (:id %)] {:type "council-entry" :id (str id)})
                                      entries))))]
 
-    (try (extension/publish-activity! {:headline (name op)
-                                       :summary
-                                       (if-let [id (:id value)]
-                                         (str "Entry #" id " in thread #" (:thread_id value))
-                                         (str (count (or (:entries value) value)) " records"))})
+    (try (extension/publish-activity! (presenter/result-presentation {:operation op}
+                                                                     (wire/->wire value)))
          (catch Exception e
            (tel/log! {:level :warn
                       :id ::activity-publication-failed

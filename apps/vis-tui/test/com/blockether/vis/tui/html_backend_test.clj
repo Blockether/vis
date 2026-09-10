@@ -175,10 +175,8 @@
             (is (some? step))
             (is (= (cell-grid html cols 80) grid))
             (is (str/includes? text expected))
+            (is (not (re-find #"Thread id|Is pass" text)))
             (when-let [heading (case (name (:operation row))
-                                 "council.publish"
-                                 "Message"
-
                                  "run_tests"
                                  "Metric"
 

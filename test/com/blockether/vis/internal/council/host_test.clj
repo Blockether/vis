@@ -12,6 +12,20 @@
 
 (h/use-mem-store!)
 
+(deftest publication-uses-semantic-result-test
+  (foundation/register!)
+  (let [published (atom nil)]
+    (with-redefs [extension/publish-activity! #(reset! published %)]
+      (#'host/result
+       {}
+       :council.publish
+       {:group_id "internal-group"}
+       {:id 279 :thread_id 258 :title "Review" :content "Useful result"}))
+    (is (= "Published message" (get @published "headline")))
+    (is (= "Review" (get @published "summary")))
+    (is (re-find #"Useful result" (pr-str (get @published "content"))))
+    (is (not (re-find #"279|258|internal-group" (pr-str @published))))))
+
 (deftest publication-survives-presentation-failure-test
   ;; C24/C25: provenance is trusted, canonical and independent of stdout or Activity IO.
   (foundation/register!)

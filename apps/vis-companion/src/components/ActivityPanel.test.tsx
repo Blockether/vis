@@ -26,6 +26,22 @@ import {
 
 afterEach(cleanup);
 
+it("does not render technical resource IDs as expandable files", () => {
+  const activity = structuredClone(storyData.ACTIVITY_RESULTS);
+  activity.rows = [activity.rows[4]];
+  activity.rows[0].presentation!.content = [];
+  activity.rows[0].resources = [
+    { type: "council-thread", id: "technical-thread-258" },
+    { type: "shell-handle", id: "technical-shell" },
+  ];
+  paintActivity({ activity });
+  expect(document.body.textContent).not.toContain("technical-thread-258");
+  expect(document.body.textContent).not.toContain("technical-shell");
+  expect(
+    screen.queryByRole("button", { name: /Published message/ }),
+  ).toBeNull();
+});
+
 it("keeps embedded document headings and code inside their Activity step", () => {
   paintActivity({ activity: storyData.ACTIVITY_RESULTS });
   openEverySettledStep();

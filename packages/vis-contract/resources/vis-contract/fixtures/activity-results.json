@@ -170,23 +170,6 @@
         "summary": "Activity review",
         "content": [
           {
-            "type": "table",
-            "columns": [
-              "Message",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Thread id",
-                "42"
-              ],
-              [
-                "Title",
-                "Activity review"
-              ]
-            ]
-          },
-          {
             "type": "heading",
             "text": "Content"
           },
@@ -240,10 +223,6 @@
               [
                 "Fail",
                 "0"
-              ],
-              [
-                "Is pass",
-                "true"
               ],
               [
                 "Pass",

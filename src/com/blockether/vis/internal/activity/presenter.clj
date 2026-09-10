@@ -52,11 +52,64 @@
                 :else "text")
    "text" text})
 
+(defn- visible-result
+  [value]
+  (cond (map? value) (into {}
+                           (keep (fn [[k v]]
+                                   (let [key-name
+                                         (str/replace (scalar k) "-" "_")
+
+                                         clean
+                                         (visible-result v)]
+
+                                     (when-not (or (contains? #{"op" "id" "is_pass" "log_path"
+                                                                "argument_key" "source_ref"
+                                                                "idempotency_key"}
+                                                              key-name)
+                                                   (str/ends-with? key-name "_id")
+                                                   (str/ends-with? key-name "_ids")
+                                                   (nil? clean)
+                                                   (and (coll? clean) (empty? clean)))
+                                       [k clean]))))
+                           value)
+        (sequential? value) (vec (keep visible-result value))
+        (and (string? value) (re-matches #"(?i)[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}" value))
+        nil
+        :else value))
+
+(defn- shell-presentation
+  [value]
+  (let [command
+        (field value "command")
+
+        exit
+        (field value "exit")
+
+        running?
+        (= "running" (field value "status"))]
+
+    {"headline" (if running? "Running command" "Command finished")
+     "summary" (or command "")
+     "content" (vec (concat (when (seq command)
+                              [{"type" "heading" "text" "Command"}
+                               {"type" "code" "language" "bash" "text" command}])
+                            (mapcat (fn [[key title]]
+                                      (when-let [text (not-empty (field value key))]
+                                        [{"type" "heading" "text" title}
+                                         {"type" "code" "text" text}]))
+                                    [["out" "Output"] ["stdout" "Output"] ["err" "Stderr"]
+                                     ["stderr" "Stderr"]])
+                            [{"type" "text"
+                              "text" (cond (some? exit) (str "Exit code: " exit)
+                                           running? "Running"
+                                           :else "Exit code unavailable")}]))}))
+
 (defn- result-blocks
   "Render bounded public data with contextual scalar-table headings. Nested maps
    use generic detail headings rather than inheriting top-level metric labels."
   [value table-label]
-  (cond (map? value) (let [entries
+  (cond (nil? value) []
+        (map? value) (let [entries
                            (sort-by (comp str key) (dissoc value :op "op"))
 
                            short?
@@ -169,26 +222,31 @@
 
         content
         (cond (= op "patch") []
+              (and (= op "council.publish") (number? value)) []
               (and (= op "cat") text)
               [{"type" "code" "language" (code-language path) "text" (read-content text)}]
               (and (= op "doc") text) [{"type" "markdown" "text" text}]
               (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
               (and (= op "grep") text)
               [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
-              :else (result-blocks value
-                                   (case op
-                                     ("run_tests" "lint_code")
-                                     "Metric"
+              :else (result-blocks
+                      (visible-result
+                        (if (map? value) (dissoc value :title "title" :summary "summary") value))
+                      (case op
+                        ("run_tests" "lint_code")
+                        "Metric"
 
-                                     ("council.publish" "council.get")
-                                     "Message"
+                        ("council.publish" "council.get")
+                        "Message"
 
-                                     ("council.read" "council.threads")
-                                     "Thread"
+                        ("council.read" "council.threads")
+                        "Thread"
 
-                                     "council.members"
-                                     "Member"
+                        "council.members"
+                        "Member"
 
-                                     "Detail")))]
+                        "Detail")))]
 
-    {"headline" headline "summary" summary "content" content}))
+    (if (or (= op "shell") (str/starts-with? op "_shell-"))
+      (shell-presentation value)
+      {"headline" headline "summary" summary "content" content})))

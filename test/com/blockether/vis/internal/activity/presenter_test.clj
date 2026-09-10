@@ -110,3 +110,52 @@
                                                         [{:name "Reviewer"} {:name "Author"}])
                          "content")]
         (expect (= [["Member" "Result"] ["Member" "Result"]] (mapv #(get % "columns") content))))))
+
+(defdescribe
+  semantic-results-test
+  (it "hides transport identifiers and redundant flags recursively"
+      (let [view
+            (presenter/result-presentation {:operation :council.publish}
+                                           {:title "Review"
+                                            :thread_id 258
+                                            :id "secret-handle"
+                                            :content "Useful result"
+                                            :nested {:session_id "uuid" :name "Reviewer"}})
+
+            body
+            (pr-str (get view "content"))]
+
+        (expect (not (re-find #"258|secret-handle|uuid|Review\"" body)))
+        (expect (re-find #"Useful result" body))))
+  (it "shows command, preserved output and actual exit status for shell handles"
+      (let [view
+            (presenter/result-presentation {:operation :_shell-wait :label "internal"}
+                                           {:command "printf 'a\nb' && false"
+                                            :out "a\nb"
+                                            :exit 1
+                                            :id "handle-123"
+                                            :log_path "/private/log"
+                                            :status "exited"})
+
+            blocks
+            (get view "content")]
+
+        (expect (= "Command finished" (get view "headline")))
+        (expect (some #(= {"type" "code" "language" "bash" "text" "printf 'a\nb' && false"} %)
+                      blocks))
+        (expect (some #(= "a\nb" (get % "text")) blocks))
+        (expect (re-find #"Exit code: 1" (pr-str blocks)))
+        (expect (not (re-find #"handle-123|/private/log|internal" (pr-str view))))))
+  (it "never invents a successful exit for a running command"
+      (let [view (presenter/result-presentation {:operation :shell}
+                                                {:command "sleep 10" :exit nil :status "running"})]
+        (expect (re-find #"Running" (pr-str view)))
+        (expect (not (re-find #"Exit code: 0" (pr-str view))))))
+  (it "does not turn a publish receipt identifier into expandable content"
+      (expect
+        (= [] (get (presenter/result-presentation {:operation :council.publish} 279) "content"))))
+  (it "retains useful titles within member lists"
+      (expect (re-find #"Reviewer"
+                       (pr-str (presenter/result-presentation {:operation :council.members}
+                                                              [{:session_id "opaque"
+                                                                :title "Reviewer"}]))))))

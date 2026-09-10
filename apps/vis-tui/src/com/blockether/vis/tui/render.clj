@@ -5371,7 +5371,12 @@
                (some #(seq (activity-field % :content)) (activity-field presentation :sections))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
-               (and (empty? children) (some #(not= (str (:id %)) (str summary)) resources))
+               (and (empty? children)
+                    (some #(and (not (contains? #{"shell-handle" "council-group" "council-thread"
+                                                  "council-entry"}
+                                                (name (:type %))))
+                                (not= (str (:id %)) (str summary)))
+                          resources))
                (and (nil? presentation) (activity-row-detail row (activity-row-state row))))))
 
 (defn- activity-file-rows
@@ -5780,7 +5785,14 @@
                                                        ;; carries every child's resource, so painting them here and again under each
                                                        ;; child is the same twelve paths printed twice.
                                                        resources
-                                                       (filterv #(not= (str (:id %)) (str summary))
+                                                       (filterv #(and (not= (str (:id %))
+                                                                            (str summary))
+                                                                      (not (contains?
+                                                                             #{"shell-handle"
+                                                                               "council-group"
+                                                                               "council-thread"
+                                                                               "council-entry"}
+                                                                             (name (:type %)))))
                                                          (:resources row))
 
                                                        presentation

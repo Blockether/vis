@@ -737,7 +737,16 @@ function ActivityStep({
       ? ""
       : (row.error_summary ?? "")
     : activityStepOutcome(row);
-  const touched = row.resources.filter((resource) => resource.id !== summary);
+  const touched = row.resources.filter(
+    (resource) =>
+      resource.id !== summary &&
+      ![
+        "shell-handle",
+        "council-group",
+        "council-thread",
+        "council-entry",
+      ].includes(resource.type),
+  );
   const object = countsVisibleFiles(
     summary,
     Math.min(touched.length, ACTIVITY_FILES_SHOWN),
