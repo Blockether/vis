@@ -242,37 +242,46 @@ print(worker_value)"))))
                              #(re-find #"^-XX:(StartFlightRecording|FlightRecorderOptions)" %)
                              (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules"))))))
 
-(defdescribe worker-entrypoint-test
-             (it "launches the runtime Java worker with the control socket and host modules"
-                 (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
-                   (let [argv (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")]
-                     (expect (= ["com.blockether.vispython.Worker" "/tmp/control.sock"
-                                 "/tmp/host-modules"]
-                                (vec (take-last 3 argv)))))))
-             (it "launches the runtime executable in native Vis"
-                 (with-redefs [com.blockether.vis.internal.util/native-image?
-                               (constantly true)
+(defdescribe
+  worker-entrypoint-test
+  (it "launches the runtime Java worker with the control socket and host modules"
+      (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
+        (let [argv (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")]
+          (expect (= ["com.blockether.vispython.Worker" "/tmp/control.sock" "/tmp/host-modules"]
+                     (vec (take-last 3 argv)))))))
+  (it "makes runtime sources and their extraction marker readable at worker boot"
+      (let [paths (set (#'worker/boot-read-paths nil "/tmp/host-modules"))]
+        (expect (contains? paths
+                           (.getCanonicalPath (java.io.File.
+                                                (com.blockether.vispython.Locations/sourcesDir)))))
+        (doseq [path (com.blockether.vispython.Sources/roots)]
+          (expect (contains? paths (.getCanonicalPath (java.io.File. ^String path)))))))
+  (it "launches the runtime executable with the parent's home in native Vis"
+      (with-redefs [com.blockether.vis.internal.util/native-image?
+                    (constantly true)
 
-                               com.blockether.vis-python-runtime/resolve-worker
-                               (fn [library]
-                                 (expect (= {:path "/runtime/libvispython.so"} library))
-                                 "/runtime/vis-python-worker")]
+                    com.blockether.vis-python-runtime/resolve-worker
+                    (fn [library]
+                      (expect (= {:path "/runtime/libvispython.so"} library))
+                      "/runtime/vis-python-worker")]
 
-                   (expect (= ["/runtime/vis-python-worker" "/tmp/control.sock" "/tmp/host-modules"]
-                              (#'worker/child-argv
-                               "/runtime/libvispython.so"
-                               "/tmp/control.sock"
-                               "/tmp/host-modules")))))
-             (it "refuses a native runtime without its worker instead of starting Vis again"
-                 (with-redefs [com.blockether.vis.internal.util/native-image?
-                               (constantly true)
+        (expect (= ["/runtime/vis-python-worker"
+                    (str "-Duser.home=" (System/getProperty "user.home")) "/tmp/control.sock"
+                    "/tmp/host-modules"]
+                   (#'worker/child-argv
+                    "/runtime/libvispython.so"
+                    "/tmp/control.sock"
+                    "/tmp/host-modules")))))
+  (it "refuses a native runtime without its worker instead of starting Vis again"
+      (with-redefs [com.blockether.vis.internal.util/native-image?
+                    (constantly true)
 
-                               com.blockether.vis-python-runtime/resolve-worker
-                               (constantly nil)]
+                    com.blockether.vis-python-runtime/resolve-worker
+                    (constantly nil)]
 
-                   (expect (= :vis/python-worker-missing
-                              (try (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")
-                                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+        (expect (= :vis/python-worker-missing
+                   (try (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")
+                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 (defdescribe worker-host-authorization-test
              (it "rejects callers not assigned to the connection before host dispatch"

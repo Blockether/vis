@@ -1,7 +1,8 @@
 (ns com.blockether.vis.native-format-test
-  "Formatter reachability through an actual native agent tool call, without a paid model."
+  "Language-tool reachability through an actual native agent call, without a paid model."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.java.shell :as sh]
             [charred.api :as json]
             [com.blockether.vis.native-binary-test :as native]
             [lazytest.core :refer [defdescribe expect it]])
@@ -13,7 +14,7 @@
   ;; JVM startup defers these dependencies. Their first use must still work after
   ;; native-image has discarded everything the builder did not load.
   (it
-    "formats and searches files through the linked image"
+    "runs Python tests and REPLs, formats, lints and searches through the linked image"
     (doseq [model ["gpt-4o" "gpt-4"]]
       (let
         [^File dir (#'native/temp-dir "vis-native-format-")
@@ -22,6 +23,37 @@
          calls (atom 0)
          code
          (str
+           (str/join
+             "\n"
+             ["def check_tests(runner):"
+              "    options = {'cwd': str(project_root_path), 'runner': runner}"
+              "    good = run_tests('python', dict(options, paths=['test_good.py']))"
+              "    assert good['is_pass'] and good['pass'] == 2 and good['total'] == 2, str(good)"
+              "    bad = run_tests('python', dict(options, paths=['test_bad.py']))"
+              "    assert not bad['is_pass'] and bad['fail'] > 0, str(bad)"
+              "    error = run_tests('python', dict(options, paths=['test_error.py']))"
+              "    assert not error['is_pass'] and error['errored'] > 0, str(error)"
+              "    empty = run_tests('python', dict(options, paths=['test_empty.py']))"
+              "    assert not empty['is_pass'], str(empty)"
+              "for runner in ['vispython', 'project']:" "    check_tests(runner)"
+              "print('NATIVE_PYTHON_TESTS_COLD_READY')"
+              "started = repl_start('python', {'cwd': str(project_root_path)})" "try:"
+              "    assert started['status'] == 'up', str(started)"
+              "    result = repl_eval('python', {'code': 'native_marker = 21\\nprint(native_marker * 2)', 'cwd': str(project_root_path)})"
+              "    assert result['out'].strip() == '42', str(result)"
+              "    again = repl_start('python', {'cwd': str(project_root_path)})"
+              "    assert again['pid'] == started['pid'], str(again)"
+              "    for runner in ['vispython', 'project']:" "        check_tests(runner)"
+              "    state = repl_eval('python', {'code': 'print(native_marker)', 'cwd': str(project_root_path)})"
+              "    assert state['out'].strip() == '21', str(state)"
+              "    print('NATIVE_PYTHON_REPL_READY')" "finally:"
+              "    repl_stop('python', {'cwd': str(project_root_path)})"
+              "restarted = repl_start('python', {'cwd': str(project_root_path)})" "try:"
+              "    assert restarted['status'] == 'up' and restarted['pid'] != started['pid'], str(restarted)"
+              "    clean = repl_eval('python', {'code': \"print('native_marker' in globals())\", 'cwd': str(project_root_path)})"
+              "    assert clean['out'].strip() == 'False', str(clean)" "finally:"
+              "    repl_stop('python', {'cwd': str(project_root_path)})" "check_tests('project')"
+              "print('NATIVE_PYTHON_TESTS_RESTART_READY')" ""])
            "print(format_code('clojure', {'path': 'default.clj'}))\n"
            "print(format_code('clojure', {'path': 'configured/example.clj'}))\n"
            "try:\n" "    result = run_tests('clojure', {'path': 'missing_test.clj'})\n"
@@ -79,6 +111,19 @@
           (spit (io/file dir "default.clj") source)
           (spit (io/file dir "configured/example.clj") source)
           (spit (io/file dir "configured/.zprint.edn") "{:width 80}")
+          (spit (io/file dir "pyproject.toml")
+                "[project]\nname = \"native-language-probe\"\nversion = \"0.0.0\"\n")
+          ;; Install only in this disposable project, never the operator's interpreter.
+          (doseq [argv [["uv" "venv" ".venv"]
+                        ["uv" "pip" "install" "--python" ".venv/bin/python" "pytest==8.4.2"]]]
+            (let [result (apply sh/sh (concat argv [:dir (.getAbsolutePath dir)]))]
+              (expect (zero? (:exit result)) (pr-str result))))
+          (spit (io/file dir "test_good.py")
+                "def test_one():\n    assert 1 + 1 == 2\ndef test_two():\n    assert 3 * 7 == 21\n")
+          (spit (io/file dir "test_bad.py") "def test_bad():\n    assert 1 == 2\n")
+          (spit (io/file dir "test_error.py") "import native_missing_dependency\n")
+          ;; Issue #70: zero discovered tests must not produce a successful 0/0.
+          (spit (io/file dir "test_empty.py") "# No tests defined.\n")
           (with-redefs-fn {#'native/whole-body #(reply false %)
                            #'native/stream-body #(reply true %)}
             (fn []
@@ -116,7 +161,15 @@
                                                  :when (= "tool" (:role message))]
 
                                              (:content message))
-                              output (str (slurp log) "\n" (pr-str tool-results))]
+                              output (str (slurp log)
+                                          "\n" (pr-str tool-results)
+                                          "\n" (str/join "\n"
+                                                         (for [^File file
+                                                               (file-seq (io/file dir ".vis/run"))
+                                                               :when (= "worker.log"
+                                                                        (.getName file))]
+
+                                                           (slurp file))))]
 
                           (expect (= 0 (.exitValue process)) output)
                           (expect (>= @calls 2) output)
@@ -124,6 +177,10 @@
                                   output)
                           (expect (str/includes? (pr-str tool-results) "NATIVE_FFF_READY") output)
                           (expect (str/includes? (pr-str tool-results) "NATIVE_LINT_READY") output)
+                          (doseq [marker ["NATIVE_PYTHON_REPL_READY"
+                                          "NATIVE_PYTHON_TESTS_COLD_READY"
+                                          "NATIVE_PYTHON_TESTS_RESTART_READY"]]
+                            (expect (str/includes? (pr-str tool-results) marker) output))
                           (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                           (expect (every? #(= model
                                               (:model (json/read-json (:body %) :key-fn keyword)))

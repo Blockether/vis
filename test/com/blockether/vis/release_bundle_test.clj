@@ -1106,6 +1106,61 @@
         (expect (not (str/includes? native "tags: ['v[0-9]*']"))))))
 
 (defdescribe
+  native-build-logs-test
+  (it "retains engine and TUI build logs even when a build fails"
+      (let [workflow (slurp ".github/workflows/native-release.yml")]
+        (expect (= 2 (count (re-seq #"name: Upload native build logs" workflow))))
+        (expect (= 2
+                   (count (re-seq #"if: always\(\)\n        uses: actions/upload-artifact@v4"
+                                  workflow))))
+        (doseq [name ["engine" "tui"]]
+          (expect (= 2
+                     (count (filter #(str/includes? % (str "tee \"$log_dir/" name ".log\""))
+                                    (str/split-lines workflow))))))))
+  (it
+    "streams both channels and preserves a failing compiler exit through tee"
+    (let
+      [workflow
+       (slurp ".github/workflows/native-release.yml")
+
+       scripts
+       (re-seq
+         #"(?s)        run: \|\n(          set -euo pipefail\n          log_dir=.*?tee \"\$log_dir/(?:engine|tui)\.log\")"
+         workflow)]
+
+      (expect (= 4 (count scripts)))
+      (doseq [[_ body]
+              scripts
+
+              status
+              [0 23]]
+
+        (let [dir
+              (.toFile (Files/createTempDirectory "vis-build-logs-" (make-array FileAttribute 0)))
+
+              script
+              (str "clojure() { echo compiler-out; echo compiler-err >&2; "
+                   "if [ \"$1\" = -X:deps ]; then return 0; fi; return " status
+                   "; };\n" (str/replace body #"(?m)^          " ""))]
+
+          (try (let [{:keys [exit output]}
+                     (run-bash ["bash" "-c" script]
+                               {"RUNNER_TEMP" (.getAbsolutePath dir)
+                                "GITHUB_RUN_ID" "123"
+                                "GITHUB_RUN_ATTEMPT" "1"})
+
+                     log
+                     (io/file dir
+                              "vis-native-123-1"
+                              (if (str/includes? body "/engine.log") "engine.log" "tui.log"))]
+
+                 (expect (= status exit) output)
+                 (doseq [channel ["compiler-out" "compiler-err"]]
+                   (expect (str/includes? output channel) output)
+                   (expect (and (.isFile log) (str/includes? (slurp log) channel)))))
+               (finally (delete-tree! dir))))))))
+
+(defdescribe
   native-pipeline-order-test
   (it "builds and stages both binaries before native tests and release attachment"
       (let [workflow
@@ -1532,10 +1587,26 @@
                    (expect (str/includes? action "subprocess.run([sys.executable")))))
 
 (defdescribe
+  native-linux-abi-baseline-test
+  ;; The engine and TUI must not require a newer glibc than the Python worker.
+  (it "builds both Linux release architectures on Ubuntu 22.04"
+      (let [workflow (slurp ".github/workflows/native-release.yml")]
+        (expect (str/includes? workflow "os: ubuntu-22.04, bin: target/vis"))
+        (expect (str/includes? workflow "os: ubuntu-22.04-arm, bin: target/vis"))
+        (expect (str/includes? workflow "bin/verify-linux-abi target/release-bundle"))
+        (expect (str/includes? workflow "bin/verify-linux-abi target/tui-release-bundle"))))
+  (it "uses the same ABI baseline for container-exported binaries"
+      (let [dockerfile (slurp "Dockerfile")]
+        (expect (str/includes? dockerfile "ARG BUILD_IMAGE=ubuntu:22.04"))
+        (expect (str/includes? dockerfile "FROM ${BUILD_IMAGE} AS jdk"))
+        (expect (str/includes? dockerfile
+                               "bin/verify-linux-abi target/vis target/vis-agent-python")))))
+
+(defdescribe
   native-linux-isolation-test
   (it "provisions and exercises user namespaces before native tests"
       (let [workflow (slurp ".github/workflows/native-release.yml")]
-        (expect (str/includes? workflow "sudo apt-get install -y bubblewrap passt"))
+        (expect (str/includes? workflow "sudo apt-get install -y bubblewrap binutils"))
         (expect (str/includes? workflow
                                "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"))
         (expect (str/includes? workflow "bwrap --unshare-all --ro-bind / / /bin/true")))))

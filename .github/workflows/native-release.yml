@@ -111,13 +111,14 @@ jobs:
           # Free standard runners that can host it (larger runners are ALWAYS
           # billed, even for public repositories, so this community project does
           # not use them):
-          #   ubuntu-latest    4 cores / 16 GB x64
-          #   ubuntu-24.04-arm 4 cores / 16 GB arm64
+          #   ubuntu-22.04     4 cores / 16 GB x64
+          #   ubuntu-22.04-arm 4 cores / 16 GB arm64
+          # Ubuntu 22.04 / glibc 2.35 is the engine, worker and TUI ABI baseline.
           # There is no flag left to win with: the next time this cliff is hit the
           # fix is a BIGGER BUILDER (an 8-core/32 GB larger runner, or a
           # self-hosted 32 GB box), or less reachable code — not more tuning.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-22.04, bin: target/vis, asset: vis-agent-linux-x64.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-22.04-arm, bin: target/vis, asset: vis-agent-linux-arm64.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # macOS arm64 is NOT in this matrix: it needs its own heap sizing and
           # its own runner, so it is the SEPARATE `macos` job below, on our own
           # labelled Apple-silicon builder. Every hosted macOS class GitHub
@@ -161,7 +162,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap passt
+          sudo apt-get install -y bubblewrap binutils
           if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
@@ -209,7 +210,12 @@ jobs:
           # The same build path stamps release, beta and unpublished experiments.
           VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
-        run: clojure -X:deps prep && clojure -T:build native
+        shell: bash
+        run: |
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$log_dir"
+          (clojure -X:deps prep && clojure -T:build native) 2>&1 | tee "$log_dir/engine.log"
       # ONE definition of a release bundle, shared with `bin/release-native` so a
       # locally built asset and a CI asset cannot drift. It also fails hard when
       # the language-resources sidecar is missing — the image no longer embeds
@@ -217,7 +223,9 @@ jobs:
       # without that directory has no working Python at all.
       - name: Stage wrapper bundle
         shell: bash
-        run: bin/stage-release-bundle "${{ matrix.bin }}" "${{ matrix.asset }}"
+        run: |
+          bin/stage-release-bundle "${{ matrix.bin }}" "${{ matrix.asset }}"
+          bin/verify-linux-abi target/release-bundle
       - name: Smoke-test the installed wrapper
         shell: bash
         run: target/release-bundle/vis-agent help >/dev/null
@@ -249,11 +257,14 @@ jobs:
           version: "0.9.2"
           enable-cache: false
       - name: Build and stage standalone TUI
+        shell: bash
         run: |
-          cd apps/vis-tui
-          clojure -T:build native
-          cd ../..
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$log_dir"
+          (cd apps/vis-tui && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
           bin/stage-tui-release apps/vis-tui/target/vis-tui "${{ matrix.tui_asset }}"
+          bin/verify-linux-abi target/tui-release-bundle
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
       - name: Test the native binaries
@@ -263,6 +274,14 @@ jobs:
           VIS_TUI_NATIVE_BIN: target/tui-release-bundle/vis-tui
         run: clojure -M:test-native
       - uses: ./.github/actions/test-native-python-sdk
+      - name: Upload native build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-build-logs-${{ matrix.asset }}
+          path: ${{ runner.temp }}/vis-native-${{ github.run_id }}-${{ github.run_attempt }}/*.log
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
@@ -372,7 +391,12 @@ jobs:
           # The same build path stamps release, beta and unpublished experiments.
           VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
-        run: clojure -X:deps prep && clojure -T:build native
+        shell: bash
+        run: |
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$log_dir"
+          (clojure -X:deps prep && clojure -T:build native) 2>&1 | tee "$log_dir/engine.log"
       - name: Stage wrapper bundle
         shell: bash
         run: bin/stage-release-bundle target/vis "$VIS_ASSET"
@@ -402,10 +426,12 @@ jobs:
           version: "0.9.2"
           enable-cache: false
       - name: Build and stage standalone TUI
+        shell: bash
         run: |
-          cd apps/vis-tui
-          clojure -T:build native
-          cd ../..
+          set -euo pipefail
+          log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$log_dir"
+          (cd apps/vis-tui && clojure -T:build native) 2>&1 | tee "$log_dir/tui.log"
           bin/stage-tui-release apps/vis-tui/target/vis-tui "$VIS_TUI_ASSET"
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
@@ -416,6 +442,14 @@ jobs:
           VIS_TUI_NATIVE_BIN: target/tui-release-bundle/vis-tui
         run: clojure -M:test-native
       - uses: ./.github/actions/test-native-python-sdk
+      - name: Upload native build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-build-logs-macos-arm64
+          path: ${{ runner.temp }}/vis-native-${{ github.run_id }}-${{ github.run_attempt }}/*.log
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3

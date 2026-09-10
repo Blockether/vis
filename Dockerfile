@@ -73,6 +73,9 @@ ARG PARAKEET_RELEASE=asr-models
 ARG VIS_ORACLE_NATIVE_IMAGE=false
 ARG VIS_NATIVE_EXTRA_ARGS=
 ARG WITH_CHROME=true
+# Exported native artifacts must run on Ubuntu 22.04 / glibc 2.35, even though
+# the container runtime can use a newer distribution for its optional tools.
+ARG BUILD_IMAGE=ubuntu:22.04
 ARG BASE_IMAGE=debian:bookworm-slim
 
 # ── Stage: jdk ───────────────────────────────────────────────────────────────
@@ -86,7 +89,7 @@ ARG BASE_IMAGE=debian:bookworm-slim
 #     file used to rewrite deps.edn on the way past — that hack is gone with it.
 # The versioned graalvm-ce-builds asset is used deliberately over any moving
 # URL: a moving URL cannot carry a checksum, and the checksum is in the pin.
-FROM ${BASE_IMAGE} AS jdk
+FROM ${BUILD_IMAGE} AS jdk
 ARG GRAAL_ARCH
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -127,7 +130,7 @@ ENV HOME=/home/vis \
 
 # build-essential + zlib headers are native-image's C toolchain, not optional.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git bash rlwrap build-essential zlib1g-dev \
+        git bash rlwrap build-essential binutils zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /home/vis
 
@@ -171,6 +174,7 @@ RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
     clojure -T:build native \
     && test -x target/vis \
     && test -d target/vis-agent-python \
+    && bin/verify-linux-abi target/vis target/vis-agent-python \
     && ./target/vis --version \
     && { [ "$(./target/vis --version | tr -d '[:space:]')" = "vis-agent$(tr -d '[:space:]' < VIS_VERSION)" ] \
          || { echo "native image does not report exactly VIS_VERSION=$(tr -d '[:space:]' < VIS_VERSION)" >&2; exit 1; }; }

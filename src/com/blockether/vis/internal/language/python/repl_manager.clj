@@ -199,7 +199,7 @@ _main()
   (let [cmd
         (vec (concat (interp/detect-command dir) ["-c" server-script]))
 
-        p
+        ^Process p
         (vis/session-process-spawn! session-id cmd dir {:env (get opts "env")})
 
         info

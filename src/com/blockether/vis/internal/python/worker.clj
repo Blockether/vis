@@ -46,7 +46,7 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
-  (:import (com.blockether.vispython Locations)
+  (:import (com.blockether.vispython Locations Sources)
            (java.io File)
            (java.lang.management ManagementFactory)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
@@ -174,7 +174,7 @@
   [library socket guest-dir]
   (if (util/native-image?)
     (if-let [executable (runtime/resolve-worker {:path library})]
-      [executable socket guest-dir]
+      [executable (str "-Duser.home=" (System/getProperty "user.home")) socket guest-dir]
       (throw (ex-info "The Python runtime archive has no worker executable"
                       {:type :vis/python-worker-missing})))
     (vec (concat [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
@@ -218,7 +218,9 @@
    read-only, not session roots."
   [library guest-dir]
   (->> (concat [(System/getProperty "user.dir") (System/getProperty "java.home")
-                (runtime/packages-dir) guest-dir]
+                (runtime/packages-dir) (Locations/sourcesDir) guest-dir]
+               ;; Extract before confinement; workers only read the versioned cache.
+               (Sources/roots)
                (str/split (System/getProperty "java.class.path" "")
                           (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))
                (when library
