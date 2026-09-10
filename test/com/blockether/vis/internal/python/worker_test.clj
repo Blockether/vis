@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.python.worker-test
   "The session-worker process boundary: control messages are bounded and a
    retired interpreter can never be entered again."
-  (:require [com.blockether.vis.internal.python.env :as env]
+  (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.loop :as loop]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.host :as python-host]
@@ -148,6 +149,36 @@ print(worker_value)"))))
                                       (:stdout (env/run-python-block
                                                  fresh-session
                                                  "print(await worker_echo('restored'))")))))))))))
+
+(defdescribe guest-sources-location-test
+             ;; Vis #185, CI 34498148579: a prior native test removed the cached guest directory.
+             (it "stages guest modules in the current home and restores removed files"
+                 (let [base
+                       (java.nio.file.Files/createTempDirectory
+                         (.toPath (java.io.File. "target"))
+                         "worker-guest-sources-"
+                         (make-array java.nio.file.attribute.FileAttribute 0))
+
+                       old-home
+                       (System/getProperty "user.home")]
+
+                   (try (doseq [name ["first" "second"]]
+                          (let [home (io/file (.toFile base) name)]
+                            (.mkdirs home)
+                            (System/setProperty "user.home" (.getCanonicalPath home))
+                            (let [directory (worker/guest-source-dir)]
+                              (expect (.startsWith (.toPath (io/file directory))
+                                                   (.toPath (.getCanonicalFile home))))
+                              (doseq [^java.io.File file (reverse (file-seq home))]
+                                (java.nio.file.Files/deleteIfExists (.toPath file)))
+                              (expect (= directory (worker/guest-source-dir)))
+                              (doseq [module ["vis_introspection.py" "vis_results.py"]]
+                                (let [file (io/file (worker/guest-source-dir) module)]
+                                  (expect (= (slurp (io/resource (str "vis-guest/" module)))
+                                             (when (.isFile file) (slurp file)))))))))
+                        (finally (System/setProperty "user.home" old-home)
+                                 (doseq [^java.io.File file (reverse (file-seq (.toFile base)))]
+                                   (java.nio.file.Files/deleteIfExists (.toPath file))))))))
 
 (defdescribe
   worker-long-home-test

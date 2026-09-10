@@ -68,21 +68,20 @@
         (when-not (and (.isFile target) (= source (slurp target))) (spit target source))))
     (.getCanonicalPath dir)))
 
-(defonce ^:private guest-source-directory
-  (delay (materialize-guest-sources!
-           (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")
-           (into {}
-                 (map (fn [name]
-                        (let [resource (or (io/resource (str "vis-guest/" name))
-                                           (throw (ex-info (str "Missing Vis guest module " name)
-                                                           {:module name})))]
-                          [name (slurp resource)])))
-                 ["vis_introspection.py" "vis_results.py"]))))
+(defonce ^:private guest-sources
+  (delay (into {}
+               (map (fn [name]
+                      (let [resource (or (io/resource (str "vis-guest/" name))
+                                         (throw (ex-info (str "Missing Vis guest module " name)
+                                                         {:module name})))]
+                        [name (slurp resource)])))
+               ["vis_introspection.py" "vis_results.py"])))
 
 (defn guest-source-dir
-  "Stage and answer the directory containing Vis-owned Python guest modules."
+  "Stage Vis-owned Python guest modules in the current home, restoring missing files."
   []
-  @guest-source-directory)
+  (materialize-guest-sources! (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")
+                              @guest-sources))
 
 (defn- serve-host-call!
   "Serve only identities the host assigned to this connection. Worker claims do
