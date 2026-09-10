@@ -291,6 +291,49 @@ export const ThinkingAndCode: Story = {
   },
 };
 
+/** Metadata stays close to copy without moving the glyph or joining the controls. */
+export const TrailingMetadata: Story = {
+  args: ThinkingAndCode.args,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const mouse = matchMedia("(min-width: 40rem) and (pointer: fine)").matches;
+    const codeCopy = canvas.getByRole("button", { name: "Copy code" });
+    const activityCopy = canvas.getByRole("button", { name: "Copy activity" });
+    const code = canvasElement.querySelector("[data-execution-code]")!;
+    const duration = code.querySelector(".text-code-duration")!;
+    const activityToggle = canvas.getByRole("button", { name: "Expand Activity" });
+    const chevron = activityToggle.querySelector("svg:last-child")!;
+    const checkSpacing = async () => {
+      for (const [metadata, copy] of [
+        [duration, codeCopy],
+        [chevron, activityCopy],
+      ]) {
+        const glyph = copy.querySelector("svg")!.getBoundingClientRect();
+        await expect(glyph.left - metadata.getBoundingClientRect().right).toBeCloseTo(
+          mouse ? 8 : 16,
+          0,
+        );
+        await expect(code.getBoundingClientRect().right - glyph.right).toBeCloseTo(12, 0);
+        const box = copy.getBoundingClientRect();
+        const minimum = mouse ? 28 : 44;
+        await expect(box.height).toBeGreaterThanOrEqual(minimum);
+        for (const x of [box.left + 1, box.left + minimum - 1]) {
+          await expect(
+            copy.contains(copy.ownerDocument.elementFromPoint(x, box.top + box.height / 2)),
+          ).toBe(true);
+        }
+      }
+      await expect(
+        activityCopy.getBoundingClientRect().left - activityToggle.getBoundingClientRect().right,
+      ).toBeCloseTo(8, 0);
+    };
+    await checkSpacing();
+    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
+    await userEvent.click(activityToggle);
+    await checkSpacing();
+  },
+};
+
 /** A step that only called: no reasoning above it, and no hole in the thread either. */
 export const NoReasoning: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED.slice(1, 2) },

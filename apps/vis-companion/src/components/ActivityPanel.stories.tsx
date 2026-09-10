@@ -34,7 +34,17 @@ import { ActivityPanel } from "./ActivityPanel";
 const meta = {
   title: "Components/Activity panel",
   component: ActivityPanel,
-  parameters: { layout: "padded" },
+  parameters: { layout: "fullscreen" },
+  // Match the transcript gutter and the execution band's inset around this panel.
+  decorators: [
+    (Story) => (
+      <div className="mx-auto w-full max-w-3xl px-3.5 pt-4 sm:px-6 sm:pt-6">
+        <div className="px-3">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
 } satisfies Meta<typeof ActivityPanel>;
 
 export default meta;
@@ -48,12 +58,30 @@ export const CopyActivity: Story = {
     const canvas = within(canvasElement);
     const user = userEvent.setup();
     const copy = canvas.getByRole("button", { name: "Copy activity" });
-    const minimum = matchMedia("(pointer: coarse)").matches ? 44 : 28;
-    await expect(copy.getBoundingClientRect().width).toBeGreaterThanOrEqual(
-      minimum,
+    const mouse = matchMedia("(min-width: 40rem) and (pointer: fine)").matches;
+    const minimum = mouse ? 28 : 44;
+    const box = copy.getBoundingClientRect();
+    const reach = getComputedStyle(copy, "::after");
+    const rightReach = reach.content === "none" ? 0 : -parseFloat(reach.right);
+    await expect(box.width + rightReach).toBeGreaterThanOrEqual(minimum);
+    await expect(box.height).toBeGreaterThanOrEqual(minimum);
+    // The invisible reach remains clickable and never extends toward the disclosure.
+    const targetRight = box.left + minimum;
+    await expect(targetRight).toBeLessThanOrEqual(
+      copy.ownerDocument.documentElement.clientWidth,
     );
-    await expect(copy.getBoundingClientRect().height).toBeGreaterThanOrEqual(
-      minimum,
+    await expect(
+      copy.contains(
+        copy.ownerDocument.elementFromPoint(
+          targetRight - 1,
+          box.top + box.height / 2,
+        ),
+      ),
+    ).toBe(true);
+    const toggle = canvas.getByRole("button", { name: "Expand Activity" });
+    await expect(box.left - toggle.getBoundingClientRect().right).toBeCloseTo(
+      8,
+      0,
     );
     await user.click(copy);
     await expect(navigator.clipboard.readText()).resolves.toContain(

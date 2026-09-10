@@ -449,9 +449,9 @@ export function CopyChip({
   value,
   label,
   title,
-  density = 'default',
+  density = "default",
   edge = false,
-  className = '',
+  className = "",
   children,
 }: {
   /** What lands on the clipboard. */
@@ -467,8 +467,8 @@ export function CopyChip({
    * tall and centres a 24px chip, so a chip that grew there would stack padding on top
    * of its own height.
    */
-  density?: 'default' | 'compact';
-  /** Use the existing full trailing cell for an icon-only execution-band action. */
+  density?: "default" | "compact";
+  /** Execution-band copy: fixed trailing inset, with touch reach into the outer gutter. */
   edge?: boolean;
   /** Placement only; the chip's own face is fixed. */
   className?: string;
@@ -488,22 +488,38 @@ export function CopyChip({
     }
   }
   if (children === undefined) {
+    const icon = isCopied ? (
+      <CheckIcon className="size-3 text-ok" />
+    ) : (
+      <CopyIcon className="size-3" />
+    );
+    if (edge) {
+      // Reserve less space before the glyph; keep the 44px touch target in the outer gutter.
+      return (
+        <Button
+          type="button"
+          variant="quiet"
+          pressEffect="none"
+          density={density}
+          aria-label={isCopied ? "Copied" : label}
+          title={isCopied ? "Copied" : (title ?? label)}
+          onClick={copy}
+          className={`relative grid h-auto w-8 shrink-0 self-stretch items-center justify-items-end border-0 pl-0 pr-3 -mr-3 after:absolute after:top-0 after:bottom-0 after:left-0 after:-right-3 after:content-[""] sm:w-9 sm:pl-0 sm:pr-4 sm:-mr-4 sm:after:-right-2 mouse:h-auto mouse:w-7 mouse:after:content-none ${className}`}
+        >
+          {icon}
+        </Button>
+      );
+    }
     return (
       <IconButton
-        label={isCopied ? 'Copied' : label}
-        title={isCopied ? 'Copied' : title ?? label}
+        label={isCopied ? "Copied" : label}
+        title={isCopied ? "Copied" : (title ?? label)}
         variant="quiet"
         density={density}
-        edge={edge}
-        fullCell={edge}
         onClick={copy}
         className={className}
       >
-        {isCopied ? (
-          <CheckIcon className="size-3 text-ok" />
-        ) : (
-          <CopyIcon className="size-3" />
-        )}
+        {icon}
       </IconButton>
     );
   }
@@ -517,12 +533,14 @@ export function CopyChip({
   // phone header has room for the mark alone, the box goes square instead of holding a
   // word's worth of air open beside the control next to it.
   const face =
-    density === 'compact'
+    density === "compact"
       ? `relative h-8 min-w-8 border-transparent bg-transparent text-ui after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-w-6 mouse:text-meta mouse:after:content-none sm:min-w-[6ch] ${
-          isCopied ? 'text-ok' : 'text-white'
+          isCopied ? "text-ok" : "text-white"
         }`
       : `h-6 min-w-[6ch] bg-button text-chip ${
-          isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
+          isCopied
+            ? "border-ok text-ok"
+            : "border-dialog-edge text-button-foreground"
         }`;
   return (
     <button
@@ -538,9 +556,9 @@ export function CopyChip({
         <CopyIcon className="size-3 opacity-60 transition-opacity group-hover:opacity-100" />
       )}
       <span
-        className={`min-w-0 truncate ${density === 'compact' ? 'hidden sm:inline' : ''}`}
+        className={`min-w-0 truncate ${density === "compact" ? "hidden sm:inline" : ""}`}
       >
-        {isCopied ? 'Copied' : children}
+        {isCopied ? "Copied" : children}
       </span>
     </button>
   );
