@@ -1993,6 +1993,37 @@
                    (expect (= "keep\nreplaced\nkeep\n" (slurp rel))))))
 
 (defdescribe
+  read-activity-snapshot-test
+  (it "retains the actual read window after the file changes without altering the tool result"
+      (let [rel
+            (write-temp! "read/activity-snapshot.clj" "(def before 1)\n(def untouched 2)\n")
+
+            sym
+            (private-fn "cat-symbol")
+
+            events
+            (atom [])
+
+            result
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (extension/invoke-symbol-wrapper
+                {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols [sym]}}
+                sym
+                [rel 1 1]
+                {:workspace/root (System/getProperty "user.dir")
+                 :workspace {:root (System/getProperty "user.dir")
+                             :repo-root (System/getProperty "user.dir")}}))
+
+            presentation
+            (:presentation (last @events))]
+
+        (spit rel "(def after 3)\n")
+        (expect (string/includes? result "│ (def before 1)"))
+        (expect (= "Read" (get presentation "headline")))
+        (expect (= "1 │ (def before 1)" (get-in presentation ["content" 0 "text"])))
+        (expect (= [:start :terminal] (mapv :phase @events))))))
+
+(defdescribe
   patch-diff-text-test
   (it "carries a real patch's bounded diff through the Activity wrapper"
       (let [rel

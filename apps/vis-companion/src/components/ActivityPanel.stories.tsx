@@ -5,6 +5,7 @@ import {
   ACTIVITY_CHRONOLOGY,
   ACTIVITY_INTERLEAVED,
   ACTIVITY_REPEATED_ARGUMENTS,
+  ACTIVITY_RESULTS,
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_LISTING,
   ACTIVITY_LISTING_BATCH,
@@ -50,6 +51,40 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
+
+/** One step disclosure opens the retained result, not invocation parameters. */
+export const ResultFirst: Story = {
+  args: { activity: ACTIVITY_RESULTS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    const rows = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>("[data-activity-row]"),
+    );
+    await expect(rows).toHaveLength(6);
+    const expected = [
+      "greeting",
+      '"Hi "',
+      "greeting_test.clj",
+      "captured lines",
+      "one disclosure",
+      "12 tests passed.",
+    ];
+    for (const [index, row] of rows.entries()) {
+      const step = within(row).getByRole("button");
+      await expect(step.getBoundingClientRect().height).toBe(24);
+      await userEvent.click(step);
+      await expect(row.textContent).toContain(expected[index]);
+      await expect(
+        within(row).queryByRole("button", { name: /^Diff/ }),
+      ).not.toBeInTheDocument();
+      await expect(row.textContent).not.toMatch(/12:abc|13:def|\["src\/com/);
+      await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+    }
+  },
+};
 
 /** The Storybook clipboard is a boundary stub, as for the shared Code copy control. */
 export const CopyActivity: Story = {
@@ -357,9 +392,14 @@ export const CompactMiddle: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("button", { name: "Expand Activity" }));
-    const rows = ["before", "middle", "after"].map((id) =>
-      canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    const rows = ["before", "middle", "after"].map(
+      (id) =>
+        canvasElement.querySelector<HTMLElement>(
+          `[data-activity-row="${id}"]`,
+        )!,
     );
     const middle = within(rows[1]).getByRole("button");
     // Adjacent boxes alone miss the blank space inside an oversized toggle.
@@ -370,7 +410,11 @@ export const CompactMiddle: Story = {
         await expect(box.height).toBe(24);
         // Invisible reach must not cover any part of a neighboring toggle.
         for (const x of [box.left + 2, box.right - 2]) {
-          for (const y of [box.top + 1, box.top + box.height / 2, box.bottom - 1]) {
+          for (const y of [
+            box.top + 1,
+            box.top + box.height / 2,
+            box.bottom - 1,
+          ]) {
             await expect(
               document.elementFromPoint(x, y)?.closest("button"),
             ).toBe(toggle);
@@ -387,7 +431,7 @@ export const CompactMiddle: Story = {
     await checkSiblings();
     await userEvent.click(middle);
     const body = rows[1].querySelector<HTMLElement>("[data-activity-content]")!;
-    const code = within(rows[1]).getByRole("region", { name: "text code" });
+    const code = within(rows[1]).getByRole("group", { name: "text code" });
     await expect(getComputedStyle(body).marginTop).toBe("0px");
     await expect(getComputedStyle(code).paddingTop).toBe("0px");
     await expect(getComputedStyle(code).paddingBottom).toBe("0px");

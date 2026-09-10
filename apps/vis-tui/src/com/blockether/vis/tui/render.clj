@@ -5735,31 +5735,10 @@
                                   :collapsed? (not show-all?)})}])))))
 
         change-entries
-        ;; No head and no card. The row above already says "PATCHED", prints its own
-        ;; `+7 -3` and carries the paths under it. The bare word `Diff` survives for the
-        ;; one case with no path to stand on: a `patch` row, whose head names the file.
+        ;; A single patch is the operation's detail, not another disclosure.
         (fn [row-id resources diffs ^long col]
           (if (and (empty? resources) (= 1 (count diffs)))
-            (let [fold-key
-                  (str row-id "#diff")
-
-                  open?
-                  (expanded? fold-key false)
-
-                  mark
-                  (if open? "▾" "▸")]
-
-              (into [{:line (str activity-marker
-                                 (ellipsize-cols (str (activity-lead col) mark " Diff") width))
-                      :meta (merge meta-base
-                                   {:kind :activity-more
-                                    :item-id row-id
-                                    :mark mark
-                                    :label "Diff"
-                                    :mark-col col
-                                    :node-id (str node-id ":" fold-key)
-                                    :collapsed? (not open?)})}]
-                    (when open? (diff-entries row-id (first diffs) col))))
+            (diff-entries row-id (first diffs) col)
             (file-entries row-id resources diffs col)))
 
         error-entries
@@ -5850,10 +5829,34 @@
 
                                                        delta
                                                        (let [{:keys [additions deletions]}
-                                                             (activity-step-delta row)]
-                                                         (when (pos? (+ (long additions)
-                                                                        (long deletions)))
-                                                           (str " +" additions " −" deletions)))
+                                                             (activity-step-delta row)
+
+                                                             text
+                                                             (when (pos? (+ (long additions)
+                                                                            (long deletions)))
+                                                               (str " +" additions " −" deletions))
+
+                                                             filename
+                                                             (when (and (= "patch" (:operation row))
+                                                                        (or caption object))
+                                                               (:name (activity-path-cells
+                                                                        (or caption object)
+                                                                        Long/MAX_VALUE)))]
+
+                                                         ;; Keep the filename before optional diff counts on narrow terminals.
+                                                         (when (or (nil? filename)
+                                                                   (<= (+ 4
+                                                                          (p/display-width
+                                                                            (str
+                                                                              (activity-lead col)
+                                                                              lead-word
+                                                                              (if caption " · " " ")
+                                                                              filename
+                                                                              text
+                                                                              (activity-row-tail
+                                                                                row))))
+                                                                       (long width)))
+                                                           text))
 
                                                        ;; Only child rows are indented, never a top-level operation.
                                                        ;; The header stays visible; only content follows the disclosure.
@@ -5869,18 +5872,36 @@
                                                                    (contains? #{:running :failed}
                                                                               state))))
 
-                                                       prefix
-                                                       (str (activity-lead col)
-                                                            lead-word
-                                                            (when object (str " " object))
-                                                            (when caption (str " · " caption))
-                                                            delta)
-
                                                        suffix
                                                        (activity-row-tail row)
 
                                                        mark
                                                        (when openable? (if open? " ▾" " ▸"))
+
+                                                       subject
+                                                       (when-let [text (or caption object)]
+                                                         (if (#{"cat" "patch"} (:operation row))
+                                                           (:text
+                                                             (activity-path-cells
+                                                               text
+                                                               (max 1
+                                                                    (- (long width)
+                                                                       (p/display-width
+                                                                         (str (activity-lead col)
+                                                                              lead-word
+                                                                              (if caption " · " " ")
+                                                                              delta
+                                                                              suffix
+                                                                              mark))
+                                                                       2))))
+                                                           text))
+
+                                                       prefix
+                                                       (str (activity-lead col)
+                                                            lead-word
+                                                            (when subject
+                                                              (str (if caption " · " " ") subject))
+                                                            delta)
 
                                                        line
                                                        (first (with-right-suffix
@@ -5978,7 +5999,12 @@
                                                                                   :activity-evidence
                                                                                   :item-id id})})]
 
-                                                             (concat [blank (line-entry headline)]
+                                                             (concat (cond-> []
+                                                                       (= "ls" (:operation row))
+                                                                       (conj blank)
+
+                                                                       true
+                                                                       (conj (line-entry headline)))
                                                                      (when (not-empty summary)
                                                                        [(line-entry summary)])
                                                                      (when open?

@@ -473,7 +473,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
       )}
       <pre
         className={`${compact ? "text-meta" : "text-ui"} ${padded ? (compact ? "py-2" : "py-2.5") : ""} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
-        role="region"
+        role={frameless ? "group" : "region"}
         aria-label={language ? `${language} code` : "Code"}
         tabIndex={0}
       >
@@ -537,6 +537,7 @@ export const Markdown = memo(function Markdown({
   hardBreaks = false,
   nested = false,
   onOpenAttachment,
+  headingLevel,
 }: {
   children: string;
   compact?: boolean;
@@ -544,6 +545,8 @@ export const Markdown = memo(function Markdown({
   /** The enclosing result owns the frame and padding of nested code and diffs. */
   nested?: boolean;
   onOpenAttachment?: OpenAttachment;
+  /** Embedded result dividers share the level below their enclosing step. */
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
 }) {
   // Transcript prose shares one fully justified reading column. Inline code and
   // links remain breakable so a long atom cannot force that column to overflow.
@@ -613,6 +616,7 @@ export const Markdown = memo(function Markdown({
           ),
           h1: ({ children: heading1 }) => (
             <h1
+              aria-level={headingLevel}
               className={`${heading("mb-1 mt-3 text-ui", "mb-1.5 mt-4 text-subhead", "mb-2 mt-6 text-head")} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}
             >
               {heading1}
@@ -620,6 +624,7 @@ export const Markdown = memo(function Markdown({
           ),
           h2: ({ children: heading2 }) => (
             <h2
+              aria-level={headingLevel}
               className={`${heading("mb-1 mt-3 text-ui", "mb-1 mt-3.5 text-title", "mb-1.5 mt-5 text-subhead")} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}
             >
               {heading2}
@@ -627,6 +632,7 @@ export const Markdown = memo(function Markdown({
           ),
           h3: ({ children: heading3 }) => (
             <h3
+              aria-level={headingLevel}
               className={`${heading("mb-0.5 mt-2.5 text-meta", "mb-1 mt-3 text-body", "mb-1 mt-4 text-title")} font-semibold text-heading-3`}
             >
               {heading3}
@@ -634,6 +640,7 @@ export const Markdown = memo(function Markdown({
           ),
           h4: ({ children: heading4 }) => (
             <h4
+              aria-level={headingLevel}
               className={`${heading("mb-0.5 mt-2 text-meta", "mb-0.5 mt-2.5 text-body", "mb-1 mt-3.5 text-body")} font-semibold text-heading-3`}
             >
               {heading4}
@@ -641,6 +648,7 @@ export const Markdown = memo(function Markdown({
           ),
           h5: ({ children: heading5 }) => (
             <h5
+              aria-level={headingLevel}
               className={`${heading("mb-0.5 mt-2 text-chip uppercase tracking-[0.06em]", "mb-0.5 mt-2.5 text-ui", "mb-1 mt-3 text-ui")} font-semibold text-heading-3`}
             >
               {heading5}
@@ -648,6 +656,7 @@ export const Markdown = memo(function Markdown({
           ),
           h6: ({ children: heading6 }) => (
             <h6
+              aria-level={headingLevel}
               className={`${heading("mb-0.5 mt-2 text-chip", "mb-0.5 mt-2.5 text-meta", "mb-1 mt-3 text-meta")} font-semibold uppercase tracking-[0.08em] text-heading-3`}
             >
               {heading6}

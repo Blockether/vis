@@ -1,0 +1,288 @@
+{
+  "state": "succeeded",
+  "counts": {
+    "running": 0,
+    "succeeded": 6,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "rows": [
+    {
+      "result_summary": "\"12:abc│ (defn greeting [name]\\n13:def│   (str \\\"Hello \\\" name))\"",
+      "id": "result-0",
+      "summary": "src/com/blockether/vis/internal/activity/presenter.clj",
+      "signal": "observation",
+      "sequence": 1,
+      "operation": "cat",
+      "presentation": {
+        "headline": "Read",
+        "summary": "src/com/blockether/vis/internal/activity/presenter.clj · lines 12–13",
+        "content": [
+          {
+            "type": "code",
+            "language": "clojure",
+            "text": "12 │ (defn greeting [name]\n13 │   (str \"Hello \" name))"
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"src/com/blockether/vis/internal/activity/presenter.clj\"]"
+        },
+        {
+          "kind": "result",
+          "text": "\"12:abc│ (defn greeting [name]\\n13:def│   (str \\\"Hello \\\" name))\""
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "\"patched presenter.clj\"",
+      "id": "result-1",
+      "summary": "src/com/blockether/vis/internal/activity/presenter.clj",
+      "signal": "mutation",
+      "sequence": 2,
+      "operation": "patch",
+      "presentation": {
+        "headline": "Patched",
+        "summary": "src/com/blockether/vis/internal/activity/presenter.clj",
+        "content": []
+      },
+      "presenter": "patch",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"src/com/blockether/vis/internal/activity/presenter.clj\"]"
+        },
+        {
+          "kind": "result",
+          "text": "\"patched presenter.clj\""
+        },
+        {
+          "kind": "diff",
+          "text": "src/com/blockether/vis/internal/activity/presenter.clj",
+          "lines": [
+            {
+              "kind": "hunk",
+              "text": "@@ -12,2 +12,2 @@"
+            },
+            {
+              "kind": "context",
+              "text": "(defn greeting [name]"
+            },
+            {
+              "kind": "deletion",
+              "text": "  (str \"Hi \" name))"
+            },
+            {
+              "kind": "addition",
+              "text": "  (str \"Hello \" name))"
+            }
+          ],
+          "additions": 1,
+          "deletions": 1,
+          "modifications": 1,
+          "is_truncated": false,
+          "is_redacted": false
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "\"grep 'greeting'  2 hits · 2 files\\nsrc/greeting.clj  (1)\\n  12:abc│ (defn greeting [name]\\ntest/greeting_test.clj  (1)\\n  8:def│ (is (= \\\"Hello Ada\\\" (greeting \\\"Ada\\\")))\"",
+      "id": "result-2",
+      "summary": "greeting",
+      "signal": "observation",
+      "sequence": 3,
+      "operation": "grep",
+      "presentation": {
+        "headline": "Searched",
+        "summary": "grep 'greeting'  2 hits · 2 files",
+        "content": [
+          {
+            "type": "code",
+            "text": "grep 'greeting'  2 hits · 2 files\nsrc/greeting.clj  (1)\n  12 │ (defn greeting [name]\ntest/greeting_test.clj  (1)\n  8 │ (is (= \"Hello Ada\" (greeting \"Ada\")))"
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"greeting\"]"
+        },
+        {
+          "kind": "result",
+          "text": "\"grep 'greeting'  2 hits · 2 files\\nsrc/greeting.clj  (1)\\n  12:abc│ (defn greeting [name]\\ntest/greeting_test.clj  (1)\\n  8:def│ (is (= \\\"Hello Ada\\\" (greeting \\\"Ada\\\")))\""
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "\"# Activity\\n\\nOpen an operation to read its **retained result**.\\n\\n- Read shows the captured lines.\\n- Patch shows the applied changes.\"",
+      "id": "result-3",
+      "summary": "activity",
+      "signal": "observation",
+      "sequence": 4,
+      "operation": "doc",
+      "presentation": {
+        "headline": "Read documentation",
+        "summary": "activity",
+        "content": [
+          {
+            "type": "markdown",
+            "text": "# Activity\n\nOpen an operation to read its **retained result**.\n\n- Read shows the captured lines.\n- Patch shows the applied changes."
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"activity\"]"
+        },
+        {
+          "kind": "result",
+          "text": "\"# Activity\\n\\nOpen an operation to read its **retained result**.\\n\\n- Read shows the captured lines.\\n- Patch shows the applied changes.\""
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{:title \"Activity review\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}",
+      "id": "result-4",
+      "summary": "Activity review",
+      "signal": "observation",
+      "sequence": 5,
+      "operation": "council.publish",
+      "presentation": {
+        "headline": "Published message",
+        "summary": "Activity review",
+        "content": [
+          {
+            "type": "table",
+            "columns": [
+              "Field",
+              "Value"
+            ],
+            "rows": [
+              [
+                "Thread id",
+                "42"
+              ],
+              [
+                "Title",
+                "Activity review"
+              ]
+            ]
+          },
+          {
+            "type": "heading",
+            "text": "Content"
+          },
+          {
+            "type": "markdown",
+            "text": "Read and Patch now show their **results** after one disclosure."
+          },
+          {
+            "type": "heading",
+            "text": "Ping"
+          },
+          {
+            "type": "text",
+            "text": "reviewer"
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"Activity review\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{:title \"Activity review\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}"
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{:is_pass true, :total 12, :pass 12, :fail 0, :output \"12 tests passed.\"}",
+      "id": "result-5",
+      "summary": "Activity tests",
+      "signal": "observation",
+      "sequence": 6,
+      "operation": "run_tests",
+      "presentation": {
+        "headline": "Ran tests",
+        "summary": "12 tests · 0 failed",
+        "content": [
+          {
+            "type": "table",
+            "columns": [
+              "Field",
+              "Value"
+            ],
+            "rows": [
+              [
+                "Fail",
+                "0"
+              ],
+              [
+                "Is pass",
+                "true"
+              ],
+              [
+                "Pass",
+                "12"
+              ],
+              [
+                "Total",
+                "12"
+              ]
+            ]
+          },
+          {
+            "type": "heading",
+            "text": "Output"
+          },
+          {
+            "type": "code",
+            "text": "12 tests passed."
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"Activity tests\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{:is_pass true, :total 12, :pass 12, :fail 0, :output \"12 tests passed.\"}"
+        }
+      ],
+      "resources": []
+    }
+  ],
+  "omitted": {
+    "rows": 0,
+    "by_classification": {}
+  }
+}

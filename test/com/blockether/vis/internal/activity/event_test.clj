@@ -4,6 +4,49 @@
             [clojure.string :as string]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe
+  result-presentation-test
+  (let [terminal (fn [operation result]
+                   (let [ctx (event/context)]
+                     (event/terminal-event ctx
+                                           (event/invocation ctx nil)
+                                           {:operation operation
+                                            :presenter :generic
+                                            :args ["src/example.clj"]
+                                            :label "src/example.clj"
+                                            :started-at-ms (System/currentTimeMillis)
+                                            :outcome :succeeded
+                                            :result result})))]
+    (it "retains read lines as highlighted code without patch anchors or escaped newlines"
+        (let [result (terminal :cat "40:abc│ (def value 1)\n41:000│ ")
+              presentation (:presentation result)]
+
+          (expect (= "Read" (get presentation "headline")))
+          (expect (= "src/example.clj · lines 40–41" (get presentation "summary")))
+          (expect (= [{"type" "code" "language" "clojure" "text" "40 │ (def value 1)\n41 │ "}]
+                     (get presentation "content")))))
+    (it "renders documentation and structured tool output instead of invocation parameters"
+        (expect (= "markdown"
+                   (get-in (terminal :doc "# Guide\n\n**Read this**")
+                           [:presentation "content" 0 "type"])))
+        (let [result (terminal :run_tests
+                               {:is_pass false
+                                :total 3
+                                :fail 1
+                                :output "Expected 2\nActual 1"
+                                :api_key "fixture-secret"})
+              text (wire/json-str (:presentation result))]
+
+          (expect (string/includes? text "Expected 2"))
+          (expect (string/includes? text "[REDACTED]"))
+          (expect (not (string/includes? text "fixture-secret")))
+          (expect (not (string/includes? text "src/example.clj")))))
+    (it "marks partial retained content and still produces a valid bounded event"
+        (let [result (terminal :doc (apply str (repeat 30000 "x")))]
+          (expect (some? (:presentation result)))
+          (expect (:result-truncated result))
+          (expect (nil? (event/event-error result)))))))
+
 (defn- argument-start
   [ctx args]
   (event/start-event ctx

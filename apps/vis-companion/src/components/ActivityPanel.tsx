@@ -289,7 +289,7 @@ function ActivityPath({ id }: { id: string }) {
   const directory = cut < 0 ? "" : shown.slice(0, cut + 1);
   const name = cut < 0 ? shown : shown.slice(cut + 1);
   return (
-    <span className="flex min-w-0" data-path={id}>
+    <span className="flex min-w-0 max-w-full" data-path={id} title={id}>
       {directory && (
         <span className="truncate text-dialog-hint">{directory}</span>
       )}
@@ -429,40 +429,21 @@ function ActivityFiles({
  * "Patch" set in bold across its top was that row said a second time, twenty
  * pixels lower and louder.
  *
- * And a step that changed SEVERAL files hands each file its OWN fold, on its own
- * path. One chevron over eleven concatenated patches made the reader find a file
- * by reading a header out of the diff, and any bound on the payload spent itself
- * on whichever file came first. The bare word `Diff` survives for the one case
- * with no path to stand on: a `patch` row, whose head already names the file.
+ * A single patch opens directly with its operation. Multi-file changes retain
+ * independent file disclosures so one large diff does not hide the others.
  */
 function ActivityChanges({
-  row,
   diffs,
   files,
 }: {
-  row: ActivityRow;
   diffs: ActivityDiffEvidence[];
   files: ActivityResource[];
 }) {
-  const [open, setOpen] = useState(false);
-  const headline = activityStepHeadline(row);
   const alone = files.length === 0 && diffs.length === 1 ? diffs[0] : undefined;
-  if (!alone) return <ActivityFiles resources={files} diffs={diffs} />;
-  return (
-    <div className="min-w-0">
-      <Disclosure
-        isOpen={open}
-        tone="muted"
-        bleed
-        aria-label={`${open ? "Collapse" : "Expand"} the patch of ${headline}`}
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
-      >
-        <span className="min-w-0 flex-1 font-sans text-meta normal-case">
-          Diff
-        </span>
-      </Disclosure>
-      {open && <ActivityDiff diff={alone} />}
-    </div>
+  return alone ? (
+    <ActivityDiff diff={alone} />
+  ) : (
+    <ActivityFiles resources={files} diffs={diffs} />
   );
 }
 
@@ -610,7 +591,7 @@ function ActivityBody({
             );
           case "markdown":
             return (
-              <Markdown key={index} compact>
+              <Markdown key={index} compact nested headingLevel={5}>
                 {block.text}
               </Markdown>
             );
@@ -779,21 +760,26 @@ function ActivityStep({
     hasChildren;
 
   const label = (
-    <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
+    <span className="flex min-w-0 flex-1 items-baseline gap-x-2">
       <span
-        className={caption ? "min-w-0 font-semibold" : "min-w-0 truncate"}
+        className="min-w-0 truncate font-semibold"
         title={activityStepHeadline(row)}
       >
         {lead}
-        {object && (
-          <>
-            {" "}
-            <span className="ml-[5px] font-normal text-dialog-hint">
-              <ActivityText text={object} format={row.summary_format} />
-            </span>
-          </>
-        )}
       </span>
+      {object ? " " : null}
+      {object && (
+        <span
+          className="min-w-0 flex-1 font-normal text-dialog-hint"
+          title={object}
+        >
+          {row.operation === "cat" || row.operation === "patch" ? (
+            <ActivityPath id={object} />
+          ) : (
+            <ActivityText text={object} format={row.summary_format} />
+          )}
+        </span>
+      )}
       {caption && (
         <>
           <span aria-hidden="true" className="text-dialog-hint">
@@ -801,10 +787,14 @@ function ActivityStep({
           </span>
           <span
             data-activity-summary
-            className="min-w-0 break-words font-normal text-dialog-hint"
+            className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
             title={caption}
           >
-            {caption}
+            {row.operation === "cat" || row.operation === "patch" ? (
+              <ActivityPath id={caption} />
+            ) : (
+              caption
+            )}
           </span>
         </>
       )}
@@ -845,8 +835,8 @@ function ActivityStep({
         <Headline
           className={
             nested
-              ? "min-w-0 text-meta font-medium text-code-result"
-              : "min-w-0 text-meta font-semibold text-code-result"
+              ? "min-w-0 text-ui font-medium text-code-result mouse:text-meta"
+              : "min-w-0 text-ui font-semibold text-code-result mouse:text-meta"
           }
         >
           {openable ? (
@@ -860,7 +850,7 @@ function ActivityStep({
               {label}
             </Disclosure>
           ) : (
-            label
+            <div className="flex min-h-6 items-center">{label}</div>
           )}
         </Headline>
       </div>
@@ -879,7 +869,7 @@ function ActivityStep({
         <section
           key={index}
           data-activity-section
-          className={`min-w-0 pl-4.5 ${index === 0 && !(open && content?.length) ? "mt-1" : "mt-[var(--text-ui--line-height)]"}`}
+          className={`min-w-0 pl-4.5 ${row.operation === "ls" ? (index === 0 && !(open && content?.length) ? "mt-1" : "mt-[var(--text-ui--line-height)]") : ""}`}
         >
           <h5
             className="truncate text-meta font-bold text-code-result"
@@ -917,11 +907,7 @@ function ActivityStep({
           child is the same twelve paths printed twice. */}
       {open && showsFiles && <ActivityFiles resources={touched} />}
       {open && diffs.length > 0 && (
-        <ActivityChanges
-          row={row}
-          diffs={diffs}
-          files={hasChildren ? [] : touched}
-        />
+        <ActivityChanges diffs={diffs} files={hasChildren ? [] : touched} />
       )}
       {open && error && <ActivityError evidence={error} />}
       {open && hasChildren && (

@@ -35,6 +35,53 @@
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
 
 (defdescribe
+  direct-activity-result-test
+  (it "opens the retained patch directly rather than a second diff disclosure"
+      (let [entries (#'render/activity-detail-entries
+                     {:node-id "activity"
+                      :activity-expanded? (fn [key default]
+                                            (get {"#band" true "patch-1" true} key default))
+                      :activity-rows [{:id "patch-1"
+                                       :sequence 1
+                                       :operation "patch"
+                                       :state "succeeded"
+                                       :summary "src/example.clj"
+                                       :resources []
+                                       :evidence [{:kind "diff"
+                                                   :text "src/example.clj"
+                                                   :additions 1
+                                                   :deletions 1
+                                                   :modifications 0
+                                                   :lines [{:kind "deletion" :text "old"}
+                                                           {:kind "addition" :text "new"}]}]}]}
+                     72
+                     "fixture")]
+        (expect (= 2 (count (filter #(= :activity-diff (get-in % [:meta :kind])) entries))))
+        (expect (not-any? #(= "Diff" (get-in % [:meta :label])) entries))))
+  (it "keeps the result filename in a narrow read or patch header"
+      (let [rows
+            (-> (io/resource "vis-contract/fixtures/activity-results.json")
+                slurp
+                json/read-str
+                activity-contract/from-wire
+                :rows)
+
+            entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows rows
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))}
+             36
+             "fixture")]
+
+        (doseq [id ["result-0" "result-1"]]
+          (let [entry (first (filter #(and (= :activity-row (get-in % [:meta :kind]))
+                                           (= id (get-in % [:meta :item-id])))
+                                     entries))]
+            (expect (str/includes? (:line entry) "presenter.clj")))))))
+
+(defdescribe
   joined-activity-band-test
   (let [rows
         (mapv (fn [i operation]

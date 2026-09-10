@@ -795,7 +795,7 @@ export function Disclosure({
               : 'text-footer-muted hover:bg-hover';
   const size =
     density === 'compact'
-      ? 'relative min-h-6 text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
+      ? 'relative min-h-6 text-ui mouse:text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
       : density === 'comfortable' || tone === 'execution'
         ? 'min-h-11 text-ui mouse:min-h-7'
         : `min-h-8 mouse:min-h-6 ${tone === 'step' || tone === 'branch' ? 'text-ui' : 'text-chip'}`;

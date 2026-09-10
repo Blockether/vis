@@ -98,57 +98,65 @@
 
 (defn- bounded-redact-result
   "Redact a bounded public view, unwrapping Python transport objects before rendering."
-  [value]
-  (let [remaining
-        (volatile! max-summary-nodes)
+  ([value] (bounded-redact-result value max-detail-bytes))
+  ([value text-limit]
+   (let [remaining
+         (volatile! max-summary-nodes)
 
-        truncated?
-        (volatile! false)
+         truncated?
+         (volatile! false)
 
-        omitted
-        "…"]
+         omitted
+         "…"]
 
-    (letfn
-      [(visit [x]
-         (if-not (pos? (long @remaining))
-           (do (vreset! truncated? true) omitted)
-           (do
-             (vswap! remaining #(unchecked-dec (long %)))
-             (cond (callback-envelope? x) "[CALLBACK]"
-                   (map? x) (loop [entries
-                                   (seq (if (and (string? (get x "__vis_object__"))
-                                                 (map? (get x "__vis_attrs__")))
-                                          (get x "__vis_attrs__")
-                                          x))
+     (letfn
+       [(visit [x]
+          (if-not (pos? (long @remaining))
+            (do (vreset! truncated? true) omitted)
+            (do
+              (vswap! remaining #(unchecked-dec (long %)))
+              (cond (callback-envelope? x) "[CALLBACK]"
+                    (map? x) (loop [entries
+                                    (seq (if (and (string? (get x "__vis_object__"))
+                                                  (map? (get x "__vis_attrs__")))
+                                           (get x "__vis_attrs__")
+                                           x))
 
-                                   result
-                                   (transient {})]
+                                    result
+                                    (transient {})]
 
-                              (cond (nil? entries) (persistent! result)
-                                    (not (pos? (long @remaining)))
-                                    (do (vreset! truncated? true)
-                                        (persistent! (assoc! result omitted "omitted")))
-                                    :else (let [[k v] (first entries)]
-                                            (recur (next entries)
-                                                   (assoc! result
-                                                           k
-                                                           (if (util/secret-key? k)
-                                                             "[REDACTED]"
-                                                             (visit v)))))))
-                   (or (vector? x) (set? x) (sequential? x))
-                   (loop [items
-                          (seq x)
+                               (cond (nil? entries) (persistent! result)
+                                     (not (pos? (long @remaining)))
+                                     (do (vreset! truncated? true)
+                                         (persistent! (assoc! result omitted "omitted")))
+                                     :else (let [[k v] (first entries)]
+                                             (recur (next entries)
+                                                    (assoc! result
+                                                            k
+                                                            (if (util/secret-key? k)
+                                                              "[REDACTED]"
+                                                              (visit v)))))))
+                    (or (vector? x) (set? x) (sequential? x))
+                    (loop [items
+                           (seq x)
 
-                          result
-                          (transient [])]
+                           result
+                           (transient [])]
 
-                     (cond (nil? items) (persistent! result)
-                           (not (pos? (long @remaining))) (do (vreset! truncated? true)
-                                                              (persistent! (conj! result omitted)))
-                           :else (recur (next items) (conj! result (visit (first items))))))
-                   (string? x) (bounded-text (util/redact-secret-text x) max-detail-bytes)
-                   :else x))))]
-      {:value (visit value) :is-truncated @truncated?})))
+                      (cond (nil? items) (persistent! result)
+                            (not (pos? (long @remaining))) (do (vreset! truncated? true)
+                                                               (persistent! (conj! result omitted)))
+                            :else (recur (next items) (conj! result (visit (first items))))))
+                    (string? x) (let [public
+                                      (util/redact-secret-text x)
+
+                                      text
+                                      (bounded-text public text-limit)]
+
+                                  (when (not= public text) (vreset! truncated? true))
+                                  text)
+                    :else x))))]
+       {:value (visit value) :is-truncated @truncated?}))))
 
 (defn- bounded-rendered
   [rendered limit]
@@ -265,6 +273,8 @@
           (and terminal? (not= 1 (count outcomes))) "terminal must have exactly one outcome"
           (and (not terminal?) (seq outcomes)) "start cannot carry an outcome"
           (and terminal? (not (number? (:duration-ms event)))) "terminal requires duration"
+          (and (:presentation event) (not (contract/valid-presentation? (:presentation event))))
+          "invalid presentation"
           (> (utf8-bytes (wire/json-str event)) (long max-event-bytes))
           (str "event exceeds " (quot (long max-event-bytes) 1024) " KiB")
           :else nil)))
@@ -593,6 +603,47 @@
         (:is-truncated argument)
         (assoc :argument-truncated true)))))
 
+(defn- result-presentation
+  "Retain a bounded result-specific view separately from the short diagnostic summary."
+  [details]
+  (let [{:keys [value is-truncated]}
+        (bounded-redact-result (:result details) 16384)
+
+        full
+        (presenter/result-presentation details value)
+
+        clip-line
+        #(-> (str %)
+             util/redact-secret-text
+             (str/replace #"[\p{Cntrl}\u2028\u2029]+" " ")
+             (bounded-text max-summary-bytes))
+
+        blocks
+        (mapv (fn [block]
+                (cond-> block
+                  (get block "text")
+                  (update "text" bounded-text 16384)
+
+                  (= "table" (get block "type"))
+                  (update "rows"
+                          #(mapv (fn [row]
+                                   (mapv (fn [cell]
+                                           (bounded-text cell 256))
+                                         row))
+                                 %))))
+              (take 32 (get full "content")))
+
+        initial
+        (-> full
+            (update "headline" clip-line)
+            (update "summary" clip-line)
+            (assoc "content" blocks))]
+
+    (loop [presentation initial]
+      (if (contract/valid-presentation? presentation)
+        {:value presentation :is-truncated (or is-truncated (not= full presentation))}
+        (when (seq (get presentation "content")) (recur (update presentation "content" pop)))))))
+
 (defn terminal-event
   [ctx invocation
    {:keys [operation presenter started-at-ms outcome result error classification group-token
@@ -624,6 +675,9 @@
                                                          (str error*)))
                             max-detail-bytes))
 
+        presentation
+        (when (= outcome :succeeded) (try (result-presentation details) (catch Exception _ nil)))
+
         diff-evidence
         (when (= outcome :succeeded) (result-diff-evidence details))
 
@@ -647,6 +701,9 @@
           identity
           (assoc :argument-key identity)
 
+          presentation
+          (assoc :presentation (:value presentation))
+
           (and (= outcome :succeeded) (:text summary))
           (assoc :result-summary (:text summary))
 
@@ -668,5 +725,5 @@
           (seq diff-evidence)
           (assoc :diff-evidence diff-evidence)
 
-          (:is-truncated summary)
+          (if presentation (:is-truncated presentation) (:is-truncated summary))
           (assoc :result-truncated true))))))

@@ -33,6 +33,21 @@
                               (not= outcome :succeeded)
                               (assoc :error (ex-info (str result) {}))))])))
 
+(defdescribe completed-file-operations-test
+             (it "retains running reads and patches internally but publishes them only when settled"
+                 (doseq [operation [:cat :patch]]
+                   (let [[start terminal]
+                         (event-pair (event/context) operation :succeeded "retained result")
+                         running (activity/reduce-event activity/empty-state start)
+                         visible (activity/presentation running)
+                         settled (activity/presentation (activity/reduce-event running terminal))]
+
+                     (expect (= 1 (count (:rows running))))
+                     (expect (empty? (:rows visible)))
+                     (expect (= 1 (get-in visible [:counts :running])))
+                     (expect (= 0 (get-in visible [:omitted :rows])))
+                     (expect (= ["succeeded"] (mapv :state (:rows settled))))))))
+
 (defdescribe
   argument-identity-test
   (it "retains complete argument identity through lifecycle and canonical projection"
@@ -439,8 +454,11 @@
       (expect (= 24 (count (:children group))))
       (expect (= (:invocation-id running) (:id current)))
       (expect (= "running" (:state current)))
-      (expect (= (mapv :result-summary (butlast (:rows state)))
-                 (mapv :result-summary (:children group))))
+      ;; Typed output uses the same receipt budget; any shed body must be explicit.
+      (expect (every? #(or (:is-truncated %)
+                           (some (fn [block] (= (apply str (repeat 2000 "x")) (get block "text")))
+                                 (get-in % [:presentation "content"])))
+                      (:children group)))
       (expect (zero? (get-in projection [:omitted :rows])))
       (expect (<= (activity/byte-size projection) activity/max-receipt-bytes))
       (expect (contract/valid-projection? projection)))))

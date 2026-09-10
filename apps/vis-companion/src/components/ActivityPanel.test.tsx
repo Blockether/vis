@@ -26,6 +26,18 @@ import {
 
 afterEach(cleanup);
 
+it("keeps embedded document headings and code inside their Activity step", () => {
+  paintActivity({ activity: storyData.ACTIVITY_RESULTS });
+  openEverySettledStep();
+  expect(
+    screen.getByRole("heading", { name: "Activity", level: 5 }),
+  ).toBeTruthy();
+  expect(screen.queryAllByRole("region", { name: "text code" })).toHaveLength(
+    0,
+  );
+  expect(screen.getAllByRole("group", { name: "text code" })).toHaveLength(2);
+});
+
 /**
  * The engine's own Activity fixture, parsed. Protocol 7 ships it as a bare
  * projection on the form that produced it, not as a classified view, so the
@@ -65,6 +77,38 @@ function openEverySettledStep() {
   }
 }
 
+it("reveals a patch diff on the first step disclosure, without another Diff control", () => {
+  const activity = activityProjection();
+  const patchRow = {
+    ...activity.rows[0],
+    operation: "patch",
+    presenter: "patch" as const,
+    state: "succeeded" as const,
+    summary: "src/example.clj",
+    result_summary: undefined,
+    resources: [],
+    evidence: [
+      {
+        kind: "diff" as const,
+        text: "src/example.clj",
+        additions: 1,
+        deletions: 1,
+        modifications: 0,
+        is_truncated: false,
+        is_redacted: false,
+        lines: [
+          { kind: "deletion" as const, text: "old" },
+          { kind: "addition" as const, text: "new" },
+        ],
+      },
+    ],
+  };
+  paintActivity({ activity: { ...activity, rows: [patchRow] } });
+  openEverySettledStep();
+  expect(screen.getByLabelText("Unified diff")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Expand the patch/ })).toBeNull();
+  expect(screen.queryByText("Diff", { selector: "span" })).toBeNull();
+});
 describe("Activity copy", () => {
   it("copies retained activity while collapsed without opening the band", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);

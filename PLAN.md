@@ -1705,3 +1705,33 @@ Follow-up verification:
 
 The user explicitly requested the scoped commit and push after verification.
 Release, deployment and live service restarts remain outside this task.
+
+# Result-first Activity in Companion and TUI
+
+Show retained operation results directly, with consistent compact rows.
+
+## Context
+
+The Activity projection and builtin presenters live under `src/com/blockether/vis/internal/activity/`. Companion renders them in `ActivityPanel.tsx`; TUI renders them in `render.clj`. The user approved completed-only Read/Patch entries, direct read snapshots and patch diffs after one disclosure, compact paths and uniform subactivity spacing, and result-specific views for builtin operations. Preserve listing presentation. Reject raw invocation parameters as normal details, nested single-file diff disclosures, and rereading current files to reconstruct historical results.
+
+## 1. Capture result presentation
+- Rationale: both clients must receive the same retained, meaningful evidence.
+- Data: builtin presenters, activity projection, host integration and their tests.
+- Acceptance criteria: regression tests reproduce missing read details and raw arguments; builtins expose result-specific content, with explicit truncation and honest errors. Read/Patch start states do not become visible entries.
+- Unknowns: confirm builtin result shapes and existing bounds before changing capture.
+
+## 2. Render compact direct details
+- Rationale: one disclosure should reveal the result on either client.
+- Data: Companion ActivityPanel, shared controls and stories; TUI Activity rendering and terminal fixtures.
+- Acceptance criteria: direct read/code and diff rendering, no redundant single-file disclosure, uniform tight subactivity spacing, readable shortened paths and accessible controls; listing unchanged.
+- Unknowns: verify touch geometry and available captured evidence.
+
+## 3. Verify the complete workflow
+- Rationale: unit tests alone do not prove rendering or host-to-client behavior.
+- Data: affected engine/host and client suites, formatting/lint/reflection, Companion Storybook/build, production browser and terminal fixtures.
+- Acceptance criteria: affected checks pass; inspect both production renderers and attach their self-contained review artifacts; preserve concurrent work and report unavailable checks.
+- Unknowns: native/device checks and any unrelated checkout failures will be reported separately.
+
+## Plan state
+
+Complete. Read/Patch starts remain internal; retained result presentations drive both clients without rereading files or exposing invocation parameters. One disclosure shows read code or a single-file diff. Compact headers retain filenames, including the 40-column TUI frame; embedded document headings and code retain accessible semantics. Listing remains unchanged. Verified: 50 Activity tests, 324 editing/wrapper tests, 279 TUI rendering/grid tests, 448 affected Companion tests, 225 Storybook stories and contrast across 10 themes. Clojure formatting, lint/reflection, Companion lint/build and diff checks passed. Production browser review covered 375/393 px phones, an 834 px touch tablet and a 1280 px desktop; HTML/native terminal grid parity covered 40/80/120 columns. Both self-contained HTML artifacts render offline. No native engine build or physical-device run was performed. Initial checkout was clean on `main` at `81e305c33`; unrelated release commits were preserved.

@@ -46,7 +46,7 @@
          (atom {})
 
          rows
-         (fixture/activity-review-rows "failed")
+         (fixture/activity-result-rows)
 
          paint!
          (fn []

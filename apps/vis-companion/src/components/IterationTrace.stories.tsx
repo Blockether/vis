@@ -846,9 +846,9 @@ export const JoinedActivity: Story = {
       0,
     );
     const codeSize = getComputedStyle(code.querySelector("pre")!).fontSize;
-    for (const element of [reads, canvas.getByText("6 files")]) {
-      await expect(getComputedStyle(element).fontSize).toBe(codeSize);
-    }
+    await expect(getComputedStyle(canvas.getByText("6 files")).fontSize).toBe(codeSize);
+    const mouse = matchMedia("(min-width: 640px) and (pointer: fine)").matches;
+    await expect(getComputedStyle(reads).fontSize).toBe(mouse ? "10px" : "11px");
     // Names use the transcript body token; counts remain secondary metadata.
     const labelSize = getComputedStyle(document.documentElement)
       .getPropertyValue("--text-ui")

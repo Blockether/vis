@@ -135,6 +135,9 @@
       (seq (:diff-evidence event))
       (update :evidence into (:diff-evidence event))
 
+      (and (:presentation event) (nil? (:presentation row)))
+      (assoc :presentation (:presentation event))
+
       (:group-token event)
       (assoc :group-token (:group-token event))
 
@@ -360,6 +363,7 @@
 (defn- projected-rows
   [rows]
   (->> rows
+       (remove #(and (= :running (:state %)) (contains? #{:cat :patch} (:operation %))))
        (sort-by :sequence)
        vec
        coalesce-shell-rows
