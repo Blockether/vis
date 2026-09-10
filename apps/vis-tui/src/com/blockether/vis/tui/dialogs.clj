@@ -1041,6 +1041,7 @@
      :reconcile (fn [state geom] -> state)         — optional clamp (e.g. scroll window)
      :paint     (fn [g state geom] -> cursor|nil)  — the only impure piece; draws to `g`
      :on-key    (fn [state key geom] -> state | {::done result})  — screen-free, TESTABLE
+     :read-key  optional (fn [screen] -> key|nil), for async loading wakeups
 
    run-modal! owns everything the old dialogs copy-pasted: terminal sizing, the
    `TextGraphics`, wheel/close/Esc normalization (via `read-modal-key!`), the
@@ -1049,7 +1050,8 @@
    Esc/close). Because `:measure`/`:reconcile`/`:on-key` are pure functions of
    data, a dialog's geometry and key logic can be unit-tested with no live
    terminal at all — the React-like win."
-  [^TerminalScreen screen {:keys [init measure reconcile paint on-key]}]
+  [^TerminalScreen screen
+   {:keys [init measure reconcile paint on-key read-key] :or {read-key read-modal-key!}}]
   (loop [state (if (fn? init) (init) init)]
     (let [size (modal-size! screen)
           cols (.getColumns size)
@@ -1063,11 +1065,387 @@
       ;; same fix applied to every band dialog); a text field returns its cell.
       (.setCursorPosition screen cursor)
       (.refresh screen Screen$RefreshType/DELTA)
-      (let [key (read-modal-key! screen)]
+      (let [key (read-key screen)]
         (if (nil? key)
           (recur state)
           (let [r (on-key state key geom)]
             (if (and (map? r) (contains? r ::done)) (::done r) (recur r))))))))
+
+(defn- metric-count [n] (if (number? n) (str (long n)) "—"))
+
+(defn- metric-percent [n] (if (number? n) (str (Math/round (double n)) "%") "—"))
+
+(defn- session-metric-rows
+  [session {:keys [phase usage parts? roots?]}]
+  (let [row
+        (fn [text]
+          {:text text})
+
+        hint
+        (fn [text]
+          {:text text :tone :hint})
+
+        head
+        (fn [text]
+          {:text text :tone :heading})
+
+        stat
+        (fn [label value]
+          (assoc (row (str label "  " value))
+            :label label
+            :value value))
+
+        health
+        (get usage "health")
+
+        input
+        (get health "last_request_tokens")
+
+        budget
+        (get health "budget_tokens")
+
+        reminder
+        (get health "reminder_tokens")
+
+        limit
+        (get health "model_input_limit")
+
+        budget?
+        (and (number? budget) (pos? (long budget)))
+
+        at?
+        (fn [n]
+          (and (number? input) (number? n) (>= (long input) (long n))))
+
+        over?
+        (and budget? (at? budget))
+
+        danger?
+        (or (at? limit) over?)
+
+        pressure
+        (cond (not budget?) "Budget not reported"
+              (at? limit) "Input limit reached"
+              over? "Over budget"
+              (at? reminder) "Fold reminder"
+              :else "Within budget")
+
+        breakdown
+        (get health "breakdown")
+
+        roots
+        (get health "roots")
+
+        estimated?
+        (pos? (long (get usage "prompt_cache_estimated_sample_count" 0)))
+
+        samples
+        (get usage "prompt_cache_sample_count")]
+
+    (vec
+      (case phase
+        :loading
+        [(hint "Reading session metrics…")]
+
+        :error
+        [{:text "Session metrics unavailable. Close and reopen to retry." :tone :error}]
+
+        :ready
+        (if-not usage
+          [(hint "No measured calls yet. Metrics appear after the first model response.")]
+          (concat
+            [(head "Session health")]
+            (if-not health
+              [(hint "Context measurement unavailable")
+               (hint "Session totals below do not measure context size.")]
+              (concat
+                [{:text pressure
+                  :tone (cond danger? :error
+                              (at? reminder) :warning
+                              :else :heading)}
+                 (hint (str (if (get health "stale") "Earlier measurement" "Last measured call")
+                            " · #"
+                            (get health "call")
+                            " · not live"))
+                 (stat "Context / working budget"
+                       (str (metric-count input)
+                            " / "
+                            (if budget? (metric-count budget) "Not reported")
+                            (when budget?
+                              (str "  "
+                                   (metric-percent (* 100.0
+                                                      (/ (double input) (double budget))))))))]
+                (when budget?
+                  [{:meter (min 1.0 (/ (double input) (double budget)))
+                    :tone (cond danger? :error
+                                (at? reminder) :warning
+                                :else :heading)}])
+                [(hint (if reminder
+                         (str "Reminder at " (metric-count reminder))
+                         "Reminder not reported"))
+                 (hint (if budget?
+                         (str (metric-count (Math/abs (- (long budget) (long input))))
+                              (if over? " over budget" " budget left"))
+                         "Working budget was not recorded"))
+                 (stat "Model input limit" (metric-count limit)) (row "")]
+                (if (some? breakdown)
+                  (concat
+                    [{:text (str (if parts? "▾" "▸") " Context breakdown [b]")
+                      :tone :heading
+                      :toggle :parts?} (hint "Instructions, tools and history · estimates")]
+                    (when parts?
+                      (concat
+                        (mapcat (fn [part]
+                                  (cond-> [(stat (get part "label")
+                                                 (str "≈" (metric-count (get part "tokens"))))]
+                                    (get part "path")
+                                    (conj (hint (get part "path")))))
+                                breakdown)
+                        [(hint
+                           "≈ Text estimates at four characters per token; image tokens and provider overhead are excluded. They need not sum to provider-reported input above.")])))
+                  [(hint "Prompt breakdown unavailable")])
+                [(row "")]
+                (if (some? roots)
+                  (concat
+                    [{:text (str (if roots? "▾" "▸") " Linked filesystems [f]")
+                      :tone :heading
+                      :toggle :roots?}
+                     (hint (str (count roots)
+                                " available · "
+                                (count (filter #(= "available" (get-in % ["guidance" "status"]))
+                                               roots))
+                                " with guidance estimates"))]
+                    (when roots?
+                      (concat
+                        (mapcat (fn [item]
+                                  (let [guidance (get item "guidance")]
+                                    [(row (get item "path"))
+                                     (hint (case (get guidance "status")
+                                             "available"
+                                             (str (get guidance "path")
+                                                  " · ≈"
+                                                  (metric-count (get guidance "tokens"))
+                                                  " tokens on disk")
+
+                                             "missing"
+                                             "No AGENTS.md or CLAUDE.md"
+
+                                             "error"
+                                             "Could not read guidance · check file access"
+
+                                             "Guidance estimate unavailable"))]))
+                                roots)
+                        [(hint
+                           "Disk estimates do not add to context usage or imply that the agent loaded the file. Main workspace guidance is listed above.")])))
+                  [(hint "Linked filesystem details unavailable")])))
+            [(row "") (head "Session totals")
+             (hint "Across all calls, including repeated context.")]
+            (map (fn [[label field]]
+                   (stat label (metric-count (get usage field))))
+                 [["Total input" "input_tokens"] ["Total output" "output_tokens"]])
+            [(stat "Cost"
+                   (if-let [cost (get usage "cost_usd")]
+                     (String/format Locale/US "$%.4f" (object-array [(double cost)]))
+                     "—"))]
+            (map (fn [[label field]]
+                   (stat label (metric-count (get usage field))))
+                 [["Folds" "fold_count"] ["Turns" "turn_count"] ["Calls" "iteration_count"]
+                  ["Tools" "tool_call_count"]])
+            [(row "") (head "Prompt cache")
+             (stat "Cached input" (metric-percent (get usage "cache_read_share_percent")))
+             (hint "Share of all input served from provider cache")
+             (stat "Reuse coverage"
+                   (str (when (and estimated?
+                                   (number? (get usage "reusable_prefix_coverage_percent")))
+                          "≈")
+                        (metric-percent (get usage "reusable_prefix_coverage_percent"))))
+             (hint (str (if estimated? "Estimated share" "Share")
+                        " of reusable prior input recovered from cache"
+                        (when (number? samples)
+                          (str " · "
+                               (metric-count samples)
+                               " of "
+                               (metric-count (get usage "iteration_count"))
+                               " calls")))) (row "")
+             (stat "Model" (or (not-empty (get usage "model")) (:model session) "—"))
+             (stat "Provider" (or (not-empty (get usage "provider")) (:provider session) "—"))
+             (stat "Active"
+                   (if-let [ms (get usage "duration_ms")]
+                     (or (vis/format-duration ms) "0s")
+                     "—")) (hint "Time spent inside turns")]))
+
+        []))))
+
+(defn session-metrics-component
+  "Companion's usage/health document in a scrollable terminal sheet. Geometry,
+   disclosures and keys are deterministic; unknown values never become zero."
+  [session snapshot]
+  {:init (merge {:scroll 0 :parts? false :roots? false} snapshot)
+   :measure
+   (fn [state cols rows]
+     (let [content-w
+           (min 76 (default-content-width cols))
+
+           content-h
+           (adaptive-content-height rows nil)
+
+           bounds
+           (dialog-bounds cols rows content-w content-h)
+
+           text-w
+           (max 1 (- (long (:inner-w bounds)) 3))
+
+           lines
+           (vec
+             (mapcat
+               (fn [{:keys [text meter label value] :as row}]
+                 (cond (some? meter)
+                       [(assoc row
+                          :text (str (apply str (repeat (long (* (double meter) text-w)) "━"))
+                                     (apply str
+                                       (repeat (- text-w (long (* (double meter) text-w))) "─"))))]
+                       (and label (<= (+ (p/display-width label) 2 (p/display-width value)) text-w))
+                       [(assoc row
+                          :value-col (- text-w (p/display-width value))
+                          :text (str label
+                                     (apply str
+                                       (repeat
+                                         (- text-w (p/display-width label) (p/display-width value))
+                                         " "))
+                                     value))]
+                       :else (map #(assoc row :text %)
+                                  (if (str/blank? text) [""] (render/wrap-text text text-w)))))
+               (session-metric-rows session state)))
+
+           layout
+           (dialog-layout bounds (count lines))]
+
+       (merge layout
+              {:cols cols
+               :rows rows
+               :bounds bounds
+               :content-w content-w
+               :content-h-req content-h
+               :text-w text-w
+               :lines lines
+               :max-scroll (max 0 (- (count lines) (long (:content-h layout))))})))
+   :reconcile (fn [state {:keys [max-scroll]}]
+                (update state :scroll #(p/clamp % 0 max-scroll)))
+   :paint
+   (fn [g {:keys [scroll]}
+        {:keys [cols rows bounds content-w content-h-req content-top content-h hint-row text-w
+                lines]}]
+     (let [{:keys [left inner-w]} bounds]
+       (draw-dialog-chrome! g cols rows "Session metrics · C-x u" content-w content-h-req)
+       (doseq [[i {:keys [text tone toggle value value-col]}]
+               (map-indexed vector (take content-h (drop scroll lines)))]
+         (let [y (+ (long content-top) (long i))]
+           (when toggle (draw-toggle-row! g left y (dec (long inner-w)) false text))
+           (p/set-colors! g
+                          (case tone
+                            :heading
+                            t/dialog-hint-key
+
+                            :hint
+                            t/dialog-hint
+
+                            :warning
+                            t/footer-warning-fg
+
+                            :error
+                            t/footer-error-fg
+
+                            t/dialog-fg)
+                          t/dialog-bg)
+           (when value-col (p/set-fg! g t/dialog-hint))
+           (if (= :heading tone)
+             (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) y (ellipsize text text-w)))
+             (p/put-str! g (+ (long left) 2) y (ellipsize text text-w)))
+           (when value-col
+             (p/set-fg! g t/dialog-fg)
+             (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2 (long value-col)) y value)))))
+       (ScrollBar/draw g
+                       Direction/VERTICAL
+                       (TerminalPosition. (int (+ (long left) (long inner-w))) (int content-top))
+                       (int content-h)
+                       (count lines)
+                       (int content-h)
+                       (Integer/valueOf (int scroll))
+                       t/dialog-border
+                       t/dialog-bg
+                       t/dialog-hint-key
+                       t/dialog-bg)
+       (draw-hint-bar! g left hint-row inner-w [["↑↓" "scroll"] ["b/f" "details"] ["Esc" "close"]])
+       nil))
+   :on-key (fn [state key {:keys [max-scroll content-h content-top bounds lines]}]
+             (let [move
+                   (fn [n]
+                     (update state :scroll #(p/clamp (+ (long %) (long n)) 0 max-scroll)))
+
+                   wheel
+                   (ScrollBar/wheelStep ^KeyStroke key)
+
+                   click
+                   (when (and (instance? MouseAction key)
+                              (= MouseActionType/CLICK_RELEASE (.getActionType ^MouseAction key))
+                              (= 1 (.getButton ^MouseAction key)))
+                     (mouse-row-offset key
+                                       (inc (long (:left bounds)))
+                                       content-top
+                                       (:inner-w bounds)
+                                       content-h))]
+
+               (cond wheel (move wheel)
+                     (some? click)
+                     (if-let [toggle (:toggle
+                                       (nth lines (+ (long (:scroll state)) (long click)) nil))]
+                       (update state toggle not)
+                       state)
+                     (modal-escape-key? key) {::done nil}
+                     :else (condp = (key-type key)
+                             KeyType/ArrowUp (move -1)
+                             KeyType/ArrowDown (move 1)
+                             KeyType/PageUp (move (- (long content-h)))
+                             KeyType/PageDown (move content-h)
+                             KeyType/Home (assoc state :scroll 0)
+                             KeyType/End (assoc state :scroll max-scroll)
+                             KeyType/Character (case (key-character key)
+                                                 \b
+                                                 (update state :parts? not)
+
+                                                 \f
+                                                 (update state :roots? not)
+
+                                                 state)
+                             state))))})
+
+(defn session-metrics-dialog!
+  "Fetch usage on demand without blocking dismissal; closing cancels the read.
+   The captured session id prevents workspace changes from retargeting the sheet."
+  [screen sid session]
+  (let [task
+        (future (vis/session-usage sid))
+
+        component
+        (session-metrics-component session {:phase :loading})
+
+        measure
+        (:measure component)
+
+        ready?
+        (volatile! false)]
+
+    (try (run-modal! screen
+                     (assoc component
+                       :measure (fn [state cols rows]
+                                  (let [snapshot (deref task 0 {:phase :loading})]
+                                    (vreset! ready? (not= :loading (:phase snapshot)))
+                                    (measure (merge state snapshot) cols rows)))
+                       :read-key (fn [screen]
+                                   (if (or @ready? (modal-input-pending? screen))
+                                     (read-modal-key! screen)
+                                     (do (Thread/sleep 16) nil)))))
+         (finally (future-cancel task)))))
 
 (defn table-modal-component
   "Pure `run-modal!` component behind `table-view-dialog!` — the spreadsheet view
@@ -5574,8 +5952,8 @@
    filtered by typing."
   ;; Whole-session Markdown copy lives in the header as an icon.
   [{:id :search-open :label "Search in Session"} {:id :show-sessions :label "Switch Session"}
-   {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
-   {:id :new-session :label "New Session"}
+   {:id :session-metrics :label "Session Metrics"} {:id :pick-file :label "Attach File"}
+   {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
    ;; Both fork verbs are `:has-turns`-gated: a session with no turns has
    ;; nothing to fork, so the palette must not even offer them.
    {:id :fork-session :label "Fork Session" :show-when :has-turns}

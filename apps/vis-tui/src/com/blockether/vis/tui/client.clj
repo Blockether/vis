@@ -359,6 +359,17 @@
                path
                opts))))
 
+(defn session-usage
+  "Read Companion's on-demand usage document. Empty usage is ready, not an error."
+  [sid]
+  (try (let [response (request! :get
+                                (str "/v1/sessions/" (enc sid) "/usage")
+                                {:timeout-ms channel-read-timeout-ms})]
+         (if (= 200 (:status response))
+           {:phase :ready :usage (get (wire/parse-json (:body response)) "usage")}
+           {:phase :error}))
+       (catch Exception _ {:phase :error})))
+
 (defn capabilities
   "The daemon's capability document, string-keyed, or nil when it cannot answer.
    The attachment contract a channel admits file drops against comes from here."

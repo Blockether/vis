@@ -5743,6 +5743,14 @@
                            (vis/notify! "Session no longer exists"
                                         :level :warn
                                         :ttl-ms copy-success-ttl-ms))))))
+                 show-session-metrics! (fn []
+                                         (when-not (:dialog-open? @state/app-db)
+                                           (with-dialog-lock #(dlg/session-metrics-dialog!
+                                                                screen
+                                                                (current-session-id)
+                                                                (merge (:session @state/app-db)
+                                                                       (:session-model-pref
+                                                                         @state/app-db))))))
                  show-sessions!
                  (fn show-sessions! []
                    (when-not (:dialog-open? @state/app-db)
@@ -7122,6 +7130,9 @@
                                      :toggle-help
                                      (state/dispatch [:toggle-help])
 
+                                     :session-metrics
+                                     (show-session-metrics!)
+
                                      :show-sessions
                                      (show-sessions!)
 
@@ -7360,6 +7371,9 @@
                          ;; the loop closes without a keystroke. Recording (C-x v) is
                          ;; still one utterance and is unchanged.
                          (do (state/dispatch [:toggle-voice-conversation]) (recur))
+
+                         :session-metrics
+                         (do (show-session-metrics!) (recur))
 
                          :show-sessions
                          (do (show-sessions!) (recur))

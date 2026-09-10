@@ -647,6 +647,7 @@
      ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
      ["Tab · Shift+Tab" "Next · previous workspace"] ["C-x ← · C-x →" "Previous · next workspace"]
      [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
+     [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]
      ["M-1 … M-9 · C-x 1 … C-x 9" "Jump straight to workspace 1–9"]
      [(keymap/label-for :close-tab) "Close (kill) the current workspace tab"]]}
    {:title "Folding"
