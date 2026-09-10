@@ -718,6 +718,10 @@ def push_changes(view, before, after):
                 one["id"], one["value_text"], label=one["label"], tone=one["tone"]
             )
     rows = {one["id"]: one for one in before.get("rows") or []}
+    # A terminal poll must not archive active rows absent from GitHub's final jobs.
+    if after["is_over"] and set(rows) - {row["id"] for row in after["rows"]}:
+        view["jobs"].clear()
+        rows = {}
     for row in after["rows"]:
         if rows.get(row["id"]) != row:
             view["jobs"].upsert(

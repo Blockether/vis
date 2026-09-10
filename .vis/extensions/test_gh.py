@@ -730,6 +730,43 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
     assert node(picture, "progress")["done"] == 4
 
 
+@pytest.mark.parametrize("already_cancelled", [False, True])
+@pytest.mark.parametrize("has_jobs", [False, True])
+def test_cancelled_run_ends_watch_without_a_replacement(
+    recorder, already_cancelled, has_jobs
+):
+    # Cancellation is terminal even without a newer run or published job details.
+    cancelled = fixture("run-final.json")
+    cancelled.update(status="completed", conclusion="cancelled")
+    if not has_jobs:
+        cancelled["jobs"] = []
+    for job in cancelled["jobs"]:
+        job.update(status="completed", conclusion="cancelled")
+        for step in job["steps"]:
+            step.update(status="completed", conclusion="cancelled")
+    polls = [] if already_cancelled else [fixture("run-mid.json")]
+    polls.append(cancelled)
+
+    result = gh.watch(
+        TITLE, DESCRIPTION, lambda: polls.pop(0), superseded_by=lambda: None
+    )
+
+    assert not polls
+    assert (result.status, result.conclusion, result.ending) == (
+        "completed",
+        "cancelled",
+        "completed",
+    )
+    assert result.replacement_run_id is None
+    assert not result.is_stopped_by_human
+    assert all(job.conclusion == "cancelled" for job in result.jobs)
+    assert node(recorder.picture(), "run")["tone"] != "running"
+    assert all(
+        row["tone"] != "running" for row in node(recorder.picture(), "jobs")["rows"]
+    )
+    assert recorder.ops()[-1]["op"] == "close"
+
+
 def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
     polls = []
     newer = {
