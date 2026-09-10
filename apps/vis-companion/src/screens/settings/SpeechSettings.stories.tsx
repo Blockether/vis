@@ -158,7 +158,13 @@ async function expectInlineTestAction(input: HTMLElement, button: HTMLElement) {
   const field = input.getBoundingClientRect();
   const action = button.getBoundingClientRect();
   await expect(action.left - field.right).toBeGreaterThanOrEqual(8);
+  // The input and its icon-labelled action must share a face and type scale.
+  await expect(action.top).toBeCloseTo(field.top, 0);
+  await expect(action.height).toBeCloseTo(field.height, 0);
   await expect(action.bottom).toBeCloseTo(field.bottom, 0);
+  await expect(getComputedStyle(input).fontSize).toBe(
+    getComputedStyle(button).fontSize,
+  );
 }
 
 async function startTest(canvasElement: HTMLElement) {

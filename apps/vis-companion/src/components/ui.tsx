@@ -217,8 +217,8 @@ export const Button = forwardRef<
   // `⋯` beside it shrinks by exactly the same amount, because a header that holds
   // one 32px button and one 44px button holds two different affordances.
   const scale = {
-    default: 'min-h-7 px-2.5 sm:min-h-8 sm:px-3 sm:text-ui',
-    comfortable: 'min-h-11 px-2.5 sm:px-3 sm:text-ui mouse:min-h-7',
+    default: 'min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7',
+    comfortable: 'min-h-11 px-2.5 text-ui sm:px-3 mouse:min-h-7',
     compact:
       'relative min-h-7 h-8 px-2.5 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] sm:min-h-8 sm:px-3 sm:text-ui mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none',
     panel:
@@ -1771,25 +1771,28 @@ export function BandButton({
   );
 }
 
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & {
-  /** Comfortable controls use 44px touch and 28px pointer targets. */
-  density?: 'default' | 'comfortable';
-}>(function Input({ className = '', density = 'default', ...props }, ref) {
-    // A masked field's dots sit shoulder-to-shoulder at this type step, so a
-    // typed key cannot be counted; the tracking is what breathes between them.
-    const masked = props.type === 'password' ? 'tracking-[0.15em]' : '';
-    const size = density === 'comfortable'
-      ? 'min-h-11 text-ui mouse:min-h-7'
-      : 'min-h-7 text-meta sm:min-h-8 sm:px-3 sm:text-ui';
-    return (
-      <input
-        ref={ref}
-        className={`w-full rounded-control border border-edge bg-input px-2.5 py-0.5 font-mono text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none ${size} ${masked} ${className}`}
-        {...props}
-      />
-    );
-  },
-);
+export const Input = forwardRef<
+  HTMLInputElement,
+  InputHTMLAttributes<HTMLInputElement> & {
+    /** Default: 32px touch / 28px pointer; panel: 32px; comfortable: 44px / 28px. */
+    density?: 'default' | 'panel' | 'comfortable';
+  }
+>(function Input({ className = '', density = 'default', ...props }, ref) {
+  // Keep password mask dots distinct without changing plain-text spacing.
+  const masked = props.type === 'password' ? 'tracking-[0.15em]' : '';
+  const size = {
+    default: 'min-h-8 sm:px-3 mouse:min-h-7',
+    panel: 'min-h-8 sm:px-3',
+    comfortable: 'min-h-11 mouse:min-h-7',
+  }[density];
+  return (
+    <input
+      ref={ref}
+      className={`w-full rounded-control border border-edge bg-input px-2.5 py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none ${size} ${masked} ${className}`}
+      {...props}
+    />
+  );
+});
 
 /**
  * A SHORT STATE MESSAGE, with one optional title band and one way out.

@@ -554,6 +554,7 @@ export function VoicesPanel({
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
             <FormLabel label="Test">
               <Input
+                density="panel"
                 aria-label="Text to synthesize"
                 placeholder="Type something to hear in this voice"
                 value={testText}
@@ -675,6 +676,7 @@ export function VoicesPanel({
               </FormLabel>
               <FormLabel label="Name">
                 <Input
+                  density="panel"
                   value={voiceName}
                   placeholder="What to call this voice"
                   onChange={(event) => setVoiceName(event.target.value)}
@@ -685,6 +687,7 @@ export function VoicesPanel({
                 hint="Optional — the tag this clip speaks in, like en or en-GB."
               >
                 <Input
+                  density="panel"
                   value={language}
                   placeholder="en"
                   onChange={(event) => setLanguage(event.target.value)}
@@ -695,6 +698,7 @@ export function VoicesPanel({
                 hint="Optional — a transcript helps the model match your voice."
               >
                 <Input
+                  density="panel"
                   value={says}
                   placeholder="Transcript of the recording"
                   onChange={(event) => setSays(event.target.value)}

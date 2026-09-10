@@ -287,8 +287,38 @@ function SwitchDemo() {
 export const Fields: Story = {
   render: () => (
     <Sheet>
-      <Group of="Input">
-        <Input placeholder="Project name" className="w-full" />
+      <Group of="Input with an icon action">
+        <Input
+          aria-label="Project name"
+          placeholder="Project name"
+          className="min-w-0 flex-1"
+        />
+        <IconButton label="Add project">
+          <PlusIcon className="size-3" />
+        </IconButton>
+        <Button variant="secondary">Create</Button>
+      </Group>
+      <Group of="Panel input">
+        <Input
+          density="panel"
+          aria-label="Voice name"
+          placeholder="Voice name"
+          className="min-w-0 flex-1"
+        />
+        <Button variant="secondary" density="panel">
+          Save voice
+        </Button>
+      </Group>
+      <Group of="Comfortable input">
+        <Input
+          density="comfortable"
+          aria-label="Search output"
+          placeholder="Search output"
+          className="min-w-0 flex-1"
+        />
+        <Button variant="secondary" density="comfortable">
+          Find
+        </Button>
       </Group>
       <Group of="Switch">
         <SwitchDemo />
@@ -297,6 +327,29 @@ export const Fields: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
+    const input = canvas.getByRole("textbox", { name: "Project name" });
+    await input.ownerDocument.fonts.ready;
+    for (const [fieldName, actionNames] of [
+      ["Project name", ["Add project", "Create"]],
+      ["Voice name", ["Save voice"]],
+      ["Search output", ["Find"]],
+    ] as const) {
+      const fieldInput = canvas.getByRole("textbox", { name: fieldName });
+      const field = fieldInput.getBoundingClientRect();
+      for (const name of actionNames) {
+        const button = canvas.getByRole("button", { name });
+        const action = button.getBoundingClientRect();
+        await expect(action.top).toBeCloseTo(field.top, 0);
+        await expect(action.height).toBeCloseTo(field.height, 0);
+        if (name !== "Add project") {
+          await expect(getComputedStyle(fieldInput).fontSize).toBe(
+            getComputedStyle(button).fontSize,
+          );
+        }
+      }
+    }
+    await userEvent.type(input, "Companion");
+    await expect(input).toHaveValue("Companion");
     const notifications = canvas.getByRole("switch", {
       name: /^Notify on this machine/,
     });
@@ -304,6 +357,11 @@ export const Fields: Story = {
     await userEvent.click(notifications);
     await expect(notifications).toHaveAttribute("aria-checked", "false");
   },
+};
+
+export const FieldsPointer: Story = {
+  ...Fields,
+  globals: { viewport: { value: "desktop", isRotated: false } },
 };
 
 export const Rows: Story = {
