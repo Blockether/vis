@@ -17,10 +17,11 @@
    loads this file, so manifest registration stays lazy.
 
    The engine namespace list is derived from the manifest's entrypoints and the
-   compiled namespace tree. Formatter dependencies are explicitly required here:
+   compiled namespace tree. Formatter and analyzer dependencies are required here:
    JVM registration defers them, but the native image must retain their code."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [clj-kondo.core]
             [cljfmt.config]
             [cljfmt.core]
             [com.blockether.vis.internal.extension.manifest :as manifest]

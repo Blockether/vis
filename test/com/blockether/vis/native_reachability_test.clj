@@ -289,7 +289,7 @@
                  (map first)
                  set)]
 
-        (doseq [backend '[cljfmt.config cljfmt.core zprint.config zprint.core]]
+        (doseq [backend '[clj-kondo.core cljfmt.config cljfmt.core zprint.config zprint.core]]
           (expect (contains? required backend)
                   (str backend " must remain reachable in the native image")))))
   (it "derives what it loads instead of carrying a list"

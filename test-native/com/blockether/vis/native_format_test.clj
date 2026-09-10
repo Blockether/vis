@@ -23,16 +23,20 @@
          code
          (str
            "print(format_code('clojure', {'path': 'default.clj'}))\n"
-           "print(format_code('clojure', {'path': 'configured/example.clj'}))\n" "try:\n"
-           "    result = run_tests('clojure', {'path': 'missing_test.clj'})\n"
-           "except Exception as error:\n"
-           "    result = str(error)\n" "assert 'no such path' in str(result), str(result)\n"
-           "print('NATIVE_TEST_HANDLER_READY')\n" "from pathlib import Path\n"
-           "assert 'default.clj' in ls(Path('.'), depth=2)\n"
+           "print(format_code('clojure', {'path': 'configured/example.clj'}))\n"
+           "try:\n" "    result = run_tests('clojure', {'path': 'missing_test.clj'})\n"
+           "except Exception as error:\n" "    result = str(error)\n"
+           "assert 'no such path' in str(result), str(result)\n"
+           "print('NATIVE_TEST_HANDLER_READY')\n"
+           "from pathlib import Path\n" "assert 'default.clj' in ls(Path('.'), depth=2)\n"
            "file_hit = grep({'query': ['defn f'], 'paths': [Path('default.clj')], 'context': 1})\n"
            "dir_hit = grep({'query': ['defn.*f'], 'paths': [Path('configured')], 'is_regex': True, 'context': 1})\n"
            "assert 'default.clj' in str(file_hit), str(file_hit)\n"
-           "assert 'example.clj' in str(dir_hit), str(dir_hit)\n" "print('NATIVE_FFF_READY')")
+           "assert 'example.clj' in str(dir_hit), str(dir_hit)\n"
+           "print('NATIVE_FFF_READY')\n"
+           ;; Regression: native lint could not locate clj_kondo/core__init.class.
+           "linted = lint_code('clojure', {'code': '(ns probe) (unknown-call)'})\n"
+           "assert 'unresolved-symbol' in str(linted), str(linted)\n" "print('NATIVE_LINT_READY')")
          tool {:id "format-native"
                :type "function"
                :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}
@@ -119,6 +123,7 @@
                           (expect (str/includes? (pr-str tool-results) "NATIVE_TEST_HANDLER_READY")
                                   output)
                           (expect (str/includes? (pr-str tool-results) "NATIVE_FFF_READY") output)
+                          (expect (str/includes? (pr-str tool-results) "NATIVE_LINT_READY") output)
                           (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                           (expect (every? #(= model
                                               (:model (json/read-json (:body %) :key-fn keyword)))
