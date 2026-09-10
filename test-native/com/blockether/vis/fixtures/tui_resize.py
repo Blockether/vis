@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 
-def check_resize(binary, home, gateway):
+def check_resize(binary, home, gateway, model_key=None):
     """Resize the kernel window and require a repaint at its new bottom row."""
     rows, cols = 24, 80
     pid, master = pty.fork()
@@ -60,11 +60,13 @@ def check_resize(binary, home, gateway):
             end = match.end()
         return colors
 
-    def await_bottom(timeout, highlighting=False):
+    def await_bottom(timeout, highlighting=False, text=None):
         nonlocal pending, cursor_row, cursor_col, output
         deadline = time.monotonic() + timeout
         seen_rows = set()
         while time.monotonic() < deadline:
+            if text is not None and text in sequence.sub(b"", output):
+                return
             colors = token_colors()
             if (
                 highlighting
@@ -104,8 +106,12 @@ def check_resize(binary, home, gateway):
                     os.write(master, f"\x1b[{cursor_row};{cursor_col}R".encode())
                 consumed = match.end()
             pending = pending[consumed:][-4096:]
-            if not highlighting and rows in seen_rows:
+            if text is None and not highlighting and rows in seen_rows:
                 return
+        if text is not None:
+            raise AssertionError(
+                f"native TUI did not respond with {text!r} within {timeout}s"
+            )
         if highlighting:
             raise AssertionError(
                 f"native Python syntax colors are missing or identical: {token_colors()}"
@@ -117,7 +123,7 @@ def check_resize(binary, home, gateway):
     try:
         await_bottom(20)
         print("initial 80x24 painted", flush=True)
-        for rows, cols in [(45, 120), (18, 70), (35, 100)]:
+        for rows, cols in [] if model_key else [(45, 120), (18, 70), (35, 100)]:
             pending = b""
             fcntl.ioctl(
                 master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0)
@@ -126,8 +132,22 @@ def check_resize(binary, home, gateway):
             # Do not send a key: resizing alone must wake and repaint the TUI.
             await_bottom(8)
             print(f"resized to {cols}x{rows}", flush=True)
-        await_bottom(8, highlighting=True)
-        print("native Python syntax colors verified", flush=True)
+        if model_key:
+            await_bottom(8, text=b"vis_identifier_marker")
+        else:
+            await_bottom(8, highlighting=True)
+            print("native Python syntax colors verified", flush=True)
+        if model_key:
+            output = b""
+            os.write(master, b"\x18" + model_key.encode())
+            if model_key == "c":
+                await_bottom(2, text=b"Session model")
+                os.write(master, b"\x1b[B\r")
+            os.write(master, b"responsive-marker")
+            await_bottom(2, text=b"responsive-marker")
+            print(
+                f"C-x {model_key}: input responsive during slow model HTTP", flush=True
+            )
     finally:
         os.close(master)
         try:
@@ -140,7 +160,12 @@ def check_resize(binary, home, gateway):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="vis-tui-resize-") as home:
         try:
-            check_resize(os.path.abspath(sys.argv[1]), home, sys.argv[2])
+            check_resize(
+                os.path.abspath(sys.argv[1]),
+                home,
+                sys.argv[2],
+                sys.argv[3] if len(sys.argv) > 3 else None,
+            )
         except Exception:
             for log in (Path(home) / ".vis/logs").glob("*.log"):
                 print(log.read_text()[-4000:], file=sys.stderr)

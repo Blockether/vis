@@ -813,28 +813,9 @@
                  (keep #(model-entry provider %) (:models provider))))
        vec))
 
-(defn- model-cycle-entries
-  "Entries for the Ctrl+T model cycle, read from the LIVE provider fleet
-   (`vis/configured-providers` — the SAME source the web picker uses) in
-   priority order. Reading live (not a stale `:config db` snapshot) means a
-   provider reorder / add / remove done after launch — or from another
-   channel — is reflected immediately, and the cycle advances the PROVIDER,
-   not just the model name inside an outdated set. The `_config` arg is kept
-   for the existing caller but intentionally ignored now that the source is
-   live."
-  [_config]
-  (entries-from-providers (try (vis/configured-providers) (catch Throwable _ nil))))
-
 (defn- model-cycle-entries-cached
-  "Footer-frequency variant of `model-cycle-entries`: the SAME entries,
-   derived from the CACHED fleet snapshot (`vis/configured-providers-cached`)
-   so the per-frame footer read never re-runs the full provider enumeration
-   on the render thread — that enumeration parses four config files per call
-   and costs ~200ms on machines with slow file IO, which stalled every live
-   frame (issue #29). The C-x m `:cycle-model` handler keeps the LIVE
-   `model-cycle-entries` (Tab-through must be exact); the fleet cache is
-   invalidated on every same-process provider mutation, so the two agree
-   outside a bounded cross-process staleness window."
+  "Model choices from the renderer's nonblocking fleet snapshot.
+   Keyboard actions must not wait for provider HTTP either."
   []
   (entries-from-providers (try (vis/configured-providers-cached) (catch Throwable _ nil))))
 
@@ -1321,7 +1302,7 @@
                       (get-in db [:session :id])
 
                       entries
-                      (model-cycle-entries nil)]
+                      (model-cycle-entries-cached)]
 
                   (cond (nil? sid) {:fx [[:notify "Open a session first to choose its model" :warn
                                           settings-notification-ttl-ms]]}
@@ -1337,7 +1318,7 @@
                               (current-model-info)
 
                               current
-                              (or (vis/gateway-session-model sid)
+                              (or (session-model-pref db)
                                   (when effective
                                     {:provider (some-> (:provider effective)
                                                        name)
@@ -1381,15 +1362,17 @@
                         [:notify "Model: router default" :info settings-notification-ttl-ms]]}))))
 
 (reg-event-db :clear-session-model-pref
-              ;; The gateway REFUSED (or never received) the pick: drop the optimistic
-              ;; value so the footer falls back to the session's REAL preference instead of
-              ;; advertising a model the session never got. Scoped to `sid` — a switch that
-              ;; happened while the PATCH was in flight must not clobber the new session's
-              ;; display.
-              (fn [db [_ sid]]
-                (if (or (nil? sid) (= (str sid) (str (get-in db [:session :id]))))
-                  (dissoc db :session-model-pref)
-                  db)))
+              ;; A failed asynchronous PATCH only rolls back its own choice, even if the
+              ;; user has already chosen another model or switched to another tab.
+              (fn [db [_ sid pref]]
+                (let [rollback (fn [tab]
+                                 (if (and (= (str sid) (str (get-in tab [:session :id])))
+                                          (= pref (:session-model-pref tab)))
+                                   (dissoc tab :session-model-pref)
+                                   tab))]
+                  (cond-> (rollback db)
+                    (:tab-locals db)
+                    (update :tab-locals #(update-vals % rollback))))))
 
 (reg-event-db :sync-session-model
               ;; The session's model preference changed SOMEWHERE ELSE — the companion app,
@@ -5269,25 +5252,52 @@
                          :level :info
                          :ttl-ms settings-notification-ttl-ms))))
 
+;; Every gateway call in this section is a BLOCKING HTTP round-trip, and
+;; `dispatch` runs effects on the thread that dispatched — for a submission that
+;; is the TUI's INPUT thread. Inline, one unreachable daemon froze the editor for
+;; the whole `ensure-gateway!` respawn wait plus the request timeout: keys
+;; ignored, nothing on screen, no way to tell a slow send from a dead one. One
+;; FIFO thread fixes both halves at once — the input thread never waits on the
+;; network, and queue mutations still reach the daemon in the order they were
+;; typed (an add and its delete must not invert).
+(def ^:private gateway-queue-executor
+  (delay (java.util.concurrent.Executors/newSingleThreadExecutor
+           (reify
+             java.util.concurrent.ThreadFactory
+               (newThread [_ r]
+                 (doto (Thread. ^Runnable r "vis-tui-gateway-queue") (.setDaemon true)))))))
+
+(defn- gateway-queue-io!
+  "Run `f` on the single FIFO gateway-queue thread. Returns its Future so a
+   caller (or a test) can await the round-trip; the TUI never does."
+  [f]
+  (.submit ^ExecutorService @gateway-queue-executor ^Runnable f))
+
 ;; Persist the active session's model preference to the shared, channel-neutral
 ;; store. The engine reads it on the next turn (router-for-model) and the web
 ;; rail shows the same value — one source of truth across channels.
-(reg-fx :set-session-model
-        (fn [sid provider model]
-          ;; A pick the GATEWAY refuses (a provider this gateway does not serve,
-          ;; e.g. after a `/reload` dropped it) answers 400 — surface it instead
-          ;; of letting the throw escape into the event loop.
-          (try (vis/gateway-set-session-model! sid provider model)
-               (catch Throwable t
-                 ;; The optimistic `:session-model-pref` was already written by the
-                 ;; dispatching event. Roll it back, or the chip keeps claiming a
-                 ;; model this session will never route through.
-                 (dispatch [:clear-session-model-pref sid])
-                 (vis/notify! (str "Model switch failed: " (ex-message t)) :level :error)))
-          ;; The background limits poller no longer resolves the active provider on
-          ;; every 1s tick (issue #31); nudge it to re-resolve on its next tick so a
-          ;; per-session model switch reflects in the footer's usage row promptly.
-          (dispatch [:force-provider-limits-refresh])))
+(reg-fx
+  :set-session-model
+  (fn [sid provider model]
+    ;; A pick the GATEWAY refuses (a provider this gateway does not serve,
+    ;; e.g. after a `/reload` dropped it) answers 400 — surface it instead
+    ;; of letting the throw escape into the event loop.
+    (gateway-queue-io!
+      (fn []
+        (try (vis/gateway-set-session-model! sid provider model)
+             (catch Throwable t
+               ;; The optimistic `:session-model-pref` was already written by the
+               ;; dispatching event. Roll it back, or the chip keeps claiming a
+               ;; model this session will never route through.
+               (tel/log!
+                 {:level :error :id ::model-switch-failed :error t :data {:session-id (str sid)}})
+               (dispatch [:clear-session-model-pref sid
+                          (when (and provider model) {:provider provider :model model})])
+               (vis/notify! (str "Model switch failed: " (ex-message t)) :level :error)))
+        ;; The background limits poller no longer resolves the active provider on
+        ;; every 1s tick (issue #31); nudge it to re-resolve on its next tick so a
+        ;; per-session model switch reflects in the footer's usage row promptly.
+        (dispatch [:force-provider-limits-refresh])))))
 
 (reg-fx :bell
         ;; Write a raw BEL (0x07) to the terminal. BEL doesn't move the cursor, so
@@ -5579,26 +5589,6 @@
 
 ;; ── Gateway queue I/O ──────────────────────────────────────────────────────
 ;;
-;; Every gateway call in this section is a BLOCKING HTTP round-trip, and
-;; `dispatch` runs effects on the thread that dispatched — for a submission that
-;; is the TUI's INPUT thread. Inline, one unreachable daemon froze the editor for
-;; the whole `ensure-gateway!` respawn wait plus the request timeout: keys
-;; ignored, nothing on screen, no way to tell a slow send from a dead one. One
-;; FIFO thread fixes both halves at once — the input thread never waits on the
-;; network, and queue mutations still reach the daemon in the order they were
-;; typed (an add and its delete must not invert).
-(def ^:private gateway-queue-executor
-  (delay (java.util.concurrent.Executors/newSingleThreadExecutor
-           (reify
-             java.util.concurrent.ThreadFactory
-               (newThread [_ r]
-                 (doto (Thread. ^Runnable r "vis-tui-gateway-queue") (.setDaemon true)))))))
-
-(defn- gateway-queue-io!
-  "Run `f` on the single FIFO gateway-queue thread. Returns its Future so a
-   caller (or a test) can await the round-trip; the TUI never does."
-  [f]
-  (.submit ^ExecutorService @gateway-queue-executor ^Runnable f))
 
 (def ^:private gateway-cancel-executor
   ;; Cancellation must bypass the FIFO submission lane: that lane may itself be

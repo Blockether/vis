@@ -5773,7 +5773,9 @@
                    (when-not (:dialog-open? @state/app-db)
                      (let [sid (current-session-id)
                            current (when sid
-                                     (try (vis/gateway-session-model sid) (catch Throwable _ nil)))]
+                                     (or (:session-model-pref @state/app-db)
+                                         (try (vis/gateway-session-model-cached sid)
+                                              (catch Throwable _ nil))))]
 
                        (when-let [choice (with-dialog-lock #(dlg/model-picker! screen current))]
                          (if (:reset? choice)

@@ -11,7 +11,7 @@
            (java.util.concurrent TimeUnit)))
 
 (defn- start-gateway-stub!
-  []
+  [& [slow-model? requests]]
   (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
     (.createContext
       server
@@ -21,6 +21,8 @@
           (handle [_ exchange]
             (with-open [^HttpExchange exchange exchange]
               (let [path (.getPath (.getRequestURI exchange))
+                    _ (when requests (swap! requests conj [(.getRequestMethod exchange) path]))
+                    _ (when (and slow-model? (str/ends-with? path "/model")) (Thread/sleep 5000))
                     body (case path
                            "/healthz"
                            {"status" "ok"
@@ -33,7 +35,11 @@
                            {"client_id" "resize-test"}
 
                            "/v1/router"
-                           {"providers" []}
+                           {"providers" [{"id" "openai"
+                                          "label" "OpenAI"
+                                          "is_default" true
+                                          "default_model" "model-a"
+                                          "models" ["model-a" "model-b"]}]}
 
                            "/v1/sessions"
                            {"id" "00000000-0000-0000-0000-000000000001"}
@@ -61,38 +67,58 @@
 
                 (.sendResponseHeaders exchange 200 (alength data))
                 (.write (.getResponseBody exchange) data))))))
+    (.setExecutor server (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor))
     (.start server)
     server))
 
+(defn- check-native-tui!
+  [model-key]
+  (let [binary (io/file (or (System/getenv "VIS_TUI_NATIVE_BIN") "apps/vis-tui/target/vis-tui"))]
+    (expect (.canExecute binary) "Build apps/vis-tui with clojure -T:build native first")
+    (when (.canExecute binary)
+      (let [requests (atom [])
+            server (start-gateway-stub! (some? model-key) requests)]
+
+        (try
+          (let [process (.start (doto (ProcessBuilder.
+                                        ^java.util.List
+                                        ["python3"
+                                         "test-native/com/blockether/vis/fixtures/tui_resize.py"
+                                         (.getAbsolutePath binary)
+                                         (str "127.0.0.1:" (.getPort (.getAddress server)))
+                                         (or model-key "")])
+                                  (.redirectErrorStream true)
+                                  (.redirectOutput ProcessBuilder$Redirect/PIPE)))]
+            (try (let [finished? (.waitFor process 55 TimeUnit/SECONDS)]
+                   (expect finished? "Native TUI PTY fixture timed out")
+                   (when finished?
+                     (let [output (slurp (.getInputStream process))]
+                       (expect (zero? (.exitValue process)) output)
+                       (expect (str/includes? output
+                                              (if model-key
+                                                "input responsive during slow model HTTP"
+                                                "resized to 100x35"))
+                               output)
+                       (when model-key
+                         (expect (some (fn [[method path]]
+                                         (and (= "PATCH" method) (str/ends-with? path "/model")))
+                                       @requests))))))
+                 (finally (when (.isAlive process)
+                            (with-open [children (.descendants process)]
+                              (doseq [^ProcessHandle child (iterator-seq (.iterator children))]
+                                (.destroyForcibly child)))
+                            (.destroyForcibly process)
+                            (.waitFor process 5 TimeUnit/SECONDS)))))
+          (finally (.stop server 0)
+                   (.shutdownNow ^java.util.concurrent.ExecutorService (.getExecutor server))))))))
+
+(defdescribe native-tui-resize-test
+             ;; Regression: Lanterna silently discarded native WINCH handler registration.
+             (it "resizes and syntax-highlights persisted Python in the native terminal"
+                 (check-native-tui! nil)))
+
 (defdescribe
-  native-tui-resize-test
-  ;; Regression: Lanterna silently discarded failure to register its reflective
-  ;; WINCH handler in native-image, leaving the screen at its original size.
-  (it "resizes and syntax-highlights persisted Python in the native terminal"
-      (let [binary (io/file (or (System/getenv "VIS_TUI_NATIVE_BIN")
-                                "apps/vis-tui/target/vis-tui"))]
-        (expect (.canExecute binary) "Build apps/vis-tui with clojure -T:build native first")
-        (when (.canExecute binary)
-          (let [server (start-gateway-stub!)]
-            (try
-              (let [process (.start (doto (ProcessBuilder.
-                                            ^java.util.List
-                                            ["python3"
-                                             "test-native/com/blockether/vis/fixtures/tui_resize.py"
-                                             (.getAbsolutePath binary)
-                                             (str "127.0.0.1:" (.getPort (.getAddress server)))])
-                                      (.redirectErrorStream true)
-                                      (.redirectOutput ProcessBuilder$Redirect/PIPE)))]
-                (try (let [finished? (.waitFor process 55 TimeUnit/SECONDS)]
-                       (expect finished? "PTY resize fixture timed out")
-                       (when finished?
-                         (let [output (slurp (.getInputStream process))]
-                           (expect (zero? (.exitValue process)) output)
-                           (expect (str/includes? output "resized to 100x35") output))))
-                     (finally (when (.isAlive process)
-                                (with-open [children (.descendants process)]
-                                  (doseq [^ProcessHandle child (iterator-seq (.iterator children))]
-                                    (.destroyForcibly child)))
-                                (.destroyForcibly process)
-                                (.waitFor process 5 TimeUnit/SECONDS)))))
-              (finally (.stop server 0))))))))
+  native-tui-model-shortcuts-test
+  ;; Model HTTP must never block the keyboard thread, including in native-image.
+  (it "opens C-x c and accepts input while its model PATCH waits" (check-native-tui! "c"))
+  (it "cycles C-x m and accepts input while its model HTTP waits" (check-native-tui! "m")))

@@ -857,6 +857,7 @@
 
           (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
           (state/dispatch [:set-model "openai" "gpt-5"])
+          (flush-queue-io!)
           (expect (nil? (:session-model-pref @state/app-db)))
           (expect (some #(re-find #"Model switch failed" (str %)) @notified)))))
   (it "a switch that SUCCEEDS keeps the pick on the chip"
@@ -870,7 +871,25 @@
 
         (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
         (state/dispatch [:set-model "openai" "gpt-5"])
+        (flush-queue-io!)
         (expect (= {:provider "openai" :model "gpt-5"} (:session-model-pref @state/app-db))))))
+
+(defdescribe
+  model-switch-rollback-test
+  (it "does not erase a newer model choice after an earlier PATCH fails"
+      (let [new-pref {:provider "openai" :model "new"}]
+        (reset! state/app-db {:session {:id "s"} :session-model-pref new-pref})
+        (state/dispatch [:clear-session-model-pref "s" {:provider "openai" :model "old"}])
+        (expect (= new-pref (:session-model-pref @state/app-db)))))
+  (it "rolls back the owning background tab without changing the active session"
+      (let [pref {:provider "openai" :model "old"}]
+        (reset! state/app-db {:active-tab-id :b
+                              :session {:id "other"}
+                              :session-model-pref pref
+                              :tab-locals {:a {:session {:id "s"} :session-model-pref pref}}})
+        (state/dispatch [:clear-session-model-pref "s" pref])
+        (expect (nil? (get-in @state/app-db [:tab-locals :a :session-model-pref])))
+        (expect (= pref (:session-model-pref @state/app-db))))))
 
 (defdescribe
   sync-session-model-test
@@ -891,52 +910,112 @@
       (expect (nil? (:session-model-pref @state/app-db)))))
 
 (defdescribe
+  model-shortcut-responsiveness-test
+  (it
+    "keeps input responsive and writes rapid model choices in order"
+    (let [release
+          (promise)
+
+          entered
+          (promise)
+
+          writes
+          (atom [])
+
+          live-reads
+          (atom 0)
+
+          task
+          (atom nil)]
+
+      (with-redefs [vis/configured-providers
+                    (fn []
+                      (swap! live-reads inc)
+                      [])
+
+                    vis/gateway-session-model
+                    (fn [_]
+                      (swap! live-reads inc)
+                      nil)
+
+                    vis/configured-providers-cached
+                    (constantly [{:id :openai :models [{:name "a"} {:name "b"}]}])
+
+                    vis/gateway-session-model-cached
+                    (constantly nil)
+
+                    state/current-model-info
+                    (constantly {:provider :openai :name "a"})
+
+                    vis/gateway-set-session-model!
+                    (fn [sid provider model]
+                      (deliver entered true)
+                      @release
+                      (swap! writes conj [sid provider model]))
+
+                    vis/notify!
+                    (fn [& _])]
+
+        (try (reset! state/app-db {:session {:id "slow-session"} :render-version 0})
+             (reset! task (future (state/dispatch [:cycle-model])
+                                  (state/dispatch [:cycle-model])
+                                  :responsive))
+             (expect (= :responsive (deref @task 1000 :blocked)))
+             (expect (= true (deref entered 1000 false)))
+             (expect (zero? @live-reads))
+             (expect (= {:provider "openai" :model "a"} (:session-model-pref @state/app-db)))
+             (finally (deliver release true) (when @task (deref @task 3000 nil)) (flush-queue-io!)))
+        (expect (= [["slow-session" "openai" "b"] ["slow-session" "openai" "a"]] @writes))))))
+
+(defdescribe
   model-shortcut-test
   ;; Ctrl+T sets the ACTIVE SESSION's persisted model preference (the shared,
   ;; channel-neutral store the web + engine read) instead of reordering global
   ;; config. Fresh sessions start with no explicit pref, so the first press
   ;; advances from the displayed router default to the next configured entry.
-  (it "fresh session advances from displayed router default to the next configured model"
-      (let [set-calls
-            (atom [])
+  (it
+    "fresh session advances from displayed router default to the next configured model"
+    (let [set-calls
+          (atom [])
 
-            notified
-            (atom nil)]
+          notified
+          (atom nil)]
 
-        (with-redefs [vis/configured-providers
+      (with-redefs [vis/configured-providers-cached
+                    (fn []
+                      [{:id :openai :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                       {:id :zai :models [{:name "glm-4.6"}]}])
+
+                    vis/gateway-session-model-cached
+                    (fn [_sid]
+                      nil)
+
+                    vis/gateway-set-session-model!
+                    (fn [sid provider model]
+                      (swap! set-calls conj [sid provider model])
+                      {:provider provider :model model})
+
+                    state/current-model-info
+                    (fn []
+                      {:provider :openai :name "gpt-5"})
+
+                    vis/notify!
+                    (fn [text & kvs]
+                      (reset! notified [text kvs]))]
+
+        (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+        (state/dispatch [:cycle-model])
+        (flush-queue-io!)
+        (expect (= [["sess-1" "openai" "gpt-5-mini"]] @set-calls))
+        (expect (= ["Model: openai/gpt-5-mini" [:level :info :ttl-ms 1500]] @notified)))))
+  (it "advances from the current pref (matched by provider+model) to the next, wrapping"
+      (let [set-calls (atom [])]
+        (with-redefs [vis/configured-providers-cached
                       (fn []
                         [{:id :openai :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
                          {:id :zai :models [{:name "glm-4.6"}]}])
-
-                      vis/gateway-session-model
-                      (fn [_sid]
-                        nil)
-
-                      vis/gateway-set-session-model!
-                      (fn [sid provider model]
-                        (swap! set-calls conj [sid provider model])
-                        {:provider provider :model model})
-
-                      state/current-model-info
-                      (fn []
-                        {:provider :openai :name "gpt-5"})
-
-                      vis/notify!
-                      (fn [text & kvs]
-                        (reset! notified [text kvs]))]
-
-          (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
-          (state/dispatch [:cycle-model])
-          (expect (= [["sess-1" "openai" "gpt-5-mini"]] @set-calls))
-          (expect (= ["Model: openai/gpt-5-mini" [:level :info :ttl-ms 1500]] @notified)))))
-  (it "advances from the current pref (matched by provider+model) to the next, wrapping"
-      (let [set-calls (atom [])]
-        (with-redefs [vis/configured-providers (fn []
-                                                 [{:id :openai
-                                                   :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
-                                                  {:id :zai :models [{:name "glm-4.6"}]}])
-                      vis/gateway-session-model (fn [_sid]
-                                                  {:provider "zai" :model "glm-4.6"}) ; last -> wraps
+                      vis/gateway-session-model-cached (fn [_sid]
+                                                         {:provider "zai" :model "glm-4.6"}) ; last -> wraps
                       vis/gateway-set-session-model! (fn [sid provider model]
                                                        (swap! set-calls conj [sid provider model])
                                                        {:provider provider :model model})
@@ -946,6 +1025,7 @@
 
           (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
           (state/dispatch [:cycle-model])
+          (flush-queue-io!)
           (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls)))))
   (it "with no active session, asks to open one and sets nothing"
       (let [set-calls
