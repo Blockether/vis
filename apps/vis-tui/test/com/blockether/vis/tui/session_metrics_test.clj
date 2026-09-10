@@ -84,6 +84,25 @@
                ((fn [s]
                   ((:on-key component) s (cap/key-stroke \f) {}))))))))
 
+(deftest metrics-width-and-directory-spacing
+  (let [component
+        (review-component)
+
+        state
+        (assoc (:init component) :roots? true)
+
+        geom
+        ((:measure component) state 160 50)
+
+        rows
+        (mapv :text (:lines geom))]
+
+    (is (= 92 (:content-w geom)))
+    (doseq [path (map #(get % "path") (get-in measured-usage ["health" "roots"]))]
+      (let [index (.indexOf ^java.util.List rows path)]
+        (is (pos? index))
+        (when (pos? index) (is (= "" (nth rows (dec index)))))))))
+
 (deftest missing-empty-error-and-pressure
   (doseq [[snapshot expected] [[{:phase :loading} "Reading session metrics"]
                                [{:phase :error} "reopen to retry"]

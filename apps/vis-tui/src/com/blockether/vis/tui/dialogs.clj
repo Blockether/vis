@@ -1219,7 +1219,7 @@
                       (concat
                         (mapcat (fn [item]
                                   (let [guidance (get item "guidance")]
-                                    [(row (get item "path"))
+                                    [(row "") (row (get item "path"))
                                      (hint (case (get guidance "status")
                                              "available"
                                              (str (get guidance "path")
@@ -1284,7 +1284,7 @@
    :measure
    (fn [state cols rows]
      (let [content-w
-           (min 76 (default-content-width cols))
+           (min 92 (default-content-width cols))
 
            content-h
            (adaptive-content-height rows nil)
