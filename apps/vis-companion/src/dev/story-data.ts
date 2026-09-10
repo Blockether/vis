@@ -29,6 +29,7 @@ import type { GatewayClient } from '../lib/gateway';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
+import livePrimitivesWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/live-primitives.json';
 import { createComposerPaste, type ComposerPaste } from '../lib/paste';
 import { COMMENTS_HEADING } from '../lib/markdown-annotations';
 import type {
@@ -748,6 +749,12 @@ export const STORY_HEALTH_USAGE: SessionUsage = {
 export const STORY_LIVE_VIEW: LiveView = (() => {
   const view = liveViewFromWire(liveViewWire);
   if (!view) throw new Error('the engine fixture must be paintable');
+  return view;
+})();
+
+export const STORY_LIVE_PRIMITIVES: LiveView = (() => {
+  const view = liveViewFromWire(livePrimitivesWire);
+  if (!view) throw new Error('the shared primitives fixture must be paintable');
   return view;
 })();
 

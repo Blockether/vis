@@ -201,14 +201,20 @@
 ;; Decoration — ink, so a long form reads like a page instead of a list
 
 (defn heading
-  "A section title: bold, unfocusable, answers nothing."
-  [text]
-  (checked {:type "heading" :text text}))
+  "A form title, or live heading addressed by id with :level 1–6."
+  ([text] (checked {:type "heading" :text text}))
+  ([id text] (heading id text nil))
+  ([id text opts] (checked-node (merge {:level 2} opts {:id id :type "heading" :text text}))))
 
 (defn paragraph
-  "Prose under a title: dim italic, wrapped, unfocusable, answers nothing."
-  [text]
-  (checked {:type "paragraph" :text text}))
+  "Form prose, or an addressed live paragraph with inline Markdown."
+  ([text] (checked {:type "paragraph" :text text}))
+  ([id text] (paragraph id text nil))
+  ([id text opts]
+   (checked-node (assoc opts
+                   :id id
+                   :type "paragraph"
+                   :text text))))
 
 ;; The request
 
@@ -248,6 +254,29 @@
   (checked-node (assoc opts
                   :id id
                   :type type-name)))
+
+(defn disclosure
+  "A collapsible live column. :default-expanded applies only to its initial active frame."
+  [id label nodes & [opts]]
+  (live-node "group"
+             id
+             (merge opts
+                    {:label label :direction "column" :fields (vec nodes) :is-collapsible true})))
+
+(defn code
+  "Literal live code; :language is optional and whitespace is preserved."
+  ([id text] (code id text nil))
+  ([id text opts] (live-node "code" id (assoc opts :text text))))
+
+(defn spinner
+  "Live activity indicator; :variant is braille, dots, line or pulse."
+  ([id text] (spinner id text nil))
+  ([id text opts] (live-node "spinner" id (assoc opts :text text))))
+
+(defn button
+  "Live operator action; accepted presses increment :clicks in shared state."
+  ([id label] (button id label nil))
+  ([id label opts] (live-node "button" id (assoc opts :label label))))
 
 (defn status
   "One line saying what is happening RIGHT NOW — replaced in place, never

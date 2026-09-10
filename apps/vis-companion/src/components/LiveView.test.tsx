@@ -50,6 +50,23 @@ function paint(props: Partial<Parameters<typeof LiveViewPanel>[0]> = {}) {
   return document.body.innerHTML;
 }
 
+describe('live log disclosures', () => {
+  // Regression #189: a scrollable log is not collapsed output.
+  it('starts each build log collapsed without deleting its retained output', () => {
+    const view: LiveView = { ...opened(), nodes: [
+      { id: 'a', type: 'log', label: 'Build A logs', lines: ['A retained'], window_lines: 100, total_lines: 1 },
+      { id: 'b', type: 'log', label: 'Build B logs', lines: ['B retained'], window_lines: 100, total_lines: 1 },
+    ] };
+    paint({ view });
+    expect(screen.queryByText('A retained')).toBeNull();
+    expect(screen.queryByText('B retained')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Build A logs' }));
+    expect(screen.getByText('A retained')).toBeTruthy();
+    expect(screen.queryByText('B retained')).toBeNull();
+    expect(view.nodes[0]).toHaveProperty('lines', ['A retained']);
+  });
+});
+
 describe('a live view on the phone', () => {
   it('paints every node the run declared, in the order it declared them', () => {
     const html = paint();
@@ -65,7 +82,8 @@ describe('a live view on the phone', () => {
     expect(html).toContain('host 2 of 3');
     expect(html).toContain('Critical');
     expect(html).toContain('Collect inventory');
-    expect(html).toContain('db-2 · 1 critical (openssl)');
+    fireEvent.click(screen.getByRole('button', { name: 'Output' }));
+    expect(document.body.innerHTML).toContain('db-2 · 1 critical (openssl)');
     expect(screen.getByLabelText('Output output').getAttribute('tabindex')).toBe('0');
     expect(screen.getAllByRole('row').length).toBe(3);
     expect(screen.getByRole('link', { name: 'The run on GitHub' })).toHaveProperty(
@@ -249,6 +267,7 @@ describe('a log the operator walks back through', () => {
       lines: ['db-2 · 1 critical (openssl)'],
       window_lines: 2000,
       total_lines: 500,
+      default_expanded: true,
     });
 
   it('offers the earlier lines only when the record still holds some', () => {
@@ -612,9 +631,8 @@ describe('the section is built from the closed vocabulary', () => {
     expect(liveViewSource).toContain('<ProgressMeter');
     expect(liveViewSource).toContain('<LoadMore');
     expect(liveViewSource).toContain('<Disclosure');
-    // And no spinner: a mark that turns for ninety minutes says only "still here",
-    // while one word says whether the run is live and, once it is not, how it ended.
-    expect(liveViewSource).not.toContain('<Spinner');
+    // Motion is explicit: only a declared spinner uses the shared control.
+    expect(liveViewSource).toContain('<Spinner');
     expect(liveViewSource).not.toContain('<button');
     expect(liveViewSource).not.toContain('style={');
     expect(liveViewSource).not.toContain('style="');

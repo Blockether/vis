@@ -70,9 +70,14 @@
     },
     "max_links": 32,
     "node_types": [
+      "button",
+      "code",
+      "heading",
       "link",
       "log",
+      "paragraph",
       "progress",
+      "spinner",
       "stat",
       "status",
       "steps",
@@ -104,9 +109,60 @@
     "aligns": [
       "left",
       "right"
-    ]
+    ],
+    "spinner_frames": {
+      "braille": [
+        "⠋",
+        "⠙",
+        "⠹",
+        "⠸",
+        "⠼",
+        "⠴",
+        "⠦",
+        "⠧",
+        "⠇",
+        "⠏"
+      ],
+      "dots": [
+        "·",
+        "··",
+        "···",
+        "····",
+        "·····",
+        "·····",
+        "····",
+        "···",
+        "··",
+        "·"
+      ],
+      "line": [
+        "-",
+        "\\",
+        "|",
+        "/",
+        "-",
+        "\\",
+        "|",
+        "/",
+        "-",
+        "-"
+      ],
+      "pulse": [
+        "·",
+        "•",
+        "●",
+        "●",
+        "●",
+        "●",
+        "●",
+        "●",
+        "•",
+        "·"
+      ]
+    }
   },
   "actions": [
+    "activate",
     "cancel",
     "interrupt",
     "select",

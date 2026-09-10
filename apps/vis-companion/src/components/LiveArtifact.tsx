@@ -148,18 +148,18 @@ export function LiveArtifact({
       <LiveViewPanel
         view={shown}
         isSettled
-        onSelect={(nodeId, itemIds) => {
+        onSelect={record.selection_snapshots?.length ? (nodeId, itemIds) => {
           const wanted = itemIds.join("\u0000");
           const snapshot = record.selection_snapshots?.find(
             (one) => one.node_id === nodeId && one.selected_ids.join("\u0000") === wanted,
           );
           if (snapshot) setShown(snapshot.view);
-        }}
+        } : undefined}
         // The log is NOT in what was read: every page comes from the record on
         // the gateway, which is why a run that logged 100 000 lines opens here at
         // all. The view id is the record's own, so a page names the same file.
-        load={(nodeId, from, limit) =>
-          client.liveViewLog(sid, record.view.id, nodeId, from, limit)
+        load={(nodeId, from, limit, query) =>
+          client.liveViewLog(sid, record.view.id, nodeId, from, limit, query)
         }
       />
     </div>

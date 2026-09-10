@@ -16,6 +16,7 @@ export const LIVE_NODE_TYPES = [
   'log',
   'table',
   'link',
+  'paragraph', 'heading', 'code', 'spinner', 'button',
 ] as const;
 
 /**
@@ -137,6 +138,7 @@ export interface LiveLogNode extends LiveNodeBase {
   lines: string[];
   window_lines: number;
   total_lines: number;
+  default_expanded?: boolean;
 }
 
 export interface LiveColumn {
@@ -178,6 +180,13 @@ export interface LiveLinkNode extends LiveNodeBase {
   links: LiveLink[];
 }
 
+export interface LiveParagraphNode extends LiveNodeBase { type: 'paragraph'; text: string; }
+export interface LiveHeadingNode extends LiveNodeBase { type: 'heading'; text: string; level: 1 | 2 | 3 | 4 | 5 | 6; }
+export interface LiveCodeNode extends LiveNodeBase { type: 'code'; text: string; language?: string; }
+export type LiveSpinnerVariant = 'braille' | 'dots' | 'line' | 'pulse';
+export interface LiveSpinnerNode extends LiveNodeBase { type: 'spinner'; text: string; variant: LiveSpinnerVariant; is_active: boolean; }
+export interface LiveButtonNode extends LiveNodeBase { type: 'button'; label: string; is_disabled: boolean; clicks: number; }
+
 /**
  * Nodes standing side by side (`row`) or one under the other (`column`). The run
  * declares an arrangement ONCE and no op carries it, so a layout never
@@ -187,6 +196,8 @@ export interface LiveGroupNode extends LiveNodeBase {
   type: 'group';
   direction: LiveGroupDirection;
   fields: LiveNode[];
+  is_collapsible?: boolean;
+  default_expanded?: boolean;
 }
 /** Every node that PAINTS — what an op may name and what a surface draws. */
 export type LiveLeafNode =
@@ -196,7 +207,7 @@ export type LiveLeafNode =
   | LiveStepsNode
   | LiveLogNode
   | LiveTableNode
-  | LiveLinkNode;
+  | LiveLinkNode | LiveParagraphNode | LiveHeadingNode | LiveCodeNode | LiveSpinnerNode | LiveButtonNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
@@ -224,6 +235,10 @@ export interface LiveLogPage {
   from: number;
   lines: string[];
   total: number;
+  /** Total matching lines; `from` is the zero-based offset within those matches. */
+  matched: number;
+  /** Original, one-based line numbers corresponding to `lines`. */
+  line_numbers: number[];
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -376,10 +391,22 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
       type: 'group',
       direction: node.direction === 'row' ? 'row' : 'column',
       fields,
+      ...(node.is_collapsible === undefined ? {} : { is_collapsible: node.is_collapsible === true }),
+      ...(node.default_expanded === undefined ? {} : { default_expanded: node.default_expanded === true }),
     };
   }
   if (!(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
   switch (type as LiveNodeType) {
+    case 'paragraph':
+      return { ...base, type: 'paragraph', text: text(node.text) };
+    case 'heading':
+      return { ...base, type: 'heading', text: text(node.text), level: Math.min(6, Math.max(1, count(node.level, 2))) as LiveHeadingNode['level'] };
+    case 'code':
+      return { ...base, type: 'code', text: text(node.text), language: optionalText(node.language) };
+    case 'spinner':
+      return { ...base, type: 'spinner', text: text(node.text) || 'Working', variant: (['braille', 'dots', 'line', 'pulse'].includes(text(node.variant)) ? node.variant : 'braille') as LiveSpinnerVariant, is_active: node.is_active !== false };
+    case 'button':
+      return { ...base, type: 'button', label: base.label || id, is_disabled: node.is_disabled === true, clicks: count(node.clicks, 0) };
     case 'status':
       return {
         ...base,
@@ -407,6 +434,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         lines: lines(node.lines),
         window_lines: count(node.window_lines, LIVE_LOG_WINDOW),
         total_lines: count(node.total_lines, lines(node.lines).length),
+        ...(node.default_expanded === undefined ? {} : { default_expanded: node.default_expanded === true }),
       };
     case 'table': {
       const tableRows = keyed(node.rows, rowFromWire);
@@ -515,6 +543,8 @@ function appendKey(node: LiveNode): 'lines' | 'rows' | 'stats' | 'steps' | 'link
 /** `set` MERGES the keys it carries onto the node (`live/apply-set`). */
 function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   switch (node.type) {
+    case 'paragraph': case 'heading': case 'code': case 'spinner': case 'button':
+      return liveNodeFromWire({ ...node, ...op }) ?? node;
     case 'status':
       return {
         ...node,

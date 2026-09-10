@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react';
+import { startTransition, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes } from 'react';
 import {
   Button,
   Disclosure,
@@ -6,6 +6,7 @@ import {
   ListRow,
   LoadMore,
   PROSE,
+  Spinner,
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import {
@@ -315,14 +316,54 @@ function LogRows({
   load,
 }: {
   node: LiveLogNode;
-  load?: (from: number, limit: number) => Promise<LiveLogPage>;
+  load?: (from: number, limit: number, query?: string) => Promise<LiveLogPage>;
 }) {
   const [earlier, setEarlier] = useState<{ from: number; lines: string[] } | null>(null);
   const [isReading, setIsReading] = useState(false);
+  const [readError, setReadError] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [search, setSearch] = useState<{ query: string; from: number } | null>(null);
+  const [result, setResult] = useState<{ page: LiveLogPage; window: string[] } | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  const searchRequest = useRef(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => () => { searchRequest.current += 1; }, []);
 
   const windowStart = Math.max(0, node.total_lines - node.lines.length);
   const knownFrom = earlier ? earlier.from : windowStart;
   const hole = earlier ? Math.max(0, windowStart - (earlier.from + earlier.lines.length)) : 0;
+
+  const clearSearch = () => {
+    searchRequest.current += 1;
+    setDraft('');
+    setSearch(null);
+    setResult(null);
+    setIsSearching(false);
+    setSearchError(false);
+  };
+  const find = async (query: string, from = 0) => {
+    if (!query) { clearSearch(); return; }
+    const request = ++searchRequest.current;
+    setSearch({ query, from });
+    setResult(null);
+    setSearchError(false);
+    setIsSearching(true);
+    try {
+      const matches = load ? [] : node.lines.flatMap((line, index) =>
+        line.toLowerCase().includes(query.toLowerCase()) ? [{ line, number: windowStart + index + 1 }] : []);
+      const slice = matches.slice(from, from + LOG_PAGE);
+      const page = load ? await load(from, LOG_PAGE, query) : {
+        node_id: node.id, from, total: node.total_lines, matched: matches.length,
+        lines: slice.map(match => match.line), line_numbers: slice.map(match => match.number),
+      };
+      if (request === searchRequest.current) setResult({ page, window: node.lines });
+    } catch {
+      if (request === searchRequest.current) setSearchError(true);
+    } finally {
+      if (request === searchRequest.current) setIsSearching(false);
+    }
+  };
 
   const readEarlier = () => {
     if (!load || isReading) return;
@@ -330,6 +371,7 @@ function LogRows({
     const limit = knownFrom - from;
     if (limit <= 0) return;
     setIsReading(true);
+    setReadError(false);
     load(from, limit)
       .then((page) => {
         setEarlier((current) => ({
@@ -337,32 +379,54 @@ function LogRows({
           lines: [...page.lines, ...(current ? current.lines : [])],
         }));
       })
-      .catch(() => undefined)
+      .catch(() => setReadError(true))
       .finally(() => setIsReading(false));
   };
 
-  if (node.lines.length === 0 && !earlier) return <Empty>{EMPTY_LINE.log}</Empty>;
   return (
     <div className="min-w-0">
-      {load && knownFrom > 0 && (
-        <LoadMore
-          label={`Load ${Math.min(LOG_PAGE, knownFrom)} earlier lines`}
-          disabled={isReading}
-          onClick={readEarlier}
-        >
-          {isReading ? 'Reading...' : `${knownFrom} earlier lines`}
-        </LoadMore>
-      )}
-      <pre
-        role="region"
-        tabIndex={0}
-        aria-label={`${node.label} output`}
-        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-words border border-dialog-edge bg-panel-2 p-2 font-mono text-meta text-dialog-hint"
-      >
-        {earlier && earlier.lines.join('\n')}
-        {hole > 0 && `\n... ${hole} lines scrolled past while you were reading\n`}
-        {earlier && hole === 0 && node.lines.length > 0 && '\n'}
-        {node.lines.join('\n')}
+      <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); void find(draft); }}>
+        <Input ref={searchInput} type="search" density="comfortable" className="min-w-0 flex-1"
+          aria-label={`Search ${node.label || 'Output'}`} placeholder="Search log…" value={draft}
+          onChange={event => setDraft(event.target.value)}
+          onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); clearSearch(); } }} />
+        <Button type="submit" variant="secondary" density="comfortable">Search</Button>
+      </form>
+      {search && <div className="mt-2 space-y-2">
+        <p role="status" className="break-words font-mono text-ui text-dialog-hint">
+          {`“${search.query}” · `}
+          {isSearching ? 'Searching…' : result ? `${result.page.matched} matches · ${result.page.total} recorded lines` : 'Search results'}
+          {!load && ' · Loaded lines only'}
+        </p>
+        {result && result.window !== node.lines && <p className="font-mono text-ui text-dialog-hint">Log changed. Refresh results.</p>}
+        {searchError && <p role="alert" className="font-mono text-ui text-err">Could not read log. Try again.</p>}
+        <div className="flex flex-wrap gap-2">
+          <Button density="comfortable" variant="secondary" onClick={() => void find(search.query)}>Refresh results</Button>
+          <Button density="comfortable" variant="secondary" onClick={clearSearch}>Clear search</Button>
+          {(search.from > 0 || (result && result.page.matched > LOG_PAGE)) && <>
+            <Button density="comfortable" variant="secondary" disabled={isSearching || search.from === 0}
+              onClick={() => void find(search.query, Math.max(0, search.from - LOG_PAGE))}>Previous matches</Button>
+            <Button density="comfortable" variant="secondary" disabled={isSearching || !result || search.from + LOG_PAGE >= result.page.matched}
+              onClick={() => void find(search.query, search.from + LOG_PAGE)}>Next matches</Button>
+          </>}
+        </div>
+        {result && result.page.lines.length === 0 && <Empty>No matching lines.</Empty>}
+      </div>}
+      {!search && load && knownFrom > 0 && <LoadMore label={`Load ${Math.min(LOG_PAGE, knownFrom)} earlier lines`}
+        disabled={isReading} onClick={readEarlier}>
+        {isReading ? 'Reading...' : `${knownFrom} earlier lines`}
+      </LoadMore>}
+      {!search && readError && <p role="alert" className="font-mono text-ui text-err">Could not read log. Try again.</p>}
+      {!search && node.lines.length === 0 && !earlier && <Empty>{EMPTY_LINE.log}</Empty>}
+      <pre role="region" tabIndex={0} aria-label={`${node.label || 'Output'} output`}
+        onKeyDown={event => { if (event.key === '/') { event.preventDefault(); event.stopPropagation(); searchInput.current?.focus(); } }}
+        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-words border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint">
+        {search ? result?.page.lines.map((line, index) => `${result.page.line_numbers[index]}: ${line}`).join('\n') : <>
+          {earlier && earlier.lines.join('\n')}
+          {hole > 0 && `\n... ${hole} lines scrolled past while you were reading\n`}
+          {earlier && hole === 0 && node.lines.length > 0 && '\n'}
+          {node.lines.join('\n')}
+        </>}
       </pre>
     </div>
   );
@@ -446,6 +510,7 @@ function TableRows({
   onSelect?: (nodeId: string, itemIds: string[]) => void;
 }) {
   const rows = orderedRows(node);
+  const isSelectable = node.is_selectable && Boolean(onSelect);
   const { valueAt, detailAt } = tableShape(node);
   const selected = useMemo(() => new Set(node.selected_ids), [node.selected_ids]);
   const grouped = useMemo(() => {
@@ -545,11 +610,11 @@ function TableRows({
               <SelectableTableRow
                 key={row.id}
                 isSelected={isSelected}
-                className={`${rowInk(row.tone)} ${node.is_selectable ? 'cursor-pointer' : ''}`}
-                onClick={node.is_selectable ? () => onSelect?.(node.id, [row.id]) : undefined}
+                className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer' : ''}`}
+                onClick={isSelectable ? () => onSelect?.(node.id, [row.id]) : undefined}
               >
                 <td className="p-0 align-top">
-                  {node.is_selectable ? (
+                  {isSelectable ? (
                     <ListRow
                       isSelected={isSelected}
                       aria-pressed={isSelected}
@@ -634,48 +699,72 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
  * the same key. A phone has no width to split, so below `sm` a row stacks; the
  * reading order is the declared order either way.
  */
-function NodeCell({
-  node,
-  load,
-  onSelect,
-}: {
-  node: LiveNode;
-  load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
-  onSelect?: (nodeId: string, itemIds: string[]) => void;
+type NodePresentation = {
+  isSettled: boolean;
+  expanded: Record<string, boolean>;
+  toggle: (id: string, value: boolean) => void;
+  onActivate?: (id: string) => Promise<void> | void;
+};
+
+/** An operator button waits for acknowledgement and is inert in receipts. */
+function ActionButton({ node, onActivate, isSettled }: {
+  node: Extract<LiveNode, { type: 'button' }>;
+  onActivate?: NodePresentation['onActivate'];
+  isSettled: boolean;
 }) {
-  if (node.type === 'group') {
-    return (
-      <div className="min-w-0 space-y-1.5">
-        {node.label && <NodeLabel>{node.label}</NodeLabel>}
-        <div
-          className={
-            node.direction === 'row'
-              ? 'grid min-w-0 gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col'
-              : 'min-w-0 space-y-3'
-          }
-        >
-          {node.fields.map((child) => (
-            <NodeCell key={child.id} node={child} load={load} onSelect={onSelect} />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const [pending, setPending] = useState(false);
+  return <Button variant="secondary" density="comfortable" disabled={isSettled || node.is_disabled || pending || !onActivate}
+    aria-busy={pending} onClick={async () => {
+      if (!onActivate || pending) return;
+      setPending(true);
+      try { await onActivate(node.id); } finally { setPending(false); }
+    }}>{node.label}</Button>;
+}
+
+function NodeCell({ node, load, onSelect, presentation }: {
+  node: LiveNode;
+  load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
+  onSelect?: (nodeId: string, itemIds: string[]) => void;
+  presentation: NodePresentation;
+}) {
+  const contentId = useId();
+  const isDisclosure = node.type === 'log' || (node.type === 'group' && node.is_collapsible);
+  const isOpen = Object.hasOwn(presentation.expanded, node.id)
+    ? presentation.expanded[node.id]
+    : (!presentation.isSettled && (node.type === 'log' || node.type === 'group') && node.default_expanded === true);
+  const label = node.label || (node.type === 'log' ? 'Output' : node.id);
+  const Heading = node.type === 'heading' ? (`h${node.level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') : 'h2';
   return (
     <div className="min-w-0 space-y-1.5">
-      {node.label && <NodeLabel>{node.label}</NodeLabel>}
-      {node.type === 'status' && <StatusRow node={node} />}
-      {node.type === 'progress' && <ProgressRow node={node} />}
-      {node.type === 'stat' && <StatRow node={node} />}
-      {node.type === 'steps' && <StepsRows node={node} />}
-      {node.type === 'log' && (
-        <LogRows
-          node={node}
-          load={load && ((from, limit) => load(node.id, from, limit))}
-        />
-      )}
-      {node.type === 'table' && <TableRows node={node} onSelect={onSelect} />}
-      {node.type === 'link' && <LinkRows node={node} />}
+      {isDisclosure ? <Disclosure isOpen={isOpen} tone="branch" density="comfortable" aria-label={label}
+        aria-controls={isOpen ? contentId : undefined}
+        onClick={() => presentation.toggle(node.id, !isOpen)}>
+        <NodeLabel>{label}</NodeLabel>{node.type === 'log' && <span className="ml-2 text-ui text-dialog-hint">{node.total_lines} lines</span>}
+      </Disclosure> : node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>}
+      {(!isDisclosure || isOpen) && <div id={contentId} className="min-w-0">
+        {node.type === 'group' && <div className={node.direction === 'row'
+          ? 'grid min-w-0 gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col' : 'min-w-0 space-y-3'}>
+          {node.fields.map((child) => <NodeCell key={child.id} node={child} load={load} onSelect={onSelect} presentation={presentation} />)}
+        </div>}
+        {node.type === 'paragraph' && <p className={`font-mono text-body text-white ${PROSE}`}><InlineMarkdown>{node.text}</InlineMarkdown></p>}
+        {node.type === 'heading' && <Heading className={`font-mono font-bold text-white ${node.level === 1 ? 'text-head' : node.level === 2 ? 'text-subhead' : 'text-title'}`}><InlineMarkdown>{node.text}</InlineMarkdown></Heading>}
+        {node.type === 'code' && <div className="min-w-0 bg-panel-2 p-2">
+          {node.language && <span className="font-mono text-ui text-dialog-hint">{node.language}</span>}
+          <pre tabIndex={0} aria-label={node.label || 'Code'} className="max-h-64 overflow-auto whitespace-pre font-mono text-body text-white"><code>{node.text}</code></pre>
+        </div>}
+        {node.type === 'spinner' && <p className="flex items-center gap-2 font-mono text-body text-white">
+          {node.is_active && !presentation.isSettled && <Spinner variant={node.variant} tone="accent" />}
+          <span>{node.text}</span>
+        </p>}
+        {node.type === 'button' && <ActionButton node={node} isSettled={presentation.isSettled} onActivate={presentation.onActivate} />}
+        {node.type === 'status' && <StatusRow node={node} />}
+        {node.type === 'progress' && <ProgressRow node={node} />}
+        {node.type === 'stat' && <StatRow node={node} />}
+        {node.type === 'steps' && <StepsRows node={node} />}
+        {node.type === 'log' && <LogRows node={node} load={load && ((from, limit, query) => query === undefined ? load(node.id, from, limit) : load(node.id, from, limit, query))} />}
+        {node.type === 'table' && <TableRows node={node} onSelect={onSelect} />}
+        {node.type === 'link' && <LinkRows node={node} />}
+      </div>}
     </div>
   );
 }
@@ -688,6 +777,7 @@ export function LiveViewPanel({
   view,
   onInterrupt,
   onSelect,
+  onActivate,
   isInterrupting = false,
   error,
   load,
@@ -696,11 +786,12 @@ export function LiveViewPanel({
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
   onInterrupt?: (note: string | null) => void;
-  /** Replace the selected ids of one selectable table in shared engine state. */
+  /** Live selection, or local snapshot browsing in a receipt; omit when unavailable. */
   onSelect?: (nodeId: string, itemIds: string[]) => void;
+  onActivate?: (nodeId: string) => Promise<void> | void;
   isInterrupting?: boolean;
   error?: string | null;
-  load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
+  load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
   /**
    * The run is OVER and this is its record. Nothing spins, and the section stops
    * being a live region: a picture that cannot change again must not announce
@@ -712,6 +803,13 @@ export function LiveViewPanel({
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
   // was stopped and not merely that it was. `null` is "not armed" — an empty
   // string is an armed stop nobody has typed into yet.
+  const phase = `${view.id}:${isSettled}`;
+  const [disclosures, setDisclosures] = useState<{ phase: string; values: Record<string, boolean> }>({ phase, values: {} });
+  const presentation: NodePresentation = {
+    isSettled, onActivate,
+    expanded: disclosures.phase === phase ? disclosures.values : {},
+    toggle: (id, value) => setDisclosures((held) => ({ phase, values: { ...(held.phase === phase ? held.values : {}), [id]: value } })),
+  };
   const [note, setNote] = useState<string | null>(null);
   const isArmed = note !== null;
   const typed = note ?? '';
@@ -739,13 +837,13 @@ export function LiveViewPanel({
           )}
         </span>
         <ViewState view={view} isSettled={isSettled} />
-        {onInterrupt && !isArmed && (
-          <Button variant="secondary" onClick={() => setNote('')} disabled={isInterrupting}>
+        {!isSettled && onInterrupt && !isArmed && (
+          <Button variant="secondary" density="comfortable" onClick={() => setNote('')} disabled={isInterrupting}>
             {isInterrupting ? 'Stopping...' : 'Interrupt'}
           </Button>
         )}
       </header>
-      {isArmed && onInterrupt && (
+      {!isSettled && isArmed && onInterrupt && (
         <form
           className="flex flex-wrap items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2"
           onSubmit={(event) => {
@@ -789,7 +887,7 @@ export function LiveViewPanel({
             key={node.id}
             className={`min-w-0 px-3 ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
           >
-            <NodeCell node={node} load={load} onSelect={onSelect} />
+            <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
           </li>
         ))}
       </ul>
@@ -946,8 +1044,18 @@ export function LiveView({
       .catch(() => setError('That job could not be selected. It may have just finished.'));
   };
 
-  const readLog = (viewId: string) => (nodeId: string, from: number, limit: number) =>
-    client.liveViewLog(sid, viewId, nodeId, from, limit);
+  const activate = async (viewId: string, nodeId: string) => {
+    setError(null);
+    try {
+      const outcome = await client.viewAction(sid, viewId, { action: 'activate', node_id: nodeId });
+      if (!outcome.is_accepted) setError('That action is unavailable. The button may be disabled or the run finished.');
+    } catch {
+      setError('That action could not be confirmed. Check the run before trying again.');
+    }
+  };
+
+  const readLog = (viewId: string) => (nodeId: string, from: number, limit: number, query?: string) =>
+    client.liveViewLog(sid, viewId, nodeId, from, limit, query);
 
   return (
     <div className="space-y-3">
@@ -959,6 +1067,7 @@ export function LiveView({
           isInterrupting={stopping === view.id}
           onInterrupt={(note) => interrupt(view.id, note)}
           onSelect={(nodeId, itemIds) => select(view.id, nodeId, itemIds)}
+          onActivate={(nodeId) => activate(view.id, nodeId)}
           load={readLog(view.id)}
         />
       ))}

@@ -3056,8 +3056,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionScreenSource).toContain(
       "Listening · tap the microphone again to finish",
     );
+    // The working status uses the configured agent name, with Vis as the fallback.
     expect(sessionScreenSource).toContain(
-      "Voice conversation · Vis is working",
+      'Voice conversation · {session?.agent_name ?? "Vis"} is working',
     );
     expect(sessionScreenSource).toContain(
       "Voice conversation · Speaking · tap the microphone to stop",

@@ -1215,3 +1215,17 @@ describe('session goal revisions', () => {
     expect(client.cachedSession('s1')?.goal).toEqual(replacement);
   });
 });
+
+it('encodes literal log search and retains bounded match offsets', async () => {
+  const page = { node_id: 'log', from: 200, lines: ['error'], total: 1000, matched: 201, line_numbers: [998] };
+  const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(page)));
+  vi.stubGlobal('fetch', fetchMock);
+  const { GatewayClient } = await import('./gateway');
+  const client = new GatewayClient(conn);
+  expect(await client.liveViewLog('s1', 'v1', 'log', 200, 200, '[disk]&Ł')).toEqual(page);
+  const url = new URL(String(fetchMock.mock.calls[0][0]));
+  expect(url.pathname).toBe('/v1/sessions/s1/views/live/v1/log/log');
+  expect(url.searchParams.get('query')).toBe('[disk]&Ł');
+  expect(url.searchParams.get('from')).toBe('200');
+  expect(url.searchParams.get('limit')).toBe('200');
+});

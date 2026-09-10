@@ -16,7 +16,7 @@
                  (walk (transient []) fields))))
 
 (def ^:private keyword-value-keys
-  #{:type :direction :tone :variant :status :state :action :kind :mode :align :op})
+  #{:type :direction :tone :variant :target-kind :status :state :action :kind :mode :align :op})
 
 (defn- restore-values
   [x]

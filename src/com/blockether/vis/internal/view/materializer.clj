@@ -67,6 +67,11 @@
    is refused with both named, because the alternative is a patch that lands
    nowhere while its author believes it painted."
   {:status #{:text :detail :tone}
+   :paragraph #{:text}
+   :heading #{:text :level}
+   :code #{:text :language}
+   :spinner #{:text :variant :is-active}
+   :button #{:is-disabled :clicks}
    :progress #{:value :done :total}
    :stat #{:stats}
    :steps #{:steps}
@@ -184,7 +189,10 @@
   [node]
   (cond-> node
     (= :log (:type node))
-    (update :total-lines #(long (or % (count (:lines node)))))))
+    (update :total-lines #(long (or % (count (:lines node)))))
+
+    (= :button (:type node))
+    (update :clicks #(long (or % 0)))))
 
 (defn- stamped
   "`node` stamped through: a layout group hands the stamp to the nodes inside it,
@@ -580,6 +588,31 @@
   (fn [node _budget]
     (:type node)))
 
+(defn- marked-lines
+  "Keep presentation types and literal blank lines unambiguous when reading markdown back."
+  [type lines]
+  (let [painted (vec (mapcat #(str/split % #"\n" -1) lines))]
+    (into [(str "<!-- vis:" (name type) " " (count painted) " -->")] painted)))
+
+(defmethod node->markdown :paragraph [{:keys [text]} _] (marked-lines :paragraph [text]))
+
+(defmethod node->markdown :heading
+  [{:keys [text level]} _]
+  (marked-lines :heading [(str (apply str (repeat (long level) "#")) " " text)]))
+
+(defmethod node->markdown :code
+  [{:keys [text language]} _]
+  (let [fenced (vec (fenced (str/split text #"\n" -1)))]
+    (marked-lines :code (update fenced 0 str (or language "")))))
+
+(defmethod node->markdown :spinner
+  [{:keys [text is-active]} _]
+  (marked-lines :spinner [(str text (when is-active " (working)"))]))
+
+(defmethod node->markdown :button
+  [{:keys [label clicks]} _]
+  (marked-lines :button [(str label " (button; " (long (or clicks 0)) " activations)")]))
+
 (defmethod node->markdown :status
   [{:keys [text detail tone]} _]
   (cond-> [(str (tone-tag tone) "**" text "**")]
@@ -901,32 +934,41 @@
            second
            parse-long))
 
+(def ^:private presentation-marker #"<!-- vis:(paragraph|heading|code|spinner|button) ([0-9]+) -->")
+
 (defn- blocks
-  "The numbered lines below the title, grouped the way [[->markdown]] laid them
-   out: one group per blank line, a fence keeping its own blank lines. Each
-   group carries the line it starts on, so a refusal can point at it."
+  "Group numbered lines without splitting fences or counted presentation content."
   [numbered]
-  (let [{:keys [acc at cur]} (reduce
-                               (fn [{:keys [acc at cur fence] :as state} [n line]]
-                                 (cond (and fence (= line fence)) (assoc state
-                                                                    :cur (conj cur line)
-                                                                    :fence nil)
-                                       fence (assoc state :cur (conj cur line))
-                                       (re-matches #"`{3,}" line) (assoc state
-                                                                    :cur (conj (or cur []) line)
-                                                                    :at (or at n)
-                                                                    :fence line)
-                                       (str/blank? line) (if (seq cur)
-                                                           (assoc state
-                                                             :acc (conj acc {:at at :lines cur})
-                                                             :at nil
-                                                             :cur nil)
-                                                           state)
-                                       :else (assoc state
-                                               :cur (conj (or cur []) line)
-                                               :at (or at n))))
-                               {:acc [] :at nil :cur nil :fence nil}
-                               numbered)]
+  (let [{:keys [acc at cur remaining]}
+        (reduce (fn [{:keys [acc at cur fence remaining] :as state} [n line]]
+                  (cond (pos? (long (or remaining 0))) (assoc state
+                                                         :cur (conj cur line)
+                                                         :remaining (dec (long remaining)))
+                        (and fence (= line fence)) (assoc state
+                                                     :cur (conj cur line)
+                                                     :fence nil)
+                        fence (assoc state :cur (conj cur line))
+                        (re-matches presentation-marker line)
+                        (assoc state
+                          :cur (conj (or cur []) line)
+                          :at (or at n)
+                          :remaining (parse-long (nth (re-matches presentation-marker line) 2)))
+                        (re-matches #"`{3,}" line) (assoc state
+                                                     :cur (conj (or cur []) line)
+                                                     :at (or at n)
+                                                     :fence line)
+                        (str/blank? line) (if (seq cur)
+                                            (assoc state
+                                              :acc (conj acc {:at at :lines cur})
+                                              :at nil
+                                              :cur nil)
+                                            state)
+                        :else (assoc state
+                                :cur (conj (or cur []) line)
+                                :at (or at n))))
+                {:acc [] :at nil :cur nil :fence nil :remaining 0}
+                numbered)]
+    (when (pos? (long remaining)) (invalid-markdown! at "presentation content is incomplete"))
     (cond-> acc
       (seq cur)
       (conj {:at at :lines cur}))))
@@ -950,7 +992,9 @@
         [text _]
         (untoned head)]
 
-    (cond (contains? type-painting-nothing head) (type-painting-nothing head)
+    (cond (re-matches presentation-marker head) (keyword (second (re-matches presentation-marker
+                                                                             head)))
+          (contains? type-painting-nothing head) (type-painting-nothing head)
           (re-matches #"`{3,}" head) :log
           (str/starts-with? head "|") :table
           (str/starts-with? head "- ") (if (every? (fn [line]
@@ -970,6 +1014,45 @@
    [[addressed]]."
   (fn [type _block]
     type))
+
+(defmethod markdown->node :paragraph
+  [_ {:keys [lines]}]
+  {:type :paragraph :text (str/join "\n" (rest lines))})
+
+(defmethod markdown->node :heading
+  [_ {:keys [at lines]}]
+  (let [[_ marks text] (or (re-matches #"(#{1,6}) (.*)" (second lines))
+                           (invalid-markdown! at "a heading needs a level from 1 to 6"))]
+    {:type :heading :level (count marks) :text (str/join "\n" (cons text (drop 2 lines)))}))
+
+(defmethod markdown->node :code
+  [_ {:keys [at lines]}]
+  (let [[_ fence language] (or (re-matches #"(`{3,})(.*)" (second lines))
+                               (invalid-markdown! at "code needs a fence"))]
+    (when-not (= fence (last lines)) (invalid-markdown! at "code needs its closing fence"))
+    (cond-> {:type :code :text (str/join "\n" (butlast (drop 2 lines)))}
+      (seq language)
+      (assoc :language language))))
+
+(defmethod markdown->node :spinner
+  [_ {:keys [lines]}]
+  (let [text
+        (str/join "\n" (rest lines))
+
+        working
+        (re-matches #"(?s)(.*) \(working\)" text)]
+
+    {:type :spinner
+     :text (if working (second working) text)
+     :is-active (boolean working)
+     :variant :braille}))
+
+(defmethod markdown->node :button
+  [_ {:keys [at lines]}]
+  (let [[_ label clicks] (or (re-matches #"(?s)(.*) \(button; ([0-9]+) activations\)"
+                                         (str/join "\n" (rest lines)))
+                             (invalid-markdown! at "a button needs a label and activation count"))]
+    {:type :button :label label :clicks (parse-long clicks) :is-disabled false}))
 
 (defmethod markdown->node :status
   [_ {:keys [at lines]}]
@@ -1276,7 +1359,7 @@
   (let [numbered
         (map-indexed (fn [i line]
                        [(inc (long i)) line])
-                     (str/split-lines (str markdown)))
+                     (str/split (str markdown) #"\n" -1))
 
         title
         (or (second (re-matches #"# (.+)" (str (second (first numbered)))))

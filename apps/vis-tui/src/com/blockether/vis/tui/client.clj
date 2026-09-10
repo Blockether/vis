@@ -1052,12 +1052,24 @@
   [sid]
   (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live")) "views")))
 
+(defn live-view-log
+  "One page of a retained log, searched literally without case sensitivity.
+   `from` counts matches; the wire response includes original line numbers."
+  [sid view-id node-id from limit query]
+  (send-json! "GET"
+              (str "/v1/sessions/" (enc sid)
+                   "/views/live/" (enc view-id)
+                   "/log/" (enc node-id)
+                   "?from=" from
+                   "&limit=" limit
+                   "&query=" (enc query))))
+
 (defn view-action!
   "Apply one operator action to the DAEMON-side View `view-id` of `sid`.
 
    `action` is the closed View map: `{:action :submit :values …}`,
    `{:action :cancel}`, `{:action :select :node-id … :item-ids …}`, or
-   `{:action :interrupt :note …}`. Kind is resolved by the daemon from the View,
+   `{:action :activate :node-id …}`, or `{:action :interrupt :note …}`. Kind is resolved by the daemon from the View,
    never encoded into this route. Returns the engine's canonical action outcome."
   [sid view-id action]
   (when-not (map? action)

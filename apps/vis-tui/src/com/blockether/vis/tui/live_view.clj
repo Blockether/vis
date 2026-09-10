@@ -6,8 +6,8 @@
    A form is a QUESTION and owns the keyboard until it is answered; a view is a
    PICTURE and leaves the composer focused. The wheel over the band scrolls it, and
    clicks open links, expand nodes, select rows in a selectable table, or fold the
-   live surface down to a compact status line without stopping it. The only key it
-   takes is Escape — which ARMS a stop on the newest open view before it interrupts
+   live surface down to a compact status line without stopping it. F3 opens its
+   keyboard controls. Escape ARMS a stop on the newest open view before it interrupts
    the turn: the band then takes one FENCED line for the comment the human types,
    Escape or Enter interrupts with it, Backspace on an empty line keeps watching.
    A view is ALWAYS stoppable; the note is what says why.
@@ -43,6 +43,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dialogs]
+            [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
@@ -50,7 +51,9 @@
             [com.blockether.vis.tui.view-materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec])
   (:import [com.googlecode.lanterna TerminalPosition]
-           [com.googlecode.lanterna.gui2 Direction ScrollBar]))
+           [com.googlecode.lanterna.gui2 Direction ScrollBar]
+           [com.googlecode.lanterna.input KeyStroke KeyType]
+           [com.googlecode.lanterna.screen TerminalScreen]))
 
 (set! *warn-on-reflection* true)
 
@@ -256,6 +259,7 @@
    :widths {}
    :fresh {:items {} :nodes #{}}
    :expanded #{}
+   :disclosures {}
    :total 0
    :visible 0})
 
@@ -290,6 +294,7 @@
    (-> pane
        (dissoc :stop :is-minimized)
        (update :view merge (:view result))
+       (assoc :disclosures {})
        (assoc :settled (-> (select-keys result [:reason :artifact-id :is-from-human])
                            (assoc :ended-at ended-at))))))
 
@@ -435,15 +440,20 @@
                          (or (pos? delta) (true? (:is-following pane)))))))
 
 (defn expanded
-  "The pane with node `node-id` toggled between its window and everything it
-   holds. The `+ N more` line is the control, so expanding is a click and needs
-   no key the composer would have to give up."
+  "Toggle a disclosure locally, or expand a windowed collection. Updates retain choices."
   [pane node-id]
-  (update pane
-          :expanded
-          (fn [ids]
-            (let [ids (set ids)]
-              (if (contains? ids node-id) (disj ids node-id) (conj ids node-id))))))
+  (let [node (first (filter #(= node-id (:id %))
+                            (mapcat #(tree-seq :fields :fields %) (get-in pane [:view :nodes]))))]
+    (if (or (= :log (:type node)) (:is-collapsible node))
+      (let [initial (and (not (settled? pane)) (true? (:default-expanded node)))
+            is-open (get (:disclosures pane) node-id initial)]
+
+        (assoc-in pane [:disclosures node-id] (not is-open)))
+      (update pane
+              :expanded
+              (fn [ids]
+                (let [ids (set ids)]
+                  (if (contains? ids node-id) (disj ids node-id) (conj ids node-id))))))))
 
 (defn painted
   "The pane taught what the last paint measured — where the viewport landed, the
@@ -650,6 +660,42 @@
   (fn [node _ctx]
     (:type node)))
 
+(defmethod node-rows :paragraph
+  [{:keys [id text]} {:keys [text-w]}]
+  (mapv (fn [runs]
+          {:kind :paragraph :node-id id :runs runs :text (segment-line runs)})
+        (md-lines text text-w)))
+
+(defmethod node-rows :heading
+  [{:keys [id text level]} {:keys [text-w]}]
+  (mapv (fn [runs]
+          {:kind :heading :node-id id :runs runs :text (segment-line runs)})
+        (md-lines (str (apply str (repeat (long level) "#")) " " text) text-w)))
+
+(defmethod node-rows :code
+  [{:keys [id text]} {:keys [text-w]}]
+  (into []
+        (mapcat (fn [line]
+                  (map (fn [part]
+                         {:kind :code :node-id id :text part})
+                       (p/fold-cols line text-w))))
+        (str/split text #"\n" -1)))
+
+(defmethod node-rows :spinner
+  [{:keys [id text variant is-active]} {:keys [is-interactive]}]
+  [{:kind :spinner
+    :node-id id
+    :text text
+    :variant variant
+    :is-active (and is-interactive is-active)}])
+
+(defmethod node-rows :button
+  [{:keys [id label is-disabled]} {:keys [is-interactive]}]
+  [{:kind :button
+    :node-id id
+    :text (str "[ " (flat-text label) " ]")
+    :is-disabled (or is-disabled (not is-interactive))}])
+
 (defmethod node-rows :status
   [{:keys [id text detail tone]} {:keys [text-w]}]
   (let [glyph
@@ -752,25 +798,24 @@
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
 
 (defmethod node-rows :log
-  [{:keys [id lines total-lines]} {:keys [is-expanded]}]
-  (if (seq lines)
-    (let [{:keys [shown]}
-          (windowed lines is-expanded true)
+  [{:keys [id label lines total-lines]} {:keys [is-expanded]}]
+  (into [{:kind :log-search :node-id id :item-id :search :text (str "Search " (or label "Output"))}]
+        (if (seq lines)
+          (let [{:keys [shown]}
+                (windowed lines is-expanded true)
 
-          ;; What is behind the log is what the RECORD holds, not what the window
-          ;; cut: the sink keeps every line that was ever accepted.
-          behind
-          (- (long (or total-lines (count lines))) (count shown))]
+                behind
+                (- (long (or total-lines (count lines))) (count shown))]
 
-      (into (if (pos? behind)
-              [{:kind :note
-                :node-id id
-                :text (str "… " behind " earlier lines — the view's record keeps them all")}]
-              [])
-            (map (fn [line]
-                   {:kind :log :node-id id :text (str line)}))
-            shown))
-    [{:kind :empty :node-id id :text (empty-text :log)}]))
+            (into (if (pos? behind)
+                    [{:kind :note
+                      :node-id id
+                      :text (str "… " behind " earlier lines — the view's record keeps them all")}]
+                    [])
+                  (map (fn [line]
+                         {:kind :log :node-id id :text (str line)}))
+                  shown))
+          [{:kind :empty :node-id id :text (empty-text :log)}])))
 
 (defmethod node-rows :table
   [{:keys [id columns is-selectable selected-ids] :as node}
@@ -926,7 +971,16 @@
    The row of air between two sections belongs to whoever stacks them, never to
    the node, so two nodes standing side by side start on the same line."
   [node ctx fresh text-w]
-  (let [children
+  (let [node-ctx
+        (ctx node text-w)
+
+        disclosure?
+        (or (= :log (:type node)) (:is-collapsible node))
+
+        is-open
+        (or (not disclosure?) (:is-open node-ctx))
+
+        children
         (not-empty (:fields node))
 
         cell-w
@@ -936,19 +990,25 @@
         (boolean (and children (= :row (:direction node)) (>= (long cell-w) (long min-column-w))))
 
         parts
-        (when children (mapv #(node-section % ctx fresh (if is-split cell-w text-w)) children))
+        (when (and is-open children)
+          (mapv #(node-section % ctx fresh (if is-split cell-w text-w)) children))
 
         body
-        (cond (nil? children) (node-rows node (ctx node text-w))
+        (cond (not is-open) []
+              (nil? children) (node-rows node node-ctx)
               is-split (split-rows parts)
               :else (stacked-rows parts))
 
         label
-        (flat-text (:label node))]
+        (if disclosure?
+          (str (if is-open "▾ " "▸ ")
+               (or (:label node) "Output")
+               (when (= :log (:type node)) (str " · " (long (or (:total-lines node) 0)) " lines")))
+          (when-not (= :button (:type node)) (flat-text (:label node))))]
 
     (with-meta (cond-> []
                  (seq label)
-                 (conj {:kind :node
+                 (conj {:kind (if disclosure? :disclosure :node)
                         :node-id (:id node)
                         :text label
                         :is-fresh (contains? (:nodes fresh) (:id node))})
@@ -973,7 +1033,10 @@
           {:text-w w
            :widths widths
            :fresh (get-in fresh [:items (:id node)] #{})
-           :is-expanded (contains? (set expanded) (:id node))
+           :is-expanded (or (= :log (:type node)) (contains? (set expanded) (:id node)))
+           :is-open (get (:disclosures pane)
+                         (:id node)
+                         (and (not (settled? pane)) (true? (:default-expanded node))))
            :is-interactive (not (settled? pane))})
 
         head
@@ -986,6 +1049,156 @@
 
     (with-meta (into head (stacked-rows sections))
       {:widths (reduce merge {} (map (comp :widths meta) sections))})))
+
+(defn controls
+  "Keyboard-accessible controls for the visible pane, in reading order."
+  [panes]
+  (when-let [pane (last (remove dormant? panes))]
+    (if (minimized? pane)
+      [{:id :restore :label "Restore live view" :kind :live-restore :view-id (view-id pane)}]
+      (into []
+            (keep (fn [entry]
+                    (when-let [kind (case (:kind entry)
+                                      (:disclosure :more)
+                                      :live-expand
+
+                                      :log-search
+                                      :live-log-search
+
+                                      :button
+                                      (when-not (:is-disabled entry) :live-activate)
+
+                                      :trow
+                                      (when (:is-selectable entry) :live-select)
+
+                                      nil)]
+                      (assoc (select-keys entry [:node-id :item-id])
+                        :id [(:node-id entry) (:item-id entry)]
+                        :label (:text entry)
+                        :kind kind
+                        :view-id (view-id pane)))))
+            (tree-seq #(seq (:cells %)) :cells {:cells (plan pane 80)})))))
+
+(defn- read-log-page!
+  "Read off the UI thread, painting existing dialog chrome while Escape can cancel."
+  [^TerminalScreen screen sid view-id node-id from query]
+  (let [task
+        (future (try {:page (vis/live-view-log sid view-id node-id from 200 query)}
+                     (catch Exception _ {:error true})))
+
+        component
+        (dialogs/select-modal-component "Searching log"
+                                        [{:label "Searching… Esc to cancel"}]
+                                        {:height :content})
+
+        state
+        (:init component)]
+
+    (try (loop [painted-size nil]
+           (.doResizeIfNecessary screen)
+           (let [size (.getTerminalSize screen)]
+             (when (not= size painted-size)
+               (let [cols (.getColumns size)
+                     rows (.getRows size)
+                     geom ((:measure component) state cols rows)]
+
+                 ((:paint component) (frame/surface-graphics screen cols rows) state geom)
+                 (.setCursorPosition screen nil)
+                 (.refresh screen)))
+             (let [key (when (dialogs/modal-input-pending? screen)
+                         (dialogs/read-modal-key! screen))]
+               (cond (and key (= KeyType/Escape (.getKeyType ^KeyStroke key))) nil
+                     (future-done? task) @task
+                     :else (do (Thread/sleep 20) (recur size))))))
+         (finally (future-cancel task)))))
+
+(defn search-log!
+  "Read-only search of a live or archived log. Pages are bounded to 200 matches.
+   Enter opens a full, wrapped line. Explicit refresh reads new output."
+  [screen pane node-id]
+  (let [node
+        (first (filter #(= node-id (:id %))
+                       (mapcat #(tree-seq :fields :fields %) (get-in pane [:view :nodes]))))
+
+        title
+        (str "Search " (or (:label node) "Output"))
+
+        prompt
+        #(dialogs/text-input-dialog! screen
+                                     title
+                                     "Literal text (empty shows all)"
+                                     :initial %
+                                     :body "Case-insensitive · entire retained log")]
+
+    (when-let [query (prompt "")]
+      (loop [query query
+             from 0]
+
+        (when-let [{:keys [page error]} (read-log-page! screen
+                                                        (get-in pane [:view :session-id])
+                                                        (view-id pane)
+                                                        node-id
+                                                        from
+                                                        query)]
+          (let [matched (long (or (get page "matched") 0))
+                items (into
+                        (cond-> [{:action :query :label "Change search"}
+                                 {:action :refresh
+                                  :label (if error "Could not read log. Retry" "Refresh results")}]
+                          (pos? from)
+                          (conj {:action :previous :label "Previous matches"})
+
+                          (< (+ from 200) matched)
+                          (conj {:action :next :label "Next matches"})
+
+                          (and (not error) (empty? (get page "lines")))
+                          (conj {:action :query :label "No matching lines. Change search"}))
+                        (map
+                          (fn [number text]
+                            {:action :line :label (str number ": " text) :text text :number number})
+                          (get page "line_numbers")
+                          (get page "lines")))
+                caption
+                (if error title (str matched " matches / " (get page "total") " lines · " query))
+                choice
+                (loop []
+
+                  (when-let [choice
+                             (dialogs/list-dialog! screen caption items {:enter-label "open"})]
+                    (if (= :line (:action choice))
+                      (do (dialogs/text-view-dialog! screen
+                                                     (str "Line " (:number choice))
+                                                     [(:text choice)])
+                          (recur))
+                      choice)))]
+
+            (case (:action choice)
+              :next
+              (recur query (+ from 200))
+
+              :previous
+              (recur query (max 0 (- from 200)))
+
+              :refresh
+              (recur query 0)
+
+              :query
+              (recur (or (prompt query) query) 0)
+
+              nil)))))))
+
+(defn animating?
+  "Whether the visible, expanded pane contains an active spinner."
+  [panes]
+  (when-let [pane (last (remove dormant? panes))]
+    (when-not (or (settled? pane) (minimized? pane))
+      (letfn [(active? [node]
+                (or (and (= :spinner (:type node)) (:is-active node))
+                    (and (= :group (:type node))
+                         (or (not (:is-collapsible node))
+                             (get (:disclosures pane) (:id node) (:default-expanded node)))
+                         (some active? (:fields node)))))]
+        (boolean (some active? (get-in pane [:view :nodes])))))))
 
 ;;; ── Where the viewport sits ─────────────────────────────────────────────────
 
@@ -1160,7 +1373,7 @@
   (boolean (some #(and (= :table (:type %)) (:is-selectable %)) (get-in pane [:view :nodes]))))
 
 (defn hint
-  "The hint bar under the band. Escape is the ONE key an interruptible view takes,
+  "The hint bar advertises F3 controls and the keys for interrupting the view,
    and while several are open it says WHICH one it will hit — the newest, the one
    the band is painting. A selectable table advertises its click. Once a stop is armed,
    the bar says the two keys that end typing: Escape or Enter interrupt with whatever
@@ -1174,7 +1387,7 @@
       (if (minimized? pane)
         [["click ▴" "restore live view"]
          ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
-        (cond-> []
+        (cond-> [["F3" "controls"]]
           (and (some? pane) (not (settled? pane)))
           (conj ["click ▾" "minimize"])
 
@@ -1281,6 +1494,51 @@
                    (if (:is-fresh entry) t/dialog-fg t/dialog-hint)
                    [p/BOLD]
                    (:text entry))
+
+    :disclosure
+    (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
+        (.register interactions/hit-map
+                   {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                    :kind :live-expand
+                    :view-id view-id
+                    :node-id (:node-id entry)
+                    :enabled? true}))
+
+    (:button :log-search)
+    (do (paint-styled! g
+                       left
+                       row
+                       inner-w
+                       (if (:is-disabled entry) t/dialog-hint t/dialog-hint-key)
+                       [p/BOLD]
+                       (:text entry))
+        (when-not (:is-disabled entry)
+          (.register interactions/hit-map
+                     {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                      :kind (if (= :log-search (:kind entry)) :live-log-search :live-activate)
+                      :view-id view-id
+                      :node-id (:node-id entry)
+                      :enabled? true})))
+
+    :spinner
+    (let [frames
+          (get hi-spec/spinner-frames (:variant entry))
+
+          frame
+          (if (:is-active entry)
+            (nth frames (mod (quot (System/currentTimeMillis) 100) (count frames)))
+            "·")]
+
+      (paint-plain! g left row inner-w t/dialog-fg (str (p/pad-right frame 5) " " (:text entry))))
+
+    :heading
+    (paint-runs! g left row inner-w t/dialog-fg [p/BOLD] (:runs entry))
+
+    :paragraph
+    (paint-runs! g left row inner-w t/dialog-fg [] (:runs entry))
+
+    :code
+    (paint-plain! g left row inner-w t/dialog-fg (:text entry))
 
     :status
     (paint-runs! g left row inner-w (tone-fg (:tone entry)) [p/BOLD] (:runs entry))

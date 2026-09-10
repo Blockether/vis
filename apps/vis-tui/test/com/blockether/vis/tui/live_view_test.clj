@@ -63,7 +63,10 @@
                    order
                    (assoc :order order))
                  (or rows 4))
-           (fixture/log "tail" {:label "Output" :lines ["> clojure -M:test" "Ran 314 tests"]})))
+           (fixture/log "tail"
+                        {:label "Output"
+                         :default-expanded true
+                         :lines ["> clojure -M:test" "Ran 314 tests"]})))
 
 (defn- pane [& args] (lv/opened (apply ci-view args)))
 
@@ -157,15 +160,16 @@
           (lv/opened (mounted {}
                               (fixture/log "tail"
                                            {:label "Output"
+                                            :default-expanded true
                                             :lines (mapv #(str "line " %) (range 40))})))
 
           lines
           (mapv :text (filterv #(= :log (:kind %)) (rows-of p)))]
 
-      (is (= lv/node-window (count lines)))
+      (is (= 40 (count lines)))
       (is (= "line 39" (last lines)))
-      (is (= "line 28" (first lines)))
-      (is (some #(str/includes? (str (:text %)) "28 earlier lines") (rows-of p))))))
+      (is (= "line 0" (first lines)))
+      (is (empty? (kinds-of p :note))))))
 
 (deftest live-view-follow-test
   (testing "a fresh pane follows the end" (is (:is-following (pane))))
@@ -893,6 +897,7 @@
                               (lv/plan (lv/opened (mounted {}
                                                            (fixture/log "tail"
                                                                         {:label "Output"
+                                                                         :default-expanded true
                                                                          :lines
                                                                          ["cat `x` **y**"]})))
                                        80)))]
@@ -1071,7 +1076,10 @@
           open
           (lv/reopened p)]
 
-      (is (str/includes? (painted-text [open]) "Ran 314 tests") "read-only, but all of it")
+      ;; Regression #189: a reopened receipt starts with each log collapsed.
+      (is (not (str/includes? (painted-text [open]) "Ran 314 tests")))
+      (is (str/includes? (painted-text [(lv/expanded open "tail")]) "Ran 314 tests")
+          "retained, read-only output")
       (is (not (str/includes? (painted-text [(lv/reopened open)]) "Ran 314 tests"))
           "the same press closes it")
       (is (lv/settled? open) "reopening does not un-end the view")))

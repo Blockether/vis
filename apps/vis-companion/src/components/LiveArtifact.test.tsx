@@ -248,6 +248,32 @@ describe('the settled run in the transcript', () => {
     expect(screen.queryByText('Tests failed')).toBeNull();
   });
 
+  it('does not offer archive table selection without recorded snapshots', async () => {
+    // Regression #189: completed live controls cannot become no-op archive buttons.
+    const saved = { ...fixture, nodes: [{ id: 'jobs', type: 'table', is_selectable: true,
+      columns: [{ id: 'job', label: 'Job' }], rows: [{ id: 'job', cells: ['Recorded job'] }] }] };
+    serve([openLine, closeLine({ reason: 'completed', view: saved })].join('\n'));
+    render(<LiveArtifact client={client()} sid="s1" url="blob:record" chrome={({ body }) => <div>{body}</div>} />);
+    await waitFor(() => expect(screen.getByText('Recorded job')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Select Recorded job' })).toBeNull();
+  });
+
+  it('searches the archive through the bounded gateway log route', async () => {
+    const saved = { ...fixture, nodes: [{ id: 'tail', type: 'log', label: 'Archive log',
+      lines: ['latest'], total_lines: 500, window_lines: 1 }] };
+    serve([openLine, closeLine({ reason: 'completed', view: saved })].join('\n'));
+    const c = client();
+    vi.mocked(c.liveViewLog).mockResolvedValue({ node_id: 'tail', from: 0, lines: ['ERROR older'],
+      line_numbers: [10], matched: 1, total: 500 });
+    render(<LiveArtifact client={c} sid="s1" url="blob:record" chrome={({ body }) => <div>{body}</div>} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive log' }));
+    const field = screen.getByRole('searchbox', { name: 'Search Archive log' });
+    fireEvent.change(field, { target: { value: 'error' } });
+    fireEvent.submit(field.closest('form')!);
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Archive log output' }).textContent).toContain('10: ERROR older'));
+    expect(c.liveViewLog).toHaveBeenCalledWith('s1', fixture.id, 'tail', 0, 200, 'error');
+  });
+
   it('opens the picture the run ended on, and nothing about it can be pressed', async () => {
     serve(
       [openLine, closeLine({ reason: 'interrupted', note: 'enough', view: sealed })].join('\n'),

@@ -1,0 +1,230 @@
+{
+  "seq": 0,
+  "channel_ids": [
+    "tui",
+    "app"
+  ],
+  "id": "live-primitives",
+  "nodes": [
+    {
+      "id": "h1",
+      "type": "heading",
+      "text": "Heading level 1",
+      "level": 1
+    },
+    {
+      "id": "h2",
+      "type": "heading",
+      "text": "Heading level 2",
+      "level": 2
+    },
+    {
+      "id": "h3",
+      "type": "heading",
+      "text": "Heading level 3",
+      "level": 3
+    },
+    {
+      "id": "h4",
+      "type": "heading",
+      "text": "Heading level 4",
+      "level": 4
+    },
+    {
+      "id": "h5",
+      "type": "heading",
+      "text": "Heading level 5",
+      "level": 5
+    },
+    {
+      "id": "h6",
+      "type": "heading",
+      "text": "Heading level 6",
+      "level": 6
+    },
+    {
+      "id": "prose",
+      "type": "paragraph",
+      "text": "A paragraph with **emphasis**, `code` and a [documentation link](https://gateway.example.com/docs)."
+    },
+    {
+      "id": "code",
+      "type": "code",
+      "label": "Example code",
+      "language": "python",
+      "text": "def greet(name):\n    return f\"Hello, {name}\"\n\n# <button> is literal text\n"
+    },
+    {
+      "id": "spinners",
+      "type": "group",
+      "direction": "row",
+      "fields": [
+        {
+          "id": "braille",
+          "type": "spinner",
+          "text": "Braille spinner",
+          "variant": "braille",
+          "is_active": true
+        },
+        {
+          "id": "dots",
+          "type": "spinner",
+          "text": "Dots spinner",
+          "variant": "dots",
+          "is_active": true
+        },
+        {
+          "id": "line",
+          "type": "spinner",
+          "text": "Line spinner",
+          "variant": "line",
+          "is_active": true
+        },
+        {
+          "id": "pulse",
+          "type": "spinner",
+          "text": "Pulse spinner",
+          "variant": "pulse",
+          "is_active": true
+        }
+      ]
+    },
+    {
+      "id": "actions",
+      "type": "group",
+      "direction": "row",
+      "fields": [
+        {
+          "id": "refresh",
+          "type": "button",
+          "label": "Refresh results",
+          "is_disabled": false,
+          "clicks": 0
+        },
+        {
+          "id": "disabled",
+          "type": "button",
+          "label": "Unavailable action",
+          "is_disabled": true,
+          "clicks": 0
+        }
+      ]
+    },
+    {
+      "id": "details",
+      "type": "group",
+      "direction": "column",
+      "label": "Details",
+      "is_collapsible": true,
+      "default_expanded": false,
+      "fields": [
+        {
+          "id": "inside",
+          "type": "paragraph",
+          "text": "Details stay available after completion."
+        },
+        {
+          "id": "a",
+          "type": "log",
+          "label": "Build A logs",
+          "window_lines": 2000,
+          "total_lines": 2,
+          "lines": [
+            "A started",
+            "A finished"
+          ]
+        },
+        {
+          "id": "b",
+          "type": "log",
+          "label": "Build B logs",
+          "window_lines": 2000,
+          "total_lines": 1,
+          "lines": [
+            "B started"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "now",
+      "type": "status",
+      "text": "Waiting for the next job",
+      "tone": "running"
+    },
+    {
+      "id": "progress",
+      "type": "progress",
+      "label": "Progress",
+      "done": 2,
+      "total": 3
+    },
+    {
+      "id": "stats",
+      "type": "stat",
+      "label": "Counts",
+      "stats": [
+        {
+          "id": "ok",
+          "label": "Passed",
+          "value_text": "2",
+          "tone": "ok"
+        }
+      ]
+    },
+    {
+      "id": "steps",
+      "type": "steps",
+      "label": "Steps",
+      "steps": [
+        {
+          "id": "test",
+          "label": "Run tests",
+          "tone": "ok"
+        }
+      ]
+    },
+    {
+      "id": "table",
+      "type": "table",
+      "columns": [
+        {
+          "id": "job",
+          "label": "Job",
+          "align": "left"
+        }
+      ],
+      "rows": [
+        {
+          "id": "test",
+          "cells": [
+            "Tests passed"
+          ],
+          "tone": "ok"
+        }
+      ],
+      "max_rows": 100,
+      "order": "insertion",
+      "is_selectable": true,
+      "selected_ids": []
+    },
+    {
+      "id": "links",
+      "type": "link",
+      "links": [
+        {
+          "id": "docs",
+          "label": "Documentation",
+          "target": "https://gateway.example.com/docs",
+          "target_kind": "url"
+        }
+      ]
+    }
+  ],
+  "title": "Live view components",
+  "source": "vis-fleet",
+  "created_at": 1787037266000,
+  "session_id": "5f0f4d0e-2f6f-4c8e-9a0e-2f9a1c0b7d31",
+  "timeout_ms": 0,
+  "description": "Shared SDK, app and terminal vocabulary"
+}

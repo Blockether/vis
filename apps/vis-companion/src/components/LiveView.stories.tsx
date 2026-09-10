@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent } from 'storybook/test';
 
-import { STORY_LIVE_VIEW } from '../dev/story-data';
+import { STORY_LIVE_VIEW, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
 
 /**
@@ -51,7 +51,7 @@ export const Interrupting: Story = {
  * announcing itself to a screen reader as a picture that can still change.
  */
 export const Settled: Story = {
-  args: { isSettled: true },
+  args: { isSettled: true, onSelect: undefined },
 };
 
 /** The patch could not be applied: the picture stays, the reason is said once. */
@@ -63,8 +63,8 @@ export const Failed: Story = {
 // down and left extra space beneath the last job, outside their row separators.
 export const FinishedJobs: Story = {
   args: {
-    isSettled: true,
     onInterrupt: undefined,
+    isSettled: false,
     view: {
       ...STORY_LIVE_VIEW,
       title: 'Finished jobs',
@@ -131,5 +131,77 @@ export const LabelledJobs: Story = {
       node.getBoundingClientRect().bottom - table.getBoundingClientRect().bottom,
     ).toBeLessThanOrEqual(1);
     await expect(canvas.queryByRole('button', { name: /Select/ })).not.toBeInTheDocument();
+  },
+ };
+
+/** All supported nodes, heading levels and spinner variants from the shared contract fixture. */
+export const AllPrimitives: Story = {
+  args: { view: STORY_LIVE_PRIMITIVES, onActivate: fn() },
+  play: async ({ canvas, args }) => {
+    for (let level = 1; level <= 6; level++) {
+      await expect(canvas.getByRole('heading', { level, name: `Heading level ${level}` })).toBeVisible();
+    }
+    await expect(canvas.getByRole('button', { name: 'Unavailable action' })).toBeDisabled();
+    const minimum = matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44;
+    for (const name of ['Refresh results', 'Details']) {
+      await expect(canvas.getByRole('button', { name }).getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+    }
+    await userEvent.click(canvas.getByRole('button', { name: 'Refresh results' }));
+    await expect(args.onActivate).toHaveBeenCalledWith('refresh');
+    await userEvent.click(canvas.getByRole('button', { name: 'Details' }));
+    await expect(canvas.queryByText('A started')).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole('button', { name: 'Build A logs' }));
+    await expect(canvas.getByText(/A started/)).toBeVisible();
+    await expect(canvas.queryByText('B started')).not.toBeInTheDocument();
+  },
+};
+
+export const AllPrimitivesReceipt: Story = {
+  args: { view: STORY_LIVE_PRIMITIVES, isSettled: true, onActivate: fn(), onSelect: undefined },
+  play: async ({ canvas }) => {
+    await expect(canvas.queryByRole('button', { name: 'Interrupt' })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole('button', { name: 'Select Tests passed' })).not.toBeInTheDocument();
+    await expect(canvas.getByRole('button', { name: 'Refresh results' })).toBeDisabled();
+    await expect(canvas.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'false');
+  },
+};
+
+export const SearchableLog: Story = {
+  args: {
+    view: { id: 'search-fixture', title: 'Build output', seq: 1,
+      nodes: [{ id: 'log', type: 'log', label: 'Build log', default_expanded: true,
+        window_lines: 3, total_lines: 503, lines: ['501 · Linking', '502 · Build finished', '503 · Saved report'] }] },
+    load: async (nodeId, from, limit, query = '') => {
+      const lines = ['ERROR [disk] · Could not write cache', 'Cache directory created', 'error · Retry succeeded'];
+      const matches = lines.flatMap((line, index) => line.toLowerCase().includes(query.toLowerCase()) ? [{ line, number: index + 7 }] : []);
+      const page = matches.slice(from, from + limit);
+      return { node_id: nodeId, from, total: 503, matched: matches.length,
+        lines: page.map(item => item.line), line_numbers: page.map(item => item.number) };
+    },
+  },
+  play: async ({ canvas }) => {
+    const search = canvas.getByRole('searchbox', { name: 'Search Build log' });
+    const minimum = matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44;
+    await expect(search.getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+    await userEvent.type(search, 'error');
+    await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
+    await expect(await canvas.findByText(/2 matches.*503 recorded lines/)).toBeVisible();
+    await expect(canvas.getByRole('region', { name: 'Build log output' })).toHaveTextContent('7: ERROR [disk]');
+    await userEvent.click(canvas.getByRole('button', { name: 'Clear search' }));
+    await expect(canvas.getByText(/501 · Linking/)).toBeVisible();
+    await userEvent.type(search, 'missing');
+    await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
+    await expect(await canvas.findByText('No matching lines.')).toBeVisible();
+  },
+};
+
+export const SearchableLogReceipt: Story = {
+  args: { ...SearchableLog.args, isSettled: true },
+  play: async ({ canvas }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Build log' }));
+    await userEvent.type(canvas.getByRole('searchbox'), '[[DISK]');
+    await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
+    await expect(await canvas.findByText(/1 matches.*503 recorded lines/)).toBeVisible();
+    await expect(canvas.queryByRole('button', { name: 'Interrupt' })).not.toBeInTheDocument();
   },
 };

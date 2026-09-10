@@ -740,6 +740,14 @@
                  (is (= 5 (get body "from")))
                  (is (= 20 (get body "total")))
                  (is (= ["line 6" "line 7" "line 8"] (get body "lines")))))
+             (testing "search pages use match offsets and retain original line numbers"
+               (let [body (json-body ((rv 'live-view-log-handler)
+                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}
+                                        :query-params {"query" "LINE 1" "from" "1" "limit" "2"}}))]
+                 (is (= 11 (get body "matched")))
+                 (is (= 20 (get body "total")))
+                 (is (= [10 11] (get body "line_numbers")))
+                 (is (= ["line 10" "line 11"] (get body "lines")))))
              (testing "a view id belonging to another session is not stoppable from here"
                (is (= 404
                       (:status
@@ -761,6 +769,13 @@
                                        {:path-params {:sid sid :view-id view-id :node-id "tail"}}))]
                  (is (= 20 (get body "total")))
                  (is (= 20 (count (get body "lines"))))))
+             (testing "a closed record remains searchable"
+               (let [body (json-body ((rv 'live-view-log-handler)
+                                       {:path-params {:sid sid :view-id view-id :node-id "tail"}
+                                        :query-params {"query" "LINE 20"}}))]
+                 (is (= ["line 20"] (get body "lines")))
+                 (is (= [20] (get body "line_numbers")))
+                 (is (= 1 (get body "matched")))))
              (finally (hi/close-live! view-id)))))))
 
 ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: tapping a CI job
@@ -993,14 +1008,17 @@
       (testing "the two minted values are still there, because the app keys on them"
         (is (some? (parse-uuid (get fixture "id"))))
         (is (pos-int? (get fixture "created_at"))))
-      (testing "and it holds one node of every kind the engine can send, wherever it stands"
-        (is (= (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)
-               (set (map #(get % "type")
-                         (mapcat #(tree-seq map?
-                                            (fn [node]
-                                              (get node "fields"))
-                                            %)
-                                 (get fixture "nodes"))))))))))
+      (testing "the engine and shared presentation fixtures cover every node type"
+        (let [presentation (wire/parse-json
+                             (slurp (io/resource "vis-contract/fixtures/live-primitives.json")))]
+          (is (= (conj (set (keys hi-spec/live-node-types)) hi-spec/group-type-name)
+                 (set (map #(get % "type")
+                           (mapcat #(tree-seq map?
+                                              (fn [node]
+                                                (get node "fields"))
+                                              %)
+                                   (concat (get fixture "nodes")
+                                           (get presentation "nodes"))))))))))))
 
 (deftest the-app-activity-fixture-is-the-host-projection-test
   (let [state
@@ -1041,3 +1059,40 @@
     (when fixture
       ;; Activity does not know its owner: the fixture IS the whole snapshot.
       (is (= (wire/parse-json (wire/json-str (activity/presentation state))) fixture)))))
+
+(deftest live-buttons-use-the-shared-http-action-test
+  (gw-hi/install!)
+  (recorded
+    (fn []
+      (let [sid
+            (str (random-uuid))
+
+            view
+            (hi/open-live! {:title "Review"
+                            :session-id sid
+                            :nodes
+                            [{:id "go" :type :button :label "Continue"}
+                             {:id "off" :type :button :label "Unavailable" :is-disabled true}]})
+
+            id
+            (:id view)]
+
+        (try (is (= 404
+                    (:status (view-action-response (str (random-uuid))
+                                                   id
+                                                   {:action "activate" :node_id "go"}))))
+             (is (= 0 (get-in (gw-hi/live-view-of sid id) [:nodes 0 :clicks])))
+             (let [response (view-action-response sid id {:action "activate" :node_id "go"})]
+               (is (= 200 (:status response)))
+               (is (true? (get (json-body response) "is_accepted")))
+               (is (= 1 (get-in (gw-hi/live-view-of sid id) [:nodes 0 :clicks]))))
+             (let [response (view-action-response sid id {:action "activate" :node_id "off"})]
+               (is (= 200 (:status response)))
+               (is (false? (get (json-body response) "is_accepted")))
+               (is (= 0 (get-in (gw-hi/live-view-of sid id) [:nodes 1 :clicks]))))
+             (is (= 400
+                    (:status
+                      (view-action-response sid id {:action "activate" :node_id "missing"}))))
+             (hi/close-live! id)
+             (is (= 404 (:status (view-action-response sid id {:action "activate" :node_id "go"}))))
+             (finally (hi/close-live! id)))))))

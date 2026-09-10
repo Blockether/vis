@@ -1570,3 +1570,138 @@ isolated gateway from the seeded extension workspace, with lifecycle tests.
 Updated #187 to require full budget resets. No live gateway was restarted and no
 historical deployment was replayed. Native-image build/tests were not run; the
 verified boundary uses the source JVM gateway and real CPython workers.
+
+# Live View presentation primitives — issue #189
+
+Complete one semantic component vocabulary across the SDK, Companion and TUI.
+
+## Context
+
+`view.json` and its schema define portable nodes. The engine parses and materializes
+these nodes; `extension.py`, Companion `LiveView.tsx` and TUI `live_view.clj` expose
+and render them. The #189 regression reproduced logs painting immediately: a bounded
+scroll area did not provide a disclosure. Existing links worked, but live paragraphs,
+heading levels, code, spinner variants and buttons were absent.
+Reject arbitrary HTML, serialized callbacks, separate client vocabularies and hiding
+logs by deleting their retained lines. Preserve unrelated concurrent edits.
+
+## 1. Contract and SDK
+- Rationale: all surfaces must accept the same nodes and updates.
+- Data: canonical JSON/schema, parser/materializers, Python and Clojure builders.
+- Acceptance criteria: paragraphs, headings 1–6, literal code, four spinner variants,
+  buttons with observable activation counts, collapsible groups and log defaults;
+  strict validation, patch/replay and finished-picture coverage.
+- Unknowns: resolve only concrete transport and validation gaps found by tests.
+
+## 2. Companion and TUI
+- Rationale: declared elements must render and work on both surfaces.
+- Data: production renderers, shared controls, terminal plans and hit regions.
+- Acceptance criteria: independent accessible disclosures preserve choices during
+  updates, completed views start collapsed, retained logs remain readable, spinners
+  stop in receipts and buttons are disabled there; keyboard and pointer support.
+- Unknowns: browser/native terminal review availability.
+
+## 3. Verify and document
+- Rationale: unit tests alone do not establish cross-client readiness.
+- Data: affected contract, engine, SDK and client suites; Storybook and terminal fixtures.
+- Acceptance criteria: tests, format/lint/reflection, app build and visual interactions
+  pass; document the API and report unverified platform boundaries accurately.
+- Unknowns: unrelated concurrent changes or external test infrastructure failures.
+
+## Plan state
+
+Phases 1–3 complete. Regression #189 was reproduced before the fix; independent
+disclosures, retained output and finished receipts have regression coverage. The
+shared fixture exercises every node across the SDK, engine, Companion and TUI.
+
+Cross-validation reproduced and fixed:
+- Reserved JavaScript property names accidentally expanding log disclosures.
+- Missing initial history for logs nested in declared or dynamically added groups.
+- Human receipts losing group hierarchy and log lines through model-result budgeting.
+- Outside-host SDK defaults and validation differing from the engine, and failed
+  multi-operation patches partially changing the stored view.
+- Archived table snapshot browsing being disabled along with producer controls;
+  tables without recorded snapshots no longer offer non-functional selection.
+
+Initial verification (phases 1–3):
+- Engine, gateway and embedded Python boundary: 258 tests passed.
+- TUI affected suites: 149 tests passed; production terminal frames reviewed at
+  40, 80 and 120 columns.
+- Full SDK suite: 439 tests passed, 13 platform/integration tests skipped.
+- Companion Live View and saved-artifact suites: 87 tests passed. Two shared-UI
+  failures were observed in SessionScreen voice copy and MachineSettings Input
+  ownership; phase 5 records their fixes. No Live View ownership violations remained.
+- Clojure formatting, lint and reflection checks and Python formatting/lint passed.
+- Companion lint and production build passed. All 222 Storybook stories passed;
+  contrast checks passed across all ten themes.
+- Browser review covered phone, tablet and desktop widths, light/dark themes,
+  independent folds, active controls and disabled producer controls in receipts.
+  Visible controls measure 44px at phone width and 28px with a desktop pointer.
+- API documentation, executable example, relative links and diff checks passed.
+- Ponytail review found one optional 18-to-7-line simplification of the JSON
+  envelope in `extension.py`'s `LiveRecorder.activate`; no review-only refactor
+  was applied. No new dependencies were introduced.
+
+Subsequent log search and shared-UI verification are recorded below.
+
+## 4. Search retained logs
+- Rationale: operators need to find output beyond the current log window, during
+  a run and after it has finished.
+- Data: streamed record reader and existing log route; Companion log controls;
+  TUI log search using existing input, list and text dialogs.
+- Acceptance criteria: literal case-insensitive search, bounded result pages,
+  original line numbers, counts, clear/retry/refresh behavior and nested logs;
+  no producer actions from receipts. Test live appends, empty results, stale
+  responses and record resets. Verify both clients and production rendering.
+- Unknowns: resolve concrete paging or lifecycle defects through regression tests.
+- State: complete. Search is read-only in both live views and receipts. Results are
+  snapshots; refresh reads new output. The gateway returns bounded match pages and
+  original line numbers without retaining the whole record in memory.
+
+Search verification:
+- Engine/view/gateway/embedded-host tests: 260 passed, including 2,500 retained
+  lines beyond the hot window, literal Unicode search, nested logs and resets.
+- TUI: 155 affected tests passed. Real terminal input, results, full-line, empty,
+  error and cancellation states are covered at 40/80/120 columns.
+- Companion: 135 affected tests passed; lint and production build passed.
+  Storybook: 224 stories passed; all 224 across 10 themes passed contrast checks.
+- Formatting and Clojure lint/reflection passed for changed files. The SDK was
+  unchanged by search; its prior 439 passing tests and 13 skips remain applicable.
+- Spel verified production stories against the standalone production-component
+  artifact: touch phone/tablet targets are 44px; pointer targets are 28px. Search,
+  clear, empty results, receipt search and original line numbers work without
+  horizontal overflow. The artifact replaces history at the existing loader only.
+- The production TUI HTML loop accepted query entry, result navigation and full-line
+  reading. Exported static HTML was checked at phone/tablet/desktop widths; terminal
+  grid assertions and a PNG capture verify the same result state.
+- Two shared-UI failures were reproduced again and resolved in phase 5.
+- Review-only simplification: the Companion loader adapter can pass its optional
+  query unconditionally instead of branching on undefined. Not applied; no new
+  dependency or search index was introduced.
+
+## 5. Resolve shared-UI verification failures
+- Rationale: finish the two reported failures before the requested commit and push.
+- Data: the shared UI regression suite, StringSetting and its production stories.
+- Acceptance criteria: preserve configured agent-name copy, use the shared Input
+  density, retain touch/pointer sizing and pass affected tests, lint, build and
+  Storybook checks without changing concurrent work.
+- Unknowns: none remain for these fixes. Native mobile packages and a native engine
+  image remain untested.
+- State: complete. The stale voice-status assertion now expects the configured
+  name with the Vis fallback. StringSetting uses the shared comfortable density
+  rather than call-site paint classes; its story checks minimum input height.
+
+Follow-up verification:
+- Reproduction: 244 shared-UI tests ran, with the two reported failures.
+- After the fixes: 390 affected Companion tests passed; lint and production build
+  passed. All 224 Storybook stories passed.
+- The first contrast scan had six render timeouts. An isolated Storybook build and
+  the unchanged scanner passed all 224 stories across all ten themes.
+- Spel confirmed 28px pointer and 44px touch input heights at desktop, phone and
+  tablet widths, with no horizontal overflow. Cancel and Enter-to-save worked;
+  production screenshots were reviewed.
+- Earlier engine, gateway, SDK and TUI results remain applicable to their unchanged
+  files. Documentation and scoped diff checks passed.
+
+The user explicitly requested the scoped commit and push after verification.
+Release, deployment and live service restarts remain outside this task.

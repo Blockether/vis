@@ -4198,9 +4198,10 @@ export class GatewayClient {
     nodeId: string,
     from: number,
     limit: number,
+    search = "",
     signal?: AbortSignal,
   ): Promise<LiveLogPage> {
-    const query = `?from=${encodeURIComponent(from)}&limit=${encodeURIComponent(limit)}`;
+    const query = `?from=${encodeURIComponent(from)}&limit=${encodeURIComponent(limit)}&query=${encodeURIComponent(search)}`;
     return this.request<LiveLogPage>(
       "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/log/${encodeURIComponent(nodeId)}${query}`,

@@ -827,7 +827,7 @@
    the size of the RECORD is counted, never claimed. `direction` and `fields`
    belong to a layout GROUP and are refused here BY NAME, so a `status` written
    with children hears about them instead of having them dropped."
-  (wire-keys (reduce disj view-spec/live-node-keys #{:total-lines :direction :fields})))
+  (wire-keys (reduce disj view-spec/live-node-keys #{:total-lines :clicks :direction :fields})))
 
 (def ^:private live-group-decl-keys
   "Every key a live layout GROUP spec may write: its own vocabulary, so `lines` on
@@ -1028,16 +1028,25 @@
 
         (when-not (and (sequential? children) (seq children))
           (group-fail! "a group needs a non-empty :fields — a row arranging nothing is a typo"))
-        (checked-live-node group-fail!
-                           (cond-> {:id id
-                                    :type view-spec/group-type
-                                    :direction (live-term group-fail!
-                                                          ":direction"
-                                                          view-spec/group-directions
-                                                          (or (pick* node :direction) "column"))
-                                    :fields (mapv #(live-node group-fail! %) children)}
-                             label
-                             (assoc :label label))))
+        (checked-live-node
+          group-fail!
+          (cond-> {:id id
+                   :type view-spec/group-type
+                   :direction (live-term group-fail!
+                                         ":direction"
+                                         view-spec/group-directions
+                                         (or (pick* node :direction) "column"))
+                   :fields (mapv #(live-node group-fail! %) children)}
+            label
+            (assoc :label label)
+
+            (some? (pick* node :is-collapsible))
+            (assoc :is-collapsible
+              (bool-value group-fail! ":is-collapsible" (pick* node :is-collapsible) false))
+
+            (some? (pick* node :default-expanded))
+            (assoc :default-expanded
+              (bool-value group-fail! ":default-expanded" (pick* node :default-expanded) false)))))
       (let [id (or (trimmed (pick* node :id))
                    (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
             node-fail! (fn [message]
@@ -1062,6 +1071,32 @@
               (trimmed (pick* node :detail))
               (assoc :detail (trimmed (pick* node :detail))))
 
+            (:paragraph :heading :code)
+            (cond-> (assoc base
+                      :text (if (= type :code)
+                              (let [text (pick* node :text)]
+                                (if (string? text) text (node-fail! "code :text must be a string")))
+                              (live-text node-fail! ":text" (pick* node :text))))
+              (= type :heading)
+              (assoc :level (live-long node-fail! ":level" (or (pick* node :level) 2)))
+
+              (and (= type :code) (some? (pick* node :language)))
+              (assoc :language (live-text node-fail! ":language" (pick* node :language))))
+
+            :spinner
+            (assoc base
+              :text (live-text node-fail! ":text" (or (pick* node :text) "Working"))
+              :variant (live-term node-fail!
+                                  ":variant"
+                                  view-spec/spinner-variants
+                                  (or (pick* node :variant) "braille"))
+              :is-active (bool-value node-fail! ":is-active" (pick* node :is-active) true))
+
+            :button
+            (assoc base
+              :label (live-text node-fail! "button :label" (pick* node :label))
+              :is-disabled (bool-value node-fail! ":is-disabled" (pick* node :is-disabled) false))
+
             :progress
             (cond-> base
               (some? (pick* node :value))
@@ -1080,13 +1115,16 @@
             (assoc base :steps (items :steps))
 
             :log
-            (assoc base
-              :lines (if-some [lines (pick* node :lines)]
-                       (text-items node-fail! ":lines" lines)
-                       [])
-              :window-lines (if-some [window (pick* node :window-lines)]
-                              (live-long node-fail! ":window-lines" window)
-                              (long (:window-lines view-spec/log-defaults))))
+            (cond-> (assoc base
+                      :lines (if-some [lines (pick* node :lines)]
+                               (text-items node-fail! ":lines" lines)
+                               [])
+                      :window-lines (if-some [window (pick* node :window-lines)]
+                                      (live-long node-fail! ":window-lines" window)
+                                      (long (:window-lines view-spec/log-defaults))))
+              (some? (pick* node :default-expanded))
+              (assoc :default-expanded
+                (bool-value node-fail! ":default-expanded" (pick* node :default-expanded) false)))
 
             :table
             (cond-> (assoc base
@@ -1125,9 +1163,10 @@
                    (when (map? node)
                      (if (group-node? node)
                        (live-nodes? (pick* node :fields))
-                       (contains? view-spec/live-node-types
-                                  (some-> (trimmed (pick* node :type))
-                                          str/lower-case)))))
+                       (and (some? (pick* node :id))
+                            (contains? view-spec/live-node-types
+                                       (some-> (trimmed (pick* node :type))
+                                               str/lower-case))))))
                  nodes)))
 
 (defn normalize-live-view
@@ -1200,7 +1239,19 @@
    :after (fn [fail! value]
             (live-text fail! ":after" value))
    :text (fn [fail! value]
-           (live-text fail! ":text" value))
+           (if (string? value) value (fail! ":text must be a string")))
+   :level (fn [fail! value]
+            (live-long fail! ":level" value))
+   :language (fn [fail! value]
+               (live-text fail! ":language" value))
+   :variant (fn [fail! value]
+              (live-term fail! ":variant" view-spec/spinner-variants value))
+   :is-active (fn [fail! value]
+                (bool-value fail! ":is-active" value true))
+   :is-disabled (fn [fail! value]
+                  (bool-value fail! ":is-disabled" value false))
+   :clicks (fn [fail! value]
+             (live-long fail! ":clicks" value))
    :detail (fn [fail! value]
              (live-text fail! ":detail" value))
    :label (fn [fail! value]
@@ -1622,6 +1673,7 @@
   {:type (assoc view-spec/live-node-types view-spec/group-type-name view-spec/group-type)
    :tone view-spec/live-tones
    :op view-spec/live-ops
+   :variant view-spec/spinner-variants
    :order view-spec/live-orders
    :dir view-spec/live-sort-dirs
    :align view-spec/live-aligns
@@ -2066,7 +2118,9 @@
                ;; view open and nameable rather than stranding whoever is holding it;
                ;; REGISTERED after, inside the branch that won the close, so a second
                ;; close files no second artifact.
-               artifact (live-artifact @cell verdict (:file entry))
+               surface-verdict (assoc (dissoc verdict :elided)
+                                 :view (select-keys @cell view-spec/live-picture-keys))
+               artifact (live-artifact @cell surface-verdict (:file entry))
                [old _] (swap-vals! pending dissoc view-id)]
 
            (when (contains? old view-id)
@@ -2084,14 +2138,16 @@
                                       (or mpl-capture/*attachment-sink* (:attachment-sink entry))]
                               (mpl-capture/record-attachment! attachment))))
                    artifact-id (when filed? (:id artifact))
-                   artifact-result (cond-> verdict
+                   artifact-result (cond-> surface-verdict
                                      artifact-id
                                      (assoc :artifact-id artifact-id))
-                   model-result (or compact-result artifact-result)]
+                   model-result (or compact-result
+                                    (cond-> verdict
+                                      artifact-id
+                                      (assoc :artifact-id artifact-id)))]
 
-               ;; The trailer and event carry the complete verdict for durable and
-               ;; human-facing readers. Only the blocked extension receives the compact
-               ;; model result when it explicitly supplied one.
+               ;; Human readers retain the layout and full hot windows. The producer
+               ;; receives the budgeted model picture, or its explicit compact result.
                (when-let [release (:wall-hold entry)]
                  (release))
                (sink/close! (:file entry)
@@ -2334,6 +2390,9 @@
       :cancel
       {:action action}
 
+      :activate
+      {:action action :node-id (live-text fail! "activate node_id" (pick* raw :node-id))}
+
       :select
       (let [node-id
             (live-text fail! "select node_id" (pick* raw :node-id))
@@ -2356,7 +2415,7 @@
 (defn action!
   "Apply one operator action to open View `view-id` through the shared action seam.
 
-   `submit` and `cancel` are input policy; `select` and `interrupt` are live policy.
+   `submit` and `cancel` are input policy; `select`, `activate` and `interrupt` are live policy.
    The action map is closed and accepts snake_case string keys or kebab keywords.
    Every outcome carries `:action`, `:view-id`, and `:is-accepted`; malformed or
    kind-incompatible actions are refused before they can mutate the View."
@@ -2385,7 +2444,7 @@
               (:submit :cancel)
               (= :input kind)
 
-              (:select :interrupt)
+              (:select :activate :interrupt)
               (= :live kind))]
 
         (when-not supported? (unsupported-view-action! view-id kind action))
@@ -2402,6 +2461,30 @@
               (cond-> (assoc base :is-accepted accepted?)
                 (not accepted?)
                 (assoc :reason "unknown"))))
+
+          :activate
+          (let [cell (:view entry)]
+            (locking cell
+              (if-not (identical? entry (get @pending view-id))
+                (assoc base
+                  :is-accepted false
+                  :reason "unknown")
+                (let [node (first (filter #(= node-id (:id %))
+                                          (tree-seq #(seq (:fields %))
+                                                    :fields
+                                                    {:fields (:nodes @cell)})))]
+                  (when-not (= :button (:type node))
+                    (invalid-view-action! view-id "activate requires a button node"))
+                  (if (:is-disabled node)
+                    (assoc base
+                      :is-accepted false
+                      :reason "disabled")
+                    (do (patch-live!
+                          view-id
+                          [{:op :set :node-id node-id :clicks (inc (long (or (:clicks node) 0)))}])
+                        (assoc base
+                          :is-accepted true
+                          :node-id node-id)))))))
 
           :select
           (let [patched

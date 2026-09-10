@@ -21,7 +21,14 @@ const meta = {
 } satisfies Meta<typeof StringSetting>;
 export default meta;
 type Story = StoryObj<typeof meta>;
-export const Default: Story = {};
+export const Default: Story = {
+  play: async ({ canvasElement }) => {
+    const field = within(canvasElement).getByRole("textbox", { name: "Agent name" });
+    const minimum = matchMedia("(min-width: 640px) and (pointer: fine)").matches ? 28 : 44;
+    await expect(field.getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+    await expect(field).toHaveValue("Ada");
+  },
+};
 export const Saving: Story = { args: { busy: true } };
 export const Rename: Story = {
   play: async ({ canvasElement }) => {

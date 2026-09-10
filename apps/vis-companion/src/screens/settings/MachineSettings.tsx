@@ -106,7 +106,7 @@ export function StringSetting({ toggle, busy, onSave }: {
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Input aria-label={toggle.label} value={draft} maxLength={toggle.max_length}
-          disabled={busy} required className="flex-1 min-h-11 sm:min-h-11 mouse:min-h-7 sm:mouse:min-h-8"
+          disabled={busy} required density="comfortable" className="flex-1"
           onChange={(event) => setDraft(event.target.value)} />
         <Button type="submit" density="panel" disabled={busy || !changed || !draft.trim()}
           aria-busy={busy}>{busy ? "Saving…" : "Save"}</Button>

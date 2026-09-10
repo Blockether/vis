@@ -1,6 +1,6 @@
 # Live views
 
-A live view displays status, progress, tables or logs while an extension runs.
+A live view displays text, headings, code, activity indicators, buttons, progress, tables and logs while an extension runs.
 `vis.live(...)` opens the view and returns a handle for updates. The user can
 watch it in the terminal or Companion app and stop it at any time.
 
@@ -19,6 +19,7 @@ Vis terminal renderer. Select an image to view it full size.
 
 [![Vis live view showing CI run 42, one of three jobs complete and a job status table](assets/screenshots/live-running.png)](assets/screenshots/live-running.png)
 
+Press F3 for keyboard controls: expand a disclosure, select a row or activate a button.
 Press Escape to open the stop confirmation. You can add a note for the agent
 before stopping the view; cancelling the confirmation keeps it running.
 
@@ -107,9 +108,15 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
-| `vis.output(id, label=…)` | streamed lines | `.write(*lines)`, `.clear()` |
+| `vis.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines)`, `.clear()` |
 | `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, branch=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
+| `vis.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
+| `vis.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
+| `vis.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
+| `vis.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
+| `vis.button(id, label, is_disabled=False)` | an operator action | `.set(label=, is_disabled=)` |
+| `vis.disclosure(id, label, *nodes, default_expanded=False)` | a collapsible column | children update by their own ids |
 
 `vis.output(...)` builds a `log` node; it is named `output` so it never shadows
 `vis.log`, the engine log line.
@@ -117,7 +124,67 @@ A view declares its nodes once, each with an id, and addresses them by id.
 Keyed updates insert new ids or update existing ones without changing their
 position. Log lines have no ids and are appended. `window_lines` limits the
 recent lines retained by a client; `.clear()` removes both displayed and
-recorded lines.
+recorded lines. Every log starts collapsed independently. Expanding one never
+opens another; patches preserve the reader's choice. `default_expanded=True`
+changes only the initial active state. Completed receipts start collapsed again,
+and their retained output remains available when expanded.
+
+Expanded logs offer **Search** in Companion and **Search log** through the TUI's
+F3 controls or pointer. Search is a literal substring, case-insensitive, across
+the retained record, including lines outside `window_lines` and closed views.
+Results include original one-based line numbers and are paged in groups of 200.
+They are a snapshot: **Refresh results** includes new output. Clearing a log
+resets its searchable history. Search never sends an action to the producer.
+In Companion, **Clear search** or Escape in the search field restores normal output; `/` while the
+output is focused moves focus to search. Without a record loader, the panel
+explicitly limits search to loaded lines. In the TUI, an empty query browses the
+record, Enter opens a full wrapped line, and Escape cancels an in-flight read.
+
+The existing `GET /v1/sessions/:sid/views/live/:view-id/log/:node-id` route accepts
+`query`, `from` and `limit`. `from` is a zero-based match offset; an empty query
+matches all lines. The response includes `lines`, `line_numbers`, `matched` and
+`total`. The gateway caps pages at the default log-window size; it streams the
+record and retains only the requested result page.
+
+Spinner variants are `braille`, `dots`, `line` and `pulse`. Set `is_active=False`
+to stop one without removing its text. Completed receipts never animate, and the
+app respects reduced-motion preferences.
+
+Buttons are real actions, not links or serialized callbacks. An accepted press
+increments that node's `clicks` in shared state and wakes `view.sleep(...)`.
+Read it with `view.state()`, then let the producer decide what to do. Disabled
+buttons and completed receipts reject activation. Treat an unconfirmed network
+request as uncertain: check state before retrying a consequential action.
+
+```python
+with vis.live("Review", [
+    vis.heading("title", "Build review", level=1),
+    vis.paragraph("intro", "Read the output before continuing."),
+    vis.code("example", "print('ready')", language="python"),
+    vis.spinner("waiting", "Waiting for review", variant="dots"),
+    vis.disclosure("details", "Build details",
+                   vis.output("tests", label="Test output"),
+                   vis.output("build", label="Build output")),
+    vis.button("continue", "Continue"),
+]) as view:
+    view["tests"].write("Tests passed")
+    while not view.is_interrupted:
+        state = view.state()
+        if not state:
+            break
+        pressed = next(n for n in state["nodes"] if n["id"] == "continue")
+        if pressed["clicks"]:
+            view["continue"].set(is_disabled=True)
+            view["waiting"].set("Review accepted", is_active=False)
+            break
+        view.sleep(60)
+```
+
+With one argument, `vis.heading(text)` and `vis.paragraph(text)` remain form
+decorations. Two positional arguments declare addressed live nodes. The Clojure
+builders in `com.blockether.vis.view` expose the same primitives, using kebab-case
+option keys; `disclosure` takes a vector of children and optional options, and
+`log` is the Clojure name of Python's `output`.
 
 Tables support `order="insertion"` (default), `"newest-first"` or
 `{"by": "duration", "dir": "desc"}`. Rows sharing a `branch="Release apps"`
@@ -139,7 +206,7 @@ children.
 
 Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_` and
 links. Status text wraps and is justified within its column.
-Log lines remain verbatim. There is no arbitrary Markdown node; each node type
+Log lines and code blocks remain verbatim and are never executed. There is no arbitrary Markdown node; each node type
 has its own Markdown output.
 
 ## Updating
@@ -179,7 +246,9 @@ button opens the same input.
 
 `view.close(reason=…, summary=…, error=…, artifact_id=…, selection_snapshots=…,
 model_result=…)` ends the view and returns `is_completed`, `reason`,
-`is_from_human`, `note`, the final view state and `summary`.
+`is_from_human`, `note`, the final view state and `summary`. In Vis, the
+model's returned view is budgeted. Clients and saved artifacts preserve the
+group hierarchy and the current log window.
 
 - `model_result` replaces the model's result with a string. Clients and the
   saved artifact still receive the full view state. A concurrent user stop

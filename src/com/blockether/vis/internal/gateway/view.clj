@@ -209,19 +209,15 @@
   (:window-lines view-spec/log-defaults))
 
 (defn live-log-range
-  "`limit` lines of log node `node-id` in view `view-id` of session `sid`, from
-   0-based `from`, read from the view's RECORD. Both may be nil: the page policy
-   lives HERE, so the REST route and any other caller page the same way.
-
-   The picture carries only the node's window, so this is how a phone scrolls
-   back through output whose patches it never received. It reads the file, not
-   the registry: a view that has already closed still answers, which is what
-   makes a finished run's log readable at all."
-  [sid view-id node-id from limit]
+  "Read one bounded page of a live or closed log. `query` is a case-insensitive
+   literal substring; `from` counts matches, not source lines. Nil paging values
+   use the log-window policy, which is also the maximum response size."
+  [sid view-id node-id from limit & [query]]
   (sink/log-range (sink/view-file (str sid) (str view-id))
                   node-id
                   (max 0 (long (or from 0)))
-                  (min (long live-log-page) (max 1 (long (or limit live-log-page))))))
+                  (min (long live-log-page) (max 1 (long (or limit live-log-page))))
+                  query))
 
 (defn on-channel-event!
   "Project one canonical `:app` View event into the session journal."

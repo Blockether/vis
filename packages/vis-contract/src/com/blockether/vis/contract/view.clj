@@ -7,63 +7,91 @@
 (set! *warn-on-reflection* true)
 
 (def ^:private source (delay (document/load! "view")))
+
 (def ^:private document (delay (wire/->engine @source)))
 
 (defn- keyword-map [names] (into {} (map (juxt identity keyword)) names))
+
 (defn- keyword-set [names] (set (map keyword names)))
 
-
 (def version "View contract document version." (:version @document))
+
 (def view-kinds "Wire View name to lifecycle kind." (keyword-map (:kinds @document)))
+
 (def view-actions "Wire operator action to internal action." (keyword-map (:actions @document)))
+
 (def field-types
   "Wire answer-field name to internal field type."
   (keyword-map (:field-types @document)))
+
 (def text-types "Answer field types carrying text." (keyword-set (:text-types @document)))
+
 (def choice-types "Answer field types carrying choices." (keyword-set (:choice-types @document)))
+
 (def secret-types
   "Answer field types replaced by vault handles."
   (keyword-set (:secret-types @document)))
+
 (def decor-types
   "Wire decoration name to internal decoration type."
   (keyword-map (:decor-types @document)))
+
 (def group-type-name "Wire name of a layout group." (:group-type @document))
+
 (def group-type "Internal type of a layout group." (keyword group-type-name))
+
 (def group-directions
   "Wire layout direction to internal direction."
   (keyword-map (:group-directions @document)))
+
 (def otp-defaults "Default and maximum one-time-code lengths." (:otp @document))
+
 (def range-defaults "Default numeric range." (:range @document))
+
 (def secret-handle-prefix
   "Prefix of an opaque secret answer handle."
   (:secret-handle-prefix @document))
+
 (def live-node-types
   "Wire semantic live-node name to internal node type."
   (keyword-map (get-in @document [:live :node-types])))
+
 (def link-targets
   "Wire link target name to internal target type."
   (keyword-map (get-in @document [:live :link-targets])))
+
 (def live-ops
   "Wire live patch operation to internal operation."
   (keyword-map (get-in @document [:live :ops])))
+
 (def live-tones "Wire live tone to internal tone." (keyword-map (get-in @document [:live :tones])))
+
 (def live-orders
   "Wire table order to internal order."
   (keyword-map (get-in @document [:live :orders])))
+
 (def live-aligns
   "Wire table alignment to internal alignment."
   (keyword-map (get-in @document [:live :aligns])))
+
 (def live-sort-dirs
   "Wire sort direction to internal direction."
   (keyword-map (get-in @document [:live :sort-dirs])))
+
 (def live-reasons
   "Wire settlement reason to internal reason."
   (keyword-map (get-in @document [:live :reasons])))
+
 (def log-defaults "Live log paint-window and patch bounds." (get-in @document [:live :log]))
+
 (def table-defaults "Live table collection and patch bounds." (get-in @document [:live :table]))
+
 (def stat-defaults "Live stat collection bound." {:max-stats (get-in @document [:live :max-stats])})
+
 (def step-defaults "Live step collection bound." {:max-steps (get-in @document [:live :max-steps])})
+
 (def link-defaults "Live link collection bound." {:max-links (get-in @document [:live :max-links])})
+
 (def view-defaults "Live node collection bound." {:max-nodes (get-in @document [:live :max-nodes])})
 
 (def vocabulary
@@ -82,6 +110,13 @@
    :secret-handle-prefix (:secret-handle-prefix @document)
    :live (:live @document)})
 
+(def spinner-frames
+  "Ten 100ms text frames per spinner variant, shared with Companion."
+  (get-in @document [:live :spinner-frames]))
+
+(def spinner-variants
+  "Wire spinner variant to internal keyword."
+  (keyword-map (map name (keys spinner-frames))))
 
 ;; The executable View shapes
 
@@ -91,6 +126,7 @@
   {:submit #{:action :values}
    :cancel #{:action}
    :select #{:action :node-id :item-ids}
+   :activate #{:action :node-id}
    :interrupt #{:action :note}})
 
 (def ^:private decor-node-types (set (vals decor-types)))
@@ -130,10 +166,15 @@
   #{:id :seq :created-at})
 
 (def live-column-keys "Every key one declared table column may carry." #{:id :label :align})
+
 (def live-row-keys "Every key one table row may carry." #{:id :cells :tone :branch})
+
 (def live-stat-keys "Every key one stat may carry." #{:id :label :value-text :tone})
+
 (def live-step-keys "Every key one step may carry." #{:id :label :tone :detail :value})
+
 (def live-link-keys "Every key one link may carry." #{:id :label :target-kind :target :tone})
+
 (def live-sorted-keys "Every key a `{:by …}` table order may carry." #{:by :dir})
 
 (def live-group-keys
@@ -142,12 +183,13 @@
    whether a human is answering it or watching it.
 
    No `:name`: a group of a VIEW holds no answer, so there is nothing to key."
-  #{:id :type :label :direction :fields})
+  #{:id :type :label :direction :fields :is-collapsible :default-expanded})
 
 (def live-node-keys
   "Allowed keys for a live node."
   #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
-    :columns :rows :max-rows :order :is-selectable :selected-ids :links :total-lines})
+    :columns :rows :max-rows :order :is-selectable :selected-ids :links :total-lines
+    :default-expanded :level :language :variant :is-active :is-disabled :clicks})
 
 (def live-view-keys
   "Every key a live view may carry, engine stamps included."
@@ -159,10 +201,11 @@
   #{:title :description :nodes})
 
 (def live-elided-keys "Keys in an elision record." #{:node-id :items})
+
 (def live-op-key-sets
   "Allowed keys for each patch operation."
   {:set #{:op :node-id :text :detail :tone :label :value :done :total :stats :steps :selected-ids
-          :links}
+          :links :level :language :variant :is-active :is-disabled :clicks}
    :append #{:op :node-id :lines :rows :stats :steps :links}
    :remove #{:op :node-id :item-ids}
    :clear #{:op :node-id}
@@ -234,7 +277,9 @@
   #{:id :name :type :label :description :placeholder :is-required :is-secret :default :validate})
 
 (def text-keys "Every key a typed field may carry." (into value-keys [:min-length :max-length]))
+
 (def choice-keys "Every key a field answered from `:options` may carry." (conj value-keys :options))
+
 (def range-keys
   "Every key a field answered on a track may carry."
   (into value-keys [:min :max :step]))
@@ -267,7 +312,6 @@
   #{:id :title :description :source :fields :submit-label :cancel-label :is-cancellable :timeout-ms
     :channel-ids :session-id})
 
-
 ;; Semantic constraints that JSON Schema cannot express.
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
@@ -279,15 +323,21 @@
           (str/replace "_" "-")))
 
 (defn- one-identity? [{:keys [id name]}] (= id name))
+
 (defn- secret-marked? [{:keys [type is-secret]}] (= is-secret (contains? secret-types type)))
+
 (defn- ordered-lengths?
   [{:keys [min-length max-length]}]
   (or (nil? min-length) (nil? max-length) (<= (long min-length) (long max-length))))
+
 (defn- otp-fits-boxes? [{:keys [max-length]}] (<= (long max-length) (long (:ceiling otp-defaults))))
+
 (defn- ascending-bounds? [{:keys [min max]}] (< (double min) (double max)))
+
 (defn- positive-step?
   [{:keys [min max step]}]
   (and (pos? (double step)) (<= (double step) (- (double max) (double min)))))
+
 (defn- option-values [field] (set (map :value (:options field))))
 
 (defn- default-in-domain?
@@ -369,9 +419,11 @@
 (defn- secret-in-domain?
   [{:keys [is-required]} value]
   (if (nil? value) (not is-required) (secret-handle? value)))
+
 (defn- selected-in-domain?
   [{:keys [is-required] :as field} value]
   (if (nil? value) (not is-required) (and (string? value) (contains? (option-values field) value))))
+
 (defn- picked-in-domain?
   [{:keys [is-required] :as field} value]
   (and (vector? value)
@@ -379,9 +431,11 @@
        (every? (option-values field) value)
        (= (count value) (count (set value)))
        (or (seq value) (not is-required))))
+
 (defn- ticked-in-domain?
   [{:keys [is-required]} value]
   (and (boolean? value) (or (true? value) (not is-required))))
+
 (defn- slid-in-domain?
   [{lo :min hi :max} value]
   (and (number? value) (<= (double lo) (double value) (double hi))))
@@ -454,11 +508,13 @@
   (and (map? x)
        (non-blank-string? (:by x))
        (or (nil? (:dir x)) (contains? (set (vals live-sort-dirs)) (:dir x)))))
+
 (defn- ordered-by-declared-column?
   [{:keys [type columns order]}]
   (or (not= :table type)
       (not (map? order))
       (and (sorted-order? order) (contains? (set (map :id columns)) (:by order)))))
+
 (defn- selection-belongs-to-table?
   [{:keys [type rows is-selectable selected-ids] :as node}]
   (if (= :table type)

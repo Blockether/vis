@@ -46,6 +46,7 @@ import {
 } from 'react';
 
 import { createPortal } from 'react-dom';
+import viewSpec from '../../../../packages/vis-contract/resources/vis-contract/view.json';
 
 import {
   CheckIcon,
@@ -95,8 +96,10 @@ export const Button = forwardRef<
      * `panel` is a settings action: a content-width 32px face with an 11px label.
      * Its invisible extension preserves a 44px touch target without filling the
      * panel. Owners provide padding and at least 8px between adjacent targets.
+     *
+     * `comfortable` uses a visible 44px touch target and a 28px mouse target.
      */
-    density?: 'default' | 'compact' | 'panel';
+    density?: 'default' | 'compact' | 'panel' | 'comfortable';
     /**
      * This button stands INSIDE a segmented run — the image viewer's `− 100% +`.
      * The middle of the run drops its side frames so the three boxes draw ONE
@@ -215,6 +218,7 @@ export const Button = forwardRef<
   // one 32px button and one 44px button holds two different affordances.
   const scale = {
     default: 'min-h-7 px-2.5 sm:min-h-8 sm:px-3 sm:text-ui',
+    comfortable: 'min-h-11 px-2.5 sm:px-3 sm:text-ui mouse:min-h-7',
     compact:
       'relative min-h-7 h-8 px-2.5 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] sm:min-h-8 sm:px-3 sm:text-ui mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none',
     panel:
@@ -774,8 +778,8 @@ export function Disclosure({
   bleed?: boolean;
   /** Keep the chevron immediately after the label and tally, not at either row edge. */
   inlineChevron?: boolean;
-  /** Compact operation rows; the containing list owns stacking isolation. */
-  density?: 'default' | 'compact';
+  /** Compact operation rows or comfortable 44px touch / 28px mouse controls. */
+  density?: 'default' | 'compact' | 'comfortable';
 }) {
   const ink =
     tone === 'step'
@@ -792,7 +796,7 @@ export function Disclosure({
   const size =
     density === 'compact'
       ? 'relative min-h-6 text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
-      : tone === 'execution'
+      : density === 'comfortable' || tone === 'execution'
         ? 'min-h-11 text-ui mouse:min-h-7'
         : `min-h-8 mouse:min-h-6 ${tone === 'step' || tone === 'branch' ? 'text-ui' : 'text-chip'}`;
   return (
@@ -1767,15 +1771,20 @@ export function BandButton({
   );
 }
 
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
-  function Input({ className = '', ...props }, ref) {
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & {
+  /** Comfortable controls use 44px touch and 28px pointer targets. */
+  density?: 'default' | 'comfortable';
+}>(function Input({ className = '', density = 'default', ...props }, ref) {
     // A masked field's dots sit shoulder-to-shoulder at this type step, so a
     // typed key cannot be counted; the tracking is what breathes between them.
     const masked = props.type === 'password' ? 'tracking-[0.15em]' : '';
+    const size = density === 'comfortable'
+      ? 'min-h-11 text-ui mouse:min-h-7'
+      : 'min-h-7 text-meta sm:min-h-8 sm:px-3 sm:text-ui';
     return (
       <input
         ref={ref}
-        className={`min-h-7 w-full rounded-control border border-edge bg-input px-2.5 py-0.5 font-mono text-meta text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${masked} ${className}`}
+        className={`w-full rounded-control border border-edge bg-input px-2.5 py-0.5 font-mono text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none ${size} ${masked} ${className}`}
         {...props}
       />
     );
@@ -2216,8 +2225,8 @@ export function DialogFrame({
   );
 }
 
-/** Same Braille cadence the TUI uses, so waiting looks the same everywhere. */
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+/** Shared frame vocabulary; the app and terminal use the same cadence. */
+const SPINNER_FRAMES = viewSpec.live.spinner_frames;
 
 // One LITERAL class per frame: Tailwind scans source text, so a computed
 // `[animation-delay:-${i}00ms]` would never be emitted. The delay is negative
@@ -2248,6 +2257,7 @@ const SPINNER_DELAYS = [
  */
 export function Spinner({
   tone = 'inherit',
+  variant = 'braille',
   className = '',
 }: {
   /**
@@ -2256,15 +2266,16 @@ export function Spinner({
    * rides, which is what a spinner inside a sentence wants.
    */
   tone?: 'inherit' | 'accent';
+  variant?: keyof typeof SPINNER_FRAMES;
   /** Placement only; the frames' own face is fixed. */
   className?: string;
 }) {
   const ink = tone === 'accent' ? 'text-accent-ink' : '';
   return (
     <span aria-hidden="true" className={`inline-grid ${ink} ${className}`}>
-      {SPINNER_FRAMES.map((frame, index) => (
+      {SPINNER_FRAMES[variant].map((frame, index) => (
         <span
-          key={frame}
+          key={index}
           className={`col-start-1 row-start-1 animate-spinner-frame opacity-0 motion-reduce:hidden ${SPINNER_DELAYS[index]}`}
         >
           {frame}

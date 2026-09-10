@@ -3464,11 +3464,10 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- live-view-log-handler
-  "GET /v1/sessions/:sid/views/live/:view-id/log/:node-id — one page of a log
-   node, `?from=` (0-based) `&limit=` lines, read from the view's record.
-
-   A view carries only its window, so this reads the durable file. A view that has
-   already closed still answers, which makes a finished run's log readable."
+  "GET /v1/sessions/:sid/views/live/:view-id/log/:node-id — one bounded page.
+   `query` is literal and case-insensitive; `from` is a zero-based match offset,
+   `limit` bounds returned lines. Answers counts and original line numbers from
+   the durable record, including after the view has closed."
   [request]
   (let [sid
         (path-sid request)
@@ -3483,7 +3482,8 @@
                                                        (str (get-in request
                                                                     [:path-params :node-id]))
                                                        (query-long request "from")
-                                                       (query-long request "limit"))))))
+                                                       (query-long request "limit")
+                                                       (get-in request [:query-params "query"]))))))
 
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before

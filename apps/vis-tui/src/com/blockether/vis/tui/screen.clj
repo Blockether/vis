@@ -721,6 +721,21 @@
                   (vis/notify! (str "Could not select that row: " (ex-message t)) :level :error)))))
     true))
 
+(defn- activate-live-button!
+  "Send one explicit operator press; the shared patch is the acknowledgement."
+  [db {:keys [view-id node-id]}]
+  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
+    (future (try
+              (let [outcome (vis/gateway-view-action! (get-in pane [:view :session-id])
+                                                      view-id
+                                                      {:action :activate :node-id node-id})]
+                (when-not (:is-accepted outcome)
+                  (vis/notify! "That button is disabled or the run has finished." :level :error)))
+              (catch Throwable _
+                (vis/notify! "The action could not be confirmed. Check the run before trying again."
+                             :level
+                             :error))))))
+
 (defn- activate-live-region!
   "Activate one click region owned by the live band; true when it was consumed."
   [db hit]
@@ -744,6 +759,9 @@
     (do (state/dispatch [:live-view-restore (:view-id hit)])
         (state/dispatch [:bump-render-version])
         true)
+
+    :live-activate
+    (do (activate-live-button! db hit) true)
 
     :live-select
     (do (select-live-row! db hit) true)
@@ -2112,6 +2130,11 @@
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock ^ReentrantLock draw-lock))))
+
+(defn- search-live-log!
+  [screen db {:keys [view-id node-id]}]
+  (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
+    (with-dialog-lock #(lv/search-log! screen pane node-id))))
 
 (defn- attachment-capabilities!
   []
@@ -3951,7 +3974,7 @@
         with-layout?
         (and eligible? same-size? last-layout)]
 
-    (if (tab-content-loading? db)
+    (if (or (tab-content-loading? db) (lv/animating? (:live-views db)))
       {:header-hover-only? false
        :partial-live? false
        :header-spinner-only? false
@@ -4158,7 +4181,9 @@
                         (boolean (:loading? db))
 
                         any-loading?
-                        (or loading? (state/any-background-loading? db))
+                        (or loading?
+                            (state/any-background-loading? db)
+                            (lv/animating? (:live-views db)))
 
                         scroll-anim?
                         (scroll-anim-active? db)
@@ -6026,6 +6051,21 @@
                    ;; the band, so the form owns the keyboard.
                    (and (some? key) (lv/stopping (lv/interruptible (:live-views db))))
                    (do (live-stop-key! db key) (recur))
+                   (and (some? key)
+                        (= KeyType/F3 (.getKeyType ^KeyStroke key))
+                        (not (overlay-locked? db))
+                        (not @paste-buffer))
+                   (do (when-let [items (seq (lv/controls (:live-views db)))]
+                         (when-let [choice (with-dialog-lock #(dlg/list-dialog!
+                                                                screen
+                                                                "Live view controls"
+                                                                items
+                                                                {:enter-label "activate"
+                                                                 :height :content}))]
+                           (if (= :live-log-search (:kind choice))
+                             (search-live-log! screen @state/app-db choice)
+                             (activate-live-region! @state/app-db choice))))
+                       (recur))
                    (nil? key)
                    (do
                      (release-wheel-momentum! scroll-momentum last-wheel-at-ms :transcript)
@@ -6599,6 +6639,12 @@
                                  :live-restore
                                  (activate-live-region! db hit)
 
+                                 :live-log-search
+                                 (search-live-log! screen db hit)
+
+                                 :live-activate
+                                 (activate-live-region! db hit)
+
                                  :live-select
                                  (activate-live-region! db hit)
 
@@ -6753,6 +6799,12 @@
                                  (activate-live-region! db hit)
 
                                  :live-restore
+                                 (activate-live-region! db hit)
+
+                                 :live-log-search
+                                 (search-live-log! screen db hit)
+
+                                 :live-activate
                                  (activate-live-region! db hit)
 
                                  :live-select

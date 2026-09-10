@@ -2306,13 +2306,23 @@ def column(*fields):
     return _group("column", fields)
 
 
-def heading(text):
-    # A section title. Pure decoration: no name, no value, never focusable.
+def heading(text, live_text=None, **spec):
+    """Form heading, or live ``heading(id, text, level=1..6)``."""
+    if live_text is not None:
+        return _live_node(
+            "heading", text, dict(spec, text=str(live_text), level=spec.get("level", 2))
+        )
+    if spec:
+        raise TypeError("live heading options require both id and text")
     return {"type": "heading", "text": str(text)}
 
 
-def paragraph(text):
-    # Prose under a title, wrapped. Pure decoration, exactly like `heading`.
+def paragraph(text, live_text=None, **spec):
+    """Form prose, or live ``paragraph(id, text)`` with inline Markdown."""
+    if live_text is not None:
+        return _live_node("paragraph", text, dict(spec, text=str(live_text)))
+    if spec:
+        raise TypeError("live paragraph options require both id and text")
     return {"type": "paragraph", "text": str(text)}
 
 
@@ -2411,6 +2421,23 @@ class _KeyedNode(_Node):
 
     def clear(self):
         return self._op("clear")
+
+
+class TextNode(_Node):
+    """A paragraph, heading or code block, replaced in place."""
+
+    def set(self, text, **spec):
+        return self._op("set", text=str(text), **spec)
+
+
+class Spinner(_Node):
+    def set(self, text=None, *, variant=None, is_active=None):
+        return self._op("set", text=text, variant=variant, is_active=is_active)
+
+
+class Button(_Node):
+    def set(self, label=None, *, is_disabled=None):
+        return self._op("set", label=label, is_disabled=is_disabled)
 
 
 class Status(_Node):
@@ -2524,6 +2551,11 @@ class Link(_KeyedNode):
 
 
 _LIVE_NODES = {
+    "paragraph": TextNode,
+    "heading": TextNode,
+    "code": TextNode,
+    "spinner": Spinner,
+    "button": Button,
     "status": Status,
     "progress": Progress,
     "stat": Stat,
@@ -3078,6 +3110,15 @@ class _LiveRecorder:
                 node.setdefault("lines", [])
                 node.setdefault("window_lines", 2000)
                 node["total_lines"] = len(node["lines"])
+            elif kind == "heading":
+                node.setdefault("level", 2)
+            elif kind == "spinner":
+                node.setdefault("text", "Working")
+                node.setdefault("variant", "braille")
+                node.setdefault("is_active", True)
+            elif kind == "button":
+                node["clicks"] = 0
+                node.setdefault("is_disabled", False)
             elif kind == "table":
                 node.setdefault("rows", [])
                 node.setdefault("max_rows", 5000)
@@ -3239,6 +3280,39 @@ class _LiveRecorder:
         self.said.append(json.loads(envelope_json))
         return self.host_live(envelope_json)
 
+    def activate(self, node_id):
+        """Simulate an accepted operator press and wake state() waiters."""
+        import json
+
+        with self._condition:
+            node = self.node(node_id)
+            if (
+                self._result is not None
+                or node.get("type") != "button"
+                or node.get("is_disabled")
+            ):
+                raise AssertionError(
+                    "only an enabled button in an open view can be activated"
+                )
+            return json.loads(
+                self.host_live(
+                    json.dumps(
+                        {
+                            "op": "patch",
+                            "patch": {
+                                "ops": [
+                                    {
+                                        "op": "set",
+                                        "node_id": node_id,
+                                        "clicks": node.get("clicks", 0) + 1,
+                                    }
+                                ]
+                            },
+                        }
+                    )
+                )
+            )
+
     def select(self, node_id, selected_ids):
         """Simulate a surface selecting rows without recording extension output."""
         import json
@@ -3339,6 +3413,46 @@ def _live_node(type_name, node_id, spec):
     return node
 
 
+def disclosure(node_id, label, *nodes, default_expanded=False):
+    """A collapsible column. Local choices survive updates; receipts start collapsed."""
+    return _live_node(
+        "group",
+        node_id,
+        {
+            "label": str(label),
+            "direction": "column",
+            "fields": list(nodes),
+            "is_collapsible": True,
+            "default_expanded": default_expanded,
+        },
+    )
+
+
+def code(node_id, text, *, language=None, **spec):
+    """Literal code; whitespace is retained and content is never executed."""
+    return _live_node("code", node_id, dict(spec, text=str(text), language=language))
+
+
+def spinner(node_id, text="Working", *, variant="braille", is_active=True, **spec):
+    """A braille, dots, line or pulse indicator. Receipts never animate."""
+    return _live_node(
+        "spinner",
+        node_id,
+        dict(spec, text=str(text), variant=variant, is_active=is_active),
+    )
+
+
+def button(node_id, label, *, is_disabled=False, **spec):
+    """An operator action. Accepted presses increment ``clicks`` in ``view.state()``.
+
+    No callback or code crosses the wire. The producer decides how to respond.
+    Disabled buttons and completed receipts cannot be activated.
+    """
+    return _live_node(
+        "button", node_id, dict(spec, label=str(label), is_disabled=is_disabled)
+    )
+
+
 def status(node_id, text=None, **spec):
     # One line saying what is happening right now: text, tone, detail, label.
     return _live_node("status", node_id, dict(spec, text=text))
@@ -3360,10 +3474,12 @@ def steps(node_id, steps=None, **spec):
 
 
 def output(node_id, **spec):
-    # Streamed lines. It is `log` on the wire; the builder is `output` so it
-    # never shadows `vis.log`, the engine log line — the same reason `slider`
-    # builds a `range` field. Unbounded: `window_lines` is only how much of it a
-    # surface holds hot, and the view's record keeps every line.
+    """Retained output with an independent disclosure, collapsed by default.
+
+    ``default_expanded=True`` opens an active log initially. Updates preserve the
+    local choice; completion starts a collapsed receipt. Hiding never clears lines.
+    ``window_lines`` bounds only the hot window, not the durable record.
+    """
     return _live_node("log", node_id, spec)
 
 

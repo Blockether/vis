@@ -17,6 +17,7 @@ import textwrap
 import threading
 import time
 import uuid
+from copy import deepcopy
 from pathlib import Path
 
 from blockether.vis import _contracts
@@ -745,7 +746,7 @@ _LIVE_ITEMS = {
 _LIVE_VIEWS = {}
 
 
-def _live_check_node(node, seen):
+def _live_check_node(node, seen, *, is_declaration=True):
     if not isinstance(node, dict):
         return f"every node must be a map, got {node!r}"
     kind = node.get("type")
@@ -771,9 +772,44 @@ def _live_check_node(node, seen):
     seen.add(node_id)
     if is_group:
         for child in node["fields"]:
-            complaint = _live_check_node(child, seen)
+            complaint = _live_check_node(child, seen, is_declaration=is_declaration)
             if complaint:
                 return complaint
+    if kind == "heading":
+        node.setdefault("level", 2)
+    if kind == "spinner":
+        node.setdefault("text", "Working")
+        node.setdefault("variant", "braille")
+        node.setdefault("is_active", True)
+    if kind in ("paragraph", "heading", "spinner"):
+        if not isinstance(node.get("text"), str) or not node["text"].strip():
+            return f"a {kind} needs nonblank text"
+    if kind == "heading" and (
+        type(node.get("level")) is not int or not 1 <= node["level"] <= 6
+    ):
+        return "a heading level is an integer from 1 to 6"
+    if kind == "code":
+        if not isinstance(node.get("text"), str):
+            return "a code block needs literal text"
+        language = node.get("language")
+        if language is None:
+            node.pop("language", None)
+        elif not isinstance(language, str) or not language.strip():
+            return "a code language must be nonblank text"
+    if kind == "spinner" and node.get("variant") not in _LIVE["spinner_frames"]:
+        return "unknown spinner variant"
+    if kind == "button":
+        if not isinstance(node.get("label"), str) or not node["label"].strip():
+            return "a button needs a label"
+        if is_declaration and "clicks" in node:
+            return "button clicks are stamped by the engine"
+        node.setdefault("clicks", 0)
+        node.setdefault("is_disabled", False)
+        if type(node["clicks"]) is not int or node["clicks"] < 0:
+            return "button clicks must be a nonnegative integer"
+    for flag in ("default_expanded", "is_collapsible", "is_active", "is_disabled"):
+        if flag in node and type(node[flag]) is not bool:
+            return f"{flag} must be boolean"
     return None
 
 
@@ -905,6 +941,9 @@ def _live_apply(view, op):
         return "- {}".format(node.get("label") or node.get("id"))
     if name == "set":
         node.update({k: v for k, v in op.items() if k not in ("op", "node_id")})
+        complaint = _live_check_node(node, set(), is_declaration=False)
+        if complaint:
+            raise Refused(complaint)
     elif name == "append":
         key = _live_items_key(node, "lines to append")
         payload = list(op.get(key) or [])
@@ -934,6 +973,10 @@ def _live_line(name, op, node):
     if name == "append":
         key = _LIVE_ITEMS[kind]
         return f"{label}: +{len(op.get(key) or [])} {key}"
+    if kind in ("paragraph", "heading", "code", "spinner"):
+        return str(node.get("text") or "")
+    if kind == "button":
+        return f"{label}: {node.get('clicks', 0)} activations"
     if kind == "status":
         detail = node.get("detail")
         return "{}: {}{}".format(
@@ -1044,7 +1087,10 @@ def _live_handle(held, envelope, op, view_id):
         return json.dumps({"view_id": view_id, "is_open": True, "view": held["view"]})
     if op == "patch":
         ops = (envelope.get("patch") or {}).get("ops") or []
-        _live_say([_live_apply(held["view"], one) for one in ops])
+        candidate = deepcopy(held["view"])
+        lines = [_live_apply(candidate, one) for one in ops]
+        held["view"] = candidate
+        _live_say(lines)
         held["seq"] += 1
         held["view"]["seq"] = held["seq"]
         return json.dumps({"view_id": view_id, "is_open": True, "seq": held["seq"]})

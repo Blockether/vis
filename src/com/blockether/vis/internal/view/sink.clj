@@ -26,7 +26,8 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.view.materializer :as materializer])
   (:import (java.io File)
-           (java.nio.file Files)))
+           (java.nio.file Files)
+           (java.util Locale)))
 
 (set! *warn-on-reflection* true)
 
@@ -198,47 +199,57 @@
 
         (when (= "close" (:kind record)) (:result record))))))
 
-(defn- log-node?
-  "True when `node` is the declaration of log node `node-id`."
-  [node node-id]
-  (and (= node-id (str (:id node))) (= "log" (str (:type node)))))
+(defn- find-log-node
+  "Find log node `node-id` at any depth of a declared layout."
+  [nodes node-id]
+  (first (filter #(and (= node-id (str (:id %))) (= "log" (str (:type %))))
+                 (mapcat #(tree-seq :fields :fields %) nodes))))
 
-(def ^:private empty-log "A log node with nothing recorded against it yet." {:total 0 :lines []})
+(def ^:private empty-log
+  "Counters and one retained result page. Line numbers are one-based."
+  {:total 0 :matched 0 :lines [] :line-numbers []})
 
 (defn- take-window
-  "Count `lines` into `state` and keep only the ones inside `[from end)`. The
-   window is the only thing held in memory, so a 100 000-line record costs the
-   asked-for page and a counter."
-  [state lines from end]
+  "Count every line and match, retaining only matches inside `[from end)`."
+  [state lines from end ^String query]
   (reduce (fn [acc text]
-            (let [at (long (:total acc))]
-              (cond-> (update acc :total inc)
-                (and (>= at (long from)) (< at (long end)))
-                (update :lines conj text))))
+            (let [line-number
+                  (inc (long (:total acc)))
+
+                  at
+                  (long (:matched acc))
+
+                  matches?
+                  (.contains (.toLowerCase ^String text Locale/ROOT) query)]
+
+              (cond-> (assoc acc :total line-number)
+                matches?
+                (update :matched inc)
+
+                (and matches? (<= (long from) at) (< at (long end)))
+                (-> (update :lines conj text)
+                    (update :line-numbers conj line-number)))))
           state
           (or lines [])))
 
 (defn- fold-record
-  "Fold one record line into what log node `node-id` holds. Only three things
-   ever touch a log: it is declared (in the view, or by `add-node`), lines are
-   appended to it, or it is emptied — `clear` and `remove-node` both start the
-   count again, exactly as the materializer does."
-  [state entry node-id from end]
+  "Fold declarations, appends and resets into one bounded log result page."
+  [state entry node-id from end query]
   (case (str (:kind entry))
     "open"
-    (if-let [node (first (filter #(log-node? % node-id) (:nodes (:view entry))))]
-      (take-window state (:lines node) from end)
+    (if-let [node (find-log-node (:nodes (:view entry)) node-id)]
+      (take-window state (:lines node) from end query)
       state)
 
     "patch"
     (reduce (fn [acc op]
               (let [op-name (str (:op op))]
-                (cond (= "add-node" op-name)
-                      (if (log-node? (:node-spec op) node-id)
-                        (take-window empty-log (:lines (:node-spec op)) from end)
-                        acc)
+                (cond (= "add-node" op-name) (if-let [node (find-log-node [(:node-spec op)]
+                                                                          node-id)]
+                                               (take-window empty-log (:lines node) from end query)
+                                               acc)
                       (not= node-id (str (:node-id op))) acc
-                      (= "append" op-name) (take-window acc (:lines op) from end)
+                      (= "append" op-name) (take-window acc (:lines op) from end query)
                       (contains? #{"clear" "remove-node"} op-name) empty-log
                       :else acc)))
             state
@@ -247,16 +258,13 @@
     state))
 
 (defn log-range
-  "`limit` lines of log node `node-id`, from 0-based `from`, as the RECORD holds
-   them — plus `:total`, every line that node ever accepted.
-
-   The picture a surface paints carries only the node's WINDOW (`:window-lines`,
-   2000 by default), so this is the one way back to output that scrolled out of
-   it: a phone that joined an hour into a build, or one whose patches were
-   evicted from the gateway's reconnect ring, pages the earlier lines from here
-   instead of being told the run has no history. One streamed pass, and only the
-   asked-for page is held."
-  [^File file node-id from limit]
+  "Read a bounded page from a log's record, including output outside its live window.
+   Optional `query` is a literal, case-insensitive substring (empty matches all).
+   `from` is a zero-based MATCH offset, `:line-numbers` are original one-based
+   positions, `:matched` counts matches and `:total` counts all retained lines.
+   Clear/remove resets both counts. Reads open and closed records in one streamed
+   pass, retaining only the requested page."
+  [^File file node-id from limit & [query]]
   (let [node-id
         (str node-id)
 
@@ -264,16 +272,18 @@
         (max 0 (long from))
 
         end
-        (+ from (max 0 (long limit)))]
+        (+ from (max 0 (long limit)))
 
-    (if-not (and file (.isFile file))
-      (assoc empty-log
-        :node-id node-id
-        :from from)
-      (with-open [reader (io/reader file)]
-        (-> (reduce (fn [state line]
-                      (fold-record state (wire/->engine (json/read-json line)) node-id from end))
-                    empty-log
-                    (line-seq reader))
-            (assoc :node-id node-id
-                   :from from))))))
+        query
+        (.toLowerCase (str query) Locale/ROOT)]
+
+    (assoc (if-not (and file (.isFile file))
+             empty-log
+             (with-open [reader (io/reader file)]
+               (reduce
+                 (fn [state line]
+                   (fold-record state (wire/->engine (json/read-json line)) node-id from end query))
+                 empty-log
+                 (line-seq reader))))
+      :node-id node-id
+      :from from)))
