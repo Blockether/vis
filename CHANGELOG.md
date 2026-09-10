@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.59] - 2026-09-10
+
+### Fixed
+- Pin Svar 0.7.166: estimate Responses context from the prepared request, excluding discarded reasoning and including tool declarations and output-format schemas (#186). Provider usage remains authoritative.
+- Pin Python runtime 0.5.8 to keep shared asynchronous clients on the same event loop.
+- Normalize spacing between Companion trace blocks.
+- Reset the execution budget after extension calls return (#187).
+- Avoid Companion input reflow during draft corrections.
+
 ## [v0.1.58] - 2026-09-10
 
 ### Fixed
