@@ -806,6 +806,7 @@ export const STORY_PROVIDERS: RouterProvider[] = [
 export const STORY_ROUTER_CLIENT = {
   cachedRouter: () => STORY_PROVIDERS,
   router: async () => STORY_PROVIDERS,
+  onProviderLimits: () => () => {},
   sessionModel: async () => ({ provider: 'anthropic', model: 'claude-opus-5' }),
   setSessionModel: async (_sid: string, provider: string, model: string) => ({ provider, model }),
 } as unknown as GatewayClient;

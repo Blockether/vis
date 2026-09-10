@@ -354,6 +354,10 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
     }
   }, [reload, setNote, setPending]);
 
+  useEffect(() => client.onProviderLimits((providerId, limits) => {
+    setProviders(rows => rows?.map(row => row.id === providerId ? { ...row, limits } : row) ?? rows);
+  }), [client]);
+
   useEffect(() => {
     const controller = new AbortController();
     void reload(controller.signal);

@@ -348,6 +348,7 @@ function withEngine(path: string, engine?: string | null): string {
 
 /** Router rows per gateway base URL, shared by every screen and client instance. */
 const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
+const providerLimitsListeners = new Map<string, Set<(providerId: string, limits: ProviderLimits) => void>>();
 // A retry on another screen/client still represents the same account operation.
 const providerResetInflight = new Map<string, Promise<ProviderResetOutcome>>();
 /** In-flight router reads per base URL, so concurrent opens cost one request. */
@@ -2565,7 +2566,22 @@ export class GatewayClient {
     );
     const limits = response.report ?? {};
     this.mergeCachedProvider(providerId, { limits });
+    for (const receive of providerLimitsListeners.get(this.base) ?? []) receive(providerId, limits);
     return limits;
+  }
+
+  /** Share live quota reads with mounted provider views on this gateway. */
+  onProviderLimits(receive: (providerId: string, limits: ProviderLimits) => void): () => void {
+    let listeners = providerLimitsListeners.get(this.base);
+    if (!listeners) {
+      listeners = new Set();
+      providerLimitsListeners.set(this.base, listeners);
+    }
+    listeners.add(receive);
+    return () => {
+      listeners.delete(receive);
+      if (!listeners.size) providerLimitsListeners.delete(this.base);
+    };
   }
 
   private providerResetKey(providerId: string, accountId: string): string {

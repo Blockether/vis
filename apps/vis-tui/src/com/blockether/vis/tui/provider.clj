@@ -23,7 +23,8 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.oauth :as oauth]
-            [com.blockether.vis.tui.primitives :as p])
+            [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.state :as state])
   (:import [com.googlecode.lanterna.screen TerminalScreen]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -707,7 +708,10 @@
         (dlg/band-questions screen g region)
 
         pid
-        (:id provider)]
+        (:id provider)
+
+        fresh
+        (atom nil)]
 
     (try
       (let [report
@@ -741,33 +745,36 @@
                       :yes-label (if pending? "Retry same request" "Use 1 reset")
                       :no-label "Cancel"}))
               false
-              :else (let [result (await-provider-operation!
-                                   q
-                                   "Codex limit reset pending"
-                                   "Esc closes this view, not the reset request."
-                                   #(vis/reset-provider-limits! pid account))]
-                      (when-not (= ::dismissed result)
-                        (let [fresh (try (vis/gateway-provider-limits pid) (catch Exception _ nil))
-                              text (case (:outcome result)
-                                     "reset"
-                                     "Limits reset; task not resent."
+              :else
+              (let [result (await-provider-operation!
+                             q
+                             "Codex limit reset pending"
+                             "Esc closes this view, not the reset request."
+                             #(try (vis/reset-provider-limits! pid account)
+                                   (finally
+                                     (try (let [report (vis/gateway-provider-limits pid)]
+                                            (reset! fresh report)
+                                            (state/dispatch [:set-provider-limits pid report]))
+                                          (catch Exception _
+                                            (state/dispatch [:force-provider-limits-refresh]))))))]
+                (when-not (= ::dismissed result)
+                  (let [text (case (:outcome result)
+                               "reset"
+                               "Limits reset; task not resent."
 
-                                     "nothing_to_reset"
-                                     "Nothing to reset; no reset used."
+                               "nothing_to_reset"
+                               "Nothing to reset; no reset used."
 
-                                     "no_credit"
-                                     "No resets available; none used."
+                               "no_credit"
+                               "No resets available; none used."
 
-                                     "already_redeemed"
-                                     "Already processed; no additional reset used.")]
-
-                          ((:note! q)
-                            text
-                            (vis/provider-reset-summary (get-in fresh [:dynamic :reset-credits])))))
-                      true)))
+                               "already_redeemed"
+                               "Already processed; no additional reset used.")]
+                    ((:note! q)
+                      text
+                      (vis/provider-reset-summary (get-in @fresh [:dynamic :reset-credits])))))
+                true)))
       (catch Exception _
-        ;; Invalidate/read even after an uncertain POST; never paint full quota locally.
-        (try (vis/gateway-provider-limits pid) (catch Exception _ nil))
         ((:note! q) "Reset not confirmed" "Reopen Reset limits to retry the same request.")
         false))))
 

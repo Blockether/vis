@@ -45,3 +45,26 @@ it('coalesces double presses but creates a new key for a later confirmed reset',
   expect(await next).toBe('no_credit');
   expect(bodies[0]).not.toEqual(bodies[1]);
 });
+
+it('scopes live limits updates to the gateway and detaches subscribers', async () => {
+  const client = new GatewayClient(conn('limits-subscription'));
+  const sameGateway = new GatewayClient(conn('limits-subscription'));
+  const otherGateway = new GatewayClient(conn('limits-other'));
+  const receive = vi.fn();
+  const other = vi.fn();
+  const stop = sameGateway.onProviderLimits(receive);
+  const stopOther = otherGateway.onProviderLimits(other);
+  const report = { status: 'ok', dynamic: { limits: [{ used: 0, limit: 100 }] } };
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ report }))));
+  try {
+    await client.providerLimits('openai-codex');
+    expect(receive).toHaveBeenCalledWith('openai-codex', report);
+    expect(other).not.toHaveBeenCalled();
+    stop();
+    await client.providerLimits('openai-codex');
+    expect(receive).toHaveBeenCalledTimes(1);
+  } finally {
+    stop();
+    stopOther();
+  }
+});

@@ -13,6 +13,7 @@ const flow: AuthFlow = { flow_id: 'test-flow', provider_id: provider.id, kind: '
   url: 'https://gateway.example.com/authorize' };
 function clientFor(started = flow) {
   return { base: 'http://127.0.0.1:7890', cachedRouter: () => [], router: vi.fn().mockResolvedValue([]),
+    onProviderLimits: () => () => {},
     startProviderAuth: vi.fn().mockResolvedValue(started),
     pollProviderAuth: vi.fn().mockResolvedValue({ status: 'ok' }),
     completeProviderAuth: vi.fn().mockResolvedValue({ status: 'ok' }),

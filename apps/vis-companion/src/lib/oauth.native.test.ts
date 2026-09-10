@@ -82,6 +82,7 @@ it('closes the actual provider UI and refreshes the same remote gateway after a 
   host.authorize.mockResolvedValue({ url: callback });
   const provider = { id: 'generic-oauth' } as RouterProvider;
   const client = { base: remote, cachedRouter: () => [], router: vi.fn().mockResolvedValue([]),
+    onProviderLimits: () => () => {},
     startProviderAuth: vi.fn().mockResolvedValue({ ...flow, provider_id: provider.id }),
     completeProviderAuth: vi.fn().mockResolvedValue({ status: 'ok' }),
     pollProviderAuth: vi.fn().mockResolvedValue({ status: 'pending' }), cancelProviderAuth: vi.fn().mockResolvedValue(undefined) };

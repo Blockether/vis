@@ -5,6 +5,7 @@
             [com.blockether.vis.tui.config :as config]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.provider :as provider]
+            [com.blockether.vis.tui.state :as state]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (def credits {:status :ok :account-id "account-1" :available-count 2})
@@ -74,9 +75,11 @@
     (let [confirmed (atom nil)
           spent (atom [])
           notes (atom [])
-          reads (atom 0)]
+          reads (atom 0)
+          updates (atom [])]
 
-      (with-redefs [client/gateway-provider-limits (fn [_]
+      (with-redefs [state/dispatch #(swap! updates conj %)
+                    client/gateway-provider-limits (fn [_]
                                                      (swap! reads inc)
                                                      {:dynamic {:reset-credits credits}})
                     client/pending-provider-reset? (constantly false)
@@ -96,7 +99,11 @@
         (is (str/includes? (str @confirmed) "all devices"))
         (is (= "Cancel" (get-in @confirmed [1 :no-label])))
         (is (= (if answer [[:openai-codex "account-1"]] []) @spent))
-        (is (= (if answer 2 1) @reads))))))
+        (is (= (if answer 2 1) @reads))
+        (is (= (if answer
+                 [[:set-provider-limits :openai-codex {:dynamic {:reset-credits credits}}]]
+                 [])
+               @updates))))))
 
 (deftest unknown-and-zero-allowance-never-spend
   (doseq [summary [nil {:status :error} {:status :unsupported} (assoc credits :available-count 0)]]
@@ -158,3 +165,50 @@
         (is (str/includes? text "account-1"))
         (is (str/includes? text "Cancel"))
         (is (str/includes? text "all devices"))))))
+
+(deftest dismissed-reset-still-refreshes-the-footer
+  (let [started
+        (promise)
+
+        finish
+        (promise)
+
+        updated
+        (promise)
+
+        waits
+        (atom 0)
+
+        fresh
+        {:dynamic {:limits [{:used 0 :limit 100}]
+                   :reset-credits (assoc credits :available-count 1)}}]
+
+    (with-redefs [client/gateway-provider-limits
+                  (fn [_]
+                    (if (realized? finish) fresh {:dynamic {:reset-credits credits}}))
+
+                  client/pending-provider-reset?
+                  (constantly false)
+
+                  client/reset-provider-limits!
+                  (fn [& _]
+                    (deliver started true)
+                    @finish
+                    {:outcome "reset"})
+
+                  state/dispatch
+                  #(deliver updated %)
+
+                  dlg/band-questions
+                  (fn [& _]
+                    {:confirm! (constantly true)
+                     :note! (fn [& _])
+                     :wait! (fn [title line done?]
+                              (if (= 1 (swap! waits inc))
+                                (wait-for-operation title line done?)
+                                (do (is (= true (deref started 5000 :timeout))) false)))})]
+
+      (try (is (true? (provider/reset-provider-limits! nil nil nil {:id :openai-codex})))
+           (is (not (realized? updated)))
+           (finally (deliver finish true)))
+      (is (= [:set-provider-limits :openai-codex fresh] (deref updated 5000 :timeout))))))

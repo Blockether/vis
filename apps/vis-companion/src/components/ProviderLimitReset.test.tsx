@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../lib/gateway';
 import type { GatewayConn, ProviderResetOutcome, RouterProvider } from '../lib/types';
-import { ProviderRows, useProviderAuth } from './ProviderAuth';
+import { ProviderRows, useProviderAuth, useProviderFleet } from './ProviderAuth';
 import { ProviderLimitReset } from './ProviderLimitReset';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -172,4 +172,44 @@ it.runIf(!!process.env.VIS_CODEX_RESET_E2E_URL)('end to end through the real gat
   await screen.findByText('Limits reset. Your task has not been resent.');
   expect(screen.getByText('0 resets available')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeDisabled();
+});
+
+it.each([false, true])('updates mounted limits views after reset even if status fails: %s', async (failStatus) => {
+  let used = 100;
+  const provider: RouterProvider = {
+    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_managed: false,
+    is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
+    status: { is_authenticated: true, auth_state: 'verified' },
+  };
+  const limits = () => ({ status: 'ok', dynamic: {
+    reset_credits: { ...credits, available_count: used ? 2 : 1 },
+    limits: [{ label: 'Weekly', used, limit: 100 }],
+  } });
+  vi.stubGlobal('fetch', vi.fn(async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith('/consume')) {
+      used = 0;
+      return new Response(JSON.stringify({ outcome: 'reset' }));
+    }
+    if (path === '/v1/router') return new Response(JSON.stringify({ providers: [{ ...provider, limits: limits() }] }));
+    if (path.endsWith('/status')) return new Response(JSON.stringify({ status: provider.status }), { status: failStatus && used === 0 ? 503 : 200 });
+    if (path.endsWith('/limits')) return new Response(JSON.stringify({ report: limits() }));
+    throw new Error(`Unexpected endpoint ${path}`);
+  }));
+  const connection = { id: 'reset-live', url: `https://reset-live-${failStatus}.example.com`, token: 'test' } as GatewayConn;
+  const client = new GatewayClient(connection);
+  const otherClient = new GatewayClient(connection);
+  function OtherLimits() {
+    const { providers } = useProviderFleet(otherClient);
+    return <output data-testid="other-quota">{providers?.[0]?.limits?.dynamic?.limits?.[0]?.used}</output>;
+  }
+  render(<><ConnectedRows client={client} /><OtherLimits /></>);
+  await waitFor(() => expect(screen.getByTestId('other-quota')).toHaveTextContent('100'));
+  fireEvent.click(await screen.findByRole('button', { name: /OpenAI Codex/i, expanded: false }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Use 1 reset' }));
+  await screen.findByText('Limits reset. Your task has not been resent.');
+  await waitFor(() => expect(screen.getByTestId('other-quota')).toHaveTextContent(/^0$/));
+  await screen.findByText('Weekly 100% left');
 });
