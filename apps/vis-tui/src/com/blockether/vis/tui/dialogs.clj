@@ -2251,22 +2251,22 @@
 (defn- band-question-frame!
   "Repaint `region` as a band holding ONE question: the host rows a taller band
    covered are handed back, the chrome is redrawn, `title` is the band's own bold
-   title and `hints` its hint bar. Returns the single body row the answer is
-   painted on."
-  [g {:keys [left inner-w text-w restore!] :as region} title hints]
-  (let [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top
-                top-limit]}
-        (tr/band-geometry region 1 true)]
-    (when restore! (restore! top-limit (dec (long wipe-top))))
-    (tr/clear-rows! g region (max (long top-limit) (long wipe-top)) foot-row)
-    (when (>= (long sep-row) (long top-limit)) (tr/draw-rule! g region sep-row))
-    (when (> (long title-rule-row) (long title-row)) (tr/draw-rule! g region title-rule-row))
-    (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
-      (tr/draw-rule! g region foot-rule-row))
-    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) title-row (ellipsize (str title) text-w)))
-    (draw-hint-bar! g left foot-row inner-w hints)
-    body-top))
+   title and `hints` its hint bar. Returns the first body row."
+  ([g region title hints] (band-question-frame! g region title hints 1))
+  ([g {:keys [left inner-w text-w restore!] :as region} title hints n]
+   (let [{:keys [sep-row title-row title-rule-row body-top foot-rule-row foot-row wipe-top
+                 top-limit]}
+         (tr/band-geometry region n true)]
+     (when restore! (restore! top-limit (dec (long wipe-top))))
+     (tr/clear-rows! g region (max (long top-limit) (long wipe-top)) foot-row)
+     (when (>= (long sep-row) (long top-limit)) (tr/draw-rule! g region sep-row))
+     (when (> (long title-rule-row) (long title-row)) (tr/draw-rule! g region title-rule-row))
+     (when (> (long foot-rule-row) (max (long sep-row) (long top-limit)))
+       (tr/draw-rule! g region foot-rule-row))
+     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+     (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) title-row (ellipsize (str title) text-w)))
+     (draw-hint-bar! g left foot-row inner-w hints)
+     body-top)))
 
 (defn mini-read!
   "Ask ONE typed question in the band's own frame: `label` becomes the band's
@@ -2428,6 +2428,51 @@
 ;; reaches for `tr/run!` plus `transient-host` itself, is how two bands drift
 ;; apart.
 
+(defn- mini-view!
+  "Read and scroll text inside the caller's band, without opening another frame."
+  [^TerminalScreen screen g {:keys [left inner-w hint-row min-row] :as region} title lines]
+  (let [width
+        (max 1 (- (long inner-w) 4))
+
+        lines
+        (vec (mapcat #(p/fold-cols % width) lines))
+
+        height
+        (max 1 (min (count lines) (- (long hint-row) (long (or min-row 0)) 4)))
+
+        limit
+        (max 0 (- (count lines) height))]
+
+    (loop [offset 0]
+      (let [top (band-question-frame! g
+                                      region
+                                      title
+                                      [["q/Esc" "back"] ["↑/↓" "scroll"] ["PgUp/PgDn" "page"]]
+                                      height)]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (doseq [[i line] (map-indexed vector (take height (drop offset lines)))]
+          (p/put-str! g (+ (long left) 2) (+ (long top) (long i)) line))
+        (.setCursorPosition screen nil)
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (read-modal-key! screen)
+              kt (when key (key-type key))
+              c (when key (key-character key))
+              wheel (when key (ScrollBar/wheelStep ^KeyStroke key))]
+
+          (when-not (or (= kt KeyType/Escape) (= kt KeyType/Enter) (= c \q))
+            (recur (long (p/clamp (if wheel
+                                    (+ (long offset) (long wheel))
+                                    (condp = kt
+                                      KeyType/ArrowUp (dec (long offset))
+                                      KeyType/ArrowDown (inc (long offset))
+                                      KeyType/PageUp (- (long offset) height)
+                                      KeyType/PageDown (+ (long offset) height)
+                                      KeyType/Home 0
+                                      KeyType/End limit
+                                      offset))
+                                  0
+                                  limit)))))))))
+
 (defn band-questions
   "Everything a band can ASK, bound to its own `region` once:
 
@@ -2435,6 +2480,7 @@
      `:choose!`      WHICH one, single-key — `[title choices]`, returns the `:id`
      `:confirm!`     y/n — `[question]` / `[question {:cost … :yes-label … :no-label …}]`
      `:note!`        SAY one line back — `[title line]`, dismissed with `q`
+     `:view!`        read-only scrollable text in this band — `[title lines]`
      `:wait!`        HOLD the band while something else finishes — `[title line-fn done?]`
      `:transient!`   ANOTHER transient over the SAME band region — `[spec]`, its
                      `:read-option` already bound, so an OPTION item inside it
@@ -2455,6 +2501,8 @@
                                                                                     question opts)))
      :note! (fn [title line]
               (mini-note! screen g region title line))
+     :view! (fn [title lines]
+              (mini-view! screen g region title lines))
      :wait! (fn [title line-fn done?]
               (mini-wait! screen g region title line-fn done?))
      :transient! (fn [spec]

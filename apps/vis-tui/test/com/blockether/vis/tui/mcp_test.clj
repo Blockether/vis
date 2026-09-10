@@ -12,6 +12,8 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.mcp :as mcp]
             [com.blockether.vis.tui.mcp-model :as mcp-model]
+            [com.blockether.vis.tui.capture :as cap]
+            [com.blockether.vis.tui.transient :as tr]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private managed-stdio
@@ -421,14 +423,87 @@
           (mcp/run-action! nil nil nil handwritten :kill)
           (expect (= :note (ffirst @log)))
           (expect (str/includes? (str @log) "not gateway-managed")))))
-  (it "still shows the read-only details as a viewer, not as a menu of keys"
-      (let [viewed (atom nil)]
-        (with-redefs [dlg/host-band-region (fn [_screen region]
-                                             region)
-                      dlg/band-questions (band-stub {} (atom []))
-                      dlg/text-view-dialog! (fn [_screen title lines]
-                                              (reset! viewed [title lines]))]
+  (it "shows every detail in the caller's transient without opening a dialog"
+      (let [viewed
+            (atom nil)
 
-          (mcp/run-action! nil nil nil managed-stdio :details)
-          (expect (= "MCP · files" (first @viewed)))
-          (expect (some #(str/starts-with? % "tools") (second @viewed)))))))
+            dialogs
+            (atom 0)
+
+            region
+            {:left 2 :inner-w 60 :hint-row 50 :text-w 58}]
+
+        (with-redefs [dlg/host-band-region
+                      (fn [_ actual]
+                        actual)
+
+                      dlg/band-questions
+                      (fn [_ _ actual]
+                        (expect (= region actual))
+                        {:view! (fn [title lines]
+                                  (reset! viewed [title lines]))
+                         :note! (fn [& _]
+                                  nil)})
+
+                      dlg/text-view-dialog!
+                      (fn [& _]
+                        (swap! dialogs inc))]
+
+          (mcp/run-action! nil nil region managed-stdio :details)
+          (expect (zero? @dialogs))
+          (expect (= ["MCP · files" (mcp/server-details managed-stdio)] @viewed))))))
+
+(defdescribe
+  mcp-details-render-test
+  (it
+    "keeps details and navigation in the existing band on wide and narrow terminals"
+    (doseq [cols
+            [40 80]
+
+            close-key
+            [\q :esc]]
+
+      (let [capture
+            (cap/capture!
+              {:cols cols
+               :rows 30
+               :keys [close-key]
+               :paint!
+               (fn [{:keys [screen]}]
+                 (let [g (.newTextGraphics ^com.googlecode.lanterna.screen.TerminalScreen screen)]
+                   (.putString ^com.googlecode.lanterna.graphics.TextGraphics g
+                               0
+                               0
+                               "Settings · MCP servers")
+                   (mcp/run-action! screen g (tr/band-region cols 30 1) managed-stdio :details)))})
+
+            text
+            (cap/frame-text capture)]
+
+        (expect (nil? (:error capture)))
+        (expect (str/includes? text "Settings · MCP servers"))
+        (expect (str/includes? text "MCP · files"))
+        (expect (str/includes? text "name"))
+        (expect (str/includes? text "back"))
+        (expect (str/includes? text "managed")))))
+  (it "scrolls long details to the end and returns to the beginning in the same band"
+      (doseq [[keys expected]
+              [[[:end :esc] "managed    config file"] [[:end :home :esc] "name       repo"]
+               [[:page-down :page-up :esc] "name       repo"] [[:down :up :esc] "name       repo"]]]
+        (let [capture (cap/capture! {:cols 40
+                                     :rows 20
+                                     :keys keys
+                                     :paint!
+                                     (fn [{:keys [screen]}]
+                                       (mcp/run-action!
+                                         screen
+                                         (.newTextGraphics
+                                           ^com.googlecode.lanterna.screen.TerminalScreen screen)
+                                         (tr/band-region 40 20 1)
+                                         (assoc handwritten
+                                           "command" (apply str (repeat 30 "long-command/")))
+                                         :details))})
+              text (cap/frame-text capture)]
+
+          (expect (str/includes? text expected))
+          (expect (str/includes? text "MCP · repo"))))))

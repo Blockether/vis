@@ -16,9 +16,8 @@
 
    Every question a verb asks — the transport, each field, the save confirm, a
    gateway refusal — is asked in the BAND the verb was fired from (`dlg/band-questions`),
-   so adding, editing, authorizing and removing a server never stacks a window
-   over the Settings list. The one dialog left is `:details`: a read-only page is
-   a viewer, not a menu of keystrokes."
+   so adding, editing, authorizing, removing and inspecting a server never stacks
+   a window over the Settings list."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
@@ -366,10 +365,8 @@
                     :no-label "Keep it"})
              (vis/gateway-mcp-delete-server! server))
 
-           ;; The one thing here that is a VIEW and not a verb: a read-only page of
-           ;; detail lines belongs in a viewer, not in a menu of keystrokes.
            :details
-           (dlg/text-view-dialog! screen (str "MCP · " server) (server-details row))
+           ((:view! q) (str "MCP · " server) (server-details row))
 
            nil)
          nil

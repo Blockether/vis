@@ -1835,7 +1835,7 @@
                             terminal
                             (if (= :enter k) (KeyStroke. KeyType/Enter) (term/keystroke k)))))]
 
-            (expect (= #{:read! :choose! :confirm! :note! :wait! :transient! :read-option}
+            (expect (= #{:read! :choose! :confirm! :note! :view! :wait! :transient! :read-option}
                        (set (keys questions))))
             ;; One typed answer, in THIS region's own band and nowhere else: the
             ;; prompt is the band's title (row 16) and the text is typed into a

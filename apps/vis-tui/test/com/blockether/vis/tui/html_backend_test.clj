@@ -175,6 +175,18 @@
             (is (some? step))
             (is (= (cell-grid html cols 80) grid))
             (is (str/includes? text expected))
+            (when-let [heading (case (name (:operation row))
+                                 "council.publish"
+                                 "Message"
+
+                                 "run_tests"
+                                 "Metric"
+
+                                 nil)]
+              (is (str/includes? text heading))
+              (is (str/includes? text "Result"))
+              (is (not (str/includes? text "Field")))
+              (is (not (str/includes? text "Value"))))
             (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))
 
 (deftest nested-result-execution-disclosures-test

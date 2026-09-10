@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.activity :as contract]
             [com.blockether.vis.contract.wire :as wire]
             [charred.api :as json]
@@ -85,3 +86,27 @@
 
                    (expect (contract/valid-projection? actual))
                    (expect (= expected actual)))))
+
+(defdescribe
+  result-table-headings-test
+  (it "names scalar-table columns for the operation, with a readable fallback"
+      (doseq [[operation heading] [[:run_tests "Metric"] [:lint_code "Metric"]
+                                   [:council.publish "Message"] [:council.get "Message"]
+                                   [:council.read "Thread"] [:council.threads "Thread"]
+                                   [:council.members "Member"] [:custom.lookup "Detail"]]]
+        (let [content (get (presenter/result-presentation {:operation operation}
+                                                          {:total 12 :title "Activity review"})
+                           "content")]
+          (expect (= [heading "Result"] (get-in content [0 "columns"]))))))
+  (it "keeps nested detail tables distinct from top-level test metrics"
+      (let [content (get (presenter/result-presentation {:operation :run_tests}
+                                                        {:total 12
+                                                         :environment {:language "clojure"}})
+                         "content")]
+        (expect (= ["Metric" "Result"] (get-in content [0 "columns"])))
+        (expect (= ["Detail" "Result"] (get-in content [2 "columns"])))))
+  (it "uses the operation's columns for each item in a result list"
+      (let [content (get (presenter/result-presentation {:operation "council.members"}
+                                                        [{:name "Reviewer"} {:name "Author"}])
+                         "content")]
+        (expect (= [["Member" "Result"] ["Member" "Result"]] (mapv #(get % "columns") content))))))

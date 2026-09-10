@@ -172,8 +172,8 @@
           {
             "type": "table",
             "columns": [
-              "Field",
-              "Value"
+              "Message",
+              "Result"
             ],
             "rows": [
               [
@@ -233,8 +233,8 @@
           {
             "type": "table",
             "columns": [
-              "Field",
-              "Value"
+              "Metric",
+              "Result"
             ],
             "rows": [
               [

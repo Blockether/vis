@@ -83,6 +83,24 @@ export const ResultFirst: Story = {
       await expect(row.textContent).not.toMatch(/12:abc|13:def|\["src\/com/);
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
     }
+    for (const [index, heading] of [
+      [4, "Message"],
+      [5, "Metric"],
+    ] as const) {
+      const table = within(rows[index]);
+      await expect(
+        table.getByRole("columnheader", { name: heading }),
+      ).toBeVisible();
+      await expect(
+        table.getByRole("columnheader", { name: "Result" }),
+      ).toBeVisible();
+    }
+    await expect(
+      canvas.queryByRole("columnheader", { name: "Field" }),
+    ).not.toBeInTheDocument();
+    await expect(
+      canvas.queryByRole("columnheader", { name: "Value" }),
+    ).not.toBeInTheDocument();
   },
 };
 
@@ -395,11 +413,8 @@ export const CompactMiddle: Story = {
     await userEvent.click(
       canvas.getByRole("button", { name: "Expand Activity" }),
     );
-    const rows = ["before", "middle", "after"].map(
-      (id) =>
-        canvasElement.querySelector<HTMLElement>(
-          `[data-activity-row="${id}"]`,
-        )!,
+    const rows = ["before", "middle", "after"].map((id) =>
+      canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
     );
     const middle = within(rows[1]).getByRole("button");
     // Adjacent boxes alone miss the blank space inside an oversized toggle.

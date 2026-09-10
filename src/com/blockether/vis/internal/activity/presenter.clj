@@ -53,41 +53,44 @@
    "text" text})
 
 (defn- result-blocks
-  "Render bounded public data as fields and result bodies, never as a printed map."
-  [value]
-  (cond (map? value)
-        (let [entries
-              (sort-by (comp str key) (dissoc value :op "op"))
+  "Render bounded public data with contextual scalar-table headings. Nested maps
+   use generic detail headings rather than inheriting top-level metric labels."
+  [value table-label]
+  (cond (map? value) (let [entries
+                           (sort-by (comp str key) (dissoc value :op "op"))
 
-              short?
-              (fn [[k v]]
-                (and (not (contains? #{"content" "body" "description" "documentation" "message"
-                                       "out" "err" "stdout" "stderr" "output" "code" "source"}
-                                     (scalar k)))
-                     (not (coll? v))
-                     (<= (count (scalar v)) 256)
-                     (not (str/includes? (scalar v) "\n"))))
+                           short?
+                           (fn [[k v]]
+                             (and (not (contains? #{"content" "body" "description" "documentation"
+                                                    "message" "out" "err" "stdout" "stderr" "output"
+                                                    "code" "source"}
+                                                  (scalar k)))
+                                  (not (coll? v))
+                                  (<= (count (scalar v)) 256)
+                                  (not (str/includes? (scalar v) "\n"))))
 
-              fields
-              (filter short? entries)
+                           fields
+                           (filter short? entries)
 
-              bodies
-              (remove short? entries)]
+                           bodies
+                           (remove short? entries)]
 
-          (into (if (seq fields)
-                  [{"type" "table"
-                    "columns" ["Field" "Value"]
-                    "rows" (mapv (fn [[k v]]
-                                   [(label k) (scalar v)])
-                                 fields)}]
-                  [])
-                (mapcat (fn [[k v]]
-                          (cons {"type" "heading" "text" (label k)}
-                                (if (string? v) [(text-block (scalar k) v)] (result-blocks v))))
-                        bodies)))
+                       (into (if (seq fields)
+                               [{"type" "table"
+                                 "columns" [table-label "Result"]
+                                 "rows" (mapv (fn [[k v]]
+                                                [(label k) (scalar v)])
+                                              fields)}]
+                               [])
+                             (mapcat (fn [[k v]]
+                                       (cons {"type" "heading" "text" (label k)}
+                                             (if (string? v)
+                                               [(text-block (scalar k) v)]
+                                               (result-blocks v "Detail"))))
+                                     bodies)))
         (sequential? value) (if (every? #(not (coll? %)) value)
                               [{"type" "text" "text" (str/join "\n" (map scalar value))}]
-                              (vec (mapcat result-blocks value)))
+                              (vec (mapcat #(result-blocks % table-label) value)))
         (string? value) [{"type" "text" "text" value}]
         :else [{"type" "text" "text" (scalar value)}]))
 
@@ -152,7 +155,7 @@
               "council.threads" "Listed threads"
               "council.members" "Listed members"}
              op
-              (str/capitalize (str/trim (str/replace op #"[_.-]" " "))))
+             (str/capitalize (str/trim (str/replace op #"[_.-]" " "))))
 
         summary
         (cond (= op "cat") (str path
@@ -172,6 +175,20 @@
               (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
               (and (= op "grep") text)
               [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
-              :else (result-blocks value))]
+              :else (result-blocks value
+                                   (case op
+                                     ("run_tests" "lint_code")
+                                     "Metric"
+
+                                     ("council.publish" "council.get")
+                                     "Message"
+
+                                     ("council.read" "council.threads")
+                                     "Thread"
+
+                                     "council.members"
+                                     "Member"
+
+                                     "Detail")))]
 
     {"headline" headline "summary" summary "content" content}))
