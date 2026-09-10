@@ -285,7 +285,8 @@
       ;; at 6 687.
       ;; 6.7k → 6.8k to state that project_root_path is always available and root is not prebound.
       ;; 6.8k → 7.4k for the read/decision boundary, exact hashline endpoints and parse retries.
-      (expect (< (count text) 7400))
+      ;; 7.4k → 7.7k for the ls signature, batching and hidden alias contract.
+      (expect (< (count text) 7700))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -1017,6 +1018,17 @@
                       "A parse refusal means fix the replacement syntax, not the anchors"
                       "never retry it unchanged"]]
           (expect (str/includes? text rule) rule)))))
+
+(defdescribe core-prompt-ls-contract-test
+             ;; Regression: the prompt omitted ls keywords, including the hidden alias.
+             (it "states the ls signature, batching, return type, and hidden precedence"
+                 (let [text (prompt/build-system-prompt {})]
+                   (doseq [rule ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None)"
+                                 "one path or a list of paths" "returns a printable STRING"
+                                 "hidden=True` aliases `is_hidden=True"
+                                 "non-None `hidden` overrides `is_hidden`"
+                                 "gitignored entries stay excluded"]]
+                     (expect (str/includes? text rule) rule)))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
 ;; do not redefine paths or helpers that the session already provides.
