@@ -67,6 +67,15 @@ resolves that issue. Keep any other body text to the reason the diff cannot expl
 - Clojure formatting uses `.zprint.edn` and the Vis formatter: one blank line between top-level forms,
   attached comments preserved, one final newline. `.clj-kondo/imports/` is tracked source, not cache.
 
+### Computer-use automation
+
+Agents may use available computer-use automation (CUA) to interact with macOS
+applications, including Xcode, and websites for a user-authorized task. Inspect
+the current UI before acting and verify the result. This permission does not
+make unavailable tools available or authorize unrelated account changes. Keep
+passwords, private keys and recovery codes out of transcripts and tracked files;
+use private human input for authentication when required.
+
 ## Read only for the area being changed
 
 Paths below are relative to this repository. Internal namespace paths begin at
