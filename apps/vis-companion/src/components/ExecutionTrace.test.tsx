@@ -106,27 +106,44 @@ describe("execution grouping", () => {
     );
   });
 
-  it("merges stdout without hiding errors or creating cards for empty output", () => {
+  it("merges stdout without hiding failure status or creating empty cards", () => {
     const view = render(
-      <IterationTrace whole iterations={iterations([
-        { source: "first()", stdout: "first output", duration_ms: 10 },
-        { source: "empty()", stdout: "\n", duration_ms: 10 },
-        { source: "fail()", error: { message: "Operation failed" } },
-        { source: "last()", stdout: "last output", duration_ms: 10 },
-      ])} />,
+      <IterationTrace
+        whole
+        iterations={iterations([
+          { source: "first()", stdout: "first output", duration_ms: 10 },
+          { source: "empty()", stdout: "\n", duration_ms: 10 },
+          { source: "fail()", error: { message: "Operation failed" } },
+          { source: "last()", stdout: "last output", duration_ms: 10 },
+        ])}
+      />,
     );
-    expect(view.container.textContent).toContain("Operation failed");
+    // Regression #181: failure status stays visible; diagnostics open independently.
+    const errorToggle = view.getByRole("button", {
+      name: "Expand error details",
+    });
+    expect(errorToggle).toHaveTextContent("Failed");
+    expect(errorToggle).toHaveAttribute("aria-expanded", "false");
+    expect(view.queryByText(/Operation failed/)).toBeNull();
+    fireEvent.click(errorToggle);
+    expect(view.getByText(/Operation failed/)).toBeVisible();
     expect(view.container.textContent).not.toContain("first output");
     fireEvent.click(view.getByRole("button", { name: "Expand code" }));
-    expect(view.getAllByRole("button", { name: "Expand result" })).toHaveLength(1);
-    expect(view.getByRole("button", { name: "Expand result" }).textContent).toBe(
-      "RESULT +2 more",
+    expect(view.getAllByRole("button", { name: "Expand result" })).toHaveLength(
+      1,
     );
+    expect(
+      view.getByRole("button", { name: "Expand result" }).textContent,
+    ).toBe("RESULT +2 more");
     fireEvent.click(view.getByRole("button", { name: "Expand result" }));
     expect(view.container.textContent).toContain("first output");
     expect(view.container.textContent).toContain("last output");
     fireEvent.click(view.getByRole("button", { name: "Collapse code" }));
-    expect(view.container.textContent).toContain("Operation failed");
+    expect(view.getByText(/Operation failed/)).toBeVisible();
+    expect(errorToggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(errorToggle);
+    expect(view.queryByText(/Operation failed/)).toBeNull();
+    expect(errorToggle).toHaveAttribute("aria-expanded", "false");
   });
 
   it("owns source and result in one CODE disclosure before Activity", () => {
