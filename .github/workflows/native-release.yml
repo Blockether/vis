@@ -243,18 +243,11 @@ jobs:
             exit 1
           fi
           target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
-      # The engine binary's own suite. Terminal rendering belongs to the standalone
-      # client suite and artifact smoke below, not to this image.
+      # The native suite exercises both the engine and the staged standalone TUI.
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.9.2"
           enable-cache: false
-      - name: Test the native binary
-        shell: bash
-        env:
-          VIS_NATIVE_BIN: ${{ matrix.bin }}
-        run: clojure -M:test-native
-      - uses: ./.github/actions/test-native-python-sdk
       - name: Build and stage standalone TUI
         run: |
           cd apps/vis-tui
@@ -263,6 +256,13 @@ jobs:
           bin/stage-tui-release apps/vis-tui/target/vis-tui "${{ matrix.tui_asset }}"
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
+      - name: Test the native binaries
+        shell: bash
+        env:
+          VIS_NATIVE_BIN: ${{ matrix.bin }}
+          VIS_TUI_NATIVE_BIN: target/tui-release-bundle/vis-tui
+        run: clojure -M:test-native
+      - uses: ./.github/actions/test-native-python-sdk
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
@@ -401,12 +401,6 @@ jobs:
         with:
           version: "0.9.2"
           enable-cache: false
-      - name: Test the native binary
-        shell: bash
-        env:
-          VIS_NATIVE_BIN: target/vis
-        run: clojure -M:test-native
-      - uses: ./.github/actions/test-native-python-sdk
       - name: Build and stage standalone TUI
         run: |
           cd apps/vis-tui
@@ -415,6 +409,13 @@ jobs:
           bin/stage-tui-release apps/vis-tui/target/vis-tui "$VIS_TUI_ASSET"
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
+      - name: Test the native binaries
+        shell: bash
+        env:
+          VIS_NATIVE_BIN: target/vis
+          VIS_TUI_NATIVE_BIN: target/tui-release-bundle/vis-tui
+        run: clojure -M:test-native
+      - uses: ./.github/actions/test-native-python-sdk
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3

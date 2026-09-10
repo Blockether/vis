@@ -1105,6 +1105,23 @@
           (expect (str/includes? native contract) contract))
         (expect (not (str/includes? native "tags: ['v[0-9]*']"))))))
 
+(defdescribe
+  native-pipeline-order-test
+  (it "builds and stages both binaries before native tests and release attachment"
+      (let [workflow
+            (slurp ".github/workflows/native-release.yml")
+
+            jobs
+            (re-seq #"(?s)- name: Build and stage standalone TUI(.*?)- name: Attach to release"
+                    workflow)]
+
+        (expect (= 2 (count jobs)))
+        (doseq [[_ steps] jobs]
+          (expect (str/includes? steps "run: clojure -M:test-native") steps)
+          (expect (str/includes? steps "VIS_TUI_NATIVE_BIN: target/tui-release-bundle/vis-tui")
+                  steps)
+          (expect (str/includes? steps "uses: ./.github/actions/test-native-python-sdk") steps)))))
+
 (defn- beta-job-script
   "Read the production inline shell of one beta workflow job for isolated execution."
   [job]
