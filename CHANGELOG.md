@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.56] - 2026-09-10
+
+### Added
+- Configure the coding agent name through gateway settings.
+- Track session goals and iteration budgets with shared client controls.
+- Select stable, beta and development update tracks from the CLI.
+
+### Fixed
+- Send TUI clipboard sequences to the controlling terminal instead of the log, and copy Unicode through Windows `clip.exe` on WSL. Native PTY tests cover bubble copying and drag selections.
+- Bundle `uv` with Python runtime 0.5.7, restore native Python workers and retain the Ubuntu 22.04 compatibility baseline.
+- Restore native TUI resizing, syntax highlighting and attachment picking; keep model shortcuts responsive during gateway requests.
+- Stabilize repository ordering in Companion and collapse tool error diagnostics by default.
+- Preserve complete test failure diagnostics, refresh provider limits and notify Council requesters when replies omit explicit pings.
+
 ## [v0.1.55] - 2026-09-09
 
 ### Fixed
@@ -6150,7 +6164,8 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.47...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.56...HEAD
+[v0.1.56]: https://github.com/Blockether/vis/compare/v0.1.55...v0.1.56
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
