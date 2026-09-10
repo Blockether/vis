@@ -3,6 +3,7 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import {
   STORY_JOINED_ACTIVITY,
   STORY_COMPACT_EXECUTIONS,
+  STORY_INERT_CLIENT,
   STORY_LISTING,
   STORY_EXCHANGE_TURN,
   STORY_TURN_ITERATIONS,
@@ -153,11 +154,106 @@ export const OpeningProse: Story = {
       const bottomInset =
         code.getBoundingClientRect().top - prose.getBoundingClientRect().bottom;
       expect(bottomInset).toBeCloseTo(10, 0);
+      const previousActivity = canvasElement.querySelector(
+        "[data-execution-activity]",
+      )!;
       expect(
         later.getBoundingClientRect().top -
-          later.closest("section")!.getBoundingClientRect().top,
+          previousActivity.getBoundingClientRect().bottom,
       ).toBeCloseTo(bottomInset, 0);
     });
+  },
+};
+
+/** Regression: prose gaps must not add the previous segment's bottom inset. */
+export const ProseSpacing: Story = {
+  args: {
+    live: false,
+    client: STORY_INERT_CLIENT,
+    sid: "prose-spacing",
+    iterations: [
+      { ...STORY_LISTING[0], id: "before-prose" },
+      {
+        ...STORY_LISTING[0],
+        id: "narrated-code",
+        assistant_prose: "I will inspect the existing build without starting another.",
+      },
+      {
+        id: "prose-only",
+        assistant_prose: "The build is running. I will observe its progress.",
+      },
+      {
+        ...STORY_LISTING[0],
+        id: "prose-with-run",
+        assistant_prose: "The observation is complete. The run is available below.",
+        attachments: [
+          {
+            index: 0,
+            iteration_id: "prose-with-run",
+            filename: "build-observation.live.ndjson",
+            media_type: "application/vnd.vis.live+ndjson",
+            size: 3700,
+          },
+        ],
+      },
+      {
+        id: "closing-prose",
+        assistant_prose: "The build continues after observation stops.",
+      },
+    ],
+  },
+  render: (args) => (
+    <AssistantMessage
+      whole
+      client={args.client}
+      sid={args.sid}
+      turn={{
+        ...STORY_EXCHANGE_TURN,
+        iterations: args.iterations,
+        content: [
+          { id: "answer", type: "prose", markdown: "No new build was started." },
+        ],
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const prose = canvas.getAllByText(
+      /^(I will inspect|The build is running|The observation is complete|The build continues)/,
+      { selector: "p" },
+    );
+    const code = canvasElement.querySelectorAll("[data-execution-code]");
+    const activity = canvasElement.querySelectorAll("[data-execution-activity]");
+    const run = canvas
+      .getByRole("button", { name: "Open run build-observation" })
+      .closest(".border-code-edge")!;
+    const answer = canvas.getByText("No new build was started.");
+    const gaps = [
+      [activity[0], prose[0]],
+      [prose[0], code[1]],
+      [activity[1], prose[1]],
+      [prose[1], prose[2]],
+      [run, prose[3]],
+      [prose[3], answer],
+      // An attachment without code already has a margin; do not add prose padding to it.
+      ...(code[2] ? [[prose[2], code[2]]] : [[prose[2], run]]),
+    ];
+    for (const [before, after] of gaps) {
+      expect(
+        after.getBoundingClientRect().top - before.getBoundingClientRect().bottom,
+        `${before.textContent?.slice(0, 40)} → ${after.textContent?.slice(0, 40)}`,
+      ).toBeCloseTo(10, 0);
+    }
+  },
+};
+
+export const ProseWithAttachment: Story = {
+  ...ProseSpacing,
+  args: {
+    ...ProseSpacing.args,
+    iterations: ProseSpacing.args!.iterations!.map((iteration) =>
+      iteration.id === "prose-with-run" ? { ...iteration, forms: [] } : iteration,
+    ),
   },
 };
 

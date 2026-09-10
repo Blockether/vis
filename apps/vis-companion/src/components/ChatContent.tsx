@@ -2563,15 +2563,13 @@ const TraceSegment = memo(function TraceSegment({
   );
 
   return (
-    <section
-      className={`group/trace-segment relative min-w-0 pb-2.5 ${live ? transcriptEnterClass : ""}`}
-    >
+    <section className={`relative min-w-0 ${live ? transcriptEnterClass : ""}`}>
       {segment.head.thinking && (
         <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>
       )}
       {segment.head.prose && (
-        // The role owns the opening gap; narration between bands keeps both insets.
-        <div className="py-2.5 text-ui text-vis-message first:group-first/trace-segment:pt-0">
+        // The trace owns outer gaps; prose only separates bands within this segment.
+        <div className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 [&+*]:mt-0">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
@@ -2744,7 +2742,7 @@ export const IterationTrace = memo(function IterationTrace({
         ) : null;
       }}
     >
-      <div ref={rootRef} className="mb-2.5 grid">
+      <div ref={rootRef} className="mb-2.5 grid gap-2.5">
         {rampDone && hidden > 0 && (
           <LoadMore
             label={`Show ${hidden} earlier step${hidden === 1 ? "" : "s"} of this turn`}
