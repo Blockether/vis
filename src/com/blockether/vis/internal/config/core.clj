@@ -222,7 +222,7 @@
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
                     (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
-                    {:min-level :info})
+                    {:min-level :debug})
   (tel/call-on-shutdown! (fn []
                            (tel/stop-handlers!))))
 
@@ -260,7 +260,7 @@
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
                     (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
-                    {:min-level :info}))
+                    {:min-level :debug}))
 
 (defn shutdown!
   "Flush and stop all telemere handlers. Call after the TUI screen
