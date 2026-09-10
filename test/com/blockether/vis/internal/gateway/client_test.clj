@@ -23,6 +23,35 @@
 
 (def ^:private fake-entry {:host "127.0.0.1" :port 7890 :pid 4242 :secret "s"})
 
+(deftest terminal-child-holds-and-releases-the-canonical-lease
+  ;; Regression: the standalone native TUI connected to an absent default gateway.
+  (doseq [exit [0 7]]
+    (let [calls (atom [])]
+      (with-redefs-fn {(rv 'ensure-gateway!) #(do (swap! calls conj :discover) fake-entry)
+                       (rv 'ensure-client!) (fn [entry]
+                                              (is (= fake-entry entry))
+                                              (swap! calls conj :acquire))
+                       (rv 'release-client!) #(swap! calls conj :release)}
+        (fn []
+          (is (= exit
+                 (client/run-tui!
+                   ["/bin/sh" "-c"
+                    (str "test \"$VIS_GATEWAY_URL\" = http://127.0.0.1:7890 || exit 91; "
+                         "test \"$VIS_GATEWAY_TOKEN\" = s || exit 92; "
+                         "test \"$VIS_TUI_LOCAL_GATEWAY\" = \"$VIS_GATEWAY_URL\" || exit 93; "
+                         "exit " exit)])))
+          (is (= [:discover :acquire :release] @calls)))))))
+
+(deftest terminal-launch-failure-releases-lease
+  (let [released (atom 0)]
+    (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
+                     (rv 'ensure-client!) (constantly "lease")
+                     (rv 'release-client!) #(swap! released inc)}
+      (fn []
+        (is
+          (try (client/run-tui! ["/nonexistent/vis-tui"]) false (catch java.io.IOException _ true)))
+        (is (= 1 @released))))))
+
 ;; Regression: direct API debugging reimplemented registry discovery and authentication
 ;; instead of using the gateway client's canonical transport.
 (deftest request-uses-the-canonical-authenticated-client

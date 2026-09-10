@@ -432,6 +432,26 @@
                                                ((rv 'maybe-stop-when-idle!))
                                                (is (wait-until #(= 1 @stops))))))))))
 
+(deftest closing-one-terminal-preserves-the-other-client
+  (let [stops (atom 0)]
+    (with-stop-stub! stops
+                     {}
+                     (fn []
+                       (with-server-state! {:managed? true
+                                            :saw-client? true
+                                            :started-at-ms (System/currentTimeMillis)
+                                            :clients {"other-terminal"
+                                                      {:pid (.pid
+                                                              (java.lang.ProcessHandle/current))}}
+                                            :sse-clients {}}
+                                           (fn []
+                                             ((rv 'maybe-stop-when-idle!))
+                                             (Thread/sleep 80)
+                                             (is (zero? @stops))
+                                             (swap! @(rv 'server-state) assoc :clients {})
+                                             ((rv 'maybe-stop-when-idle!))
+                                             (is (wait-until #(= 1 @stops)))))))))
+
 (deftest killed-client-lease-does-not-pin-managed-daemon
   (testing "dead recorded client pids are reaped, so SIGKILLed TUIs still let the daemon die"
     (let [stops (atom 0)]

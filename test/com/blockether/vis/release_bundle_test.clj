@@ -1356,34 +1356,81 @@
                (expect (not (str/includes? output "<-M:vis>")) output)
                (expect (str/includes? output "<--help>") output))
              (finally (delete-tree! root)))))
-  (it "prefers the co-located native terminal client without invoking the engine"
-      (let [root
-            (.toFile (Files/createTempDirectory "vis-native-tui-launcher-test-"
-                                                (make-array FileAttribute 0)))
+  (it
+    "launches the JVM terminal through the JVM engine, preserving the caller directory"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-jvm-tui-lease-" (make-array FileAttribute 0)))
 
-            bin
-            (doto (io/file root "bin") .mkdirs)
+          home
+          (doto (io/file root "home") .mkdirs)
 
-            home
-            (doto (io/file root "home") .mkdirs)
+          path-dir
+          (doto (io/file root "path") .mkdirs)]
 
-            launcher
-            (io/file bin "vis-agent")]
+      (try
+        (write-executable!
+          (io/file path-dir "clojure")
+          (str
+            "#!/usr/bin/env bash\n"
+            "for arg in \"$@\"; do if [[ \"$arg\" == -Spath ]]; then printf 'src:resources'; exit 0; fi; done\n"
+            "printf '<%s>' \"$@\"\n"))
+        (let [{:keys [exit output]}
+              (run-bash ["bash" "bin/vis-agent" "tui" "--continue"]
+                        {"HOME" (.getAbsolutePath home)
+                         "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
+                         "VIS_NO_AUTO_INSTALL" "1"
+                         "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))})]
+          (expect (zero? exit) output)
+          (expect (str/includes? output "<-M:vis><gateway><tui><-->") output)
+          (expect (str/includes? output
+                                 "<clojure.main><-m><com.blockether.vis.tui.main><--continue>")
+                  output)
+          (expect (str/includes? output "<-Duser.dir=") output)
+          (expect (str/includes? output "/apps/vis-tui/src:") output))
+        (finally (delete-tree! root)))))
+  (it
+    "launches the native terminal through the matching engine gateway lease"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-native-tui-launcher-test-"
+                                              (make-array FileAttribute 0)))
 
-        (try (io/copy (io/file "bin/vis-agent") launcher)
-             (.setExecutable ^java.io.File launcher true)
-             (write-executable! (io/file bin "vis-agent-native")
-                                "#!/usr/bin/env bash\nprintf 'engine'\n")
-             (write-executable! (io/file bin "vis-tui")
-                                "#!/usr/bin/env bash\nprintf '<%s>' \"$@\"\n")
-             (let [{:keys [exit output]} (run-bash
-                                           ["bash" (.getAbsolutePath launcher) "tui" "--continue"]
-                                           {"HOME" (.getAbsolutePath home)
-                                            "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))})]
+          bin
+          (doto (io/file root "bin") .mkdirs)
+
+          home
+          (doto (io/file root "home") .mkdirs)
+
+          launcher
+          (io/file bin "vis-agent")]
+
+      (try (io/copy (io/file "bin/vis-agent") launcher)
+           (.setExecutable ^java.io.File launcher true)
+           (write-executable! (io/file bin "vis-agent-native")
+                              "#!/usr/bin/env bash\nprintf 'engine<%s>' \"$@\"\n")
+           (write-executable! (io/file bin "vis-tui") "#!/usr/bin/env bash\nprintf '<%s>' \"$@\"\n")
+           (let [{:keys [exit output]} (run-bash
+                                         ["bash" (.getAbsolutePath launcher) "tui" "--continue"]
+                                         {"HOME" (.getAbsolutePath home)
+                                          "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))})]
+             (expect (zero? exit) output)
+             (expect (str/includes? output "engine<gateway>engine<tui>") output)
+             (expect (str/includes? output
+                                    (str "engine<" (.getCanonicalPath (io/file bin "vis-tui")) ">"))
+                     output)
+             (expect (str/includes? output "engine<--continue>") output))
+           (doseq [[args extra-env] [[["--help"] {}] [["--version"] {}]
+                                     [["--gateway" "gateway.example.com" "--continue"] {}]
+                                     [["--continue"]
+                                      {"VIS_GATEWAY_URL" "http://gateway.example.com:7890"}]]]
+             (let [{:keys [exit output]}
+                   (run-bash (into ["bash" (.getAbsolutePath launcher) "tui"] args)
+                             (merge {"HOME" (.getAbsolutePath home)
+                                     "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))}
+                                    extra-env))]
                (expect (zero? exit) output)
-               (expect (= "<--continue>" output) output)
-               (expect (not (str/includes? output "engine")) output))
-             (finally (delete-tree! root))))))
+               (expect (not (str/includes? output "engine<")) output)
+               (expect (str/includes? output (str "<" (last args) ">")) output)))
+           (finally (delete-tree! root))))))
 
 ;; Regression: source launches accepted old Java and coupled users to the native-build pin.
 (defdescribe

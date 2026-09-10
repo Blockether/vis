@@ -980,6 +980,14 @@ runtime="$(runtime_effective)"
 # A native terminal client is deliberately a sibling process, not code linked
 # into the engine image. Native tracks use it; dev launches the app from the same
 # pinned source checkout. Missing clients never become prompt text for a model.
+# Explicit targets and informational commands never acquire a local gateway.
+tui_local=1
+[[ -z "${VIS_GATEWAY_URL:-}" || -z "${VIS_GATEWAY_URL// /}" ]] || tui_local=0
+for arg in "$@"; do
+  case "$arg" in
+    --gateway|--gateway=*|--gateway-token|--gateway-token=*|--help|-h|help|--version|-V|version) tui_local=0 ;;
+  esac
+done
 if (( tui_requested )) && [[ "$runtime" == native ]]; then
   native_runtime="$(find_native 2>/dev/null || true)"
   native_home="${native_runtime:+$(cd -P "$(dirname "$native_runtime")" && pwd)}"
@@ -994,10 +1002,16 @@ if (( tui_requested )) && [[ "$runtime" == native ]]; then
     configure_system_trust native
     measure_log "native TUI → $tui_runtime"
     cd "$invocation_cwd"
-    run_measured_or_exec "process native TUI" "$tui_runtime" "$@"
+    if (( ! tui_local )); then
+      run_measured_or_exec "process native TUI" "$tui_runtime" "-Duser.home=${HOME:-$vis_home}" "$@"
+    fi
+    [[ -n "$native_runtime" ]] || die "the native engine is not installed" "Run: vis-agent update"
+    set -- gateway tui -- "$tui_runtime" "-Duser.home=${HOME:-$vis_home}" "$@"
   fi
-  die "the native terminal client is not installed" \
-      "Run: vis-agent update" "For JVM development: vis-agent update --track dev"
+  if [[ -z "$tui_runtime" ]]; then
+    die "the native terminal client is not installed" \
+        "Run: vis-agent update" "For JVM development: vis-agent update --track dev"
+  fi
 fi
 
 configure_system_trust "$runtime"
@@ -1069,7 +1083,12 @@ if (( tui_requested )); then
   measure_log "JVM TUI → $tui_root"
   cd "$tui_root"
   tui_classpath="$(absolute_project_classpath "$tui_root" -Spath -M:run)" || exit 1
-  run_measured_or_exec "process JVM TUI" clojure -J--enable-native-access=ALL-UNNAMED "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run "$@"
+  tui_command=(clojure -J--enable-native-access=ALL-UNNAMED "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run)
+  if (( ! tui_local )); then
+    run_measured_or_exec "process JVM TUI" "${tui_command[@]}" "$@"
+  fi
+  # The engine resolves its own classpath below and re-execs that JVM for the daemon.
+  set -- gateway tui -- "$JAVA_CMD" --enable-native-access=ALL-UNNAMED "-Duser.dir=$invocation_cwd" ${trust_native_args[@]+"${trust_native_args[@]}"} -cp "$tui_classpath" clojure.main -m com.blockether.vis.tui.main "$@"
 fi
 
 stream_trace_jvm_opts=()

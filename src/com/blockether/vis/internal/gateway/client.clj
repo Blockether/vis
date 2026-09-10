@@ -1111,6 +1111,50 @@
                path
                opts))))
 
+(defn run-tui!
+  "Run a terminal child while holding this runtime's local gateway lease.
+   Discovery owns native/JVM re-exec, locking and existing-daemon reuse. Never
+   kill a gateway here: its reaper alone decides when all clients and work ended.
+   Connection credentials travel only in the child's environment, never argv."
+  [argv]
+  (when (empty? argv) (throw (ex-info "terminal executable is required" {:vis/user-error true})))
+  (try
+    (let [entry
+          (ensure-gateway!)
+
+          _
+          (ensure-client! entry)
+
+          pb
+          (ProcessBuilder. ^java.util.List argv)
+
+          env
+          (.environment pb)
+
+          url
+          (base-url entry)]
+
+      (.put env "VIS_GATEWAY_URL" url)
+      (.put env "VIS_GATEWAY_TOKEN" (str (:secret entry)))
+      (.put env "VIS_TUI_LOCAL_GATEWAY" (if (:remote? entry) "" url))
+      (.directory pb (io/file (System/getProperty "user.dir")))
+      (.inheritIO pb)
+      (let [child
+            (.start pb)
+
+            hook
+            (Thread. ^Runnable
+                     (fn []
+                       (.destroy child))
+                     "vis-tui-child-shutdown")]
+
+        (.addShutdownHook (Runtime/getRuntime) hook)
+        (try (.waitFor child)
+             (finally (.destroy child)
+                      (try (.removeShutdownHook (Runtime/getRuntime) hook)
+                           (catch IllegalStateException _ nil))))))
+    (finally (release-client!))))
+
 (def ^:private channel-read-timeout-ms
   "Ceiling for a read a CHANNEL makes while a person waits at an open dialog.
    Short on purpose: an unreachable daemon must paint \"unavailable\" within

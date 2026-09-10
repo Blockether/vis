@@ -19,6 +19,7 @@
             [com.blockether.vis.tui.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.io BufferedReader File InputStream InputStreamReader)
+           (java.lang ProcessHandle)
            (java.net URI URLEncoder)
            (java.nio.charset StandardCharsets)))
 
@@ -125,7 +126,9 @@
       {:base-url (str scheme "://" host ":" port prefix)
        :host host
        :port port
-       :secret (not-empty (str/trim (str token)))})))
+       :secret (not-empty (str/trim (str token)))
+       :local? (and (contains? #{"127.0.0.1" "localhost" "[::1]" "::1"} host)
+                    (= absolute (System/getenv "VIS_TUI_LOCAL_GATEWAY")))})))
 
 (defn configure!
   "Configure the gateway target. Call before any request.
@@ -209,7 +212,10 @@
                                (str secret))
 
                              (= as :stream)
-                             (assoc "Accept-Encoding" "identity"))}
+                             (assoc "Accept-Encoding" "identity")
+
+                             (:local? entry)
+                             (assoc "X-Vis-Client-Pid" (str (.pid (ProcessHandle/current)))))}
            (some? body)
            (assoc :body (if raw-body? body (wire/json-str body)))
 
@@ -316,7 +322,12 @@
     (locking client-id
       (when-not @client-id
         (let [response
-              (send-json-with-entry! entry "POST" "/v1/clients" {:kind "tui-client"})
+              (send-json-with-entry! entry
+                                     "POST"
+                                     "/v1/clients"
+                                     (cond-> {:kind "tui-client"}
+                                       (:local? entry)
+                                       (assoc :pid (.pid (ProcessHandle/current)))))
 
               registered-id
               (get response "client_id")]

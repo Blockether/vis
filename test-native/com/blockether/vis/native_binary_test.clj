@@ -35,6 +35,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [charred.api :as json]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -149,6 +150,78 @@
     {:finished? finished?
      :exit (when finished? (.exitValue process))
      :output (if (.exists log) (slurp log) "")}))
+
+(defdescribe
+  native-terminal-supervisor-test
+  (it
+    "runs a terminal child and releases its lease without stopping the gateway"
+    (let [dir
+          (temp-dir "vis-native-tui-lease-")
+
+          server
+          (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
+
+          requests
+          (atom [])
+
+          handshake
+          (into {}
+                (map (fn [[k v]]
+                       [(get gateway-contract/handshake-keys k) v]))
+                (gateway-contract/handshake {:version "dev" :build "fixture"}))]
+
+      (try (.createContext server
+                           "/"
+                           (reify
+                             HttpHandler
+                               (handle [_ exchange]
+                                 (let [^HttpExchange exchange
+                                       exchange
+
+                                       path
+                                       (.getPath (.getRequestURI exchange))
+
+                                       method
+                                       (.getRequestMethod exchange)
+
+                                       _
+                                       (slurp (.getRequestBody exchange))
+
+                                       body
+                                       (case path
+                                         "/healthz"
+                                         {:status "ok" :secret_match true :protocol handshake}
+
+                                         "/v1/clients"
+                                         {:client_id "terminal-lease"}
+
+                                         {})
+
+                                       bytes
+                                       (.getBytes ^String (json/write-json-str body)
+                                                  StandardCharsets/UTF_8)]
+
+                                   (swap! requests conj [method path])
+                                   (.sendResponseHeaders exchange 200 (alength bytes))
+                                   (with-open [out (.getResponseBody exchange)]
+                                     (.write out bytes))))))
+           (.start server)
+           (let [url
+                 (str "http://127.0.0.1:" (.getPort (.getAddress server)))
+
+                 result
+                 (run-binary dir
+                             [(.getAbsolutePath (require-binary))
+                              (str "-Duser.home=" (.getAbsolutePath dir)) "--gateway" url "gateway"
+                              "tui" "--" "/bin/sh" "-c" "test -n \"$VIS_GATEWAY_URL\" && exit 7"]
+                             60)]
+
+             (expect (:finished? result) (:output result))
+             (expect (= 7 (:exit result)) (:output result))
+             (expect (some #{["POST" "/v1/clients"]} @requests))
+             (expect (some #{["DELETE" "/v1/clients/terminal-lease"]} @requests))
+             (expect (not-any? #(= "/v1/admin/stop" (second %)) @requests)))
+           (finally (.stop server 0) (delete-tree! dir))))))
 
 ;; ── a provider that answers on loopback ──────────────────────────────────────
 

@@ -3409,7 +3409,14 @@
 
 (doseq
   [spec
-   [{:cmd/name "start"
+   [{:cmd/name "tui"
+     :cmd/parent ["gateway"]
+     :cmd/doc "Run the terminal client with a local gateway lease (used by the launcher)."
+     :cmd/run-fn (fn [_ args]
+                   (let [exit (gateway-client/run-tui! (vec (drop-while #{"--"} args)))]
+                     (shutdown-agents)
+                     (System/exit (int exit))))}
+    {:cmd/name "start"
      :cmd/parent ["gateway"]
      :cmd/doc
      "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground, always on THIS machine."
@@ -3945,7 +3952,8 @@
 (defn- deferred-python-dispatch?
   "True for long-lived processes that load Python only at the gateway execution boundary."
   [args]
-  (or (= "sdk-stdio" (first args)) (= ["gateway" "start"] (vec (take 2 args)))))
+  (or (= "sdk-stdio" (first args))
+      (contains? #{["gateway" "start"] ["gateway" "tui"]} (vec (take 2 args)))))
 
 ;; Root command
 ;;

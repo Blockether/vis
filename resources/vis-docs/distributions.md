@@ -59,6 +59,23 @@ Dev needs Git and JDK 25+. The launcher can install the Clojure CLI;
 To run local repository edits independently of installed tracks, use
 `clojure -M:vis` inside that checkout. Build those edits with `clojure -T:build native`.
 
+## Terminal gateway lifecycle
+
+`vis-agent tui` discovers the local gateway and starts one when none is running.
+A native installation starts a native gateway; dev starts it with the same JVM
+and engine classpath. A compatible gateway already serving other clients is
+reused, never killed to change its runtime.
+
+The launcher holds a client lease until the TUI exits. The TUI also registers its
+local PID so crashed clients and their event streams can be reaped. A managed
+gateway stops after its last client disconnects and no work remains. Closing one
+TUI does not stop another TUI, the companion, or an active turn. Manually started
+gateways remain user-owned.
+
+`--gateway` or `VIS_GATEWAY_URL` selects an explicit gateway: the TUI only connects
+to it and never starts or stops a local replacement. Help and version commands do
+not start a gateway. Direct `vis-tui` execution remains a connection-only client;
+use `vis-agent tui` for automatic local lifecycle management.
 ## Automatic native betas
 
 The Beta Native workflow starts after successful push CI on `main`. It verifies

@@ -6,6 +6,24 @@
             [taoensso.telemere :as tel]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
+(deftest local-client-leases-and-streams-carry-the-process-id
+  ;; A killed TUI must not leave a pidless lease or SSE stream pinning the daemon.
+  (doseq [local? [true false]]
+    (let [requests (atom [])
+          entry {:base-url "http://127.0.0.1:7890" :local? local?}]
+
+      (with-redefs-fn {#'client/client-id (atom nil)
+                       #'client/ensure-release-hook! (constantly nil)
+                       #'http/request (fn [request]
+                                        (swap! requests conj request)
+                                        {:status 200 :body "{\"client_id\":\"test-lease\"}"})}
+        (fn []
+          (#'client/ensure-client! entry)
+          (#'client/gw-send! entry "GET" "/v1/events" {:as :stream})
+          (is (= local? (boolean (re-find #"\"pid\"" (:body (first @requests))))))
+          (is (= (when local? (str (.pid (java.lang.ProcessHandle/current))))
+                 (get-in (last @requests) [:headers "X-Vis-Client-Pid"]))))))))
+
 (deftest multiplexed-listeners-share-the-session-subscription
   (let [state
         (atom {:subs {} :epoch 0 :future nil :stream nil})

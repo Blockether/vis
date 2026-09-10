@@ -23,7 +23,7 @@
 
 (def ^:private help-text
   [usage "" "The Vis terminal application. It talks to a Vis gateway over HTTP and SSE;"
-   "start one with `vis-agent gateway start` if none is running." ""
+   "vis-agent tui automatically manages a local gateway unless --gateway is supplied." ""
    "  --gateway HOST[:PORT]  gateway address (env VIS_GATEWAY_URL)"
    "  --gateway-token TOKEN  gateway token (env VIS_GATEWAY_TOKEN)"
    "                        no gateway/token supplied: use ~/.vis/gateway.token"
