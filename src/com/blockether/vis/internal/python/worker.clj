@@ -502,6 +502,10 @@
   (locking workers
     (when-let [state (get @workers k)]
       (swap! workers dissoc k)
+      ;; Lifecycle cancellation is explicit, not an authorization or crash error.
+      (let [[pending _] (reset-vals! (:pending (:peer state)) {})]
+        (doseq [[_ waiting] pending]
+          (deliver waiting {"error" "Python worker stopped by session lifecycle cancellation"})))
       (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
       (let [^Process process (:process state)]
         (.destroy process)

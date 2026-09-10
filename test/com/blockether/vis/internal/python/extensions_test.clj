@@ -3089,6 +3089,204 @@ vis.register(vis.Extension(name='asker', description='asker', alias='a',
 ")
 
 (defdescribe
+  extension-reload-dialog-isolation-test
+  ;; #192: reload in B must not revoke A's pending dialog callback or cleanup.
+  (it
+    "keeps both session workers alive through reload and secret cleanup"
+    (with-fresh-loaded
+      {"asker.py" asker-py}
+      (fn [_ {:keys [ext-dir]}]
+        (let [a
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              b
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              invoke
+              (fn [ctx sym]
+                (binding [extension/*current-environment* {:python-context ctx :session-id ctx}]
+                  ((symbol-fn (registered "asker") sym))))
+
+              pending
+              (promise)
+
+              continue
+              (promise)
+
+              answer
+              (answer-pending! "Deploy"
+                               (fn [id]
+                                 (deliver pending id)
+                                 (deref continue 15000 nil)
+                                 (human-input/submit! id
+                                                      {"env" "staging" "token" "synthetic-192"})))
+
+              running
+              (future (invoke a 'ask_key))]
+
+          (try (expect (string? (deref pending 10000 nil)))
+               (let [a-row
+                     (get @@#'pyx/session-contexts [a "asker"])
+
+                     a-worker
+                     (worker/extension-worker-key a)]
+
+                 (expect (some? (:context a-row)))
+                 (binding [extension/*current-environment* {:python-context b :session-id b}]
+                   (expect (= 0 (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))
+                 (expect (worker/worker-live? a-worker))
+                 (expect (= a-row (get @@#'pyx/session-contexts [a "asker"])))
+                 (expect (contains? @(get-in @@#'worker/workers [a-worker :peer :host-sessions])
+                                    (:context a-row)))
+                 (deliver continue true)
+                 (expect (= {:is-accepted true} (deref answer 10000 ::timeout)))
+                 (let [result (deref running 10000 ::timeout)]
+                   (expect (= "synthetic-192" (get-in result [:result "token"])))
+                   (expect (true? (get-in result [:result "forgotten"]))))
+                 (expect (empty? (human-input/pending-requests))))
+               (finally (deliver continue true)
+                        (future-cancel running)
+                        (ep/dispose-python-context! a)
+                        (ep/dispose-python-context! b))))))))
+
+(defdescribe extension-cancelled-caller-lease-test
+             ;; #192: cancellation of the host caller is not completion of guest execution.
+             (it "defers retirement until the outstanding worker reply settles"
+                 (let [ctx
+                       (pyx/build-context "cancelled-caller-192")
+
+                       reply
+                       (promise)]
+
+                   (try (locking @#'pyx/session-contexts (#'pyx/acquire-context! ctx))
+                        (pyx/close-context! ctx)
+                        (let [released (with-redefs [worker/pending-replies (constantly [reply])]
+                                         (#'pyx/release-settled-context! ctx))]
+                          (expect (contains? @@#'pyx/live-contexts ctx))
+                          (expect (contains? @(get-in @@#'worker/workers
+                                                      [worker/shared-key :peer :host-sessions])
+                                             ctx))
+                          (expect (not (realized? released)))
+                          (deliver reply {"value" nil})
+                          (expect (not= ::timeout (deref released 10000 ::timeout)))
+                          (expect (not (contains? @@#'pyx/live-contexts ctx))))
+                        (finally (deliver reply {"value" nil}) (pyx/close-context! ctx))))))
+
+(def ^:private reload-dialog-py
+  "import os
+import blockether.vis.extension as vis
+
+def probe():
+    'Return worker identity and admitted helper version.'
+    import reload_helper_192
+    return {'pid': os.getpid(), 'version': reload_helper_192.version}
+
+def wait_probe(mode, timeout_ms):
+    'Wait for synthetic input, then import admitted code and clean up.'
+    answer = vis.ask('Reload lifecycle', [{'name': 'token', 'type': 'password'}], timeout_ms=timeout_ms)
+    if not answer:
+        return {'reason': answer.reason}
+    handle = answer['token']
+    try:
+        matched = answer.reveal('token') == 'synthetic-192'
+        if mode == 'failure':
+            raise ValueError('primary-192')
+        result = probe()
+        result['matched'] = matched
+        return result
+    finally:
+        vis.forget(handle)
+
+vis.register(vis.Extension(name='reload-lifecycle', description='Reload lifecycle fixture.',
+    alias='reload_lifecycle', symbols=[vis.Symbol(probe), vis.Symbol(wait_probe)]))
+")
+
+(defdescribe
+  extension-reload-lifecycle-paths-test
+  ;; #192: exercise real workers, dialog outcomes, lazy imports and secret cleanup.
+  (doseq [mode [:submit :cancel :timeout :failure :teardown]]
+    (it
+      (str "drains the old session generation through " (name mode))
+      (with-fresh-loaded
+        {"extension.py" reload-dialog-py "reload_helper_192/__init__.py" "version = 1\n"}
+        (fn [loaded {:keys [ext-dir]}]
+          (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+          (let [a (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                b (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                invoke (fn [ctx sym & args]
+                         (binding [extension/*current-environment* {:python-context ctx
+                                                                    :session-id ctx}]
+                           (apply (symbol-fn (registered "reload-lifecycle") sym) args)))
+                b-before (:result (invoke b 'probe))
+                pending (promise)
+                proceed (promise)
+                answer (answer-pending! "Reload lifecycle"
+                                        (fn [id]
+                                          (deliver pending id)
+                                          (deref proceed 15000 nil)
+                                          (case mode
+                                            :cancel
+                                            (human-input/cancel! id)
+
+                                            (:timeout :teardown)
+                                            nil
+
+                                            (human-input/submit! id {"token" "synthetic-192"}))))
+                running (future
+                          (invoke a 'wait_probe (name mode) (if (= mode :timeout) 3000 20000)))
+                secret-count (count @@#'human-input/secrets)]
+
+            (try (expect (string? (deref pending 10000 nil)))
+                 (let [old-ctx (:context (get @@#'pyx/session-contexts [a "reload-lifecycle"]))
+                       snapshot (get-in @@#'pyx/context-lifecycle [old-ctx :snapshot])]
+
+                   (write-ext! ext-dir "reload_helper_192/__init__.py" "version = 2\n")
+                   (binding [extension/*current-environment* {:python-context
+                                                              (if (= mode :submit) a b)}]
+                     (expect (= 0
+                                (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))
+                   (let [b-after (:result (invoke b 'probe))]
+                     (expect (= 2 (get b-after "version")))
+                     (expect (= (get b-before "pid") (get b-after "pid"))))
+                   (expect (.isDirectory (io/file snapshot)))
+                   (expect (contains? @@#'pyx/live-contexts old-ctx))
+                   (when (= mode :teardown) (pyx/close-session-contexts! a))
+                   (deliver proceed true)
+                   (deref answer 10000 ::timeout)
+                   (let [result (deref running 10000 ::timeout)]
+                     (case mode
+                       :submit
+                       (do (expect (= 1 (get-in result [:result "version"])))
+                           (expect (true? (get-in result [:result "matched"])))
+                           (expect (not= (get b-before "pid") (get-in result [:result "pid"]))))
+
+                       :cancel
+                       (expect (= "cancelled" (get-in result [:result "reason"])))
+
+                       :timeout
+                       (expect (= "timeout" (get-in result [:result "reason"])))
+
+                       :teardown
+                       (expect (str/includes? (pr-str result) "session lifecycle cancellation"))
+
+                       :failure
+                       (expect (str/includes? (pr-str result) "primary-192"))))
+                   (loop [attempt 0]
+                     (when (and (seq (human-input/pending-requests)) (< attempt 100))
+                       (Thread/sleep 10)
+                       (recur (inc attempt))))
+                   (expect (empty? (human-input/pending-requests)))
+                   (expect (= secret-count (count @@#'human-input/secrets)))
+                   (when-not (= mode :teardown)
+                     (expect (= 2 (get-in (invoke a 'probe) [:result "version"]))))
+                   (expect (not (contains? @@#'pyx/live-contexts old-ctx)))
+                   (expect (not (.exists (io/file snapshot)))))
+                 (finally (deliver proceed true)
+                          (ep/dispose-python-context! a)
+                          (ep/dispose-python-context! b)
+                          (future-cancel running)))))))))
+
+(defdescribe
   python-human-input-test
   (it
     "vis.ask pauses the extension, then returns typed values with the password kept opaque"

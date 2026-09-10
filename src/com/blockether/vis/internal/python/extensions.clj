@@ -118,9 +118,8 @@
 (defonce
   ^:private
   ^{:doc
-    "Extension namespace -> worker key. Every namespace operation resolves
-           through this map so a session-local extension follows its sandbox into
-           that session's interpreter; registry-only contexts use the shared worker."}
+    "Extension namespace -> worker key. Session extensions use a separate trusted
+     interpreter; registry-only contexts use the shared registration worker."}
   context-workers
   (atom {}))
 
@@ -465,10 +464,8 @@
   "Open one trusted extension namespace and answer its unique name.
 
    With one argument this is the gateway-wide registration namespace in the
-   shared worker. `worker` selects a session's existing worker instead: only the
-   namespace is new, while imports and native-library state are shared with that
-   session's sandbox. Trust is per namespace, so it is set explicitly here and
-   never inherited by the sandbox namespace."
+   shared trusted worker. The explicit worker must be a trusted extension worker,
+   never a session's sandbox process."
   ([label] (open-context! pyext/shared-key label))
   ([worker label] (open-context! worker label)))
 
@@ -697,19 +694,64 @@
   session-contexts
   (atom {}))
 
+(defonce ^:private context-lifecycle
+  ;; Context -> snapshot and admitted calls. Guarded by session-contexts.
+  (atom {}))
+
+(defn- delete-tree!
+  [^File dir]
+  (when (and dir (.exists dir))
+    (doseq [^File f (reverse (file-seq dir))]
+      (.delete f))))
+
 (defn- discard-context!
   ([ctx] (discard-context! ctx true))
   ([ctx close-in-worker?]
-   (when ctx
-     (let [worker (worker-for ctx)]
-       (swap! live-contexts disj ctx)
-       (swap! context-workers dissoc ctx)
-       (try (python-host/forget-session! ctx) (catch Throwable _ nil))
-       (when (and close-in-worker? (pyext/worker-live? worker))
-         (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))
-       (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
-         (pyext/stop-worker! worker))))
+   (locking session-contexts
+     (when ctx
+       (let [{:keys [calls snapshot]} (get @context-lifecycle ctx)]
+         (if (and close-in-worker? (pos? (long (or calls 0))))
+           (swap! context-lifecycle assoc-in [ctx :closing?] true)
+           (let [worker (worker-for ctx)]
+             (swap! live-contexts disj ctx)
+             (swap! context-workers dissoc ctx)
+             (swap! context-lifecycle dissoc ctx)
+             (try (python-host/forget-session! ctx) (catch Throwable _ nil))
+             (when (and close-in-worker? (pyext/worker-live? worker))
+               (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))
+             (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
+               (pyext/stop-worker! worker))
+             (when (and snapshot
+                        (not-any? #(= snapshot (:snapshot %)) (vals @loaded))
+                        (not-any? #(= snapshot (:snapshot %)) (vals @context-lifecycle)))
+               (delete-tree! (io/file snapshot))))))))
    nil))
+
+(defn- acquire-context!
+  [ctx]
+  (when (or (not (contains? @live-contexts ctx)) (get-in @context-lifecycle [ctx :closing?]))
+    (throw (ex-info "Python extension context was retired before the call started"
+                    {:type ::context-retired})))
+  (swap! context-lifecycle update-in [ctx :calls] (fnil inc 0)))
+
+(defn- release-context!
+  [ctx]
+  (locking session-contexts
+    (when (contains? @context-lifecycle ctx)
+      (let [state (swap! context-lifecycle update-in [ctx :calls] dec)]
+        (when (and (zero? (long (get-in state [ctx :calls]))) (get-in state [ctx :closing?]))
+          (discard-context! ctx))))))
+
+(defn- release-settled-context!
+  "Caller cancellation can precede the guest reply. Keep its lease until the
+   worker actually replies or exits, so a reload cannot revoke live callbacks."
+  [ctx]
+  (let [pending (remove realized? (pyext/pending-replies (worker-for ctx)))]
+    (if (seq pending)
+      (future (doseq [reply pending]
+                @reply)
+              (release-context! ctx))
+      (release-context! ctx))))
 
 (defn- initialize-extension-context!
   "Evaluate admitted extension `source` in a trusted namespace of `worker`.
@@ -725,6 +767,7 @@
         frozen-home
         (.getCanonicalPath (.getParentFile snap))]
 
+    (swap! context-lifecycle assoc ctx {:snapshot (.getCanonicalPath snap) :calls 0})
     (try (bind-host! ctx label)
          (locking ctx
            (exec-in! ctx bootstrap-python)
@@ -788,33 +831,38 @@
         path
         (get (meta source-f) callable-path-key)]
 
-    (if-not (and worker path (pyext/worker-live? worker))
+    (when (and worker path (not (pyext/worker-live? worker)))
+      (throw (ex-info "Python extension session is no longer running" {:type ::session-closed})))
+    (if-not (and worker path)
       [source-ctx source-f]
       (if-let [entry (source-entry ext-name source-ctx)]
         (let [cache-key [worker ext-name]
-              local (locking session-contexts
-                      (let [cached (get @session-contexts cache-key)]
-                        (if (identical? source-ctx (:source-context cached))
-                          cached
-                          (let [fresh (initialize-extension-context! (pyext/extension-worker-key
-                                                                       worker)
-                                                                     (str ext-name)
-                                                                     (io/file (:snapshot entry))
-                                                                     (:path entry)
-                                                                     (:source entry)
-                                                                     (:packages entry))
-                                row (assoc fresh :source-context source-ctx)]
+              local
+              (locking session-contexts
+                (let [cached (get @session-contexts cache-key)]
+                  (if (or (identical? source-ctx (:source-context cached))
+                          (pos? (long (or (get-in @context-lifecycle [(:context cached) :calls])
+                                          0))))
+                    cached
+                    (let [fresh (initialize-extension-context! (pyext/extension-worker-key worker)
+                                                               (str ext-name)
+                                                               (io/file (:snapshot entry))
+                                                               (:path entry)
+                                                               (:source entry)
+                                                               (:packages entry))
+                          row (assoc fresh :source-context source-ctx)]
 
-                            (swap! session-contexts assoc cache-key row)
-                            (discard-context! (:context cached))
-                            row))))
+                      (swap! session-contexts assoc cache-key row)
+                      (discard-context! (:context cached))
+                      row))))
               target-f (get-in (:registration local) path)]
 
           (when-not (fn? target-f)
             (throw (ex-info (str "Python extension callable disappeared at " (pr-str path))
                             {:extension ext-name :path path})))
           [(:context local) target-f])
-        [source-ctx source-f]))))
+        (throw (ex-info "Python extension registration was replaced before the call started"
+                        {:type ::context-retired}))))))
 
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
 ;; registry expects. Every adapter is defensive: a closed context (after
@@ -834,18 +882,28 @@
                      str)})
 
 (defn- call-py-ext
-  "Invoke trusted extension code outside the model interpreter. Only sealed data
-   crosses the process boundary; Python object references cannot cross it."
+  "Lease a session-owned context through the complete call, including host cleanup."
   [ext-name env ctx f args]
   (let [effective-env
         (or (not-empty env) extension/*current-environment*)
 
         [call-ctx call-f]
-        (session-call-target ext-name effective-env ctx f)]
+        (locking session-contexts
+          (let [[target target-f] (session-call-target ext-name effective-env ctx f)]
+            (acquire-context! target)
+            [target target-f]))]
 
-    (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name})
-                             :env effective-env}
-                            (python-host/conveying call-ctx (call-py call-ctx call-f args)))))
+    (try (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name})
+                                  :env effective-env}
+                                 (python-host/conveying call-ctx (call-py call-ctx call-f args)))
+         (catch Throwable t
+           ;; A reload must not replay an operation which already ran and failed.
+           (throw (ex-info (ex-message t) (assoc (ex-data t) ::call-started true) t)))
+         (finally (try (release-settled-context! call-ctx)
+                       (catch Throwable _
+                         (tel/log! {:level :warn
+                                    :id ::context-cleanup-failed
+                                    :data {:extension ext-name}})))))))
 
 (defn- sctx->env
   "Minimal state env for a slash callback: the persistence handle and session
@@ -917,6 +975,7 @@
       (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv)})
            (catch Throwable t
              (if-let [fresh (and (not *healing-symbol*)
+                                 (not (::call-started (ex-data t)))
                                  (context-dead? ctx)
                                  (live-symbol-fn ext-name sym ctx))]
                (binding [*healing-symbol* true]
@@ -1887,12 +1946,6 @@
                                        (str rel " " (util/sha256-hex (slurp f)))))
                                    (source-files root)))))
 
-(defn- delete-tree!
-  [^File dir]
-  (when (and dir (.exists dir))
-    (doseq [^File f (reverse (file-seq dir))]
-      (.delete f))))
-
 (defonce ^:private snapshot-home
   ;; ONE temp tree per process for every frozen import root, removed at exit.
   ;; Workers already admit the staged guest-module directory as boot-time read-only
@@ -1957,39 +2010,27 @@
          (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
 
 (defn ^:no-doc close-context!
-  "Tear down an extension session this namespace owns: its host bindings go, then
-   its namespace in the interpreter, and its name is marked dead so a captured
-   callable is refused instead of quietly reaching an empty namespace.
-
-   Every close here tears down a session that is already superseded, dead or
-   being replaced, so a failing close must never take the load, or the failure
-   being reported, down with it."
+  "Retire a registration after admitted calls drain. Session realizations remain
+   owned by their sessions; another session's reload must not revoke them."
   [ctx]
-  (let [locals (into []
-                     (filter (fn [[_ row]]
-                               (identical? ctx (:source-context row))))
-                     @session-contexts)]
-    (when (seq locals)
-      (swap! session-contexts #(apply dissoc % (map first locals)))
-      (doseq [[_ row] locals]
-        (discard-context! (:context row))))
-    (discard-context! ctx)))
+  (discard-context! ctx))
 
 (defn ^:no-doc close-session-contexts!
   "Stop the session's separate trusted extension worker and forget its namespaces.
    Teardown does not enter an interpreter that may be blocked in native code."
   [worker]
-  (pyext/stop-worker! (pyext/extension-worker-key worker))
-  (let [locals (into []
-                     (filter (fn [[[k _] _]]
-                               (= worker k)))
-                     @session-contexts)]
-    (doseq [extension-worker (distinct (map #(worker-for (:context (second %))) locals))]
-      (pyext/stop-worker! extension-worker))
-    (when (seq locals)
-      (swap! session-contexts #(apply dissoc % (map first locals)))
-      (doseq [[_ row] locals]
-        (discard-context! (:context row) false))))
+  (locking session-contexts
+    (pyext/stop-worker! (pyext/extension-worker-key worker))
+    (let [locals (into []
+                       (filter (fn [[[k _] _]]
+                                 (= worker k)))
+                       @session-contexts)]
+      (doseq [extension-worker (distinct (map #(worker-for (:context (second %))) locals))]
+        (pyext/stop-worker! extension-worker))
+      (when (seq locals)
+        (swap! session-contexts #(apply dissoc % (map first locals)))
+        (doseq [[_ row] locals]
+          (discard-context! (:context row) false)))))
   nil)
 
 (defn- load-file!
@@ -2269,15 +2310,17 @@
          ;; Frozen code this process no longer serves. A retained last-good entry
          ;; (its own reload failed) still points at its snapshot, so only trees
          ;; nothing references are removed.
-         (let [live (set (keep :snapshot (vals @loaded)))]
-           (doseq [s (distinct (keep :snapshot (vals old-loaded)))
-                   :when (not (live s))]
+         (locking session-contexts
+           (let [live (set (concat (keep :snapshot (vals @loaded))
+                                   (keep :snapshot (vals @context-lifecycle))))]
+             (doseq [s (distinct (keep :snapshot (vals old-loaded)))
+                     :when (not (live s))]
 
-             (delete-tree! (io/file s)))
-           (doseq [^File s (keep (comp :dir :frozen) (vals @roots))
-                   :when (not (live (.getCanonicalPath s)))]
+               (delete-tree! (io/file s)))
+             (doseq [^File s (keep (comp :dir :frozen) (vals @roots))
+                     :when (not (live (.getCanonicalPath s)))]
 
-             (delete-tree! s)))
+               (delete-tree! s))))
          (reset! last-fingerprint fp)
          ;; Propagate to live surfaces (cached session envs, TUI slash
          ;; palette). Without this a /reload only updates the GLOBAL
