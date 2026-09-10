@@ -181,29 +181,31 @@ def test_status():
     assert status() == "ready"
 ```
 
-After initial sync, install pytest and run the package tests from `project/`:
+After initial sync, run the package tests from `project/` using its environment:
 
 ```bash
-vis-agent python -m pip install pytest
-vis-agent python -m pytest einmal/tests/ -q
+vis-agent python uv run --project ./einmal --no-sync --with pytest python -m pytest einmal/tests/ -q
 ```
 
-This uses shared Vis packages, not the project's `.venv`; sync does not install dev
-groups. No `PYTHONPATH` or extra `source_paths` is needed for this editable package.
-Use `vis-agent python -m pytest`, not `vis-agent python pytest`.
+This uses the project's editable install. `--with pytest` supplies pytest for this
+command without changing the project's dependencies or lockfile; `--no-sync` keeps
+the prepared environment unchanged. No `PYTHONPATH` or extra `source_paths` is needed.
 
 Then make a representative call in Vis. An import or registration does not prove
 the trusted session worker can use the dependencies. For native libraries, test the
 actual calculation through the tool; trusted workers support `ctypes`, but the
 model's sandbox is a separate confined process.
 
-## Understand the shared environment
+## Project and shared environments
 
-`~/.vis/python/packages` is shared across projects and extensions, not isolated per
-project. Editable installs put `.pth` files or backend import hooks there instead
-of copying source. Both the sandbox and trusted workers activate them, but this does
-not widen sandbox filesystem access. A sandbox import still needs its checkout in
-an allowed [workspace root](jail.md#filesystem-access).
+`uv sync` installs project dependencies and editable `.pth` files or backend import
+hooks into the project's environment, normally `.venv`. Vis activates that environment
+for the matching trusted extension worker. Preparing it does not install the project
+into the model sandbox.
+
+`~/.vis/python/packages` remains shared storage for standalone Vis Python installs.
+Sandbox imports still need their checkout in an allowed
+[workspace root](jail.md#filesystem-access); editable installs do not widen access.
 
 Editable projects read the live checkout, not a frozen source snapshot. A first import
 can observe edits before reload; cached imports can retain old code. Use `/reload`
@@ -211,7 +213,7 @@ as the explicit update step. Ordinary installed dependencies are not cleared fro
 the registration worker's module cache by editable reload.
 
 Build backends and executable `.pth` lines are trusted code. A failed load cannot
-roll back shared package changes. Imports in `python_execution` never install
+roll back project or shared package changes. Imports in `python_execution` never install
 packages, and the shared directory is read-only there.
 
 ## See also

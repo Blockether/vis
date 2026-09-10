@@ -273,6 +273,9 @@ def check_resize(binary, home, gateway, mode=None):
             output = b""
             os.write(master, f"\x1b[<0;{col};{row}M\x1b[<0;{col};{row}m".encode())
             await_bottom(8, copied="Copy: Zażółć gęślą jaźń 中文 😀")
+            # Separate gestures: within 500 ms a second press intentionally
+            # selects the whole line. Fast Linux helpers finish inside that window.
+            time.sleep(0.6)
             output = b""
             if clipboard_file.exists():
                 clipboard_file.unlink()

@@ -752,7 +752,11 @@
           (io/file dir ".vis/python/packages/unrelated-1.dist-info/METADATA")
 
           bin
-          (require-binary)]
+          (require-binary)
+
+          python
+          (com.blockether.vispython.Locations/pythonExecutable
+            (str (io/file (.getParentFile (python-library bin)) "python")))]
 
       (try (with-open [out (io/output-stream (io/file dir wheel-name))]
              (.write out ^bytes (pip-wheel)))
@@ -774,9 +778,7 @@
                       "description='Native locked project fixture'))\n"))
            (let [locked (run-binary dir
                                     ["uv" "lock" "--project" (str project) "--offline" "--python"
-                                     (com.blockether.vispython.Locations/pythonExecutable
-                                       (str (io/file (.getParentFile (python-library bin))
-                                                     "python"))) "--no-python-downloads"]
+                                     python "--no-python-downloads"]
                                     60)]
              (expect (= 0 (:exit locked)) (:output locked)))
            ;; #178: an unrelated shared distribution update must not invalidate this project.
@@ -785,7 +787,8 @@
            (let [synced (run-binary dir
                                     [(.getAbsolutePath bin)
                                      (str "-Duser.home=" (.getAbsolutePath dir)) "python" "uv"
-                                     "sync" "--project" (str project) "--locked" "--offline"]
+                                     "sync" "--project" (str project) "--locked" "--offline"
+                                     "--python" python]
                                     120)]
              (expect (= 0 (:exit synced)) (:output synced)))
            (spit unrelated "Summary: updated metadata\n" :append true)
@@ -801,7 +804,7 @@
              (expect (= 0 (:exit result)) (:output result))
              (expect (str/includes? (:output result) "native-uv-value-42") (:output result))
              (expect (= lock-before (slurp (io/file project "uv.lock"))))
-             (expect (not (.exists (io/file project ".venv")))))
+             (expect (.isDirectory (io/file project ".venv"))))
            (finally (delete-tree! dir))))))
 
 (defdescribe
@@ -1158,11 +1161,12 @@
           entries
           (doto (io/file dir ".vis/extensions") .mkdirs)
 
-          packages
-          (io/file dir ".vis/python/packages")
-
           bin
           (require-binary)
+
+          python
+          (com.blockether.vispython.Locations/pythonExecutable
+            (str (io/file (.getParentFile (python-library bin)) "python")))
 
           run
           (fn [args]
@@ -1179,34 +1183,38 @@
                  (io/file project "backend.py"))
         (spit module "VALUE = 41\n")
         (spit (io/file entries "editable.py")
-              (str "import blockether.vis.extension as vis\n"
+              (str "# /// script\n# [tool.vis]\n# project = '../../project'\n# ///\n"
+                   "import blockether.vis.extension as vis\n"
                    "from vis_editable_fixture import VALUE\n"
                    "vis.register(vis.Extension(name='native-editable-' + str(VALUE), "
                    "description='Native editable source fixture'))\n"))
         (let [locked (run-binary dir
                                  ["uv" "lock" "--project" (str project) "--offline" "--python"
-                                  (com.blockether.vispython.Locations/pythonExecutable
-                                    (str (io/file (.getParentFile (python-library bin)) "python")))
-                                  "--no-python-downloads"]
+                                  python "--no-python-downloads"]
                                  60)]
           (expect (= 0 (:exit locked)) (:output locked)))
-        (let [synced (run ["python" "uv" "sync" "--project" (str project) "--locked" "--offline"])]
+        (let [synced (run ["python" "uv" "sync" "--project" (str project) "--locked" "--offline"
+                           "--python" python])]
           (expect (= 0 (:exit synced)) (:output synced)))
-        (expect (.isFile (io/file packages "fixture.pth")))
-        (expect (not (.exists (io/file packages "vis_editable_fixture.py"))))
+        (let [pth (some #(when (= "fixture.pth" (.getName ^File %)) %)
+                        (file-seq (io/file project ".venv")))]
+          (expect (some? pth))
+          (expect (= (.getCanonicalPath source) (str/trim (slurp pth))))
+          (expect (not (.exists (io/file (.getParentFile ^File pth) "vis_editable_fixture.py")))))
         (let [lock-before
               (slurp (io/file project "uv.lock"))
 
               mtime
               (.lastModified module)]
 
-          (doseq [value [41 42]]
+          ;; Upstream CPython caches bytecode by second-resolution mtime.
+          (doseq [[value modified] [[41 mtime] [42 (+ mtime 2000)]]]
             (spit module (str "VALUE = " value "\n"))
-            (.setLastModified module mtime)
+            (.setLastModified module modified)
             (let
               [imported
                (run
-                 ["python" "-c"
+                 ["python" "uv" "run" "--project" (str project) "--no-sync" "python" "-c"
                   "import vis_editable_fixture as fixture; print(fixture.VALUE, fixture.__file__)"])
                registered (run ["extension" "list"])]
 
@@ -1217,7 +1225,7 @@
               (expect (str/includes? (:output registered) (str "native-editable-" value))
                       (:output registered))))
           (expect (= lock-before (slurp (io/file project "uv.lock"))))
-          (expect (not (.exists (io/file project ".venv")))))
+          (expect (.isDirectory (io/file project ".venv"))))
         (finally (delete-tree! dir))))))
 
 (defdescribe
@@ -1277,7 +1285,7 @@
         (expect (= #{"einmal/pyproject.toml" "einmal/src/einmal/__init__.py"
                      "einmal/tests/test_status.py" ".vis/extensions/einmal_tools.py"}
                    (set (keys files))))
-        (expect (= 5 (count commands)))
+        (expect (= 4 (count commands)))
         (expect (= "vis-agent extension list" registration-command))
         (doseq [[path source] files]
           (let [file (io/file dir path)]
@@ -1290,18 +1298,18 @@
             (expect (str/includes? imported (str "ready " (.getCanonicalPath module))) imported))
           (let [registered (checked registration-command)]
             (expect (str/includes? registered "Package example.") registered))
-          (checked (commands 3))
-          (expect (str/includes? (checked (commands 4)) "1 passed"))
+          (expect (str/includes? (checked (commands 3)) "1 passed"))
           (let [mtime (.lastModified module)]
             (spit module (str/replace (slurp module) "ready" "fresh"))
-            (.setLastModified module mtime))
+            ;; The guide runs upstream CPython, whose bytecode cache uses whole seconds.
+            (.setLastModified module (+ mtime 2000)))
           ;; Neither the install command nor lock generation is repeated for source edits.
           (let [imported (checked (commands 2))]
             (expect (str/includes? imported (str "fresh " (.getCanonicalPath module))) imported))
           (expect (str/includes? (checked registration-command) "Package example."))
           (let [test-file (io/file project "tests/test_status.py")]
             (spit test-file (str/replace (slurp test-file) "ready" "fresh")))
-          (expect (str/includes? (checked (commands 4)) "1 passed"))
+          (expect (str/includes? (checked (commands 3)) "1 passed"))
           (expect (= lock-before (slurp (io/file project "uv.lock")))))
         (let [metadata
               (io/file project "pyproject.toml")
@@ -1332,20 +1340,22 @@
           (expect (not (str/includes? (checked registration-command) "Package example.")))
           (checked (commands 0))
           (checked (commands 1))
-          (expect (str/includes? (checked
-                                   "vis-agent python -c \"import idna; print(idna.__version__)\"")
-                                 "3.10"))
+          (expect
+            (str/includes?
+              (checked
+                "vis-agent python uv run --project ./einmal --no-sync python -c \"import idna; print(idna.__version__)\"")
+              "3.10"))
           (expect (str/includes? (checked registration-command) "Package example."))
           (let
             [probe
-             "vis-agent python -c \"import shared_tools; print(shared_tools.VALUE, shared_tools.__file__)\""
+             "vis-agent python uv run --project ./einmal --no-sync python -c \"import shared_tools; print(shared_tools.VALUE, shared_tools.__file__)\""
 
              mtime
              (.lastModified dep-module)]
 
             (expect (str/includes? (checked probe) (str "41 " (.getCanonicalPath dep-module))))
             (spit dep-module "VALUE = 42\n")
-            (.setLastModified dep-module mtime)
+            (.setLastModified dep-module (+ mtime 2000))
             (expect (str/includes? (checked probe) (str "42 " (.getCanonicalPath dep-module))))))
-        (expect (not (.exists (io/file project ".venv"))))
+        (expect (.isDirectory (io/file project ".venv")))
         (finally (delete-tree! dir))))))
