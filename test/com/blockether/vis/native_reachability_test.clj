@@ -73,40 +73,50 @@
                    (= type (get entry "type")))
                  entries)))
 
-(defdescribe native-reachability-test
-             (it "ships reachability metadata that parses"
-                 (expect (.isFile metadata-file))
-                 (expect (vector? (reflection-entries))))
-             ;; Regression, CI run 33988584650: the native gateway could not
-             ;; construct IncludeExcludeSet's concrete sets during HTTP startup.
-             ;; CI run 33989745234 also exposed the PathSpecSet constructor.
-             (it "registers the collection constructors used during gateway startup"
-                 (doseq [type ["java.util.HashSet" "org.eclipse.jetty.http.pathmap.PathSpecSet"
-                               "org.eclipse.jetty.util.AsciiLowerCaseSet"]]
-                   (expect (registered-constructor? (reflection-entries) type []))))
-             (it "registers BigInteger(String) — every YAML integer needs it"
-                 (expect (registered-constructor? (reflection-entries)
-                                                  "java.math.BigInteger"
-                                                  ["java.lang.String"])))
-             (it "registers BigInteger(String,int) — every tools.reader integer literal needs it"
-                 (expect (registered-constructor? (reflection-entries)
-                                                  "java.math.BigInteger"
-                                                  ["java.lang.String" "int"])))
-             (it "keeps the reflective YAML integer path this registration exists for"
-                 ;; yamlstar hands the raw scalar text to clojure.core/bigint, so loading a
-                 ;; plain integer is exactly the call the native image must be able to make.
-                 (expect (= {"n" 3} (yamlstar/load "n: 3")))
-                 (expect (= {"n" 9007199254740991} (yamlstar/load "n: 9007199254740991"))))
-             (it "registers Character/codePointAt(CharSequence,int) — every YAML document needs it"
-                 (expect (registered-method? (reflection-entries)
-                                             "java.lang.Character"
-                                             "codePointAt"
-                                             ["java.lang.CharSequence" "int"])))
-             (it "keeps the reflective YAML scan path this registration exists for"
-                 ;; The scanner reaches codePointAt for every character it reads, so a
-                 ;; nested config document is exactly the call the image must be able to make.
-                 (expect (= {"gateway" {"host" "0.0.0.0" "port" 7890}}
-                            (yamlstar/load "gateway:\n  host: 0.0.0.0\n  port: 7890\n")))))
+(defdescribe
+  native-reachability-test
+  (it "ships reachability metadata that parses"
+      (expect (.isFile metadata-file))
+      (expect (vector? (reflection-entries))))
+  (it "registers Hikari configuration accessors used by disk-pool diagnostics"
+      (let [entries
+            (get
+              (charred/read-json
+                (slurp
+                  "resources/META-INF/native-image/com.zaxxer/HikariCP/reachability-metadata.json"))
+              "reflection")]
+        (expect (some #(and (= "com.zaxxer.hikari.HikariConfig" (get % "type"))
+                            (true? (get % "allPublicMethods")))
+                      entries))))
+  ;; Regression, CI run 33988584650: the native gateway could not
+  ;; construct IncludeExcludeSet's concrete sets during HTTP startup.
+  ;; CI run 33989745234 also exposed the PathSpecSet constructor.
+  (it "registers the collection constructors used during gateway startup"
+      (doseq [type ["java.util.HashSet" "org.eclipse.jetty.http.pathmap.PathSpecSet"
+                    "org.eclipse.jetty.util.AsciiLowerCaseSet"]]
+        (expect (registered-constructor? (reflection-entries) type []))))
+  (it "registers BigInteger(String) — every YAML integer needs it"
+      (expect
+        (registered-constructor? (reflection-entries) "java.math.BigInteger" ["java.lang.String"])))
+  (it "registers BigInteger(String,int) — every tools.reader integer literal needs it"
+      (expect (registered-constructor? (reflection-entries)
+                                       "java.math.BigInteger"
+                                       ["java.lang.String" "int"])))
+  (it "keeps the reflective YAML integer path this registration exists for"
+      ;; yamlstar hands the raw scalar text to clojure.core/bigint, so loading a
+      ;; plain integer is exactly the call the native image must be able to make.
+      (expect (= {"n" 3} (yamlstar/load "n: 3")))
+      (expect (= {"n" 9007199254740991} (yamlstar/load "n: 9007199254740991"))))
+  (it "registers Character/codePointAt(CharSequence,int) — every YAML document needs it"
+      (expect (registered-method? (reflection-entries)
+                                  "java.lang.Character"
+                                  "codePointAt"
+                                  ["java.lang.CharSequence" "int"])))
+  (it "keeps the reflective YAML scan path this registration exists for"
+      ;; The scanner reaches codePointAt for every character it reads, so a
+      ;; nested config document is exactly the call the image must be able to make.
+      (expect (= {"gateway" {"host" "0.0.0.0" "port" 7890}}
+                 (yamlstar/load "gateway:\n  host: 0.0.0.0\n  port: 7890\n")))))
 
 ;; MEASURED regression (this working tree, before the registration below): the gateway
 ;; served every request on `ring.adapter.jetty9`, whose Jetty handler is a `:gen-class`

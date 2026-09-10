@@ -355,7 +355,7 @@
              ;; thing a deployment actually relies on: an OpenAI-compatible endpoint put in
              ;; config reaches a real model call out of the native image.
              (it
-               "answers the prompt from the keyless custom provider its config names"
+               "answers through a disk-backed session store with debug logging enabled"
                (let [dir
                      (temp-dir "vis-native-agent")
 
@@ -365,7 +365,9 @@
                  (try (overlay! dir port)
                       (let [{:keys [exit output]}
                             (run-binary dir
-                                        [(.getAbsolutePath (require-binary)) "--db" ":memory"
+                                        [(.getAbsolutePath (require-binary))
+                                         (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                         (.getAbsolutePath (io/file dir "sessions")) "--debug"
                                          "--raw" "Reply with exactly: hello world"]
                                         180)
 
@@ -384,6 +386,7 @@
                                  (remove str/blank?))]
 
                         (expect (= 0 exit) output)
+                        (expect (.isFile (io/file dir "sessions" "vis.db")))
                         (expect (str/includes? output "hello world") output)
                         ;; Without this the test would also pass on a machine whose own
                         ;; ~/.vis holds a real credential, and would prove nothing.
