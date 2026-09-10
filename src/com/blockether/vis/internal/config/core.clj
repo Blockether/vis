@@ -1311,8 +1311,7 @@
 (defn- configured-agent-name
   [raw]
   (let [value (get raw "agent_name")]
-    (if (and (string? value)
-             (not (str/blank? value))
+    (if (and (util/non-blank-string? value)
              (<= (count value) 80)
              (not (re-find #"[\x00-\x1f\x7f-\x9f]" value)))
       (str/trim value)
