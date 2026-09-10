@@ -120,6 +120,14 @@ through `python.runner`; see [Configuration](configuration.md#python-import-root
 `VIS_PYTHON_HOME` at another interpreter tree. Neither is needed in a normal
 install.
 
+## TLS compatibility
+
+`python.tls_strict` defaults to `true`. An explicit `false` clears only strict
+X.509 validation, for both sandbox execution and trusted Python extensions;
+certificate trust and hostname checks remain enabled. Configure it in user or
+project YAML. See [TLS validation](configuration.md#python-tls-validation) for
+security trade-offs, scope and worker reload requirements.
+
 ## See also
 
 - [How Vis manages context](token-optimization.md) — batching tool calls and storing results in Python.

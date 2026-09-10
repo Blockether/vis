@@ -695,6 +695,11 @@
     "python": {
       "type": "object",
       "properties": {
+        "tls_strict": {
+          "type": "boolean",
+          "default": true,
+          "description": "Python worker TLS policy. False removes only VERIFY_X509_STRICT; certificate trust and hostname verification remain enabled. Applies to sandbox execution and trusted Python extensions at worker startup."
+        },
         "index_url": {
           "type": "string",
           "pattern": "^https?://[^\\s/?#@]+(?:/[^\\s?#@]*)?$",

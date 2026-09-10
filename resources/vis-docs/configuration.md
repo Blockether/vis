@@ -386,6 +386,43 @@ in `~/.vis/python/pycache`. Override these locations with `VIS_PYTHON_PACKAGES`
 and `VIS_PYTHON_PYCACHE_PREFIX`. `VIS_PYTHON_HOME` and `VIS_PYTHON_NATIVE_PATH`
 select another runtime. All four variables are read at startup.
 
+## Python TLS validation
+
+Both `~/.vis/config.yml` and project `vis.yml` accept this setting, using the
+normal configuration merge order:
+
+```yaml
+python:
+  tls_strict: true
+```
+
+The default is `true`, preserving Python's TLS validation behavior. Set it to
+`false` only for compatibility with a trusted corporate CA that fails strict
+X.509 checks, for example because its CA `Basic Constraints` is not critical:
+
+```yaml
+python:
+  tls_strict: false
+```
+
+This clears only `ssl.VERIFY_X509_STRICT` when Python SSL contexts receive their
+verification flags. Trust-chain, certificate-signature, expiry and hostname
+verification remain enabled. It does not add trusted certificates or retry a
+failed handshake with verification disabled. STRICT covers multiple X.509
+requirements; disabling it is a security trade-off, not a certificate repair.
+Prefer a correctly issued CA when your administrator can provide one.
+
+The same merged value applies to **`python_execution` and trusted Python
+extensions**, including their separate workers. It affects Python's `ssl`
+contexts, including contexts created by stdlib clients and libraries that use
+`ssl.SSLContext`. It does not affect JVM TLS, `gh`, `curl`, uv, external Python
+processes or libraries using a different TLS implementation.
+
+The value is read when a worker starts. Run `/reload` after changing it to rebuild
+session workers; restart Vis if a gateway-wide extension registration worker
+already exists. Existing connections are not modified. Only YAML booleans are
+accepted: use `false`, not the string `"false"`.
+
 ## Python package index
 
 Set the embedded runtime's primary package index in `vis.yml`:

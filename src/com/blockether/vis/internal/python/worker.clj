@@ -38,6 +38,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -265,6 +266,14 @@
               (.clear (.selectedKeys selector))
               (recur)))))))
 
+(defn- tls-strict?
+  "Read the merged worker policy; invalid lenient YAML must not weaken TLS."
+  []
+  (let [strict (get-in (config/load-config-raw) ["python" "tls_strict"] true)]
+    (when-not (boolean? strict)
+      (throw (ex-info "python.tls_strict must be a boolean" {:type ::invalid-tls-strict})))
+    strict))
+
 (defn- start!
   "Start `k` behind its live session policy and answer it connected. The parent
    binds first; the run directory is the worker's only host-owned writable grant."
@@ -315,7 +324,7 @@
                                      (.getAbsolutePath dir)
                                      (.getAbsolutePath socket)
                                      (boot-read-paths library guest-dir))
-              extra (cond-> {}
+              extra (cond-> {"VIS_PYTHON_TLS_STRICT" (str (tls-strict?))}
                       packages
                       (assoc Locations/PACKAGES_ENV (.getCanonicalPath packages))
 
