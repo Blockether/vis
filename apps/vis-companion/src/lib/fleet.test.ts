@@ -584,7 +584,7 @@ describe('projectGroups', () => {
     expect(projectGroups(null, [])).toEqual([]);
   });
 
-  it('is the gateway\'s own projects, counted and ordered by IT, even with no rows held', () => {
+  it('orders gateway projects by canonical root without changing their counts or the snapshot', () => {
     const overview: GatewayOverview = {
       projects: [
         {
@@ -612,18 +612,31 @@ describe('projectGroups', () => {
       awaiting_count: 0,
     };
     const groups = projectGroups(overview, []);
-    expect(groups.map((group) => group.root)).toEqual(['/repo/quiet', '/repo/busy']);
+    expect(groups.map((group) => group.root)).toEqual(['/repo/busy', '/repo/quiet']);
     expect(groups.map((group) => group.tally)).toEqual([
-      { count: 400, live: 0, awaiting: 0, unread: 0 },
       { count: 12, live: 2, awaiting: 0, unread: 0 },
+      { count: 400, live: 0, awaiting: 0, unread: 0 },
     ]);
-    overview.projects[1]!.last_activity_ms = 9999;
-    overview.projects[1]!.live_count = 5;
-    expect(projectGroups(overview, []).map((group) => group.root)).toEqual(['/repo/quiet', '/repo/busy']);
+    expect(overview.projects.map((project) => project.root)).toEqual(['/repo/quiet', '/repo/busy']);
+    const refreshed = {
+      ...overview,
+      projects: [...overview.projects].reverse().map((project) => ({
+        ...project,
+        name: 'Renamed',
+        last_activity_ms: 9999,
+        live_count: 5,
+      })),
+    };
+    const updated = projectGroups(refreshed, []);
+    expect(updated.map((group) => group.root)).toEqual(['/repo/busy', '/repo/quiet']);
+    expect(updated.map((group) => [group.label, group.tally.live])).toEqual([
+      ['Renamed', 5],
+      ['Renamed', 5],
+    ]);
     expect(groups.every((group) => group.sessions.length === 0)).toBe(true);
   });
 
-  it('follows the counted projects with a root only this device holds', () => {
+  it('keeps a local root in the same position when its overview arrives', () => {
     const overview: GatewayOverview = {
       projects: [
         {
@@ -643,8 +656,22 @@ describe('projectGroups', () => {
     };
     const draft = session('d', { workspace: { root: '/drafts/x', is_draft: true } });
     const groups = projectGroups(overview, [draft]);
-    expect(groups.map((group) => group.root)).toEqual(['/repo/a', '/drafts/x']);
-    expect(groups[1]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0 });
+    expect(groups.map((group) => group.root)).toEqual(['/drafts/x', '/repo/a']);
+    expect(groups[0]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0 });
+    expect(groups[0]?.sessions).toEqual([draft]);
+    overview.projects.unshift({
+      root: '/drafts/x',
+      project_id: 'p-d',
+      name: 'Draft',
+      session_count: 1,
+      live_count: 0,
+      awaiting_count: 0,
+      last_activity_ms: 20,
+    });
+    const refreshed = projectGroups(overview, [draft]);
+    expect(refreshed.map((group) => group.root)).toEqual(groups.map((group) => group.root));
+    expect(refreshed[0]?.projectId).toBe('p-d');
+    expect(refreshed[0]?.sessions).toEqual([draft]);
   });
 });
 

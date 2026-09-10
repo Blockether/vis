@@ -494,7 +494,7 @@ export function projectLabel(sessions: Session[]): string {
 }
 
 /** Group by workspace root, preserving session order inside each group.
- * Roots absent from the server overview use stable root order, never activity.
+ * Roots use stable canonical root order, never activity.
  */
 export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> {
   const groups = new Map<string, Session[]>();
@@ -586,11 +586,10 @@ export interface ProjectGroupView {
 }
 
 /**
- * A machine's projects in server order. Counts and activity never reorder headers.
- *
- * A root the gateway did not tally — a draft workspace, or any root at all when the
- * machine has answered no overview yet — is not in its ordering either, so it follows
- * the projects that are, counted by what is on screen.
+ * A machine's projects in canonical root order, matching the gateway contract.
+ * Apply it to cached overviews and local-only roots too: response order, activity
+ * and a root gaining an overview must not move existing headers.
+ * The gateway owns counts; roots absent from its overview use the rows on screen.
  */
 export function projectGroups(
   overview: GatewayOverview | null | undefined,
@@ -600,28 +599,29 @@ export function projectGroups(
   const held = groupByWorkDir(rows);
   const byRoot = new Map(held);
   const tallied = overview?.projects ?? [];
-  const groups: ProjectGroupView[] = tallied
-    .map((project) => {
-      const sessions = byRoot.get(project.root) ?? NO_SESSIONS;
-      return {
-        root: project.root,
-        label: project.name.trim() ? homeifyPath(project.name.trim()) : rootLabel(project.root),
-        projectId: project.project_id ?? '',
-        tally: {
-          count: project.session_count,
-          live: project.live_count ?? 0,
-          awaiting: project.awaiting_count ?? 0,
-          unread: sessions.filter(isUnread).length,
-        },
-        sessions,
-      };
-    });
+  const groups: ProjectGroupView[] = tallied.map((project) => {
+    const sessions = byRoot.get(project.root) ?? NO_SESSIONS;
+    return {
+      root: project.root,
+      label: project.name.trim() ? homeifyPath(project.name.trim()) : rootLabel(project.root),
+      projectId: project.project_id ?? '',
+      tally: {
+        count: project.session_count,
+        live: project.live_count ?? 0,
+        awaiting: project.awaiting_count ?? 0,
+        unread: sessions.filter(isUnread).length,
+      },
+      sessions,
+    };
+  });
   const counted = new Set(tallied.map((project) => project.root));
-  return groups.concat(
-    held
-      .filter(([root]) => !counted.has(root))
-      .map(([root, sessions]) => localGroup(root, sessions, isUnread)),
-  );
+  return groups
+    .concat(
+      held
+        .filter(([root]) => !counted.has(root))
+        .map(([root, sessions]) => localGroup(root, sessions, isUnread)),
+    )
+    .sort((left, right) => (left.root < right.root ? -1 : left.root > right.root ? 1 : 0));
 }
 
 /**

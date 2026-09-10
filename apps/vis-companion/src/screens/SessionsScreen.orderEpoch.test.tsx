@@ -19,6 +19,11 @@ const rowOrder = () =>
     (row) => row.dataset.sessionId,
   );
 
+const projectOrder = () =>
+  Array.from(document.querySelectorAll<HTMLElement>("[data-project-root]")).map(
+    (group) => group.dataset.projectRoot,
+  );
+
 const at = (hour: number) => new Date(Date.UTC(2024, 4, 1, hour, 0, 0)).toISOString();
 
 const row = (id: string, hour: number) =>
@@ -44,6 +49,54 @@ describe("the order the reader is looking at", () => {
       await vi.advanceTimersByTimeAsync(ms);
     });
   };
+
+  // Regression: repository headers jumped even while session order was held.
+  // Snapshot/response order must not override the canonical root ordering.
+  it("keeps repository headers fixed across reordered poll answers and search", async () => {
+    const a = listSession({ ...row("a", 12), workspace: { root: "/repo/a" } });
+    const b = listSession({ ...row("b", 11), workspace: { root: "/repo/b" } });
+    const view = renderSessionsScreen({ machines: [{ sessions: [a, b] }] });
+    restore = view.restore;
+    await settle(50);
+    expect(projectOrder()).toEqual(["/repo/a", "/repo/b"]);
+
+    act(() => screen.getByRole("button", { name: "Expand b" }).click());
+    await settle(50);
+    expect(rowOrder()).toEqual(["a", "b"]);
+
+    // The fixture returns the overview in activity order, reversing the headers.
+    view.setRows(0, [{ ...b, modified_at: at(18), live: true }, a]);
+    await settle(10_000);
+    expect(projectOrder()).toEqual(["/repo/a", "/repo/b"]);
+    expect(rowOrder()).toEqual(["a", "b"]);
+
+    act(() => view.setQuery("Session"));
+    await settle(1_000);
+    expect(projectOrder()).toEqual(["/repo/a", "/repo/b"]);
+    act(() => view.setQuery(""));
+    await settle(50);
+    expect(projectOrder()).toEqual(["/repo/a", "/repo/b"]);
+  });
+
+  it("uses the same repository order for a cached first paint and its revalidation", async () => {
+    const a = listSession({ ...row("a", 11), workspace: { root: "/repo/a" } });
+    const b = listSession({ ...row("b", 12), workspace: { root: "/repo/b" } });
+    const previous = renderSessionsScreen({ machines: [{ sessions: [b, a] }] });
+    restore = previous.restore;
+    await settle(50);
+    previous.unmount();
+    previous.restore();
+
+    const resumed = renderSessionsScreen({
+      at: previous.conns,
+      machines: [{ sessions: [{ ...a, modified_at: at(18) }, b], holdsList: true }],
+    });
+    restore = resumed.restore;
+    expect(projectOrder()).toEqual(["/repo/a", "/repo/b"]);
+    resumed.releaseList();
+    await settle(50);
+    expect(projectOrder()).toEqual(["/repo/a", "/repo/b"]);
+  });
 
   it("does not move a row a turn on another machine just made the freshest", async () => {
     const view = renderSessionsScreen({

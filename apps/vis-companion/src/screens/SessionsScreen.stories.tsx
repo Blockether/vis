@@ -55,6 +55,14 @@ export const Fleet: Story = {
     await expect(await page.findByText('uberworkspace', {}, { timeout: 5000 })).toBeVisible();
     await expect(await page.findByText('svar')).toBeVisible();
     await expect(await page.findByTitle('~/rewrite')).toBeVisible();
+    // Response order must not determine which repository appears first.
+    const roots = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>('[data-project-root]'),
+    ).map((group) => group.dataset.projectRoot);
+    await expect(roots).toHaveLength(4);
+    await expect(roots).toEqual([...roots].sort());
+    const expand = page.queryByRole('button', { name: 'Expand uberworkspace' });
+    if (expand) await userEvent.click(expand);
     await expect(
       await page.findByRole('navigation', { name: 'Pages of uberworkspace sessions' }),
     ).toBeVisible();
