@@ -115,5 +115,83 @@ class SourceClasspathTest(unittest.TestCase):
             run.source_classpath.cache_clear()
 
 
+class ExtensionGatewayTest(unittest.TestCase):
+    # Issue #187: a gateway started before fixture seeding has no local extension.
+    def test_gateway_eval_uses_source_classpath_in_fixture_workspace(self):
+        with (
+            patch.object(
+                run, "source_classpath", return_value="/checkout/src:/deps.jar"
+            ),
+            patch.object(run.subprocess, "run") as invoke,
+        ):
+            run.gateway_eval(
+                {"VIS_DB_PATH": "/tmp/isolated.mdb"}, "(+ 1 2)", 20, cwd="/tmp/fixture"
+            )
+        args, kwargs = invoke.call_args
+        self.assertEqual(run.CLOJURE, args[0][0])
+        self.assertEqual(["-Scp", "/checkout/src:/deps.jar"], args[0][1:3])
+        self.assertEqual("/tmp/fixture", kwargs["cwd"])
+        self.assertEqual(20, kwargs["timeout"])
+
+    def test_source_gateway_starts_in_the_seeded_workspace(self):
+        with patch.object(run, "gateway_eval") as evaluate:
+            evaluate.return_value.returncode = 0
+            gateway = run.start_source_gateway(cwd="/tmp/fixture")
+        try:
+            self.assertEqual("/tmp/fixture", evaluate.call_args.kwargs["cwd"])
+            self.assertTrue(
+                gateway["env"]["VIS_DB_PATH"].startswith(gateway["runtime"])
+            )
+            self.assertNotIn("VIS_GATEWAY_URL", gateway["env"])
+        finally:
+            run.shutil.rmtree(gateway["runtime"])
+
+    def test_local_extension_gateway_is_seeded_isolated_and_always_stopped(self):
+        scenario = run.load_scenarios(["extension-watchdog"])[0]
+        shared_env = {"VIS_DB_PATH": "/tmp/shared.mdb"}
+        for fail in (False, True):
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as traces:
+                local = {"env": {"VIS_DB_PATH": "/tmp/local.mdb"}, "port": 12345}
+                workspaces = []
+
+                def start(*, cwd, workspaces=workspaces, local=local):
+                    workspaces.append(cwd)
+                    self.assertTrue(
+                        (Path(cwd) / ".vis/extensions/watchdog_probe.py").is_file()
+                    )
+                    return local
+
+                with (
+                    patch.object(run, "TRACES", traces),
+                    patch.dict(os.environ, {"VIS_E2E_KEEP": ""}),
+                    patch.object(run, "source_classpath", return_value="/checkout/src"),
+                    patch.object(run, "start_source_gateway", side_effect=start),
+                    patch.object(run, "stop_source_gateway", return_value=0) as stop,
+                    patch.object(run.subprocess, "run") as invoke,
+                ):
+                    invoke.return_value.returncode = 0
+                    invoke.return_value.stdout = ""
+                    if fail:
+
+                        def execute(command, **kwargs):
+                            if "--full-trace-json-stream" in command:
+                                raise RuntimeError("model process failed")
+                            return invoke.return_value
+
+                        invoke.side_effect = execute
+                        with self.assertRaisesRegex(
+                            RuntimeError, "model process failed"
+                        ):
+                            run.run_one((scenario, "test-model", shared_env, 12344))
+                    else:
+                        run.run_one((scenario, "test-model", shared_env, 12344))
+                    stop.assert_called_once_with(local)
+                    model_call = invoke.call_args_list[-1]
+                    self.assertEqual(local["env"], model_call.kwargs["env"])
+                self.assertEqual(1, len(workspaces))
+                self.assertFalse(Path(workspaces[0]).exists())
+                self.assertEqual({"VIS_DB_PATH": "/tmp/shared.mdb"}, shared_env)
+
+
 if __name__ == "__main__":
     unittest.main()

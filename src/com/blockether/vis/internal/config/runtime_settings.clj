@@ -306,11 +306,11 @@
 (def ^:dynamic *blocking-wall-park*
   "Park hook installed by the innermost enclosing timeout wall: `(fn [thunk])`.
 
-   Every wall in this engine counts WALL-CLOCK time, so a legitimate block —
-   above all an input View waiting on the operator — otherwise dies at the
-   wall with a bare `Timeout` while the form is still up. Code about to park
-   on a human answer calls [[park-blocking-wall]]; every
-   enclosing wall then stops its clock until the thunk returns."
+   Extension dispatch and blocking user-input operations call
+   [[park-blocking-wall]]. Enclosing execution clocks stop for the complete
+   invocation, including hooks. The final concurrent or nested exit restores
+   the full execution budget; cancellation and the operation's own timeout
+   remain independent of this clock."
   nil)
 
 (defn park-blocking-wall
@@ -355,16 +355,15 @@
    Returns `{:deadline <atom epoch-ms or nil> :park (fn [thunk]) :hold (fn [] release)}`,
    where a NIL deadline is NO wall at all (see [[await-wall]]).
 
-   `park` is RE-ENTRANT: nested parks each LIFT the wall and only the OUTERMOST
-   exit restores the base budget, so an inner park returning cannot collapse the
-   clock while an outer park is still live. It also COMPOSES with the park
-   inherited from [[*blocking-wall-park*]], so parking an inner wall parks every
-   enclosing one too — an input View that asks the operator a question
-   must not be killed by the Python eval watchdog wrapped around its block.
+   `park` is re-entrant and safe for concurrent calls. Only the final exit
+   restores the full `timeout-ms` budget, measured from that exit, even when
+   the call throws. Time spent executing extensions or awaiting user input
+   does not consume the enclosing execution budget.
 
-   `hold` is the same clock, taken and released on separate calls (see
-   [[*blocking-wall-hold*]]), sharing park's depth so the two nest in either
-   order."
+   It composes with [[*blocking-wall-park*]], so parking an inner wall parks
+   every enclosing wall too. `hold` takes and releases the same clock on
+   separate calls (see [[*blocking-wall-hold*]]). Parks and holds share depth
+   and nest in either order."
   [start timeout-ms]
   (let [timeout-ms
         (long timeout-ms)
@@ -383,12 +382,13 @@
 
         enter!
         (fn []
-          (swap! depth inc)
-          (reset! deadline nil))
+          (locking deadline (swap! depth inc) (reset! deadline nil)))
 
         leave!
         (fn []
-          (reset! deadline (when-not (pos? (long (swap! depth dec))) (+ (util/now-ms) timeout-ms))))
+          (locking deadline
+            (reset! deadline (when-not (pos? (long (swap! depth dec)))
+                               (+ (util/now-ms) timeout-ms)))))
 
         park
         (fn [thunk]
@@ -431,9 +431,9 @@
    atom on every wake so a park that MOVED the wall extends the wait instead of
    expiring. Returns `timeout-value` once the wall is really reached.
 
-   A NIL deadline is no wall: a human is being asked, or is watching a live
-   view, and the run is billed nothing — the wait just continues, polling only
-   so the restored budget lands the moment the last hold is released."
+   A nil deadline disables this watchdog while an extension executes, a human
+   is being asked, or a live view is watched. Polling observes the full budget
+   restored after the final park or hold is released."
   [fut deadline timeout-value]
   (loop []
 
@@ -446,6 +446,7 @@
       (if (pos? remaining)
         (let [r (deref fut remaining timeout-value)]
           (if (identical? timeout-value r) (recur) r))
-        timeout-value))))
+        ;; A call may have parked or reset the wall after the first read.
+        (if (locking deadline (= at @deadline)) timeout-value (recur))))))
 
 (def ^:dynamic *rlm-context* "Dynamic context for RLM debug logging." nil)

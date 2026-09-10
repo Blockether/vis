@@ -28,8 +28,10 @@ canonical oldest-prefix fold, real provider cache reads, and the persisted
 cache-metric arithmetic. `workspace_filesystem` maps catalog ids to fixture-relative
 directories; seeding generates vis.yml with absolute paths and explicit admission.
 
-Each scenario runs in its own throwaway git repo through one source-owned gateway on an
-isolated temporary DB, so an already-running installed gateway cannot mask working-tree edits. Runs are parallel. Usage:
+Each scenario runs in its own throwaway git repo through a source-owned gateway on an
+isolated temporary DB, so an installed gateway cannot mask working-tree edits. Fixtures
+with project extensions get a separate gateway started from their seeded workspace.
+Runs are parallel. Usage:
 
     VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash python3 run.py [scenario-id ...]
 """
@@ -91,11 +93,11 @@ def literal_fold_keys(code):
     ]
 
 
-def gateway_eval(env, form, timeout):
+def gateway_eval(env, form, timeout, *, cwd=REPO):
     """Evaluate one canonical gateway-client form against the working tree."""
     return subprocess.run(
-        [CLOJURE, "-M", "-e", form],
-        cwd=REPO,
+        [CLOJURE, "-Scp", source_classpath(), "-M", "-e", form],
+        cwd=cwd,
         env=env,
         capture_output=True,
         text=True,
@@ -257,7 +259,7 @@ def stop_source_gateway(gateway):
         shutil.rmtree(gateway["runtime"], ignore_errors=True)
 
 
-def start_source_gateway():
+def start_source_gateway(*, cwd=REPO):
     """Start a current-classpath gateway on an isolated DB and free loopback port."""
     runtime = tempfile.mkdtemp(prefix="vis_e2e_gateway_")
     env = os.environ.copy()
@@ -272,7 +274,7 @@ def start_source_gateway():
         f'(gateway-client/ensure-gateway! {{:host "127.0.0.1" :port {port}}})'
     )
     try:
-        result = gateway_eval(env, form, 120)
+        result = gateway_eval(env, form, 120, cwd=cwd)
     except (OSError, subprocess.SubprocessError):
         stop_source_gateway(gateway)
         raise
@@ -335,6 +337,7 @@ def seed_files(sc, work):
 def run_one(job):
     sc, model, run_env, gateway_port = job
     work = tempfile.mkdtemp(prefix=f"vis_e2e_{sc['id']}_")
+    local_gateway = None
     try:
         seed_files(sc, work)
         for cmd in (
@@ -345,6 +348,12 @@ def run_one(job):
             ["git", "commit", "-qm", "init"],
         ):
             subprocess.run(cmd, cwd=work, check=True)
+
+        # Project extensions load when the gateway starts, not when files appear
+        # in a later client's workspace. Keep their registry isolated per run.
+        if os.path.isdir(os.path.join(work, ".vis", "extensions")):
+            local_gateway = start_source_gateway(cwd=work)
+            run_env, gateway_port = local_gateway["env"], local_gateway["port"]
 
         t0 = time.time()
         exit_code = None
@@ -642,6 +651,8 @@ def run_one(job):
             "evidence": evidence,
         }
     finally:
+        if local_gateway:
+            stop_source_gateway(local_gateway)
         if not os.environ.get("VIS_E2E_KEEP"):
             shutil.rmtree(work, ignore_errors=True)
 

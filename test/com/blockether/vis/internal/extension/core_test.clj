@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.extension.core-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.contract.activity :as activity-contract]
@@ -988,3 +990,188 @@
                                                                        {:result "recovered"})}))
                                 []
                                 {}))))))
+
+(defdescribe
+  extension-call-parks-execution-test
+  ;; Issue #187: ordinary extension calls, not only views, own their lifetime.
+  (it
+    "parks observed and raw calls, then resets the full five-minute budget"
+    (doseq [raw?
+            [false true]
+
+            observed?
+            [false true]]
+
+      (let [clock
+            (atom 299000)
+
+            {:keys [deadline park]}
+            (rt/parkable-wall 0 300000)
+
+            entry
+            {:ext.symbol/symbol 'pause
+             :ext.symbol/tag :observation
+             :ext.symbol/raw? raw?
+             :ext.symbol/fn (fn []
+                              (expect (nil? @deadline))
+                              (reset! clock 900000)
+                              (if raw? :done (extension/success {:result :done})))}
+
+            ext
+            {:ext/name "test.watchdog" :ext/engine {:ext.engine/symbols [entry]}}
+
+            invoke
+            (get (extension/wrap-extension ext {}) 'pause)]
+
+        (with-redefs [util/now-ms (fn ^long []
+                                    (long @clock))]
+          (binding [rt/*blocking-wall-park* park
+                    extension/*tool-event-sink* (when observed?
+                                                  (fn [_]))]
+
+            (expect (= :done (invoke)))))
+        (expect (= 1200000 @deadline)))))
+  (it "parks direct observed invocations as well as installed symbols"
+      (let [{:keys [deadline park]}
+            (rt/parkable-wall 0 300000)
+
+            entry
+            {:ext.symbol/symbol 'pause
+             :ext.symbol/tag :observation
+             :ext.symbol/fn (fn []
+                              (expect (nil? @deadline))
+                              (extension/success {:result :done}))}]
+
+        (with-redefs [util/now-ms (fn ^long []
+                                    900000)]
+          (binding [rt/*blocking-wall-park* park]
+            (expect (= :done
+                       (extension/invoke-symbol-wrapper {:ext/name "test.watchdog"} entry [] {})))))
+        (expect (= 1200000 @deadline))))
+  (it
+    "parks hooks and lifecycle observers through the final terminal"
+    (let [{:keys [deadline park]}
+          (rt/parkable-wall 0 300000)
+
+          clock
+          (atom 0)
+
+          stages
+          (atom [])
+
+          stage!
+          (fn [stage]
+            (expect (nil? @deadline))
+            (swap! stages conj stage)
+            (swap! clock + 300000))
+
+          entry
+          {:ext.symbol/symbol 'pause
+           :ext.symbol/tag :observation
+           :ext.symbol/before-fn (fn [& _]
+                                   (stage! :before)
+                                   {})
+           :ext.symbol/fn (fn []
+                            (stage! :call)
+                            (extension/success {:result :done}))
+           :ext.symbol/after-fn (fn [& _]
+                                  (stage! :after)
+                                  {})}]
+
+      (with-redefs [util/now-ms (fn ^long []
+                                  (long @clock))]
+        (binding [rt/*blocking-wall-park* park
+                  extension/*tool-event-sink* (fn [_]
+                                                (stage! :event))]
+
+          (expect (= :done
+                     (extension/invoke-symbol-wrapper {:ext/name "test.watchdog"} entry [] {})))))
+      (expect (= [:event :before :call :after :event] @stages))
+      (expect (= 1800000 @deadline))))
+  (it "resets after observed and raw invocation errors without swallowing them"
+      (doseq [raw?
+              [false true]
+
+              observed?
+              [false true]]
+
+        (let [{:keys [deadline park]}
+              (rt/parkable-wall 0 300000)
+
+              entry
+              {:ext.symbol/symbol 'pause
+               :ext.symbol/tag :observation
+               :ext.symbol/raw? raw?
+               :ext.symbol/fn (fn []
+                                (expect (nil? @deadline))
+                                (throw (ex-info "extension failed" {})))}
+
+              ext
+              {:ext/name "test.watchdog" :ext/engine {:ext.engine/symbols [entry]}}
+
+              invoke
+              (get (extension/wrap-extension ext {}) 'pause)]
+
+          (with-redefs [util/now-ms (fn ^long []
+                                      900000)]
+            (binding [rt/*blocking-wall-park* park
+                      extension/*tool-event-sink* (when observed?
+                                                    (fn [_]))]
+
+              (expect (some? (try (invoke) nil (catch Exception e e))))))
+          (expect (= 1200000 @deadline)))))
+  (it "keeps error recovery inside the parked invocation"
+      (let [{:keys [deadline park]}
+            (rt/parkable-wall 0 300000)
+
+            entry
+            {:ext.symbol/symbol 'pause
+             :ext.symbol/tag :observation
+             :ext.symbol/fn (fn []
+                              (throw (ex-info "extension failed" {})))
+             :ext.symbol/on-error-fn (fn [& _]
+                                       (expect (nil? @deadline))
+                                       {:result (extension/success {:result :recovered})})}]
+
+        (with-redefs [util/now-ms (fn ^long []
+                                    900000)]
+          (binding [rt/*blocking-wall-park* park]
+            (expect (= :recovered
+                       (extension/invoke-symbol-wrapper {:ext/name "test.watchdog"} entry [] {})))))
+        (expect (= 1200000 @deadline))))
+  (it "does not restore the clock when a nested tool returns to its caller"
+      (let [{:keys [deadline park]}
+            (rt/parkable-wall 0 300000)
+
+            ext
+            {:ext/name "test.watchdog"}
+
+            inner
+            {:ext.symbol/symbol 'inner
+             :ext.symbol/tag :observation
+             :ext.symbol/fn (fn []
+                              (extension/success {:result :done}))}
+
+            outer
+            {:ext.symbol/symbol 'outer
+             :ext.symbol/tag :observation
+             :ext.symbol/fn (fn []
+                              (expect (= :done (extension/invoke-symbol-wrapper ext inner [] {})))
+                              (expect (nil? @deadline))
+                              (extension/success {:result :done}))}]
+
+        (with-redefs [util/now-ms (fn ^long []
+                                    900000)]
+          (binding [rt/*blocking-wall-park* park]
+            (expect (= :done (extension/invoke-symbol-wrapper ext outer [] {})))))
+        (expect (= 1200000 @deadline))))
+  (it "does not park or reset the clock when merely installing data symbols"
+      (let [{:keys [deadline park]} (rt/parkable-wall 0 300000)]
+        (binding [rt/*blocking-wall-park* park]
+          (expect (= {'value 42}
+                     (extension/wrap-extension {:ext/name "test.watchdog"
+                                                :ext/engine {:ext.engine/symbols
+                                                             [{:ext.symbol/symbol 'value
+                                                               :ext.symbol/val 42}]}}
+                                               {}))))
+        (expect (= 300000 @deadline)))))

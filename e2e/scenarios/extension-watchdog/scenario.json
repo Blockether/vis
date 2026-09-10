@@ -1,0 +1,16 @@
+{
+  "lang": "python",
+  "prompt": "Verify the local watchdog_probe extension. In your first Python block define an async helper named wait_release_progress that awaits watchdog_probe.poll with a computed duration of 300 + 10 seconds and returns its result. In a separate later block await wait_release_progress(), assert the returned count is 1 and timed_out is False, and print EXTENSION_WATCHDOG_OK. Use only this local extension; do not use shell, live views, background handles, change any timeout, or edit files. Let the call finish even though it takes longer than five minutes. The final answer must contain EXTENSION_WATCHDOG_OK. watchdog_probe must be the preinstalled host extension. Do not import its source, instantiate it, stub it, replace it, or simulate its work. If it is unavailable, report that and stop.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "EXTENSION_WATCHDOG_OK"
+  ],
+  "want_tools": [
+    "watchdog_probe.poll"
+  ],
+  "want_forms": [
+    "def wait_release_progress",
+    "await wait_release_progress()"
+  ]
+}

@@ -32,6 +32,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.channel.theme :as theme]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
@@ -1920,75 +1921,80 @@
    Identity and wrapper-entry order are allocated before hooks. The terminal is
    emitted only after recovery, hooks, envelope validation, and public-value
    conversion determine exactly what Python receives. Nested wrappers inherit the
-   actual parent invocation id; concurrent terminal order follows observation."
+   actual parent invocation id; concurrent terminal order follows observation.
+   The enclosing execution budget is parked through the complete invocation and
+   reset in full after the last concurrent or nested call returns or throws."
   [ext sym-entry args env]
-  (if-not *tool-event-sink*
-    (invoke-symbol-wrapper* ext sym-entry args env)
-    (let [ctx
-          (or *tool-event-context* (activity-event/context))
+  (rt/park-blocking-wall
+    (fn []
+      (if-not *tool-event-sink*
+        (invoke-symbol-wrapper* ext sym-entry args env)
+        (let [ctx
+              (or *tool-event-context* (activity-event/context))
 
-          invocation
-          (activity-event/invocation ctx *current-invocation-id*)
+              invocation
+              (activity-event/invocation ctx *current-invocation-id*)
 
-          sym
-          (:ext.symbol/symbol sym-entry)
+              sym
+              (:ext.symbol/symbol sym-entry)
 
-          operation
-          (keyword (tool-call-name ext sym))
+              operation
+              (keyword (tool-call-name ext sym))
 
-          presenter
-          (or (:ext.symbol/presenter sym-entry) :generic)
+              presenter
+              (or (:ext.symbol/presenter sym-entry) :generic)
 
-          started-at-ms
-          (util/now-ms)
+              started-at-ms
+              (util/now-ms)
 
-          details
-          {:operation operation
-           :presenter presenter
-           :classification (:ext.symbol/tag sym-entry)
-           :extension (:ext/name ext)
-           :symbol sym
-           :label (tool-start-label args)
-           :phrase (tool-start-phrase sym-entry env args)
-           :args args}]
+              details
+              {:operation operation
+               :presenter presenter
+               :classification (:ext.symbol/tag sym-entry)
+               :extension (:ext/name ext)
+               :symbol sym
+               :label (tool-start-label args)
+               :phrase (tool-start-phrase sym-entry env args)
+               :args args}]
 
-      (record-tool-event! (activity-event/start-event ctx invocation details))
-      (binding [*tool-event-context*
-                ctx
+          (record-tool-event! (activity-event/start-event ctx invocation details))
+          (binding [*tool-event-context*
+                    ctx
 
-                *current-invocation-id*
-                (:invocation-id invocation)
+                    *current-invocation-id*
+                    (:invocation-id invocation)
 
-                *activity-content-sink*
-                (fn [blocks]
-                  (record-tool-event!
-                    (activity-event/content-event ctx invocation details blocks)))]
+                    *activity-content-sink*
+                    (fn [blocks]
+                      (record-tool-event!
+                        (activity-event/content-event ctx invocation details blocks)))]
 
-        (try (let [envelope
-                   (volatile! nil)
+            (try (let [envelope
+                       (volatile! nil)
 
-                   value
-                   (binding [*tool-result-observer* #(vreset! envelope %)]
-                     (invoke-symbol-wrapper* ext sym-entry args env))]
+                       value
+                       (binding [*tool-result-observer* #(vreset! envelope %)]
+                         (invoke-symbol-wrapper* ext sym-entry args env))]
 
-               (record-tool-event! (activity-event/terminal-event ctx
-                                                                  invocation
-                                                                  (assoc details
-                                                                    :started-at-ms started-at-ms
-                                                                    :outcome :succeeded
-                                                                    :result value
-                                                                    :result-envelope @envelope)))
-               value)
-             (catch Throwable t
-               (record-tool-event! (activity-event/terminal-event
-                                     ctx
-                                     invocation
-                                     (assoc details
-                                       :started-at-ms started-at-ms
-                                       :outcome
-                                       (if (cancellation/cancellation? t) :cancelled :failed)
-                                       :error t)))
-               (throw t)))))))
+                   (record-tool-event! (activity-event/terminal-event ctx
+                                                                      invocation
+                                                                      (assoc details
+                                                                        :started-at-ms started-at-ms
+                                                                        :outcome :succeeded
+                                                                        :result value
+                                                                        :result-envelope
+                                                                        @envelope)))
+                   value)
+                 (catch Throwable t
+                   (record-tool-event! (activity-event/terminal-event
+                                         ctx
+                                         invocation
+                                         (assoc details
+                                           :started-at-ms started-at-ms
+                                           :outcome
+                                           (if (cancellation/cancellation? t) :cancelled :failed)
+                                           :error t)))
+                   (throw t)))))))))
 
 (def ^:private ^:dynamic *log-writer*
   "Writer that sends output to the log file instead of stdout/stderr.
@@ -2047,8 +2053,10 @@
                   [sym
                    (if (:ext.symbol/raw? sym-entry)
                      (fn [& args]
-                       (with-context {:ext ext :symbol sym :env (env-thunk)}
-                                     (apply (:ext.symbol/fn sym-entry) args)))
+                       (rt/park-blocking-wall (fn []
+                                                (with-context
+                                                  {:ext ext :symbol sym :env (env-thunk)}
+                                                  (apply (:ext.symbol/fn sym-entry) args)))))
                      (fn [& args]
                        (let [env (env-thunk)
                              w (get-log-writer)]

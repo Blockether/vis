@@ -18,6 +18,9 @@
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.foundation.harness.core :as harness]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.gateway.state :as gateway-state]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.view.core :as human-input]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
@@ -4159,3 +4162,219 @@ vis.register(vis.Extension(
                   (expect (str/includes? ((:expand-fn template) {} "for Ada")
                                          "references/style.md")))
                 (finally (ep/dispose-python-context! ctx))))))))))
+
+(defn- with-watchdog-extension
+  "Run a test with a real sandbox and a separate trusted extension worker."
+  [f]
+  (with-loaded
+    {"watchdog_probe.py"
+     (slurp "e2e/scenarios/extension-watchdog/files/.vis/extensions/watchdog_probe.py")}
+    (fn [loaded _]
+      (expect (zero? (:failed loaded)) (pr-str (pyx/load-failures)))
+      (let [sandbox-root
+            (temp-dir)
+
+            ctx
+            (:python-context (ep/create-python-context {}
+                                                       (fn []
+                                                         [(.getCanonicalPath sandbox-root)])
+                                                       {:worker? true
+                                                        :jail-enabled? true
+                                                        :enabled? false
+                                                        :allowed-domains []
+                                                        :denied-domains []
+                                                        :exclude-domains []}
+                                                       nil))
+
+            ext
+            (registered "watchdog-probe")
+
+            env
+            {:python-context ctx
+             :session-id (str "watchdog-" (random-uuid))
+             :extensions (atom [ext])
+             :active-extensions (atom [])}]
+
+        (try (lp/sync-active-extension-symbols! env [ext])
+             ;; Worker startup is not what these deliberately short budgets measure.
+             (let [warm (ep/run-python-block ctx "await watchdog_probe.poll(0)")]
+               (expect (nil? (:error warm)) (pr-str warm)))
+             (f ctx env)
+             (finally (ep/dispose-python-context! ctx)))))))
+
+(defn- watchdog-block
+  [ctx env code & {:keys [tool-event-fn]}]
+  (with-redefs [rt/MIN_EVAL_TIMEOUT_MS 1000]
+    (binding [rt/*eval-timeout-ms* 1000]
+      ;; A source-code timeout heuristic must not hide this regression.
+      (expect (= 1000 (rt/eval-timeout-ms-for-code 1000 code)))
+      (#'lp/run-python-code ctx code :env env :tool-event-fn tool-event-fn))))
+
+(defdescribe
+  python-extension-execution-budget-test
+  ;; Issue #187 and session 633cdc58-89fe-4b3d-88ec-caa624d118ed:
+  ;; reproduce silent calls and helpers, never replay historical deployments.
+  (it "lets a silent extension outlive execution and grants a full budget on return"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result (watchdog-block ctx
+                                       env
+                                       (str "import time\n"
+                                            "time.sleep(0.65)\n"
+                                            "answer = await watchdog_probe.poll(1.3)\n"
+                                            "time.sleep(0.65)\n"
+                                            "print(answer.count, answer.timed_out, 'resumed')\n"))]
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (not (:timeout? result)))
+            (expect (str/includes? (or (:stdout result) "") "2 False resumed"))
+            (expect (not (worker/retired? ctx)))))))
+  (it "resolves a previous-block helper and computed duration without replaying calls"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [defined
+                (watchdog-block ctx
+                                env
+                                (str "async def wait_release_progress():\n"
+                                     "    duration = sum([0.7, 0.6])\n"
+                                     "    return await watchdog_probe.poll(duration)\n"))
+
+                result
+                (watchdog-block ctx
+                                env
+                                (str "import time\n" "for _ in range(3):\n"
+                                     "    time.sleep(0.6)\n"
+                                     "    observation = await wait_release_progress()\n"
+                                     "    print(observation.count)\n" "time.sleep(0.6)\n"))]
+
+            (expect (nil? (:error defined)) (pr-str defined))
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (= "2\n3\n4" (str/trim (or (:stdout result) ""))))))))
+  (it "keeps overlapping calls parked until the last one finishes"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result
+                (watchdog-block
+                  ctx
+                  env
+                  (str
+                    "import time\n"
+                    "time.sleep(0.6)\n"
+                    "answers = await gather(watchdog_probe.poll(0.2), watchdog_probe.poll(1.6))\n"
+                    "time.sleep(0.6)\n" "print(sorted(answer.count for answer in answers))\n"))]
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (str/includes? (or (:stdout result) "") "[2, 3]"))))))
+  (it "restores the budget after a handled extension exception"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result (watchdog-block ctx
+                                       env
+                                       (str "import time\n" "time.sleep(0.6)\n"
+                                            "try:\n" "    await watchdog_probe.fail(1.3)\n"
+                                            "except Exception:\n" "    print('handled')\n"
+                                            "time.sleep(0.6)\n" "print('continued')\n"))]
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (str/includes? (or (:stdout result) "") "handled\ncontinued"))))))
+  (it "preserves an extension-owned timeout as data and continues the same block"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result (watchdog-block ctx
+                                       env
+                                       (str "import time\n" "time.sleep(0.6)\n"
+                                            "observation = await watchdog_probe.deadline(1.3)\n"
+                                            "assert observation.timed_out\n"
+                                            "time.sleep(0.6)\n"
+                                            "print('operation timed out; execution resumed')\n"))]
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (not (:timeout? result)))
+            (expect (str/includes? (or (:stdout result) "") "execution resumed"))))))
+  (it "stops runaway Python after a returned extension and preserves the context"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result
+                (watchdog-block ctx env "await watchdog_probe.poll(1.3)\nwhile True:\n    pass\n")
+
+                next-result
+                (watchdog-block ctx env "print((await watchdog_probe.poll(0)).count)\n")]
+
+            (expect (true? (:timeout? result)))
+            (expect (not (worker/retired? ctx)))
+            (expect (nil? (:error next-result)) (pr-str next-result))
+            (expect (= "3" (str/trim (or (:stdout next-result) "")))))))))
+
+(defdescribe
+  python-extension-watchdog-lifecycle-test
+  ;; Issue #187: parking the execution clock must not hide cancellation or death.
+  (it "still lets the user cancel an in-flight extension"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [token
+                (cancellation/cancellation-token)
+
+                started
+                (promise)
+
+                stopper
+                (future (when (= true (deref started 5000 :timeout))
+                          (Thread/sleep 200)
+                          (cancellation/cancel! token :client-cancel-turn)))]
+
+            (try (let [result (watchdog-block
+                                ctx
+                                (assoc env :cancel-token token)
+                                "await watchdog_probe.poll(30)\nprint('must not resume')\n"
+                                :tool-event-fn
+                                #(when (= :start (:phase %)) (deliver started true)))]
+                   (expect (cancellation/cancelled? token))
+                   (expect (some? (:error result)))
+                   (expect (not (:timeout? result)))
+                   (expect (not (str/includes? (or (:stdout result) "") "must not resume"))))
+                 (finally (cancellation/cancel! token :test-cleanup) (deref stopper 5000 nil)))))))
+  (it "surfaces a terminated extension worker instead of waiting forever"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [started
+                (promise)
+
+                stopper
+                (future (when (= true (deref started 5000 :timeout))
+                          (Thread/sleep 200)
+                          (worker/stop-worker! (worker/extension-worker-key ctx))))]
+
+            (try (let [result (watchdog-block ctx
+                                              env
+                                              "await watchdog_probe.poll(30)\n"
+                                              :tool-event-fn
+                                              #(when (= :start (:phase %)) (deliver started true)))]
+                   (expect (some? (:error result)))
+                   (expect (not (:timeout? result)))
+                   (expect (not (worker/worker-live? (worker/extension-worker-key ctx)))))
+                 (finally (deref stopper 5000 nil)))))))
+  (it "does not classify a silent real extension as a stalled turn"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [started
+                (promise)
+
+                checked
+                (promise)
+
+                inspector
+                (future (when (= true (deref started 5000 :timeout))
+                          (Thread/sleep 1100)
+                          (deliver
+                            checked
+                            (#'gateway-state/turn-stall-decision
+                             (#'gateway-state/advance-turn-stall-state
+                              {:started? true :first-output-timeout-ms 10 :stall-timeout-ms 10}
+                              {:phase :tool-start}
+                              0)
+                             900000))))]
+
+            (try (let [result (watchdog-block ctx
+                                              env
+                                              "print((await watchdog_probe.poll(1.6)).count)\n"
+                                              :tool-event-fn
+                                              #(when (= :start (:phase %)) (deliver started true)))]
+                   (expect (nil? (:error result)) (pr-str result))
+                   (expect (= false (:tripped? (deref checked 3000 nil)))))
+                 (finally (deref inspector 5000 nil))))))))

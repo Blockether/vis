@@ -1516,3 +1516,57 @@ and executable beta workflow gates. Clojure formatting and lint/reflection, Bash
 syntax, ShellCheck, actionlint, 45 local documentation links and diff checks pass.
 Current-main CI and automatic native beta publication remain to be observed after push.
 No local or production gateway restart is part of this change.
+
+# Extension watchdog lifetime — issue #187
+
+Separate extension waits from Python execution and reset the full budget on return.
+
+## Context
+
+`extension/core.clj` owns observed and raw callable dispatch. `config/runtime_settings.clj`
+already has a reentrant parked clock, but ordinary extension calls do not use it and
+concurrent entry/release can race. The gateway already exempts execution phases from
+stall cancellation. Session `633cdc58-89fe-4b3d-88ec-caa624d118ed` includes 300-second
+failures in repeated extension calls behind helpers. Replay only side-effect-free
+fixtures, never that session's deployment commands. Reject larger global timeouts,
+source-name matching, and requiring a view or background handle.
+
+## 1. Reproduce the boundary and clock failures
+- Rationale: pin the reported behavior before editing production code.
+- Data: existing extension, Python worker, loop and gateway suites.
+- Acceptance criteria: regression failures for unparked calls and concurrent release;
+  include real Python extension workers, computed waits and hidden sequential helpers.
+- Unknowns: whether existing cancellation and gateway coverage exposes additional gaps.
+
+## 2. Connect dispatch and preserve watchdog safety
+- Rationale: extension lifetime is independent of execution time.
+- Data: runtime clock and the common extension dispatcher.
+- Acceptance criteria: calls park the clock; the final return or error restores a full
+  configured budget (five minutes by default); nested/overlapping calls compose;
+  cancellation and genuine worker failures still unwind without replay.
+- Unknowns: resolve only failures found by the affected tests.
+
+## 3. Verify end to end and finish
+- Rationale: unit checks alone do not prove the sandbox/host/extension boundary.
+- Data: real-worker regressions, source-gateway model scenario, formatting/lint/reflection.
+- Acceptance criteria: affected suites and isolated end-to-end runs pass; report native
+  coverage separately; update #187's superseded remaining-budget criterion and deliver
+  only this task's changes without restarting a live gateway.
+- Unknowns: availability of native build tooling and provider credentials.
+
+## Plan state
+
+Phases 1–2 complete: reproduced unparked real extension calls and both clock races;
+connected observed/raw dispatch, synchronized reset/entry, and rechecked expiry.
+Fifteen clock regressions and nine real sandbox/extension regressions pass, including
+hidden sequential helpers, overlap, operation timeouts, cancellation and worker death.
+Phase 3 complete: 233 affected Clojure tests, 20 watchdog/view regressions, and 10
+E2E-runner tests pass. This adds 34 regression cases across clocks, dispatch, real
+workers and the runner. Formatting, Clojure lint/reflection and Python lint pass.
+The source-gateway model E2E completes one real 310-second extension call through a
+previous-block helper, then continues without timeout or replay (398.2 seconds total).
+The first E2E exposed missing project-extension seeding; the runner now starts an
+isolated gateway from the seeded extension workspace, with lifecycle tests.
+Updated #187 to require full budget resets. No live gateway was restarted and no
+historical deployment was replayed. Native-image build/tests were not run; the
+verified boundary uses the source JVM gateway and real CPython workers.
