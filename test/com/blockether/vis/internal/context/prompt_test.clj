@@ -284,7 +284,8 @@
       ;; GONE, and the shape rule in §2 is where a model reads what a block gives back. It lands
       ;; at 6 687.
       ;; 6.7k → 6.8k to state that project_root_path is always available and root is not prebound.
-      (expect (< (count text) 6800))
+      ;; 6.8k → 7.4k for the read/decision boundary, exact hashline endpoints and parse retries.
+      (expect (< (count text) 7400))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -953,7 +954,7 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (not (str/includes? text "CHANGING the tree is plain Python")))
                    (expect (not (str/includes? text "are edited in plain Python")))
-                   (expect (str/includes? text "restate the text you replace: quote the anchor"))))
+                   (expect (str/includes? text "Use `patch(path, edits)`"))))
              ;; Regression: `cat` grew a negative endpoint and the prompt kept quiet, so
              ;; the tail of a file still cost a line count first and then a read.
              (it "says a negative `start` counts from the end"
@@ -986,6 +987,36 @@
              (it "says a shell handle reads its last n LINES"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "`sh.logs(-50)` (last n LINES)")))))
+
+;; Regression, user report: cat and a patch with unseen or placeholder hashes
+;; ran in one block; printing the read cannot inform a prewritten replacement.
+(defdescribe
+  core-prompt-grounds-patch-retries-test
+  (it "waits for observed anchors before generating a dependent patch"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule ["Print it and END the block; continue in the NEXT block"
+                      "Copy anchors verbatim from observed output"
+                      "same line number and full three-character hash"
+                      "never guess hashes or use placeholders" "Never probe with an invalid patch"
+                      "a hard-coded patch in the same block cannot use output you have not seen"]]
+          (expect (str/includes? text rule) rule))))
+  ;; Editing e2e used source text or bare line numbers despite the anchor instruction.
+  (it "defines both endpoints as hashline strings rather than text or line numbers"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq
+          [rule
+           ["`Path.read_text` gives no anchors"
+            "`from`/`to` MUST be `line:hash` strings, never source text or bare numbers"
+            "Given `12:abc│ old`, a one-line edit is `{\"from\": \"12:abc\", \"replace\": \"new\"}`"
+            "`replace` is new file text without hash gutters"]]
+          (expect (str/includes? text rule) rule))))
+  (it "distinguishes stale-anchor recovery from invalid replacement syntax"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule ["use a FRESH ANCHOR from the last result or re-read the target"
+                      "confirm the intended target before retrying"
+                      "A parse refusal means fix the replacement syntax, not the anchors"
+                      "never retry it unchanged"]]
+          (expect (str/includes? text rule) rule)))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
 ;; do not redefine paths or helpers that the session already provides.
