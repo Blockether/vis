@@ -137,10 +137,12 @@ configuration, and normal sync removes extraneous packages from the project envi
 their upstream meaning. `vis-agent python uv sync --help` is uv's own help.
 
 Configure uv through `pyproject.toml`, `uv.toml`, its environment variables or CLI
-options. Vis's `python.index_url` applies to pip, not uv. Keep credentials in uv's
-credential configuration or environment, never committed URLs. CLI output and exit
-status are unchanged; automatic extension preparation reports bounded, credential-
-redacted diagnostics and the uv exit status or timeout.
+options. Vis's [`python.index_url`](configuration.md#python-package-index) also
+supplies uv's default index unless `UV_DEFAULT_INDEX` or `UV_INDEX_URL` is already
+set; override it with uv's `--default-index`. Keep credentials in uv's credential
+configuration or environment, never committed URLs. CLI output and exit status
+are unchanged; automatic extension preparation reports bounded, credential-redacted
+diagnostics and the uv exit status or timeout.
 
 The CLI does not force embedded Python. When selecting Python yourself, use a version
 compatible with the gateway's embedded interpreter for compiled extension dependencies.

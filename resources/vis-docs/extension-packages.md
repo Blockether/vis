@@ -151,8 +151,10 @@ for the complete registration and implementation.
 At startup and `/reload`, Vis runs bundled upstream `uv sync` for these packages,
 selecting the gateway's embedded Python with `--python`. uv manages the project's
 lock and environment, including default dependency groups and removal of extraneous
-packages. It can update an existing lock. Configure indexes through uv's own project
-configuration, environment or CLI; `python.index_url` applies only to pip.
+packages. It can update an existing lock. Vis's
+[`python.index_url`](configuration.md#python-package-index) supplies uv's default
+index unless its index environment is already set. Override it with uv's
+`--default-index`; uv still manages named indexes and package source configuration.
 
 Each loaded project uses its own trusted worker and imports dependencies from its uv
 environment, normally `.venv`. These dependencies are not installed into shared sandbox

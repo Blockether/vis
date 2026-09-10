@@ -221,10 +221,7 @@
 
     (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                      (swap! calls conj args))
-                          #'python-runtime/project-packages (constantly project)
-                          #'config/load-config-raw
-                          (fn []
-                            (throw (ex-info "uv must not inherit Vis pip configuration" {})))}
+                          #'python-runtime/project-packages (constantly project)}
            (fn []
              (dotimes [_ 2]
                (is (= project (python-runtime/ensure-project! project))))

@@ -118,7 +118,7 @@
 (defdescribe
   native-private-index-build-test
   (it
-    "uses a named authenticated index for locked artifacts and isolated build requirements (#183)"
+    "uses Vis's default and a named authenticated index for locked artifacts and build requirements (#183)"
     (let [dir
           (#'native/temp-dir "vis-native-private-index")
 
@@ -209,6 +209,9 @@
                       "UV_INDEX_FIXTURE_USERNAME" "fixture-user"
                       "UV_INDEX_FIXTURE_PASSWORD" "fixture-password"})]
 
+          (spit (io/file dir "vis.yml") (str "python:\n  index_url: " index "\n"))
+          (spit (io/file dir ".netrc")
+                "machine 127.0.0.1 login fixture-user password fixture-password\n")
           (spit
             (io/file project "pyproject.toml")
             (str
@@ -218,7 +221,7 @@
               "vis-built-fixture = {path = '../built'}\n"
               "[[tool.uv.index]]\nname = 'fixture'\nurl = '"
               index
-              "'\ndefault = true\n"))
+              "'\nexplicit = true\n"))
           (spit (io/file built "pyproject.toml")
                 (str "[project]\nname = 'vis-built-fixture'\nversion = '1.0'\n"
                      "[build-system]\nrequires = ['vis-cli-fixture==1.0']\n"
@@ -238,10 +241,20 @@
               "    return name\n"))
           (with-redefs-fn {#'native/native-environment (constantly environment)}
             (fn []
+              (let [probe (#'native/run-binary
+                           dir
+                           [(.getAbsolutePath bin) (str "-Duser.home=" dir) "python" "uv" "run"
+                            "--no-project" "--offline" "--python" (str (io/file home "bin/python3"))
+                            "python" "-c"
+                            "import os; print(os.environ.get('UV_DEFAULT_INDEX', ''))"]
+                           30)]
+                (expect (= 0 (:exit probe)) (:output probe))
+                (expect (= index (str/trim (:output probe)))))
               (let [locked (#'native/run-binary
                             dir
                             [(str (io/file home "bin/uv")) "lock" "--project" (str project)
-                             "--python" (str (io/file home "bin/python3")) "--no-python-downloads"]
+                             "--python" (str (io/file home "bin/python3")) "--no-python-downloads"
+                             "--default-index" index]
                             60)]
                 (expect (= 0 (:exit locked)) (:output locked)))
               (let [lock-before
@@ -262,6 +275,25 @@
                 (expect (= lock-before (slurp (io/file project "uv.lock"))))
                 (expect (some #(and (:authenticated? %) (= (:path %) (str "/files/" wheel-name)))
                               @requests))
+                (doseq [flag [nil "--default-index"]]
+                  (reset! requests [])
+                  (let [explicit-index (str/replace index "/simple" "/override/simple")
+                        installed
+                        (#'native/run-binary
+                         dir
+                         (into [(.getAbsolutePath bin) (str "-Duser.home=" dir) "python" "uv" "pip"
+                                "install" "--python" (str (io/file home "bin/python3")) "--target"
+                                (str (io/file dir (str "pip-" (or flag "default")))) "--no-deps"
+                                "--no-cache" "--only-binary" ":all:"]
+                               (concat (when flag [flag explicit-index]) ["vis-cli-fixture==1.0"]))
+                         30)
+                        expected-path (str (when flag "/override") "/simple/vis-cli-fixture/")]
+
+                    (expect (= 0 (:exit installed)) (:output installed))
+                    (expect (some #(and (:authenticated? %) (= expected-path (:path %))) @requests)
+                            (str "index option: " flag))
+                    (when flag
+                      (expect (not-any? #(= "/simple/vis-cli-fixture/" (:path %)) @requests)))))
                 (let [probe (#'native/run-binary
                              dir
                              [(.getAbsolutePath bin) (str "-Duser.home=" dir) "python" "uv" "run"

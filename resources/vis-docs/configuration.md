@@ -395,16 +395,18 @@ python:
   index_url: https://gateway.example.com/simple
 ```
 
-This setting applies to Vis-managed pip installs and is read from merged
-configuration for each install. It does not configure uv, including
-`vis-agent python uv` and automatic extension project preparation. Configure uv
-through its project files, environment variables or command-line options.
+This setting applies to Vis-managed pip installs, `vis-agent python uv`, and
+automatic extension project preparation. It is read from merged configuration
+for each subprocess. For uv, Vis supplies `UV_DEFAULT_INDEX` when neither
+`UV_DEFAULT_INDEX` nor `UV_INDEX_URL` is already set. Use `--default-index` for a
+command-line override. uv's deprecated `--index-url` and `-i` do not override
+`UV_DEFAULT_INDEX`. Named indexes and package source pins remain managed by uv.
 
 `index_url` overrides pip's primary index from `PIP_INDEX_URL` or `pip.conf`.
-When absent, pip keeps its inherited settings. Other pip settings, including
-extra indexes, proxies and certificates, remain unchanged. Prefer one
-company virtual index serving both private and public packages; extra indexes
-are not ordered fallback sources and can introduce dependency confusion.
+When absent, both installers keep their inherited settings. Other installer
+settings, including extra indexes, proxies and certificates, remain unchanged.
+Prefer one company virtual index serving both private and public packages;
+extra indexes are not ordered fallback sources and can introduce dependency confusion.
 
 Use a literal HTTP(S) URL without credentials, a query string or a fragment.
 Keep authentication outside committed YAML, for example in the gateway user's

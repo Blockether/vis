@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.python.uv-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [java.nio.file Files]
@@ -110,6 +111,75 @@
     (is (not (str/includes? rendered "fixture-key-body")))
     (is (str/includes? rendered "BUILD_ERROR_MARKER"))
     (is (str/includes? rendered "BUILD_DETAIL_MARKER"))))
+
+(deftest vis-index-reaches-uv-processes-test
+  ;; #183: a Vis index must reach both explicit uv and automatic project preparation.
+  (python-runtime/ensure-library!)
+  (with-uv-fixture
+    "printf '%s' \"${UV_DEFAULT_INDEX:-}\" > \"$0.index\"\nexit 0\n"
+    (fn [dir uv]
+      (let [yml
+            (io/file dir "vis.yml")
+
+            configure-index!
+            @#'python-runtime/uv-index!]
+
+        (with-redefs-fn {#'config/load-config-raw #(@#'config/read-yaml-config-map (str yml))
+                         #'python-runtime/uv-index! (fn [^ProcessBuilder builder]
+                                                      (doto (.environment builder)
+                                                        (.remove "UV_DEFAULT_INDEX")
+                                                        (.remove "UV_INDEX_URL"))
+                                                      (configure-index! builder))
+                         #'python-runtime/bundled-uv! (constantly uv)
+                         #'python-runtime/project-packages (constantly dir)}
+          (fn []
+            (doseq [index ["https://gateway.example.com/simple"
+                           "https://gateway.example.com/other/simple" nil]]
+              (spit yml (if index (str "python:\n  index_url: " index "\n") "python: {}\n"))
+              (doseq [invoke [#(python-runtime/uv-command! ["sync"])
+                              #(python-runtime/ensure-project! dir)]]
+                (invoke)
+                (is (= (or index "") (slurp (io/file (str uv ".index")))))))))))))
+
+(deftest uv-index-environment-precedence-test
+  (doseq [[index inherited expected] [[nil {"UNRELATED" "kept"} {"UNRELATED" "kept"}]
+                                      ["https://gateway.example.com/simple" {}
+                                       {"UV_DEFAULT_INDEX" "https://gateway.example.com/simple"}]
+                                      ["https://gateway.example.com/simple"
+                                       {"UV_DEFAULT_INDEX" "https://gateway.example.com/explicit"}
+                                       {"UV_DEFAULT_INDEX" "https://gateway.example.com/explicit"}]
+                                      ["https://gateway.example.com/simple"
+                                       {"UV_INDEX_URL" "https://gateway.example.com/legacy"}
+                                       {"UV_INDEX_URL" "https://gateway.example.com/legacy"}]]]
+    (let [builder (ProcessBuilder. ^java.util.List ["uv"])
+          environment (.environment builder)]
+
+      (.clear environment)
+      (.putAll environment inherited)
+      (with-redefs [config/load-config-raw (constantly
+                                             (if index {"python" {"index_url" index}} {}))]
+        (is (identical? builder (#'python-runtime/uv-index! builder)))
+        (is (= expected (into {} environment)))))))
+
+(deftest uv-index-invalid-config-does-not-launch-test
+  ;; #183: never fall back to a public index when Vis's configured index is invalid.
+  (python-runtime/ensure-library!)
+  (with-uv-fixture "printf launched > \"$0.launched\"\n"
+                   (fn [dir uv]
+                     (doseq [index [nil "" " " 42 "--no-index"
+                                    "https://user:fixture-password@gateway.example.com/simple"
+                                    "https://gateway.example.com/simple?token=fixture"]]
+                       (with-redefs-fn {#'config/load-config-raw (constantly {"python" {"index_url"
+                                                                                        index}})
+                                        #'python-runtime/bundled-uv! (constantly uv)}
+                         (fn []
+                           (doseq [invoke [#(python-runtime/uv-command! ["sync"])
+                                           #(python-runtime/ensure-project! dir)]]
+                             (let [e (failure invoke)]
+                               (is (str/includes? (str (some-> e
+                                                               .getMessage))
+                                                  "python.index_url"))
+                               (is (not (.exists (io/file (str uv ".launched")))))))))))))
 
 (deftest uv-cli-forwards-argv-and-exit-test
   ;; #183: bundling uv must not replace its commands or reinterpret its options.

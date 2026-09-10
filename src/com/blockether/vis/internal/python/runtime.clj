@@ -145,17 +145,26 @@
         (runtime/use-library! (str home))
         (.getAbsolutePath library))))
 
-(defn- index-args
-  [flag]
+(defn- configured-index-url
+  []
   (let [python (get (config/load-config-raw) "python")]
-    (if (contains? python "index_url")
+    (when (contains? python "index_url")
       (let [index (get python "index_url")]
         (when-not (contract-config/definition-valid? "python" {"index_url" index})
           (throw (ex-info
                    "python.index_url must be an HTTP(S) URL without credentials, query or fragment"
                    {:type ::invalid-index-url})))
-        [flag index])
-      [])))
+        index))))
+
+(defn- uv-index!
+  "Supply Vis's index as uv's default without replacing explicit uv environment settings."
+  [^ProcessBuilder builder]
+  (when-let [index (configured-index-url)]
+    (let [environment (.environment builder)]
+      (when-not (or (.containsKey environment "UV_DEFAULT_INDEX")
+                    (.containsKey environment "UV_INDEX_URL"))
+        (.put environment "UV_DEFAULT_INDEX" index))))
+  builder)
 
 (def ^:private diagnostic-limit 16384)
 
@@ -267,6 +276,7 @@
          process
          (try (.start (doto (ProcessBuilder. ^java.util.List command)
                         (.directory project)
+                        uv-index!
                         (.redirectErrorStream true)))
               (catch java.io.IOException e
                 (throw (installer-error "uv" phase {:out (.getMessage e)}))))
@@ -370,11 +380,13 @@
                              cause)))))))
 
 (defn uv-command!
-  "Run the bundled upstream uv with unchanged arguments, environment and stdio.
-   Return its exit code. No Vis config, sandbox or installer policy applies."
+  "Run bundled upstream uv with unchanged arguments and stdio; return its exit code.
+   Vis's python.index_url supplies UV_DEFAULT_INDEX unless uv's index environment
+   is already set. Explicit uv CLI options retain upstream precedence."
   [args]
   (.waitFor (.start (doto (ProcessBuilder. ^java.util.List (into [(bundled-uv!)] args))
                       (.directory (io/file (System/getProperty "user.dir")))
+                      uv-index!
                       (.inheritIO)))))
 
 (defn pip-install!
@@ -390,7 +402,12 @@
    Measured on a machine that had never installed pytest."
   ([specs] (pip-install! {} specs))
   ([opts specs]
-   (let [result (runtime/pip-install! opts (into (index-args "--index-url") specs))]
+   (let [index
+         (configured-index-url)
+
+         result
+         (runtime/pip-install! opts (into (if index ["--index-url" index] []) specs))]
+
      (when (zero? (long (or (:exit result) 1)))
        (try
          (runtime/exec! runtime/default-session "import importlib; importlib.invalidate_caches()")
