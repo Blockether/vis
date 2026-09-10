@@ -104,6 +104,50 @@ describe("composer height", () => {
     expect(composer.style.height).toBe("32px");
   });
 
+  // Regression: intermittent iOS typing stalls persisted for short drafts. Deleting
+  // within a wrapped line must not collapse the live editor to measure its text.
+  it.each(["deleteContentBackward", "insertReplacementText"])(
+    "does not resize an unchanged two-line composer for %s",
+    (inputType) => {
+      installLayout();
+      installObserver();
+      renderSessionScreen();
+      const composer = screen.getByLabelText(
+        "Message Vis",
+      ) as HTMLTextAreaElement;
+      fireEvent.input(composer, { target: { value: "a".repeat(50) } });
+      expect(composer.style.height).toBe("48px");
+      composer.focus();
+      const heightWrites = vi.spyOn(composer.style, "height", "set");
+      try {
+        fireEvent.input(composer, {
+          target: {
+            value: "a".repeat(49),
+            selectionStart: 20,
+            selectionEnd: 20,
+          },
+          inputType,
+        });
+
+        expect(heightWrites).not.toHaveBeenCalled();
+        expect(composer.style.height).toBe("48px");
+        expect(composer.selectionStart).toBe(20);
+        expect(document.activeElement).toBe(composer);
+        expect(document.querySelectorAll("textarea")).toHaveLength(1);
+
+        // A real line-count change writes only the final height, never `auto`.
+        fireEvent.input(composer, {
+          target: { value: "a".repeat(30) },
+          inputType,
+        });
+        expect(heightWrites.mock.calls).toEqual([["32px"]]);
+        expect(document.querySelectorAll("textarea")).toHaveLength(1);
+      } finally {
+        heightWrites.mockRestore();
+      }
+    },
+  );
+
   // Regression: shortening a long Polish draft (including an autocorrection)
   // reset the live box to `auto` and reflowed the transcript despite staying capped.
   it.each(["deleteContentBackward", "insertReplacementText"])(

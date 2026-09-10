@@ -3056,9 +3056,8 @@ export function SessionScreen({
   // own content, so the common case (no height change) costs nothing upstream.
   const promptLengthRef = useRef(0);
   const composerWidthRef = useRef(0);
-  // Fit the box to the text it holds. `remeasure` is the expensive direction:
-  // only a box measured from its NATURAL height can come back DOWN, so growth,
-  // the common case, never pays for it.
+  // Growth uses the live scrollHeight; shrinking measures outside document flow
+  // so deleting within a wrapped line never collapses the editor or transcript.
   const fitComposer = useCallback((remeasure: boolean) => {
     const textarea = composerRef.current;
     if (!textarea) return;
@@ -3086,19 +3085,23 @@ export function SessionScreen({
     // An overflowing box still needs the maximum height after a deletion or
     // autocorrection. Resetting it to `auto` only reflows the transcript twice.
     if (contentHeight > 80 || !remeasure || !textarea.style.height) return;
-    // Natural-height measurement can transiently clamp a bottom-pinned scroller. Restore
-    // its prior position after writing the final composer height.
-    const box = scrollRef.current;
-    const parkedTop = box ? box.scrollTop : 0;
-    const parkedHeight = box ? box.clientHeight : 0;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 80)}px`;
-    if (
-      box &&
-      box.clientHeight === parkedHeight &&
-      box.scrollTop !== parkedTop
-    ) {
-      box.scrollTop = parkedTop;
+    // Use the same typography and width without changing the live editor's height.
+    // A readonly, hidden sibling does not participate in focus, spellcheck or layout
+    // of the transcript. Remove it before returning, including on a failed measure.
+    const measure = textarea.ownerDocument.createElement("textarea");
+    measure.className = `${textarea.className} invisible pointer-events-none absolute top-0 left-0`;
+    measure.rows = 1;
+    measure.readOnly = true;
+    measure.tabIndex = -1;
+    measure.setAttribute("aria-hidden", "true");
+    measure.style.width = `${textarea.clientWidth}px`;
+    measure.value = textarea.value;
+    textarea.parentElement?.appendChild(measure);
+    try {
+      const height = `${Math.min(measure.scrollHeight, 80)}px`;
+      if (textarea.style.height !== height) textarea.style.height = height;
+    } finally {
+      measure.remove();
     }
   }, []);
 
