@@ -656,18 +656,28 @@
             (format-generic-limit-rows now-ms [row])))))
 
 (defn- build-limits-segments
-  [db _now-ms]
-  (into (cond-> [{:text " Limits " :kind :footer-limits :region :left :priority 1}]
-          (get-in db [:session :goal])
-          (conj {:text (str " Goal: "
-                            (get gateway-contract/session-goal-labels
-                                 (get-in db [:session :goal "status"]))
-                            " ")
-                 :kind :footer-goal
-                 :region :left
-                 :priority 1
-                 :join-left? true}))
-        (build-usage-segments db)))
+  [db now-ms]
+  (let [provider
+        (session-effective-provider db)
+
+        text
+        (when provider (generic-limits-footer-text db provider now-ms))]
+
+    (into (cond-> [{:text
+                    (if text (str " Limits: " (str/replace text #"^limits: " "") " ") " Limits ")
+                    :kind :footer-limits
+                    :region :left
+                    :priority 1}]
+            (get-in db [:session :goal])
+            (conj {:text (str " Goal: "
+                              (get gateway-contract/session-goal-labels
+                                   (get-in db [:session :goal "status"]))
+                              " ")
+                   :kind :footer-goal
+                   :region :left
+                   :priority 1
+                   :join-left? true}))
+          (build-usage-segments db))))
 
 ;;; ── Echo area (which-key strip + transient messages) ────────────────
 (defn- hint-segment

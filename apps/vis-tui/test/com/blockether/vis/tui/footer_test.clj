@@ -26,6 +26,50 @@
     (or (<= 0x2061 n 0x206F) (<= 0xE000 n 0xE0FF) (p/inline-sentinel? (str c)))))
 
 (defdescribe
+  inline-limits-regression-test
+  ;; The goals/footer change hid the quota behind a label-only button.
+  (it
+    "paints premium usage and reset time inline while preserving the details target"
+    (let [db {:messages []
+              :settings {}
+              :provider-limits {:provider-id :github-copilot
+                                :report {:status :ok
+                                         :dynamic {:limits [{:id :premium_interactions
+                                                             :label "Premium"
+                                                             :used 51730
+                                                             :limit 100000
+                                                             :remaining 48270
+                                                             :window {:resets-at-ms 3600000}}]}}}}]
+      (with-redefs-fn {#'footer/session-effective-provider (constantly :github-copilot)}
+        (fn []
+          (let [segment (first (#'footer/build-limits-segments db 0))]
+            (expect (= :footer-limits (:kind segment)))
+            (expect (str/includes? (:text segment) "51730/100000"))
+            (expect (str/includes? (:text segment) "↺1h0m")))
+          (doseq [cols [40 80 120]
+                  goal [nil {"status" "active"}]]
+
+            (let [frame (cap/capture! {:cols cols
+                                       :rows 6
+                                       :paint! (fn [{:keys [screen]}]
+                                                 (footer/draw-footer!
+                                                   (.newTextGraphics
+                                                     ^com.googlecode.lanterna.screen.TerminalScreen
+                                                     screen)
+                                                   (assoc db :session {:goal goal})
+                                                   0
+                                                   cols
+                                                   0))})
+                  row (nth (str/split-lines (cap/frame-text frame)) 1)]
+
+              (expect (nil? (:error frame)))
+              (expect (str/includes? row "Limits:"))
+              (when goal (expect (str/includes? row "Goal:")))
+              (when (>= cols 80)
+                (expect (str/includes? row "51730/100000"))
+                (expect (str/includes? row "↺1h0m"))))))))))
+
+(defdescribe
   ir->footer-text-test
   ;; Footer hook IR was routed
   ;; through `lines->sentinel-strings`, which prepends
