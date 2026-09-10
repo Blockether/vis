@@ -1623,7 +1623,16 @@
                  [["tui" "--jvm" "--gateway" "gateway.example.com" "--continue"]
                   "<-M:run><--gateway><gateway.example.com><--continue>"]
                  [["tui" "--jvm" "--help"] "<-M:run><--help>"]
-                 [["--jvm" "--version"] "<-M:vis><--version>"]]]
+                 [["--jvm" "--version"] "<-M:vis><--version>"]
+                 [["gateway" "start" "--jvm" "--port" "8080"]
+                  "<-M:vis><gateway><start><--port><8080>"]
+                 [["gateway" "--jvm" "start" "--host" "127.0.0.1"]
+                  "<-M:vis><gateway><start><--host><127.0.0.1>"]
+                 [["--jvm" "gateway" "start"] "<-M:vis><gateway><start>"]
+                 [["gateway" "--jvm" "--help"] "<-M:vis><gateway><--help>"]
+                 [["gateway" "start" "--jvm" "--help"] "<-M:vis><gateway><start><--help>"]
+                 [["gateway" "status" "--jvm" "--db" "custom db"]
+                  "<-M:vis><gateway><status><--db><custom db>"]]]
 
           (spit track-file (str track "\n"))
           (let [{:keys [exit output]} (run-bash (into ["bash" (.getAbsolutePath launcher)] args)
@@ -1640,11 +1649,12 @@
             (expect (zero? exit) output)
             (expect (str/includes? output "native<--jvm>") output)))
         (delete-tree! (io/file install "src"))
-        (let [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "tui" "--jvm"]
-                                              env)]
-          (expect (not (zero? exit)) output)
-          (expect (str/includes? output "vis-agent update --track dev") output)
-          (expect (= "release\n" (slurp track-file))))
+        (doseq [args [["tui" "--jvm"] ["gateway" "start" "--jvm"]]]
+          (let [{:keys [exit output]} (run-bash (into ["bash" (.getAbsolutePath launcher)] args)
+                                                env)]
+            (expect (not (zero? exit)) output)
+            (expect (str/includes? output "vis-agent update --track dev") output)
+            (expect (= "release\n" (slurp track-file)))))
         (finally (delete-tree! root))))))
 
 ;; Regression: source launches accepted old Java and coupled users to the native-build pin.

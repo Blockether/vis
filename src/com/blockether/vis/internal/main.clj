@@ -3382,7 +3382,8 @@
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
      :cmd/usage
-     "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] gateway <start|status|stop|pair> [--db PATH]"
+     "vis-agent [--jvm] [--gateway HOST[:PORT] --gateway-token TOKEN] gateway <start|status|stop|pair> [--db PATH]"
+     :cmd/examples ["vis-agent gateway start --jvm"]
      :cmd/subcommands #(registry/registered-under ["gateway"])}
     {:cmd/name "python"
      :cmd/doc
@@ -3417,9 +3418,9 @@
     {:cmd/name "start"
      :cmd/parent ["gateway"]
      :cmd/doc
-     "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground, always on THIS machine."
+     "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground, always on THIS machine. Use --jvm to run it on the JVM without changing the installed track."
      :cmd/usage
-     "vis-agent gateway start [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair]"
+     "vis-agent gateway start [--jvm] [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair]"
      :cmd/args
      [{:name "port" :kind :flag :type :string :doc "TCP port to listen on (default 7890)."}
       {:name "host"
@@ -3445,8 +3446,8 @@
        :type :boolean
        :doc
        "Print a VIS companion pairing QR (URL + bearer token). Implies a phone-reachable bind (Tailscale IP, else 0.0.0.0) unless --host says otherwise."}]
-     :cmd/examples ["vis-agent gateway start" "vis-agent gateway start --port 8080"
-                    "vis-agent gateway start --pair"
+     :cmd/examples ["vis-agent gateway start" "vis-agent gateway start --jvm"
+                    "vis-agent gateway start --port 8080" "vis-agent gateway start --pair"
                     "vis-agent gateway start --host 0.0.0.0 --require-token --pair"]
      :cmd/run-fn cli-gateway-start!}
     {:cmd/name "status"

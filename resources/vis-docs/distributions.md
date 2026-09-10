@@ -84,14 +84,22 @@ Use `--jvm` to run on the JVM without changing the installed track:
 vis-agent tui --jvm
 # Equivalent:
 vis-agent --jvm tui
+
+# Start a foreground gateway on the JVM:
+vis-agent gateway start --jvm
+# Equivalent:
+vis-agent --jvm gateway start
 ```
 
 The flag applies to this launch only and is consumed by the launcher, not the
-terminal client. It uses the managed source in `~/.vis/install/src`. If no managed
-source exists, a checkout-owned launcher uses its own source tree:
+engine or terminal client. It uses the managed source in `~/.vis/install/src`. If
+no managed source exists, a checkout-owned launcher uses its own source tree:
 `./bin/vis-agent tui --jvm`. An installed launcher with no source reports how to
 install it with `vis-agent update --track dev`; it does not download source or
 change tracks automatically. JVM execution requires JDK 25+.
+
+For gateway inspection and control commands, `--jvm` selects the local command's
+runtime; it does not change the runtime of an already-running or remote daemon.
 
 `--jvm` is not an update option. Use `--track dev` to install or update JVM source.
 Arguments after `--` or `python uv` are passed through unchanged.

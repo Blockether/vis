@@ -248,7 +248,20 @@
       (expect (str/includes? (->> (:cmd/args (get subs "status"))
                                   (map :doc)
                                   (str/join " "))
-                             "ignored when --gateway")))))
+                             "ignored when --gateway"))))
+  (it "documents the gateway JVM override in command help"
+      (let [parent
+            (first (filter #(= "gateway" (:cmd/name %)) (registry/registered-under [])))
+
+            start
+            (first (filter #(= "start" (:cmd/name %)) (registry/registered-under ["gateway"])))]
+
+        (doseq [[cmd path] [[parent ["vis-agent" "gateway"]]
+                            [start ["vis-agent" "gateway" "start"]]]]
+          (let [help (commandline/render-command cmd path)]
+            (expect (str/includes? help "[--jvm]"))
+            (expect (str/includes? help "vis-agent gateway start --jvm"))))
+        (expect (str/includes? (:cmd/doc start) "without changing the installed track")))))
 
 (defdescribe
   parse-run-args-test
