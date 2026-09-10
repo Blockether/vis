@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.61] - 2026-09-10
+
+### Fixed
+- Restore Python guest modules before worker startup when their staged directory was removed or the runtime home changed, fixing the native regression that blocked v0.1.60 (#185).
+- Include the `python.tls_strict` configuration, shared sandbox/extension policy and runtime 0.5.9 prepared for v0.1.60.
+
 ## [v0.1.60] - 2026-09-10
 
 ### Added
