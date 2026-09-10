@@ -113,10 +113,3 @@ jobs:
           esac
       - name: Publish complete stable release
         run: gh release edit "$RELEASE_TAG" --draft=false --latest
-
-  installer:
-    needs: publish
-    uses: ./.github/workflows/installer-assets.yml
-    with:
-      tag: ${{ github.ref_name }}
-    secrets: inherit

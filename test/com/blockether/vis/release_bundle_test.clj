@@ -145,8 +145,26 @@
           ;; Dev must ignore a native binary retained from an earlier installation.
           (write-executable! (io/file launcher-dir "vis-agent-native")
                              "#!/usr/bin/env bash\necho unexpected-native >&2\nexit 77\n")
-          (io/copy (io/file "bin/vis-agent") launcher)
-          (.setExecutable ^java.io.File launcher true)
+          (write-executable!
+            launcher
+            (if installer?
+              (str "#!/usr/bin/env bash\n"
+                   "echo \"vis-agent: update: 'dev' is not a distribution track\" >&2\n"
+                   "exit 1\n")
+              (slurp "bin/vis-agent")))
+          (when installer?
+            (let [{:keys [exit output]}
+                  (run-bash ["bash" (.getAbsolutePath launcher) "update" "--track" "dev"] {})]
+              (expect (= 1 exit) output)
+              (expect (str/includes? output "'dev' is not a distribution track") output))
+            (io/copy (io/file "bin/install-vis-agent") (io/file root "install-vis-agent"))
+            (write-executable!
+              (io/file path-dir "curl")
+              (str "#!/usr/bin/env bash\nset -euo pipefail\n"
+                   "[[ \"$*\" == *'/releases/download/installer/vis-agent'* ]] || exit 77\n"
+                   "while (( $# )); do\n" "  if [[ \"$1\" == -o ]]; then cp -- "
+                   "'" (.getAbsolutePath (io/file remote-bin "vis-agent"))
+                   "' \"$2\"; exit 0; fi\n" "  shift\ndone\nexit 77\n")))
           (write-executable!
             (io/file path-dir "clojure")
             (str
@@ -174,7 +192,7 @@
                 "fi\n" "exec \"$VIS_TEST_REAL_GIT\" \"$@\"\n")))
           (let [{:keys [exit output]}
                 (run-bash (if installer?
-                            ["bash" (.getAbsolutePath (io/file "bin/install-vis-agent"))
+                            ["bash" (.getAbsolutePath (io/file root "install-vis-agent"))
                              "--install-dir" (.getAbsolutePath launcher-dir) "--track" "dev"]
                             (cond-> ["bash" (.getAbsolutePath launcher) "update" "--track" "dev"]
                               keep-gateway?
@@ -197,6 +215,7 @@
                 :old-commit old-commit
                 :new-commit new-commit
                 :managed-src managed-src
+                :launcher launcher
                 :clojure-calls clojure-calls
                 :fetch-calls fetch-calls}))))
       (finally (delete-tree! root)))))
@@ -834,11 +853,13 @@
 ;; Update defaults are independent of the last installed track.
 (defdescribe
   distribution-track-test
-  (it "installs dev through the installer without selecting a leftover native executable"
+  (it "replaces an old dev-rejecting launcher through the published bootstrap"
       (with-source-update-fixture {:installer? true}
-                                  (fn [{:keys [exit output new-commit managed-src]}]
+                                  (fn [{:keys [exit output new-commit managed-src launcher]}]
                                     (expect (zero? exit) output)
-                                    (expect (= new-commit (git! managed-src "rev-parse" "HEAD"))))))
+                                    (expect (= new-commit (git! managed-src "rev-parse" "HEAD")))
+                                    (expect (= (slurp (io/file managed-src "bin/vis-agent"))
+                                               (slurp launcher))))))
   (it "installs a complete immutable beta through either entry point without Git or JVM"
       (doseq [installer? [false true]]
         (with-native-install-fixture
@@ -1177,16 +1198,59 @@
                   steps)
           (expect (str/includes? steps "uses: ./.github/actions/test-native-python-sdk") steps)))))
 
-(defn- beta-job-script
-  "Read the production inline shell of one beta workflow job for isolated execution."
-  [job]
-  (->> (str/split-lines (slurp ".github/workflows/beta-native.yml"))
+(defn- workflow-job-script
+  "Read the first production inline shell of one workflow job for isolated execution."
+  [workflow job]
+  (->> (str/split-lines (slurp workflow))
        (drop-while #(not= % (str "  " job ":")))
        (drop-while #(not= % "        run: |"))
        rest
        (take-while #(or (str/blank? %) (str/starts-with? % "          ")))
        (map #(if (str/blank? %) "" (subs % 10)))
        (str/join "\n")))
+
+(defdescribe
+  installer-bootstrap-gate-test
+  ;; The public bootstrap still rejected dev after main already supported it.
+  (it
+    "selects only the latest green main commit without waiting for a stable release"
+    (let [script
+          (workflow-job-script ".github/workflows/installer-assets.yml" "publish")
+
+          sha
+          (apply str (repeat 40 "a"))]
+
+      (expect (not (str/blank? script)))
+      (doseq [[overrides expected-exit publish?]
+              [[{} 0 true] [{"EVENT_SHA" ""} 0 true] [{"TEST_GREEN_MAIN" ""} 0 false]
+               [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} 0 false]
+               [{"EVENT_SHA" "main"} 1 false] [{"TEST_GREEN_MAIN" "main" "EVENT_SHA" ""} 1 false]
+               [{"TEST_API_EXIT" "22"} 22 false]]]
+        (let [dir (.toFile (Files/createTempDirectory "vis-installer-gate-"
+                                                      (make-array FileAttribute 0)))
+              outputs (io/file dir "outputs")]
+
+          (try
+            (spit outputs "")
+            (let
+              [{:keys [exit output]}
+               (run-bash
+                 ["bash" "-c"
+                  (str
+                    "gh() {\ncase \"$*\" in\n"
+                    " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*)\n"
+                    "  [[ \"$TEST_API_EXIT\" = 0 ]] || return \"$TEST_API_EXIT\"\n"
+                    "  printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
+                    " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
+                 (merge {"GITHUB_REPOSITORY" "example/vis"
+                         "EVENT_SHA" sha
+                         "TEST_GREEN_MAIN" sha
+                         "TEST_API_EXIT" "0"
+                         "GITHUB_OUTPUT" (.getAbsolutePath outputs)}
+                        overrides))]
+              (expect (= expected-exit exit) output)
+              (expect (= (if publish? (str "sha=" sha "\n") "") (slurp outputs)) output))
+            (finally (delete-tree! dir))))))))
 
 (defn- run-beta-job
   "Execute a workflow job against a fake GitHub CLI; no live requests or publication."
@@ -1207,7 +1271,7 @@
         (apply str (repeat 40 "a"))
 
         script
-        (beta-job-script job)]
+        (workflow-job-script ".github/workflows/beta-native.yml" job)]
 
     (try
       (expect (not (str/blank? script)))
@@ -1901,12 +1965,22 @@
                                          (slurp ".github/workflows/release.yml")))]
         (expect (str/includes? native-call "actions: read"))
         (expect (str/includes? native-call "contents: write"))))
-  (it "refreshes the bootstrap only from a complete published stable release without moving tags"
+  (it "refreshes the bootstrap from trusted green main CI without moving tags"
       (let [workflow (slurp ".github/workflows/installer-assets.yml")]
-        (expect (str/includes? workflow "workflow_call:"))
-        (expect (str/includes? workflow "--published"))
-        (expect (not (str/includes? workflow "branches: [main]")))
-        (expect (not (str/includes? workflow "git tag -f")))))
+        (doseq [contract ["workflow_run:" "workflows: [CI]" "branches: [main]" "types: [completed]"
+                          "workflow_run.conclusion == 'success'" "workflow_run.event == 'push'"
+                          "workflow_run.head_branch == 'main'"
+                          "workflow_run.head_repository.full_name == github.repository"
+                          "github.ref == 'refs/heads/main'" "actions: read"
+                          "ref: ${{ steps.pick.outputs.sha }}" "persist-credentials: false"
+                          ".head_repository.full_name ==" "group: installer-assets"
+                          "cancel-in-progress: false" "--prerelease --latest=false"]]
+          (expect (str/includes? workflow contract) contract))
+        (expect (= 2 (count (re-seq #"if: steps.pick.outputs.sha != ''" workflow))))
+        (doseq [obsolete ["workflow_call:" "inputs.tag" "/releases/latest" "git tag -f"]]
+          (expect (not (str/includes? workflow obsolete)) obsolete))
+        (expect (not (str/includes? (slurp ".github/workflows/release.yml")
+                                    "uses: ./.github/workflows/installer-assets.yml")))))
   (it
     "requires every uploaded platform artifact and rejects published or mismatched releases"
     (let

@@ -22,8 +22,10 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --track dev
 ```
 
-The script is published as a GitHub release asset because some networks block
-`raw.githubusercontent.com`. Running `bin/install-vis-agent` from a clone also works.
+The bootstrap scripts refresh after successful `main` CI, independently of stable
+releases. They are published as GitHub release assets because some networks block
+`raw.githubusercontent.com`. Native installations still use the matching launcher
+from their selected release. Running `bin/install-vis-agent` from a clone also works.
 
 ## Updating and selecting a track
 
@@ -58,6 +60,21 @@ Dev needs Git and JDK 25+. The launcher can install the Clojure CLI;
 `VIS_NO_AUTO_INSTALL=1` disables that installation. Dev does not build native images.
 To run local repository edits independently of installed tracks, use
 `clojure -M:vis` inside that checkout. Build those edits with `clojure -T:build native`.
+
+### Older launchers that reject dev
+
+If `vis-agent update --track dev` reports that dev is not a distribution track,
+your installed launcher predates the dev selector. `--dev` is not an update option.
+Rerun the current bootstrap with dev selected; a plain update reinstalls the stable
+release's launcher and may still lack the selector:
+
+```bash
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --track dev
+```
+
+Use `--install-dir PATH` if Vis was installed somewhere other than `~/.local/bin`.
+Dev requires Git and JDK 25+. This replaces the launcher and installs main source;
+it does not erase your sessions or configuration.
 
 ## Terminal gateway lifecycle
 
