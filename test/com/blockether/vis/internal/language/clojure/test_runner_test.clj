@@ -6,6 +6,7 @@
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
+            [clojure.test :as ct]
             [com.blockether.vis.contract.surface :as contract]
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nc]
             [com.blockether.vis.internal.language.clojure.repl-manager :as repl-manager]
@@ -458,14 +459,14 @@
 
 (defn- with-cli-run
   "Run the cli fallback against a canned shell result, with no project on disk."
-  [{:keys [exit out]}]
+  [{:keys [exit out err]}]
   (with-redefs [com.blockether.vis.internal.language.clojure.test-runner/cli-command-for
                 (fn [_root _sel _aliases]
                   {:tool :clj :cmd ["clojure" "-M:test"]})
 
                 shell/sh
                 (fn [& _]
-                  {:exit exit :out out :err ""})]
+                  {:exit exit :out out :err err})]
 
     (run-via-cli "/proj" {})))
 
@@ -491,6 +492,158 @@
         (expect (= 0 (get r "fail")))
         (expect (= 0 (get r "errored")))
         (expect (true? (get r "is_pass"))))))
+
+(defdescribe
+  cli-failure-diagnostics-test
+  ;; Regression #184: retain the full report and every fault before any display
+  ;; renderer limits its preview, including failures before noisy stdout/stderr.
+  (it "retains Kaocha failure evidence preceding a noisy report"
+      (let [report
+            (str "FAIL in sample.core-test/broken (core_test.clj:7)\n"
+                 "Expected: 1\nActual: 2\n\n"
+                 (apply str (repeat 80 "ordinary log line\n"))
+                 "1 tests, 1 assertions, 1 failures.\n")
+
+            r
+            (with-cli-run {:exit 1 :out report})
+
+            fault
+            (first (get r "failures"))]
+
+        (expect (false? (get r "is_pass")))
+        (expect (= 1 (get r "fail")))
+        (expect (= report (get r "output")))
+        (expect (= 1 (count (get r "failures"))))
+        (expect (= {"ns" "sample.core-test"
+                    "test" "broken"
+                    "type" "fail"
+                    "file" "core_test.clj"
+                    "line" 7
+                    "expected" "1"
+                    "actual" "2"}
+                   (dissoc fault "message")))
+        (expect (contract/valid? :test-fn (assoc r "language" "clojure")))))
+  (it
+    "keeps stdout faults when stderr contains more than forty warnings"
+    (let
+      [out
+       "FAIL in (sample.core-test/broken) (core_test.clj:7)\nexpected: 1\n  actual: 2\n\n1 tests, 1 assertions, 1 failures."
+
+       err
+       (apply str (repeat 80 "compiler warning\n"))
+
+       r
+       (with-cli-run {:exit 1 :out out :err err})]
+
+      (expect (= (str out "\n" err) (get r "output")))
+      (expect (= "broken" (get-in r ["failures" 0 "test"])))
+      (expect (= "2" (get-in r ["failures" 0 "actual"])))))
+  (it "collects multiple assertions and thrown errors without deduplicating tests"
+      (let [trace
+            (apply str (repeat 80 "    at sample.core_test.invoke(core_test.clj:19)\n"))
+
+            report
+            (str "Testing sample.core-test\n\n"
+                 "FAIL in (broken) (core_test.clj:7)\nexpected: 1\n  actual: 2\n\n"
+                 "FAIL in (broken) (core_test.clj:8)\nexpected: true\n  actual: false\n\n"
+                 "Testing sample.other-test\n\n"
+                 "ERROR in (throws) (other_test.clj:19:4)\n"
+                 "Uncaught exception, not in assertion.\nexpected: nil\n"
+                 "  actual: clojure.lang.ExceptionInfo: boom\n"
+                 trace
+                 "\nRan 2 tests containing 3 assertions.\n2 failures, 1 errors.\n")
+
+            r
+            (with-cli-run {:exit 1 :err report})
+
+            faults
+            (get r "failures")]
+
+        (expect (= report (get r "output")))
+        (expect (= 3 (get r "fail")))
+        (expect (= 1 (get r "errored")))
+        (expect (= ["broken" "broken" "throws"] (mapv #(get % "test") faults)))
+        (expect (= ["fail" "fail" "error"] (mapv #(get % "type") faults)))
+        (expect (= "sample.other-test" (get-in faults [2 "ns"])))
+        (expect (= 19 (get-in faults [2 "line"])))
+        (expect (str/includes? (str (get-in faults [2 "message"])) "ExceptionInfo: boom"))
+        (expect (str/includes? (str (get-in faults [2 "message"])) trace))))
+  (it
+    "reads a real clojure.test reporter rather than only canned output"
+    (let [report
+          (with-out-str
+            (binding [ct/*test-out*
+                      *out*
+
+                      ct/*testing-vars*
+                      (list #'with-cli-run)
+
+                      ct/*report-counters*
+                      (ref ct/*initial-report-counters*)]
+
+              (ct/report {:type :begin-test-ns
+                          :ns (the-ns
+                                'com.blockether.vis.internal.language.clojure.test-runner-test)})
+              (ct/report {:type :fail
+                          :file "core_test.clj"
+                          :line 7
+                          :expected '(= 1 2)
+                          :actual '(not (= 1 2))})
+              (ct/report {:type :error
+                          :file "core_test.clj"
+                          :line 9
+                          :expected nil
+                          :actual (ex-info "reporter boom" {})})
+              (ct/report {:type :summary :test 1 :pass 0 :fail 1 :error 1})))
+
+          r
+          (with-cli-run {:exit 1 :out report})]
+
+      (expect (= report (get r "output")))
+      (expect (= ["fail" "error"] (mapv #(get % "type") (get r "failures"))))
+      (expect (= ["with-cli-run" "with-cli-run"] (mapv #(get % "test") (get r "failures"))))
+      (expect (str/includes? (str (get-in r ["failures" 1 "message"])) "reporter boom"))))
+  (it "preserves multiline Kaocha assertions and normalizes unknown locations"
+      (let [report
+            (str "\u001b[31mFAIL in sample.core-test/broken (Unknown:-1)\u001b[0m\n"
+                 "Expected:\n  {:value 1}\nActual:\n  - {:value 1}\n  + {:value 2}\n\n"
+                 "1 tests, 1 assertions, 1 failures.\n")
+
+            r
+            (with-cli-run {:exit 1 :out report})]
+
+        (expect (not (str/includes? (get r "output") "\u001b")))
+        (expect (= "{:value 1}" (get-in r ["failures" 0 "expected"])))
+        (expect (= "- {:value 1}\n  + {:value 2}" (get-in r ["failures" 0 "actual"])))
+        (expect (nil? (get-in r ["failures" 0 "file"])))
+        (expect (nil? (get-in r ["failures" 0 "line"])))
+        (expect (contract/valid? :test-fn (assoc r "language" "clojure")))))
+  (it "collects Lazytest default result blocks including exception details"
+      (let [report
+            (str "sample.core-test\n  broken-test\n    checks equality:\n\n"
+                 "values differ\nExpected: (= 1 2)\nActual: false\n"
+                 "Evaluated arguments:\n * 1\n * 2\n\nin core_test.clj:7\n\n"
+                 "sample.core-test\n  throws-test\n    throws:\n\n"
+                 "clojure.lang.ExceptionInfo: boom\nExpected: nil\nActual: nil\n\n"
+                 "Originating error:\n    sample.core_test.invoke(core_test.clj:19)\n\n"
+                 "in core_test.clj:19\n\nRan 2 test cases in 0.01 seconds.\n2 failures.\n")
+
+            r
+            (with-cli-run {:exit 1 :out report})]
+
+        (expect (= report (get r "output")))
+        (expect (= ["broken-test" "throws-test"] (mapv #(get % "test") (get r "failures"))))
+        (expect (= ["fail" "error"] (mapv #(get % "type") (get r "failures"))))
+        (expect (= [7 19] (mapv #(get % "line") (get r "failures"))))
+        (expect (str/includes? (str (get-in r ["failures" 1 "message"])) "ExceptionInfo: boom"))))
+  (it "keeps long passing and unrecognized failing reports complete"
+      (doseq [[exit summary] [[0 "Ran 1 test cases.\n0 failures.\n"]
+                              [1 "custom reporter: assertion failed\n"]]]
+        (let [report (str "first log line\n" (apply str (repeat 100 "log line\n")) summary)
+              r (with-cli-run {:exit exit :out report})]
+
+          (expect (= report (get r "output")))
+          (expect (= [] (get r "failures")))))))
 
 (defdescribe repl-errored-count-test
              (it "counts a test that THREW into errored as well as fail"
@@ -711,6 +864,38 @@
       {:exit exit
        :out (if (= "node" (first args)) (str "Testing repro.core-test\n" out) out)
        :err ""})))
+
+(defdescribe shadow-failure-diagnostics-test
+             ;; Regression #184 also applied to shadow-cljs via the shared CLI tail.
+             (it "keeps compilation warnings and complete Node failure diagnostics"
+                 (let [compile-out
+                       (str "WARNING: A terminally deprecated method was called\n"
+                            "[:test] Build completed. (1 files)\n")
+
+                       test-out
+                       (str "Testing repro.core-test\n\n"
+                            "FAIL in (broken) (core_test.cljs:7:2)\n"
+                            "expected: 1\n  actual: 2\n\n"
+                            (apply str (repeat 80 "ordinary log line\n"))
+                            "Ran 1 tests containing 1 assertions.\n1 failures, 0 errors.\n")
+
+                       err
+                       (apply str (repeat 80 "compiler warning\n"))]
+
+                   (with-project cljs-project
+                                 (fn [root]
+                                   (with-redefs [shell/sh (fn [& args]
+                                                            (if (= "node" (first args))
+                                                              {:exit 1 :out test-out :err err}
+                                                              {:exit 0 :out compile-out :err ""}))]
+                                     (let [r (run-via-shadow root ["repro.core-test"] {})]
+                                       (expect (false? (get r "is_pass")))
+                                       (expect (= (str compile-out test-out err) (get r "output")))
+                                       (expect (= "repro.core-test" (get-in r ["failures" 0 "ns"])))
+                                       (expect (= "broken" (get-in r ["failures" 0 "test"])))
+                                       (expect (= "core_test.cljs"
+                                                  (get-in r ["failures" 0 "file"])))
+                                       (expect (= 7 (get-in r ["failures" 0 "line"]))))))))))
 
 (defdescribe
   run-via-shadow-verdict-test

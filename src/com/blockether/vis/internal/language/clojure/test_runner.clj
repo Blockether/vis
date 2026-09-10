@@ -9,6 +9,9 @@
    is a uniform STRING-keyed map (crosses the strings-only boundary) with
    \"mode\" (repl or cli), \"framework\", \"ns\", \"total\", \"pass\", \"fail\" and
    \"failures\" [{\"ns\" \"test\" \"message\" \"file\" \"line\"} ...].
+   CLI and shadow-cljs retain complete stdout/stderr in \"output\" (ANSI-stripped)
+   and collect per-fault diagnostics before rendering. Only the display preview
+   may be bounded; the result data is never reduced to a log tail.
 
    run-form is the code EVALED on the target nREPL. It is a quoted form (not a
    call into this namespace) so it works against ANY project's nREPL, including
@@ -1006,12 +1009,99 @@
                "repl_unusable" true}
               (throw e))))))))
 
-(defn- cli-tail
-  "Last 40 lines of a CLI test run's combined out+err, ANSI-stripped so the
-   stored :output renders clean in every channel."
-  [^String s]
-  (let [lines (str/split-lines (strip-ansi (or s "")))]
-    (str/join "\n" (take-last 40 lines))))
+(defn- command-output
+  "Keep complete stdout and stderr, stripping only ANSI controls. Separate
+   streams even when stdout has no final newline; never discard test evidence."
+  [{:keys [out err]}]
+  (let [out
+        (or (strip-ansi out) "")
+
+        err
+        (or (strip-ansi err) "")]
+
+    (str out (when (and (seq out) (seq err) (not (str/ends-with? out "\n"))) "\n") err)))
+
+(defn- cli-fault
+  "Retain the whole diagnostic block, including multiline diffs and traces,
+   and expose assertion values separately when the reporter labels them."
+  [fault details]
+  (into
+    (assoc fault "message" details)
+    (map (fn [[_ label value]]
+           [(str/lower-case label) (str/trim value)]))
+    (re-seq
+      #"(?ims)^[ \t]*(expected|actual):[ \t]*(.*?)(?=^[ \t]*(?:expected|actual|diff|Evaluated arguments|Originating error):|^\r?$|\z)"
+      details)))
+
+(defn- conventional-cli-failures
+  "Read clojure.test, Kaocha and cljs.test FAIL/ERROR blocks. Namespace headers
+   scope unqualified test names; repeated faults in one test remain separate."
+  [out]
+  (let [finish (fn [faults fault details]
+                 (cond-> faults
+                   fault
+                   (conj (cli-fault fault (str/join "\n" details)))))]
+    (loop [[line & lines] (str/split-lines out)
+           ns-name nil
+           fault nil
+           details []
+           faults []]
+
+      (if line
+        (let [header (re-matches #"^(FAIL|ERROR) in (.+?)(?: \(([^()]*)\))?$" line)
+              testing (re-matches #"^Testing (\S+)\s*$" line)]
+
+          (cond
+            header
+            (let [[_ kind identity location] header
+                  identity (str/replace identity #"^\((.*)\)$" "$1")
+                  [test-ns test-name]
+                  (if (str/includes? identity "/") (str/split identity #"/" 2) [ns-name identity])
+                  [_ file line-number] (re-matches #"^(.*?):(-?\d+)(?::\d+)?$" (or location ""))]
+
+              (recur lines
+                     ns-name
+                     {"ns" test-ns
+                      "test" test-name
+                      "type" (str/lower-case kind)
+                      "file" file
+                      "line" (some-> line-number
+                                     parse-long)}
+                     []
+                     (finish faults fault details)))
+            (or testing (re-find #"^(?:Ran \d+ test|\d+ tests?, \d+ assertions?,)" line))
+            (recur lines (if testing (second testing) ns-name) nil [] (finish faults fault details))
+            :else (recur lines
+                         ns-name
+                         fault
+                         (cond-> details
+                           fault
+                           (conj line))
+                         faults)))
+        (finish faults fault details)))))
+
+(defn- lazytest-cli-failures
+  "Lazytest's default results reporter prints an indented identity followed by
+   assertion/exception details and an `in file:line` footer, not FAIL headers."
+  [out]
+  (mapv (fn [[_ ns-name docs details file line-number]]
+          (cli-fault {"ns" ns-name
+                      "test" (str/replace (str/trim (first (str/split-lines docs))) #":$" "")
+                      "type" (if (str/includes? details "Originating error:") "error" "fail")
+                      "file" file
+                      "line" (parse-long line-number)}
+                     (str docs "\n" details)))
+        (re-seq #"(?ms)^(\S+)\r?\n((?:[ \t]+[^\r\n]+\r?\n)+)\r?\n(.*?)^in ([^\r\n]+):(-?\d+)\r?$"
+                out)))
+
+(defn- cli-failures
+  "Extract supported reporters without changing the project's test command.
+   Unrecognized formats remain available in the complete output field."
+  [root out]
+  (get (normalize-faults root
+                         {"failures" (into (conventional-cli-failures out)
+                                           (lazytest-cli-failures out))})
+       "failures"))
 
 (defn- summary-counts
   "Read complete, anchored reporter summaries. Never splice counts from unrelated
@@ -1316,7 +1406,7 @@
                  (catch Throwable t {:exit -1 :out "" :err (ex-message t)}))
 
             out
-            (str (:out res) (:err res))
+            (command-output res)
 
             exit
             (long (or (:exit res) -1))
@@ -1335,7 +1425,8 @@
 
         (cond-> (assoc base
                   "exit" exit
-                  "output" (cli-tail out)
+                  "output" out
+                  "failures" (cli-failures root out)
                   "is_pass" (boolean (and (zero? exit)
                                           ran?
                                           (pos? (long cases))
@@ -1362,20 +1453,6 @@
           ignored-focus?
           (assoc "error"
             "Kaocha ignored an unmatched metadata filter; the requested focus was not verified"))))))
-
-(defn- shadow-tail
-  "shadow-cljs boots a JVM whose Unsafe/deprecation warnings are four lines of
-   pure noise on EVERY run — dropped here so the tail the caller reads is the
-   test report itself."
-  [^String out]
-  (cli-tail
-    (str/join
-      "\n"
-      (remove (fn [line]
-                (re-find
-                  #"^WARNING: (A terminally deprecated|sun\.misc\.Unsafe|Please consider reporting)"
-                  line))
-        (str/split-lines (str out))))))
 
 (defn- karma-summary-counts
   "Karma reports TOTAL or completed per-browser progress. Keep earlier failures,
@@ -1473,11 +1550,11 @@
                      (catch Throwable t {:exit -1 :out "" :err (ex-message t)}))
 
                 out
-                (str (:out res) (:err res))
+                (command-output res)
 
                 acc
                 (-> acc
-                    (update :out str out)
+                    (update :out #(command-output {:out % :err out}))
                     (update :cmds conj (str/join " " argv))
                     (assoc :last-out out
                            :exit (long (or (:exit res) -1))))
@@ -1523,7 +1600,8 @@
                   "build" build
                   "command" (str/join " && " (:cmds ran))
                   "exit" exit
-                  "output" (shadow-tail (:out ran))
+                  "output" (:out ran)
+                  "failures" (cli-failures root (:out ran))
                   "is_pass" (boolean (and (zero? exit)
                                           (not (:error ran))
                                           (empty? missing-nses)
