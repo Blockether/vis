@@ -27,6 +27,7 @@ import activityResults from '../../../../packages/vis-contract/resources/vis-con
 import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
+import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
@@ -1293,6 +1294,50 @@ export const STORY_EXCHANGE_TURN: TranscriptTurn = {
   provider: 'anthropic',
   duration_ms: 11500,
 };
+
+/** The production session screen over deterministic, local gateway answers. */
+export const STORY_COMPOSER_SESSION: Session = {
+  ...STORY_SESSION_ROW,
+  id: 'composer-input-story',
+  title: 'Composer input',
+  status: 'idle',
+  live: false,
+  current_turn_id: null,
+  is_awaiting_input: false,
+  turn_count: 1,
+};
+const composerStoryTurns = [STORY_EXCHANGE_TURN];
+const composerStoryNoop = () => {};
+const composerStoryAnswers: Record<string, unknown> = {
+  base: 'http://gateway.example.com',
+  cachedSession: () => STORY_COMPOSER_SESSION,
+  cachedTranscript: () => composerStoryTurns,
+  cachedQueuedTurns: () => [],
+  cachedSentAttachments: () => [],
+  session: async () => STORY_COMPOSER_SESSION,
+  transcript: async () => composerStoryTurns,
+  transcriptWindow: async () => composerStoryTurns,
+  transcriptIfMoved: async () => null,
+  capabilities: async () => null,
+  voiceModel: async () => null,
+  queuedTurns: async () => ({ turns: [], paused: null }),
+  turnTrace: async () => null,
+  onArtifactRevision: () => composerStoryNoop,
+  retainAttachment: () => composerStoryNoop,
+};
+export const STORY_COMPOSER_CLIENT = new Proxy(composerStoryAnswers, {
+  get(target, key) {
+    if (typeof key !== 'string') return Reflect.get(target, key);
+    if (key in target) return target[key];
+    return key.startsWith('cached') ? () => null : async () => [];
+  },
+}) as unknown as GatewayClient;
+export const STORY_COMPOSER_SUBSCRIPTIONS = {
+  hasEndedTurn: () => false,
+  resync: composerStoryNoop,
+  subscribeSession: () => composerStoryNoop,
+  subscribeConnection: () => composerStoryNoop,
+} as unknown as SessionSubscriptionHub;
 
 export const STORY_COMPACT_EXECUTIONS: TranscriptIteration[] = [
   {

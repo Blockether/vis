@@ -1,4 +1,5 @@
 import {
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,6 +9,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type SetStateAction,
 } from "react";
 import {
   AssistantMessage,
@@ -644,8 +646,23 @@ export function SessionScreen({
   const voiceMailboxId = draftMessageId;
   // The composer footer carries `--safe-bottom` itself; see `useSafeBottomStyle`.
   const safeBottomStyle = useSafeBottomStyle();
-  const [prompt, setPrompt] = useState(
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  // This snapshot drives suggestions, not the native editor. Typing updates it
+  // at transition priority so the screen cannot block the next keyboard event.
+  const [prompt, setPromptSnapshot] = useState(
     () => peekDraftMessage(draftMessageId).text,
+  );
+  const setPrompt = useCallback(
+    (change: SetStateAction<string>) => {
+      const textarea = composerRef.current;
+      const current = textarea?.value ?? peekDraftMessage(draftMessageId).text;
+      const next = typeof change === "function" ? change(current) : change;
+      // Application edits are immediate, even if the rendering snapshot is behind
+      // (including an empty snapshot while sending a newly typed message).
+      if (textarea && textarea.value !== next) textarea.value = next;
+      setPromptSnapshot(next);
+    },
+    [draftMessageId],
   );
   const [draftMessageReady, setDraftMessageReady] = useState(false);
   // Same fact, readable SYNCHRONOUSLY: the effects below run in declaration
@@ -886,7 +903,6 @@ export function SessionScreen({
   const [pendingVoiceSend, setPendingVoiceSend] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLTextAreaElement>(null);
   // One user activation, one post-commit reveal. Keeping this as state (rather than
   // calling scrollToEnd inside send) makes React mount the optimistic prompt before
   // the scroller measures its new end.
@@ -1108,7 +1124,6 @@ export function SessionScreen({
     // and then sent to the wrong session.
     draftMessageReadyRef.current = false;
     setDraftMessageReady(false);
-    setPrompt(peekDraftMessage(draftMessageId).text);
     setComposerNotice(null);
     setVoicePhase("idle");
     setVoiceRequested(false);
@@ -3014,14 +3029,11 @@ export function SessionScreen({
     };
   }, [sid]);
 
-  // Let the native editor own typing, selection and marked text. A controlled
-  // textarea also rewrites defaultValue (its child text) on every keystroke,
-  // even when its live value already matches. Only application changes such as
-  // draft restore, completion and send need a write back into the editor.
+  // Seed only on a session change. A deferred typing snapshot must never write
+  // back over newer native text, marked text or an unreported iOS correction.
   useLayoutEffect(() => {
-    const textarea = composerRef.current;
-    if (textarea && textarea.value !== prompt) textarea.value = prompt;
-  }, [prompt]);
+    setPrompt(peekDraftMessage(draftMessageId).text);
+  }, [draftMessageId, setPrompt]);
 
   useEffect(() => {
     const textarea = composerRef.current;
@@ -3086,8 +3098,9 @@ export function SessionScreen({
   }, []);
 
   useEffect(() => {
-    const shrunk = prompt.length < promptLengthRef.current;
-    promptLengthRef.current = prompt.length;
+    const length = composerRef.current?.value.length ?? 0;
+    const shrunk = length < promptLengthRef.current;
+    promptLengthRef.current = length;
     fitComposer(shrunk);
   }, [fitComposer, prompt]);
 
@@ -3144,16 +3157,27 @@ export function SessionScreen({
     };
   }, [draftMessageId]);
 
-  // Record every change. Sending clears the composer, which clears the message.
+  // Keep the memory draft current before yielding to React. Disk writes remain
+  // debounced by the store; leaving/backgrounding must not save an older snapshot.
+  const recordComposerDraft = useCallback(
+    (text: string) => {
+      if (!draftMessageReadyRef.current) return;
+      writeDraftMessage(draftMessageId, {
+        text,
+        pastes: pastes.values(),
+        attachments,
+        counter: pasteCounterRef.current,
+      });
+    },
+    [draftMessageId, pastes, attachments],
+  );
+
+  // Hydration, application edits and payload changes also update the draft. Read
+  // the editor, not a typing snapshot whose transition may have been interrupted.
   useEffect(() => {
-    if (!draftMessageReady || !draftMessageReadyRef.current) return;
-    writeDraftMessage(draftMessageId, {
-      text: prompt,
-      pastes: pastes.values(),
-      attachments,
-      counter: pasteCounterRef.current,
-    });
-  }, [draftMessageReady, draftMessageId, prompt, pastes, attachments]);
+    if (!draftMessageReady) return;
+    recordComposerDraft(composerRef.current?.value ?? "");
+  }, [draftMessageReady, prompt, recordComposerDraft]);
 
   // Consume shared input after draft hydration, append it to existing text, and persist
   // the one-time handoff.
@@ -3462,9 +3486,10 @@ export function SessionScreen({
     const id = ++pasteCounterRef.current;
     const paste = createComposerPaste(id, content);
     const input = event.currentTarget;
-    const start = input.selectionStart ?? prompt.length;
+    const text = input.value;
+    const start = input.selectionStart ?? text.length;
     const end = input.selectionEnd ?? start;
-    const nextPrompt = `${prompt.slice(0, start)}${paste.token}${prompt.slice(end)}`;
+    const nextPrompt = `${text.slice(0, start)}${paste.token}${text.slice(end)}`;
     setPastes((current) => new Map(current).set(id, paste));
     setPrompt(nextPrompt);
     window.requestAnimationFrame(() => {
@@ -3991,7 +4016,12 @@ export function SessionScreen({
   }, [client, sid, fileOpen, fileQuery]);
 
   function completeFile(path: string) {
-    const spliced = applyFileMention(prompt, caretPos, path);
+    const textarea = composerRef.current;
+    const spliced = applyFileMention(
+      textarea?.value ?? prompt,
+      textarea?.selectionStart ?? caretPos,
+      path,
+    );
     setPrompt(spliced.text);
     setFileIndex(0);
     setFileDismissed(true);
@@ -4397,7 +4427,11 @@ export function SessionScreen({
   // replaced started recording in the same gesture, which is right for a menu
   // and wrong for a hold — holding is how you change modes, not how you talk.
   const enterVoiceConversation = async () => {
-    if (Boolean(prompt.trim()) || attachments.length > 0 || pastes.size > 0) {
+    if (
+      Boolean(composerRef.current?.value.trim()) ||
+      attachments.length > 0 ||
+      pastes.size > 0
+    ) {
       setComposerNotice(
         "Send or clear the current message before starting voice conversation.",
       );
@@ -4832,26 +4866,28 @@ export function SessionScreen({
                         ? composerSuggestionListId("slashes")
                         : undefined
                   }
-                  aria-expanded={
-                    slashMatches.length > 0 || fileMatches.length > 0
-                  }
+                  aria-autocomplete="list"
+                  aria-haspopup="listbox"
                   className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1.5 mouse:text-meta"
                   onPaste={handlePaste}
                   onFocus={handleComposerFocus}
-                  onSelect={(event) =>
-                    setCaret(
-                      (event.target as HTMLTextAreaElement).selectionStart ?? 0,
-                    )
-                  }
+                  onSelect={(event) => {
+                    const position = event.currentTarget.selectionStart ?? 0;
+                    startTransition(() => setCaret(position));
+                  }}
                   onChange={(event) => {
-                    setPrompt(event.target.value);
-                    setCaret(
-                      event.target.selectionStart ?? event.target.value.length,
-                    );
-                    setSlashIndex(0);
-                    setSlashDismissed(false);
-                    setFileIndex(0);
-                    setFileDismissed(false);
+                    const text = event.currentTarget.value;
+                    const position =
+                      event.currentTarget.selectionStart ?? text.length;
+                    recordComposerDraft(text);
+                    startTransition(() => {
+                      setPromptSnapshot(text);
+                      setCaret(position);
+                      setSlashIndex(0);
+                      setSlashDismissed(false);
+                      setFileIndex(0);
+                      setFileDismissed(false);
+                    });
                   }}
                   onKeyDown={(event) => {
                     // Asked per keystroke, so a keyboard folded onto a tablet
