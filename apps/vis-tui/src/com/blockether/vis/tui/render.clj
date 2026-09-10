@@ -6709,12 +6709,13 @@
                                    :section :iteration
                                    :kind :result}))
 
-                ;; The duration figure the companion paints on every finished form. A form
-                ;; with no stdout has no card head to carry it, so the result band gets one
-                ;; figure-only row. A card head, `+N more` disclosure, or FAILED headline
-                ;; already carries the same figure: never paint it twice.
+                ;; Only source-bearing executions may have a figure-only row. Empty
+                ;; envelopes can carry a default zero without any Python execution.
+                ;; A code/card head or FAILED headline already carries the same figure;
+                ;; never paint it twice.
                 duration-stamp
-                (when-let [d (and (not (and code-node-id (seq c-lines)))
+                (when-let [d (and (not (str/blank? code))
+                                  (not (and code-node-id (seq c-lines)))
                                   (nil? card)
                                   (nil? error)
                                   (empty? form-artifacts)
@@ -6914,14 +6915,11 @@
 
                 block-code-lines
                 (into []
-                      (mapcat (fn [[idx form]]
-                                (let [fl (form-lines form (inc (long idx)))]
-                                  ;; ONE terminal-bg blank between consecutive
-                                  ;; forms inside the same iteration.
-                                  (concat (when (pos? (long idx))
-                                            [(line-entry (str iteration-pad-marker ""))])
-                                          fl)))
-                              (map-indexed vector forms-vec)))]
+                      (comp (keep (fn [[idx form]]
+                                    (seq (form-lines form (inc (long idx))))))
+                            (interpose [(line-entry (str iteration-pad-marker ""))])
+                            cat)
+                      (map-indexed vector forms-vec))]
 
             ;; A trailing pad separates iterations; no leading pad may split thinking
             ;; from the code it introduces.

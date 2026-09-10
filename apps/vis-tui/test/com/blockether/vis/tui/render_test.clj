@@ -6730,6 +6730,39 @@ h = 8"
         (expect (not (str/includes? text "first_detail()")))
         (expect (not (str/includes? text "PYTHON")))
         (expect (not (str/includes? text "Execution")))))
+  (it "does not render empty execution blocks from duration-only forms"
+      ;; Regression: a default zero duration painted a standalone <1ms result.
+      (doseq [width
+              [40 80]
+
+              forms
+              [[] [{:duration-ms 0}] [{:code "" :duration-ms 0}] [{:code "  " :duration-ms 0}]
+               [{:duration-ms 0} {:duration-ms 0}]]]
+
+        (let [entries
+              (format-iteration-entry-entries (iteration/canonicalize {:forms forms})
+                                              (- width 4)
+                                              1
+                                              {:session-id "s" :session-turn-id "t"})
+
+              captured
+              (cap/capture! {:cols width
+                             :rows 12
+                             :paint! (fn [{:keys [g]}]
+                                       (render/draw-chat-bubble!
+                                         g
+                                         {:role :assistant
+                                          :text ""
+                                          :prewrapped-lines (mapv :line entries)
+                                          :line-meta (mapv :meta entries)}
+                                         0
+                                         0
+                                         (- width 4)
+                                         {:viewport-top 0 :viewport-h 12}))})]
+
+          (expect (= [{:line "" :meta nil}] entries))
+          (expect (nil? (:error captured)))
+          (expect (not (str/includes? (cap/frame-text captured) "<1ms"))))))
   (it "shows <1ms on a measured sub-millisecond CODE header"
       (let [entry
             (iteration/canonicalize {:forms [{:code "pass" :success? true :duration-ms 0}]})
