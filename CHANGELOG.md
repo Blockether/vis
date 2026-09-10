@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.57] - 2026-09-10
+
+### Fixed
+- Align the extension installation regression with upstream `uv` configuration and project environments, resolving the source verification failure that blocked v0.1.56.
+- Include the WSL clipboard and native runtime fixes prepared for v0.1.56.
+
 ## [v0.1.56] - 2026-09-10
 
 ### Added
@@ -6164,7 +6170,8 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.56...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.57...HEAD
+[v0.1.57]: https://github.com/Blockether/vis/compare/v0.1.56...v0.1.57
 [v0.1.56]: https://github.com/Blockether/vis/compare/v0.1.55...v0.1.56
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
