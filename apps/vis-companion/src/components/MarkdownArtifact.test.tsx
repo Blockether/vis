@@ -257,9 +257,9 @@ describe("picking a passage on a touch screen", () => {
 
 // A remark used to be an anonymous grey box under a page of untouched prose:
 // nothing said which line it was about. Each comment now has an ordinal and a
-// colour, and the quoted block wears both.
+// colour; the quoted block uses only the matching background.
 describe("marking up the passages a comment is about", () => {
-  it("underlines each quoted block in its comment's colour and numbers it", () => {
+  it("highlights quoted blocks without decorations or inserted content", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     const host = document.createElement("div");
     document.body.append(host);
@@ -280,7 +280,13 @@ describe("marking up the passages a comment is about", () => {
 
     const heading = host.querySelector("h1") as HTMLElement;
     const paragraph = host.querySelector("p") as HTMLElement;
-    expect(heading.style.textDecorationLine).toBe("underline");
+    // Regression: comment highlighting must not add padding or inline numbers.
+    for (const block of [heading, paragraph]) {
+      expect([...block.style]).toEqual(["background-color"]);
+      expect(block.querySelector("sup")).toBeNull();
+    }
+    expect(heading.textContent).toBe("Ship it");
+    expect(paragraph.textContent).toBe("We cut on Friday.");
     // jsdom normalises a hex colour to `rgb(...)`, so the palette is compared
     // through the same normalisation rather than by spelling.
     const asRgb = (hex: string) => {
@@ -288,16 +294,8 @@ describe("marking up the passages a comment is about", () => {
       probe.style.color = hex;
       return probe.style.color;
     };
-    expect(heading.style.textDecorationColor).toBe(asRgb(annotationColor(0)));
-    expect(paragraph.style.textDecorationColor).toBe(asRgb(annotationColor(1)));
-    expect(paragraph.style.textDecorationColor).not.toBe(
-      heading.style.textDecorationColor,
-    );
-
-    const ordinals = Array.from(
-      host.querySelectorAll<HTMLElement>("sup[data-comment-ordinal]"),
-    ).map((mark) => mark.textContent);
-    expect(ordinals).toEqual(["1", "2"]);
+    expect(heading.style.backgroundColor).toBe(annotationWash(0));
+    expect(paragraph.style.backgroundColor).toBe(annotationWash(1));
 
     // The list below says the same thing, and removal names the number.
     expect(
@@ -491,7 +489,7 @@ describe("the tap that quotes a passage", () => {
     });
 
     expect(paragraph.dataset.quotePending).toBe("true");
-    expect(paragraph.style.boxShadow).toBe("");
+    expect([...paragraph.style]).toEqual(["background-color"]);
     expect(host.textContent).not.toContain("Comment on “We cut on Friday.”");
     expect(host.querySelector('textarea[aria-label="Comment"]')).not.toBeNull();
     done();

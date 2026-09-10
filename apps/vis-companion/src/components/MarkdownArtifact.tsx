@@ -39,10 +39,8 @@ const TAP_SLOP = 10;
 /**
  * ONE COLOUR PER COMMENT, AND THE SAME COLOUR IN BOTH PLACES.
  *
- * A remark is identified by its ORDINAL and by its hue: the passage it is about
- * is marked in that hue and carries the number, and the card below wears the
- * very same ordinal. Ten remarks on one note are then ten threads a reader can
- * follow, instead of ten identical grey boxes under a page of untouched prose.
+ * A remark has an ordinal in the comment list and a matching background hue on
+ * its passage. Highlighting never changes the document's content or geometry.
  *
  * The palette is spelled as THEME VARIABLES, never as hard-coded hex: the app's
  * paper is whichever palette this device selected, so an ink chosen for a cream
@@ -396,23 +394,14 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     setDirty(true);
   }, []);
 
-  // THE PASSAGE WEARS ITS OWN COMMENT.
-  //
-  // A remark that only exists in a list at the bottom leaves the reader guessing
-  // which line it is about — so the quoted block is MARKED in that comment's
-  // colour: a thin wash of the same hue behind it, a rule under it, and the
-  // ordinal at its end. The colours are theme variables, so the mark is as
-  // legible on the gateway's dark paper as on its light one. It is painted
-  // straight onto the rendered markdown (the prose comes from the shared
-  // `Markdown`, so there is no React node here to decorate), and the cleanup
-  // removes exactly what this pass added.
+  // Highlight passages with background only. Padding, inline ordinals and
+  // decorations change wrapping or add marks the reader did not request.
   useEffect(() => {
     const prose = proseRef.current;
     if (!prose) return;
     const blocks = Array.from(
       prose.querySelectorAll<HTMLElement>(QUOTABLE_BLOCKS),
     );
-    const marks: HTMLElement[] = [];
     const painted: HTMLElement[] = [];
     for (const block of blocks) {
       const text = quoteOf(block.textContent ?? "");
@@ -421,26 +410,8 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         if (text.length > 0 && comment.quote === text) hits.push(at);
       });
       if (hits.length === 0) continue;
-      block.style.textDecorationLine = "underline";
-      block.style.textDecorationColor = annotationColor(hits[0]);
-      block.style.textDecorationThickness = "1px";
-      block.style.textUnderlineOffset = "4px";
       block.style.backgroundColor = annotationWash(hits[0]);
-      block.style.boxShadow = `inset 2px 0 0 0 ${annotationColor(hits[0])}`;
-      block.style.borderRadius = "2px";
-      block.style.paddingInline = "0.375rem";
       painted.push(block);
-      for (const at of hits) {
-        const mark = document.createElement("sup");
-        mark.dataset.commentOrdinal = String(at + 1);
-        mark.textContent = String(at + 1);
-        mark.style.color = annotationColor(at);
-        mark.style.fontWeight = "700";
-        mark.style.marginInlineStart = "0.25em";
-        mark.style.textDecoration = "none";
-        block.appendChild(mark);
-        marks.push(mark);
-      }
     }
     // THE PICKED PASSAGE IS SHOWN AS PICKED — BY ITS PAPER, AND BY NOTHING ELSE.
     //
@@ -460,24 +431,14 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         if (quoteOf(block.textContent ?? "") !== quote) continue;
         block.style.backgroundColor =
           "color-mix(in oklab, var(--accent) 24%, transparent)";
-        block.style.borderRadius = "2px";
-        block.style.paddingInline = "0.375rem";
         block.dataset.quotePending = "true";
         painted.push(block);
       }
     }
     return () => {
-      for (const mark of marks) mark.remove();
       for (const block of painted) {
         delete block.dataset.quotePending;
-        block.style.textDecorationLine = "";
-        block.style.textDecorationColor = "";
-        block.style.textDecorationThickness = "";
-        block.style.textUnderlineOffset = "";
         block.style.backgroundColor = "";
-        block.style.boxShadow = "";
-        block.style.borderRadius = "";
-        block.style.paddingInline = "";
       }
     };
   }, [comments, body, quote]);

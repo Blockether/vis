@@ -62,3 +62,34 @@ export const Commented: Story = {
 export const Plain: Story = {
   args: { text: LOG_TEXT, plain: true },
 };
+
+/** Regression: selecting and commenting must not reflow the document. */
+export const StableHighlight: Story = {
+  args: {
+    text: '# Delivery plan\n\nThis passage wraps on a phone and must keep exactly the same layout when selected or commented.\n\n- Keep the next step in place.',
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const passage = canvas.getByText(
+      'This passage wraps on a phone and must keep exactly the same layout when selected or commented.',
+    );
+    const blocks = [...canvasElement.querySelectorAll('h1, p, li')];
+    const geometry = () => blocks.map((block) => {
+      const box = block.getBoundingClientRect();
+      return [box.width, box.height];
+    });
+    const before = geometry();
+    const content = passage.innerHTML;
+    const check = () => {
+      expect(geometry()).toEqual(before);
+      expect(passage.innerHTML).toBe(content);
+      expect(getComputedStyle(passage).textDecorationLine).toBe('none');
+      expect(getComputedStyle(passage).boxShadow).toBe('none');
+      expect(passage.style.backgroundColor).not.toBe('');
+    };
+    await userEvent.click(passage);
+    check();
+    await userEvent.type(canvas.getByRole('textbox', { name: 'Comment' }), 'Keep this layout.');
+    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
+    check();
+  },
+};
