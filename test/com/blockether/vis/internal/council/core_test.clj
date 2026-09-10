@@ -1499,9 +1499,9 @@
       (is (= [(:id request)] (mapv :entry_id (:pending_replies batch))))
       (is (= 1 (:due_iteration (first (:pending_replies batch)))))
       (is (document/valid? "council" "input_batch" batch))
-      ;; Reading or an unrelated continuation does not satisfy the obligation.
+      ;; Reading or an update outside the request thread does not satisfy the obligation.
       (page receiver {:thread_id (:id request)})
-      (publish receiver {:content "Unrelated update" :thread_id (:id request)})
+      (publish receiver {:content "Unrelated update"})
       (is (= [(:id request)] (mapv :entry_id (council 'pending-replies db b gid input-state))))
       (is (rejected? :invalid-reply
                      #(publish (assoc w
@@ -1632,6 +1632,239 @@
             (is (= 1 (count (ps/db-council-pending db a "another" gid 999999 20))))
             (council 'acknowledge-input! db a active ["later" 0])
             (is (empty? (ps/db-council-pending db a "another" gid 0 20)))))))))
+
+(deftest thread-reply-wakes-requester-test
+  ;; #182: a no-ping continuation must return to an idle requester, without reply_to.
+  (with-council
+    (doseq [required?
+            [false true]
+
+            paused?
+            [false true]]
+
+      (let [{:keys [db ids gid]}
+            (world)
+
+            [a b c]
+            ids
+
+            update!
+            (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
+
+            drop!
+            (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+
+            launched
+            (atom [])
+
+            running
+            {:current-turn "fixture"
+             :turns {"fixture" {:status "running"
+                                :cancel-token (cancellation/cancellation-token)}}}]
+
+        (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.loop 'db-info) (constantly db)
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state 'session-model)
+                         (constantly {:provider "fixture" :model "fixture"})
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state 'fresh-entry)
+                         (fn [_]
+                           {:next-seq 0 :turns {} :turn-order []})
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                     'launch-turn-worker!)
+                         (fn [sid tid request opts]
+                           (swap! launched conj [sid tid request opts]))}
+          (fn []
+            (try
+              (doseq [sid ids]
+                (update! sid (constantly running)))
+              (let [snapshot
+                    #(council 'runtime db)
+
+                    actors
+                    (into {}
+                          (map (fn [[sid active]]
+                                 [sid
+                                  {:session-id sid
+                                   :activation-id (:activation-id active)
+                                   :source "host"}])
+                               (snapshot)))
+
+                    publish!
+                    (fn [sid opts]
+                      (council 'publish! db snapshot (actors sid) opts))
+
+                    request
+                    (publish! a
+                              {:content "What did you find?" :ping [b c] :reply_required required?})
+
+                    opts
+                    {:content "Here is the evidence."
+                     :thread_id (:id request)
+                     :idempotency_key "thread-answer"}]
+
+                (is (empty? (:ping (publish! a
+                                             {:content "Additional context."
+                                              :thread_id (:id request)}))))
+                (update! a (constantly {:turns {} :queue-paused paused?}))
+                (is (nil? (get (snapshot) a)))
+                (let [reply
+                      (publish! b opts)
+
+                      other
+                      (publish! c (assoc opts :ping []))
+
+                      notifications
+                      (ps/db-council-pending db a "later" gid 999999 20)]
+
+                  (is (= [a] (:ping reply) (:ping other)))
+                  (is (= (:id request) (:reply_to reply) (:reply_to other)))
+                  (is (= [(:id reply) (:id other)] (mapv :id notifications)))
+                  (is (= [b c] (mapv :author_session_id notifications)))
+                  (is (= (if paused? [] [a]) (mapv first @launched)))
+                  (is (= reply (publish! b (assoc opts :ping []))))
+                  (is (empty? (:ping (publish! b
+                                               (assoc opts
+                                                 :content "A follow-up."
+                                                 :idempotency_key "follow-up")))))
+                  (when-not paused?
+                    (let [active
+                          (get (snapshot) a)
+
+                          batch
+                          (council 'prepare-input!
+                                   db
+                                   a
+                                   (:activation-id active)
+                                   gid
+                                   (:input-state active)
+                                   ["wake" 0]
+                                   8192)]
+
+                      (is (true? (:wake? active)))
+                      (is (= [(:id reply) (:id other)] (mapv :id (:entries batch))))
+                      (is (empty? (:pending_replies batch)))
+                      (council 'acknowledge-input! db a active ["wake" 0])
+                      (is (empty? (ps/db-council-pending db a "later" gid 0 20)))
+                      (is (empty? (:ping (council 'publish!
+                                                  db
+                                                  snapshot
+                                                  {:session-id a
+                                                   :activation-id (:activation-id active)
+                                                   :source "host"}
+                                                  {:content "Thanks."
+                                                   :thread_id (:id request)}))))))
+                  (is (= (if paused? 0 1) (count @launched)))))
+              (finally (run! drop! ids)))))))))
+
+(deftest thread-reply-routing-and-deduplication-test
+  ;; #182: address one requester, not the root author or every thread participant.
+  (with-council
+    (let [{:keys [ids fleet] :as w}
+          (world)
+
+          [a b c]
+          ids
+
+          peer
+          (fn [sid]
+            (assoc w
+              :actor
+              {:session-id sid :activation-id (get-in @fleet [sid :activation-id]) :source "sdk"}))
+
+          thread
+          (publish w {:content "Initial request." :ping [b]})
+
+          request
+          (publish (peer c) {:content "A newer request." :thread_id (:id thread) :ping [b]})
+
+          answers
+          (mapv deref
+                (mapv (fn [i]
+                        (future (publish (peer b)
+                                         {:content "Answer."
+                                          :thread_id (:id thread)
+                                          :idempotency_key (str i)})))
+                      (range 8)))
+
+          correlated
+          (filter :reply_to answers)]
+
+      (is (= 8 (count (set (map :id answers)))))
+      (is (= 1 (count correlated)))
+      (is (= [c] (:ping (first correlated))))
+      (is (= (:id request) (:reply_to (first correlated))))
+      ;; Do not fall back to older requests on follow-ups or acknowledgements.
+      (is (empty? (:ping (publish (peer b) {:content "Follow-up." :thread_id (:id thread)}))))
+      (is (empty? (:ping (publish (peer c) {:content "Thanks." :thread_id (:id thread)}))))
+      (is (rejected? :invalid-reply
+                     #(publish (peer c)
+                               {:content "Acknowledgement." :reply_to (:id (first correlated))})))
+      ;; An older request remains addressable explicitly, including an optional one.
+      (is (= [a] (:ping (publish (peer b) {:content "Earlier answer." :reply_to (:id thread)})))))))
+
+(deftest thread-reply-explicit-selection-test
+  ;; #182: explicit selectors and unaddressed peers must not infer a return recipient.
+  (with-council
+    (let [{:keys [ids fleet] :as w}
+          (world)
+
+          [_ b c]
+          ids
+
+          peer
+          (fn [sid]
+            (assoc w
+              :actor
+              {:session-id sid :activation-id (get-in @fleet [sid :activation-id]) :source "sdk"}))
+
+          request
+          (publish w {:content "Question." :ping [b]})
+
+          opts
+          {:content "Update." :thread_id (:id request)}
+
+          receiver
+          (peer b)]
+
+      (is (empty? (:ping (publish (peer c) opts))))
+      (let [explicit (publish receiver (assoc opts :ping [c]))]
+        (is (= [c] (:ping explicit)))
+        (is (nil? (:reply_to explicit))))
+      (swap! fleet select-keys [b])
+      (let [broadcast (publish receiver (assoc opts :ping "all"))]
+        (is (empty? (:ping broadcast)))
+        (is (nil? (:reply_to broadcast))))
+      (is (= (:id request) (:reply_to (publish receiver (assoc opts :ping []))))))))
+
+(deftest thread-reply-acknowledgement-does-not-answer-older-request-test
+  ;; #182: a newer reply must not make an acknowledgement answer an older request.
+  (with-council
+    (let [{:keys [ids fleet] :as w}
+          (world)
+
+          [a b]
+          ids
+
+          receiver
+          (assoc w
+            :actor {:session-id b :activation-id (get-in @fleet [b :activation-id]) :source "sdk"})
+
+          request
+          (publish w {:content "Original question." :ping [b]})
+
+          question
+          (publish receiver {:content "Which check?" :thread_id (:id request) :ping [a]})
+
+          answer
+          (publish w {:content "The affected suite." :thread_id (:id request)})
+
+          acknowledgement
+          (publish receiver {:content "Thanks." :thread_id (:id request)})]
+
+      (is (= (:id question) (:reply_to answer)))
+      (is (empty? (:ping acknowledgement)))
+      (is (nil? (:reply_to acknowledgement)))
+      (is (= [a]
+             (:ping (publish receiver {:content "All checks pass." :reply_to (:id request)})))))))
 
 (deftest required-reply-unavailable-test
   (with-council

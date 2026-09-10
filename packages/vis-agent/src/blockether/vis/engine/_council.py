@@ -131,7 +131,9 @@ class Council:
     ) -> CouncilEntry:
         """Publish a message, optionally requiring a reply in the receiving iteration.
 
-        reply_to answers a required request and automatically notifies its author.
+        A no-ping thread continuation answers the latest addressed entry only if it
+        is an unanswered request, notifying its author. reply_to selects a request
+        explicitly. Follow-ups and acknowledgements do not fall back to older requests.
         Explicit IDs can wake idle peers; 'all' selects active peers only. Required
         requests report per-recipient states in replies; unavailable is not success.
         Retry uncertain IO with the same idempotency_key; it never notifies twice.

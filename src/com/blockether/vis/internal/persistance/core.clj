@@ -681,7 +681,7 @@
 
 (defdelegate db-council-replay [db-info sid key])
 
-(defdelegate db-council-insert! [db-info row recipients])
+(defdelegate db-council-insert! [db-info row recipients infer-reply?])
 
 (defdelegate db-council-bind-wake! [db-info entry-id sid activation])
 

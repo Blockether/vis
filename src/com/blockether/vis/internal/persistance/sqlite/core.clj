@@ -4894,15 +4894,42 @@
                               :where [:and [:= :author_sid sid] [:= :idempotency_key key]]})]
     {:fingerprint (:fingerprint row) :entry (first (council-rows db [row]))}))
 
+(defn- council-thread-request
+  "Infer only from the latest addressed entry; replies and resolved requests stop inference."
+  [db row]
+  (let [query
+        {:select [:e.id :e.author_sid :e.reply_to :p.reply_entry_id :p.state]
+         :from [[:council_entry :e]]
+         :join [[:council_ping :p]
+                [:and [:= :p.entry_id :e.id] [:= :p.recipient_sid (:author_sid row)]]]
+         :where [:and [:= :e.group_id (:group_id row)] [:not= :e.author_sid (:author_sid row)]]
+         :order-by [[:e.id :desc]]
+         :limit 1}
+
+        ;; Seek continuations by thread; the root is older and uses its primary key.
+        request
+        (or (query-one! db (update query :where conj [:= :e.thread_id (:thread_id row)]))
+            (query-one! db (update query :where conj [:= :e.id (:thread_id row)])))]
+
+    (when (and (nil? (:reply_to request))
+               (nil? (:reply_entry_id request))
+               (contains? #{"pending" "delivered"} (:state request)))
+      request)))
+
 (defn db-council-insert!
-  "Entry and frozen recipient generations commit together; replays recheck inside the writer."
-  [db row recipients]
+  "Entry, inferred reply and frozen recipients commit together; replays recheck inside the writer."
+  [db row recipients infer-reply?]
   (sqlite-write-tx!
     db
     (fn [tx]
       (if-let [replay (db-council-replay tx (:author_sid row) (:idempotency_key row))]
         replay
-        (let [reply-to (:reply_to row)
+        (let [implicit (when infer-reply? (council-thread-request tx row))
+              row (cond-> row
+                    implicit
+                    (assoc :reply_to (:id implicit)))
+              recipients (if implicit [[(:author_sid implicit) "council-wake"]] recipients)
+              reply-to (:reply_to row)
               recipient (when reply-to
                           (query-one! tx
                                       {:select [:*]

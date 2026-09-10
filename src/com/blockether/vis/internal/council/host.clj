@@ -55,7 +55,7 @@
                               opts)))))
 
 (defn publish
-  "Publish a thread entry. reply_required=True requires a reply in the recipient's first receiving iteration. reply_to answers that entry and automatically notifies its author. Explicit ping IDs can wake idle peers; all selects active peers only."
+  "Publish a thread entry. A no-ping continuation answers the latest entry addressed to this session if it is an unanswered request, and notifies its author; reply_to selects a request explicitly. reply_required=True requires an answer in the receiving iteration. Explicit ping IDs can wake idle peers; all selects active peers only."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db
