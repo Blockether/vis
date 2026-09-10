@@ -173,6 +173,82 @@
 
 (defn- read-content [text] (str/replace text #"(?m)^(\d+):[0-9a-f]+│ ?" "$1 │ "))
 
+(defn- repl-presentation
+  [value]
+  (let [language
+        (or (field value "language") "text")
+
+        code
+        (field value "code")
+
+        status
+        (field value "status")
+
+        statuses
+        (if (coll? status) (set status) #{status})
+
+        timeout?
+        (or (true? (field value "timed_out")) (contains? statuses "timeout"))
+
+        error-text
+        (some #(let [v (field value %)] (when (and (string? v) (not (str/blank? v))) v))
+              ["exc" "error_message" "ex" "root_ex"])
+
+        error?
+        (or error-text (false? (field value "ok")) (contains? statuses "eval-error"))
+
+        values
+        (field value "values")
+
+        result
+        (if (seq values) (str/join "\n" values) (field value "value"))
+
+        result
+        (if (nil? result) (if (= language "clojure") "nil" "None") (scalar result))
+
+        section
+        (fn [title text syntax]
+          (when (and (string? text) (not (str/blank? text)))
+            [{"type" "heading" "text" title}
+             (cond-> {"type" "code" "text" text}
+               syntax
+               (assoc "language" syntax))]))
+
+        trace
+        (field value "trace")
+
+        error-body
+        (str/join "\n"
+                  (remove str/blank?
+                    [(or error-text "Evaluation failed")
+                     (when (seq trace) (if (string? trace) trace (str/join "\n" trace)))
+                     (when-let [data (field value "error_data")]
+                       (str "ex-data: " data))]))]
+
+    {"headline" (cond timeout? "Evaluation timed out"
+                      error? "Evaluation failed"
+                      :else "Evaluated")
+     "summary" (str (case language
+                      "clojure"
+                      "Clojure"
+
+                      "python"
+                      "Python"
+
+                      language)
+                    " REPL")
+     "content" (vec (concat (section "Program" code language)
+                            (section "Stdout" (field value "out") nil)
+                            (section "Stderr" (field value "err") nil)
+                            (cond timeout? (section "Timeout"
+                                                    (str "Evaluation timed out"
+                                                         (when-let [ms (field value "ms")]
+                                                           (str " after " ms "ms"))
+                                                         ".")
+                                                    nil)
+                                  error? (section "Error" error-body nil)
+                                  :else (section "Result" result language))))}))
+
 (defn result-presentation
   "Default result view for an invocation without an authored presentation.
    Input is public, redacted and node-bounded by the event owner. The owner also
@@ -247,6 +323,6 @@
 
                         "Detail")))]
 
-    (if (or (= op "shell") (str/starts-with? op "_shell-"))
-      (shell-presentation value)
-      {"headline" headline "summary" summary "content" content})))
+    (cond (= op "repl_eval") (repl-presentation value)
+          (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
+          :else {"headline" headline "summary" summary "content" content})))

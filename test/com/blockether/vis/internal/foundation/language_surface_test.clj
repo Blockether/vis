@@ -153,7 +153,8 @@
                                         (reset! seen arg)
                                         {:success? true :result {:value "3"}})}])]
 
-        (expect (= {:value "3"} (:result (language-surface/repl-eval env "clojure" "(+ 1 2)"))))
+        (expect (= {:value "3" "language" "clojure"}
+                   (:result (language-surface/repl-eval env "clojure" "(+ 1 2)"))))
         (expect (= "(+ 1 2)" @seen))))
   (it
     "passes a language-first repl id and opts to language handlers"

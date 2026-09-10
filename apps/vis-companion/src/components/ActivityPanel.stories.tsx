@@ -6,6 +6,7 @@ import {
   ACTIVITY_INTERLEAVED,
   ACTIVITY_REPEATED_ARGUMENTS,
   ACTIVITY_RESULTS,
+  ACTIVITY_REPL,
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_LISTING,
   ACTIVITY_LISTING_BATCH,
@@ -51,6 +52,36 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
+
+export const ReplResults: Story = {
+  args: { activity: ACTIVITY_REPL },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    await userEvent.click(canvas.getByRole("button", { name: /Eval ×5/ }));
+    const rows = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>("[data-activity-row]"),
+    );
+    await expect(rows).toHaveLength(5);
+    for (const [index, row] of rows.entries()) {
+      await userEvent.click(within(row).getByRole("button"));
+      await expect(
+        within(row).getByRole("heading", { name: "Program" }),
+      ).toBeVisible();
+      for (const title of index < 2
+        ? ["Stdout", "Stderr", "Result"]
+        : [index === 4 ? "Timeout" : "Error"]) {
+        await expect(
+          within(row).getByRole("heading", { name: title }),
+        ).toBeVisible();
+      }
+      await expect(within(row).queryByRole("table")).not.toBeInTheDocument();
+      await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+    }
+  },
+};
 
 /** One step disclosure opens the retained result, not invocation parameters. */
 export const ResultFirst: Story = {

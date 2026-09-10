@@ -34,6 +34,28 @@
 
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
 
+(defdescribe repl-activity-result-test
+             (it
+               "renders the shared REPL fixture without transport tables at narrow and wide widths"
+               (let [rows (-> (io/resource "vis-contract/fixtures/activity-repl.json")
+                              slurp
+                              json/read-str
+                              activity-contract/from-wire
+                              :rows)]
+                 (doseq [width [36 72]]
+                   (let [entries (#'render/activity-detail-entries
+                                  {:node-id "repl"
+                                   :activity-rows rows
+                                   :activity-expanded? (fn [_ _]
+                                                         true)}
+                                  width
+                                  "fixture")
+                         text (str/join "\n" (map :line entries))]
+
+                     (doseq [heading ["Program" "Stdout" "Stderr" "Result" "Error" "Timeout"]]
+                       (expect (str/includes? text heading)))
+                     (expect (not (str/includes? text "Detail"))))))))
+
 (defdescribe
   direct-activity-result-test
   (it "does not offer disclosures for technical resource IDs"

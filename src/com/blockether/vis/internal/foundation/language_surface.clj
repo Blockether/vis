@@ -588,7 +588,13 @@
    (the namespace the form is read in) and `port`/`host`, which dial an nREPL directly
    instead of a REPL this session owns."
   [env & args]
-  (dispatch! env :repl-eval-fn args))
+  (dispatch! env
+             :repl-eval-fn
+             args
+             (fn [handler envelope]
+               (if (map? (:result envelope))
+                 (update envelope :result assoc "language" (:language handler))
+                 envelope))))
 
 (defn repl-start
   "Start a language REPL resource: `repl_start(language,{cwd,id,aliases,env})`.
@@ -732,10 +738,11 @@
   (vis/symbol
     #'repl-eval
     {:symbol 'repl_eval
-     :result (str
-               "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure: "
-               "`code,repl,value/values,out,err,status,ns,ms,timed_out,ex,root_ex`; Python/Bun: "
-               "`code,ok,out,err,value,data,type,exc`. No UI `transcript` or `content`.")
+     :result
+     (str
+       "Pack-defined string-keyed object stamped with `op` and selected `language`; fields may be absent. Clojure: "
+       "`code,repl,value/values,out,err,status,ns,ms,timed_out,ex,root_ex`; Python/Bun: "
+       "`code,ok,out,err,value,data,type,exc`. No UI `transcript` or `content`.")
      :description
      (str
        "Evaluate `code` in an already-running project REPL — "

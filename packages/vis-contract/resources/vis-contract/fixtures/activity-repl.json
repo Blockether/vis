@@ -1,0 +1,274 @@
+{
+  "state": "succeeded",
+  "counts": {
+    "running": 0,
+    "succeeded": 5,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "rows": [
+    {
+      "result_summary": "{\"language\" \"clojure\", \"code\" \"(do\\n  (println \\\"Hello Ada\\\")\\n  (binding [*out* *err*] (println \\\"Check input\\\"))\\n  {:answer 42 :ready true})\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{:answer 42, :ready true}\", \"status\" [\"done\"]}",
+      "id": "result-0",
+      "summary": "REPL",
+      "signal": "observation",
+      "sequence": 1,
+      "operation": "repl_eval",
+      "presentation": {
+        "headline": "Evaluated",
+        "summary": "Clojure REPL",
+        "content": [
+          {
+            "type": "heading",
+            "text": "Program"
+          },
+          {
+            "type": "code",
+            "text": "(do\n  (println \"Hello Ada\")\n  (binding [*out* *err*] (println \"Check input\"))\n  {:answer 42 :ready true})",
+            "language": "clojure"
+          },
+          {
+            "type": "heading",
+            "text": "Stdout"
+          },
+          {
+            "type": "code",
+            "text": "Hello Ada\n"
+          },
+          {
+            "type": "heading",
+            "text": "Stderr"
+          },
+          {
+            "type": "code",
+            "text": "Check input\n"
+          },
+          {
+            "type": "heading",
+            "text": "Result"
+          },
+          {
+            "type": "code",
+            "text": "{:answer 42, :ready true}",
+            "language": "clojure"
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"REPL\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{\"language\" \"clojure\", \"code\" \"(do\\n  (println \\\"Hello Ada\\\")\\n  (binding [*out* *err*] (println \\\"Check input\\\"))\\n  {:answer 42 :ready true})\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{:answer 42, :ready true}\", \"status\" [\"done\"]}"
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{\"language\" \"python\", \"code\" \"import sys\\nprint('Hello Ada')\\nprint('Check input', file=sys.stderr)\\n{'answer': 42, 'ready': True}\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{'answer': 42, 'ready': True}\", \"ok\" true}",
+      "id": "result-1",
+      "summary": "REPL",
+      "signal": "observation",
+      "sequence": 2,
+      "operation": "repl_eval",
+      "presentation": {
+        "headline": "Evaluated",
+        "summary": "Python REPL",
+        "content": [
+          {
+            "type": "heading",
+            "text": "Program"
+          },
+          {
+            "type": "code",
+            "text": "import sys\nprint('Hello Ada')\nprint('Check input', file=sys.stderr)\n{'answer': 42, 'ready': True}",
+            "language": "python"
+          },
+          {
+            "type": "heading",
+            "text": "Stdout"
+          },
+          {
+            "type": "code",
+            "text": "Hello Ada\n"
+          },
+          {
+            "type": "heading",
+            "text": "Stderr"
+          },
+          {
+            "type": "code",
+            "text": "Check input\n"
+          },
+          {
+            "type": "heading",
+            "text": "Result"
+          },
+          {
+            "type": "code",
+            "text": "{'answer': 42, 'ready': True}",
+            "language": "python"
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"REPL\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{\"language\" \"python\", \"code\" \"import sys\\nprint('Hello Ada')\\nprint('Check input', file=sys.stderr)\\n{'answer': 42, 'ready': True}\", \"out\" \"Hello Ada\\n\", \"err\" \"Check input\\n\", \"value\" \"{'answer': 42, 'ready': True}\", \"ok\" true}"
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{\"language\" \"clojure\", \"code\" \"(/ 1 0)\", \"ex\" \"ArithmeticException\", \"error_message\" \"Divide by zero\", \"status\" [\"eval-error\"]}",
+      "id": "result-2",
+      "summary": "REPL",
+      "signal": "observation",
+      "sequence": 3,
+      "operation": "repl_eval",
+      "presentation": {
+        "headline": "Evaluation failed",
+        "summary": "Clojure REPL",
+        "content": [
+          {
+            "type": "heading",
+            "text": "Program"
+          },
+          {
+            "type": "code",
+            "text": "(/ 1 0)",
+            "language": "clojure"
+          },
+          {
+            "type": "heading",
+            "text": "Error"
+          },
+          {
+            "type": "code",
+            "text": "Divide by zero"
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"REPL\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{\"language\" \"clojure\", \"code\" \"(/ 1 0)\", \"ex\" \"ArithmeticException\", \"error_message\" \"Divide by zero\", \"status\" [\"eval-error\"]}"
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{\"language\" \"python\", \"code\" \"1 / 0\", \"ok\" false, \"exc\" \"Traceback (most recent call last):\\n  File \\\"<repl>\\\", line 1, in <module>\\nZeroDivisionError: division by zero\"}",
+      "id": "result-3",
+      "summary": "REPL",
+      "signal": "observation",
+      "sequence": 4,
+      "operation": "repl_eval",
+      "presentation": {
+        "headline": "Evaluation failed",
+        "summary": "Python REPL",
+        "content": [
+          {
+            "type": "heading",
+            "text": "Program"
+          },
+          {
+            "type": "code",
+            "text": "1 / 0",
+            "language": "python"
+          },
+          {
+            "type": "heading",
+            "text": "Error"
+          },
+          {
+            "type": "code",
+            "text": "Traceback (most recent call last):\n  File \"<repl>\", line 1, in <module>\nZeroDivisionError: division by zero"
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"REPL\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{\"language\" \"python\", \"code\" \"1 / 0\", \"ok\" false, \"exc\" \"Traceback (most recent call last):\\n  File \\\"<repl>\\\", line 1, in <module>\\nZeroDivisionError: division by zero\"}"
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{\"language\" \"clojure\", \"code\" \"(Thread/sleep 10000)\", \"timed_out\" true, \"ms\" 100}",
+      "id": "result-4",
+      "summary": "REPL",
+      "signal": "observation",
+      "sequence": 5,
+      "operation": "repl_eval",
+      "presentation": {
+        "headline": "Evaluation timed out",
+        "summary": "Clojure REPL",
+        "content": [
+          {
+            "type": "heading",
+            "text": "Program"
+          },
+          {
+            "type": "code",
+            "text": "(Thread/sleep 10000)",
+            "language": "clojure"
+          },
+          {
+            "type": "heading",
+            "text": "Timeout"
+          },
+          {
+            "type": "code",
+            "text": "Evaluation timed out after 100ms."
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"REPL\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{\"language\" \"clojure\", \"code\" \"(Thread/sleep 10000)\", \"timed_out\" true, \"ms\" 100}"
+        }
+      ],
+      "resources": []
+    }
+  ],
+  "omitted": {
+    "rows": 0,
+    "by_classification": {}
+  }
+}

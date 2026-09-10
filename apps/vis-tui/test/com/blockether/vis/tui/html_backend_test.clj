@@ -187,6 +187,38 @@
               (is (not (str/includes? text "Value"))))
             (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))
 
+(deftest repl-result-html-native-parity-test
+  (let [rows (-> (io/resource "vis-contract/fixtures/activity-repl.json")
+                 slurp
+                 json/read-str
+                 activity-contract/from-wire
+                 :rows)]
+    (doseq [cols [40 80 120]]
+      (with-open [html (activity-review-terminal cols 100)
+                  terminal (DefaultVirtualTerminal. (TerminalSize. cols 100))
+                  hs (doto (TerminalScreen. html) (.startScreen))
+                  ts (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (paint-activity-review! hs rows {})
+        (let [band (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
+                                  (.current interactions/hit-map)))
+              band-opened (toggle-review-region {} band)
+              _ (paint-activity-review! hs rows band-opened)
+              group (first (filter #(str/ends-with? (str (:node-id %)) "#group")
+                                   (.current interactions/hit-map)))
+              opened (toggle-review-region band-opened group)]
+
+          (doseq [row rows]
+            (paint-activity-review! hs rows opened)
+            (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
+                                      (.current interactions/hit-map)))
+                  expanded (toggle-review-region opened step)]
+
+              (is (some? step))
+              (paint-activity-review! hs rows expanded)
+              (paint-activity-review! ts rows expanded)
+              (is (= (cell-grid html cols 100) (cell-grid terminal cols 100))))))))))
+
 (deftest nested-result-execution-disclosures-test
   ;; Result stays inside Code; Activity remains independent through every fold state.
   (try

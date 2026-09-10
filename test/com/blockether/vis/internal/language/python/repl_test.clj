@@ -7,6 +7,8 @@
             [com.blockether.vis.internal.language.python.core :as core]
             [com.blockether.vis.internal.language.python.interpreter :as interp]
             [com.blockether.vis.internal.language.python.repl-manager :as repl]
+            [com.blockether.vis.internal.activity.presenter-test :as activity-fixture]
+            [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
@@ -260,6 +262,45 @@
                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 ;; ── language-facade wiring ───────────────────────────────────────────────────
+(defdescribe
+  repl-activity-test
+  (it
+    "retains real Python program, streams and result through the facade and Activity"
+    (when (has-python?)
+      (let [root
+            (tmp-dir)
+
+            dir
+            (.getCanonicalPath root)
+
+            env
+            {:workspace/root dir
+             :session-id test-session-id
+             :jail-policy-fn (constantly {:roots-fn (constantly [dir]) :net-enabled? false})
+             :extensions (atom [{:ext/name "python"
+                                 :ext/language-tools [{:language "python"
+                                                       :repl-eval-fn core/py-repl-eval-fn}]}])}
+
+            code
+            "import sys\nprint('hello')\nprint('warning', file=sys.stderr)\n{'answer': 42}"]
+
+        (try (core/py-start-repl-fn env "start" nil)
+             (let [result
+                   (:result (language-surface/repl-eval env "python" {"code" code}))
+
+                   projection
+                   (activity-fixture/result-fixture [[:repl_eval "REPL" result nil]])
+
+                   blocks
+                   (get-in projection ["rows" 0 "presentation" "content"])]
+
+               (expect (= "python" (get result "language")))
+               (expect (= ["Program" "Stdout" "Stderr" "Result"]
+                          (mapv #(get % "text") (filter #(= "heading" (get % "type")) blocks))))
+               (expect (= [code "hello\n" "warning\n" "{'answer': 42}"]
+                          (mapv #(get % "text") (filter #(= "code" (get % "type")) blocks)))))
+             (finally (repl/stop! dir) (cleanup root)))))))
+
 (defdescribe
   facade-test
   (it "repl_eval requires explicit repl and then returns the value"

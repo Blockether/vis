@@ -10,7 +10,7 @@
 
 (defn result-fixture
   "Production-generated result views shared by Companion stories and TUI grid tests."
-  []
+  [& [repl-cases]]
   (let
     [path
      "src/com/blockether/vis/internal/activity/presenter.clj"
@@ -60,7 +60,7 @@
                                           :result result
                                           :result-envelope envelope
                                           :started-at-ms (System/currentTimeMillis)))]))
-             cases)]
+             (or repl-cases cases))]
 
     (-> (activity/replay events)
         (assoc :state :succeeded)
@@ -159,3 +159,93 @@
                        (pr-str (presenter/result-presentation {:operation :council.members}
                                                               [{:session_id "opaque"
                                                                 :title "Reviewer"}]))))))
+
+(defdescribe
+  repl-results-test
+  (it "renders both languages as program, optional streams and one result"
+      (doseq [language ["clojure" "python"]]
+        (let [value {"language" language
+                     "code" "source"
+                     "value" "42"
+                     "values" ["42"]
+                     "data" 42
+                     "type" "int"
+                     "ok" true
+                     "out" "hello\n"
+                     "err" "warning\n"
+                     "status" ["done"]}
+              blocks (get (presenter/result-presentation {:operation :repl_eval} value) "content")]
+
+          (expect (= ["Program" "Stdout" "Stderr" "Result"]
+                     (mapv #(get % "text") (filter #(= "heading" (get % "type")) blocks))))
+          (expect (= [language nil nil language]
+                     (mapv #(get % "language") (filter #(= "code" (get % "type")) blocks))))
+          (expect (= ["source" "hello\n" "warning\n" "42"]
+                     (mapv #(get % "text") (filter #(= "code" (get % "type")) blocks)))))))
+  (it "omits empty streams without losing false or zero results"
+      (doseq [value ["false" "0" "None" "nil"]]
+        (let [view (presenter/result-presentation
+                     {:operation :repl_eval}
+                     {"language" "python" "code" "source" "value" value "out" "" "err" ""})]
+          (expect (= ["Program" "Result"]
+                     (mapv #(get % "text")
+                           (filter #(= "heading" (get % "type")) (get view "content"))))))))
+  (it "keeps partial streams with errors and timeouts, not a successful result"
+      (doseq [[failure title] [[{"ok" false "exc" "ValueError: invalid"} "Error"]
+                               [{"ex" "ArithmeticException" "status" ["eval-error"]} "Error"]
+                               [{"timed_out" true "ms" 100} "Timeout"]]]
+        (let [view (presenter/result-presentation
+                     {:operation :repl_eval}
+                     (merge {"language" "clojure" "code" "source" "out" "partial\n" "value" "old"}
+                            failure))
+              headings (mapv #(get % "text")
+                             (filter #(= "heading" (get % "type")) (get view "content")))]
+
+          (expect (= ["Program" "Stdout" title] headings)))))
+  (it "does not duplicate nREPL values or Python structured data"
+      (let [view (presenter/result-presentation
+                   {:operation :repl_eval}
+                   {"language" "clojure" "code" "1 2" "value" "2" "values" ["1" "2"]})]
+        (expect (= "1\n2" (get (last (get view "content")) "text"))))))
+
+(defn repl-result-fixture
+  "Retained REPL results shared by both production clients."
+  []
+  (result-fixture
+    (mapv
+      (fn [result]
+        [:repl_eval "REPL" result nil])
+      [{"language" "clojure"
+        "code"
+        "(do\n  (println \"Hello Ada\")\n  (binding [*out* *err*] (println \"Check input\"))\n  {:answer 42 :ready true})"
+        "out" "Hello Ada\n"
+        "err" "Check input\n"
+        "value" "{:answer 42, :ready true}"
+        "status" ["done"]}
+       {"language" "python"
+        "code"
+        "import sys\nprint('Hello Ada')\nprint('Check input', file=sys.stderr)\n{'answer': 42, 'ready': True}"
+        "out" "Hello Ada\n"
+        "err" "Check input\n"
+        "value" "{'answer': 42, 'ready': True}"
+        "ok" true}
+       {"language" "clojure"
+        "code" "(/ 1 0)"
+        "ex" "ArithmeticException"
+        "error_message" "Divide by zero"
+        "status" ["eval-error"]}
+       {"language" "python"
+        "code" "1 / 0"
+        "ok" false
+        "exc"
+        "Traceback (most recent call last):\n  File \"<repl>\", line 1, in <module>\nZeroDivisionError: division by zero"}
+       {"language" "clojure" "code" "(Thread/sleep 10000)" "timed_out" true "ms" 100}])))
+
+(defdescribe repl-fixture-test
+             (it "pins the portable REPL projection used by both clients"
+                 (let [actual (repl-result-fixture)]
+                   (expect (contract/valid-projection? actual))
+                   (expect (= actual
+                              (json/read-json (slurp
+                                                (io/resource
+                                                  "vis-contract/fixtures/activity-repl.json"))))))))

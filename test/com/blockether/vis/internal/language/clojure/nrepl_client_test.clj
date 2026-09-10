@@ -7,6 +7,7 @@
    connection from a previous run dialing into a dead socket."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nc]
+            [com.blockether.vis.internal.activity.presenter-test :as activity-fixture]
             [lazytest.core :refer [defdescribe expect it]]
             [nrepl.core :as nrepl]
             [nrepl.middleware.session :as mw-session]
@@ -24,6 +25,33 @@
         (:port srv)]
 
     (try (f port) (finally (nc/close-all!) (server/stop-server srv)))))
+
+(defdescribe
+  repl-activity-test
+  (it "retains real nREPL program, streams and pretty result through Activity events"
+      (with-server
+        (fn [port]
+          (let
+            [code
+             "(do (println \"hello\") (binding [*out* *err*] (println \"warning\")) {:answer 42})"
+
+             result
+             (assoc (nc/eval! {:port port :code code :pretty? true})
+               "language" "clojure"
+               "code" code)
+
+             projection
+             (activity-fixture/result-fixture [[:repl_eval "REPL" result nil]])
+
+             blocks
+             (get-in projection ["rows" 0 "presentation" "content"])]
+
+            (expect (= ["Program" "Stdout" "Stderr" "Result"]
+                       (mapv #(get % "text") (filter #(= "heading" (get % "type")) blocks))))
+            (expect (= code (get-in blocks [1 "text"])))
+            (expect (= "hello\n" (get-in blocks [3 "text"])))
+            (expect (= "warning\n" (get-in blocks [5 "text"])))
+            (expect (str/includes? (get-in blocks [7 "text"]) ":answer 42")))))))
 
 (defdescribe eval-test
              (it "evaluates a single form and reports the value"
