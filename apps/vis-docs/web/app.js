@@ -1,6 +1,11 @@
 /** Enhance the Worker-rendered page; the catalog and detail links also work without JavaScript. */
 import { shellHTML, cardsHTML, categoriesHTML, detailHTML, previewHTML, tocHTML, filters, filterURL, visibleItems } from './render.js';
 export { installCommand } from './render.js';
+import { catalogMetadata } from './discovery.js';
+function updateMetadata(data={}) {
+  document.head.querySelectorAll('[data-discovery]').forEach(node=>node.remove());
+  document.head.insertAdjacentHTML('beforeend',catalogMetadata(data));
+}
 
 export function mount(container,request=fetch,initial) {
   const $=selector=>container.querySelector(selector);
@@ -33,14 +38,14 @@ export function mount(container,request=fetch,initial) {
     const identity=window.location.pathname.match(/^\/extensions\/([0-9a-f]{24})$/)?.[1], revision=++routeRevision;
     $('#catalog-page').hidden=!!identity;$('#detail-page').hidden=!identity;$('.toc').innerHTML=tocHTML(!!identity);
     $('#back-to-catalog').href=filterURL(state);
-    if(!identity) {document.title='Extension Center · Vis';return;}
+    if(!identity) {updateMetadata();return;}
     $('#detail').innerHTML='<p>Loading extension…</p>';
     try {
       const item=items.find(item=>item.id===identity)||await api('/api/extensions/'+identity);
       if(disposed||revision!==routeRevision) return;
-      $('#detail').innerHTML=detailHTML(item);document.title=item.name+' · Vis';
+      $('#detail').innerHTML=detailHTML(item);updateMetadata({item});
       if(focus) $('#detail h1').focus({preventScroll:true});
-    } catch(error) {if(!disposed&&revision===routeRevision) {$('#detail').innerHTML='<h1>Could not load this extension</h1><p></p><button id="retry-detail" type="button">Retry details</button>';$('#detail p').textContent=error.message;}}
+    } catch(error) {if(!disposed&&revision===routeRevision) {updateMetadata({detailError:true});$('#detail').innerHTML='<h1>Could not load this extension</h1><p></p><button id="retry-detail" type="button">Retry details</button>';$('#detail p').textContent=error.message;}}
   }
   function navigate(href) {window.history.pushState(null,'',href);route(true);window.scrollTo({top:0});}
   const pop=()=>{state=filters(window.location.search);renderList();route();};window.addEventListener('popstate',pop);

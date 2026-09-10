@@ -14,11 +14,11 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
     const dom=new JSDOM(readFileSync('dist/'+file,'utf8'),{url:'https://gateway.example.com/'+file});
     try {
       const document=dom.window.document;
-      expect(document.querySelector('style, script:not([src]), [onclick]'),file).toBeNull();
+      expect(document.querySelector('style, script:not([src]):not([type="application/ld+json"]), [onclick]'),file).toBeNull();
       expect(document.querySelector('.top .center-link').getAttribute('href'),file).toBe('/extensions/');
       for(const node of document.querySelectorAll('a[href], link[href], script[src], img[src]')) {
         const url=new URL(node.getAttribute('href')||node.getAttribute('src'),dom.window.location.href);
-        if(url.origin!=='https://gateway.example.com'||url.pathname==='/extensions/') continue;
+        if(url.origin!=='https://gateway.example.com'||url.pathname.startsWith('/extensions/')) continue;
         expect(existsSync('dist'+(url.pathname==='/'?'/index.html':url.pathname)),file+': '+url.pathname).toBe(true);
       }
     } finally {dom.window.close();}
@@ -47,11 +47,13 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
   const site=createTestHarness({workers:[{configPath:'./wrangler.jsonc'}]});
   try {
     await site.listen();
-    for(const path of ['/','/index.html','/extending.html','/assets/theme.css','/assets/docs.js','/assets/prism.min.js']) {
+    for(const path of ['/','/index.html','/extending.html','/assets/theme.css','/assets/docs.js','/assets/prism.min.js','/favicon.ico','/favicon-32.png','/apple-touch-icon.png','/site.webmanifest','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/llms.txt','/llms-full.txt','/extending.md']) {
       const response=await site.fetch(path,{redirect:'manual'});
       expect(response.status,path).toBe(200);
       expect(response.headers.get('Content-Security-Policy'),path).toBe(security['Content-Security-Policy']);
       if(path==='/') expect(await response.text()).toBe(readFileSync('dist/index.html','utf8'));
+      if(path.endsWith('.xml')) expect(response.headers.get('content-type')).toMatch(/(?:application|text)\/xml/);
+      if(path.endsWith('.txt')) expect(response.headers.get('content-type')).toContain('text/plain');
     }
     const head=await site.fetch('/',{method:'HEAD'});expect(head.status).toBe(200);expect(await head.text()).toBe('');
     expect((await site.fetch('/missing.html')).status).toBe(404);

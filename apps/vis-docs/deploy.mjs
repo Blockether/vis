@@ -27,10 +27,25 @@ export async function verifyDeployment(hostname) {
         ['/extensions/', 'id="catalog-data"'],
         ['/assets/theme.css', ':root'],
         ['/assets/prism.min.js', 'Prism'],
+        ['/robots.txt', 'Sitemap:'],
+        ['/sitemap.xml', '<sitemapindex'],
+        ['/sitemap-docs.xml', '<urlset'],
+        ['/extensions/sitemap.xml', '<urlset'],
+        ['/llms.txt', '## Documentation'],
+        ['/llms-full.txt', '# Vis documentation'],
+        ['/extensions/llms.txt', '# Vis Extension Center'],
+        ['/extending.md', '# Extending Vis'],
+        ['/site.webmanifest', '"icons"'],
       ]) {
         const response = await fetch(new URL(path, origin), {signal: AbortSignal.timeout(20000), redirect: 'error'});
         const content = await response.text();
         if (!response.ok || !content.includes(marker) || (path === '/' && content.includes('id="catalog-data"'))) throw new Error('Public site is not ready');
+      }
+      for (const path of ['/favicon.ico','/favicon-32.png','/apple-touch-icon.png']) {
+        const response=await fetch(new URL(path,origin),{signal:AbortSignal.timeout(20000),redirect:'error'});
+        const bytes=new Uint8Array(await response.arrayBuffer());
+        const signature=path.endsWith('.ico')?[0,0,1,0]:[137,80,78,71,13,10,26,10];
+        if(!response.ok||!signature.every((byte,index)=>bytes[index]===byte)) throw new Error('Site icons are not ready');
       }
       const api = await fetch(new URL('/api/extensions', origin), {signal: AbortSignal.timeout(20000), redirect: 'error'});
       if (!api.ok || !Array.isArray((await api.json()).extensions)) throw new Error('Catalog is not ready');

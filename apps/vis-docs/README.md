@@ -18,6 +18,32 @@ share the catalog renderer in `web/render.js`; all documentation links stay on t
 The catalog link is public-site-only. It is neither a `doc()` entry nor a page served
 by the embedded documentation. Local/live documentation rendering remains supported.
 
+## Public discovery
+
+`npm run build` regenerates metadata and discovery from the engine's collected documentation
+records, not a second list of pages. `web/discovery.js` owns the public canonical origin
+(`https://vis.blockether.com`), shared head metadata and the accessible header icon.
+Local previews retain production canonical URLs; embedded/live docs are unchanged.
+
+- Every public page has a canonical URL, page-specific description, Open Graph and Twitter
+  metadata, JSON-LD, shared PNG favicons, an Apple touch icon and a web manifest.
+  Icons are resized from the existing Vis logo at build time; no external icon service is used.
+- `/robots.txt` advertises `/sitemap.xml`. That index points to generated `/sitemap-docs.xml`
+  and live `/extensions/sitemap.xml`. Filter URLs and duplicate `/index.html` are excluded.
+- `/llms.txt` is the generated Markdown documentation index; `/llms-full.txt` includes all
+  documentation text. Each document also has a `.md` URL and an HTML alternate link.
+  The conventional filename is **llms.txt** (plural); it is a discovery convention, not an
+  access-control mechanism or a guarantee that an agent will follow instructions.
+- `/extensions/llms.txt` lists approved catalog entries and links the public JSON API.
+  It and the catalog sitemap use the same 60-second snapshot as the UI. Pending submissions
+  never appear; database failures return an uncached 503 rather than an empty sitemap.
+- API responses and error pages are marked `noindex`. Client-side catalog navigation updates
+  canonical and social metadata alongside the title. Content remains server-rendered for crawlers.
+
+Discovery assets remain available without the catalog database. Production verification checks
+both sitemap branches, agent indexes, raw Markdown and favicon signatures after deployment.
+Changing the public canonical origin requires updating `web/discovery.js` and rebuilding.
+
 ## Local development
 
 Requires Node 22.12+, npm, Clojure CLI and the repository-pinned GraalVM CE. Prepare the

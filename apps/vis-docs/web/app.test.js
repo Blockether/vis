@@ -58,6 +58,9 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   $(`[data-name="${item.name}"] .card-main`).click(); await tick();
   expect($('#catalog-page').hidden).toBe(true);
   expect($('#detail-page').hidden).toBe(false);
+  expect($('link[rel="canonical"]').href).toBe('https://vis.blockether.com/extensions/'+item.id);
+  expect($('meta[property="og:title"]').content).toBe(item.name+' · Vis');
+  expect($('meta[name="description"]').content).toBe(item.description);
   expect($('#install-command').textContent).toBe(installCommand(item));
   expect(installCommand(item)).toContain("--subdirectory 'extensions/greeting'");
   expect(installCommand(item)).toContain("--revision '"+'a'.repeat(40)+"'");
@@ -70,6 +73,9 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect(writeText).toHaveBeenCalledWith(installCommand(item));
   $('#back-to-catalog').click(); await tick();
   expect($('#catalog-page').hidden).toBe(false);
+  expect($('link[rel="canonical"]').href).toBe('https://vis.blockether.com/extensions/');
+  expect(document.querySelectorAll('link[rel="canonical"]')).toHaveLength(1);
+  expect($('meta[property="og:title"]').content).toBe('Extension Center · Vis');
   expect(names()).toHaveLength(6);
 });
 
@@ -140,7 +146,10 @@ test('the catalog uses the documentation stylesheet and three-column page shell'
   expect(readFileSync('dist/assets/theme.css')).toEqual(readFileSync('../../resources/vis-docs/assets/theme.css'));
   expect($('.top .brand').textContent).toBe('Vis');
   expect($('.top .brand').getAttribute('href')).toBe('/');
-  expect($('.top .center-link').textContent).toBe('Extension Center');
+  expect($('.top .center-link').getAttribute('aria-label')).toBe('Extension Center');
+  expect($('.top .center-link').getAttribute('title')).toBe('Extension Center');
+  expect($('.top .center-link svg').getAttribute('aria-hidden')).toBe('true');
+  expect($('.top .center-link').textContent).toBe('');
   expect($('.top .center-link').getAttribute('href')).toBe('/extensions/');
   expect($('.top .center-link').getAttribute('aria-current')).toBe('location');
   expect($('.top .center-link').hasAttribute('target')).toBe(false);

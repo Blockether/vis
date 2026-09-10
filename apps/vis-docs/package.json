@@ -17,6 +17,7 @@
     "eslint": "10.10.0",
     "jsdom": "29.1.1",
     "miniflare": "5.20260908.0-alpha",
+    "sharp": "0.35.4",
     "vite": "8.1.5",
     "vitest": "4.1.11",
     "wrangler": "4.130.0"

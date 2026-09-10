@@ -1,5 +1,6 @@
 import { renderPage } from './web/render.js';
 import { security } from './headers.js';
+import { sitemap, catalogText } from './web/discovery.js';
 import { identity, inspectRepository, readBounded, RequestError } from './github.js';
 
 const reply=(body,status=200,html=false,cache='no-store')=>new Response(html?body:JSON.stringify(body),{status,headers:{...security,'Content-Type':html?'text/html; charset=utf-8':'application/json; charset=utf-8','Cache-Control':cache}});
@@ -37,6 +38,12 @@ async function handle(request,env,ctx) {
   const page=path==='/extensions/'||/^\/extensions\/[0-9a-f]{24}$/.test(path);
   if(['GET','HEAD'].includes(request.method)) {
     if(path==='/extensions') return new Response(null,{status:308,headers:{...security,Location:'/extensions/'+url.search}});
+    if(path==='/extensions/sitemap.xml'||path==='/extensions/llms.txt') {
+      const items=(await catalog(env,url.origin,ctx)).extensions;
+      const xml=path.endsWith('.xml');
+      return new Response(xml?sitemap(['/extensions/',...items.map(item=>'/extensions/'+item.id)]):catalogText(items),
+        {headers:{...security,'Content-Type':xml?'application/xml; charset=utf-8':'text/plain; charset=utf-8','Cache-Control':'public, max-age=60'}});
+    }
     if(page) {
       const data={items:[],search:url.search,siteKey:env.TURNSTILE_SITE_KEY||''};
       let status=200;
@@ -69,6 +76,10 @@ export default {
       response=reply({error:error instanceof RequestError?error.message:'Catalog or GitHub is unavailable. Try again later.'},error instanceof RequestError?error.status:503);
     }
     if(response.status===429) response.headers.set('Retry-After','60');
+    if(new URL(request.url).pathname.startsWith('/api/')||response.status>=400) {
+      response=new Response(response.body,response);
+      response.headers.set('X-Robots-Tag','noindex');
+    }
     return request.method==='HEAD'?new Response(null,response):response;
   },
 };

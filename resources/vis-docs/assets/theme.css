@@ -34,13 +34,16 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   letter-spacing:-.02em;color:var(--fg)}
 .top .brand .dot{width:.85rem;height:.85rem;border-radius:50%;background:var(--primary);
   box-shadow:0 0 0 3px #dbe7fc,0 1px 3px rgba(30,30,30,.15)}
-.top .center-link{display:inline-flex;align-items:center;min-width:0;min-height:1.75rem;
-  font-size:var(--text-small);line-height:1.3;color:var(--fg-soft)}
-.top .center-link[aria-current]{font-weight:600;color:var(--link)}
+/* The public-site header uses Lucide grid-2x2; its full label stays in the sidebar. */
+.top .center-link,.top .gh{display:inline-flex;align-items:center;justify-content:center;
+  min-width:1.75rem;min-height:1.75rem;color:var(--fg-soft);text-decoration:none}
+.top .center-link{order:1}
+.top .gh{order:2}
+.top .center-link[aria-current]{color:var(--link);box-shadow:inset 0 -2px currentColor}
+.top .center-link:hover,.top .gh:hover{color:var(--link-hover)}
+.top .center-link:focus-visible,.top .gh:focus-visible{outline:2px solid var(--link);outline-offset:2px}
 .top .spacer{flex:1}
-.top .gh{display:inline-flex;align-items:center;color:var(--dim);transition:color .12s}
-.top .gh:hover{color:var(--link-hover)}
-.top .gh svg{display:block}
+.top .center-link svg,.top .gh svg{display:block}
 .shell{max-width:var(--maxw);margin:0 auto;display:grid;
   grid-template-columns:16rem minmax(0,1fr) 15rem;gap:0}
 /* sidebar */
@@ -152,8 +155,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .scrim{display:none}
 @media(pointer:coarse){
   .nav a{display:flex;align-items:center;min-height:2.75rem}
-  .top .gh{justify-content:center;min-width:2.75rem;min-height:2.75rem}
-  .top .center-link{min-height:2.75rem}
+  .top .gh,.top .center-link{min-width:2.75rem;min-height:2.75rem}
 }
 /* tablet: drop the right rail */
 @media(max-width:1100px){.shell{grid-template-columns:15rem minmax(0,1fr)}.toc{display:none}}

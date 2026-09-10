@@ -113,4 +113,29 @@ test('portable display metadata agrees with the shipped manifest and rejects uns
   for(const url of ['http://github.com/a/b','https://example.com/a/b','https://github.com/a/b/tree/main','https://github.com:443/a/b']) expect(()=>repositoryURL(url)).toThrow();
   expect(repositoryURL('https://github.com/example/repo.git/')).toBe('https://github.com/example/repo');
   expect(()=>moderationStatements('approve',"'; DELETE FROM extensions;")).toThrow();
+ });
+test('live discovery includes only approved listings and shares the cached catalog snapshot',async()=>{
+  const items=JSON.parse(readFileSync('web/catalog.fixture.json','utf8'));
+  const item=items[0];
+  await fixture.db.prepare('INSERT INTO extensions VALUES (?, ?, ?)').bind(item.id,JSON.stringify(item),item.added_at).run();
+  await fixture.db.prepare('INSERT INTO submissions VALUES (?, ?, ?, ?, ?)').bind('b'.repeat(24),items[1].id,items[1].revision,JSON.stringify(items[1]),items[1].added_at).run();
+  for(const path of ['/extensions/sitemap.xml','/extensions/llms.txt']) {
+    const response=await fixture.runtime.dispatchFetch('https://center.example.com'+path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain(path.endsWith('.xml')?'application/xml':'text/plain');
+    expect(response.headers.get('cache-control')).toBe('public, max-age=60');
+    const text=await response.text();expect(text).toContain('/extensions/'+item.id);expect(text).not.toContain(items[1].id);
+    const head=await fixture.runtime.dispatchFetch('https://center.example.com'+path,{method:'HEAD'});
+    expect(head.status).toBe(200);expect(await head.text()).toBe('');
+  }
+  const api=await fixture.runtime.dispatchFetch('https://center.example.com/api/extensions');
+  expect(api.headers.get('x-robots-tag')).toBe('noindex');
+  const missing=await fixture.runtime.dispatchFetch('https://center.example.com/extensions/'+'f'.repeat(24));
+  expect(missing.status).toBe(404);expect(missing.headers.get('x-robots-tag')).toBe('noindex');
+});
+test('discovery fails explicitly rather than publishing an empty catalog when D1 is unavailable',async()=>{
+  for(const path of ['/extensions/sitemap.xml','/extensions/llms.txt']) {
+    const response=await worker.fetch(new Request('https://center.example.com'+path),{},{waitUntil(){}});
+    expect(response.status).toBe(503);expect(response.headers.get('cache-control')).toBe('no-store');
+  }
 });
