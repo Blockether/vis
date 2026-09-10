@@ -1129,11 +1129,7 @@
           (require-binary)
 
           guide
-          (-> (slurp (io/resource "vis-docs/extension-packages.md"))
-              (str/split #"## uv projects\n" 2)
-              second
-              (str/split #"\n## " 2)
-              first)
+          (slurp (io/resource "vis-docs/extension-development.md"))
 
           files
           (into {}
@@ -1142,8 +1138,14 @@
                 (re-seq #"(?s)```(?:toml|python)\n# ([^\n]+)\n(.*?)\n```" guide))
 
           commands
-          (vec (mapcat (comp str/split-lines second)
-                       (take 2 (re-seq #"(?s)```bash\n(.*?)\n```" guide))))
+          (->> (re-seq #"(?ms)^([ \t]*)```bash\n(.*?)^\1```[ \t]*$" guide)
+               (mapcat (fn [[_ _indent source]]
+                         (str/split-lines source)))
+               (map str/trim)
+               vec)
+
+          registration-command
+          (second (re-find #"`(vis-agent extension list)`" guide))
 
           run
           (fn [command]
@@ -1172,7 +1174,8 @@
         (expect (= #{"einmal/pyproject.toml" "einmal/src/einmal/__init__.py"
                      "einmal/tests/test_status.py" ".vis/extensions/einmal_tools.py"}
                    (set (keys files))))
-        (expect (= 6 (count commands)))
+        (expect (= 5 (count commands)))
+        (expect (= "vis-agent extension list" registration-command))
         (doseq [[path source] files]
           (let [file (io/file dir path)]
             (io/make-parents file)
@@ -1182,20 +1185,20 @@
           (checked (commands 1))
           (let [imported (checked (commands 2))]
             (expect (str/includes? imported (str "ready " (.getCanonicalPath module))) imported))
-          (let [registered (checked (commands 3))]
+          (let [registered (checked registration-command)]
             (expect (str/includes? registered "Package example.") registered))
-          (checked (commands 4))
-          (expect (str/includes? (checked (commands 5)) "1 passed"))
+          (checked (commands 3))
+          (expect (str/includes? (checked (commands 4)) "1 passed"))
           (let [mtime (.lastModified module)]
             (spit module (str/replace (slurp module) "ready" "fresh"))
             (.setLastModified module mtime))
           ;; Neither the install command nor lock generation is repeated for source edits.
           (let [imported (checked (commands 2))]
             (expect (str/includes? imported (str "fresh " (.getCanonicalPath module))) imported))
-          (expect (str/includes? (checked (commands 3)) "Package example."))
+          (expect (str/includes? (checked registration-command) "Package example."))
           (let [test-file (io/file project "tests/test_status.py")]
             (spit test-file (str/replace (slurp test-file) "ready" "fresh")))
-          (expect (str/includes? (checked (commands 5)) "1 passed"))
+          (expect (str/includes? (checked (commands 4)) "1 passed"))
           (expect (= lock-before (slurp (io/file project "uv.lock")))))
         (let [metadata
               (io/file project "pyproject.toml")
@@ -1223,13 +1226,13 @@
                      "\n"
                      local-source
                      "\n"))
-          (expect (not (str/includes? (checked (commands 3)) "Package example.")))
+          (expect (not (str/includes? (checked registration-command) "Package example.")))
           (checked (commands 0))
           (checked (commands 1))
           (expect (str/includes? (checked
                                    "vis-agent python -c \"import idna; print(idna.__version__)\"")
                                  "3.10"))
-          (expect (str/includes? (checked (commands 3)) "Package example."))
+          (expect (str/includes? (checked registration-command) "Package example."))
           (let
             [probe
              "vis-agent python -c \"import shared_tools; print(shared_tools.VALUE, shared_tools.__file__)\""
