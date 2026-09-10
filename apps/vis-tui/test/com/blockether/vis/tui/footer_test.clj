@@ -26,6 +26,34 @@
     (or (<= 0x2061 n 0x206F) (<= 0xE000 n 0xE0FF) (p/inline-sentinel? (str c)))))
 
 (defdescribe
+  inline-goal-iterations-test
+  (it "shows used iterations and the budget inline, including unlimited goals"
+      (doseq [[used budget label] [[0 20 "0/20"] [7 20 "7/20"] [20 20 "20/20"] [21 20 "21/20"]
+                                   [7 nil "7/∞"]]]
+        (let [db {:messages []
+                  :settings {}
+                  :session {:goal
+                            {"status" "active" "iterations_used" used "iteration_budget" budget}}}
+              segment (second (#'footer/build-limits-segments db 0))
+              text (str "Goal: Active " label " iter")
+              frame (cap/capture! {:cols 120
+                                   :rows 6
+                                   :paint! (fn [{:keys [screen]}]
+                                             (footer/draw-footer!
+                                               (.newTextGraphics
+                                                 ^com.googlecode.lanterna.screen.TerminalScreen
+                                                 screen)
+                                               db
+                                               0
+                                               120
+                                               0))})]
+
+          (expect (= :footer-goal (:kind segment)))
+          (expect (str/includes? (:text segment) text))
+          (expect (nil? (:error frame)))
+          (expect (str/includes? (cap/frame-text frame) text))))))
+
+(defdescribe
   inline-limits-regression-test
   ;; The goals/footer change hid the quota behind a label-only button.
   (it

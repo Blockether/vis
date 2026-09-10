@@ -672,7 +672,13 @@
             (conj {:text (str " Goal: "
                               (get gateway-contract/session-goal-labels
                                    (get-in db [:session :goal "status"]))
-                              " ")
+                              " "
+                              (goal-count (get-in db [:session :goal "iterations_used"] 0))
+                              "/"
+                              (if-let [budget (get-in db [:session :goal "iteration_budget"])]
+                                (goal-count budget)
+                                "∞")
+                              " iter ")
                    :kind :footer-goal
                    :region :left
                    :priority 1
