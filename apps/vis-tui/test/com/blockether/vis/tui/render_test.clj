@@ -7706,31 +7706,42 @@ print(paths)"
           (expect (str/includes? (:line entry) caption))
           (expect (str/includes? (:line entry) "42ms"))))))
 
-(defdescribe live-artifact-receipt-test
-             (it "keeps the recorded view named and clickable with code collapsed after reload"
-                 (let [entries
-                       (format-iteration-entry-entries
-                         {:iteration-id "iteration-live"
-                          :attachments [{:source "tool"
-                                         :kind "doc"
-                                         :filename "Release.live.ndjson"
-                                         :media-type "application/vnd.vis.live+ndjson"
-                                         :size 2048}]
-                          :forms [{:code "await gh.watch()" :stdout "Finished" :success? true}]}
-                         80
-                         1
-                         {:session-id "session-live" :session-turn-id "turn-live"})
+(defdescribe
+  live-artifact-receipt-test
+  (it
+    "keeps the recorded view named and clickable with code collapsed after reload"
+    (let [entries
+          (format-iteration-entry-entries
+            {:iteration-id "iteration-live"
+             :attachments [{:source "tool"
+                            :kind "doc"
+                            :filename "Release.live.ndjson"
+                            :media-type "application/vnd.vis.live+ndjson"
+                            :size 2048}]
+             :forms [{:code "await gh.watch()" :stdout "Finished" :success? true}]}
+            80
+            1
+            {:session-id "session-live" :session-turn-id "turn-live"})
 
-                       receipt
-                       (first (filter #(= "iteration-live"
-                                          (get-in % [:meta :artifact :iteration-id]))
-                                      entries))]
+          receipt
+          (first (filter #(= "iteration-live" (get-in % [:meta :artifact :iteration-id])) entries))]
 
-                   (expect (some? receipt))
-                   (expect (str/includes? (:line receipt) "LIVE VIEW"))
-                   (expect (str/ends-with? (:line receipt) "Release ▸"))
-                   (expect (not (str/includes? (:line receipt) "ndjson")))
-                   (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))
+      (expect (some? receipt))
+      ;; #205: a recorded view is a bounded card, not a one-line disclosure.
+      (let [card
+            (filter #(get-in % [:meta :live-card-row]) entries)
+
+            text
+            (str/join "\n" (map :line card))]
+
+        (expect (= 8 (count card)))
+        (expect (str/includes? text "Live view"))
+        (expect (str/includes? text "Release"))
+        (expect (str/includes? text "Recorded"))
+        (expect (str/includes? text "┌"))
+        (expect (str/includes? text "┘"))
+        (expect (not (str/includes? text "ndjson"))))
+      (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))
 
 (defdescribe
   activity-middle-content-spacing-test

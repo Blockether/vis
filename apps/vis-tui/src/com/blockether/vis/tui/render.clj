@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.highlight :as hl]
@@ -2179,11 +2180,50 @@
                   ;; Resolve durable artifacts through the attachment policy.
                   (when-let [artifact (:artifact meta)]
                     (.register interactions/hit-map
-                               {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                               {:bounds {:row (+ (long viewport-top) (long y))
+                                         :col x
+                                         :width (min iw (long (or (:live-card-width meta) iw)))}
                                 :kind :artifact
+                                :live-card? (boolean (:live-card-row meta))
                                 :session-id (:session-id meta)
                                 :artifact artifact}))
                   (cond
+                    (:live-card-row meta)
+                    (let [width (min iw (long (:live-card-width meta)))
+                          hovered? (= (interactions/label-key {:kind :artifact
+                                                               :live-card? true
+                                                               :session-id (:session-id meta)
+                                                               :artifact (:artifact meta)})
+                                      (interactions/label-key (.hovered interactions/hit-map)))
+                          row-bg (if hovered? t/link-chrome-hover-bg t/terminal-bg)
+                          border-fg (if hovered? t/text-fg t/dialog-hint)
+                          row (:live-card-row meta)
+                          row-fg (cond hovered? t/text-fg
+                                       (#{:top :bottom} row) border-fg
+                                       (and (= :status row) (:live-card-error? meta))
+                                       t/code-error-fg
+                                       (= :hint row) t/dialog-hint
+                                       :else t/text-fg)]
+
+                      (p/set-colors! g row-fg row-bg)
+                      (p/fill-rect! g x y width 1)
+                      (p/styled g
+                                (cond-> []
+                                  (= :title row)
+                                  (conj p/BOLD)
+
+                                  (and hovered? (= :title row))
+                                  (conj p/UNDERLINE))
+                                ;; The card owns its cell width, not the narrower prose clip.
+                                (p/put-str! g
+                                            x
+                                            y
+                                            (p/truncate-cols (subs (nth raw-lines lines-idx) 1)
+                                                             width)))
+                      (when-not (#{:top :bottom} row)
+                        (p/set-colors! g border-fg row-bg)
+                        (p/put-str! g x y "│")
+                        (when (> width 1) (p/put-str! g (+ x width -1) y "│"))))
                     ;; Iteration header.
                     (str/starts-with? line iteration-hdr-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -4751,11 +4791,13 @@
                            (when-not (or (#{"image" "table"} kind)
                                          (str/starts-with? media-type "image/")
                                          (str/starts-with? media-type "video/"))
-                             {:filename (str (or (field artifact "filename") "artifact"))
-                              :media-type media-type
-                              :size (field artifact "size")
-                              :iteration-id (str iteration-id)
-                              :index index}))))
+                             (cond-> {:filename (str (or (field artifact "filename") "artifact"))
+                                      :media-type media-type
+                                      :size (field artifact "size")
+                                      :iteration-id (str iteration-id)
+                                      :index index}
+                               (field artifact "view_id")
+                               (assoc :view-id (field artifact "view_id")))))))
          vec)))
 
 (defn- strip-produced-artifact-transport
@@ -4769,18 +4811,76 @@
           str/trim
           not-empty))
 
+(defn- live-artifact-card-entries
+  "One recorded view, bounded in terminal cells. Run status is joined only by view ID;
+   an unloaded record says Recorded, never an inferred success. Every card row opens
+   the same durable artifact, including borders and padding."
+  [artifact session-id max-w run]
+  (let [width
+        (max 1 (long max-w))
+
+        inner
+        (max 0 (- width 4))
+
+        title
+        (str/replace (or (:title run) (str/replace (:filename artifact) #"\.live\.ndjson$" ""))
+                     #"\s+"
+                     " ")
+
+        reason
+        (some-> (:reason run)
+                name)
+
+        status
+        (str/join " · "
+                  (remove str/blank?
+                    [(if reason (str/capitalize reason) "Recorded")
+                     (when (pos? (long (or (:lines run) 0)))
+                       (str (:lines run) (if (= 1 (:lines run)) " line" " lines")))
+                     (when (pos? (long (or (:elapsed-ms run) 0)))
+                       (vis/format-duration (:elapsed-ms run)))]))
+
+        edge
+        (fn [left label right]
+          (str left
+               (p/ellipsize label (max 0 (- width 2)))
+               (repeat-str \─ (max 0 (- width 2 (p/display-width label))))
+               right))
+
+        body
+        (fn [text]
+          (str "│ " (p/pad-right (p/ellipsize text inner) inner) " │"))
+
+        rows
+        [[:top (edge "┌" "─ Live view " "┐")] [:pad (body "")] [:title (body title)]
+         [:pad (body "")] [:status (body status)]
+         [:hint (body (str "Click or " (keymap/label-for :toggle-detail-labels) " to open"))]
+         [:pad (body "")] [:bottom (edge "└" "" "┘")]]]
+
+    (into [{:line ""}]
+          (concat (map (fn [[row line]]
+                         {:line (str result-marker (p/truncate-cols line width))
+                          :meta {:artifact artifact
+                                 :session-id session-id
+                                 :live-card-row row
+                                 :live-card-width width
+                                 :live-card-error? (contains? #{"failed" "interrupted" "timeout"
+                                                                "cancelled"}
+                                                              reason)}})
+                       rows)
+                  [{:line ""}]))))
+
 (defn- artifact-disclosure-entries
-  [artifacts session-id]
+  [artifacts session-id max-w runs]
   (into []
-        (mapcat (fn [{:keys [filename media-type] :as artifact}]
+        (mapcat (fn [{:keys [filename media-type view-id] :as artifact}]
                   (let [meta {:artifact artifact :session-id session-id}]
                     (if (attach/live-artifact? artifact)
-                      [{:line (str result-marker
-                                   (band-label "LIVE VIEW")
-                                   " — "
-                                   (str/replace filename #"\.live\.ndjson$" "")
-                                   " ▸")
-                        :meta meta}]
+                      (live-artifact-card-entries artifact
+                                                  session-id
+                                                  max-w
+                                                  (when view-id
+                                                    (some #(when (= view-id (:view-id %)) %) runs)))
                       [{:line (str result-marker filename " · " media-type) :meta meta}
                        {:line (str result-marker "↗ click to open in the system viewer")
                         :meta meta}]))))
@@ -6959,12 +7059,20 @@
                   (vec result-lines))
 
                 artifact-block
-                (artifact-disclosure-entries form-artifacts session-id)
+                (artifact-disclosure-entries form-artifacts session-id fill-w (mapcat :runs forms))
 
                 ;; Python and Result share the compact execution surface. Activity follows as
                 ;; a timeline surface, while the verdict remains transcript text above both.
                 generic-run-entries
-                (run-row-entries (vec runs) fill-w session-id false)
+                (run-row-entries (filterv (fn [run]
+                                            (not-any? #(and (attach/live-artifact? %)
+                                                            (:view-id %)
+                                                            (= (:view-id %) (:view-id run)))
+                                                      iteration-artifacts))
+                                   runs)
+                                 fill-w
+                                 session-id
+                                 false)
 
                 ;; A failure closes with one blank error row, the same bottom edge a code
                 ;; band or a result band ends on; without it the red message sat hard
@@ -8226,50 +8334,45 @@
                         t/terminal-bg)))))
 
 (defn draw-detail-labels!
-  "Vim-style jump-label overlay for collapsible disclosures.
+  "Jump-label overlay for transcript disclosures and recorded live-view cards.
 
-   `frozen` is the `[label region]` assignment captured ONCE when the mode
-   opened (`interactions/assign-labels` on that frame), read from `db` — NOT re-derived
-   per frame. Freezing matters mid-turn: a live stream keeps re-registering
-   `interactions/hit-map` as the trace grows, so a per-frame `assign-labels` would
-   reshuffle the letters under the user's fingers and race the keypress. With a
-   frozen map the letter→fold binding is stable. Each badge is re-anchored to
-   its fold's CURRENT painted position — the region is matched by
-   `[session-id node-id]` against this frame's `interactions/hit-map`, so the letter
-   tracks the fold as the transcript scrolls and is simply dropped when the
-   fold scrolls off. Falls back to a live `assign-labels` when no frozen set is
-   present (the command-palette entry can open the mode from a dialog frame
-   that had nothing to freeze). Inactive / empty ⇒ paints nothing.
+   Labels are frozen when the mode opens, then re-anchored by `interactions/label-key`
+   to the current painted rows. Streaming and scrolling cannot reassign a key to
+   another target. Offscreen targets have no badge; an empty frozen set uses the
+   current frame. A live card receives a visible selection border as well as a badge.
 
-   Called by the full-frame painter right AFTER `HitRegionMap.commitFrame`, so
-   `interactions/hit-map` holds this frame's freshly-registered regions. The input
-   handler resolves a typed letter against the SAME frozen map, so a badge and
-   its keypress always point at the same fold without shared mutable state."
+   Call after HitRegionMap.commitFrame. Keyboard activation uses the same frozen
+   identities and current hit map. Inactive or empty surfaces paint nothing."
   [^TextGraphics g active? frozen]
   (when active?
     (let [labels
           (if (seq frozen) frozen (interactions/assign-labels (.current interactions/hit-map)))
 
-          live-by-node
-          (reduce (fn [m r]
-                    (if (= :toggle-details (:kind r)) (assoc m [(:session-id r) (:node-id r)] r) m))
-                  {}
-                  (.current interactions/hit-map))]
+          live-by-target
+          (group-by interactions/label-key (.current interactions/hit-map))]
 
       (doseq [[label region]
               labels
 
               :let [live
-                    (get live-by-node [(:session-id region) (:node-id region)])]
-              :when live]
+                    (get live-by-target (interactions/label-key region))]
+              :when (seq live)]
 
-        (let [{:keys [bounds]} live]
-          ;; Loud avy-style lead badge: ground-colored text on the saturated
-          ;; `warning-fg` fill so the label pops in EVERY theme (the old pairing
-          ;; painted terminal-bg on the pale `warning-bg`, ~1.1:1 contrast — invisible
-          ;; on Solarized). warning-fg gives 8:1+ AAA contrast light or dark. Letters
-          ;; are upper-cased so they stand out of the surrounding lowercase prose;
-          ;; the input handler lower-cases the keypress, so the match still holds.
+        ;; Keyboard selection marks the entire visible card, not just its arrow.
+        (when (:live-card? region)
+          (p/set-colors! g t/warning-fg t/terminal-bg)
+          (doseq [{:keys [bounds]}
+                  live
+
+                  :let [{:keys [row col width]}
+                        bounds]]
+
+            (p/styled g
+                      [p/BOLD]
+                      (p/put-str! g col row "┃")
+                      (when (> (long width) 1)
+                        (p/put-str! g (+ (long col) (long width) -1) row "┃")))))
+        (let [{:keys [bounds]} (first live)]
           (p/set-colors! g t/terminal-bg t/warning-fg)
           (p/styled g
                     [p/BOLD]

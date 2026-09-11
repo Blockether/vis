@@ -26,19 +26,32 @@
    first so the common case is a no-reach keypress."
   (mapv str "asdfghjklqwertyuiopzxcvbnm"))
 
+(defn label-key
+  "Stable identity for keyboard-addressable transcript disclosures and live cards.
+   A card's border, padding and content rows share one target. Other artifacts do not."
+  [region]
+  (case (:kind region)
+    :toggle-details
+    [:toggle-details (:session-id region) (:node-id region)]
+
+    :artifact
+    (when (:live-card? region)
+      [:artifact (:session-id region) (get-in region [:artifact :iteration-id])
+       (get-in region [:artifact :index])])
+
+    nil))
+
 (defn assign-labels
-  "Assign deterministic labels to visible `:toggle-details` regions, deduped by
-   `[session-id node-id]` and capped by `label-alphabet`."
+  "Label visible disclosures and live cards in paint order, once per target."
   [regions]
-  (let [toggles (:out (reduce (fn [{:keys [seen] :as acc} region]
-                                (if (= :toggle-details (:kind region))
-                                  (let [key [(:session-id region) (:node-id region)]]
-                                    (if (contains? seen key)
-                                      acc
-                                      (-> acc
-                                          (update :seen conj key)
-                                          (update :out conj region))))
+  (let [targets (:out (reduce (fn [{:keys [seen] :as acc} region]
+                                (if-let [key (label-key region)]
+                                  (if (contains? seen key)
+                                    acc
+                                    (-> acc
+                                        (update :seen conj key)
+                                        (update :out conj region)))
                                   acc))
                               {:seen #{} :out []}
                               regions))]
-    (mapv vector label-alphabet toggles)))
+    (mapv vector label-alphabet targets)))

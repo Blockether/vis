@@ -2359,6 +2359,37 @@
        (catch Throwable _
          (vis/notify! "Artifact could not be opened." :level :warn :ttl-ms status-error-ttl-ms)))))
 
+(defn- activate-detail-label!
+  "Resolve a frozen jump label against the current frame and activate its target.
+   Live cards share the durable opener used by mouse input; other labels toggle folds."
+  [db ^KeyStroke key]
+  (let [chr
+        (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))
+
+        frozen
+        (or (seq (:detail-labels db)) (interactions/assign-labels (.current interactions/hit-map)))
+
+        hit
+        (when (and chr (not (.isCtrlDown key)) (not (.isAltDown key)))
+          (get (into {} frozen) (str (Character/toLowerCase ^char chr))))
+
+        target
+        (when hit
+          (or (some #(when (= (interactions/label-key hit) (interactions/label-key %)) %)
+                    (.current interactions/hit-map))
+              hit))]
+
+    (case (:kind target)
+      :artifact
+      (open-produced-artifact! (:session-id target) (:artifact target))
+
+      :toggle-details
+      (state/dispatch [:toggle-detail (:session-id target) (:node-id target) (:collapsed? target)])
+
+      nil)
+    (state/dispatch [:set-detail-labels false])
+    (state/dispatch [:bump-render-version])))
+
 (defn- open-click-target!
   ([{:keys [kind url session-id]}]
    (if (and (= :url kind) (re-find #"(?i)^attachment:" (str url)))
@@ -7068,40 +7099,11 @@
                            (= KeyType/Escape ktype) (state/dispatch [:blur-attachments]))
                      (recur))
                    ;; Vim-style jump labels own the keyboard while active: a
-                   ;; letter toggles the fold under its badge, Esc / C-g / any
+                   ;; letter opens the card or toggles the fold under its badge;
                    ;; other key cancels. Sits above the fall-through so the
                    ;; label keys never reach the draft or the app-verb dispatch.
                    (and (instance? KeyStroke key) (:detail-labels-active? db))
-                   (let [ks ^KeyStroke key
-                         ktype (.getKeyType ks)
-                         chr (when (= ktype KeyType/Character) (.getCharacter ks))
-                         ;; Resolve against the FROZEN assignment the painter
-                         ;; badged (falling back to the live frame only when the
-                         ;; mode opened from a dialog with nothing to freeze), so a
-                         ;; typed letter hits the fold under its badge even as a
-                         ;; live stream repaints beneath it.
-                         frozen (or (seq (:detail-labels db))
-                                    (interactions/assign-labels (.current interactions/hit-map)))
-                         hit (when (and chr (not (.isCtrlDown ks)) (not (.isAltDown ks)))
-                               (get (into {} frozen) (str (Character/toLowerCase ^char chr))))
-                         ;; Toggle against the fold's CURRENT collapsed state when
-                         ;; it is still on screen (the stream may have re-rendered it
-                         ;; since the freeze); else fall back to the frozen row.
-                         target (when hit
-                                  (or (some (fn [r]
-                                              (when (and (= :toggle-details (:kind r))
-                                                         (= (:session-id r) (:session-id hit))
-                                                         (= (:node-id r) (:node-id hit)))
-                                                r))
-                                            (.current interactions/hit-map))
-                                      hit))]
-
-                     (when target
-                       (state/dispatch [:toggle-detail (:session-id target) (:node-id target)
-                                        (:collapsed? target)]))
-                     (state/dispatch [:set-detail-labels false])
-                     (state/dispatch [:bump-render-version])
-                     (recur))
+                   (do (activate-detail-label! db key) (recur))
                    :else
                    (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
                          {:keys [action state workspace-index character]}
