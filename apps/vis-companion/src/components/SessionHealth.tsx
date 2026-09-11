@@ -4,7 +4,7 @@ import { Disclosure } from "./ui";
 
 /** Presentation data for one persisted request, never the lifetime usage rollup.
  * Optional fields remain unknown for measurements made before they were recorded.
- * Breakdown rows estimate the logical request before provider adaptation, including
+ * Breakdown rows estimate the recorded prepared or logical request, including
  * tool payloads, images, reasoning and framing. They do not partition measured usage.
  * Linked guidance estimates describe disk contents, not model read receipts.
  */
@@ -15,6 +15,7 @@ export interface SessionHealthSnapshot {
   modelInputLimit?: number;
   call: number;
   stale?: boolean;
+  countedProjection?: "prepared-request" | "logical-request";
   breakdown?: { label: string; tokens: number; path?: string }[];
   roots?: {
     path: string;
@@ -54,6 +55,7 @@ export function SessionHealth({
     breakdown,
     roots,
   } = snapshot;
+  const isPrepared = snapshot.countedProjection === "prepared-request";
   const estimatedInput = breakdown?.length
     ? breakdown.reduce((total, part) => total + part.tokens, 0)
     : undefined;
@@ -154,7 +156,8 @@ export function SessionHealth({
               <span className="min-w-0 py-2.5">
                 <span className="block">Context breakdown</span>
                 <span className="block text-ui font-normal text-dialog-hint">
-                  Logical request · not measured usage
+                  {isPrepared ? "Prepared request" : "Logical request"} · not
+                  measured usage
                 </span>
               </span>
             </Disclosure>
@@ -206,13 +209,13 @@ export function SessionHealth({
                   ))}
                 </dl>
                 <p className="mt-3 text-ui text-dialog-hint">
-                  ≈ Local estimates describe logical messages and tools before
-                  provider adaptation, not the prepared request used for
-                  preflight. Svar tokenizes text and tool payloads and estimates
-                  images, reasoning and framing. Adapters may drop or reshape
-                  content. Provider-reported input for this same call, including
-                  cached input, determines context pressure above; estimates do
-                  not.
+                  {isPrepared
+                    ? "≈ Local estimates describe the full prepared request after provider adaptation, including retained replay and wire-shaped tools, not just a WebSocket delta. "
+                    : "≈ Local estimates describe logical messages and tools before provider adaptation, not the prepared request used for preflight. Adapters may drop or reshape content. "}
+                  Svar tokenizes text and tool payloads and estimates images,
+                  reasoning and framing. Provider-reported input for this same
+                  call, including cached input, determines context pressure
+                  above; estimates do not.
                 </p>
               </div>
             )}

@@ -98,6 +98,42 @@ export const EstimateDrift: Story = {
   },
 };
 
+/** #186: synthetic prepared-accounting fixture, passed through the wire-data mapping. */
+export const PreparedRequest: Story = {
+  args: {
+    health: undefined,
+    usage: {
+      ...STORY_HEALTH_USAGE,
+      health: {
+        last_request_tokens: 162_177,
+        budget_tokens: 200_000,
+        reminder_tokens: 150_000,
+        model_input_limit: 272_000,
+        call: 33,
+        counted_projection: "prepared-request",
+        breakdown: [
+          { label: "System instructions", tokens: 5_600 },
+          { label: "Conversation and tool results", tokens: 160_000 },
+          { label: "Tool declarations", tokens: 350 },
+          { label: "Reply framing", tokens: 3 },
+        ],
+      },
+    },
+  },
+  play: async ({ canvas }) => {
+    await userEvent.click(
+      canvas.getByRole("button", { name: /Context breakdown/ }),
+    );
+    await expect(
+      canvas.getByText("Prepared request · not measured usage"),
+    ).toBeVisible();
+    await expect(canvas.getByText("165,953 tokens")).toBeVisible();
+    await expect(canvas.getByText("+3,776 tokens (+2.3%)")).toBeVisible();
+    await expect(canvas.getByText("81%")).toBeVisible();
+    await expect(canvas.getByRole("meter")).toHaveAttribute("value", "162177");
+  },
+};
+
 export const FoldReminder: Story = {
   args: {
     usage: STORY_HEALTH_USAGE,

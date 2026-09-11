@@ -50,6 +50,10 @@
                     (constantly {:input-tokens 900000
                                  :health {:last-request-tokens 32000
                                           :budget-tokens 200000
+                                          :counted-projection :prepared-request
+                                          :estimated-input-tokens 33000
+                                          :breakdown [{:label "Conversation and tool results"
+                                                       :tokens 33000}]
                                           :call 5
                                           :stale true
                                           :roots [{:path "/linked"}]}})]
@@ -58,6 +62,9 @@
           (expect (= 900000 (get usage "input_tokens")))
           (expect (= {"last_request_tokens" 32000
                       "budget_tokens" 200000
+                      "counted_projection" "prepared-request"
+                      "estimated_input_tokens" 33000
+                      "breakdown" [{"label" "Conversation and tool results" "tokens" 33000}]
                       "call" 5
                       "stale" true
                       "roots" [{"path" "/linked"}]}

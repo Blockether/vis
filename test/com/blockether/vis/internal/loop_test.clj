@@ -147,7 +147,7 @@
 
 (defn- context-token-observations
   "Capture request-count diagnostics at the real dispatch boundary, without network IO."
-  [{:keys [input-tokens counter error served-model] :or {counter (constantly 1000)}}]
+  [{:keys [input-tokens counter error served-model accounting] :or {counter (constantly 1000)}}]
   (let [environment
         (lp/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
 
@@ -188,6 +188,7 @@
                                  :content "done"
                                  :routed/model (or served-model "gpt-4o")
                                  :routed/provider-id :lmstudio
+                                 :request-accounting accounting
                                  :api-usage (when (some? input-tokens)
                                               {:input-tokens input-tokens :output-tokens 1})}))]
 
@@ -251,6 +252,56 @@
           (expect (= (count "opaque-signed-reasoning") (:thinking-signature-chars data)))
           (expect (not-any? #(str/includes? (pr-str data) %)
                             ["private-user-text" "private-reasoning" "opaque-signed-reasoning"])))))
+  (it "uses prepared accounting from the served attempt without recounting logical replay"
+      ;; #186: a routed fallback must not inherit the originally resolved model's count.
+      (let [accounting
+            {:source :svar-estimate
+             :projection :prepared-request
+             :model "gpt-4.1"
+             :input-tokens 300
+             :components {:messages 270 :instructions 10 :tools 17 :reply-priming 3}}
+
+            {:keys [observations health error counted]}
+            (context-token-observations {:input-tokens 250
+                                         :served-model "gpt-4.1"
+                                         :accounting accounting
+                                         :counter (fn [& _]
+                                                    (throw (ex-info "Must not recount" {})))})
+
+            data
+            (:data (first observations))]
+
+        (expect (nil? error))
+        (expect (empty? counted))
+        (expect (= :prepared-request (:counted-projection health) (:counted-projection data)))
+        (expect (= 300 (:estimated-input-tokens health) (:local-input-tokens data)))
+        (expect (= 250 (:provider-input-tokens data)))
+        (expect (= 50 (:local-minus-provider-tokens data)))))
+  (it "logs prepared rejection accounting without reporting it as measured usage"
+      ;; #186: provider rejections may identify the fallback only in prepared accounting.
+      (let [error
+            (ex-info "Context overflow"
+                     {:type :svar.core/context-overflow
+                      :input-tokens 1000
+                      :max-input-tokens 900
+                      :request-accounting {:source :svar-estimate
+                                           :projection :prepared-request
+                                           :model "gpt-4.1"
+                                           :input-tokens 1000
+                                           :components {:messages 997 :reply-priming 3}}})
+
+            result
+            (context-token-observations {:error error})
+
+            data
+            (:data (first (:observations result)))]
+
+        (expect (identical? error (:error result)))
+        (expect (= :prepared-request (:counted-projection data)))
+        (expect (= "gpt-4.1" (:model data)))
+        (expect (= 1000 (:local-input-tokens data)))
+        (expect (= :unavailable (:provider-count-source data)))
+        (expect (nil? (:local-minus-provider-tokens data)))))
   (it "keeps missing and zero provider counts distinct, without manufacturing a ratio"
       (doseq [input [nil 0]]
         (let [{:keys [observations error]} (context-token-observations {:input-tokens input})
@@ -277,6 +328,78 @@
         (expect (= :unavailable (:local-count-source data)))
         (expect (nil? (:local-to-provider-ratio data)))
         (expect (not (str/includes? (pr-str data) "private-tokenizer-data"))))))
+
+(defdescribe
+  prepared-responses-health-test
+  ;; #186: exercise public Svar routing + the real Responses adapter through Vis.
+  ;; Only the provider transport is replaced; no paid requests or private payloads.
+  (it
+    "keeps prepared counts and same-call usage aligned across replay growth and folding"
+    (let [base-environment
+          (lp/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
+
+          model
+          "gpt-6-astra"
+
+          router
+          (svar/make-router [{:id :prepared-test
+                              :api-key "test"
+                              :base-url "http://127.0.0.1:1"
+                              :api-style :openai-compatible-responses
+                              :models [{:name model :context 272000}]}])
+
+          environment
+          (assoc base-environment :router router)
+
+          sent
+          (atom [])
+
+          dense
+          (apply str (repeat 200 "result ąć中文={x:17}; "))
+
+          replay
+          (fn [size producing-model]
+            [{:role "system" :content "System instructions"}
+             {:role "user" :content "Check the result"}
+             {:role "assistant"
+              :model producing-model
+              :content
+              [{:type "thinking"
+                :thinking "brief"
+                :thinking-signature (json/write-json-str {:type "reasoning"
+                                                          :id "rs_test"
+                                                          :encrypted_content (apply str
+                                                                               (repeat size "A"))
+                                                          :summary []})}
+               {:type "tool_use" :id "call_1" :name "python_execution" :input {:code "print(1)"}}]}
+             {:role "user"
+              :content [{:type "tool_result"
+                         :tool_use_id "call_1"
+                         :content [{:type "text" :text dense}]}]}])]
+
+      (try (with-redefs [svar-llm/openai-responses-completion
+                         (fn [body _]
+                           (swap! sent conj body)
+                           {:content "Done."
+                            :api-usage {:input-tokens (+ 100 (count @sent)) :output-tokens 1}})]
+             (doseq [messages [(replay 1000 model) (replay 2000 model) (replay 2000 "gpt-5.6-sol")
+                               [{:role "system" :content "Fold checkpoint"}
+                                {:role "user" :content "Resume work"}]]]
+               (let [result (lp/run-iteration environment
+                                              messages
+                                              {:resolved-model {:provider :prepared-test
+                                                                :name model}})
+                     health (:request-health result)
+                     expected (svar-router/count-responses-request model (last @sent))]
+
+                 (expect (= :prepared-request (:counted-projection health)))
+                 (expect (= model (:token-count-model health)))
+                 (expect (= expected
+                            (:estimated-input-tokens health)
+                            (reduce + 0 (map :tokens (:breakdown health)))))
+                 (expect (= (+ 100 (count @sent)) (get-in result [:api-usage :input-tokens])))
+                 (expect (not (str/includes? (pr-str health) dense))))))
+           (finally (lp/dispose-environment! base-environment))))))
 
 (defdescribe
   context-overflow-logging-test

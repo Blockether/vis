@@ -149,6 +149,7 @@ export interface SessionHealthData {
   iteration?: number;
   measured_at?: number;
   stale?: boolean;
+  counted_projection?: "prepared-request" | "logical-request";
   breakdown?: { label: string; tokens: number; path?: string }[];
   roots?: {
     path: string;

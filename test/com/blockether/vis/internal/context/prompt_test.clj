@@ -81,6 +81,45 @@
         (expect (< (+ 1000 (svar-router/count-responses-request model prepared))
                    (reduce + (map :tokens (:breakdown health)))))
         (expect (not (str/includes? (pr-str health) signature)))))
+  (it "uses Svar's prepared components without recounting logical messages or tools"
+      ;; #186: the prepared request can omit replay that the logical tokenizer counts.
+      (let [accounting {:source :svar-estimate
+                        :projection :prepared-request
+                        :model "gpt-6-astra"
+                        :api-style :openai-compatible-responses
+                        :input-tokens 123
+                        :components
+                        {:messages 90 :instructions 20 :tools 8 :output-format 2 :reply-priming 3}}]
+        (with-redefs [svar-router/count-messages (fn [& _]
+                                                   (throw (ex-info "Must not recount" {})))
+                      svar-router/count-tokens (fn [& _]
+                                                 (throw (ex-info "Must not recount" {})))]
+
+          (let [health (prompt/request-health {}
+                                              [{:role "user" :content "private"}]
+                                              [{:name "private-tool"}]
+                                              "gpt-6-astra"
+                                              accounting)]
+            (expect (= :prepared-request (:counted-projection health)))
+            (expect (= :svar-estimate (:token-count-source health)))
+            (expect (= "gpt-6-astra" (:token-count-model health)))
+            (expect (= 123
+                       (:estimated-input-tokens health)
+                       (reduce + 0 (map :tokens (:breakdown health)))))
+            (expect (= [20 90 8 2 3] (mapv :tokens (:breakdown health))))
+            (expect (not (str/includes? (pr-str health) "private")))))))
+  (it "does not accept accounting for a different model or inconsistent components"
+      (doseq [accounting [{:model "other" :input-tokens 3 :components {:reply-priming 3}}
+                          {:model "gpt-6-astra" :input-tokens 5 :components {:reply-priming 3}}]]
+        (let [health (prompt/request-health
+                       {}
+                       []
+                       []
+                       "gpt-6-astra"
+                       (merge {:source :svar-estimate :projection :prepared-request} accounting))]
+          (expect (= :unavailable (:token-count-source health)))
+          (expect (empty? (:breakdown health)))
+          (expect (nil? (:estimated-input-tokens health))))))
   (it "names foldable prior-turn recaps separately from user requests"
       (let [messages
             (prompt/assemble-initial-messages

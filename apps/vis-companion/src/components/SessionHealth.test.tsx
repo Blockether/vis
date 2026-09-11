@@ -90,6 +90,43 @@ describe("session health in metrics", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("uses the persisted prepared projection without changing measured utilization", async () => {
+    render(
+      <SessionStatsPanel
+        session={STORY_SESSION_ROW}
+        usage={{
+          ...STORY_HEALTH_USAGE,
+          health: {
+            last_request_tokens: 100,
+            budget_tokens: 200,
+            call: 4,
+            counted_projection: "prepared-request",
+            breakdown: [
+              { label: "Conversation and tool results", tokens: 120 },
+            ],
+          },
+        }}
+        phase="ready"
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Context breakdown/ }),
+    );
+    expect(
+      screen.getByText("Prepared request · not measured usage"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/full prepared request after provider adaptation/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/before provider adaptation/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("120 tokens")).toBeInTheDocument();
+    expect(screen.getByText("+20 tokens (+20.0%)")).toBeInTheDocument();
+    expect(screen.getByRole("meter")).toHaveAttribute("value", "100");
+    expect(screen.getByText("50%")).toBeInTheDocument();
+  });
+
   it.each([
     [100, 90, "−10 tokens (−10.0%)"],
     [100, 100, "0 tokens (0.0%)"],

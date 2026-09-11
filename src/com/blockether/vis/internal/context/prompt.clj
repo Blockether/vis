@@ -895,60 +895,84 @@
                              :else {:status "missing"}))
                      (catch Exception _ {:status "error"})))))
 
-(defn request-health
-  "Content-free provenance for the logical request handed to Svar, BEFORE adaptation.
+(defn- prepared-request-parts
+  "Project Svar's content-free components into UI labels without rescaling them."
+  [model {:keys [source projection input-tokens components] :as accounting}]
+  (when-not (and (= :svar-estimate source)
+                 (= :prepared-request projection)
+                 (= model (:model accounting))
+                 (integer? input-tokens)
+                 (not (neg? (long input-tokens)))
+                 (every? #(and (integer? %) (not (neg? (long %)))) (vals components))
+                 (= input-tokens (reduce + 0 (vals components))))
+    (throw (ex-info "Prepared request accounting unavailable" {})))
+  (let [parts (into []
+                    (keep (fn [[key label]]
+                            (when-let [tokens (get components key)]
+                              (when (pos? tokens) {:label label :tokens tokens}))))
+                    [[:instructions "System instructions"]
+                     [:messages "Conversation and tool results"] [:tools "Tool declarations"]
+                     [:output-format "Output format"] [:reply-priming "Reply framing"]])]
+    (when-not (= input-tokens (reduce + 0 (map :tokens parts)))
+      (throw (ex-info "Prepared request components unavailable" {})))
+    parts))
 
-   The breakdown and its total include tools and canonical messages. Svar tokenizes
-   text/tool payloads and estimates images, reasoning and message framing. This is
-   NOT Svar's prepared-request preflight count: adapters may drop or reshape replay
-   content. Neither estimate replaces same-request provider usage for utilization.
-   Metadata attributes sent guidance without rereading or double-counting it.
-   An absent model uses Svar's fallback encoding. Root guidance is disk-only."
-  [environment messages tools & [model]]
+(defn request-health
+  "Content-free provenance for one request. Prefer Svar's final :request-accounting
+   over recounting canonical messages: Responses replay filtering, tool shaping and
+   body overrides have already happened. Its components are not rescaled to usage.
+   Wires without prepared accounting retain explicitly labelled logical estimates.
+   Neither estimate replaces same-request provider usage for utilization. Root
+   guidance is disk-only; logical metadata attributes guidance without rereading it."
+  [environment messages tools & [model accounting]]
   (try
     (let [model
           (or model "unknown")
 
           priming
-          (svar-router/count-messages model [])
+          (if accounting 0 (svar-router/count-messages model []))
 
           parts
-          (mapcat
-            (fn [message]
-              (let [total
-                    (- (svar-router/count-messages model [message]) priming)
+          (if accounting
+            (prepared-request-parts model accounting)
+            (mapcat
+              (fn [message]
+                (let [total
+                      (- (svar-router/count-messages model [message]) priming)
 
-                    overhead
-                    (- (svar-router/count-messages model [(assoc message :content "")]) priming)
+                      overhead
+                      (- (svar-router/count-messages model [(assoc message :content "")]) priming)
 
-                    [known remainder]
-                    (reduce
-                      (fn [[rows left] part]
-                        (let [tokens (min (long left)
-                                          (max 0
-                                               (- (svar-router/count-messages
-                                                    model
-                                                    [(assoc message :content (:content part))])
-                                                  priming
-                                                  overhead)))]
-                          [(conj rows (assoc (select-keys part [:label :path]) :tokens tokens))
-                           (- (long left) tokens)]))
-                      [[] total]
-                      (::parts (meta message)))]
+                      [known remainder]
+                      (reduce
+                        (fn [[rows left] part]
+                          (let [tokens (min (long left)
+                                            (max 0
+                                                 (- (svar-router/count-messages
+                                                      model
+                                                      [(assoc message :content (:content part))])
+                                                    priming
+                                                    overhead)))]
+                            [(conj rows (assoc (select-keys part [:label :path]) :tokens tokens))
+                             (- (long left) tokens)]))
+                        [[] total]
+                        (::parts (meta message)))]
 
-                (cond-> known
-                  (pos? remainder)
-                  (conj {:label (if (#{"system" "developer"} (:role message))
-                                  "System instructions"
-                                  "Conversation and tool results")
-                         :tokens remainder}))))
-            messages)
+                  (cond-> known
+                    (pos? remainder)
+                    (conj {:label (if (#{"system" "developer"} (:role message))
+                                    "System instructions"
+                                    "Conversation and tool results")
+                           :tokens remainder}))))
+              messages))
 
           parts
-          (cond-> (conj (vec parts) {:label "Message framing" :tokens priming})
-            (seq tools)
-            (conj {:label "Tool declarations"
-                   :tokens (svar-router/count-tokens model (json/write-json-str tools))}))
+          (if accounting
+            parts
+            (cond-> (conj (vec parts) {:label "Message framing" :tokens priming})
+              (seq tools)
+              (conj {:label "Tool declarations"
+                     :tokens (svar-router/count-tokens model (json/write-json-str tools))})))
 
           groups
           (group-by (juxt :label :path) parts)
@@ -958,7 +982,7 @@
 
       {:token-count-source :svar-estimate
        :token-count-model model
-       :counted-projection :logical-request
+       :counted-projection (if accounting :prepared-request :logical-request)
        :estimated-input-tokens (reduce + 0 (map :tokens parts))
        :breakdown (mapv (fn [key]
                           (let [rows (get groups key)]
@@ -973,6 +997,6 @@
     (catch Exception _
       {:token-count-source :unavailable
        :token-count-model (or model "unknown")
-       :counted-projection :logical-request
+       :counted-projection (if accounting :prepared-request :logical-request)
        :breakdown []
        :roots []})))

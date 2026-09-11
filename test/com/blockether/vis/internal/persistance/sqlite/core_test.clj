@@ -45,7 +45,11 @@
           {:budget-tokens 200000
            :reminder-tokens 150000
            :model-input-limit 272000
-           :breakdown [{:label "Main AGENTS.md" :tokens 42 :path "/work/AGENTS.md"}]
+           ;; #186: the projection and estimate survive storage independently of usage.
+           :counted-projection :prepared-request
+           :token-count-source :svar-estimate
+           :estimated-input-tokens 33000
+           :breakdown [{:label "System instructions" :tokens 33000}]
            :roots [{:path "/work/linked"}]}]
 
       (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 90000 "output" 2}})

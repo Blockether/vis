@@ -538,6 +538,7 @@ export function SessionStatsPanel({
     modelInputLimit: measured.model_input_limit,
     call: measured.call,
     stale: measured.stale,
+    countedProjection: measured.counted_projection,
     breakdown: measured.breakdown,
     roots: measured.roots?.map((item) => ({
       path: item.path,

@@ -5043,9 +5043,9 @@
             :iteration (inc (long (or iteration 0)))})))
 
 (defn- log-context-token-counts!
-  "Compare the persisted logical-request estimate (including tools) with its own
-   response usage, not a previous request or retry. Neither is the prepared-request
-   preflight count. Reasoning contributes only sizes to the log; failure is non-fatal."
+  "Compare the persisted request estimate with its own response usage, not a prior
+   request or retry. The health record names the prepared or logical projection.
+   Reasoning contributes only logical aggregate sizes; counting failure is non-fatal."
   [messages health provider model request-context observation]
   (let [local-tokens
         (:estimated-input-tokens health)
@@ -5344,11 +5344,17 @@
                                                       first-output-timeout-ms)
                  (catch Exception e
                    (when (perr/context-overflow-error? e)
-                     (let [model
-                           (or (:model (ex-data e)) (:name resolved-model) (:model resolved-model))]
+                     (let [model (or (get-in (ex-data e) [:request-accounting :model])
+                                     (:model (ex-data e))
+                                     (:name resolved-model)
+                                     (:model resolved-model))]
                        (log-context-token-counts!
                          messages
-                         (prompt/request-health environment messages provider-tools model)
+                         (prompt/request-health environment
+                                                messages
+                                                provider-tools
+                                                model
+                                                (:request-accounting (ex-data e)))
                          (:provider resolved-model)
                          model
                          request-context
@@ -5401,10 +5407,13 @@
           fold-measurement (get (some-> (:ctx-atom environment)
                                         deref)
                                 "engine_fold_measurement")
-          request-health
-          (cond-> (prompt/request-health environment messages provider-tools actual-model)
-            fold-measurement
-            (assoc :fold-measurement fold-measurement))
+          request-health (cond-> (prompt/request-health environment
+                                                        messages
+                                                        provider-tools
+                                                        actual-model
+                                                        (:request-accounting ask-result))
+                           fold-measurement
+                           (assoc :fold-measurement fold-measurement))
           _ (log-context-token-counts! messages
                                        request-health
                                        actual-provider
