@@ -56,8 +56,16 @@ describe('desktop release signing', () => {
     }
     expect(workflow).toContain('Missing required signing credential: $name');
     expect(workflow).toContain("APPLE_SIGNING_IDENTITY: 'Developer ID Application:");
-    expect(workflow).toContain('export APPLE_API_KEY_PATH');
-    expect(workflow).toContain(`trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT`);
+    expect(workflow).toContain('export APPLE_API_KEY_PATH=');
+    expect(workflow).toContain('trap cleanup EXIT');
+    expect(workflow).toContain('security list-keychains -d user -s "${original_keychains[@]}"');
+    expect(workflow).toContain('security delete-keychain "$keychain"');
+    // The first signed CI run failed with errSecInternalComponent on the shared Mac.
+    expect(workflow).toContain('security list-keychains -d user -s "$keychain"');
+    expect(workflow).toContain('security set-key-partition-list -S apple-tool:,apple:,codesign:');
+    expect(workflow).toContain('for certificate in DeveloperIDCA DeveloperIDG2CA');
+    expect(workflow).toContain('unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD VIS_ASC_KEY');
+    expect(workflow.indexOf('codesign --force --timestamp')).toBeLessThan(workflow.lastIndexOf('npm run package:desktop'));
     for (const check of ['codesign --verify --deep --strict', 'xcrun stapler validate', 'spctl --assess --type execute']) {
       expect(workflow.indexOf(check)).toBeGreaterThan(workflow.indexOf('name: Sign and notarize macOS'));
       expect(workflow.indexOf(check)).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));

@@ -107,8 +107,7 @@ jobs:
         if: runner.os == 'Linux'
         run: npm run package:desktop
 
-      # Tauri imports APPLE_CERTIFICATE into a temporary signing keychain.
-      # Its notarization step signs, submits to Apple, and staples the app.
+      # Isolate CI signing from locked or duplicate identities in the login keychain.
       - name: Sign and notarize macOS with Pake
         if: runner.os == 'macOS'
         env:
@@ -124,10 +123,42 @@ jobs:
             test -n "${!name}" || { echo "Missing required signing credential: $name" >&2; exit 1; }
           done
           umask 077
-          APPLE_API_KEY_PATH="$(mktemp "$RUNNER_TEMP/vis-desktop-key.XXXXXX")"
-          export APPLE_API_KEY_PATH
-          trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
+          signing_dir="$(mktemp -d "$RUNNER_TEMP/vis-desktop-signing.XXXXXX")"
+          keychain="$signing_dir/signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          echo "::add-mask::$keychain_password"
+          original_keychains=()
+          while IFS= read -r line; do
+            line="${line#*\"}"
+            original_keychains+=("${line%\"*}")
+          done < <(security list-keychains -d user)
+          cleanup() {
+            security list-keychains -d user -s "${original_keychains[@]}"
+            security delete-keychain "$keychain" || true
+            rm -rf "$signing_dir"
+          }
+          trap cleanup EXIT
+          export APPLE_API_KEY_PATH="$signing_dir/AuthKey_$APPLE_API_KEY.p8"
           printf '%s\n' "$VIS_ASC_KEY" > "$APPLE_API_KEY_PATH"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$signing_dir/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing_dir/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # codesign also needs Apple's intermediate certificates to build its trust chain.
+          for certificate in DeveloperIDCA DeveloperIDG2CA; do
+            curl --fail --silent --show-error --location "https://www.apple.com/certificateauthority/$certificate.cer" -o "$signing_dir/$certificate.cer"
+            security import "$signing_dir/$certificate.cer" -k "$keychain" > /dev/null
+          done
+          security list-keychains -d user -s "$keychain"
+          security find-identity -v -p codesigning "$keychain"
+          # Fail before compilation if noninteractive signing is unavailable.
+          cp /usr/bin/true "$signing_dir/signing-probe"
+          codesign --force --timestamp --options runtime --keychain "$keychain" --sign "$APPLE_SIGNING_IDENTITY" "$signing_dir/signing-probe"
+          codesign --verify --strict "$signing_dir/signing-probe"
+          # Use the prepared keychain, not Tauri's second certificate import.
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD VIS_ASC_KEY
           npm run package:desktop
 
       - name: Verify macOS signature and notarization
