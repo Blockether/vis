@@ -177,7 +177,10 @@ def load_recovery_run(repository: str, run_id: int, *, native: bool = False) -> 
         names = {f"native / vis-agent-linux-{arch}.tar.gz" for arch in ("x64", "arm64")}
         for job in run["jobs"]:
             if job["name"] in names:
-                log = gh(f"repos/{repository}/actions/jobs/{job['id']}/logs")
+                log = gh(
+                    "--allow-escape-sequences",
+                    f"repos/{repository}/actions/jobs/{job['id']}/logs",
+                )
                 log = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", log)
                 job["checkout_shas"] = re.findall(
                     r"\bgit log -1 --format=%H\r?\n[^\n]*?\b([0-9a-f]{40})\b", log

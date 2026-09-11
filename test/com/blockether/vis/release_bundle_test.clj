@@ -2551,7 +2551,7 @@
              "for t, commit in [('main', sha), (tag, 'bad')]:" "    try: check(t=t, commit=commit)"
              "    except ValueError: pass"
              "    else: raise AssertionError('accepted invalid release identity')"
-             "log = '2026-01-01T00:00:00Z [command]/usr/bin/git log -1 --format=%H\\n2026-01-01T00:00:00Z ' + sha + '\\n'"
+             "log = chr(27) + '[32m2026-01-01T00:00:00Z [command]/usr/bin/git log -1 --format=%H' + chr(10) + '2026-01-01T00:00:00Z ' + sha + chr(27) + '[0m' + chr(10)"
              "run = {key: value for key, value in native.items() if key != 'jobs'}"
              "pages = [{'jobs': [dict(job)]} for job in native['jobs']]" "for page in pages:"
              "    page['jobs'][0].pop('checkout_shas')"
@@ -2560,6 +2560,7 @@
              "    assert request.call_count == 4"
              "    assert '--paginate' in request.call_args_list[1].args[0]"
              "    assert '--slurp' in request.call_args_list[1].args[0]"
+             "    assert all('--allow-escape-sequences' in call.args[0] for call in request.call_args_list[2:])"
              "print(f'{len(cases) + 2} unsafe recovery cases refused; matching source and repaired native checks accepted')"])]
          {})]
       (expect (zero? exit) output))))
