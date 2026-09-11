@@ -564,53 +564,41 @@
                         (get summary "turns"))))
               v)
 
-        n
-        (count v)
+        ;; Largest first, newest first on ties: every possible surviving coverer
+        ;; is already known when an entry is visited. Dropped entries never need
+        ;; another comparison. The sorted set chooses the earliest ORIGINAL
+        ;; survivor when several incomparable supersets can inherit turn intent.
+        ;; O(n*m*s + n log n), m = survivors, s = subset-comparison cost;
+        ;; nested/equal folds have m=1, rather than the former cubic scan (#207).
+        [survivors covered-by]
+        (reduce (fn [[survivors covered-by] i]
+                  (let [si (nth coverage i)]
+                    (if-let [j (when (seq si)
+                                 (some (fn [j]
+                                         (when (every? (nth coverage j) si) j))
+                                       survivors))]
+                      [survivors (assoc covered-by i j)]
+                      [(conj survivors i) covered-by])))
+                [(sorted-set) {}]
+                (sort-by #(count (nth coverage %)) > (reverse (range (count v)))))
 
-        covered?
-        (fn [i]
-          (let [si (nth coverage i)]
-            (and (seq si)
-                 (boolean (some (fn [j]
-                                  (when (not= i j)
-                                    (let [sj (nth coverage j)]
-                                      (and (every? sj si)           ; si ⊆ sj
-                                           (or (not (every? si sj)) ; proper subset → superset wins
-                                               (< (long i) (long j))))))) ; equal → later wins
-                                (range n))))))
-
-        ;; A covered summary's whole-turn intent must survive on a SURVIVING
-        ;; coverer (coverage is transitive, so one always exists when i is
-        ;; covered): index → extra turns to merge.
-        surviving-coverer
-        (fn [i]
-          (let [si (nth coverage i)]
-            (some (fn [j]
-                    (when (and (not= i j)
-                               (not (covered? j))
-                               (let [sj (nth coverage j)]
-                                 (and (every? sj si)
-                                      (or (not (every? si sj)) (< (long i) (long j))))))
-                      j))
-                  (range n))))
-
+        ;; Merge in input order, using the ORIGINAL coverage above. Transferred
+        ;; intent must not change which other summaries are superseded.
         merged-turns
-        (reduce (fn [m i]
-                  (let [ts (get (nth v i) "turns")]
-                    (if (and (covered? i) (seq ts))
-                      (if-let [j (surviving-coverer i)]
-                        (update m j (fnil into #{}) ts)
-                        m)
-                      m)))
-                {}
-                (range n))]
+        (reduce-kv (fn [m i s]
+                     (let [ts (get s "turns")]
+                       (if-let [j (and (seq ts) (get covered-by i))]
+                         (update m j (fnil into #{}) ts)
+                         m)))
+                   {}
+                   v)]
 
-    (vec (keep-indexed (fn [i s]
-                         (when-not (covered? i)
-                           (if-let [extra (get merged-turns i)]
-                             (update s "turns" (fnil into #{}) extra)
-                             s)))
-                       v))))
+    (mapv (fn [i]
+            (let [s (nth v i)]
+              (if-let [extra (get merged-turns i)]
+                (update s "turns" (fnil into #{}) extra)
+                s)))
+          survivors)))
 
 (defn- int-runs
   "Collapse a seq of integers into ascending inclusive `[lo hi]` runs of

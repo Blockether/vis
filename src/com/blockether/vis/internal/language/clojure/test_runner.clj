@@ -18,7 +18,7 @@
    hosts that do not have the vis-agent extension on their classpath."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.java.shell :as shell]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [clojure.string :as str]
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.internal.language.clojure.repl-manager :as repl-manager]
@@ -1357,6 +1357,53 @@
           (present? "bb.edn") {:tool :bb :cmd ["bb" "test"] :selectors? false}
           :else nil)))
 
+(defn- test-deadline [] (+ (System/nanoTime) (* (long rt/RUN_TESTS_TIMEOUT_MS) 1000000)))
+
+(defn- timeout-error [] (str "test run timed out after " rt/RUN_TESTS_TIMEOUT_MS "ms"))
+
+(defn- run-command
+  "Run one owned subprocess within an absolute monotonic deadline. Files retain
+   complete stdout/stderr without reader futures or pipes a grandchild can hold
+   open. Timeout and interruption tear down the tree before this call returns."
+  [root argv deadline]
+  (try (if (<= (long deadline) (System/nanoTime))
+         {:exit -1 :out "" :err "" :timed-out true}
+         (let [dir
+               (java.nio.file.Files/createTempDirectory
+                 "vis-test-run-"
+                 (make-array java.nio.file.attribute.FileAttribute 0))
+
+               out
+               (io/file (str dir) "stdout")
+
+               err
+               (io/file (str dir) "stderr")]
+
+           (try (let [p
+                      (.start (doto (ProcessBuilder. ^java.util.List (vec argv))
+                                (.directory (io/file root))
+                                (.redirectOutput out)
+                                (.redirectError err)))
+
+                      done?
+                      (try (.close (.getOutputStream p))
+                           (.waitFor p
+                                     (max 0 (- (long deadline) (System/nanoTime)))
+                                     java.util.concurrent.TimeUnit/NANOSECONDS)
+                           (finally (when (.isAlive p) (shell/kill-tree! p))))]
+
+                  (cond-> {:exit (if (.isAlive p) -1 (.exitValue p))
+                           :out (slurp out)
+                           :err (slurp err)
+                           :timed-out (not done?)}
+                    (.isAlive p)
+                    (assoc :err (str (slurp err) "\nCould not terminate test process"))))
+                (finally (java.nio.file.Files/deleteIfExists (.toPath out))
+                         (java.nio.file.Files/deleteIfExists (.toPath err))
+                         (java.nio.file.Files/deleteIfExists dir)))))
+       (catch InterruptedException e (.interrupt (Thread/currentThread)) (throw e))
+       (catch Exception e {:exit -1 :out "" :err (ex-message e)})))
+
 (defn- run-via-cli
   "Run the discovered command in a clean JVM. Exit zero is insufficient: require
    a nonempty test summary, preserve effective namespace focus, and report the
@@ -1402,8 +1449,7 @@
       (assoc base "error" "this runner has no supported focus adapter; no tests started")
       :else
       (let [res
-            (try (apply shell/sh (concat cmd [:dir (str root)]))
-                 (catch Throwable t {:exit -1 :out "" :err (ex-message t)}))
+            (run-command root cmd (test-deadline))
 
             out
             (command-output res)
@@ -1428,6 +1474,7 @@
                   "output" out
                   "failures" (cli-failures root out)
                   "is_pass" (boolean (and (zero? exit)
+                                          (not (:timed-out res))
                                           ran?
                                           (pos? (long cases))
                                           (zero? faults)
@@ -1452,7 +1499,12 @@
 
           ignored-focus?
           (assoc "error"
-            "Kaocha ignored an unmatched metadata filter; the requested focus was not verified"))))))
+            "Kaocha ignored an unmatched metadata filter; the requested focus was not verified")
+
+          (:timed-out res)
+          (assoc "timed_out"
+            true "error"
+            (timeout-error)))))))
 
 (defn- karma-summary-counts
   "Karma reports TOTAL or completed per-browser progress. Keep earlier failures,
@@ -1541,13 +1593,15 @@
     (if error
       (assoc base "error" error)
       (let
-        [ran
+        [deadline
+         (test-deadline)
+
+         ran
          (reduce
            (fn [acc {:keys [argv compile?]}]
              (let
                [res
-                (try (apply shell/sh (concat argv [:dir (str root)]))
-                     (catch Throwable t {:exit -1 :out "" :err (ex-message t)}))
+                (run-command root argv deadline)
 
                 out
                 (command-output res)
@@ -1570,7 +1624,12 @@
                 (cond-> acc
                   (and (zero? (:exit acc)) (not compiled?))
                   (assoc :error
-                    "shadow-cljs did not confirm compilation; nothing verified and no stale JavaScript executed"))]
+                    "shadow-cljs did not confirm compilation; nothing verified and no stale JavaScript executed")
+
+                  (:timed-out res)
+                  (assoc :timed-out
+                    true :error
+                    (timeout-error)))]
 
                (if (and (zero? (long (:exit acc))) (not (:error acc))) acc (reduced acc))))
            {:out "" :exit 0 :cmds []}
@@ -1634,7 +1693,12 @@
           (assoc "error"
             (str "shadow-cljs ran 0 tests for build "
                  build
-                 " — check the namespace selection and the configured source paths/classpath")))))))
+                 " — check the namespace selection and the configured source paths/classpath"))
+
+          (:timed-out ran)
+          (assoc "timed_out"
+            true "error"
+            (timeout-error)))))))
 
 (defn- run-via-shadow
   "Own one run's output directory through compilation and Node execution.

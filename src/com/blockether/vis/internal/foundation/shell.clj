@@ -573,58 +573,55 @@
          ::cleanup (::cleanup policy))
        (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
-(defn- kill-tree!
-  "Destroy a spawned process + every descendant reachable via `ProcessHandle.of
-   pid`: polite SIGTERM first, then a forced SIGKILL after a 2s grace. Accepts
-   EITHER a `java.lang.Process` (the sync run's ProcessBuilder path) or the
-   pty HANDLE MAP (the bg path); both spawn genuine OS processes reachable
-   via `ProcessHandle`. Never throws (teardown path). NOTE: a deliberately-
-   detaching child (`setsid`/double-fork/`nohup … &`) reparents to init and
-   escapes this reach — the registry still drops cleanly and the pump is unblocked
-   by closing the stream in the stop-fn, but the orphan keeps running."
+(defn kill-tree!
+  "Destroy an OWNED process and its reachable descendants: TERM, then KILL after
+   a 2s grace, then wait up to 2s for exit and reap the owned Process. Used by
+   shells and one-shot test runners; never use on an externally owned REPL.
+   Accepts a java.lang.Process or a PTY handle map. Never throws; preserves
+   interrupts without letting cancellation skip escalation. A child that has
+   already detached/reparented before the snapshot is outside this tree."
   [p]
-  (try (let [pid
-             (if (map? p) (:pid p) (.pid ^Process p))
+  (let [interrupted? (volatile! (Thread/interrupted))]
+    (try (let [pid (if (map? p) (:pid p) (.pid ^Process p))
+               destroy (if (map? p)
+                         (:destroy p)
+                         (fn [force?]
+                           (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
+               ^ProcessHandle ph (.orElse (ProcessHandle/of pid) nil)
+               descendants (if ph
+                             (with-open [stream (.descendants ph)]
+                               (vec (iterator-seq (.iterator stream))))
+                             [])
+               alive? (fn []
+                        (or (and ph (.isAlive ph))
+                            (some (fn [^ProcessHandle d]
+                                    (.isAlive d))
+                                  descendants)))
+               await-exit! (fn []
+                             (let [deadline (+ (System/nanoTime) 2000000000)]
+                               (loop []
 
-             destroy
-             (if (map? p)
-               (:destroy p)
-               (fn [force?]
-                 (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
+                                 (when (and (alive?) (< (System/nanoTime) deadline))
+                                   (try (Thread/sleep 50)
+                                        (catch InterruptedException _ (vreset! interrupted? true)))
+                                   (recur)))))]
 
-             ^ProcessHandle ph
-             (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
-
-             descendants
-             (if ph
-               (with-open [stream (.descendants ph)]
-                 (vec (iterator-seq (.iterator stream))))
-               [])
-
-             alive?
-             (fn []
-               (or (and ph (.isAlive ph))
-                   (some (fn [^ProcessHandle d]
-                           (.isAlive d))
-                         descendants)))]
-
-         ;; Retain handles before TERM: children can be reparented when the launcher exits.
-         (run! (fn [^ProcessHandle d]
-                 (try (.destroy d) (catch Throwable _ nil)))
-               descendants)
-         (destroy false)
-         (let [deadline (+ (util/now-ms) 2000)]
-           (loop []
-
-             (when (and (alive?) (< (util/now-ms) deadline)) (Thread/sleep 50) (recur))))
-         ;; A dead launcher does not imply that its children honored TERM.
-         (run! (fn [^ProcessHandle d]
-                 (try (when (.isAlive d) (.destroyForcibly d)) (catch Throwable _ nil)))
-               descendants)
-         (when (and ph (.isAlive ph)) (destroy true)))
-       ;; A cancel landing mid-kill still has a session to unwind: keep the
-       ;; interrupt, never let the tree teardown swallow it.
-       (catch Throwable t (cancellation/preserve-interrupt! t) nil))
+           ;; Keep handles before TERM: a launcher can exit before its children.
+           (run! (fn [^ProcessHandle d]
+                   (try (.destroy d) (catch Throwable _ nil)))
+                 descendants)
+           (destroy false)
+           (await-exit!)
+           (run! (fn [^ProcessHandle d]
+                   (try (when (.isAlive d) (.destroyForcibly d)) (catch Throwable _ nil)))
+                 descendants)
+           (when (and ph (.isAlive ph)) (destroy true))
+           (await-exit!)
+           (when (instance? Process p)
+             (try (.waitFor ^Process p 0 TimeUnit/MILLISECONDS)
+                  (catch InterruptedException _ (vreset! interrupted? true)))))
+         (catch Throwable t (cancellation/preserve-interrupt! t))
+         (finally (when @interrupted? (.interrupt (Thread/currentThread))))))
   nil)
 
 ;; BLOCKING runner — INTERNAL only (`run-blocking`, `run-argv`, the bang path)

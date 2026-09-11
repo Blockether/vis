@@ -2428,7 +2428,13 @@
   shell-stop-stubborn-child-test
   (it
     "kills a TERM-resistant child even when its parent exits first"
-    (doseq [pty? [false true]]
+    ;; #207: cancellation must not skip the force-kill phase.
+    (doseq [pty?
+            [false true]
+
+            interrupted?
+            [false true]]
+
       (let
         [p
          (.start
@@ -2436,28 +2442,31 @@
              ^java.util.List
              ["bash" "-c"
               "trap 'exit 0' TERM; bash -c 'trap \"\" TERM HUP; echo $$; exec sleep 300' & wait"]))
-         child (atom nil)]
+
+         child
+         (atom nil)]
 
         (try (with-open [reader (io/reader (.getInputStream p))]
                (let [line (future (.readLine ^java.io.BufferedReader reader))]
                  (reset! child (parse-long (deref line 5000 "")))))
              (expect (some? @child))
-             (#'shell/kill-tree!
-              (if pty?
-                {:pid (.pid p)
-                 :destroy (fn [force?]
-                            (if force? (.destroyForcibly p) (.destroy p)))}
-                p))
+             (when interrupted? (.interrupt (Thread/currentThread)))
+             (shell/kill-tree! (if pty?
+                                 {:pid (.pid p)
+                                  :destroy (fn [force?]
+                                             (if force? (.destroyForcibly p) (.destroy p)))}
+                                 p))
+             (expect (= interrupted? (Thread/interrupted)))
              (expect (not (.isAlive p)))
              ;; Escalation must follow the child, not the parent's lifetime.
              (expect (nil? (poll #(when (alive-pid? @child) :alive) nil? 30)))
-             (finally
-               ;; Clean up even against the broken implementation.
-               (when-let [pid @child]
-                 (when-let [h (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
-                   (.destroyForcibly ^java.lang.ProcessHandle h)))
-               (.destroyForcibly p)
-               (.waitFor p)))))))
+             (finally (Thread/interrupted)
+                      ;; Clean up even against the broken implementation.
+                      (when-let [pid @child]
+                        (when-let [h (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
+                          (.destroyForcibly ^java.lang.ProcessHandle h)))
+                      (.destroyForcibly p)
+                      (.waitFor p)))))))
 
 ;; Regression, issue #139: shells started at the SAME MOMENT for the same program
 ;; all derived the one id `sleep` — a single registry entry, log file and attach

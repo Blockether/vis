@@ -12,6 +12,8 @@
             [com.blockether.vis.internal.language.clojure.repl-manager :as repl-manager]
             [com.blockether.vis.internal.language.clojure.shadow-cljs :as shadow]
             [com.blockether.vis.internal.language.clojure.test-runner :as tr]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.foundation.shell :as shell-owner]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private run-via-repl
@@ -464,7 +466,7 @@
                 (fn [_root _sel _aliases]
                   {:tool :clj :cmd ["clojure" "-M:test"]})
 
-                shell/sh
+                tr/run-command
                 (fn [& _]
                   {:exit exit :out out :err err})]
 
@@ -855,9 +857,9 @@
 
 (defn- sh-answering
   "Record commands and answer the execution result. Shadow compile steps get a
-   successful compiler report; tests of compiler failure stub shell/sh directly."
+   successful compiler report; tests of compiler failure stub tr/run-command directly."
   [calls exit out]
-  (fn [& args]
+  (fn [_dir args _deadline]
     (swap! calls conj (vec (take-while string? args)))
     (if-let [build (second (drop-while #(not= "compile" %) args))]
       {:exit 0 :out (str "[:" build "] Build completed. (1 files)\n") :err ""}
@@ -882,20 +884,20 @@
                        err
                        (apply str (repeat 80 "compiler warning\n"))]
 
-                   (with-project cljs-project
-                                 (fn [root]
-                                   (with-redefs [shell/sh (fn [& args]
-                                                            (if (= "node" (first args))
-                                                              {:exit 1 :out test-out :err err}
-                                                              {:exit 0 :out compile-out :err ""}))]
-                                     (let [r (run-via-shadow root ["repro.core-test"] {})]
-                                       (expect (false? (get r "is_pass")))
-                                       (expect (= (str compile-out test-out err) (get r "output")))
-                                       (expect (= "repro.core-test" (get-in r ["failures" 0 "ns"])))
-                                       (expect (= "broken" (get-in r ["failures" 0 "test"])))
-                                       (expect (= "core_test.cljs"
-                                                  (get-in r ["failures" 0 "file"])))
-                                       (expect (= 7 (get-in r ["failures" 0 "line"]))))))))))
+                   (with-project
+                     cljs-project
+                     (fn [root]
+                       (with-redefs [tr/run-command (fn [_dir args _deadline]
+                                                      (if (= "node" (first args))
+                                                        {:exit 1 :out test-out :err err}
+                                                        {:exit 0 :out compile-out :err ""}))]
+                         (let [r (run-via-shadow root ["repro.core-test"] {})]
+                           (expect (false? (get r "is_pass")))
+                           (expect (= (str compile-out test-out err) (get r "output")))
+                           (expect (= "repro.core-test" (get-in r ["failures" 0 "ns"])))
+                           (expect (= "broken" (get-in r ["failures" 0 "test"])))
+                           (expect (= "core_test.cljs" (get-in r ["failures" 0 "file"])))
+                           (expect (= 7 (get-in r ["failures" 0 "line"]))))))))))
 
 (defdescribe
   run-via-shadow-verdict-test
@@ -905,10 +907,11 @@
    all is reported as not passing rather than as a green suite."
   (it "reports the counts of a clean run"
       (let [calls (atom [])]
-        (with-redefs [shell/sh (sh-answering
-                                 calls
-                                 0
-                                 "Ran 3 tests containing 5 assertions.\n0 failures, 0 errors.\n")]
+        (with-redefs [tr/run-command
+                      (sh-answering
+                        calls
+                        0
+                        "Ran 3 tests containing 5 assertions.\n0 failures, 0 errors.\n")]
           (with-project cljs-project
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -920,10 +923,11 @@
                             (expect (= 2 (count @calls)))))))))
   (it "FAILS a run whose tests failed, even though shadow-cljs exited 0"
       (let [calls (atom [])]
-        (with-redefs [shell/sh (sh-answering
-                                 calls
-                                 0
-                                 "Ran 3 tests containing 5 assertions.\n2 failures, 1 errors.\n")]
+        (with-redefs [tr/run-command
+                      (sh-answering
+                        calls
+                        0
+                        "Ran 3 tests containing 5 assertions.\n2 failures, 1 errors.\n")]
           (with-project cljs-project
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -933,7 +937,8 @@
                             (expect (= 1 (get r "errored")))))))))
   (it "FAILS a run that printed no summary at all, rather than calling it green"
       (let [calls (atom [])]
-        (with-redefs [shell/sh (sh-answering calls 0 "shadow-cljs - HELP\n  compile <build>\n")]
+        (with-redefs [tr/run-command
+                      (sh-answering calls 0 "shadow-cljs - HELP\n  compile <build>\n")]
           (with-project cljs-project
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -941,10 +946,11 @@
                             (expect (str/includes? (get r "error") "nothing verified"))))))))
   (it "names the build when the selected namespaces compiled but ran nothing"
       (let [calls (atom [])]
-        (with-redefs [shell/sh (sh-answering
-                                 calls
-                                 0
-                                 "Ran 0 tests containing 0 assertions.\n0 failures, 0 errors.\n")]
+        (with-redefs [tr/run-command
+                      (sh-answering
+                        calls
+                        0
+                        "Ran 0 tests containing 0 assertions.\n0 failures, 0 errors.\n")]
           (with-project cljs-project
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -952,7 +958,7 @@
                             (expect (str/includes? (get r "error") "classpath"))))))))
   (it "reports a project it cannot run as data, and shells nothing"
       (let [calls (atom [])]
-        (with-redefs [shell/sh (sh-answering calls 0 "")]
+        (with-redefs [tr/run-command (sh-answering calls 0 "")]
           (with-project {"test/repro/core_test.cljs" "(ns repro.core-test)\n"}
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
@@ -1097,7 +1103,7 @@
                                        :runner {:main-opts ["-m" "kaocha.runner"]}}})}
         (fn [root]
           (let [calls (atom [])]
-            (with-redefs [shell/sh
+            (with-redefs [tr/run-command
                           (sh-answering calls 0 "3 tests, 5 assertions, 0 failures, 0 errors.\n")]
               (let [r (run-via-cli root {:nses ["sample.core-test"] :aliases ["runner"]})]
                 (expect (str/includes? (get r "command") "--focus sample.core-test"))
@@ -1107,7 +1113,8 @@
       (with-project {"deps.edn" "{:aliases {:test {:extra-paths [\"test\"]}}}"}
                     (fn [root]
                       (let [calls (atom [])]
-                        (with-redefs [shell/sh (sh-answering calls 0 "Clojure 1.12\nuser=>\n")]
+                        (with-redefs [tr/run-command
+                                      (sh-answering calls 0 "Clojure 1.12\nuser=>\n")]
                           (expect (string? (get (run-via-cli root {}) "error")))
                           (expect (empty? @calls)))))))
   (it "refuses unsupported focus before launching a custom runner"
@@ -1115,7 +1122,7 @@
         {"deps.edn" "{:aliases {:test {:main-opts [\"-m\" \"custom.runner\"]}}}"}
         (fn [root]
           (let [calls (atom [])]
-            (with-redefs [shell/sh
+            (with-redefs [tr/run-command
                           (sh-answering
                             calls
                             0
@@ -1123,11 +1130,12 @@
               (expect (string? (get (run-via-cli root {:nses ["sample.core-test"]}) "error")))
               (expect (empty? @calls)))))))
   (it "does not call a zero-test focused run a pass"
-      (with-project
-        {"deps.edn" "{:aliases {:test {:main-opts [\"-m\" \"lazytest.main\"]}}}"}
-        (fn [root]
-          (with-redefs [shell/sh (sh-answering (atom []) 0 "Ran 0 test cases.\n0 failures.\n")]
-            (expect (false? (get (run-via-cli root {:nses ["missing.ns-test"]}) "is_pass"))))))))
+      (with-project {"deps.edn" "{:aliases {:test {:main-opts [\"-m\" \"lazytest.main\"]}}}"}
+                    (fn [root]
+                      (with-redefs [tr/run-command
+                                    (sh-answering (atom []) 0 "Ran 0 test cases.\n0 failures.\n")]
+                        (expect (false? (get (run-via-cli root {:nses ["missing.ns-test"]})
+                                             "is_pass"))))))))
 
 (defdescribe
   runner-configuration-matrix-test
@@ -1181,7 +1189,8 @@
       (fn [root]
         (let [calls (atom [])]
           (with-redefs [repl-manager/live-repl-for-dir (constantly nil)
-                        shell/sh (sh-answering calls 0 "1 tests, 1 assertions, 0 failures.\n")]
+                        tr/run-command
+                        (sh-answering calls 0 "1 tests, 1 assertions, 0 failures.\n")]
 
             (tr/clj-test-fn {:workspace/root root}
                             {"paths" ["test/com/example/thing_test.clj"] "aliases" ["runner"]})
@@ -1204,7 +1213,8 @@
                             {"ns" "sample.core-test/adds-test"}]]
             (let [calls (atom [])]
               (with-redefs [repl-manager/live-repl-for-dir (constantly nil)
-                            shell/sh (sh-answering calls 0 "Ran 1 test cases.\n0 failures.\n")]
+                            tr/run-command
+                            (sh-answering calls 0 "Ran 1 test cases.\n0 failures.\n")]
 
                 (let [result (:result (tr/clj-test-fn {:workspace/root root} selector))]
                   (expect (= {"is_pass" true} (select-keys result ["is_pass" "error"])))
@@ -1300,7 +1310,8 @@
           (doseq [norm [{:vars [{:ns "repro.core-test" :name "one-test"}]} {:include ["slow"]}
                         {:exclude ["slow"]} {:aliases ["frontend"]}]]
             (let [calls (atom [])]
-              (with-redefs [shell/sh (sh-answering calls 0 "Ran 1 tests.\n0 failures, 0 errors.\n")]
+              (with-redefs [tr/run-command
+                            (sh-answering calls 0 "Ran 1 tests.\n0 failures, 0 errors.\n")]
                 (expect (string? (get (run-via-shadow root ["repro.core-test"] norm) "error")))
                 (expect (empty? @calls)))))))))
 
@@ -1334,7 +1345,7 @@
                     1] ["TOTAL: 1 FAILED, 0 SUCCESS\nTOTAL: 1 SUCCESS\n" false 2 1]
                    ["Chrome: Executed 1 of 2 SUCCESS\nFirefox: Executed 1 of 1 SUCCESS\n" false nil
                     nil] ["Chrome: Executed 1 of 1 (1 FAILED)\nTOTAL: 1 SUCCESS\n" false nil nil]]]
-            (with-redefs [shell/sh (sh-answering (atom []) 0 out)]
+            (with-redefs [tr/run-command (sh-answering (atom []) 0 out)]
               (let [r (run-via-shadow root ["repro.core-test"] {})]
                 (expect (= pass? (get r "is_pass")))
                 (expect (= n (get r "selected")))
@@ -1442,7 +1453,7 @@
                         (reset! seen aliases)
                         {:tool :clj :cmd ["clojure" "-M:test:bench"]})
 
-                      shell/sh
+                      tr/run-command
                       (fn [& _]
                         {:exit 0
                          :out "Ran 1 test cases in 0.1 seconds.\n0 failures, 0 errors.\n"
@@ -1505,7 +1516,7 @@
   (it
     "does not let an unrelated later count erase failures in a completed report"
     (with-redefs
-      [shell/sh
+      [tr/run-command
        (sh-answering
          (atom [])
          0
@@ -1516,7 +1527,7 @@
   (it
     "does not pass a later green summary after an earlier failing node run"
     (with-redefs
-      [shell/sh
+      [tr/run-command
        (sh-answering
          (atom [])
          0
@@ -1524,13 +1535,13 @@
       (with-project cljs-project
                     (fn [root]
                       (expect (false? (get (run-via-shadow root [] {}) "is_pass")))))))
-  (it "requires the complete cljs.test failure/error pair"
-      (with-redefs [shell/sh (sh-answering (atom [])
-                                           0
-                                           "Ran 2 tests containing 2 assertions.\n0 failures.\n")]
-        (with-project cljs-project
-                      (fn [root]
-                        (expect (false? (get (run-via-shadow root [] {}) "is_pass"))))))))
+  (it
+    "requires the complete cljs.test failure/error pair"
+    (with-redefs [tr/run-command
+                  (sh-answering (atom []) 0 "Ran 2 tests containing 2 assertions.\n0 failures.\n")]
+      (with-project cljs-project
+                    (fn [root]
+                      (expect (false? (get (run-via-shadow root [] {}) "is_pass"))))))))
 
 (defdescribe
   node-execution-boundary-test
@@ -1540,8 +1551,8 @@
       cljs-project
       (fn [root]
         (with-redefs
-          [shell/sh
-           (fn [& args]
+          [tr/run-command
+           (fn [_dir args _deadline]
              (if (= "node" (first args))
                {:exit 1
                 :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors.\n"
@@ -1555,9 +1566,10 @@
       (with-project cljs-project
                     (fn [root]
                       (let [calls (atom [])]
-                        (with-redefs [shell/sh (fn [& args]
-                                                 (swap! calls conj (first args))
-                                                 {:exit 0 :out "shadow-cljs - HELP\n" :err ""})]
+                        (with-redefs [tr/run-command
+                                      (fn [_dir args _deadline]
+                                        (swap! calls conj (first args))
+                                        {:exit 0 :out "shadow-cljs - HELP\n" :err ""})]
                           (expect (false? (get (run-via-shadow root [] {}) "is_pass")))
                           (expect (= 1 (count @calls))))))))
   (it
@@ -1579,7 +1591,7 @@
 
 (defdescribe
   shadow-output-isolation-test
-  (it "isolates output/dev paths and cleans successful, failed and throwing invocations"
+  (it "isolates output/dev paths and cleans successful, failed and unlaunchable commands"
       ;; Issue #157: never execute or remove a watch-owned bundle.
       (with-project
         (assoc cljs-project
@@ -1591,16 +1603,16 @@
                                                            :output-dir "watch-out"}}}}))
         (fn [root]
           (let [outputs (atom [])]
-            (doseq [outcome [:pass :compile-failure :node-failure :throw]]
+            (doseq [outcome [:pass :compile-failure :node-failure :launch-failure]]
               (let [calls (atom [])]
                 (with-redefs
-                  [shell/sh
-                   (fn [& args]
+                  [tr/run-command
+                   (fn [_dir args _deadline]
                      (swap! calls conj (first args))
                      (if (= "node" (first args))
                        (do (expect (= (last @outputs) (second args)))
-                           (if (= :throw outcome)
-                             (throw (ex-info "fixture launch failure" {}))
+                           (if (= :launch-failure outcome)
+                             {:exit -1 :out "" :err "fixture launch failure"}
                              {:exit (if (= :node-failure outcome) 1 0)
                               :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors.\n"
                               :err ""}))
@@ -1728,31 +1740,31 @@
                     (let [before (eval! snapshot)]
                       (expect (string? before))
                       ;; Force the watch write into the compile/Node gap, not a timing lottery.
-                      (let [real-sh shell/sh
+                      (let [real-command @#'tr/run-command
                             interposed? (atom false)]
 
                         (with-redefs
-                          [shell/sh (fn [& args]
-                                      (when (and (= "node" (first args))
-                                                 (compare-and-set! interposed? false true))
-                                        (spit
-                                          (io/file root "test/repro/fail_test.cljs")
-                                          "\n;; Force a watch rebuild at the execution boundary.\n"
-                                          :append
-                                          true)
-                                        (eval! "(shadow.cljs.devtools.api/watch-compile! :test)"))
-                                      (apply real-sh args))]
+                          [tr/run-command
+                           (fn [dir args deadline]
+                             (when (and (= "node" (first args))
+                                        (compare-and-set! interposed? false true))
+                               (spit (io/file root "test/repro/fail_test.cljs")
+                                     "\n;; Force a watch rebuild at the execution boundary.\n"
+                                     :append
+                                     true)
+                               (eval! "(shadow.cljs.devtools.api/watch-compile! :test)"))
+                             (real-command dir args deadline))]
                           (run! deps-cfg {"ns" "repro.core-test"} true 1))
                         (expect @interposed?))
                       ;; Both compilers must finish before either Node starts. This also
                       ;; exercises shadow's shared compiler cache under overlapping runs.
                       (dotimes [_ 3]
-                        (let [real-sh shell/sh
+                        (let [real-command @#'tr/run-command
                               ready (java.util.concurrent.CountDownLatch. 2)
                               outputs (atom [])]
 
-                          (with-redefs [shell/sh
-                                        (fn [& args]
+                          (with-redefs [tr/run-command
+                                        (fn [dir args deadline]
                                           (when (= "node" (first args))
                                             (swap! outputs conj (second args))
                                             (.countDown ready)
@@ -1761,7 +1773,7 @@
                                                               java.util.concurrent.TimeUnit/SECONDS)
                                               (throw (ex-info "parallel Node barrier timed out"
                                                               {}))))
-                                          (apply real-sh args))]
+                                          (real-command dir args deadline))]
                             (let [runs (mapv (fn [ns-name]
                                                (future (:result (tr/clj-test-fn {:workspace/root
                                                                                  root}
@@ -1825,10 +1837,229 @@
       cljs-project
       (fn [root]
         (with-redefs
-          [shell/sh
+          [tr/run-command
            (sh-answering
              (atom [])
              0
              "Testing repro.core-test\nRan 1 tests containing 1 assertions.\n0 failures, 0 errors.\n")]
           (expect (false? (get (run-via-shadow root ["repro.core-test" "repro.missing-test"] {})
                                "is_pass"))))))))
+
+(defdescribe
+  subprocess-test-timeout-test
+  ;; Regression #207: the clean-JVM path ignored the REPL's run_tests budget.
+  ;; This fixture finishes on its own even against the unbounded implementation.
+  (it "times out and reaps a launcher, child and TERM-resistant grandchild"
+      (with-project
+        {}
+        (fn [root]
+          (with-redefs [rt/RUN_TESTS_TIMEOUT_MS
+                        500
+
+                        tr/cli-command-for
+                        (fn [& _]
+                          {:tool :clj
+                           :cmd ["bash" "-c"
+                                 (str
+                                   "printf 'PARENT=%s\n' $$; "
+                                   "bash -c 'trap \"\" TERM HUP; sleep 5 & "
+                                   "printf \"CHILD=%s GRANDCHILD=%s\\n\" $$ $!; wait' & wait")]})]
+
+            (let [r
+                  (run-via-cli root {})
+
+                  pids
+                  (map (comp parse-long second)
+                       (re-seq #"(?:PARENT|CHILD|GRANDCHILD)=(\d+)" (get r "output")))]
+
+              (expect (true? (get r "timed_out")))
+              (expect (false? (get r "is_pass")))
+              (expect (str/includes? (str (get r "error")) "500ms"))
+              (expect (= 3 (count pids)))
+              (doseq [pid pids]
+                (let [h (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
+                  (try (expect (or (nil? h) (not (.isAlive ^java.lang.ProcessHandle h))))
+                       (finally (when h (.destroyForcibly ^java.lang.ProcessHandle h))))))))))))
+
+(defdescribe
+  subprocess-command-contract-test
+  ;; #207: exercise the actual process boundary, not just a canned shell result.
+  (it
+    "retains complete stdout/stderr, exit status and closes stdin"
+    (with-project
+      {}
+      (fn [root]
+        (let
+          [r
+           (#'tr/run-command
+            root
+            ["bash" "-c"
+             "cat; printf 'first\n'; for ((i=0;i<20000;i++)); do echo output; echo warning >&2; done; printf 'last\n'; exit 7"]
+            (#'tr/test-deadline))]
+          (expect (= 7 (:exit r)))
+          (expect (false? (:timed-out r)))
+          (expect (= (str "first\n" (apply str (repeat 20000 "output\n")) "last\n") (:out r)))
+          (expect (= (apply str (repeat 20000 "warning\n")) (:err r)))))))
+  (it "does not launch another process after its shared deadline expires"
+      (with-project {}
+                    (fn [root]
+                      (let [r (#'tr/run-command root ["bash" "-c" "touch unexpected"] 0)]
+                        (expect (:timed-out r))
+                        (expect (not (.exists (io/file root "unexpected"))))))))
+  (it "reports a failed spawn as data and removes its capture directory"
+      (with-project
+        {}
+        (fn [root]
+          (let [dirs
+                (fn []
+                  (set (filter #(str/starts-with? % "vis-test-run-")
+                               (.list (io/file (System/getProperty "java.io.tmpdir"))))))
+
+                before
+                (dirs)
+
+                r
+                (#'tr/run-command root [(str root "/missing-command")] (#'tr/test-deadline))]
+
+            (expect (= -1 (:exit r)))
+            (expect (str/includes? (:err r) "missing-command"))
+            (expect (= before (dirs)))))))
+  (it "cannot pass a timed-out process even if it printed a pass and exited zero on TERM"
+      (with-project {}
+                    (fn [root]
+                      (with-redefs [tr/cli-command-for
+                                    (fn [& _]
+                                      {:tool :clj :cmd ["fixture"]})
+
+                                    tr/run-command
+                                    (fn [& _]
+                                      {:exit 0
+                                       :out "Ran 1 tests.\n0 failures, 0 errors.\n"
+                                       :err "last warning"
+                                       :timed-out true})]
+
+                        (let [r (run-via-cli root {})]
+                          (expect (false? (get r "is_pass")))
+                          (expect (true? (get r "timed_out")))
+                          (expect (str/includes? (get r "output") "last warning"))))))))
+
+(defdescribe
+  shadow-shared-timeout-test
+  ;; #207: compilation and execution consume ONE REPL-sized budget.
+  (it "shares a deadline, preserves both steps' output and refuses a timed-out pass"
+      (with-project
+        cljs-project
+        (fn [root]
+          (let [deadlines (atom [])]
+            (with-redefs [rt/RUN_TESTS_TIMEOUT_MS 1234
+                          tr/run-command
+                          (fn [_root _argv deadline]
+                            (swap! deadlines conj deadline)
+                            (if (= 1 (count @deadlines))
+                              {:exit 0 :out "[:test] Build completed.\n" :err "compiler warning"}
+                              {:exit 0
+                               :out "Ran 1 tests.\n0 failures, 0 errors.\n"
+                               :err "test warning"
+                               :timed-out true}))]
+
+              (let [r (run-via-shadow root [] {})]
+                (expect (= 2 (count @deadlines)))
+                (expect (apply = @deadlines))
+                (expect (false? (get r "is_pass")))
+                (expect (true? (get r "timed_out")))
+                (expect (str/includes? (get r "error") "1234ms"))
+                (expect (str/includes? (get r "output") "compiler warning"))
+                (expect (str/includes? (get r "output") "test warning"))))))))
+  (it "does not run Node after a compiler timeout, even with a completion banner"
+      (with-project
+        cljs-project
+        (fn [root]
+          (let [calls (atom 0)]
+            (with-redefs [tr/run-command
+                          (fn [& _]
+                            (swap! calls inc)
+                            {:exit 0 :out "[:test] Build completed.\n" :err "" :timed-out true})]
+              (let [r (run-via-shadow root [] {})]
+                (expect (= 1 @calls))
+                (expect (true? (get r "timed_out")))
+                (expect (false? (get r "is_pass"))))))))))
+
+(defdescribe
+  subprocess-cancellation-test
+  ;; #207: interrupt the real CLI and shadow workers after their grandchildren
+  ;; have started. All fixture processes self-expire even if cleanup regresses.
+  (it
+    "propagates interruption only after terminating the owned process tree"
+    (doseq [kind [:cli :shadow]]
+      (with-project
+        {}
+        (fn [root]
+          (let [pid-file (io/file root "pids")
+                command ["bash" "-c"
+                         (str "exec > pids; printf '%s\n' $$; "
+                              "bash -c 'trap \"\" TERM HUP; sleep 8 & "
+                              "printf \"%s %s\\n\" $$ $!; wait' & wait")]
+                result (promise)
+                run! (fn []
+                       (try (deliver
+                              result
+                              (if (= :cli kind) (run-via-cli root {}) (run-via-shadow root [] {})))
+                            (catch InterruptedException _
+                              (deliver result
+                                       {:cancelled true
+                                        :interrupted (.isInterrupted (Thread/currentThread))}))
+                            (catch Throwable e (deliver result e))))]
+
+            (with-redefs [rt/RUN_TESTS_TIMEOUT_MS 60000
+                          tr/cli-command-for (fn [& _]
+                                               {:tool :clj :cmd command})
+                          shadow/run-steps
+                          (fn [& _]
+                            {:build "test" :target :node-test :steps [{:argv command}]})]
+
+              (let [worker (doto (Thread. ^Runnable run!) (.start))
+                    pids (loop [attempts 200]
+                           (let [pids (when (.exists pid-file)
+                                        (mapv parse-long (re-seq #"\d+" (slurp pid-file))))]
+                             (if (or (= 3 (count pids)) (zero? attempts))
+                               pids
+                               (do (Thread/sleep 10) (recur (dec attempts))))))
+                    handles (mapv #(.orElse (java.lang.ProcessHandle/of (long %)) nil) pids)]
+
+                (try (expect (= 3 (count pids)))
+                     (.interrupt worker)
+                     (expect (= {:cancelled true :interrupted true} (deref result 6000 ::pending)))
+                     (doseq [^java.lang.ProcessHandle h handles]
+                       (expect (or (nil? h) (not (.isAlive h)))))
+                     (finally (.interrupt worker)
+                              (doseq [^java.lang.ProcessHandle h handles]
+                                (when h (.destroyForcibly h)))
+                              (.join worker 3000)))))))))))
+
+(defdescribe repl-timeout-ownership-test
+             (it "uses the same budget but never kills an external REPL's process"
+                 (let [seen
+                       (atom nil)
+
+                       kills
+                       (atom 0)]
+
+                   (with-redefs [rt/RUN_TESTS_TIMEOUT_MS
+                                 1234
+
+                                 nc/probe!
+                                 (constantly {:status :up})
+
+                                 nc/eval!
+                                 (fn [opts]
+                                   (reset! seen (:timeout-ms opts))
+                                   {"timed_out" true})
+
+                                 shell-owner/kill-tree!
+                                 (fn [_]
+                                   (swap! kills inc))]
+
+                     (let [r (run-via-repl "." [] {} 54749)]
+                       (expect (= 1234 @seen))
+                       (expect (true? (get r "timed_out")))
+                       (expect (zero? @kills)))))))

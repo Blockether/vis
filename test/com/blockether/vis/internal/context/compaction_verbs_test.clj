@@ -676,6 +676,116 @@
 
 (def ^:private supersede-summaries (var-get #'eng/supersede-summaries))
 
+(defn- reference-supersede
+  "Pairwise definition of coverage, independent of traversal order (#207)."
+  [rows]
+  (let [v
+        (mapv first rows)
+
+        covers
+        (mapv second rows)
+
+        ids
+        (range (count rows))
+
+        covered?
+        (fn [i]
+          (let [si (nth covers i)]
+            (and (seq si)
+                 (some (fn [j]
+                         (let [sj (nth covers j)]
+                           (and (every? sj si)
+                                (or (< (count si) (count sj)) (< (long i) (long j))))))
+                       ids))))
+
+        survivors
+        (vec (remove covered? ids))
+
+        extra
+        (reduce (fn [m i]
+                  (let [ts (get (nth v i) "turns")]
+                    (if (and (seq ts) (covered? i))
+                      (let [j (first (filter #(every? (nth covers %) (nth covers i)) survivors))]
+                        (update m j (fnil into #{}) ts))
+                      m)))
+                {}
+                ids)]
+
+    (mapv (fn [i]
+            (cond-> (nth v i)
+              (get extra i)
+              (update "turns" (fnil into #{}) (get extra i))))
+          survivors)))
+
+(defdescribe
+  supersede-summaries-equivalence-test
+  (it "preserves pairwise semantics across duplicate, empty, overlapping and recap-only coverage"
+      (let [rng
+            (java.util.Random. 207)
+
+            choices
+            [[{"scopes" #{}} #{}] [{"turns" [1]} #{"t1"}]
+             [{"scopes" ["t1/i1" "t1/i1"] "turns" [1]} #{"t1/i1"}]
+             [{"scopes" #{"t1/i1" "t2/i1"} "turns" [1 2]} #{"t1/i1" "t2/i1"}]
+             [{"scopes" #{"t2/i1"} "turns" [1 2]} #{"t2/i1" "t1"}]
+             [{"scopes" #{"t2/i1"}} #{"t2/i1"}] [{"scopes" #{"t1"} "turns" [1 1]} #{"t1"}]
+             [{"scopes" #{"t3/i1"} "turns" #{3}} #{"t3/i1"}]]]
+
+        (dotimes [_ 300]
+          (let [rows (mapv (fn [i]
+                             (let [[s c] (nth choices (.nextInt rng (count choices)))]
+                               [(assoc s "gist" (str i)) c]))
+                           (range (.nextInt rng 12)))]
+            (expect (= (reference-supersede rows) (supersede-summaries (mapv first rows)))))))))
+
+(defdescribe
+  supersede-summaries-scaling-test
+  ;; Regression #207: nested folds repeatedly recomputed covered? inside another
+  ;; scan. Count set comparisons, not elapsed time, so CPU speed cannot hide it.
+  (it "checks each nested fold against its surviving superset only once"
+      (doseq [n
+              [40 80 800]
+
+              reverse?
+              [false true]]
+
+        (let [summaries
+              (mapv (fn [i]
+                      {"scopes" (mapv #(str "t" % "/i1") (range 1 (inc i)))
+                       "turns" [i]
+                       "gist" (str i)})
+                    (range 1 (inc n)))
+
+              comparisons
+              (atom 0)
+
+              every*
+              every?
+
+              out
+              (with-redefs [every? (fn [pred xs]
+                                     (when (and (set? pred) (set? xs)) (swap! comparisons inc))
+                                     (every* pred xs))]
+                (supersede-summaries (if reverse? (vec (reverse summaries)) summaries)))]
+
+          (expect (= 1 (count out)))
+          (expect (= (str n) (get (first out) "gist")))
+          (expect (= (set (range 1 (inc n))) (set (get (first out) "turns"))))
+          (expect (<= @comparisons n)))))
+  (it "sends whole-turn intent to the earliest surviving coverer, not the largest"
+      (let [summaries [{"scopes" #{"t1/i1" "t2/i1"} "gist" "first"}
+                       {"scopes" #{"t1/i1"} "turns" [1] "gist" "covered"}
+                       {"scopes" #{"t1/i1" "t3/i1" "t4/i1"} "gist" "largest"}
+                       {"scopes" #{} "gist" "empty"}]]
+        (expect (= [(assoc (first summaries) "turns" #{1}) (nth summaries 2) (nth summaries 3)]
+                   (supersede-summaries summaries)))))
+  (it "keeps newer equal coverage and empty summaries in original order"
+      (let [summaries [{"scopes" #{"t1/i1"} "turns" [1] "gist" "old"}
+                       {"scopes" #{} "gist" "empty one"} {"scopes" #{"t1/i1"} "gist" "new"}
+                       {"scopes" #{} "gist" "empty two"}]]
+        (expect (= [(nth summaries 1) (assoc (nth summaries 2) "turns" #{1}) (nth summaries 3)]
+                   (supersede-summaries summaries))))))
+
 (defdescribe
   whole-turn-intent-test
   ;; `"turns"` records EXPLICIT whole-turn intent only. Downstream

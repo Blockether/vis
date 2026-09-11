@@ -70,6 +70,14 @@
            "except Exception as error:\n" "    result = str(error)\n"
            "assert 'no such path' in str(result), str(result)\n"
            "print('NATIVE_TEST_HANDLER_READY')\n"
+           ;; #207: execute the new owned-process/capture boundary in the image.
+           "cli = run_tests('clojure', {'cwd': str(project_root_path / 'clj-runner')})\n"
+           "assert cli['is_pass'] and cli['total'] == 1 and cli['mode'] == 'cli', str(cli)\n"
+           "assert 'native runner stderr' in cli['output'], str(cli)\n"
+           "print('NATIVE_TEST_SUBPROCESS_READY')\n"
+           "child = await shell('sleep 30')\n" "stopped = await child.stop()\n"
+           "assert stopped['status'] == 'stopped', str(stopped)\n"
+           "print('NATIVE_PROCESS_CLEANUP_READY')\n"
            "from pathlib import Path\n" "assert 'default.clj' in ls(Path('.'), depth=2)\n"
            "file_hit = grep({'query': ['defn f'], 'paths': [Path('default.clj')], 'context': 1})\n"
            "dir_hit = grep({'query': ['defn.*f'], 'paths': [Path('configured')], 'is_regex': True, 'context': 1})\n"
@@ -137,6 +145,14 @@
           (spit (io/file dir "default.clj") source)
           (spit (io/file dir "configured/example.clj") source)
           (spit (io/file dir "configured/.zprint.edn") "{:width 80}")
+          (io/make-parents (io/file dir "clj-runner/bb.edn"))
+          (spit
+            (io/file dir "clj-runner/bb.edn")
+            (pr-str '{:tasks {:requires ([clojure.test :as t])
+                              test (do
+                                    (t/deftest native-pass (t/is (= 2 (+ 1 1))))
+                                    (binding [*out* *err*] (println "native runner stderr"))
+                                    (t/run-tests))}}))
           (spit (io/file dir "pyproject.toml")
                 "[project]\nname = \"native-language-probe\"\nversion = \"0.0.0\"\n")
           ;; Install only in this disposable project, never the operator's interpreter.
@@ -205,7 +221,9 @@
                           (expect (str/includes? (pr-str tool-results) "NATIVE_LINT_READY") output)
                           (doseq [marker ["NATIVE_KEYWORDS_READY" "NATIVE_PYTHON_REPL_READY"
                                           "NATIVE_PYTHON_TESTS_COLD_READY"
-                                          "NATIVE_PYTHON_TESTS_RESTART_READY"]]
+                                          "NATIVE_PYTHON_TESTS_RESTART_READY"
+                                          "NATIVE_TEST_SUBPROCESS_READY"
+                                          "NATIVE_PROCESS_CLEANUP_READY"]]
                             (expect (str/includes? (pr-str tool-results) marker) output))
                           (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                           (expect (every? #(= model

@@ -187,11 +187,10 @@
 (def RUN_TESTS_TIMEOUT_MS
   "The budget for ONE `run_tests` run, in every pack — ten minutes.
 
-   Declared here because three places must agree on it: the Clojure pack hands it
-   to the nREPL eval that runs the suite, the Python pack waits exactly this long
-   on the project interpreter's pytest, and [[RUN_TESTS_FLOOR_SECS]] floors the
-   eval watchdog above it. Two packs each holding their own literal is the drift
-   this namespace exists to prevent.
+   The Clojure pack uses this for both nREPL evaluation and owned CLI processes
+   (one deadline across shadow-cljs compilation and execution). The Python pack
+   waits this long on the project interpreter's pytest. [[RUN_TESTS_FLOOR_SECS]]
+   keeps the eval watchdog above all of them; no runner owns another literal.
 
    Overrunning it is reported as a STRUCTURED result — a wedged nREPL, a killed
    pytest process, the output that did arrive — so the number says when we stop
