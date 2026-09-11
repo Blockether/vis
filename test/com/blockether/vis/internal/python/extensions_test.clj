@@ -386,6 +386,49 @@ vis.register(vis.Extension(
             (expect (= "Check counter" (get-in projection [:rows 0 :summary])))
             (expect (activity-contract/valid-projection? projection))))))))
 
+(defdescribe
+  sdk-end-only-activity-test
+  (it
+    "carries SDK visibility through registration, publication, return values and failures"
+    (let [source
+          (->
+            counter-py
+            (str/replace "label=\"Check counter\"" "label=\"Check counter\", show_start=False")
+            (str/replace
+              "is_hidden=True"
+              "is_hidden=True, activity=vis.Activity(label=\"Check counter\", show_start=False)"))]
+      (with-loaded {"counter.py" source}
+                   (fn [_ _]
+                     (expect (= [] (pyx/load-failures)))
+                     (let [ext (registered "counter")
+                           entries (get-in ext [:ext/engine :ext.engine/symbols])
+                           read-entry (second entries)
+                           boom-entry (last entries)
+                           events (atom [])
+                           state (atom activity/empty-state)
+                           visible-counts (atom [])]
+
+                       (expect (false? (get-in read-entry [:ext.symbol/activity :show-start])))
+                       (expect (false? (get-in boom-entry [:ext.symbol/activity :show-start])))
+                       (binding [extension/*tool-event-sink*
+                                 (fn [event]
+                                   (swap! events conj event)
+                                   (swap! state activity/reduce-event event)
+                                   (swap! visible-counts conj
+                                     (count (:rows (activity/presentation @state)))))]
+                         (expect (= {"count" 0 "op" "counter_counter_read"}
+                                    (extension/invoke-symbol-wrapper ext read-entry [] {})))
+                         (expect (try (extension/invoke-symbol-wrapper ext boom-entry [] {})
+                                      false
+                                      (catch Exception _ true))))
+                       (expect (= [0 0 0 1 1 2] @visible-counts))
+                       (expect (= ["**Counter** ready" "success"]
+                                  (mapv #(get-in % [:presentation "content" 0 "text"])
+                                        (filter #(= :content (:phase %)) @events))))
+                       (expect (= @state (activity/replay @events)))
+                       (expect (= ["succeeded" "failed"]
+                                  (mapv :state (:rows (activity/presentation @state)))))))))))
+
 ;; Loading + registry
 
 (defdescribe load-and-register-test

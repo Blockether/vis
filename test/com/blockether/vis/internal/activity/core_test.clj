@@ -34,20 +34,74 @@
                               (not= outcome :succeeded)
                               (assoc :error (ex-info (str result) {}))))])))
 
-(defdescribe completed-file-operations-test
-             (it "retains running reads and patches internally but publishes them only when settled"
-                 (doseq [operation [:cat :patch]]
-                   (let [[start terminal]
-                         (event-pair (event/context) operation :succeeded "retained result")
-                         running (activity/reduce-event activity/empty-state start)
-                         visible (activity/presentation running)
-                         settled (activity/presentation (activity/reduce-event running terminal))]
+(defdescribe
+  completed-file-operations-test
+  (it "uses declared end-only visibility for built-ins and extension operations"
+      (doseq [operation [:cat :patch]]
+        (expect (false? (:show-start (presenter/for-tool operation)))))
+      (doseq [operation
+              [:cat :patch :custom.lookup]
 
-                     (expect (= 1 (count (:rows running))))
-                     (expect (empty? (:rows visible)))
-                     (expect (= 1 (get-in visible [:counts :running])))
-                     (expect (= 0 (get-in visible [:omitted :rows])))
-                     (expect (= ["succeeded"] (mapv :state (:rows settled))))))))
+              outcome
+              [:succeeded :failed :cancelled]]
+
+        (let [[start terminal]
+              (event-pair (event/context)
+                          operation
+                          outcome
+                          "retained result"
+                          {:activity {:headline "Read record" :show-start false}})
+
+              running
+              (activity/reduce-event activity/empty-state start)
+
+              visible
+              (activity/presentation running)
+
+              settled
+              (activity/presentation (activity/reduce-event running terminal))]
+
+          (expect (= 1 (count (:rows running))))
+          (expect (empty? (:rows visible)))
+          (expect (= 1 (get-in visible [:counts :running])))
+          (expect (= 0 (get-in visible [:omitted :rows])))
+          (expect (= [(name outcome)] (mapv :state (:rows settled))))
+          (expect (contract/valid-projection? settled)))))
+  (it "does not infer visibility from the operation name"
+      (let [[start] (event-pair (event/context)
+                                :cat
+                                :succeeded
+                                nil
+                                {:activity {:headline "Read file" :show-start true}})]
+        (expect (= 1
+                   (count (:rows (activity/presentation (activity/reduce-event activity/empty-state
+                                                                               start))))))))
+  (it "retains hidden content and shows cancellation when evaluation ends"
+      (let [ctx
+            (event/context)
+
+            invocation
+            (event/invocation ctx nil)
+
+            details
+            {:operation :custom.lookup
+             :presenter :generic
+             :activity {:headline "Read record" :show-start false}}
+
+            content
+            {"headline" "Read record" "summary" "One record" "content" []}
+
+            running
+            (activity/replay [(event/start-event ctx invocation details)
+                              (event/content-event ctx invocation details content)])
+
+            settled
+            (activity/presentation (activity/settle-running running :cancelled "Cancelled"))]
+
+        (expect (empty? (:rows (activity/presentation running))))
+        (expect (= "cancelled" (get-in settled [:rows 0 :state])))
+        (expect (= content (get-in settled [:rows 0 :presentation])))
+        (expect (contract/valid-projection? settled)))))
 
 (defdescribe
   argument-identity-test

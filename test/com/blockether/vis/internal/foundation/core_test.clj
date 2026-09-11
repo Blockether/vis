@@ -34,6 +34,7 @@
 
                    (expect (map? declaration) (str (:ext/name ext) "/" (:ext.symbol/symbol entry)))
                    (expect (and (string? headline) (re-matches #"[A-Z][A-Za-z ]+" headline)))
+                   (expect (boolean? (:show-start declaration)))
                    (expect (fn? (:render declaration)))))))
 
 (defdescribe

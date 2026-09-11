@@ -1069,12 +1069,13 @@
 
         record-tool-event
         (fn [event]
-          (try (dispatch-activity! (fn []
-                                     (when (= :open @activity-phase)
-                                       (activity-event/accept! activity-collector event)
-                                       (publish-activity!
-                                         (swap! activity-state activity/reduce-event event)))
-                                     (when tool-event-fn (tool-event-fn event))))
+          (try (dispatch-activity!
+                 (fn []
+                   (when (= :open @activity-phase)
+                     (activity-event/accept! activity-collector event)
+                     (let [state (swap! activity-state activity/reduce-event event)]
+                       (when (activity-event/visible-event? event) (publish-activity! state))))
+                   (when tool-event-fn (tool-event-fn event))))
                (catch java.util.concurrent.RejectedExecutionException _ nil)))
 
         reinspection-sink
@@ -5536,7 +5537,9 @@
                                                 (fn [tool-event]
                                                   ;; Turn progress consumes starts only. Terminal truth
                                                   ;; feeds Activity without changing that stream.
-                                                  (when (= :start (:phase tool-event))
+                                                  (when (and (= :start (:phase tool-event))
+                                                             (activity-event/visible-event?
+                                                               tool-event))
                                                     (on-chunk {:phase :tool-start
                                                                :iteration iteration-position
                                                                :position idx

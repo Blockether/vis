@@ -14,9 +14,13 @@ def test_symbol_declares_activity_without_changing_execution():
         """Check one component."""
         return 7
 
-    activity = vis.Activity(presenter="tests", label="checking components")
+    activity = vis.Activity(presenter="tests", label="Check components")
     spec = vis.Symbol(check, activity=activity)._spec()
-    assert spec["activity"] == {"presenter": "tests", "label": "checking components"}
+    assert spec["activity"] == {
+        "presenter": "tests",
+        "label": "Check components",
+        "show_start": True,
+    }
     assert spec["fn"]() == 7
     with pytest.raises(FrozenInstanceError):
         activity.presenter = "shell"
@@ -34,7 +38,8 @@ def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
             return True
 
     assert vis.Symbol(Checks(), name="checks")._spec()["methods"][0]["activity"] == {
-        "presenter": "tests"
+        "presenter": "tests",
+        "show_start": True,
     }
     with pytest.raises(TypeError):
         vis.Activity(state="succeeded")
@@ -137,6 +142,87 @@ def test_shared_activity_admission(sample):
     else:
         with pytest.raises(ValueError):
             ActivityProjection.from_wire(sample["projection"])
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+def test_end_only_activity_skips_start_and_preserves_outcome(
+    monkeypatch, is_async, fails
+):
+    import asyncio
+
+    phases = []
+    updates = []
+    monkeypatch.setattr(
+        vis._host, "activity", lambda value: updates.append(value) or True
+    )
+    failure = ValueError("Record unavailable")
+
+    def read_record():
+        """Read one record."""
+        assert not phases
+        if fails:
+            raise failure
+        return {"records": 1}
+
+    async def read_async():
+        """Read one record asynchronously."""
+        return read_record()
+
+    def render(phase, **_):
+        phases.append(phase)
+        return vis.ActivityPresentation(
+            "Read record", "Record unavailable" if fails else "One record"
+        )
+
+    spec = vis.Symbol(
+        read_async if is_async else read_record,
+        activity=vis.Activity(label="Read record", show_start=False, render=render),
+    )._spec()
+    assert spec["activity"]["show_start"] is False
+
+    def invoke():
+        return asyncio.run(spec["fn"]()) if is_async else spec["fn"]()
+
+    if fails:
+        with pytest.raises(ValueError) as caught:
+            invoke()
+        assert caught.value is failure
+    else:
+        assert invoke() == {"records": 1}
+    assert phases == ["failure" if fails else "success"]
+    assert len(updates) == 1
+
+
+def test_end_only_activity_preserves_cancellation_when_rendering_fails():
+    import asyncio
+
+    cancellation = asyncio.CancelledError()
+    phases = []
+
+    async def read_record():
+        """Read one record."""
+        raise cancellation
+
+    def render(phase, error, **_):
+        phases.append(phase)
+        assert error is cancellation
+        raise RuntimeError("Presentation unavailable")
+
+    tool = vis.Symbol(
+        read_record,
+        activity=vis.Activity(label="Read record", show_start=False, render=render),
+    )._spec()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        asyncio.run(tool["fn"]())
+    assert caught.value is cancellation
+    assert phases == ["failure"]
+
+
+@pytest.mark.parametrize("invalid", [None, 0, 1, "false", []])
+def test_activity_start_policy_requires_a_boolean(invalid):
+    with pytest.raises(TypeError, match="show_start"):
+        vis.Activity(label="Read record", show_start=invalid)
 
 
 def test_custom_activity_callbacks_preserve_results_and_errors(monkeypatch):

@@ -2829,6 +2829,59 @@
                (expect (empty? (hi/open-live-ids))))))))))
 
 (defdescribe
+  end-only-activity-publication-test
+  (it
+    "keeps starts and intermediate content internal until the operation settles"
+    (doseq [show-start [false true]]
+      (let [snapshots (atom [])
+            events (atom [])
+            processed (promise)
+            details {:operation :quick_read
+                     :presenter :generic
+                     :activity {:headline "Read record" :show-start show-start}}]
+
+        (tpc/with-own
+          [pc {}]
+          (with-redefs [env/run-python-block
+                        (fn [_ _ _]
+                          (let [ctx (activity-event/context)
+                                invocation (activity-event/invocation ctx nil)
+                                started (util/now-ms)]
+
+                            (extension/*tool-event-sink*
+                              (activity-event/start-event ctx invocation details))
+                            (extension/*tool-event-sink*
+                              (activity-event/content-event
+                                ctx
+                                invocation
+                                details
+                                {"headline" "Read record" "summary" "One record" "content" []}))
+                            (expect (deref processed 2000 false))
+                            (expect (= show-start (boolean (seq @snapshots))))
+                            (extension/*tool-event-sink* (activity-event/terminal-event
+                                                           ctx
+                                                           invocation
+                                                           (assoc details
+                                                             :started-at-ms started
+                                                             :outcome :succeeded
+                                                             :result 1)))
+                            {:stdout "done"}))]
+            (let [result (#'lp/run-python-code
+                          pc
+                          "pass"
+                          :env
+                          {:activity/on-snapshot #(swap! snapshots conj %)}
+                          :tool-event-fn
+                          (fn [event]
+                            (swap! events conj event)
+                            (when (= :content (:phase event)) (deliver processed true))))]
+              (expect (nil? (:error result)))
+              (expect (= [:start :content :terminal] (mapv :phase @events)))
+              (expect (= "succeeded" (get-in result [:activity :rows 0 :state])))
+              (expect (= "Read record"
+                         (get-in result [:activity :rows 0 :presentation "headline"]))))))))))
+
+(defdescribe
   activity-coalesced-content-test
   (it "flushes the final throttled presentation while the tool is still waiting"
       ;; The installed SDK's HTTP/stdio flow exposed a lost trailing update: a

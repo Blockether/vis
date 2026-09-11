@@ -1769,3 +1769,57 @@ Complete locally. Every first-party observed binding and bundled Python tool dec
 Verified: 76 Activity/foundation tests, 62 extension registry tests, 135 real Python-host tests, 264 TUI render tests, 123 TUI screen tests, 20 HTML/native terminal parity tests, 112 Companion tests, 230 Storybook stories and contrast across 10 themes. The SDK passed 439 tests (13 optional integration tests skipped); bundled extension suites passed 101 tests. Clojure formatting/lint/reflection, Python formatting/lint, Companion lint/typecheck/build, documentation snippets/links and diff checks passed. All 65 tracked Markdown documents passed the wording scan. Browser review covered 393 px phone, 834 px touch tablet and 1280 px desktop frames; virtual-terminal capture covered the expanded Activity content. No native engine build or physical-device run was performed. Temporary review services were stopped.
 
 Initial checkout was clean on main at 060962680. Commit and push are authorized; concurrent unrelated changes are excluded.
+
+# Human-readable Activity lifecycle
+
+Phrase: show useful human-facing progress, not a start notification for every fast call.
+
+## Context
+
+Read and Patch currently suppress running rows by operation name in `activity/core.clj`.
+The Python SDK cannot declare that policy. Keep internal paired lifecycle evidence,
+but let each binding choose running visibility. Preserve sentence-case English labels,
+proper names, failures, counts, ordering and diffs. Do not uppercase returned content
+or remove lifecycle tracking to suppress UI noise.
+
+## 1. Declare and enforce visibility
+- Rationale: quick local actions need only an end result; slow work needs progress.
+- Data: Activity event/reducer, loop publication, SDK declarations, Python bridge and canonical schema.
+- Acceptance criteria: `show_start=False` suppresses running rows and start callbacks/progress; terminal success, failure and cancellation remain observable.
+- Unknowns: concurrent publication and interrupted evaluation must retain final evidence.
+
+## 2. Align built-ins, extensions and authoring guidance
+- Rationale: presentations are for people, independently of Python return values.
+- Data: explicit built-in declarations, bundled extensions, greeter example and extension guides.
+- Acceptance criteria: all first-party tools choose a visibility policy; docs explain understandable English, useful summaries and end-only examples.
+- Unknowns: coordinate SDK release with another active session after pushing.
+
+## 3. Verify and publish
+- Rationale: the declaration crosses the installed SDK/engine boundary.
+- Data: regression, runtime and package tests; formatting/lint/reflection; docs/link/diff checks.
+- Acceptance criteria: scoped verified commit pushed to main, with release handoff and limitations reported.
+- Unknowns: preserve concurrent documentation changes.
+
+## Plan state
+
+Implemented and verified. Every first-party built-in and bundled Python tool explicitly
+chooses start visibility. Fast local operations use end-only presentation; the SDK exposes
+`Activity(show_start=False)` through the canonical declaration schema and real Python host.
+Internal paired events retain timing, order, errors and cancellation, while both client
+projections hide running rows. Human-readable sentence-case English remains the repository
+rule. All extension authoring guides and executable examples now explain the policy.
+
+Verification: 140 Activity/registry/foundation tests passed; the broader Activity/contract/loop/docs
+run passed 609 of 610, with one failure from another session's concurrent CSS change. That
+session corrected its CSS/test consistency and a fresh docs run passed all 27 tests. All 136
+real Python-host tests passed. The SDK passed 449 tests with 13 optional integration skips;
+the final authoring run passed 10 tests, including two newly added package-guide regressions.
+All 101 bundled extension tests passed. Clojure formatting/lint/reflection, Python formatting/lint,
+canonical docs/link checks and all 65 tracked Markdown wording checks passed. No client renderer,
+wire projection shape or native interop changed; no new native build or physical-device run was performed.
+
+Initial checkout was clean on main at a0f888fa6. Commit/push is authorized and scoped changes
+exclude concurrent documentation/CSS work. A coordinated engine/SDK release is needed to
+distribute the new declaration. Release handoff was requested on council thread 311; the docs
+session declined because it needs direct user authorization in its own conversation. Release
+remains pending; this task does not tag or publish distributions.

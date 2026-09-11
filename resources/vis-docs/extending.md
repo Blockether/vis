@@ -69,7 +69,9 @@ vis.register(
         description="Generate greetings without sending messages.",
         alias="greeting",
         symbols=[vis.Symbol(
-            hello, activity=vis.Activity(label="Greet person", render=greeting_activity)
+            hello, activity=vis.Activity(
+                label="Greet person", show_start=False, render=greeting_activity
+            )
         )],
     )
 )
@@ -78,11 +80,17 @@ vis.register(
 The filename identifies the entry file; `name` identifies the extension;
 `Symbol(hello)` exposes the callable as `hello`. `alias` does not add a prefix.
 Keep entry filenames different from the packages they import. Declare an Activity
-beside every tool binding. Use capitalized natural-language labels, not Python
-identifiers; the engine does not invent a generic result view. The callback shows
-the greeting and a useful count while the return value stays available to Python.
-See [Activity presentation](extension-api.md#activity-presentation) for limits,
-object methods, intermediate updates and testing.
+beside every tool binding. Activities are meant for human consumption: use clear
+sentence-case English labels, not Python identifiers or serialized objects. The
+callback shows the greeting and a useful count while the return value stays
+available to Python.
+
+This fast greeting uses `show_start=False`, so only its end
+result is shown. Quick local reads and patches also need no running row; slow
+work and network requests should keep `show_start=True`. The engine still tracks
+start/end internally and preserves failures and cancellation.
+See [Activity presentation](extension-api.md#activity-presentation) for human-readable
+summaries, object methods, intermediate updates, limits and testing.
 
 ### 2. Load it
 

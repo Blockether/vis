@@ -65,13 +65,27 @@ def status() -> str:
 import blockether.vis.extension as vis
 from einmal import status
 
+def status_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation("Check integration status", f"Status: {result[:160]}")
+
+
 vis.register(vis.Extension(
     name="einmal",
     description="Package example.",
     alias="einmal",
-    symbols=[vis.Symbol(status)],
+    symbols=[vis.Symbol(
+        status, activity=vis.Activity(
+            label="Check integration status", show_start=False, render=status_activity
+        )
+    )],
 ))
 ```
+
+The local status lookup uses an end-only, human-readable Activity. Keep its
+presentation at the binding even though the implementation lives in a separate
+package. See [Activity presentation](extension-api.md#activity-presentation).
 
 `project` is relative to the entry file, not the working directory; absolute paths
 also work. It must contain `pyproject.toml` and `uv.lock`. Project mode rejects

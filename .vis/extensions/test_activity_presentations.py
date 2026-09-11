@@ -59,6 +59,9 @@ def test_every_bundled_tool_declares_a_bounded_natural_language_activity(
     for entry in exported:
         declaration = getattr(tools, entry["name"]).__vis_symbol_activity__
         assert re.fullmatch(r"[A-Z][A-Za-z ]+", declaration.label)
+        # These bundled tools perform network IO or verification, so show live progress.
+        assert declaration.show_start is True
+        assert entry["activity"]["show_start"] is True
         assert callable(declaration.render)
         for phase in ("start", "failure"):
             assert (

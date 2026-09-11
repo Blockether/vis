@@ -93,10 +93,14 @@ Declare presentation beside each tool binding:
 For an object namespace, put `@vis.method(activity=...)` on **each exported
 method**, including nested methods. Namespace-level Activity is rejected.
 
-Use capitalized natural-language labels and headlines: "Run tests", "Search
-files", "Check service health". Do not expose `run_tests`, qualified method
-names, or all-caps sentences as activity labels. Preserve proper names such as
-GitHub and SDK. Use direct, consistent language without profanity or vulgarity.
+Activities are meant for human consumption, not as a second machine protocol.
+Write understandable English: an action in the headline, its target or outcome
+in the summary, and selected evidence in the content. Use sentence case: "Read
+file", "Run tests", "Check service health". Do not expose `run_tests`, qualified
+method names, object representations or all-caps sentences as labels. Preserve
+proper names such as GitHub and acronyms such as SDK. Keep terminology consistent
+and never use profanity or vulgarity. Do not change the case of filenames, code,
+commands or returned content to match a label.
 
 `vis.Activity(presenter="tests", label="Run checks", render=render_checks)` selects
 a semantic presenter and a synchronous callback. `presenter` classifies the
@@ -104,6 +108,29 @@ operation; it does **not** generate tool-specific content. The default
 `"generic"` is only a classification, not a result renderer. The engine never
 turns an arbitrary result object into an activity view or a generic result-summary
 block. The tool's return value remains independently available to Python.
+
+Not every operation needs a visible start. Set `show_start=False` for fast local
+actions such as reading a file, applying a patch or looking up a cached record:
+
+```python
+activity = vis.Activity(
+    label="Read record", show_start=False, render=render_record
+)
+```
+
+This is **end-only presentation**, not missing lifecycle tracking. The engine
+still records paired start/end evidence for order, duration, errors and
+cancellation. It does not publish a running row or start progress for that call.
+The callback skips `start` and runs on `success` or `failure`. Published content
+is retained internally and becomes visible only when the call settles, including
+failure or cancellation. Returning `None` from a start callback alone does not
+hide the engine's running row; use `show_start=False`.
+
+Keep the default `show_start=True` for work a person waits for: tests, builds,
+network requests, file transfers or user input. Publish intermediate updates only
+when they communicate a meaningful change. Choose the policy at each binding,
+not from an arbitrary duration threshold; a remote read may need progress even
+though a local read does not. Internal counts still include all observed calls.
 
 The callback receives keyword arguments `phase` (`start`, `success`, `failure`),
 `args`, `kwargs`, `result` and `error`. It returns
@@ -124,8 +151,8 @@ snapshot while a tool runs; empty content clears the body.
 
 Each headline and summary is one line of at most 512 UTF-8 bytes. A presentation
 allows 8 sections, 32 total blocks and 32 KiB. Bound large content deliberately
-and label excerpts. Test start, success, failure, empty results, replacement,
-redaction and disclosure in both clients. The
+and label excerpts. Test declared start visibility, success, failure, cancellation,
+empty results, replacement, redaction and disclosure in both clients. The
 [tested greeter entrypoint](extension-design.md#keep-the-entrypoint-small)
 demonstrates the callback beside registration. Exact portable limits and block
 shapes live in the
@@ -259,7 +286,10 @@ class Tools:
 `vis.Symbol(Tools(), name="tools").contract` expands `Result.text` beneath the
 variadic tuple. Omitting `text` uses the public string `"ready"`. The SDK tests
 execute these snippets, and host-to-sandbox tests cover invocation, nested records,
-redacted defaults, introspection and refreshed metadata after reload.
+redacted defaults, introspection and refreshed metadata after reload. This is
+contract inspection, not registration. When you bind `Tools.read`, declare its
+Activity in the entrypoint as in the [greeter example](extension-design.md#keep-the-entrypoint-small);
+this immediate local operation can use `show_start=False`.
 
 ## Slash commands
 

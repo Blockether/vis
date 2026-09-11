@@ -124,7 +124,9 @@ def greeting_activity(*, phase, result, **_):
 
 
 Greeter.hello = vis.method(
-    activity=vis.Activity(label="Greet person", render=greeting_activity)
+    activity=vis.Activity(
+        label="Greet person", show_start=False, render=greeting_activity
+    )
 )(Greeter.hello)
 
 vis.register(
@@ -150,13 +152,24 @@ method in an object namespace. Declare it at the binding, not as a later UI task
 The example decorates `Greeter.hello` in the entrypoint so its ordinary Python
 implementation stays independent of Vis.
 
-Use capitalized natural-language labels and headlines, such as "Greet person" or
-"Run tests", with consistent terminology and no profanity or vulgarity. Show a
-meaningful target, count or status in the summary. Put selected content behind
-disclosure rather than serializing the returned object. The engine supplies
-execution state and errors, but no generic result view. Test empty results,
-running updates, success and failure; verify that presentation errors cannot
-change the tool result. Follow the canonical
+Activities are meant for human consumption. A person should understand what
+happened without knowing a Python method name or result type. Use sentence-case
+English labels such as "Greet person" or "Run tests", preserve proper names and
+acronyms, and use consistent terminology without profanity or vulgarity. Show a
+meaningful target, count or outcome in the summary. Put selected evidence behind
+disclosure rather than serializing the returned object. Never change the case of
+code, paths or returned content merely to format a label.
+
+Choose whether a person needs to see the operation begin. Fast local reads,
+patches and greetings use `show_start=False`: only the end result is visible.
+The example uses this policy because generating a greeting is immediate. Slow
+work, network requests and user input keep `show_start=True` and can publish
+meaningful intermediate updates. The engine always tracks start/end internally;
+hiding progress never hides failures, cancellation or the final result.
+
+Test empty results, the chosen start visibility, success, failure and cancellation;
+verify that presentation errors cannot change the tool result. The engine supplies
+execution state and errors, but no generic result view. Follow the canonical
 [Activity API](extension-api.md#activity-presentation) for declarations and limits.
 
 ## Give each kind of instruction one owner

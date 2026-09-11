@@ -16,7 +16,9 @@ def greeting_activity(*, phase, result, **_):
 
 
 Greeter.hello = vis.method(
-    activity=vis.Activity(label="Greet person", render=greeting_activity)
+    activity=vis.Activity(
+        label="Greet person", show_start=False, render=greeting_activity
+    )
 )(Greeter.hello)
 
 vis.register(

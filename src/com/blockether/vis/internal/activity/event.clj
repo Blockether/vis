@@ -269,6 +269,8 @@
                (not (and (string? (:argument-key event))
                          (re-matches #"[0-9a-f]{64}" (:argument-key event)))))
           "malformed argument key"
+          (and (contains? event :show-start) (not (boolean? (:show-start event))))
+          "start visibility must be boolean"
           (not (contains? #{:start :content :terminal} (:phase event))) "unknown lifecycle phase"
           (and terminal? (not= 1 (count outcomes))) "terminal must have exactly one outcome"
           (and (not terminal?) (seq outcomes)) "start cannot carry an outcome"
@@ -362,9 +364,14 @@
    :phase phase
    :observed-at (util/now-ms)})
 
+(defn visible-event?
+  "Whether an internal event may publish progress. End-only calls still track every event."
+  [event]
+  (or (= :terminal (:phase event)) (not (false? (:show-start event)))))
+
 (defn content-event
   "Validate a whole presentation replacement; text and content never author lifecycle."
-  [ctx invocation {:keys [operation presenter]} presentation]
+  [ctx invocation {:keys [operation presenter activity]} presentation]
   (when-not (contract/valid-presentation? presentation)
     (throw (ex-info "Invalid or oversized Activity presentation"
                     {:type :activity/invalid-content})))
@@ -372,8 +379,10 @@
     (when-not (contract/valid-presentation? public)
       (throw (ex-info "Invalid or oversized Activity presentation"
                       {:type :activity/invalid-content})))
-    (checked (assoc (base-event ctx invocation operation presenter :content)
-               :presentation public))))
+    (checked (cond-> (assoc (base-event ctx invocation operation presenter :content)
+                       :presentation public)
+               (false? (:show-start activity))
+               (assoc :show-start false)))))
 
 (defn- map-value [m k] (when (map? m) (or (get m k) (get m (name k)))))
 
@@ -567,6 +576,9 @@
       (cond-> (merge (base-event ctx invocation operation presenter :start)
                      (select-keys invocation [:parent-invocation-id])
                      {:status :running})
+        (false? (get-in details [:activity :show-start]))
+        (assoc :show-start false)
+
         argument
         (assoc :argument-summary (:text argument))
 

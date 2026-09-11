@@ -61,6 +61,7 @@
            :presenter (presenter/presenter-for (:operation event) (:presenter event))
            :classification (presenter/classification event)
            :state :running
+           :show-start (not (false? (:show-start event)))
            :summary (presenter/row-summary event)
            :group-token (:group-token event)
            :group-head (:group-head event)
@@ -368,7 +369,7 @@
 (defn- projected-rows
   [rows]
   (->> rows
-       (remove #(and (= :running (:state %)) (contains? #{:cat :patch} (:operation %))))
+       (remove #(and (= :running (:state %)) (false? (:show-start %))))
        (sort-by :sequence)
        vec
        coalesce-shell-rows

@@ -167,6 +167,10 @@
           "type": "string",
           "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
           "maxLength": 96
+        },
+        "show_start": {
+          "type": "boolean",
+          "default": true
         }
       },
       "required": [

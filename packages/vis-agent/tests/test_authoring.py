@@ -47,8 +47,11 @@ def test_example_manifest_registration_and_domain_behavior(monkeypatch):
     assert _contracts.validate("symbol", "callable", tool["contract"])
     assert "Unicode code points" in tool["doc"]
     assert tool["activity"]["label"] == "Greet person"
+    assert tool["activity"]["show_start"] is False
+    assert _contracts.validate("activity", "declaration", tool["activity"])
     result = tool["fn"]("Ada")
     assert result.text == "Hello, Ada!"
+    assert len(updates) == 1
     assert updates[-1]["headline"] == "Greet person"
     assert updates[-1]["content"] == [{"type": "text", "text": "Hello, Ada!"}]
     domain_tests = runpy.run_path(str(EXAMPLE / "tests/test_greeter.py"))
@@ -89,6 +92,40 @@ def test_documented_cross_module_wrapper_example(monkeypatch):
     assert result[0].text == "ready"
     with pytest.raises(FrozenInstanceError):
         result[0].text = "changed"
+
+
+@pytest.mark.parametrize("page", ["extension-development.md", "extension-packages.md"])
+def test_documented_package_entry_owns_its_end_only_activity(monkeypatch, page):
+    domain_source = re.search(
+        r"```python\n# einmal/src/einmal/__init__\.py\n(.*?)\n```",
+        (DOCS / "extension-development.md").read_text(),
+        re.S,
+    )[1]
+    domain = ModuleType("einmal")
+    monkeypatch.setitem(sys.modules, "einmal", domain)
+    exec(compile(domain_source, "einmal/__init__.py", "exec"), domain.__dict__)
+    entry_source = re.search(
+        r"```python\n# \.vis/extensions/einmal_tools\.py\n(.*?)\n```",
+        (DOCS / page).read_text(),
+        re.S,
+    )[1]
+    monkeypatch.setattr(vis, "_registration", {"spec": None})
+    updates = []
+    monkeypatch.setattr(
+        vis._host, "activity", lambda value: updates.append(value) or True
+    )
+    exec(compile(entry_source, page, "exec"), {})
+    (tool,) = vis._registration["spec"]["symbols"]
+    assert tool["activity"]["show_start"] is False
+    assert tool["activity"]["label"] == "Check integration status"
+    assert tool["fn"]() == "ready"
+    assert updates == [
+        {
+            "headline": "Check integration status",
+            "summary": "Status: ready",
+            "content": [],
+        }
+    ]
 
 
 def test_quickstart_runs_as_one_project_extension(monkeypatch):

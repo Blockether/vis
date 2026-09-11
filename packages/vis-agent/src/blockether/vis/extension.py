@@ -390,25 +390,35 @@ class ActivityPresentation(ActivitySection):
 
 @dataclass(frozen=True, slots=True)
 class Activity:
-    """Symbol presentation; the engine owns identity, timing and outcome.
+    """Human-facing symbol presentation; the engine owns identity, timing and outcome.
 
     Declare Activity on every exported callable, including each object method.
-    Labels and headlines use capitalized natural language ("Run tests"), not
-    identifiers or all-caps sentences. The engine does not generate result views.
-    Use render or publish_activity for task-specific counts, content and sections.
+    Write understandable English for people, not Python identifiers or object reprs.
+    Labels and headlines use sentence case ("Read file", "Run tests"), preserving
+    proper names and acronyms. Summaries explain the target, useful counts or outcome.
+    Use render or publish_activity for selected content; return values stay independent.
+
+    show_start=False makes a fast operation end-only: no running row or start callback.
+    Use it for quick reads, patches and local lookups. Keep show_start=True for work
+    people wait for, such as tests, network requests or transfers. Internal start/end
+    tracking still preserves ordering, timing, errors and cancellation. Published
+    content is retained but stays hidden until an end-only invocation settles.
 
     render is an optional synchronous callback receiving phase, args, kwargs,
     result and error as keyword arguments; it returns an ActivityPresentation
-    (or None to keep the current presentation). It runs on start, success and failure.
-    Use publish_activity inside a long-running symbol for intermediate stages.
-    A rendering failure never changes the symbol's return value or exception.
+    (or None to keep the current presentation). It runs on success and failure,
+    and on start only when show_start=True. Use publish_activity for intermediate
+    stages of long-running tools. Rendering failures never change returns or errors.
     """
 
     presenter: str = "generic"
     label: str | None = None
     render: Callable[..., ActivityPresentation | None] | None = None
+    show_start: bool = True
 
     def __post_init__(self):
+        if not isinstance(self.show_start, bool):
+            raise TypeError("Activity show_start must be a boolean")
         if self.render is not None and (
             not callable(self.render) or inspect.iscoroutinefunction(self.render)
         ):
@@ -434,6 +444,7 @@ def _activity_spec(activity):
         raise TypeError("activity must be a vis.Activity declaration")
     return {
         "presenter": activity.presenter,
+        "show_start": activity.show_start,
         **({"label": activity.label} if activity.label is not None else {}),
     }
 
@@ -473,7 +484,8 @@ def _activity_call(fn, activity):
     if inspect.iscoroutinefunction(fn):
 
         async def invoke(*args, **kwargs):
-            render("start", args, kwargs)
+            if activity.show_start:
+                render("start", args, kwargs)
             try:
                 result = await fn(*args, **kwargs)
             except BaseException as error:
@@ -484,7 +496,8 @@ def _activity_call(fn, activity):
     else:
 
         def invoke(*args, **kwargs):
-            render("start", args, kwargs)
+            if activity.show_start:
+                render("start", args, kwargs)
             try:
                 result = fn(*args, **kwargs)
             except BaseException as error:

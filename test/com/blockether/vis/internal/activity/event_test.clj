@@ -5,6 +5,29 @@
             [clojure.string :as string]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe start-visibility-contract-test
+             (it "allows only boolean start visibility and never suppresses a terminal"
+                 (let [ctx
+                       (event/context)
+
+                       invocation
+                       (event/invocation ctx nil)
+
+                       details
+                       {:operation :custom.lookup
+                        :presenter :generic
+                        :activity {:headline "Read record" :show-start false}}
+
+                       start
+                       (event/start-event ctx invocation details)]
+
+                   (expect (false? (event/visible-event? start)))
+                   (expect (event/visible-event? (dissoc start :show-start)))
+                   (doseq [value [nil "false" 0]]
+                     (expect (= "start visibility must be boolean"
+                                (event/event-error (assoc start :show-start value)))))
+                   (expect (event/visible-event? (assoc start :phase :terminal))))))
+
 (defdescribe unregistered-result-presentation-test
              (it "never invents a result view for a tool without an authored presentation"
                  (let [ctx

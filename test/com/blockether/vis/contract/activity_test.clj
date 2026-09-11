@@ -25,9 +25,15 @@
     (is (document/valid-json? "activity" "projection" fixture))
     (doseq [old-key ["anchor" "schema_version" "view_id"]]
       (is (not (document/valid-json? "activity" "projection" (assoc fixture old-key 1)))))
-    (is (document/valid-json? "activity"
-                              "declaration"
-                              {"presenter" "tests" "label" "checking components"}))
+    (doseq [show-start [true false]]
+      (is (document/valid-json?
+            "activity"
+            "declaration"
+            {"presenter" "tests" "label" "Check components" "show_start" show-start})))
+    (doseq [show-start [nil 0 1 "false"]]
+      (is (not (document/valid-json? "activity"
+                                     "declaration"
+                                     {"presenter" "tests" "show_start" show-start}))))
     (is (not (document/valid-json? "activity"
                                    "declaration"
                                    {"presenter" "tests" "state" "succeeded"})))))

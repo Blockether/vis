@@ -404,10 +404,12 @@
     (optional-field? x :ext.symbol/hidden? boolean?)
     (optional-field? x :ext.symbol/tag #{:observation :mutation})
     (optional-field? x :ext.symbol/presenter keyword?)
-    (optional-field?
-      x
-      :ext.symbol/activity
-      #(and (map? %) (non-blank-string? (:headline %)) (optional-field? % :render fn?)))
+    (optional-field? x
+                     :ext.symbol/activity
+                     #(and (map? %)
+                           (optional-field? % :headline non-blank-string?)
+                           (optional-field? % :show-start boolean?)
+                           (optional-field? % :render fn?)))
     (optional-field? x :ext.symbol/batch-hint pos-int?)
     (every? #(optional-field? x % fn?)
             [:ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/after-fn
@@ -802,8 +804,11 @@
    docstring + arglists). Pass it as `#'my-tool`.
 
    Observed tools return canonical internal envelope maps. Declare `:activity`
-   beside every observed binding: `{:headline \"Read file\" :render callback}`.
-   Use capitalized natural language, not identifiers or all-caps sentences. The
+   beside every observed binding: `{:headline \"Read file\" :show-start false :render callback}`.
+   Activity is for people: use understandable sentence-case English, not identifiers
+   or all-caps sentences. Quick reads and patches use `:show-start false` to show only
+   the end result; slow operations keep the default true to show running progress.
+   This hides presentation, never internal timing, failure or cancellation tracking. The
    optional callback receives invocation details and a bounded, redacted public
    result, and returns a canonical Activity presentation. Tools can instead call
    `publish-activity!` while running. No generic result presentation is generated;

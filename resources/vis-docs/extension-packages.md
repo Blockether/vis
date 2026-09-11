@@ -206,13 +206,28 @@ project/
 import blockether.vis.extension as vis
 from einmal import status
 
+def status_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation("Check integration status", f"Status: {result[:160]}")
+
+
 vis.register(vis.Extension(
     name="einmal",
     description="Company tools.",
     alias="einmal",
-    symbols=[vis.Symbol(status)],
+    symbols=[vis.Symbol(
+        status, activity=vis.Activity(
+            label="Check integration status", show_start=False, render=status_activity
+        )
+    )],
 ))
 ```
+
+This example checks local status and uses `show_start=False`. A status check that
+waits for a network response should keep `show_start=True`. Package layout does
+not replace the obligation to give every tool a human-readable
+[Activity presentation](extension-api.md#activity-presentation).
 
 `status` must have a docstring, like any exported tool. The metadata is parsed
 without executing the entry. Vis validates it, snapshots the source files,

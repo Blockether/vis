@@ -236,7 +236,10 @@ class SDK:
     @vis.method(
         tag="mutation",
         activity=vis.Activity(
-            presenter="tests", label="Check SDK", render=_check_activity
+            presenter="tests",
+            label="Check SDK",
+            show_start=True,
+            render=_check_activity,
         ),
     )
     def check(

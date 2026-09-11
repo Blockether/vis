@@ -432,7 +432,9 @@ class Uplink:
 
     @vis.method(
         tag="mutation",
-        activity=vis.Activity(label="Run remote command", render=_command_activity),
+        activity=vis.Activity(
+            label="Run remote command", show_start=True, render=_command_activity
+        ),
     )
     def run(self, command: str, timeout_s: int = 60) -> CommandResult:
         """Execute one shell command on the remote server.
@@ -446,7 +448,9 @@ class Uplink:
 
     @vis.method(
         tag="observation",
-        activity=vis.Activity(label="Check service", render=_service_activity),
+        activity=vis.Activity(
+            label="Check service", show_start=True, render=_service_activity
+        ),
     )
     def service(self, unit: str, timeout_s: int = 30) -> ServiceStatus:
         """Read one systemd unit's state; no systemctl action is taken.
@@ -479,7 +483,9 @@ class Uplink:
 
     @vis.method(
         tag="observation",
-        activity=vis.Activity(label="Check service health", render=_health_activity),
+        activity=vis.Activity(
+            label="Check service health", show_start=True, render=_health_activity
+        ),
     )
     def health(
         self,
@@ -521,7 +527,9 @@ class Uplink:
 
     @vis.method(
         tag="observation",
-        activity=vis.Activity(label="Inspect server", render=_info_activity),
+        activity=vis.Activity(
+            label="Inspect server", show_start=True, render=_info_activity
+        ),
     )
     def info(self, timeout_s: int = 30) -> HostInfo:
         """Collect identity, uptime and memory facts in one round trip.
@@ -562,7 +570,9 @@ class Uplink:
 
     @vis.method(
         tag="mutation",
-        activity=vis.Activity(label="Upload file", render=_upload_activity),
+        activity=vis.Activity(
+            label="Upload file", show_start=True, render=_upload_activity
+        ),
     )
     def put(
         self, local_path: str, remote_path: str, timeout_s: int = 120
@@ -598,7 +608,9 @@ class Uplink:
 
     @vis.method(
         tag="observation",
-        activity=vis.Activity(label="Download file", render=_download_activity),
+        activity=vis.Activity(
+            label="Download file", show_start=True, render=_download_activity
+        ),
     )
     def get(
         self, remote_path: str, local_path: str, timeout_s: int = 120

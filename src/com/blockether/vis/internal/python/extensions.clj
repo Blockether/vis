@@ -1207,11 +1207,14 @@
           (assoc :hidden? true)
 
           activity
-          (assoc :presenter (keyword (get activity "presenter")))
+          (assoc :presenter
+            (keyword (get activity "presenter")) :activity
+            (cond-> {:show-start (get activity "show_start" true)}
+              (get activity "label")
+              (assoc :headline (get activity "label"))))
 
           (get activity "label")
-          (assoc :activity
-            {:headline (get activity "label")} :ticker-fn
+          (assoc :ticker-fn
             (fn [_env _args]
               (get activity "label"))))]
 

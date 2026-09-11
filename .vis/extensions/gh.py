@@ -1657,7 +1657,9 @@ class Gh:
 
     @vis.method(
         tag="mutation",
-        activity=vis.Activity(label="Sign in to GitHub", render=_login_activity),
+        activity=vis.Activity(
+            label="Sign in to GitHub", show_start=True, render=_login_activity
+        ),
     )
     def login(self, hostname: str = "github.com") -> Account:
         """Authenticate GitHub CLI on one host through GitHub's browser device flow.
@@ -1671,7 +1673,9 @@ class Gh:
         return _login(hostname)
 
     @vis.method(
-        activity=vis.Activity(label="List workflow runs", render=_runs_activity)
+        activity=vis.Activity(
+            label="List workflow runs", show_start=True, render=_runs_activity
+        )
     )
     def runs(self, repo: str | None = None, limit: int = 10) -> tuple[RunSummary, ...]:
         """List recent Actions runs, newest first, without watching anything.
@@ -1682,7 +1686,11 @@ class Gh:
         """
         return run_list(repo, limit)
 
-    @vis.method(activity=vis.Activity(label="Watch workflow", render=_watch_activity))
+    @vis.method(
+        activity=vis.Activity(
+            label="Watch workflow", show_start=True, render=_watch_activity
+        )
+    )
     def watch(
         self, run: str | int | None = None, repo: str | None = None, pr=None
     ) -> WatchOutcome:
