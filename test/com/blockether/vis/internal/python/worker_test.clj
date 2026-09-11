@@ -53,6 +53,19 @@ worker_value = 41
 print(worker_value)"))))
           (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
 
+(defdescribe worker-runtime-source-selection-test
+             ;; #194: JSON-escaped forward slashes are not Python path literals.
+             (it "selects the host runtime roots as real import paths before installing the worker"
+                 (with-worker-context
+                   (fn [session]
+                     (let [result (worker/eval-str
+                                    session
+                                    com.blockether.vis-python-runtime/default-session
+                                    (str "__vis_runtime_roots__ == "
+                                         (env/py-json-literal
+                                           (vec (com.blockether.vispython.Sources/roots)))))]
+                       (expect (= "True" result) (str result)))))))
+
 (defdescribe
   shared-packages-install-authority-test
   (it "does not expose a package installer to sandbox code"

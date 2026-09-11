@@ -61,6 +61,45 @@
             "assert (await doctor.help('other')).text == 'other:' + str(value)\n"))
         "print(value, await editable_source())"))))
 
+(deftest sdk-survives-editable-cwd-test
+  ;; #194: refreshing an editable root containing cwd evicted the synthetic SDK.
+  (#'fixtures/with-shared-packages
+   (fn [packages]
+     ;; An editable .pth can cover cwd without containing an installed SDK copy.
+     (spit (io/file packages "cwd.pth") (str (.getCanonicalPath (io/file ".")) "\n"))
+     (#'fixtures/with-fresh-loaded
+      {"sdk.py"
+       (str
+         "import blockether.vis.extension as vis\n"
+         "def sdk_count():\n" "    \"Increment persisted state through the injected host.\"\n"
+         "    vis.state['count'] = vis.state.get('count', 0) + 1\n"
+         "    return vis.state['count']\n"
+         "vis.register(vis.Extension(name='editable-sdk', alias='sdk', description='Editable SDK fixture', "
+         "symbols=[vis.Symbol(sdk_count, activity=vis.Activity(label='Count calls', show_start=False))]))\n")}
+      (fn [result {:keys [ext-dir store]}]
+        (is (= {:loaded 1 :failed 0 :changed? true} result) (pr-str (extensions/load-failures)))
+        (is (empty? (extensions/load-failures)))
+        (when-let [ext (#'fixtures/registered "editable-sdk")]
+          (is (= 1 (:result ((#'fixtures/symbol-fn ext 'sdk_count)))))
+          (let [ctx (:python-context (env/create-python-context
+                                       {}
+                                       (constantly [(str ext-dir)])
+                                       {:worker? true :jail-enabled? true :enabled? false}
+                                       nil))]
+            (try (loop/sync-active-extension-symbols! {:python-context ctx
+                                                       :db-info store
+                                                       :extensions (atom [ext])
+                                                       :active-extensions (atom [])}
+                                                      [ext])
+                 (let [answer (env/run-python-block ctx "print(await sdk_count())")]
+                   (is (nil? (:error answer)) (str answer))
+                   (is (= "2\n" (:stdout answer))))
+                 (finally (env/dispose-python-context! ctx)))))
+        (is (= {:loaded 1 :failed 0 :changed? true}
+               (extensions/reload-python-extensions! {:dirs [(str ext-dir)]})))
+        (when-let [ext (#'fixtures/registered "editable-sdk")]
+          (is (= 3 (:result ((#'fixtures/symbol-fn ext 'sdk_count)))))))))))
+
 (deftest editable-sync-and-reload-test
   ;; #175 and #178: real manual uv preparation, source/API reload, stale status and retry.
   (#'fixtures/with-shared-packages

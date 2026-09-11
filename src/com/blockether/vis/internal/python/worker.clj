@@ -355,8 +355,21 @@
 
               (.setDaemon thread true)
               (.start thread)
-              (tel/log! {:level :debug :id ::started} (str "python worker pid " (.pid process)))
-              state)))
+              (try
+                ;; #194: the archive's worker may carry older Python than the host's
+                ;; pinned runtime dependency. Select that dependency before any imports
+                ;; from install-runtime, not the worker executable's bundled copy.
+                (child/request!
+                  peer
+                  {"op" "exec"
+                   "session" runtime/default-session
+                   "code" (str "import json, sys\n__vis_runtime_roots__ = json.loads("
+                               (pr-str (json/write-json-str (vec (Sources/roots))))
+                               ")\nsys.path[:] = __vis_runtime_roots__ + [p for p in sys.path"
+                               " if p not in __vis_runtime_roots__]\n")})
+                (tel/log! {:level :debug :id ::started} (str "python worker pid " (.pid process)))
+                state
+                (catch Throwable error (.destroy process) (throw error))))))
         (finally (Files/deleteIfExists (.toPath socket)) (Files/deleteIfExists control-dir))))))
 
 (defn- alive? [state] (and state (.isAlive ^Process (:process state))))
