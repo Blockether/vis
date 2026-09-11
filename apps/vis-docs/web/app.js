@@ -44,7 +44,8 @@ export function mount(container,request=fetch,initial) {
     if(!identity) {updateMetadata();return;}
     $('#detail').innerHTML='<p>Loading extension…</p>';
     try {
-      const item=await api('/api/extensions/'+identity);
+      const version=new URLSearchParams(window.location.search).get('version');
+      const item=await api('/api/extensions/'+identity+(version===null?'':'?version='+encodeURIComponent(version)));
       if(disposed||revision!==routeRevision) return;
       $('#detail').innerHTML=detailHTML(item);updateMetadata({item});feedback(item);
       if(focus) $('#detail h1').focus({preventScroll:true});
@@ -79,13 +80,14 @@ export function mount(container,request=fetch,initial) {
     if(confirm&&!preview) return;
     if(!token) {$('#submit-status').textContent='Complete the anti-spam check before continuing.';return;}
     const source={repository_url:form.elements.repository_url.value.trim(),subdirectory:form.elements.subdirectory.value.trim(),turnstile_token:token};
-    if(confirm) source.revision=preview.revision;
+    const tag=form.elements.release_tag.value.trim();if(tag) source.release_tag=tag;
+    if(confirm) {source.revision=preview.revision;source.release_tag=preview.release_tag;}
     const revision=++submissionRevision;token='';
     $('#review-submit').disabled=true;$('#submit-confirm').disabled=true;$('#submit-status').textContent=confirm?'Submitting for review…':'Reading GitHub metadata…';
     try {
       const data=await api(confirm?'/api/submissions':'/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(source)});
       if(disposed||revision!==submissionRevision) return;
-      if(confirm) {dialog.close();$('#notice').textContent='Submitted for moderation. It will appear in the catalog only after approval. Reference: '+data.id;}
+      if(confirm) {dialog.close();$('#notice').textContent=data.status==='approved'?'This version is already approved in the catalog.':'Submitted for moderation. It will appear in the catalog only after approval. Reference: '+data.id;}
       else {preview=data;form.hidden=true;$('#submit-step').textContent='2 of 2 · Review';$('#preview').innerHTML=previewHTML(data);$('#submit-status').textContent='Review the checks and linked source before submitting this commit.';$('#submit-confirm').hidden=false;$('#submit-confirm').disabled=false;$('#edit-submission').hidden=false;dialog.querySelector('.dialog-body').scrollTop=0;$('#submit-step').focus({preventScroll:true});challenge('extension-submit');}
     } catch(error) {if(revision===submissionRevision) {$('#submit-status').textContent=error.message;challenge(confirm?'extension-submit':'extension-preview');}}
     finally {if(revision===submissionRevision) {$('#review-submit').disabled=false;$('#submit-confirm').disabled=false;}}
@@ -96,7 +98,7 @@ export function mount(container,request=fetch,initial) {
   const click=async event=>{
     const node=event.target.closest('a,button');if(!node||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey) return;
     if(node.matches('[data-category]')) {event.preventDefault();state.category=node.dataset.category;renderList();saveFilters();route();closeNavigation();if(mobile.matches) $('#search').focus({preventScroll:true});}
-    else if(node.matches('.card-main,#back-to-catalog')) {event.preventDefault();closeNavigation();navigate(node.href);if(node.id==='back-to-catalog') $('#search').focus({preventScroll:true});}
+    else if(node.matches('.card-main,#back-to-catalog,[data-release]')) {event.preventDefault();closeNavigation();navigate(node.href);if(node.id==='back-to-catalog') $('#search').focus({preventScroll:true});}
     else if(node.id==='submit-open') openSubmission();
     else if(node.id==='clear-filters') {event.preventDefault();clearFilters();}
     else if(node.id==='retry') {event.preventDefault();load();}
@@ -104,6 +106,8 @@ export function mount(container,request=fetch,initial) {
     else if(node.id==='copy-command') {try {await navigator.clipboard.writeText($('#install-command').textContent);node.textContent='Copied';} catch {node.textContent='Select and copy the command above';}}
     else if(node.closest('.toc')) {event.preventDefault();$(node.getAttribute('href'))?.scrollIntoView({block:'start'});}
   };
+  const versionSubmit=event=>{if(event.target.id==='version-form') {event.preventDefault();navigate(event.target.action+'?version='+encodeURIComponent($('#release-version').value));}};
+  container.addEventListener('submit',versionSubmit);
   container.addEventListener('click',click);
   const keys=event=>{
     if(dialog.open) return;
@@ -121,5 +125,5 @@ export function mount(container,request=fetch,initial) {
   };
   document.addEventListener('keydown',keys);
   if(!initial) {load();route();} else if(initial.item) feedback(initial.item);
-  return ()=>{disposed=true;cleanupCommunity?.();++routeRevision;++submissionRevision;removeChallenge();window.removeEventListener('popstate',pop);mobile.removeEventListener('change',syncNavigation);document.removeEventListener('keydown',keys);container.removeEventListener('click',click);document.body.style.overflow='';container.replaceChildren();};
+  return ()=>{disposed=true;cleanupCommunity?.();++routeRevision;++submissionRevision;removeChallenge();window.removeEventListener('popstate',pop);mobile.removeEventListener('change',syncNavigation);document.removeEventListener('keydown',keys);container.removeEventListener('click',click);container.removeEventListener('submit',versionSubmit);document.body.style.overflow='';container.replaceChildren();};
 }

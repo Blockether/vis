@@ -12,6 +12,25 @@ CREATE TABLE IF NOT EXISTS submissions (
   submitted_at TEXT NOT NULL,
   UNIQUE(extension_id, revision)
 );
+-- Version identities are permanent, including rejected releases (discovery must not requeue them).
+CREATE TABLE IF NOT EXISTS releases (
+  extension_id TEXT NOT NULL CHECK(length(extension_id) = 24),
+  version TEXT NOT NULL,
+  revision TEXT NOT NULL CHECK(length(revision) = 40),
+  metadata TEXT NOT NULL CHECK(json_valid(metadata)),
+  status TEXT NOT NULL CHECK(status IN ('approved','rejected')),
+  reviewed_at TEXT NOT NULL,
+  PRIMARY KEY(extension_id,version)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS release_tags ON releases(extension_id,json_extract(metadata,'$.release_tag'))
+  WHERE json_extract(metadata,'$.release_tag') IS NOT NULL;
+CREATE TABLE IF NOT EXISTS release_sync (
+  extension_id TEXT PRIMARY KEY REFERENCES extensions(id) ON DELETE CASCADE,
+  page INTEGER NOT NULL DEFAULT 1,
+  position INTEGER NOT NULL DEFAULT 0,
+  checked_at TEXT NOT NULL,
+  error TEXT
+);
 
 -- Only moderated comments are public. Voter is a private HMAC, never a raw IP.
 CREATE TABLE IF NOT EXISTS comments (

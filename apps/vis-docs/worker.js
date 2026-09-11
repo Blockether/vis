@@ -1,7 +1,8 @@
 import { renderPage } from './web/render.js';
 import { security } from './headers.js';
 import { sitemap, catalogText } from './web/discovery.js';
-import { identity, inspectRepository, RequestError } from './github.js';
+import { inspectRepository, RequestError } from './github.js';
+import { discoverReleases, extensionDetail, queueRelease } from './releases.js';
 import { protectedBody } from './antispam.js';
 import { readCommunity, writeCommunity } from './community.js';
 
@@ -18,7 +19,7 @@ async function catalog(env,origin,ctx) {
 }
 async function protectedSource(request,env,path) {
   const action=path==='/api/preview'?'extension-preview':'extension-submit';
-  const source=await protectedBody(request,env,action,['repository_url','subdirectory','revision']);
+  const source=await protectedBody(request,env,action,['repository_url','subdirectory','revision','release_tag']);
   if(path==='/api/submissions'&&!/^[0-9a-f]{40}$/.test(source.revision||'')) throw new RequestError('Review a pinned commit before submitting.');
   return source;
 }
@@ -39,8 +40,7 @@ async function handle(request,env,ctx) {
       try {
         data.items=(await catalog(env,url.origin,ctx)).extensions;
         if(path!=='/extensions/') {
-          const row=await env.DB.prepare('SELECT metadata, added_at FROM extensions WHERE id=?').bind(path.split('/').at(-1)).first();
-          data.item=row?{...JSON.parse(row.metadata),added_at:row.added_at}:null;
+          data.item=await extensionDetail(env,path.split('/').at(-1),url.searchParams.get('version'));
           if(!data.item) {data.detailError=true;status=404;}
         }
       } catch {data.error='Could not load the catalog. Try again later.';data.detailError=path!=='/extensions/';status=503;}
@@ -48,8 +48,8 @@ async function handle(request,env,ctx) {
     }
     if(path==='/api/extensions') return reply(await catalog(env,url.origin,ctx),200,false,'public, max-age=60');
     if(/^\/api\/extensions\/[0-9a-f]{24}$/.test(path)) {
-      const row=await env.DB.prepare('SELECT metadata, added_at FROM extensions WHERE id = ?').bind(path.split('/').at(-1)).first();
-      return row?reply({...JSON.parse(row.metadata),added_at:row.added_at},200,false,'public, max-age=60'):reply({error:'Repository not listed.'},404);
+      const item=await extensionDetail(env,path.split('/').at(-1),url.searchParams.get('version'));
+      return item?reply(item,200,false,'public, max-age=60'):reply({error:'Repository or approved version not listed.'},404);
     }
     const community=path.match(/^\/api\/extensions\/([0-9a-f]{24})\/community$/);
     if(community) return reply(await readCommunity(request,env,community[1]));
@@ -62,9 +62,8 @@ async function handle(request,env,ctx) {
   const source=await protectedSource(request,env,path);
   const metadata=await inspectRepository(source,env);
   if(path==='/api/preview') return reply(metadata);
-  const now=new Date().toISOString(), id=await identity(metadata.id+'\n'+metadata.revision);
-  await env.DB.prepare('INSERT INTO submissions (id, extension_id, revision, metadata, submitted_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(extension_id, revision) DO NOTHING').bind(id,metadata.id,metadata.revision,JSON.stringify({...metadata,checked_at:now}),now).run();
-  return reply({id,status:'pending'},202);
+  const submission=await queueRelease(env,metadata);
+  return reply(submission,submission.status==='pending'?202:200);
 }
 export default {
   async fetch(request,env,ctx) {
@@ -79,4 +78,5 @@ export default {
     }
     return request.method==='HEAD'?new Response(null,response):response;
   },
+  async scheduled(_controller,env,ctx) {ctx.waitUntil(discoverReleases(env));},
 };

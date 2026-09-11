@@ -77,16 +77,23 @@ in assets, source control, screenshots or client configuration.
 
 1. Keep `pyproject.toml` and `extension.py` together in a public GitHub repository.
    Follow the [project contract](../../resources/vis-docs/extension-packages.md#package-manifest).
+   Set a canonical version such as `1.2.0` or `2.0.0rc1`, commit it, and publish a GitHub
+   Release with the matching tag `vVERSION` or `PACKAGE-NAME/vVERSION`. A tag alone
+   is not a published release. No wheel, release asset or PyPI publication is required.
 2. Choose **Add a repository**, enter `https://github.com/owner/repository`, and leave
    **Project folder** empty for root or provide a folder such as `extensions/greeting`.
-3. Complete the anti-spam check and choose **Review repository**. The Worker checks public
-   access, resolves a full commit SHA, finds `pyproject.toml` and `extension.py`, validates
-   required display metadata and the unconditional `vis-agent` declaration, and checks
-   declared source directories and skill directories containing `SKILL.md`.
-4. Review the displayed checks, dependencies, manifest and linked source at that commit.
-   Complete the second anti-spam check and choose **Submit for review**. The Worker repeats
-   repository checks at the same commit before saving. Retain the submission reference.
-5. A maintainer reviews the pending entry before approving it. Nothing publishes automatically.
+   Set **Release tag** for a monorepo or prerelease; otherwise GitHub's latest stable
+   release is selected. Register each repository/folder pair only once.
+3. Complete the anti-spam check and choose **Review repository**. The Worker verifies
+   the published release, resolves its tag to a full commit SHA, requires the tag to
+   match `project.version`, and validates the manifest, unconditional `vis-agent`
+   declaration, source directories and skill directories containing `SKILL.md`.
+4. Review the displayed release, checks, dependencies, manifest and source at that commit.
+   Complete the second anti-spam check and choose **Submit for review**. The Worker
+   checks that the tag still identifies that commit before saving. Retain the reference.
+5. A maintainer approves each version separately. Subsequent GitHub Releases are
+   discovered and queued automatically; they do not require another submission form.
+   Discovery never approves releases or updates users' installed code.
 
 The dialog fills the phone viewport in portrait and landscape, keeps its X button visible
 while the body scrolls, and respects safe areas. X or Escape closes it and returns focus to
@@ -99,25 +106,47 @@ validation is deliberately not a second Python packaging implementation: the SDK
 authoritative for PEP 440/508, runtime compatibility and installation. Moderators should
 check the manifest with that SDK before approval; listing is not an endorsement.
 
-Only approved listings and comments are public. Pending entries live in `submissions`,
-without an anonymous read API. A repository/folder pair identifies a listing; repeated
-submissions of the same commit are idempotent. Updates require approval and preserve
-the original addition date. GitHub stars, license and dates are checked snapshots.
+Only approved listings, releases and comments are public. Pending entries live in
+`submissions`, without an anonymous read API. A repository/folder pair identifies a
+listing; repeated submissions of the same commit are idempotent. Every reviewed
+version retains its commit permanently, including rejected versions. A moved tag
+cannot replace that identity: publish a new version instead. Approval preserves the
+original listing date and keeps the newest approved stable version as the default,
+including when an older backport is approved later. Prereleases remain explicitly selectable.
+GitHub stars, license and dates are checked snapshots.
+
+`GET /api/extensions/ID` returns the default version, `latest_version` and approved
+`releases` summaries. `?version=1.2.0` returns the full metadata for that approved
+version; pending, rejected and unknown versions return 404. The detail page supports
+version deep links, release notes and commit links, and copies `vis-agent extension install
+... --version VERSION --trust`. The CLI also provides `versions`, `update` and
+`rollback`; see the [installation guide](../../resources/vis-docs/extension-packages.md).
+Deploy the catalog API and use a Vis build that includes these version-aware commands;
+older binaries do not gain new CLI flags from a catalog deployment.
 
 Moderation uses Cloudflare account authentication through Wrangler, not a public admin
 endpoint or a browser token. These commands target the **local** database by default:
 
 ```sh
 npm run moderate -- list
+npm run moderate -- list-sync
 npm run moderate -- approve SUBMISSION_ID
 npm run moderate -- reject SUBMISSION_ID
 ```
 
 Replace `SUBMISSION_ID` with the full 24-character reference. Review before approving
 or rejecting. Append `--remote` only when intentionally moderating the deployed catalog.
-Approval writes the public entry before deleting the pending one; interruption leaves an
-idempotently repeatable approval, never deletes an unapproved entry. Catalog cache may
-show the previous snapshot for up to 60 seconds. There is no automatic refresh job.
+Approval saves the immutable release before updating the public listing and deleting
+its pending entry. An interruption can be retried without replacing a reviewed commit.
+Catalog cache may show the previous snapshot for up to 60 seconds.
+
+The `*/5 * * * *` scheduled handler checks one registered listing and one page of up
+to 20 GitHub Releases per tick, inspecting at most five new candidates. Its private
+`release_sync` cursor resumes within a page, advances through older pages, then starts
+again; listings rotate by last check time. Detection time depends on catalog size,
+history and GitHub availability, not just the five-minute schedule. Rejected and
+pending tags are not repeatedly queued. Failures preserve approved metadata and are
+visible to authenticated operators through `list-sync`, never through the public API.
 
 ## README and community feedback
 

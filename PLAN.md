@@ -1881,3 +1881,66 @@ TUI, Companion and documentation-app work remains outside scope. The user explic
 authorized the scoped commit and push after cross-validation.
 No live gateway restart or release was requested or performed; running installations
 need a matching engine/SDK update before using the new publication contract.
+
+# GitHub release versions for extension packages
+
+Phrase: publish once on GitHub, approve immutable versions, install deliberately.
+
+## Context
+
+`apps/vis-docs` currently stores one approved snapshot per repository/project folder.
+`packages/vis-agent/src/blockether/vis/extension_package.py` installs a full SHA but
+cannot select catalog versions, update or roll back an installation. The host bridge
+is `internal/python/extensions.clj`, with CLI commands in `internal/main.clj`.
+Keep GitHub as source of code; do not require PyPI, run publisher code while reviewing,
+automatically replace installed code, or let moved tags alter approved versions.
+Concurrent community/README and TUI work is outside this task and must be preserved.
+
+## 1. Define and implement package lifecycle
+- Rationale: explicit version selection must resolve a reviewed immutable commit.
+- Data: existing inert manifest checks, Git transport and local source linking.
+- Acceptance criteria: list approved versions, install a selected version, explicit update and rollback; failed preparation preserves the active package; local links are never overwritten.
+- Unknowns: coordinate the public release JSON with the agent maintaining the Spel extension.
+
+## 2. Discover, moderate and display GitHub Releases
+- Rationale: authors submit a repository once, then publish releases without repeated forms.
+- Data: Worker GitHub metadata checks, D1 submissions, moderator CLI and detail renderer.
+- Acceptance criteria: scheduled bounded discovery, repeated validation, private pending/rejected releases, immutable approved version-to-SHA mapping, version history and pinned install commands on mobile and desktop.
+- Unknowns: preserve existing approved snapshots and separate concurrent edits safely.
+
+## 3. Document, cross-validate and finish
+- Rationale: authors and users need one accurate end-to-end contract.
+- Data: SDK tests, CLI/embedded-host tests, real workerd/D1/browser flow, docs/link checks, formatting and lint/reflection.
+- Acceptance criteria: documented release/tag/manifest workflow, explicit install/update/rollback examples, checked failure states; publish only scoped verified changes under applicable authorization.
+- Unknowns: native and remote deployment verification depend on the available build and permissions; report exact limitations.
+
+## Plan state
+
+Implementation and local verification complete. GitHub Releases are required for
+catalog publication; authors register a repository/folder once. Discovery is bounded
+to one listing, one 20-release page and five new inspections per tick, with a saved
+cursor. Only separately approved immutable versions enter public history. No legacy
+source snapshot is silently promoted to an approved GitHub Release.
+
+The SDK and CLI support explicit versions, latest approved stable selection, update
+availability, deliberate update and rollback. Atomic managed snapshots retain the
+previous installation on preparation failure. Tests also exercise real discovery and
+trusted-worker calls before and after update/rollback plus explicit reload; the
+separate integration test covers actual uv preparation against a test-owned index.
+
+Verification: package/authoring tests (63), CLI and embedded-host tests (77), full
+Worker/D1/UI suite (132), Python formatting/lint, Clojure formatting/lint/reflection, ESLint,
+docs build, Wrangler deployment dry-run and 70 local documentation links passed.
+Desktop Chromium and WebKit iPhone 14 emulation checked version selection, history
+navigation, pinned commands and source links. Touch controls are at least 44 px;
+portrait and landscape with 130% text have no horizontal overflow. These are browser
+emulation checks, not a physical-device test. The browser denied clipboard writes;
+the existing manual-copy fallback appeared. Clipboard success and the exact selected
+version command are covered by the UI tests; a real clipboard write was not verified.
+
+Spel coordination is in council thread 392. The publisher owns its release and tag;
+production catalog submission/moderation remains blocked on its anti-spam check and
+operator authentication. No bypass was added. This task did not publish a Vis release,
+restart services, deploy the catalog, commit or push. The new CLI requires a matching
+Vis build; a catalog deployment alone cannot add flags to an older binary.
+Unrelated TUI, Companion, dependency and runtime work remains outside this task.

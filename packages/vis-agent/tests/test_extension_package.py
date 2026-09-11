@@ -1,6 +1,8 @@
 """GitHub and local project admission share one inert manifest contract."""
 
+import io
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 from blockether.vis import extension_package as package
@@ -192,7 +194,7 @@ def test_real_git_checkout_is_pinned_and_installs_only_selected_project(
     assert not (target / "vis-greeter/.git").exists()
     assert not (target / "vis-greeter/unrelated.txt").exists()
     assert commands
-    assert sorted(p.name for p in target.iterdir()) == ["vis-greeter"]
+    assert sorted(p.name for p in target.iterdir()) == [".versions", "vis-greeter"]
 
 
 def test_remote_failure_and_invalid_revision_leave_no_installation(
@@ -205,7 +207,7 @@ def test_remote_failure_and_invalid_revision_leave_no_installation(
 
     monkeypatch.setattr(package, "_checkout", fail)
     with pytest.raises(ValueError, match="fetch"):
-        package.install(REPOSITORY, target, trust=True)
+        package.install(REPOSITORY, target, trust=True, revision="a" * 40)
     assert not target.exists() or not list(target.iterdir())
     with pytest.raises(ValueError, match="revision"):
         package.install(REPOSITORY, target, trust=True, revision="--upload-pack=bad")
@@ -248,3 +250,304 @@ def test_skill_paths_and_resources_stay_inside_package(tmp_path):
     (skill / "reference.txt").symlink_to(tmp_path / "private.txt")
     with pytest.raises(ValueError, match="inside"):
         package.inspect_source(source)
+
+
+@pytest.fixture
+def releases(tmp_path, monkeypatch):
+    repository = project(tmp_path / "repository" / "plugins/greeting").parents[1]
+    original = subprocess.run
+
+    def git(*args):
+        return original(
+            ["git", "-C", str(repository), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git("init")
+    metadata = []
+    for version in ("1.0.0", "1.1.0", "2.0.0rc1"):
+        (repository / "plugins/greeting/pyproject.toml").write_text(
+            MANIFEST.replace('version = "1.0.0"', f'version = "{version}"')
+        )
+        (repository / "plugins/greeting/src/greeter.py").write_text(
+            f'VERSION = "{version}"'
+        )
+        git("add", ".")
+        git(
+            "-c",
+            "user.name=Test Author",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            version,
+        )
+        metadata.append(
+            {
+                "name": "vis-greeter",
+                "version": version,
+                "revision": git("rev-parse", "HEAD"),
+                "repository_url": REPOSITORY,
+                "subdirectory": "plugins/greeting",
+                "release_tag": "v" + version,
+                "prerelease": "rc" in version,
+            }
+        )
+
+    commands = []
+
+    def transport(args, **kwargs):
+        commands.append(args)
+        return original(
+            [
+                str(repository)
+                if arg == REPOSITORY
+                else "protocol.file.allow=always"
+                if arg == "protocol.file.allow=never"
+                else arg
+                for arg in args
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(package.subprocess, "run", transport)
+    monkeypatch.setattr(package, "_catalog", lambda *_: {"releases": metadata})
+    return metadata, tmp_path / "installed", commands
+
+
+def test_version_install_update_and_rollback_use_real_pinned_checkouts(releases):
+    metadata, target, commands = releases
+    first = package.install(
+        REPOSITORY, target, trust=True, subdirectory="plugins/greeting", version="1.0.0"
+    )
+    active = target / "vis-greeter"
+    initial = active.resolve()
+    assert first["revision"] == metadata[0]["revision"]
+    assert active.is_symlink()
+    assert '"1.0.0"' in (active / "src/greeter.py").read_text()
+    status = package.versions("vis-greeter", directory=target)
+    assert status["installed"] == "1.0.0"
+    assert status["latest"] == "1.1.0"
+    assert status["update_available"]
+    assert [r["version"] for r in status["releases"]] == ["2.0.0rc1", "1.1.0", "1.0.0"]
+    updated = package.update("vis-greeter", target, trust=True)
+    assert updated["version"] == "1.1.0"
+    assert initial.exists()
+    assert active.resolve() != initial
+    assert not package.versions("vis-greeter", directory=target)["update_available"]
+    restored = package.rollback("vis-greeter", target, trust=True)
+    assert restored["revision"] == first["revision"]
+    assert '"1.0.0"' in (active / "src/greeter.py").read_text()
+    assert all(args[-1] != "HEAD" for args in commands if "fetch" in args)
+    assert len([args for args in commands if "fetch" in args]) == 3
+
+
+def test_default_install_selects_stable_and_prerelease_is_explicit(releases):
+    metadata, target, _ = releases
+    installed = package.install(
+        REPOSITORY, target, trust=True, subdirectory="plugins/greeting"
+    )
+    assert installed["revision"] == metadata[1]["revision"]
+    pre = package.update("vis-greeter", target, trust=True, version="2.0.0rc1")
+    assert pre["revision"] == metadata[2]["revision"]
+    restored = package.rollback("vis-greeter", target, trust=True, version="1.0.0")
+    assert restored["version"] == "1.0.0"
+
+
+def test_rollback_keeps_local_edits_but_refetches_original_source(releases):
+    _, target, _ = releases
+    package.install(
+        REPOSITORY, target, trust=True, subdirectory="plugins/greeting", version="1.0.0"
+    )
+    saved = (target / "vis-greeter").resolve()
+    (saved / "src/greeter.py").write_text("LOCAL_EDIT = True")
+    package.update("vis-greeter", target, trust=True)
+    package.rollback("vis-greeter", target, trust=True)
+    assert (saved / "src/greeter.py").read_text() == "LOCAL_EDIT = True"
+    assert '"1.0.0"' in (target / "vis-greeter/src/greeter.py").read_text()
+
+
+@pytest.mark.parametrize(
+    "failure", ["fetch", "manifest", "copy", "activate", "catalog"]
+)
+def test_failed_updates_leave_the_current_package_and_receipt_intact(
+    releases, monkeypatch, failure
+):
+    metadata, target, _ = releases
+    package.install(
+        REPOSITORY, target, trust=True, subdirectory="plugins/greeting", version="1.0.0"
+    )
+    active = (target / "vis-greeter").resolve()
+    receipt = (active.parent / "receipt.json").read_bytes()
+
+    def fail(*_args, **_kwargs):
+        raise ValueError("Fixture failure")
+
+    if failure == "manifest":
+        metadata[1]["name"] = "another-name"
+    else:
+        owner, attribute = (
+            (package.os, "replace")
+            if failure == "activate"
+            else (
+                package,
+                {"fetch": "_checkout", "copy": "_copy_project", "catalog": "_catalog"}[
+                    failure
+                ],
+            )
+        )
+        monkeypatch.setattr(owner, attribute, fail)
+    with pytest.raises(ValueError):
+        package.update("vis-greeter", target, trust=True)
+    assert (target / "vis-greeter").resolve() == active
+    assert (active.parent / "receipt.json").read_bytes() == receipt
+    assert len(list(active.parent.parent.iterdir())) == 1
+    assert not list(target.glob("*.install-lock"))
+
+
+def test_version_lookup_and_lifecycle_fail_closed(releases, monkeypatch):
+    _, target, _ = releases
+    with pytest.raises(ValueError, match="not approved"):
+        package.install(
+            REPOSITORY,
+            target,
+            trust=True,
+            subdirectory="plugins/greeting",
+            version="99.0.0",
+        )
+    assert not target.exists()
+    package.install(
+        REPOSITORY, target, trust=True, subdirectory="plugins/greeting", version="1.0.0"
+    )
+    active = (target / "vis-greeter").resolve()
+    with pytest.raises(ValueError, match="No previous"):
+        package.rollback("vis-greeter", target, trust=True)
+    for operation in (package.update, package.rollback):
+        with pytest.raises(ValueError, match="trust"):
+            operation("vis-greeter", target)
+    with pytest.raises(ValueError, match="older"):
+        package.rollback("vis-greeter", target, trust=True, version="1.1.0")
+    package.update("vis-greeter", target, trust=True)
+    with pytest.raises(ValueError, match="rollback"):
+        package.update("vis-greeter", target, trust=True, version="1.0.0")
+    unchanged = package.update("vis-greeter", target, trust=True)
+    assert "Already installed" in unchanged["next"]
+    monkeypatch.setattr(
+        package, "_catalog", lambda *_: (_ for _ in ()).throw(ValueError("offline"))
+    )
+    assert package.rollback("vis-greeter", target, trust=True)["version"] == "1.0.0"
+    assert active.exists()
+
+
+def test_local_source_links_and_unmanaged_directories_are_never_replaced(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "installed"
+    package.install(str(source), target, trust=True)
+    for operation in (package.update, package.rollback):
+        with pytest.raises(ValueError, match="local source"):
+            operation("vis-greeter", target, trust=True)
+    with pytest.raises(ValueError, match="version"):
+        package.install(str(source), target, trust=True, version="1.0.0")
+    assert (target / "vis-greeter").resolve() == source
+
+
+def test_catalog_version_identity_is_checked_before_fetch(releases):
+    metadata, target, commands = releases
+    metadata[0]["repository_url"] = "https://github.com/other/repository"
+    with pytest.raises(ValueError, match="Invalid release"):
+        package.install(
+            REPOSITORY,
+            target,
+            trust=True,
+            subdirectory="plugins/greeting",
+            version="1.0.0",
+        )
+    assert not commands
+    assert not target.exists()
+
+
+def test_conflicting_selectors_do_not_access_network(tmp_path):
+    with pytest.raises(ValueError, match="not both"):
+        package.install(
+            REPOSITORY, tmp_path, trust=True, version="1.0.0", revision="a" * 40
+        )
+
+
+def test_changed_installation_is_not_overwritten_after_network_preparation(
+    releases, monkeypatch
+):
+    _, target, _ = releases
+    package.install(
+        REPOSITORY, target, trust=True, subdirectory="plugins/greeting", version="1.0.0"
+    )
+    original = package._checkout
+
+    def replace_during_fetch(*args):
+        revision = original(*args)
+        active = target / "vis-greeter"
+        active.unlink()
+        active.symlink_to(target / "user-source")
+        project(target / "user-source")
+        return revision
+
+    monkeypatch.setattr(package, "_checkout", replace_during_fetch)
+    with pytest.raises(ValueError, match="local source"):
+        package.update("vis-greeter", target, trust=True)
+    assert (target / "vis-greeter").resolve() == target / "user-source"
+
+
+def test_catalog_uses_one_fixed_https_origin_and_refuses_redirects(monkeypatch):
+    requests = []
+
+    def open_request(request, timeout):
+        requests.append((request.full_url, timeout))
+        return io.BytesIO(b'{"releases": []}')
+
+    def opener(handler):
+        assert (
+            handler.redirect_request(
+                None, None, 302, None, None, "https://other.example.com"
+            )
+            is None
+        )
+        return SimpleNamespace(open=open_request)
+
+    monkeypatch.setattr(package, "build_opener", opener)
+    assert package._catalog(REPOSITORY, "plugins/greeting") == {"releases": []}
+    expected = package.hashlib.sha256(
+        (REPOSITORY.lower() + "\nplugins/greeting").encode()
+    ).hexdigest()[:24]
+    assert requests == [("https://vis.blockether.com/api/extensions/" + expected, 20)]
+
+
+@pytest.mark.parametrize("body", [b"not json", b" " * (4 * 1024 * 1024 + 1)])
+def test_malformed_or_oversized_catalog_responses_fail_closed(monkeypatch, body):
+    monkeypatch.setattr(
+        package,
+        "build_opener",
+        lambda *_: SimpleNamespace(open=lambda *_a, **_k: io.BytesIO(body)),
+    )
+    with pytest.raises(ValueError):
+        package._catalog(REPOSITORY, "")
+
+
+def test_prerelease_only_needs_explicit_selection_and_update_never_downgrades(releases):
+    metadata, target, _ = releases
+    metadata[:] = [metadata[2]]
+    with pytest.raises(ValueError, match="No approved stable"):
+        package.install(REPOSITORY, target, trust=True, subdirectory="plugins/greeting")
+    installed = package.install(
+        REPOSITORY,
+        target,
+        trust=True,
+        subdirectory="plugins/greeting",
+        version="2.0.0rc1",
+    )
+    metadata.append(
+        {**metadata[0], "version": "1.1.0", "revision": "a" * 40, "prerelease": False}
+    )
+    result = package.update("vis-greeter", target, trust=True)
+    assert result["revision"] == installed["revision"]
+    assert "no changes" in result["next"]

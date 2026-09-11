@@ -220,6 +220,57 @@
           (expect (= (str (System/getProperty base) "/.vis/extensions") (:directory options))))))))
 
 (defdescribe
+  extension-version-commands-test
+  (it "passes version selection to install without losing the project scope"
+      (let [calls (atom [])]
+        (with-redefs [python-extensions/install-package!
+                      (fn [source options]
+                        (swap! calls conj [source options])
+                        {"name" "vis-greeter" "version" "1.2.0" "mode" "github" "next" "/reload"})]
+          (with-out-str (commandline/dispatch! (#'main/root-command)
+                                               ["vis-agent" "extension" "install"
+                                                "https://github.com/example/greeting" "--version"
+                                                "1.2.0" "--trust" "--project"])))
+        (expect (= "1.2.0" (get-in @calls [0 1 :version])))
+        (expect (= (str (System/getProperty "user.dir") "/.vis/extensions")
+                   (get-in @calls [0 1 :directory])))))
+  (it "dispatches approved version discovery with installed and update information"
+      (let [lines (atom [])]
+        (with-redefs [main/stdout! #(swap! lines conj %)
+                      python-extensions/package-versions
+                      (fn [source options]
+                        (expect (= "vis-greeter" source))
+                        (expect (= "plugins/greeting" (:subdirectory options)))
+                        {"installed" "1.0.0"
+                         "latest" "1.2.0"
+                         "update_available" true
+                         "releases" [{"version" "1.2.0" "revision" (apply str (repeat 40 "a"))}]})]
+
+          (commandline/dispatch! (#'main/root-command)
+                                 ["vis-agent" "extension" "versions" "vis-greeter" "--subdirectory"
+                                  "plugins/greeting"]))
+        (expect (some #(str/includes? % "Update available") @lines))
+        (expect (some #(str/includes? % "1.2.0") @lines))))
+  (it "passes explicit trust, version and project to lifecycle operations"
+      (doseq [command ["update" "rollback"]]
+        (let [calls (atom [])
+              operation (fn [name options]
+                          (swap! calls conj [name options])
+                          {"name" name "version" "1.2.0" "mode" "github" "next" "/reload"})]
+
+          (with-redefs [python-extensions/update-package! operation
+                        python-extensions/rollback-package! operation]
+
+            (with-out-str (commandline/dispatch! (#'main/root-command)
+                                                 ["vis-agent" "extension" command "vis-greeter"
+                                                  "--trust" "--version" "1.2.0" "--project"])))
+          (expect (= [["vis-greeter"
+                       {:trust true
+                        :version "1.2.0"
+                        :directory (str (System/getProperty "user.dir") "/.vis/extensions")}]]
+                     @calls))))))
+
+(defdescribe
   gateway-command-help-test
   (it
     "says in `gateway` help which subcommands follow --gateway, and which never leave this machine"

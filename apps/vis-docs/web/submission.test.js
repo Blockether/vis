@@ -13,7 +13,7 @@ beforeAll(async()=>{fixture=await runtimeFixture();});
 afterAll(async()=>{await fixture?.runtime.dispose();});
 beforeEach(async()=>{
   address++;fixture.controls.github='ok';fixture.controls.tokens.clear();fixture.controls.requests=[];
-  await fixture.db.batch(['DELETE FROM submissions','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));
+  await fixture.db.batch(['DELETE FROM submissions','DELETE FROM releases','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));
   await fixture.runtime.purgeCache();
   dom=new JSDOM('<div id="app"></div>',{url:'https://center.example.com/extensions/'});
   vi.stubGlobal('window',dom.window);vi.stubGlobal('document',dom.window.document);vi.stubGlobal('navigator',dom.window.navigator);
@@ -57,7 +57,8 @@ test.each(['','plugins/greeting'])('browser review, submission, approval and cat
   $('.card-main').click();
   await vi.waitFor(()=>expect($('#install-command')).not.toBeNull());
   expect($('#install-command').textContent).toBe(installCommand(listing));
-  expect($('#install-command').textContent).toContain(fixture.revision);
+  expect($('#install-command').textContent).toContain("--version '1.0.0'");
+  expect($('#source-link').href).toContain(fixture.revision);
   expect($('#source-link').href).toBe(listing.source_url);
   await vi.waitFor(()=>expect($('[data-rating] button')).not.toBeNull());
   const confirmFeedback=async()=>{await vi.waitFor(()=>expect($('[data-check-status]').textContent).toContain('then confirm'));$('[data-feedback-confirm]').click();};

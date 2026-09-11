@@ -1806,17 +1806,48 @@
           slurp
           str/trim))
 
+(defn- package-operation
+  [operation arguments]
+  (package-call
+    (str operation "(**json.loads(" (python-string-literal (json/write-json-str arguments)) "))")))
+
 (defn install-package!
-  "Admit a reviewed GitHub revision or source project for the next load."
-  [source {:keys [trust subdirectory revision directory]}]
-  (package-call (str "install(**json.loads("
-                     (python-string-literal (json/write-json-str {:source source
-                                                                  :directory directory
-                                                                  :trust (boolean trust)
-                                                                  :subdirectory (or subdirectory "")
-                                                                  :revision revision
-                                                                  :vis_version (package-version)}))
-                     "))")))
+  "Install an approved version, an explicit SHA or a local source project."
+  [source {:keys [trust subdirectory revision version directory]}]
+  (package-operation "install"
+                     {:source source
+                      :directory directory
+                      :trust (boolean trust)
+                      :subdirectory (or subdirectory "")
+                      :revision revision
+                      :version version
+                      :vis_version (package-version)}))
+
+(defn package-versions
+  "List approved releases and update availability for a repository or installed name."
+  [source {:keys [subdirectory directory]}]
+  (package-operation "versions"
+                     {:source source :subdirectory (or subdirectory "") :directory directory}))
+
+(defn update-package!
+  "Explicitly activate a newer approved source snapshot; dependencies prepare on reload."
+  [name {:keys [trust version directory]}]
+  (package-operation "update"
+                     {:name name
+                      :directory directory
+                      :trust (boolean trust)
+                      :version version
+                      :vis_version (package-version)}))
+
+(defn rollback-package!
+  "Restore a previous pinned source or an explicitly selected older approved release."
+  [name {:keys [trust version directory]}]
+  (package-operation "rollback"
+                     {:name name
+                      :directory directory
+                      :trust (boolean trust)
+                      :version version
+                      :vis_version (package-version)}))
 
 (defn- extension-plan
   [^File f]

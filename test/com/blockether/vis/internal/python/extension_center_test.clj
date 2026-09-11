@@ -171,3 +171,84 @@
                 (is (= 1 (:failed (pyx/reload-python-extensions! opts))))
                 (is (= 43 (invoke)))))
             (finally (.stop index 0)))))))))
+
+(deftest approved-release-lifecycle-crosses-the-embedded-host
+  (#'fixtures/with-shared-packages
+   (fn [packages]
+     (#'fixtures/with-fresh-loaded
+      {}
+      (fn [_ {:keys [ext-dir]}]
+        (let
+          [directory
+           (str (io/file ext-dir "extensions"))
+
+           invoke
+           #'pyx/package-call
+
+           setup
+           (str
+             "def _catalog(repository, folder):\n"
+             "    return {'releases': [{'repository_url': repository, 'subdirectory': folder,"
+             " 'name': 'vis-release-fixture', 'version': version, 'revision': digit * 40,"
+             " 'release_tag': 'v' + version} for version, digit in [('1.0.0', 'a'), ('1.1.0', 'b')]]}\n"
+             "def _checkout(repository, directory, revision):\n"
+             "    selected = directory / 'plugins' / 'greeting'\n"
+             "    selected.mkdir(parents=True)\n"
+             "    version = '1.0.0' if revision == 'a' * 40 else '1.1.0'\n"
+             "    (selected / 'extension.py').write_text("
+             (#'pyx/python-string-literal
+              "import blockether.vis.extension as vis\nVERSION = SELECTED_VERSION\ndef current_version():\n    \"Return the active release.\"\n    return VERSION\nvis.register(vis.Extension(name=\"vis-release-fixture\", description=\"Release fixture\", alias=\"release\", symbols=[vis.Symbol(current_version, activity=vis.Activity(label=\"Read active release\", show_start=False))]))\n")
+             ".replace('SELECTED_VERSION', repr(version)))\n"
+             "    (selected / 'pyproject.toml').write_text("
+             "'[project]\\nname=\"vis-release-fixture\"\\nversion=\"' + version + '\"\\n'"
+             " + 'description=\"Release fixture\"\\nrequires-python=\">=3.11\"\\n'"
+             " + 'dependencies=[\"vis-agent>=0.1.0\"]\\n[tool.vis]\\ncategory=\"tools\"\\n')\n"
+             "    return revision\n")
+
+           package-call
+           @invoke
+
+           options
+           {:directory directory :trust true :version "1.0.0" :subdirectory "plugins/greeting"}
+
+           active-version
+           #(:result ((#'fixtures/symbol-fn
+                       (#'fixtures/registered "vis-release-fixture")
+                       'current_version)))
+
+           reload-release
+           (fn []
+             (let [result (pyx/reload-python-extensions! {:dirs [directory]})]
+               (is (= 0 (:failed result))
+                   (pr-str {:result result :failures (pyx/load-failures)}))))]
+
+          (with-redefs-fn {invoke (fn [expression]
+                                    (package-call (str "exec(" (#'pyx/python-string-literal setup)
+                                                       ", install.__globals__) or " expression)))
+                           ;; The preceding test covers real uv. Here only dependency preparation
+                           ;; and remote transport are replaced; discovery and trusted workers are real.
+                           #'python-runtime/ensure-project! (constantly packages)}
+            (fn []
+              (is (= "1.0.0"
+                     (get (pyx/install-package! "https://github.com/example/extensions" options)
+                          "version")))
+              (reload-release)
+              (is (= "1.0.0" (active-version)))
+              (let [status (pyx/package-versions "vis-release-fixture" {:directory directory})]
+                (is (= "1.0.0" (get status "installed")))
+                (is (= "1.1.0" (get status "latest")))
+                (is (true? (get status "update_available"))))
+              (is (= "1.1.0"
+                     (get (pyx/update-package! "vis-release-fixture" (dissoc options :version))
+                          "version")))
+              (is (= "1.0.0" (active-version)) "Installed code changes only after reload")
+              (reload-release)
+              (is (= "1.1.0" (active-version)))
+              (is (= "1.0.0"
+                     (get (pyx/rollback-package! "vis-release-fixture" (dissoc options :version))
+                          "version")))
+              (is (= "1.1.0" (active-version)))
+              (reload-release)
+              (is (= "1.0.0" (active-version)))
+              (is (= 3 (count (.listFiles (io/file directory ".versions" "vis-release-fixture")))))
+              (is (.isFile (io/file directory "vis-release-fixture" "extension.py")))))))))))

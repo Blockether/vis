@@ -5,7 +5,8 @@ pyproject.toml and extension.py together, at repository root or in a selected
 subdirectory. Installation requires trust; dependency preparation runs on reload.
 """
 
-import json  # noqa: F401 -- the embedded engine invokes install via json.loads.
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -14,7 +15,9 @@ import sys
 import tempfile
 import tomllib
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 try:
     from packaging.requirements import Requirement
@@ -267,24 +270,163 @@ def _copy_project(source, destination):
     shutil.copytree(source, destination, ignore=excluded)
 
 
-def install(
-    source, directory, trust=False, subdirectory="", revision=None, vis_version=None
-):
-    """Atomically install a trusted GitHub revision or link a local project; never overwrite.
+CATALOG = "https://vis.blockether.com"
 
-    GitHub source is fetched using Git, without submodules, hooks or archive transport.
-    A catalog command pins a full commit SHA. Without a pin, the default branch is used.
-    Only the selected project is installed. Local checkouts stay linked for /reload.
-    """
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _catalog(repository, subdirectory):
+    identity = hashlib.sha256(
+        (repository.lower() + "\n" + subdirectory).encode()
+    ).hexdigest()[:24]
+    request = Request(
+        CATALOG + "/api/extensions/" + identity,
+        headers={"Accept": "application/json", "User-Agent": "Vis-Extension-Installer"},
+    )
+    try:
+        with build_opener(_NoRedirect()).open(request, timeout=20) as response:
+            body = response.read(4 * 1024 * 1024 + 1)
+        if len(body) > 4 * 1024 * 1024:
+            raise ValueError("Catalog response is too large")
+        return json.loads(body)
+    except HTTPError as exc:
+        if exc.code == 404:
+            raise ValueError(
+                "No approved releases for this repository and project folder"
+            ) from exc
+        raise ValueError(
+            "Extension Center is unavailable; no code was changed"
+        ) from exc
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            "Extension Center is unavailable; no code was changed"
+        ) from exc
+
+
+def _releases(repository, subdirectory):
+    data = _catalog(repository, subdirectory)
+    if not isinstance(data, dict) or not isinstance(data.get("releases"), list):
+        raise ValueError("Invalid release metadata from Extension Center")
+    releases = []
+    versions = set()
+    for item in data["releases"]:
+        if (
+            not isinstance(item, dict)
+            or github_repository(item.get("repository_url")).lower()
+            != repository.lower()
+            or project_subdirectory(item.get("subdirectory", "")) != subdirectory
+            or not re.fullmatch(r"[0-9a-f]{40}", item.get("revision", ""))
+            or not isinstance(item.get("version"), str)
+        ):
+            raise ValueError("Invalid release metadata from Extension Center")
+        version = Version(item["version"])
+        if version in versions:
+            raise ValueError("Catalog contains ambiguous package versions")
+        versions.add(version)
+        releases.append(item)
+    return sorted(releases, key=lambda item: Version(item["version"]), reverse=True)
+
+
+def _select(releases, version=None):
+    if version is not None:
+        wanted = Version(version)
+        selected = next(
+            (item for item in releases if Version(item["version"]) == wanted), None
+        )
+    else:
+        selected = next(
+            (
+                item
+                for item in releases
+                if not item.get("prerelease")
+                and not Version(item["version"]).is_prerelease
+                and not Version(item["version"]).is_devrelease
+            ),
+            None,
+        )
+    if selected is None:
+        raise ValueError(
+            "Requested version is not approved in Extension Center"
+            if version
+            else "No approved stable release; select a prerelease explicitly with --version"
+        )
+    return selected
+
+
+def _name(name):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        raise ValueError("Use the normalized installed extension name")
+    return name
+
+
+def _managed(directory, name):
+    destination = directory / _name(name)
+    store = (directory / ".versions" / name).resolve()
+    if not destination.is_symlink():
+        raise ValueError(
+            "Update and rollback require a managed GitHub install, not a local source link or directory"
+        )
+    project = destination.resolve(strict=True)
+    snapshot = project.parent
+    if project.name != "project" or snapshot.parent != store:
+        raise ValueError("Update and rollback never replace local source links")
+    record = json.loads((snapshot / "receipt.json").read_text(encoding="utf-8"))
+    if record.get("name") != name or not re.fullmatch(
+        r"[0-9a-f]{40}", record.get("revision", "")
+    ):
+        raise ValueError("Invalid installed package receipt")
+    return snapshot, record
+
+
+def versions(source, subdirectory="", directory=None):
+    """List approved releases and update availability for a repository or installed name."""
+    installed = None
+    if not source.startswith("https://"):
+        if directory is None:
+            raise ValueError(
+                "Use a GitHub repository URL or an installed extension name"
+            )
+        _, installed = _managed(Path(directory).expanduser().resolve(), source)
+        source, subdirectory = installed["repository_url"], installed["subdirectory"]
+    repository = github_repository(source)
+    subdirectory = project_subdirectory(subdirectory)
+    releases = _releases(repository, subdirectory)
+    try:
+        latest = _select(releases)["version"]
+    except ValueError:
+        latest = None
+    return {
+        "repository_url": repository,
+        "subdirectory": subdirectory,
+        "installed": installed["version"] if installed else None,
+        "latest": latest,
+        "update_available": bool(
+            installed and latest and Version(latest) > Version(installed["version"])
+        ),
+        "releases": releases,
+    }
+
+
+def _trust(trust):
     if not trust:
         raise ValueError(
             "Extensions and build backends run with your permissions; review the source and pass --trust"
         )
-    subdirectory = project_subdirectory(subdirectory)
-    if revision is not None and (
-        not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)
-    ):
-        raise ValueError("revision must be a full, lowercase Git commit SHA")
+
+
+def _admit(
+    source,
+    directory,
+    subdirectory,
+    revision,
+    vis_version,
+    release=None,
+    replacing=None,
+    expected=None,
+):
     path = Path(source).expanduser()
     if path.is_file() and path.name == "pyproject.toml":
         if subdirectory:
@@ -297,7 +439,7 @@ def install(
         raise ValueError(
             "revision applies only to a GitHub repository, not a local directory"
         )
-    directory = Path(directory).expanduser()
+    directory = Path(directory).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
     python_version = ".".join(map(str, sys.version_info[:3]))
     with tempfile.TemporaryDirectory(prefix=".install-", dir=directory) as temporary:
@@ -309,18 +451,56 @@ def install(
         if not selected.is_relative_to(path.resolve()):
             raise ValueError("Selected folder must stay inside the repository")
         metadata = inspect_source(selected, vis_version, python_version)
+        if release and (
+            metadata["version"] != str(Version(release["version"]))
+            or metadata["name"] != release["name"]
+        ):
+            raise ValueError("Fetched manifest does not match the approved release")
+        if replacing and metadata["name"] != replacing:
+            raise ValueError("An update cannot change the installed extension name")
         destination = directory / metadata["name"]
         lock = directory / ("." + metadata["name"] + ".install-lock")
         fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(fd)
         try:
-            if os.path.lexists(destination):
+            previous = None
+            if replacing:
+                active, _ = _managed(directory, replacing)
+                if active.name != expected:
+                    raise ValueError(
+                        "Installation changed during preparation; retry the operation"
+                    )
+                previous = active.name
+            elif os.path.lexists(destination):
                 raise FileExistsError(
-                    "Extension already exists; remove it explicitly before replacing it"
+                    "Extension already exists; use extension update or rollback explicitly"
                 )
             if repository:
-                _copy_project(selected, stage / "project")
-                (stage / "project").rename(destination)
+                snapshot = directory / ".versions" / metadata["name"] / stage.name
+                snapshot.parent.mkdir(parents=True, exist_ok=True)
+                prepared = stage / "prepared"
+                prepared.mkdir()
+                _copy_project(selected, prepared / "project")
+                record = {
+                    "name": metadata["name"],
+                    "version": metadata["version"],
+                    "repository_url": repository,
+                    "subdirectory": subdirectory,
+                    "revision": revision,
+                    "release_tag": release.get("release_tag") if release else None,
+                    "previous": previous,
+                }
+                (prepared / "receipt.json").write_text(
+                    json.dumps(record), encoding="utf-8"
+                )
+                prepared.rename(snapshot)
+                pointer = stage / "active"
+                try:
+                    pointer.symlink_to(snapshot / "project", target_is_directory=True)
+                    os.replace(pointer, destination)
+                except BaseException:
+                    shutil.rmtree(snapshot)
+                    raise
             else:
                 destination.symlink_to(selected, target_is_directory=True)
         finally:
@@ -333,3 +513,122 @@ def install(
         "revision": revision,
         "next": "Start Vis or /reload to prepare dependencies and load the extension",
     }
+
+
+def install(
+    source,
+    directory,
+    trust=False,
+    subdirectory="",
+    revision=None,
+    vis_version=None,
+    version=None,
+):
+    """Install an approved version, an explicit SHA, or a linked local project.
+
+    No selector means the latest approved stable release, never a moving branch.
+    Release selection does not import publisher code. Dependency preparation is on reload.
+    """
+    _trust(trust)
+    subdirectory = project_subdirectory(subdirectory)
+    if revision is not None and (
+        not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)
+    ):
+        raise ValueError("revision must be a full, lowercase Git commit SHA")
+    if revision and version is not None:
+        raise ValueError("Choose --version or --revision, not both")
+    path = Path(source).expanduser()
+    local = path.is_dir() or (path.is_file() and path.name == "pyproject.toml")
+    release = None
+    if local and version is not None:
+        raise ValueError(
+            "version applies only to a GitHub repository, not a local directory"
+        )
+    if not local and not revision:
+        release = _select(_releases(github_repository(source), subdirectory), version)
+        revision = release["revision"]
+    return _admit(source, directory, subdirectory, revision, vis_version, release)
+
+
+def update(name, directory, trust=False, version=None, vis_version=None):
+    """Explicitly replace a managed package with an approved newer stable or selected release."""
+    _trust(trust)
+    directory = Path(directory).expanduser().resolve()
+    active, current = _managed(directory, name)
+    release = _select(
+        _releases(current["repository_url"], current["subdirectory"]), version
+    )
+    older = Version(release["version"]) < Version(current["version"])
+    if older and version is not None:
+        raise ValueError(
+            "Selected release is older; use extension rollback --version explicitly"
+        )
+    if older or release["revision"] == current["revision"]:
+        return {
+            "name": name,
+            "version": current["version"],
+            "mode": "github",
+            "revision": current["revision"],
+            "next": "No newer approved stable release; no changes made"
+            if older
+            else "Already installed; no changes made",
+        }
+    if Version(release["version"]) == Version(current["version"]):
+        raise ValueError("A published version cannot change its approved commit")
+    return _admit(
+        current["repository_url"],
+        directory,
+        current["subdirectory"],
+        release["revision"],
+        vis_version,
+        release,
+        name,
+        active.name,
+    )
+
+
+def rollback(name, directory, trust=False, version=None, vis_version=None):
+    """Restore the previous pinned source, or select an older approved catalog version.
+
+    Source is re-fetched and validated before the atomic pointer change. Previous
+    snapshots are retained, including local edits; dependencies are resolved on /reload.
+    """
+    _trust(trust)
+    directory = Path(directory).expanduser().resolve()
+    active, current = _managed(directory, name)
+    if version is not None:
+        release = _select(
+            _releases(current["repository_url"], current["subdirectory"]), version
+        )
+        if Version(release["version"]) >= Version(current["version"]):
+            raise ValueError(
+                "Rollback version must be older than the installed version"
+            )
+    else:
+        previous = current.get("previous")
+        if not isinstance(previous, str) or not re.fullmatch(
+            r"\.install-[a-zA-Z0-9_-]+", previous
+        ):
+            raise ValueError(
+                "No previous installation; choose an approved older --version"
+            )
+        release = json.loads(
+            (active.parent / previous / "receipt.json").read_text(encoding="utf-8")
+        )
+        if (
+            release.get("repository_url") != current["repository_url"]
+            or release.get("subdirectory") != current["subdirectory"]
+            or release.get("name") != name
+            or not re.fullmatch(r"[0-9a-f]{40}", release.get("revision", ""))
+        ):
+            raise ValueError("Invalid previous package receipt")
+    return _admit(
+        current["repository_url"],
+        directory,
+        current["subdirectory"],
+        release["revision"],
+        vis_version,
+        release,
+        name,
+        active.name,
+    )

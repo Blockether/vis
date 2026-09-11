@@ -93,6 +93,13 @@ test('catalog CSS uses a two-column grid on wide screens and border-separated ro
   expect(style.textContent).not.toMatch(/data-view|view-switch/);
 });
 
+test('release controls retain pointer and touch targets without replacing native selects',()=>{
+  const style=document.createElement('style');style.textContent=readFileSync('web/style.css','utf8');document.body.append(style);
+  const rules=[...style.sheet.cssRules],touch=[...rules.find(rule=>rule.conditionText==='(pointer: coarse)').cssRules];
+  for(const [selector,property,value] of [['.version-picker select','height','2.75rem'],['.release-history a','min-height','1.75rem'],['.install-section summary','min-height','1.75rem']]) expect(rules.find(rule=>rule.selectorText===selector).style.getPropertyValue(property)).toBe(value);
+  for(const selector of ['.release-history a','.install-section summary']) expect(touch.find(rule=>rule.selectorText===selector).style.getPropertyValue('min-height')).toBe('2.75rem');
+});
+
 test('repository anti-spam check is separated from the review button', () => {
   const style=document.createElement('style');
   style.textContent=readFileSync('web/style.css','utf8');
@@ -111,7 +118,7 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect($('meta[name="description"]').content).toBe(item.description);
   expect($('#install-command').textContent).toBe(installCommand(item));
   expect(installCommand(item)).toContain("--subdirectory 'extensions/greeting'");
-  expect(installCommand(item)).toContain("--revision '"+'a'.repeat(40)+"'");
+  expect(installCommand(item)).toContain("--version '1.0.0'");
   expect(installCommand(item)).not.toMatch(/registry|zip/i);
   expect(installCommand({...item,subdirectory:"tools/O'Reilly"})).toContain("--subdirectory 'tools/O'\\''Reilly'");
   expect($('#source-link').href).toBe(item.source_url);
@@ -323,4 +330,32 @@ test('repository scrolling remains scoped after visiting feedback on a detail pa
   const feedbackBody=$('.feedback-dialog .dialog-body');feedbackBody.scrollTop=77;
   $('#submit-open').click();const repositoryBody=$('#submit-dialog .dialog-body');repositoryBody.scrollTop=200;
   $('#submit-close').click();expect(repositoryBody.scrollTop).toBe(0);expect(feedbackBody.scrollTop).toBe(77);
+ });
+
+test('version selection changes the pinned detail, is linkable, and survives back navigation',async()=>{
+  const latest={...item,version:'1.2.0',revision:'b'.repeat(40),source_url:item.repository_url+'/tree/'+'b'.repeat(40)}, older={...item,version:'1.0.0'};
+  const releases=[latest,older].map(release=>({...release,release_tag:'v'+release.version,release_url:item.repository_url+'/releases/tag/v'+release.version}));
+  const request=vi.fn(async path=>({ok:true,json:async()=>path==='/api/extensions'?{extensions:[latest]}:{...(path.includes('version=1.0.0')?older:latest),latest_version:'1.2.0',releases}}));
+  setup(request);await tick();$('.card-main').click();await tick();
+  expect($('#release-version').value).toBe('1.2.0');
+  change('#release-version','1.0.0','change');$('#version-form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await tick();
+  expect(window.location.search).toBe('?version=1.0.0');
+  expect(request).toHaveBeenCalledWith('/api/extensions/'+item.id+'?version=1.0.0',undefined);
+  expect($('#install-command').textContent).toContain("--version '1.0.0'");
+  expect($('#release-version').value).toBe('1.0.0');
+  expect($('#source-link').href).toBe(older.source_url);
+  expect($('#version-help').textContent).toContain('different version');
+  expect($('.release-history').textContent).toContain('Approved releases (2)');
+  window.history.replaceState(null,'','/extensions/'+item.id);window.dispatchEvent(new window.PopStateEvent('popstate'));await tick();
+  expect($('#release-version').value).toBe('1.2.0');
+});
+
+test('repository confirmation pins the selected release tag as well as its SHA',async()=>{
+  const request=vi.fn(async path=>({ok:true,json:async()=>path==='/api/extensions'?{extensions:[]}:{...item,source_paths:[],release_tag:'vis-greeter/v1.0.0'}}));
+  setup(request);await tick();$('#submit-open').click();
+  change('#repository-url',item.repository_url);change('#release-tag','vis-greeter/v1.0.0');
+  $('#repository-form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await tick();
+  $('#submit-confirm').click();await tick();
+  const body=JSON.parse(request.mock.calls.find(([path])=>path==='/api/submissions')[1].body);
+  expect(body.release_tag).toBe('vis-greeter/v1.0.0');expect(body.revision).toBe(item.revision);
 });

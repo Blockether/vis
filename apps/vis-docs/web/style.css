@@ -68,7 +68,16 @@ dialog.content p, dialog.content li { text-align: start; hyphens: none; }
 .repository-checks { font-size: var(--text-small); }
 dialog form label { display: block; margin-top: 1.25rem; }
 .optional { color: var(--dim); margin-left: .5rem; }
-#folder-help { margin: .625rem 0 1.5rem; }
+#folder-help, #release-help { margin: .625rem 0 1.5rem; }
+.version-picker { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+.version-picker select { flex: 1; min-width: 0; max-width: 100%; width: 16rem; height: 2.75rem; padding: 0 .5rem; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); }
+.release-history { margin: 1rem 0; }
+.release-history ol { padding-left: 1.5rem; }
+.release-history li { margin: 1rem 0; overflow-wrap: anywhere; }
+.release-history li > * { margin-right: .75rem; }
+.release-history .help { display: block; }
+.release-history a { display: inline-flex; align-items: center; min-width: 1.75rem; min-height: 1.75rem; }
+.install-section summary { min-height: 1.75rem; padding-block: .125rem; }
 #turnstile-widget { margin-top: 1.5rem; }
 #submit-status { color: var(--dim); font-size: var(--text-small); }
 #submit-status:empty { margin: 0; }
@@ -82,6 +91,8 @@ dialog form label { display: block; margin-top: 1.25rem; }
   .repository-link, .actions a { min-height: 2.75rem; }
   input:not([type=checkbox]), select, textarea { font-size: 1rem; }
   .actions a { display: inline-flex; align-items: center; }
+  .release-history a { min-width: 2.75rem; min-height: 2.75rem; }
+  .install-section summary { min-height: 2.75rem; padding-block: .5rem; }
   kbd { display: none; }
 }
 @media (max-width: 1200px) {

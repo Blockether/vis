@@ -3826,6 +3826,19 @@
 
 ;;; ── `vis-agent extension` subcommand (host-owned canonical) ─────────────────────────
 
+(defn- package-directory
+  [project?]
+  (str (io/file (System/getProperty (if project? "user.dir" "user.home")) ".vis" "extensions")))
+
+(defn- print-package-result
+  [action result]
+  (stdout! (str action
+                " " (get result "name")
+                "@" (get result "version")
+                " (" (get result "mode")
+                "). " (get result "next")))
+  result)
+
 (registry/register-cmd! {:cmd/name "list"
                          :cmd/parent ["extension"]
                          :cmd/internal? true
@@ -3837,9 +3850,9 @@
   {:cmd/name "install"
    :cmd/parent ["extension"]
    :cmd/internal? true
-   :cmd/doc "Install a reviewed GitHub repository or local Python project."
+   :cmd/doc "Install an approved GitHub release, an explicit commit or a local Python project."
    :cmd/usage
-   "vis-agent extension install SOURCE --trust [--subdirectory PATH] [--revision SHA] [--project]"
+   "vis-agent extension install SOURCE --trust [--subdirectory PATH] [--version VERSION | --revision SHA] [--project]"
    :cmd/args [{:name "source"
                :kind :positional
                :type :string
@@ -3858,23 +3871,83 @@
                :kind :flag
                :type :string
                :doc "Reviewed full Git commit SHA for a GitHub install."}
+              {:name "version"
+               :kind :flag
+               :type :string
+               :doc "Approved release version; defaults to the latest approved stable release."}
               {:name "project" :kind :flag :type :boolean :doc "Install for this project only."}]
-   :cmd/run-fn (fn [{:strs [source trust subdirectory revision project]} _]
-                 (let [result (python-extensions/install-package!
+   :cmd/run-fn (fn [{:strs [source trust subdirectory revision version project]} _]
+                 (print-package-result "Installed"
+                                       (python-extensions/install-package!
+                                         source
+                                         {:trust trust
+                                          :subdirectory (or subdirectory "")
+                                          :revision revision
+                                          :version version
+                                          :directory (package-directory project)})))})
+
+(registry/register-cmd!
+  {:cmd/name "versions"
+   :cmd/parent ["extension"]
+   :cmd/internal? true
+   :cmd/doc "List approved versions and check whether an installed extension has an update."
+   :cmd/usage "vis-agent extension versions SOURCE [--subdirectory PATH] [--project]"
+   :cmd/args [{:name "source"
+               :kind :positional
+               :type :string
+               :required true
+               :doc "GitHub repository URL or normalized installed extension name."}
+              {:name "subdirectory"
+               :kind :flag
+               :type :string
+               :doc "Project folder for a repository URL; installed names use their saved folder."}
+              {:name "project" :kind :flag :type :boolean :doc "Check the project installation."}]
+   :cmd/run-fn (fn [{:strs [source subdirectory project]} _]
+                 (let [result (python-extensions/package-versions
                                 source
-                                {:trust trust
-                                 :subdirectory (or subdirectory "")
-                                 :revision revision
-                                 :directory (str (io/file (if project
-                                                            (System/getProperty "user.dir")
-                                                            (System/getProperty "user.home"))
-                                                          ".vis"
-                                                          "extensions"))})]
-                   (stdout! (str "Installed " (get result "name")
-                                 "@" (get result "version")
-                                 " (" (get result "mode")
-                                 "). " (get result "next")))
+                                {:subdirectory (or subdirectory "")
+                                 :directory (package-directory project)})]
+                   (when-let [installed (get result "installed")]
+                     (stdout! (str "Installed: " installed
+                                   ". " (if (get result "update_available")
+                                          "Update available."
+                                          "No newer stable release."))))
+                   (stdout! (str "Latest approved stable: " (or (get result "latest") "none")))
+                   (doseq [release (get result "releases")]
+                     (stdout! (str (get release "version")
+                                   "  "
+                                   (get release "revision")
+                                   (when (get release "prerelease") "  prerelease"))))
                    result))})
+
+(doseq [[command action operation] [["update" "Selected" #'python-extensions/update-package!]
+                                    ["rollback" "Restored" #'python-extensions/rollback-package!]]]
+  (registry/register-cmd!
+    {:cmd/name command
+     :cmd/parent ["extension"]
+     :cmd/internal? true
+     :cmd/doc (if (= command "update")
+                "Explicitly select a newer approved extension release. Never updates automatically."
+                "Restore the previous pinned source or choose an older approved release.")
+     :cmd/usage (str "vis-agent extension " command " NAME --trust [--version VERSION] [--project]")
+     :cmd/args
+     [{:name "name"
+       :kind :positional
+       :type :string
+       :required true
+       :doc "Normalized installed extension name, such as vis-greeter."}
+      {:name "trust"
+       :kind :flag
+       :type :boolean
+       :doc "Allow the reviewed source and build backend to run with your permissions."}
+      {:name "version" :kind :flag :type :string :doc "Select an approved release explicitly."}
+      {:name "project" :kind :flag :type :boolean :doc "Change the project installation only."}]
+     :cmd/run-fn (fn [{:strs [name trust version project]} _]
+                   (print-package-result action
+                                         (operation name
+                                                    {:trust trust
+                                                     :version version
+                                                     :directory (package-directory project)})))}))
 
 ;; Dispatcher entry point (-main)
 

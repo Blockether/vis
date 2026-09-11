@@ -9,7 +9,7 @@ import { identity, manifestMetadata, projectFolder, repositoryURL } from './gith
 let fixture, serial=0;
 beforeAll(async()=>{fixture=await runtimeFixture();});
 afterAll(async()=>{await fixture?.runtime.dispose();});
-beforeEach(async()=>{fixture.controls.github='ok';fixture.controls.verification='ok';fixture.controls.requests=[];fixture.controls.tokens.clear();fixture.controls.contents.clear();fixture.controls.manifest=readFileSync('examples/vis-greeter/pyproject.toml','utf8');await fixture.db.batch(['DELETE FROM submissions','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));await fixture.runtime.purgeCache();});
+beforeEach(async()=>{fixture.controls.github='ok';fixture.controls.verification='ok';fixture.controls.requests=[];fixture.controls.tokens.clear();fixture.controls.contents.clear();fixture.controls.manifest=readFileSync('examples/vis-greeter/pyproject.toml','utf8');await fixture.db.batch(['DELETE FROM submissions','DELETE FROM releases','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));await fixture.runtime.purgeCache();});
 function post(path,source={},headers={}) {
   const token=(path==='/api/preview'?'preview':'submit')+'-'+(++serial);
   return fixture.runtime.dispatchFetch('https://center.example.com'+path,{method:'POST',headers:{Origin:'https://center.example.com','Content-Type':'application/json','CF-Connecting-IP':'10.0.0.'+(serial%250+1),...headers},body:JSON.stringify({repository_url:'https://github.com/example/extensions',subdirectory:'plugins/greeting',turnstile_token:token,...source})});
@@ -194,7 +194,8 @@ test('every approved extension has a crawlable, server-rendered detail page',asy
       try {
         const d=detail.window.document;
         expect(d.querySelector('#detail h1').textContent).toBe(item.name);
-        expect(d.querySelector('#install-command').textContent).toContain(item.revision);
+        expect(d.querySelector('#install-command').textContent).toContain("--version '"+item.version+"'");
+        expect(d.querySelector('#source-link').href).toContain(item.revision);
         expect(d.querySelector('link[rel="canonical"]').href).toBe(canonical);
         expect(d.querySelector('meta[name="robots"]').content).toMatch(/^index, follow/);
         expect(d.querySelector('meta[name="description"]').content).toBe(item.description);

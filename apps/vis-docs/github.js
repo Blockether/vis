@@ -51,25 +51,44 @@ export function manifestMetadata(text) {
   assert(new Set(skills).size===skills.length,'skills must not repeat a directory.');
   return {name:p.name.toLowerCase().replace(/[-_.]+/g,'-'),version:p.version,description:p.description,category:v.category,requires_python:p['requires-python'],dependencies:p.dependencies,source_paths:paths,skills};
 }
-export async function inspectRepository(source,env) {
-  const repository_url=repositoryURL(source.repository_url), subdirectory=projectFolder(source.subdirectory);
-  assert(source.revision===undefined||/^[0-9a-f]{40}$/.test(source.revision),'revision must be a full Git commit SHA.');
-  const repository=repository_url.slice('https://github.com/'.length), owner=repository.split('/')[0], api='/repos/'+repository;
+// Catalog releases use a canonical, sortable subset of PEP 440; the SDK checks runtime requirements.
+export function releaseVersion(version) {
+  const match=typeof version==='string'&&version.match(/^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:(a|b|rc)(0|[1-9][0-9]{0,8}))?$/);
+  assert(match,'Release versions must be MAJOR.MINOR.PATCH, optionally followed by aN, bN or rcN.');
+  return {version_key:[...match.slice(1,4),({a:0,b:1,rc:2}[match[4]]??3),match[5]||0].map(value=>String(value).padStart(9,'0')).join('.'),prerelease:!!match[4]};
+}
+export function githubClient(env) {
   const signal=AbortSignal.timeout(20000);
-  async function github(path) {
+  return async path=>{
     const headers={'Accept':'application/vnd.github+json','User-Agent':'Vis-Extension-Center','X-GitHub-Api-Version':'2022-11-28'};
     if(env.GITHUB_TOKEN) headers.Authorization='Bearer '+env.GITHUB_TOKEN;
     const response=await fetch('https://api.github.com'+path,{headers,redirect:'manual',signal});
     if(response.status>=300&&response.status<400) throw new RequestError('GitHub redirected this repository. Submit its current URL.');
-    if(response.status===404) throw new RequestError('Public repository, revision or project folder not found on GitHub.');
+    if(response.status===404) throw new RequestError('Public repository, published release, revision or project folder not found on GitHub. Publish a GitHub Release first.');
     if(!response.ok) throw new RequestError('GitHub is unavailable or rate-limited. Try again later.',503);
     return JSON.parse(await readBounded(response,1024*1024));
-  }
+  };
+}
+export async function inspectRepository(source,env) {
+  const repository_url=repositoryURL(source.repository_url), subdirectory=projectFolder(source.subdirectory);
+  assert(source.revision===undefined||/^[0-9a-f]{40}$/.test(source.revision),'revision must be a full Git commit SHA.');
+  const repository=repository_url.slice('https://github.com/'.length), owner=repository.split('/')[0], api='/repos/'+repository;
+  assert(source.release_tag===undefined||typeof source.release_tag==='string'&&/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(source.release_tag),'Use a GitHub release tag, such as v1.2.0.');
+  const github=githubClient(env);
   const repo=await github(api);
   assert(repo.private===false,'Only public GitHub repositories can be listed.');
-  const commit=await github(api+'/commits/'+encodeURIComponent(source.revision||repo.default_branch));
-  const sha=commit.sha;
-  assert(/^[0-9a-f]{40}$/.test(sha)&&(!source.revision||sha===source.revision),'GitHub returned a different revision.');
+  const release=await github(api+(source.release_tag?'/releases/tags/'+encodeURIComponent(source.release_tag):'/releases/latest'));
+  assert(release.draft===false&&typeof release.prerelease==='boolean'&&typeof release.tag_name==='string'&&release.tag_name.length<=200&&!Number.isNaN(Date.parse(release.published_at)),'Choose a published GitHub Release, not a draft or an unpublished tag.');
+  assert(!source.release_tag||release.tag_name===source.release_tag,'GitHub returned a different release tag.');
+  let object=(await github(api+'/git/ref/tags/'+encodeURIComponent(release.tag_name))).object;
+  for(let depth=0;object?.type==='tag'&&depth<4;depth++) {
+    assert(/^[0-9a-f]{40}$/.test(object.sha),'Invalid annotated tag object.');
+    object=(await github(api+'/git/tags/'+object.sha)).object;
+  }
+  assert(object?.type==='commit'&&/^[0-9a-f]{40}$/.test(object.sha),'Release tag must resolve to a commit.');
+  assert(!source.revision||source.revision===object.sha,'Release tag moved since review. Publish a new version instead.');
+  const commit=await github(api+'/commits/'+object.sha), sha=commit.sha;
+  assert(sha===object.sha,'GitHub returned a different revision.');
   const encoded=path=>path.split('/').map(encodeURIComponent).join('/');
   const contents=path=>github(api+'/contents'+(path?'/'+encoded(path):'')+'?ref='+sha);
   const entries=await contents(subdirectory);
@@ -86,6 +105,9 @@ export async function inspectRepository(source,env) {
     try {return new TextDecoder('utf-8',{fatal:true}).decode(bytes);} catch {throw new RequestError(path+' must be UTF-8.');}
   }
   const metadata=manifestMetadata(await textFile('pyproject.toml'));
+  const version=releaseVersion(metadata.version);
+  assert(['v'+metadata.version,metadata.name+'/v'+metadata.version].includes(release.tag_name),'Release tag must match project.version: vVERSION or PACKAGE-NAME/vVERSION.');
+  Object.assign(metadata,version,{release_tag:release.tag_name,release_url:repository_url+'/releases/tag/'+encodeURIComponent(release.tag_name),release_published_at:new Date(release.published_at).toISOString(),prerelease:release.prerelease||version.prerelease});
   for(const path of metadata.source_paths) assert(Array.isArray(await contents(prefix+path)),'source_paths must be directories inside the selected project.');
   for(const path of metadata.skills) {
     const files=await contents(prefix+path);

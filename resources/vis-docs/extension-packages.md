@@ -52,27 +52,103 @@ gateway's `PATH`. GitHub installs also need Git on `PATH`.
    `await greet.hello("Ada")`. The result's `.text` is `Hello, Ada!`.
    `vis-agent extension list` checks registration, not execution.
 
-### Install reviewed GitHub source
+### Install an approved GitHub Release
 
-The [Extension Center](https://vis.blockether.com/extensions/) lists public GitHub
-projects. After reviewing source and dependencies, copy its commit-pinned install
-command. For your own repository, the command has this form:
+The [Extension Center](https://vis.blockether.com/extensions/) lists approved releases
+of public GitHub projects. **Publishing an extension on PyPI is not required.**
+Review the selected version's source, manifest and dependencies before installing:
 
 ```bash
-vis-agent extension install https://github.com/example/vis-greeter --project --trust
-vis-agent extension install https://github.com/example/extensions --subdirectory tools/greeting --project --trust
+vis-agent extension versions https://github.com/example/vis-greeter
+vis-agent extension install https://github.com/example/vis-greeter --version 1.2.0 --project --trust
+vis-agent extension install https://github.com/example/extensions --subdirectory tools/greeting --version 1.2.0 --project --trust
 ```
 
-Replace the placeholder repository. These commands select its default branch; add
-`--revision` with the reviewed full lowercase 40-character commit SHA to pin a
-version. Only HTTPS `github.com/owner/repository` URLs are accepted. Pass a project
-folder with `--subdirectory`, not as a GitHub file or tree URL.
+Replace the example repository and version with an approved listing. In the Extension
+Center, choose **Version** to see that release's README, dependencies, full commit and
+install command. Older approved releases remain selectable and linkable.
 
-GitHub installation stages a checkout and atomically installs only the selected
-project. The catalog stores no source bundles and is not contacted during installation.
-Submodules and Git LFS are not fetched; symlinks are refused. Keep required source
-and portable dependency paths inside the selected project, within the limits of
-4096 entries and 64 MiB.
+Without `--version`, a GitHub install selects the **latest approved stable version**,
+never the default branch. Prereleases require explicit `--version`. Unknown, pending
+or rejected versions fail without falling back to another version, tag or branch.
+The catalog resolves the version to its approved full SHA; Git fetches that commit
+and the installer checks the manifest identity and runtime requirements again.
+Moving or deleting a GitHub tag cannot change an approved version's SHA.
+
+For source outside the catalog, use `--revision` with a reviewed full lowercase
+40-character commit SHA instead of `--version`. This deliberately bypasses catalog
+approval, not trust or manifest checks. Only HTTPS `github.com/owner/repository` URLs
+are accepted. Select a monorepo folder with `--subdirectory`, not a file or tree URL.
+
+GitHub installation stages and validates only the selected project before atomically
+activating a source snapshot. The catalog stores no source distributions. Submodules
+and Git LFS are not fetched; symlinks are refused. Keep required source and portable
+dependency paths inside the selected project, within 4096 entries and 64 MiB.
+
+### Check for updates and roll back
+
+Use the normalized installed package name, not the repository name:
+
+```bash
+vis-agent extension versions vis-greeter --project
+vis-agent extension update vis-greeter --project --trust
+vis-agent extension update vis-greeter --version 1.3.0 --project --trust
+vis-agent extension rollback vis-greeter --project --trust
+vis-agent extension rollback vis-greeter --version 1.1.0 --project --trust
+```
+
+`versions` shows the installed version, approved history, latest stable version and
+whether an update is available. `update` selects a newer approved stable release;
+`--version` explicitly selects a newer release, including a prerelease. It never
+downgrades implicitly. `rollback` restores the previous installation's pinned source,
+or an older approved version selected with `--version`. The previous-source form
+needs GitHub but not the catalog; it fetches the saved SHA again, not the current tag.
+
+All source changes are explicit and require `--trust`. A failed fetch, compatibility
+check or activation leaves the active installation unchanged. After success, start
+Vis or use `/reload` to prepare dependencies and activate the code in running sessions.
+Source rollback does not undo extension state, external side effects or dependency
+changes already made by a build backend. Review release notes before changing versions.
+
+Managed GitHub installations use a link in `.vis/extensions/` and retain source
+snapshots and receipts in its hidden `.versions/<package>/` directory. Previous
+snapshots preserve local edits but are not used as release source when rolling back.
+Do not edit receipts or delete snapshots you still need. Local development links and
+unmanaged directories are never replaced by `update` or `rollback`; use their source
+workflow instead. A pre-existing unmanaged GitHub copy must be preserved and removed
+explicitly before installing it as a managed package.
+
+### Publish and maintain releases
+
+1. Keep `pyproject.toml`, `extension.py`, required source and optional skills together.
+   Use a static `project.version`, and commit `uv.lock` for reproducible dependencies.
+2. Test the package with the supported Vis and Python versions. Bump the manifest version
+   for each new release; update the lockfile when needed.
+3. Tag that commit and **publish a GitHub Release**, not only a Git tag or a draft.
+   Use `v1.2.0`, or `PACKAGE-NAME/v1.2.0` for an independently versioned monorepo package.
+   For example, Spel's `extensions/vis-spel` package uses `vis-spel/v0.1.0`.
+   The version suffix must exactly match `project.version`.
+4. Submit the repository and project folder to Extension Center **once**. The optional
+   **Release tag** field selects a monorepo release or prerelease; otherwise review uses
+   GitHub's latest stable release. Review the pinned metadata and submit for moderation.
+5. After approval, publish subsequent GitHub Releases in the same repository and folder.
+   Scheduled discovery validates them and queues new versions for moderation without
+   another submission form. The current approved version stays available during review.
+
+Catalog releases use canonical `MAJOR.MINOR.PATCH`, optionally followed by `aN`, `bN`
+or `rcN`, for example `1.3.0rc1`. Mark prereleases on GitHub too. Local package validation
+still uses the SDK's PEP 440 rules. GitHub Release notes are the place for changelogs,
+breaking changes and supported runtime versions. No release asset, wheel, PyPI account
+or publisher credential in Vis is required; declared dependencies may still use PyPI.
+
+Discovery runs every five minutes, checking one registered listing and one page of up
+to 20 releases, with at most five new release inspections per tick. Its cursor resumes
+within a page and rotates across listings and older pages, so detection is not immediate
+and depends on catalog size and GitHub availability. Only approved
+versions are public. Rejection is retained, so the same release is not repeatedly
+queued. A version's commit cannot be replaced: fix a rejected or moved-tag release by
+publishing a **new version**, never by retagging an approved version. Listing checks
+metadata and required files; it is not a code audit or an endorsement.
 
 ## Reload, update or remove
 
@@ -81,7 +157,7 @@ and portable dependency paths inside the selected project, within the limits of
 | Edit an entry, helper module, declared source root or bundled skill | `/reload`; call the tool on the next turn |
 | Change a package's dependencies | Deliberately update `uv.lock` if needed, then `/reload` |
 | Change a manually prepared editable project's dependencies | Follow the [explicit sync workflow](extension-development.md#prepare-the-project-environment) |
-| Replace an installed GitHub revision | Preserve any local work, remove the installed directory, install the reviewed revision, then `/reload` |
+| Change a managed GitHub version | Explicit `extension update` or `extension rollback`, then `/reload` |
 | Uninstall | Remove only the installed link or directory, then `/reload`; do not delete a linked development checkout |
 
 Install never overwrites an existing destination. `/reload` does not fetch a newer

@@ -5,6 +5,7 @@
   "compatibility_date": "2026-02-01",
   "workers_dev": true,
   "preview_urls": false,
+  "triggers": {"crons": ["*/5 * * * *"]},
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
