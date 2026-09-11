@@ -776,22 +776,15 @@ sync_wrapper_from_source() {
   fi
 }
 
-# Resolve one immutable, published beta before acquiring either platform asset.
-# GitHub lists public releases newest first; drafts are absent from this endpoint.
-# Match the beta tag in an asset URL, never a word in release notes or a stable tag.
+# The beta publication gate records its newest complete immutable release here.
+# GitHub's release listing order does not identify the newest published beta.
 vis_beta_tag() {
-  local page=1 json tag
-  while :; do
-    json="$(curl -fsSL "https://api.github.com/repos/$vis_repo_slug/releases?per_page=100&page=$page")" || \
-      die "update: could not list published betas"
-    tag="$(printf '%s' "$json" | grep -oE '"https://[^" ]*/releases/download/beta-[0-9a-f]{40}/vis-agent-[^" /]+\.tar\.gz"' | sed -n '1p')" || tag=""
-    if [[ -n "$tag" ]]; then
-      tag="${tag%/*}"; printf '%s' "${tag##*/}"; return 0
-    fi
-    [[ "$(printf '%s' "$json" | tr -d '[:space:]')" != '[]' ]] || \
-      die "update: no complete native beta is published"
-    page=$((page + 1))
-  done
+  local tag
+  tag="$(curl -fsSL "https://github.com/$vis_repo_slug/releases/download/installer/native-beta")" || \
+    die "update: could not read the published native beta selection"
+  [[ "$tag" =~ ^beta-[0-9a-f]{40}$ ]] || \
+    die "update: invalid published native beta selection"
+  printf '%s\n' "$tag"
 }
 
 # Releases replace the launcher and its native runtime together.

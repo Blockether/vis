@@ -139,3 +139,31 @@ jobs:
           assert all(asset['size'] > 0 and asset['state'] == 'uploaded' for asset in assets)
           PY
           gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
+
+  index:
+    name: select the published native beta for installers
+    needs: [pick, publish]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: beta-native-index
+      cancel-in-progress: false
+    steps:
+      - name: Record the latest complete native beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.pick.outputs.sha }}
+          TAG: ${{ needs.pick.outputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          [ "$TAG" = "beta-$SHA" ]
+          green_main="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" \
+            -q '.workflow_runs[0].head_sha // empty')"
+          if [ "$green_main" != "$SHA" ]; then
+            echo '::notice::A newer successful main CI superseded this beta selection'
+            exit 0
+          fi
+          [ "$(gh api "repos/$REPO/releases/tags/$TAG" -q '.draft == false and .prerelease == true')" = true ]
+          printf '%s\n' "$TAG" > "$RUNNER_TEMP/native-beta"
+          gh release upload installer "$RUNNER_TEMP/native-beta" --repo "$REPO" --clobber

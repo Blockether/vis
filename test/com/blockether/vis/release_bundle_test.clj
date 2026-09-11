@@ -303,7 +303,13 @@
           "case $url in\n"
           (when (= track "beta")
             (str
-              "  *'releases?per_page=100&page=1') echo '[{\"tag_name\":\"v9.9.9\"}]' ;;\n"
+              "  */releases/download/installer/native-beta) printf '%s\n' 'beta-"
+              (apply str (repeat 40 "a"))
+              "' ;;\n"
+              ;; GitHub returned an older published beta first on the real installer path.
+              "  *'releases?per_page=100&page=1') printf '%s' '[{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
+              (apply str (repeat 40 "b"))
+              "/vis-agent-linux-x64.tar.gz\"}]}]' ;;\n"
               "  *'releases?per_page=100&page=2'|*/releases/tags/beta-*) printf '%s' '"
               "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/beta-"
               (apply str (repeat 40 "a"))
@@ -882,7 +888,8 @@
           {:track "beta" :previous-track "dev" :installer? installer?}
           (fn [{:keys [exit output launcher env urls bin]}]
             (expect (zero? exit) output)
-            (expect (str/includes? urls "releases?per_page=100&page=2") urls)
+            (expect (str/includes? urls "/releases/download/installer/native-beta") urls)
+            (expect (not (str/includes? urls "releases?per_page=")) urls)
             (expect (str/includes? urls (str "/releases/tags/beta-" (apply str (repeat 40 "a"))))
                     urls)
             (expect (= "beta\n" (slurp (io/file (get env "VIS_HOME") "install" "track"))))
@@ -1304,10 +1311,12 @@
               " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*) printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
               " *'/actions/workflows/ci.yml/runs?head_sha='*) printf '%s' \"$TEST_GREEN\" ;;\n"
               " *'/releases?per_page=100'*) printf '%s' \"$TEST_DRAFT\" ;;\n"
+              " *'/releases/tags/beta-'*) printf '%s' \"$TEST_PUBLISHED\" ;;\n"
               " *'/git/ref/tags/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] ;;\n"
               " 'api --method POST '*'/git/refs '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; : > \"$TEST_TAG_CREATED\" ;;\n"
               " *'/commits/beta-'*) [ \"$TEST_TAG_EXISTS\" = 1 ] || [ -f \"$TEST_TAG_CREATED\" ] || return 1; printf '%s' \"$TEST_TAG_SHA\" ;;\n"
               " 'release create '*|'release edit '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
+              " 'release upload installer '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/native-beta\" >> \"$TEST_CALLS\" ;;\n"
               " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
            (merge {"REPO" "example/vis"
                    "EVENT_SHA" sha
@@ -1320,9 +1329,11 @@
                    "TEST_TAG_CREATED" (.getAbsolutePath (io/file dir "created-tag"))
                    "TEST_GREEN" "1"
                    "TEST_DRAFT" ""
+                   "TEST_PUBLISHED" "true"
                    "GITHUB_OUTPUT" (.getAbsolutePath outputs)
                    "TEST_CALLS" (.getAbsolutePath calls)
-                   "METADATA" (.getAbsolutePath data)}
+                   "METADATA" (.getAbsolutePath data)
+                   "RUNNER_TEMP" (.getAbsolutePath dir)}
                   overrides))]
         (assoc result
           :outputs (slurp outputs)
@@ -1387,6 +1398,39 @@
             (expect (= exit-ok? (zero? exit)) output)
             (expect (= publish? (str/includes? calls "--draft=false --prerelease --latest=false"))
                     calls))))))
+
+(defdescribe
+  beta-index-test
+  (it "updates the installer selection only for the latest green published beta"
+      (doseq [[overrides pass? update?]
+              [[{} true true] [{"TEST_GREEN_MAIN" (apply str (repeat 40 "b"))} true false]
+               [{"TEST_PUBLISHED" "false"} false false] [{"SHA" "main"} false false]
+               [{"TAG" "v9.9.9"} false false]]]
+        (let [{:keys [exit output calls]} (run-beta-job "index" overrides {})]
+          (expect (= pass? (zero? exit)) output)
+          (expect (= update? (str/includes? calls "release upload installer")) calls)
+          (when update?
+            (expect (str/includes? calls (str "beta-" (apply str (repeat 40 "a")))) calls)))))
+  (it
+    "rejects missing or malformed installer beta selections"
+    (let [body (re-find #"(?ms)^vis_beta_tag\(\) \{.*?^\}\n" (slurp "bin/vis-agent"))]
+      (doseq [[value curl-exit valid?] [[(str "beta-" (apply str (repeat 40 "a"))) "0" true]
+                                        ["" "0" false] ["v1.2.3" "0" false]
+                                        [(str "beta-" (apply str (repeat 39 "a"))) "0" false]
+                                        [(str "beta-" (apply str (repeat 40 "a")) "\nbeta-other")
+                                         "0" false] ["" "22" false]]]
+        (let
+          [{:keys [exit output]}
+           (run-bash
+             ["bash" "-c"
+              (str
+                "die() { echo \"$*\" >&2; exit 1; }\n"
+                "curl() { case $* in */releases/download/installer/native-beta) printf '%s' \"$TEST_BETA_TAG\"; return \"$TEST_CURL_EXIT\" ;; *) echo '[]' ;; esac; }\n"
+                body
+                "vis_beta_tag")]
+             {"TEST_BETA_TAG" value "TEST_CURL_EXIT" curl-exit})]
+          (expect (= valid? (zero? exit)) output)
+          (when valid? (expect (= value (str/trim output)))))))))
 
 ;; Regression: a source run from any directory other than the checkout
 ;; died with "Could not locate com/blockether/vis/core". tools.deps caches the
