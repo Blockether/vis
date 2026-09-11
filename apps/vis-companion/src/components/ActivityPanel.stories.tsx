@@ -66,10 +66,15 @@ export const ReplResults: Story = {
     );
     await expect(rows).toHaveLength(5);
     for (const [index, row] of rows.entries()) {
-      await userEvent.click(within(row).getByRole("button"));
+      const toggle = within(row).getByRole("button");
+      await userEvent.click(toggle);
+      const program = within(row).getByRole("heading", { name: "Program" });
+      await expect(program).toBeVisible();
+      // The first section needs one line of separation from the activity header.
       await expect(
-        within(row).getByRole("heading", { name: "Program" }),
-      ).toBeVisible();
+        program.getBoundingClientRect().top -
+          toggle.getBoundingClientRect().bottom,
+      ).toBe(parseFloat(getComputedStyle(program).lineHeight));
       for (const title of index < 2
         ? ["Stdout", "Stderr", "Result"]
         : [index === 4 ? "Timeout" : "Error"]) {

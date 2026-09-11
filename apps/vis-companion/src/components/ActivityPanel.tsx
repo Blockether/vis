@@ -537,7 +537,7 @@ function ActivityBody({
             return (
               <h5
                 key={index}
-                className={`text-meta font-bold text-code-result ${index > 0 ? "mt-3" : ""}`}
+                className={`text-meta font-bold text-code-result ${index > 0 ? "mt-3" : "mt-[var(--text-meta--line-height)]"}`}
               >
                 {block.text}
               </h5>
