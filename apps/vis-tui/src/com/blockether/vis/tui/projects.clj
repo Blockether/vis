@@ -117,7 +117,7 @@
         (sidebar-entries db)
 
         capacity
-        (max 0 (- (long rows) 8))
+        (max 0 (- (long rows) (if (get-in db [:project-sidebar :error]) 8 7)))
 
         index
         (max 0 (long (or (get-in db [:project-sidebar :index]) 0)))
@@ -191,7 +191,7 @@
         (when (and (> width 1) (> rows 1))
           (p/set-fg! g t/dialog-hint)
           (p/draw-box! g left 0 width rows)
-          (doseq [row (distinct (filter #(< 0 (long %) (dec rows)) [2 (- rows 4)]))]
+          (doseq [row (distinct (filter #(< 0 (long %) (dec rows)) [2 (- rows 3)]))]
             (p/put-str! g left row (str "├" (p/horiz-line (- width 2)) "┤"))))
         (when (and (>= width 18) (> rows 3))
           (p/set-fg! g t/header-fg)
@@ -256,17 +256,17 @@
                         (if (:loading? sidebar) "Loading projects…" "Add a project with +")
                         (max 0 (- width 4)))))
         (when (> rows 6)
-          (p/set-colors! g (if (:error sidebar) t/warning-fg t/dialog-hint) t/dialog-bg)
-          (p/put-str! g
-                      (+ left 2)
-                      (- rows 3)
-                      (p/truncate-cols (or (:error sidebar) "↑↓ select · Enter open")
-                                       (max 0 (- width 4))))
-          (p/set-colors! g t/dialog-hint t/dialog-bg)
-          (p/put-str! g
-                      (+ left 2)
-                      (- rows 2)
-                      (p/truncate-cols "C-x w hide · Esc chat" (max 0 (- width 4)))))))
+          (when-let [error (:error sidebar)]
+            (p/set-colors! g t/warning-fg t/dialog-bg)
+            (p/put-str! g (+ left 2) (- rows 4) (p/truncate-cols error (max 0 (- width 4))))))
+        (when (> rows 5)
+          (let [available (max 0 (- width 4))
+                hints ["↑↓ select · ↵ open · C-x w hide · Esc chat"
+                       "↑↓ · ↵ open · C-x w hide · Esc chat" "↑↓ · ↵ · C-x w · Esc"]
+                hint (or (first (filter #(<= (p/display-width %) available) hints)) (last hints))]
+
+            (p/set-colors! g t/dialog-hint t/dialog-bg)
+            (p/put-str! g (+ left 2) (- rows 2) (p/truncate-cols hint available))))))
     (.commitFrame hit-map)))
 
 (defn key-action

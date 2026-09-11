@@ -288,8 +288,13 @@
         (is (str/includes? text "Companion"))
         (is (re-find #"Companion +1 tab · 1 running" text)))
       (when (>= cols 26) (is (str/includes? text "1 running")))
-      (when (>= cols 26) (is (str/includes? text "↑↓ select · Enter open")))
-      (is (str/includes? text (if (>= cols 26) "C-x w hide · Esc chat" "C-x w hide")))
+      (let [footer (nth (str/split-lines text) 16)]
+        (doseq [label ["↑↓" "↵" "C-x w" "Esc"]]
+          (is (str/includes? footer label)))
+        (when (>= width 40)
+          (doseq [label ["open" "hide" "chat"]]
+            (is (str/includes? footer label)))))
+      (is (= "├" (get-in capture [:frames 0 15 0 :ch])))
       (is (= :project-add (:kind (.lookup projects/hit-map (- width 8) 1))))
       (is (= :project-hide (:kind (.lookup projects/hit-map (- width 4) 1))))
       (is (= "┌" (get-in capture [:frames 0 0 0 :ch])))
@@ -299,6 +304,27 @@
              (projects/key-action
                db
                (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 5))))))))
+
+(deftest project-sidebar-footer-error-test
+  (let [db
+        (assoc-in (fixture-db) [:project-sidebar :error] "Project lookup failed")
+
+        capture
+        (cap/capture! {:cols 144
+                       :rows 18
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 144 18))})
+
+        lines
+        (str/split-lines (cap/frame-text capture))]
+
+    (is (str/includes? (nth lines 14) "Project lookup failed"))
+    (doseq [label ["↑↓" "↵" "C-x w" "Esc"]]
+      (is (str/includes? (nth lines 16) label)))
+    (is (= 8
+           (count (projects/visible-entries
+                    (assoc-in db [:project-sidebar :items] (vec (repeat 30 project-a)))
+                    16))))))
 
 (deftest project-sidebar-label-width-test
   (doseq [[cols index label fits?] [[40 0 "vis-python-runtime" true]
@@ -322,7 +348,7 @@
         visible
         (projects/visible-entries {:project-sidebar sidebar} 16)]
 
-    (is (= 8 (count visible)))
+    (is (= 9 (count visible)))
     (is (= 50 (:index (last visible))))))
 
 (defn review-terminal
@@ -663,12 +689,12 @@
         visible
         (projects/visible-entries db 16)]
 
-    (is (= 8 (count visible)))
+    (is (= 9 (count visible)))
     (is (= :project-select (:kind (first visible)))
         "Keep the parent visible above a long waiting group")
     (is (= 31 (:index (last visible))))
     (is (= [:session "29"] (projects/key-action db (cap/key-stroke :enter))))
-    (is (empty? (projects/visible-entries db 8)))))
+    (is (empty? (projects/visible-entries db 7)))))
 
 (deftest project-input-band-keeps-docked-sidebar-test
   (with-redefs [timg/images-protocol
@@ -912,7 +938,7 @@
         visible
         (projects/visible-entries db 16)]
 
-    (is (= 8 (count visible)))
+    (is (= 9 (count visible)))
     (is (= :project-select (:kind (first visible))))
     (is (= 30 (:unread (first visible))))
     (is (= 31 (:index (last visible))))
