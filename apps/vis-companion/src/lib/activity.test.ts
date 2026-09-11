@@ -35,6 +35,7 @@ for (const sample of argumentCases) {
     ).toEqual(sample.groups);
   });
 }
+// Regression #201: shared fixtures include extension headlines and fallback order.
 for (const sample of groupingCases) {
   it(`portable grouping: ${sample.name}`, () => {
     const projection = activityProjectionFromWire(sample.projection);

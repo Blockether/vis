@@ -92,7 +92,8 @@
 
 (defn operation-groups
   "One group per exact operation across the block, ordered by first entry.
-   Known operations use canonical labels; extensions retain their operation names.
+   Known operations use canonical labels; otherwise use the first nonblank presentation
+   headline in invocation order, falling back to the operation name when none is present.
    Preserve member order and shell evidence, with the first invocation as disclosure identity."
   [rows]
   (let [ordered
@@ -109,7 +110,9 @@
                   (first members)]
 
               {:id (first-invocation-id row)
-               :label (get-in vocabulary ["operation_groups" operation] operation)
+               :label (or (get-in vocabulary ["operation_groups" operation])
+                          (first (remove str/blank? (map (comp :headline :presentation) members)))
+                          operation)
                :rows members}))
           (distinct (map :operation ordered)))))
 

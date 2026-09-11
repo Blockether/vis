@@ -51,27 +51,30 @@ export function argumentGroups(rows: readonly ActivityRow[]): ArgumentGroup[] {
   return groups;
 }
 
-/** One group per operation across the block, ordered by first entry. Shell evidence stays intact. */
+/**
+ * Group exact operations in invocation order, preserving shell evidence and identity.
+ * Canonical labels win; otherwise use the first nonblank presentation headline,
+ * falling back to the operation name when no member has one.
+ */
 export function operationGroups(
   rows: readonly ActivityRow[],
 ): OperationGroup[] {
   const labels: Readonly<Record<string, string>> =
     activityContract.operation_groups;
-  const groups: OperationGroup[] = [];
-  const byOperation = new Map<string, OperationGroup>();
+  const byOperation = new Map<string, ActivityRow[]>();
   for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
-    const existing = byOperation.get(row.operation);
-    if (existing) existing.rows.push(row);
-    else {
-      const label = Object.hasOwn(labels, row.operation)
-        ? labels[row.operation]
-        : row.operation;
-      const group = { id: firstInvocationId(row), label, rows: [row] };
-      groups.push(group);
-      byOperation.set(row.operation, group);
-    }
+    const members = byOperation.get(row.operation);
+    if (members) members.push(row);
+    else byOperation.set(row.operation, [row]);
   }
-  return groups;
+  return [...byOperation].map(([operation, members]) => ({
+    id: firstInvocationId(members[0]),
+    label: Object.hasOwn(labels, operation)
+      ? labels[operation]
+      : (members.find((row) => optionalText(row.presentation?.headline))
+          ?.presentation?.headline ?? operation),
+    rows: members,
+  }));
 }
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
