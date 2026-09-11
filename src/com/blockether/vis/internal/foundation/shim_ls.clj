@@ -125,7 +125,10 @@
          "then alphabetical — a directory is `name/` (with its child count once `depth` expanded "
          "it), a file is `name  size` (`812`, `7.2k`, `2.1M`). `ls([dir, ...])` renders one "
          "blank-line separated section per directory, and a batch entry may be a per-path spec "
-         "(`{\"path\": dir, \"depth\": 2}`). Dotfiles need `is_hidden=True`; gitignored "
+         "(`{\"path\": dir, \"depth\": 2}`). Optional `pattern=None` leaves the listing unchanged; "
+         "a string filters basenames by case-sensitive glob (`*`, `?`, `[abc]`, `{a,b}`), not regex, "
+         "at each requested depth, retaining ancestors of matches. Per-path specs override it; "
+         "None disables filtering. Example: `ls(dir, pattern='*snapshot*')`. Dotfiles need `is_hidden=True`; gitignored "
          "entries are never listed. Use confirmed directories: one missing, protected or "
          "non-directory path fails the batch with a host tool error. Read files with `cat`. "
          "A path is a `str` or a `pathlib.Path`.")

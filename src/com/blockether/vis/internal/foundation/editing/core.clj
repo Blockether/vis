@@ -2940,6 +2940,20 @@
             (assoc (merge shared (when (map? e) (dissoc e "path"))) "path" p)))
         entries))
 
+(defn- ls-filter-entries
+  "Filter basenames while retaining ancestors of matches within the listed depth."
+  [^java.nio.file.PathMatcher matcher entries]
+  (into []
+        (keep (fn [entry]
+                (let [children (when (contains? entry "children")
+                                 (ls-filter-entries matcher (get entry "children")))]
+                  (when (or (.matches matcher (.toPath (io/file (get entry "name"))))
+                            (seq children))
+                    (cond-> entry
+                      children
+                      (assoc "children" children))))))
+        entries))
+
 (defn- ls-one
   "List one normalized directory. A missing path names its nearest existing
    parent; a file directs the caller to `cat`. Neither returns a partial listing."
@@ -2964,13 +2978,28 @@
     (when-not (.isDirectory f)
       (throw (ex-info (str "ls: `" (rel-path f) "` is a file; use `cat`.")
                       {:type :ext.foundation.editing/ls-on-file :path path})))
-    (list-dir f {:depth (or (get spec "depth") 1) :is_hidden (boolean (get spec "is_hidden"))})))
+    (let [pattern
+          (get spec "pattern")
+
+          matcher
+          (when (some? pattern)
+            (when-not (string? pattern)
+              (throw (ex-info "ls: `pattern` must be a glob string or None"
+                              {:type :ext.foundation.editing/invalid-ls-args})))
+            (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" pattern)))
+
+          row
+          (list-dir f
+                    {:depth (or (get spec "depth") 1) :is_hidden (boolean (get spec "is_hidden"))})]
+
+      (if matcher (update row "entries" #(ls-filter-entries matcher %)) row))))
 
 (defn list-directories
   "List directories for the sandbox's `ls` helper. `args` is the string-keyed
    request — `{\"paths\" [dir | {\"path\" dir, …}, …], \"depth\" n, \"is_hidden\" b}`,
    an entry's own options overriding the shared ones — and the answer is one row
-   per requested directory IN REQUEST ORDER.
+   per requested directory IN REQUEST ORDER. Optional `pattern` is a basename glob;
+   nil disables it. Matching descendants retain their ancestors.
 
    Listing a directory is not a wire round trip: it is a call inside the Python
    block the model was already running, so it costs no tool result and no native

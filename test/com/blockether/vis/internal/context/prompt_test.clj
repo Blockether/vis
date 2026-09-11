@@ -362,7 +362,8 @@
       ;; 7.4k → 7.7k for the ls signature, batching and hidden alias contract.
       ;; 7.7k → 8.2k for project-style correctness (#188); scope and verification stay single-owned.
       ;; 8.2k → 8.3k for confirmed paths, direct reads and question-driven discovery.
-      (expect (< (count text) 8300))
+      ;; 8.3k → 8.5k for optional ls glob filtering and per-path overrides.
+      (expect (< (count text) 8500))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -1090,16 +1091,17 @@
                       "never retry it unchanged"]]
           (expect (str/includes? text rule) rule)))))
 
-(defdescribe core-prompt-ls-contract-test
-             ;; Regression: the prompt omitted ls keywords, including the hidden alias.
-             (it "states the ls signature, batching, return type, and hidden precedence"
-                 (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None)"
-                                 "one path or a list of paths" "returns a printable STRING"
-                                 "hidden=True` aliases `is_hidden=True"
-                                 "non-None `hidden` overrides `is_hidden`"
-                                 "gitignored entries stay excluded"]]
-                     (expect (str/includes? text rule) rule)))))
+(defdescribe
+  core-prompt-ls-contract-test
+  ;; Regression: the prompt omitted ls keywords, including the hidden alias.
+  (it "states the ls signature, batching, return type, and hidden precedence"
+      (let [text (prompt/build-system-prompt {})]
+        (doseq [rule ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None)"
+                      "Optional `pattern` filters basenames by case-sensitive glob"
+                      "one path or a list of paths" "returns a printable STRING"
+                      "hidden=True` aliases `is_hidden=True"
+                      "non-None `hidden` overrides `is_hidden`" "gitignored entries stay excluded"]]
+          (expect (str/includes? text rule) rule)))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
 ;; do not redefine paths or helpers that the session already provides.

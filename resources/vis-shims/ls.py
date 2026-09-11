@@ -63,7 +63,7 @@ def __vis_install_ls__():
         _render(entries, "", out)
         return "\n".join(out)
 
-    def ls(paths=".", depth=1, is_hidden=False, *, hidden=None):
+    def ls(paths=".", depth=1, is_hidden=False, *, hidden=None, pattern=None):
         """Map a tree through the host's ignore-aware walk, as a compact STRING.
 
         ls(dir) returns a ready-to-print tree: a `path  Nd Nf` header, then one
@@ -77,6 +77,10 @@ def __vis_install_ls__():
         path is a str or any os.PathLike, so pathlib.Path works wherever a
         string does.
 
+        pattern=None leaves the listing unchanged. A string filters file and
+        directory basenames with a case-sensitive glob (*, ?, [abc], {a,b}),
+        at every requested depth; ancestors of matches remain visible.
+        A per-path spec may override pattern, including None to disable it.
         Dotfiles need is_hidden=True (alias: hidden=True). If supplied, hidden
         overrides is_hidden; gitignored entries are never listed.
         Start at a known parent and batch only confirmed directories. A missing,
@@ -96,6 +100,7 @@ def __vis_install_ls__():
                     "paths": [_as_spec(entry) for entry in request],
                     "depth": int(depth),
                     "is_hidden": bool(is_hidden),
+                    "pattern": pattern,
                 }
             )
         )
@@ -109,13 +114,17 @@ def __vis_install_ls__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["ls"] = (
-        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None): directory contents from the "
+        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None): directory contents from the "
         "host's ignore-aware walk, rendered as a compact printable STRING. "
         "ls(dir) -> a `path  Nd Nf` header then one tree line per entry, "
         "directories first then alphabetical: a directory is `name/` (with its "
         "child count once depth expanded it), a file is `name  size` "
         "(`812`, `7.2k`, `2.1M`); ls([dir, ...]) -> one such section per "
-        "directory in request order, blank-line separated. Dotfiles need "
+        "directory in request order, blank-line separated. Optional pattern=None "
+        "leaves the listing unchanged; a string is a case-sensitive basename glob "
+        "(*, ?, [abc], {a,b}), not a regex. Applied at every requested depth, keeping "
+        "ancestors of matches. Per-path specs override pattern (None disables it). "
+        "Example: ls(dir, pattern='*snapshot*'). Dotfiles need "
         "is_hidden=True (alias: hidden=True). When not None, hidden overrides "
         "is_hidden; gitignored entries are never listed. Start at a known "
         "parent; batch only confirmed directories. One missing, protected or "

@@ -1,16 +1,18 @@
 {
   "lang": "clojure",
-  "prompt": "Locate the Clojure namespace demo.directory-map in this project. Use ls to list the directory containing it, including its immediate subdirectories. Report the directory's project-relative path and the immediate subdirectory names. Do not edit files.",
+  "prompt": "Locate the Clojure namespace demo.directory-map in this project. Use ls to list the directory containing it, including its immediate subdirectories. Report the directory's project-relative path and the immediate subdirectory names. Do not edit files. Then call ls on that same directory with optional pattern='*map*'. Confirm that this filtered listing includes directory_map.clj but excludes fixtures, and include the exact phrase 'glob filter verified' in your answer only if both conditions hold.",
   "want": {},
   "wantnot": {},
   "want_answer": [
     "packages/listing/src/demo",
-    "fixtures"
+    "fixtures",
+    "glob filter verified"
   ],
   "want_tools": [
     "ls"
   ],
   "want_forms": [
-    "ls("
+    "ls(",
+    "pattern="
   ]
 }

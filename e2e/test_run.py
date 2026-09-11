@@ -243,5 +243,38 @@ class ScenarioTimeoutTest(unittest.TestCase):
         self.assertIn("vis-agent timed out after 900s", result["err_msgs"])
 
 
+class ActivityToolEvidenceTest(unittest.TestCase):
+    def test_ls_is_detected_from_end_only_activity_snapshots(self):
+        # ls emits form-activity, not the obsolete tool-start trace event.
+        scenario = run.load_scenarios(["ls-source-root-discovery"])[0].copy()
+        scenario.update(want_answer=[], want_forms=[])
+        activity = {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "form-activity",
+                "activity": {
+                    "rows": [{"id": "ls-1", "operation": "ls", "state": "succeeded"}]
+                },
+            },
+        }
+        result_event = {"event": "result", "payload": {"answer": "Listed directory"}}
+        for snapshots, expected in [([], False), ([activity, activity], True)]:
+            with (
+                self.subTest(snapshots=len(snapshots)),
+                tempfile.TemporaryDirectory() as traces,
+                patch.object(run, "TRACES", traces),
+                patch.object(run, "source_classpath", return_value="/checkout/src"),
+                patch.object(run.subprocess, "run") as invoke,
+            ):
+                invoke.return_value.returncode = 0
+                invoke.return_value.stdout = "\n".join(
+                    json.dumps(event) for event in [*snapshots, result_event]
+                )
+                result = run.run_one((scenario, "test-model", {}, 12344))
+                self.assertEqual(expected, result["correct"])
+                if expected:
+                    self.assertIn("tools=ls×1", result["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

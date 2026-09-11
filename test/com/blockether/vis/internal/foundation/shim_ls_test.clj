@@ -97,6 +97,40 @@
                  "      ls(['.'], hidden=True) == shown) \n")]
 
         (expect (= "True True True True\n" (out ctx code)))))
+  ;; Regression: the optional pattern keyword previously raised TypeError.
+  (it "filters basenames by optional glob, preserving matching descendants and batch overrides"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "from pathlib import Path\n"
+                 "p = Path('resources/vis-shims')\n" "plain = ls(p)\n"
+                 "filtered = ls(p, pattern='l?.py')\n"
+                 "batch = ls([p, {'path': p, 'pattern': None}], pattern='l?.py').split('\\n\\n')\n"
+                 "tree = ls('resources', depth=2, pattern='ls.py')\n"
+                 "print(ls(p, pattern=None) == plain, ls(p, pattern='*') == plain,\n"
+                 "      '  0d 1f\\n' in filtered, 'ls.py  ' in filtered,\n"
+                 "      batch == [filtered, plain], 'vis-shims/ 1' in tree,\n"
+                 "      'ls.py  ' in tree, 'attach.py  ' not in tree,\n"
+                 "      ls(p, pattern='__no_match__').endswith('  empty'),\n"
+                 "      '.gitignore  ' not in ls('.', pattern='.git*'),\n"
+                 "      '.gitignore  ' in ls('.', pattern='.git*', hidden=True))")]
+
+        (expect (= "True True True True True True True True True True True\n" (out ctx code)))))
+  (it "rejects malformed patterns and filters case-sensitively within the requested depth"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "def rejected(pattern):\n"
+                 "    try:\n" "        ls('resources', pattern=pattern)\n"
+                 "    except Exception as e:\n" "        return type(e).__name__\n"
+                 "print(rejected(42), rejected('['),\n"
+                 "      ls('resources/vis-shims', pattern='LS.PY').endswith('  empty'),\n"
+                 "      ls('resources', depth=1, pattern='ls.py').endswith('  empty'),\n"
+                 "      'vis-shims/' in ls('resources', pattern='vis-shims'))")]
+
+        (expect (= "VisToolError VisToolError True True True\n" (out ctx code)))))
   (it "sizes a file in at most four characters"
       (let [ctx
             (sandbox)
@@ -108,16 +142,18 @@
                  "      all(s[-1].isdigit() or s[-1] in \"kMGT\" for s in sizes))")]
 
         (expect (= "True True\n" (out ctx code)))))
-  (it
-    "documents itself in the sandbox `__vis_docs__` table"
-    (let [ctx
-          (sandbox)
+  (it "documents itself in the sandbox `__vis_docs__` table"
+      (let [ctx
+            (sandbox)
 
-          code
-          (str "d = globals()[\"__vis_docs__\"][\"ls\"]\n"
-               "print(\"depth\" in d, \"is_hidden\" in d, \"gitignored\" in d, \"STRING\" in d)")]
+            code
+            (str
+              "d = globals()[\"__vis_docs__\"][\"ls\"]\n"
+              "print('pattern=None' in d, 'case-sensitive basename glob' in d,\n"
+              "      'not a regex' in d, d == ls.__doc__,\n"
+              "      all(word in d for word in ['depth', 'is_hidden', 'gitignored', 'STRING']))")]
 
-      (expect (= "True True True True\n" (out ctx code)))))
+        (expect (= "True True True True True\n" (out ctx code)))))
   ;; Regression: `ls(Path("src/..."))` raised `TypeError: 'PosixPath' object is not iterable` —
   ;; one path-like argument was iterated as if it were a list of paths.
   (it
@@ -155,13 +191,16 @@
                                 {:roots-fn roots-fn :net-enabled? false})
             :jail-enabled? true
             :enabled? false}]
-          (expect (= "True True True\n"
-                     (out ctx
-                          (str "from pathlib import Path\n" "text = ls(Path('.'), depth=2)\n"
-                               "batch = ls([Path('resources/vis-shims'), "
-                               "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
-                               "print('AGENTS.md  ' in text, 'vis-shims/' in text, "
-                               "'ls.py  ' in batch and 'core.clj  ' in batch)"))))))))
+          (expect
+            (= "True True True True\n"
+               (out ctx
+                    (str "from pathlib import Path\n"
+                         "text = ls(Path('.'), depth=2)\n"
+                         "batch = ls([Path('resources/vis-shims'), "
+                         "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
+                         "print('AGENTS.md  ' in text, 'vis-shims/' in text, "
+                         "'ls.py  ' in batch and 'core.clj  ' in batch, "
+                         "'  0d 1f\\n' in ls(Path('resources/vis-shims'), pattern='ls.py'))"))))))))
 
 (defdescribe
   ls-shim-failure-test

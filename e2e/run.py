@@ -401,6 +401,7 @@ def run_one(job):
         form_events = []
         provider_calls = []
         tools = []
+        activity_ids = set()
         errs = []
         unparsed = []
         done = False
@@ -457,11 +458,13 @@ def run_one(job):
                         "iteration": pl.get("iteration"),
                     }
                 )
-            elif ph == "tool-start":
-                te = pl.get("tool-event") or {}
-                sym = te.get("symbol") or te.get("op")
-                if sym:
-                    tools.append(sym)
+            elif ph == "form-activity":
+                for row in (pl.get("activity") or {}).get("rows", []):
+                    row_id = row.get("id")
+                    operation = row.get("operation")
+                    if row_id and operation and row_id not in activity_ids:
+                        activity_ids.add(row_id)
+                        tools.append(operation)
             elif ph == "form-result":
                 if pl.get("error"):
                     e = pl.get("error")
