@@ -8,14 +8,19 @@
   (:import [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]))
 
 (defn geometry
-  "Reserve 30 cells on wide terminals; use a dismissible overlay below 72 columns."
+  "Use a quarter of the terminal, bounded to 26–36 cells; overlay if chat would fall below 60."
   [db cols rows]
   (when (get-in db [:project-sidebar :open?])
-    (let [width (min 30 (long cols))]
-      {:left (- (long cols) width)
-       :width width
-       :rows (long rows)
-       :chat-cols (if (>= (long cols) 72) (- (long cols) width) (long cols))})))
+    (let [cols
+          (long cols)
+
+          width
+          (min cols (max 26 (min 36 (quot cols 4))))
+
+          left
+          (- cols width)]
+
+      {:left left :width width :rows (long rows) :chat-cols (if (>= left 60) left cols)})))
 
 (defn chat-cols [db cols] (or (:chat-cols (geometry db cols 0)) cols))
 

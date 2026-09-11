@@ -224,8 +224,22 @@
     (is (nil? (projects/key-action (assoc-in db [:project-sidebar :open?] false)
                                    (cap/key-stroke \+))))))
 
+(deftest project-sidebar-width-test
+  ;; Keep the sidebar bounded without squeezing the conversation below 60 columns.
+  (doseq [[cols width chat-cols] [[24 24 24] [26 26 26] [40 26 40] [72 26 72] [80 26 80] [85 26 85]
+                                  [86 26 60] [96 26 70] [120 30 90] [144 36 108] [240 36 204]]]
+    (let [db (fixture-db)]
+      (is (= {:left (- cols width) :width width :rows 24 :chat-cols chat-cols}
+             (projects/geometry db cols 24)))
+      (is (= cols (projects/chat-cols (assoc-in db [:project-sidebar :open?] false) cols)))))
+  (doseq [cols (range 24 241)]
+    (let [{:keys [left width chat-cols]} (projects/geometry (fixture-db) cols 24)]
+      (is (<= (min cols 26) width 36))
+      (is (= cols (+ left width)))
+      (is (or (= cols chat-cols) (>= chat-cols 60))))))
+
 (deftest project-sidebar-grid-test
-  (doseq [cols [24 40 80 120]]
+  (doseq [cols [24 26 40 72 80 85 86 96 120 144 240]]
     (let [db (fixture-db)
           capture (cap/capture! {:cols cols
                                  :rows 18
@@ -240,6 +254,8 @@
       (is (str/includes? text "Projects"))
       (is (str/includes? text "Companion"))
       (is (str/includes? text "1 running"))
+      (when (>= cols 26) (is (str/includes? text "↑↓ select · Enter open")))
+      (is (str/includes? text "C-x w hide · Esc chat"))
       (is (= :project-add (:kind (.lookup interactions/hit-map (- cols 7) 0))))
       (is (= :project-hide (:kind (.lookup interactions/hit-map (- cols 3) 0))))
       (is (= [:select project-b]
@@ -247,6 +263,20 @@
                                   (MouseAction. MouseActionType/CLICK_DOWN
                                                 1
                                                 (TerminalPosition. (+ (int left) 4) 4))))))))
+
+(deftest project-sidebar-label-width-test
+  (doseq [[cols label fits?] [[26 "vis-python-runtime" true] [26 "tree-sitter-language-pack" false]
+                              [144 "tree-sitter-language-pack" true]]]
+    (let [db (assoc-in (fixture-db) [:project-sidebar :items 0 "name"] label)
+          capture (cap/capture! {:cols cols
+                                 :rows 18
+                                 :paint! (fn [{:keys [screen]}]
+                                           (projects/paint! (.newTextGraphics screen) db cols 18))})
+          row (nth (str/split-lines (cap/frame-text capture)) 2)]
+
+      (is (nil? (:error capture)))
+      (is (= fits? (str/includes? row label)))
+      (is (= (not fits?) (str/includes? row "…"))))))
 
 (deftest project-sidebar-overflow-test
   (let [sidebar
@@ -275,7 +305,7 @@
                 vis/get-router
                 (constantly nil)]
 
-    (doseq [cols [40 80 120]]
+    (doseq [cols [40 80 85 86 96 120 144]]
       (let [capture (cap/capture! {:cols cols
                                    :rows 24
                                    :paint!
@@ -312,7 +342,7 @@
                 vis/get-router
                 (constantly nil)]
 
-    (doseq [cols [24 40 80 120]]
+    (doseq [cols [24 26 40 80 85 86 96 120 144]]
       (with-open [html (review-terminal cols 24)
                   html-screen (doto (TerminalScreen. html) (.startScreen))]
 
