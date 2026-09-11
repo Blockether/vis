@@ -185,7 +185,7 @@ export function SessionHealth({
                         {differenceSign}
                         {Math.abs(difference).toLocaleString("en-US")} tokens
                         {input > 0 &&
-                          ` (${differenceSign}${Math.abs((difference / input) * 100).toFixed(1)}%)`}
+                          ` (${differenceSign}${(Math.round(Math.abs((difference / input) * 100) * 10) / 10).toFixed(1)}%)`}
                       </dd>
                     </div>
                   )}

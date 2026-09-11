@@ -1,0 +1,410 @@
+{
+  "usage": {
+    "input_tokens": 2100000,
+    "input_cache_read_tokens": 1953000,
+    "output_tokens": 18000,
+    "iteration_count": 33
+  },
+  "cases": [
+    {
+      "name": "prepared replay",
+      "health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 5600
+          },
+          {
+            "label": "Conversation and tool results",
+            "tokens": 160000
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 350
+          },
+          {
+            "label": "Reply framing",
+            "tokens": 3
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Fold reminder",
+        "percent": 81,
+        "estimate": "165,953 tokens",
+        "reported": "162,177 tokens",
+        "difference": "+3,776 tokens (+2.3%)",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "historical logical request",
+      "health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "logical-request",
+        "breakdown": [
+          {
+            "label": "Conversation and tool results",
+            "tokens": 216546
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 404
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Fold reminder",
+        "percent": 81,
+        "estimate": "216,950 tokens",
+        "reported": "162,177 tokens",
+        "difference": "+54,773 tokens (+33.8%)",
+        "projection": "Logical request",
+        "scope": "before provider adaptation"
+      }
+    },
+    {
+      "name": "underestimate",
+      "health": {
+        "last_request_tokens": 100,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 90
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Within budget",
+        "percent": 50,
+        "estimate": "90 tokens",
+        "reported": "100 tokens",
+        "difference": "−10 tokens (−10.0%)",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "exact estimate",
+      "health": {
+        "last_request_tokens": 100,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 100
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Within budget",
+        "percent": 50,
+        "estimate": "100 tokens",
+        "reported": "100 tokens",
+        "difference": "0 tokens (0.0%)",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "zero measured input",
+      "health": {
+        "last_request_tokens": 0,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 100
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Within budget",
+        "percent": 0,
+        "estimate": "100 tokens",
+        "reported": "0 tokens",
+        "difference": "+100 tokens",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "zero estimate",
+      "health": {
+        "last_request_tokens": 100,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 0
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Within budget",
+        "percent": 50,
+        "estimate": "0 tokens",
+        "reported": "100 tokens",
+        "difference": "−100 tokens (−100.0%)",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "one decimal rounding",
+      "health": {
+        "last_request_tokens": 2000,
+        "budget_tokens": 4000,
+        "call": 5,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "Conversation and tool results",
+            "tokens": 2051
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Within budget",
+        "percent": 50,
+        "estimate": "2,051 tokens",
+        "reported": "2,000 tokens",
+        "difference": "+51 tokens (+2.6%)",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "empty breakdown",
+      "health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Fold reminder",
+        "percent": 81,
+        "estimate": null,
+        "reported": null,
+        "difference": null,
+        "projection": null,
+        "scope": null
+      }
+    },
+    {
+      "name": "stale missing breakdown",
+      "health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ],
+        "stale": true
+      },
+      "expected": {
+        "pressure": "Fold reminder",
+        "percent": 81,
+        "estimate": null,
+        "reported": null,
+        "difference": null,
+        "projection": null,
+        "scope": null
+      }
+    },
+    {
+      "name": "historical missing budget and projection",
+      "health": {
+        "last_request_tokens": 100,
+        "call": 2,
+        "breakdown": [
+          {
+            "label": "History",
+            "tokens": 120
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Budget not reported",
+        "percent": null,
+        "estimate": "120 tokens",
+        "reported": "100 tokens",
+        "difference": "+20 tokens (+20.0%)",
+        "projection": "Logical request",
+        "scope": "before provider adaptation"
+      }
+    },
+    {
+      "name": "over budget despite lower estimate",
+      "health": {
+        "last_request_tokens": 210000,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 5600
+          },
+          {
+            "label": "Conversation and tool results",
+            "tokens": 160000
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 350
+          },
+          {
+            "label": "Reply framing",
+            "tokens": 3
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Over budget",
+        "percent": 105,
+        "estimate": "165,953 tokens",
+        "reported": "210,000 tokens",
+        "difference": "−44,047 tokens (−21.0%)",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "input limit despite lower estimate",
+      "health": {
+        "last_request_tokens": 272000,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 5600
+          },
+          {
+            "label": "Conversation and tool results",
+            "tokens": 160000
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 350
+          },
+          {
+            "label": "Reply framing",
+            "tokens": 3
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
+      },
+      "expected": {
+        "pressure": "Input limit reached",
+        "percent": 136,
+        "estimate": "165,953 tokens",
+        "reported": "272,000 tokens",
+        "difference": "−106,047 tokens (−39.0%)",
+        "projection": "Prepared request",
+        "scope": "full prepared request after provider adaptation"
+      }
+    },
+    {
+      "name": "missing measurement with lifetime usage",
+      "health": null,
+      "expected": {
+        "pressure": "Context measurement unavailable",
+        "percent": null,
+        "estimate": null,
+        "reported": null,
+        "difference": null,
+        "projection": null,
+        "scope": null
+      }
+    }
+  ]
+}

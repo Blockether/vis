@@ -1075,6 +1075,33 @@
 
 (defn- metric-percent [n] (if (number? n) (str (Math/round (double n)) "%") "—"))
 
+(defn- metric-tokens [^long n] (String/format Locale/US "%,d tokens" (object-array [n])))
+
+(defn- metric-token-difference
+  [^long estimate ^long input]
+  (let [difference
+        (- estimate input)
+
+        sign
+        (cond (pos? difference) "+"
+              (neg? difference) "−"
+              :else "")]
+
+    (str sign
+         (metric-tokens (Math/abs difference))
+         (when (pos? input)
+           (str " ("
+                sign
+                (String/format Locale/US
+                               "%.1f"
+                               (object-array [(/ (double (Math/round (* 10.0
+                                                                        (Math/abs
+                                                                          (* 100.0
+                                                                             (/ (double difference)
+                                                                                (double input)))))))
+                                                 10.0)]))
+                "%)")))))
+
 (defn- session-metric-rows
   [session {:keys [phase usage parts? roots?]}]
   (let [row
@@ -1133,6 +1160,16 @@
         breakdown
         (get health "breakdown")
 
+        estimate
+        (when (seq breakdown)
+          (reduce (fn [^long total part]
+                    (+ total (long (get part "tokens"))))
+                  0
+                  breakdown))
+
+        prepared?
+        (= "prepared-request" (get health "counted_projection"))
+
         roots
         (get health "roots")
 
@@ -1187,13 +1224,19 @@
                               (if over? " over budget" " budget left"))
                          "Working budget was not recorded"))
                  (stat "Model input limit" (metric-count limit)) (row "")]
-                (if (some? breakdown)
+                (if (seq breakdown)
                   (concat
                     [{:text (str (if parts? "▾" "▸") " Context breakdown [b]")
                       :tone :heading
-                      :toggle :parts?} (hint "Instructions, tools and history · estimates")]
+                      :toggle :parts?}
+                     (hint (str (if prepared? "Prepared request" "Logical request")
+                                " · not measured usage"))]
                     (when parts?
                       (concat
+                        [(stat "Local estimate" (metric-tokens estimate))
+                         (stat "Provider-reported input" (metric-tokens input))
+                         (stat "Estimate − reported" (metric-token-difference estimate input))
+                         (row "")]
                         (mapcat (fn [part]
                                   (cond-> [(stat (get part "label")
                                                  (str "≈" (metric-count (get part "tokens"))))]
@@ -1201,7 +1244,11 @@
                                     (conj (hint (get part "path")))))
                                 breakdown)
                         [(hint
-                           "≈ Text estimates at four characters per token; image tokens and provider overhead are excluded. They need not sum to provider-reported input above.")])))
+                           (str
+                             (if prepared?
+                               "≈ Local estimates describe the full prepared request after provider adaptation, including retained replay and wire-shaped tools, not just a WebSocket delta. "
+                               "≈ Local estimates describe logical messages and tools before provider adaptation, not the prepared request used for preflight. Adapters may drop or reshape content. ")
+                             "Svar tokenizes text and tool payloads and estimates images, reasoning and framing. Provider-reported input for this same call, including cached input, determines context pressure above; estimates do not."))])))
                   [(hint "Prompt breakdown unavailable")])
                 [(row "")]
                 (if (some? roots)
@@ -1276,8 +1323,10 @@
         []))))
 
 (defn session-metrics-component
-  "Companion's usage/health document in a scrollable terminal sheet. Geometry,
-   disclosures and keys are deterministic; unknown values never become zero."
+  "Companion's usage/health document in a scrollable terminal sheet. Context pressure
+   uses provider-reported input, never summed estimates or lifetime usage. Breakdown
+   rows sum the recorded prepared or logical request, not a new tokenization pass.
+   Geometry, disclosures and keys are deterministic; unknown values never become zero."
   [session snapshot]
   {:init (merge {:scroll 0 :parts? false :roots? false} snapshot)
    :measure

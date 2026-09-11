@@ -1,5 +1,7 @@
 (ns com.blockether.vis.tui.session-metrics-test
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.dialogs :as dlg]
@@ -51,6 +53,52 @@
   [component state cols rows]
   (str/join "\n" (map :text (:lines ((:measure component) state cols rows)))))
 
+(def health-parity-fixture
+  "One wire fixture consumed by the Companion and TUI regression suites."
+  (wire/parse-json (slurp (io/resource "vis-contract/fixtures/session-health.json"))))
+
+;; #186: both clients must show the same request estimate and provider measurement.
+(deftest shared-health-accounting-parity
+  (doseq [{:strs [name health expected]} (get health-parity-fixture "cases")]
+    (let [usage (cond-> (get health-parity-fixture "usage")
+                  health
+                  (assoc "health" health))
+          snapshot (with-redefs [client/request! (fn [& _]
+                                                   {:status 200
+                                                    :body (wire/json-str {"usage" usage})})]
+                     (client/session-usage "fixture-session"))
+          component (dlg/session-metrics-component {} snapshot)
+          state (assoc (:init component)
+                  :parts? true
+                  :roots? true)
+          geom ((:measure component) state 160 80)
+          rows (:lines geom)
+          text (str/replace (str/join " " (map :text rows)) #"\s+" " ")
+          values (into {} (keep #(when (:label %) [(:label %) (:value %)])) rows)]
+
+      (is (= usage (:usage snapshot)) name)
+      (is (str/includes? text (get expected "pressure")) name)
+      (is (= (get expected "estimate") (get values "Local estimate")) name)
+      (is (= (get expected "reported") (get values "Provider-reported input")) name)
+      (is (= (get expected "difference") (get values "Estimate − reported")) name)
+      (is (= "2100000" (get values "Total input")) name)
+      (if-let [percent (get expected "percent")]
+        (do (is (str/ends-with? (get values "Context / working budget") (str percent "%")) name)
+            (is (= (min 1.0
+                        (/ (double (get health "last_request_tokens"))
+                           (double (get health "budget_tokens"))))
+                   (some :meter rows))
+                name))
+        (is (not-any? :meter rows) name))
+      (if-let [projection (get expected "projection")]
+        (do (is (str/includes? text (str projection " · not measured usage")) name)
+            (is (str/includes? text (get expected "scope")) name)
+            (is (str/includes? text "Svar tokenizes") name)
+            (is (str/includes? text "including cached input") name))
+        (is (not-any? #(= :parts? (:toggle %)) rows) name))
+      (when (get health "stale") (is (str/includes? text "Earlier measurement") name))
+      (is (not (str/includes? text "four characters per token")) name))))
+
 (deftest metrics-fields-and-disclosures
   (let [component
         (review-component)
@@ -72,7 +120,7 @@
                    "Reminder at 90000" "200000" "Instructions" "Tool definitions" "History"
                    "4 available" "1 with guidance estimates" "840 tokens on disk"
                    "No AGENTS.md or CLAUDE.md" "Could not read guidance"
-                   "Guidance estimate unavailable" "Text estimates" "Disk estimates"
+                   "Guidance estimate unavailable" "Svar tokenizes" "Disk estimates"
                    "Session totals" "repeated context" "Total input" "842190" "Total output" "12842"
                    "$1.2749" "Folds" "Turns" "Calls" "Tools" "72%" "≈91%" "20 of 24 calls"
                    "example-model" "example-provider" "Active"]]
@@ -192,19 +240,37 @@
       (is (= {:phase :error} (client/session-usage "id"))))))
 
 (deftest production-terminal-grid
-  (doseq [cols [40 80 120]]
-    (let [capture (cap/capture! {:cols cols
-                                 :rows 40
-                                 :keys [:end :home \b \f :esc]
-                                 :paint! (fn [{:keys [screen g]}]
-                                           (p/set-bg! g theme/terminal-bg)
-                                           (p/fill-rect! g 0 0 cols 40)
-                                           (dlg/run-modal! screen (review-component)))})
-          text (cap/frame-text capture)]
+  (doseq [cols
+          [40 80 120]
+
+          usage
+          [measured-usage
+           (assoc (get health-parity-fixture "usage")
+             "health" (get-in health-parity-fixture ["cases" 0 "health"]))]]
+
+    (let [capture
+          (cap/capture! {:cols cols
+                         :rows 40
+                         :keys [:end :home \b \f :esc]
+                         :paint! (fn [{:keys [screen g]}]
+                                   (p/set-bg! g theme/terminal-bg)
+                                   (p/fill-rect! g 0 0 cols 40)
+                                   (dlg/run-modal! screen
+                                                   (dlg/session-metrics-component
+                                                     {}
+                                                     {:phase :ready :usage usage})))})
+
+          text
+          (-> (cap/frame-text capture)
+              (str/replace #"[│█]" " ")
+              (str/replace #"\s+" " "))]
 
       (is (nil? (:error capture)))
       (is (str/includes? text "Session metrics"))
-      (is (str/includes? text "Session health")))))
+      (is (str/includes? text "Session health"))
+      (when (= "prepared-request" (get-in usage ["health" "counted_projection"]))
+        (doseq [expected ["Prepared request" "165,953 tokens" "162,177 tokens" "+3,776 tokens"]]
+          (is (str/includes? text expected) (str cols " columns: " expected)))))))
 
 (deftest dismiss-loading-cancels-fetch
   (let [started

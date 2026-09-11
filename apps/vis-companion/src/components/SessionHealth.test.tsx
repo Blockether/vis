@@ -8,6 +8,8 @@ import {
   STORY_HEALTH_USAGE,
   STORY_SESSION_ROW,
 } from "../dev/story-data";
+import healthParity from "../../../../packages/vis-contract/resources/vis-contract/fixtures/session-health.json";
+import type { SessionHealthData } from "../lib/types";
 import { SessionStatsPanel } from "./SessionList";
 
 function paint(health = STORY_SESSION_HEALTH) {
@@ -22,6 +24,67 @@ function paint(health = STORY_SESSION_HEALTH) {
 }
 
 describe("session health in metrics", () => {
+  // #186: this same wire fixture drives the production TUI metrics regression.
+  it.each(healthParity.cases)(
+    "matches TUI accounting: $name",
+    async ({ health, expected }) => {
+      render(
+        <SessionStatsPanel
+          session={STORY_SESSION_ROW}
+          usage={{
+            ...healthParity.usage,
+            health: (health ?? undefined) as SessionHealthData | undefined,
+          }}
+          phase="ready"
+        />,
+      );
+      expect(screen.getByText(expected.pressure)).toBeInTheDocument();
+      expect(screen.getByText("2.1M")).toBeInTheDocument();
+      if (expected.percent !== null) {
+        expect(screen.getByText(`${expected.percent}%`)).toBeInTheDocument();
+        expect(screen.getByRole("meter")).toHaveAttribute(
+          "value",
+          String(health!.last_request_tokens),
+        );
+        expect(screen.getByRole("meter")).toHaveAttribute(
+          "max",
+          String(health!.budget_tokens),
+        );
+      } else {
+        expect(screen.queryByRole("meter")).not.toBeInTheDocument();
+      }
+      if (expected.projection) {
+        await userEvent.click(
+          screen.getByRole("button", { name: /Context breakdown/ }),
+        );
+        expect(
+          screen.getByText(`${expected.projection} · not measured usage`),
+        ).toBeInTheDocument();
+        for (const [label, value] of [
+          ["Local estimate", expected.estimate],
+          ["Provider-reported input", expected.reported],
+          ["Estimate − reported", expected.difference],
+        ] as const) {
+          expect(screen.getByText(label).nextElementSibling).toHaveTextContent(
+            value!,
+          );
+        }
+        expect(
+          screen.getByText(new RegExp(expected.scope!)),
+        ).toBeInTheDocument();
+        expect(screen.getByText(/including cached input/)).toBeInTheDocument();
+      } else {
+        expect(
+          screen.queryByRole("button", { name: /Context breakdown/ }),
+        ).not.toBeInTheDocument();
+      }
+      if (health?.stale)
+        expect(screen.getByText(/Earlier measurement/)).toBeInTheDocument();
+      expect(
+        screen.queryByText(/four characters per token/),
+      ).not.toBeInTheDocument();
+    },
+  );
   it("separates the last measured context, the operating budget and lifetime input", () => {
     paint();
     expect(
