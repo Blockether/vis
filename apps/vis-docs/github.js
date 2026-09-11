@@ -77,16 +77,21 @@ export async function inspectRepository(source,env) {
   const regular=name=>entries.find(e=>e.name===name&&e.type==='file'&&!e.submodule_git_url);
   assert(regular('pyproject.toml')&&regular('extension.py'),'pyproject.toml and extension.py must be files in the selected folder; set Project folder for a monorepo.');
   const prefix=subdirectory?subdirectory+'/':'';
-  const manifest=await contents(prefix+'pyproject.toml');
-  assert(manifest.type==='file'&&!manifest.submodule_git_url&&manifest.encoding==='base64'&&typeof manifest.content==='string','pyproject.toml must be a regular UTF-8 file.');
-  assert(manifest.size<=128*1024&&manifest.content.length<=180000,'pyproject.toml exceeds 128 KiB.');
-  let text; try {text=new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(manifest.content.replace(/\s/g,'')),c=>c.charCodeAt(0)));} catch {throw new RequestError('pyproject.toml must be valid base64 UTF-8.');}
-  const metadata=manifestMetadata(text);
+  async function textFile(path) {
+    const file=await contents(prefix+path);
+    assert(file.type==='file'&&!file.submodule_git_url&&file.encoding==='base64'&&typeof file.content==='string',path+' must be a regular UTF-8 file.');
+    assert(file.size<=128*1024&&file.content.length<=180000,path+' exceeds 128 KiB.');
+    let bytes;try {bytes=Uint8Array.from(atob(file.content.replace(/\s/g,'')),c=>c.charCodeAt(0));} catch {throw new RequestError(path+' must be valid base64 UTF-8.');}
+    assert(bytes.length<=128*1024,path+' exceeds 128 KiB.');
+    try {return new TextDecoder('utf-8',{fatal:true}).decode(bytes);} catch {throw new RequestError(path+' must be UTF-8.');}
+  }
+  const metadata=manifestMetadata(await textFile('pyproject.toml'));
   for(const path of metadata.source_paths) assert(Array.isArray(await contents(prefix+path)),'source_paths must be directories inside the selected project.');
   for(const path of metadata.skills) {
     const files=await contents(prefix+path);
     assert(Array.isArray(files)&&files.some(entry=>entry.name==='SKILL.md'&&entry.type==='file'&&!entry.submodule_git_url),'Each skills directory must contain a SKILL.md file.');
   }
   const readme=entries.find(e=>/^readme\.(md|rst|txt)$/i.test(e.name)&&e.type==='file'&&!e.submodule_git_url);
-  return {...metadata,id:await identity(repository_url.toLowerCase()+'\n'+subdirectory),repository_url,repository,owner,subdirectory,revision:sha,source_url:repository_url+'/tree/'+sha+(subdirectory?'/'+encoded(subdirectory):''),manifest_url:repository_url+'/blob/'+sha+'/'+encoded(prefix+'pyproject.toml'),readme_url:readme?repository_url+'/blob/'+sha+'/'+encoded(prefix+readme.name):null,stars:Number.isSafeInteger(repo.stargazers_count)?Math.max(0,repo.stargazers_count):0,topics:Array.isArray(repo.topics)?repo.topics.filter(t=>typeof t==='string').slice(0,20):[],license:repo.license?.spdx_id||null,archived:!!repo.archived,updated_at:commit.commit.committer.date};
+  const readme_content=readme?await textFile(readme.name):null;
+  return {...metadata,id:await identity(repository_url.toLowerCase()+'\n'+subdirectory),repository_url,repository,owner,subdirectory,revision:sha,source_url:repository_url+'/tree/'+sha+(subdirectory?'/'+encoded(subdirectory):''),manifest_url:repository_url+'/blob/'+sha+'/'+encoded(prefix+'pyproject.toml'),readme_url:readme?repository_url+'/blob/'+sha+'/'+encoded(prefix+readme.name):null,readme:readme_content,readme_format:readme?.name.split('.').at(-1).toLowerCase()||null,stars:Number.isSafeInteger(repo.stargazers_count)?Math.max(0,repo.stargazers_count):0,topics:Array.isArray(repo.topics)?repo.topics.filter(t=>typeof t==='string').slice(0,20):[],license:repo.license?.spdx_id||null,archived:!!repo.archived,updated_at:commit.commit.committer.date};
 }

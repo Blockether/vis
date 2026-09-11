@@ -2,6 +2,8 @@
 import { shellHTML, cardsHTML, categoriesHTML, detailHTML, previewHTML, tocHTML, filters, filterURL, visibleItems } from './render.js';
 export { installCommand } from './render.js';
 import { catalogMetadata } from './discovery.js';
+import { mountCommunity } from './community.js';
+import { loadTurnstile } from './turnstile.js';
 function updateMetadata(data={}) {
   document.head.querySelectorAll('[data-discovery]').forEach(node=>node.remove());
   document.head.insertAdjacentHTML('beforeend',catalogMetadata(data));
@@ -10,7 +12,8 @@ function updateMetadata(data={}) {
 export function mount(container,request=fetch,initial) {
   const $=selector=>container.querySelector(selector);
   if(!$('#catalog-page')) container.innerHTML=shellHTML(initial||{search:window.location.search});
-  let state=filters(window.location.search), items=initial?.items||[], disposed=false, routeRevision=0, submissionRevision=0, challengeRevision=0, preview=null, token='', widget=null, challengeLoading=null;
+  let state=filters(window.location.search), items=initial?.items||[], disposed=false, routeRevision=0, submissionRevision=0, challengeRevision=0, preview=null, token='', widget=null, cleanupCommunity=null;
+  const feedback=item=>{cleanupCommunity=mountCommunity($('#feedback'),item.id,$('#turnstile-widget').dataset.sitekey,request);};
   const navigation=$('#navtoggle'), mobile=window.matchMedia('(max-width: 820px)'), dialog=$('#submit-dialog'), form=$('#repository-form');
   async function api(path,options) {const response=await request(path,options);const data=await response.json();if(!response.ok) throw new Error(data.error||'Request failed. Try again.');return data;}
   function syncNavigation() {
@@ -34,15 +37,16 @@ export function mount(container,request=fetch,initial) {
     finally {$('#results')?.removeAttribute('aria-busy');}
   }
   async function route(focus=false) {
+    cleanupCommunity?.();cleanupCommunity=null;
     const identity=window.location.pathname.match(/^\/extensions\/([0-9a-f]{24})$/)?.[1], revision=++routeRevision;
     $('#catalog-page').hidden=!!identity;$('#detail-page').hidden=!identity;$('.toc').innerHTML=tocHTML(!!identity);
     $('#back-to-catalog').href=filterURL(state);
     if(!identity) {updateMetadata();return;}
     $('#detail').innerHTML='<p>Loading extension…</p>';
     try {
-      const item=items.find(item=>item.id===identity)||await api('/api/extensions/'+identity);
+      const item=await api('/api/extensions/'+identity);
       if(disposed||revision!==routeRevision) return;
-      $('#detail').innerHTML=detailHTML(item);updateMetadata({item});
+      $('#detail').innerHTML=detailHTML(item);updateMetadata({item});feedback(item);
       if(focus) $('#detail h1').focus({preventScroll:true});
     } catch(error) {if(!disposed&&revision===routeRevision) {updateMetadata({detailError:true});$('#detail').innerHTML='<h1>Could not load this extension</h1><p></p><button id="retry-detail" type="button">Retry details</button>';$('#detail p').textContent=error.message;}}
   }
@@ -58,19 +62,14 @@ export function mount(container,request=fetch,initial) {
     const sitekey=$('#turnstile-widget').dataset.sitekey;
     if(!sitekey) {$('#submit-status').textContent='Submissions are not configured yet. Try again later.';return;}
     try {
-      if(typeof window.turnstile?.render!=='function') {
-        challengeLoading ||= new Promise((resolve,reject)=>{
-          const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.onload=resolve;script.onerror=()=>{script.remove();challengeLoading=null;reject(new Error('Could not load the anti-spam check. Close and reopen the form to retry.'));};document.head.append(script);
-        });
-        await challengeLoading;
-      }
+      if(typeof window.turnstile?.render!=='function') await loadTurnstile();
       if(disposed||revision!==challengeRevision||!dialog.open) return;
       widget=window.turnstile.render($('#turnstile-widget'),{sitekey,action,theme:'light',size:'flexible',callback:value=>{if(revision===challengeRevision) token=value;},'expired-callback':()=>{if(revision===challengeRevision) {token='';$('#submit-status').textContent='Anti-spam check expired. Please complete it again.';}},'error-callback':()=>{if(revision===challengeRevision) {token='';$('#submit-status').textContent='Anti-spam check failed. Close and reopen the form to retry.';}}});
     } catch(error) {if(revision===challengeRevision) $('#submit-status').textContent=error.message;}
   }
   function resetPreview() {
     ++submissionRevision;preview=null;removeChallenge();$('#preview').replaceChildren();$('#submit-confirm').hidden=true;$('#edit-submission').hidden=true;
-    $('#submit-status').textContent='';$('#review-submit').disabled=false;form.hidden=false;$('#submit-step').textContent='1 of 2 · Repository';$('.dialog-body').scrollTop=0;
+    $('#submit-status').textContent='';$('#review-submit').disabled=false;form.hidden=false;$('#submit-step').textContent='1 of 2 · Repository';dialog.querySelector('.dialog-body').scrollTop=0;
   }
   function openSubmission() {closeNavigation();resetPreview();dialog.showModal();syncNavigation();(window.matchMedia('(pointer: coarse)').matches?$('#submit-close'):form.elements.repository_url).focus({preventScroll:true});challenge('extension-preview');}
   $('#submit-close').onclick=()=>dialog.close();
@@ -87,7 +86,7 @@ export function mount(container,request=fetch,initial) {
       const data=await api(confirm?'/api/submissions':'/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(source)});
       if(disposed||revision!==submissionRevision) return;
       if(confirm) {dialog.close();$('#notice').textContent='Submitted for moderation. It will appear in the catalog only after approval. Reference: '+data.id;}
-      else {preview=data;form.hidden=true;$('#submit-step').textContent='2 of 2 · Review';$('#preview').innerHTML=previewHTML(data);$('#submit-status').textContent='Review the checks and linked source before submitting this commit.';$('#submit-confirm').hidden=false;$('#submit-confirm').disabled=false;$('#edit-submission').hidden=false;$('.dialog-body').scrollTop=0;$('#submit-step').focus({preventScroll:true});challenge('extension-submit');}
+      else {preview=data;form.hidden=true;$('#submit-step').textContent='2 of 2 · Review';$('#preview').innerHTML=previewHTML(data);$('#submit-status').textContent='Review the checks and linked source before submitting this commit.';$('#submit-confirm').hidden=false;$('#submit-confirm').disabled=false;$('#edit-submission').hidden=false;dialog.querySelector('.dialog-body').scrollTop=0;$('#submit-step').focus({preventScroll:true});challenge('extension-submit');}
     } catch(error) {if(revision===submissionRevision) {$('#submit-status').textContent=error.message;challenge(confirm?'extension-submit':'extension-preview');}}
     finally {if(revision===submissionRevision) {$('#review-submit').disabled=false;$('#submit-confirm').disabled=false;}}
   }
@@ -121,6 +120,6 @@ export function mount(container,request=fetch,initial) {
     }
   };
   document.addEventListener('keydown',keys);
-  if(!initial) {load();route();}
-  return ()=>{disposed=true;++routeRevision;++submissionRevision;removeChallenge();window.removeEventListener('popstate',pop);mobile.removeEventListener('change',syncNavigation);document.removeEventListener('keydown',keys);container.removeEventListener('click',click);document.body.style.overflow='';container.replaceChildren();};
+  if(!initial) {load();route();} else if(initial.item) feedback(initial.item);
+  return ()=>{disposed=true;cleanupCommunity?.();++routeRevision;++submissionRevision;removeChallenge();window.removeEventListener('popstate',pop);mobile.removeEventListener('change',syncNavigation);document.removeEventListener('keydown',keys);container.removeEventListener('click',click);document.body.style.overflow='';container.replaceChildren();};
 }

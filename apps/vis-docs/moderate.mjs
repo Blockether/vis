@@ -2,6 +2,11 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export function moderationStatements(action,id) {
+  if(action==='list-comments') return ["SELECT id, extension_id, name, body, created_at FROM comments WHERE status='pending' ORDER BY id"];
+  if(['approve-comment','reject-comment'].includes(action)) {
+    if(!/^[1-9][0-9]{0,15}$/.test(id||'')||!Number.isSafeInteger(Number(id))) throw new Error('Use the full numeric comment reference.');
+    return [`UPDATE comments SET status='${action==='approve-comment'?'approved':'rejected'}' WHERE id=${id}`];
+  }
   if(action==='list') return ["SELECT id, extension_id, revision, submitted_at, json_extract(metadata, '$.repository_url') AS repository, json_extract(metadata, '$.subdirectory') AS folder FROM submissions ORDER BY submitted_at"];
   if(!['approve','reject'].includes(action)||!(/^[0-9a-f]{24}$/).test(id||'')) throw new Error('Use list, approve ID or reject ID. ID must be the full 24-character submission reference.');
   const remove=`DELETE FROM submissions WHERE id = '${id}'`;

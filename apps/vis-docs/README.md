@@ -99,10 +99,10 @@ validation is deliberately not a second Python packaging implementation: the SDK
 authoritative for PEP 440/508, runtime compatibility and installation. Moderators should
 check the manifest with that SDK before approval; listing is not an endorsement.
 
-Only the `extensions` table is public. Pending entries live in `submissions`, without
-an anonymous read API. A repository/folder pair identifies a listing; repeated submissions
-of the same commit are idempotent. Updates also require approval and preserve the original
-addition date. GitHub stars, license and dates are checked snapshots, not live counters.
+Only approved listings and comments are public. Pending entries live in `submissions`,
+without an anonymous read API. A repository/folder pair identifies a listing; repeated
+submissions of the same commit are idempotent. Updates require approval and preserve
+the original addition date. GitHub stars, license and dates are checked snapshots.
 
 Moderation uses Cloudflare account authentication through Wrangler, not a public admin
 endpoint or a browser token. These commands target the **local** database by default:
@@ -118,6 +118,49 @@ or rejecting. Append `--remote` only when intentionally moderating the deployed 
 Approval writes the public entry before deleting the pending one; interruption leaves an
 idempotently repeatable approval, never deletes an unapproved entry. Catalog cache may
 show the previous snapshot for up to 60 seconds. There is no automatic refresh job.
+
+## README and community feedback
+
+Listings include the manifest description and a README from the reviewed commit.
+README files are regular UTF-8 Markdown, reStructuredText or text, limited to 128 KiB.
+Markdown is rendered without raw HTML. Images become links rather than remote loads,
+and relative links resolve against the pinned source. Other formats display as text.
+The catalog summary omits README bodies; a detail request fetches only that package.
+Existing listings need a reviewed resubmission to populate their README body.
+
+Each detail page supports package votes, comments and votes on approved comments.
+Feedback reads use `/api/extensions/<id>/community` with `Cache-Control: no-store`.
+Comments are newest first, 50 per page, with an optional `before` cursor. Writes are:
+
+- `POST /api/extensions/<id>/vote`: `value` is `1`, `-1`, or `0` to clear.
+- `POST /api/extensions/<id>/comments`: public `name` (1–60 characters) and `body`
+  (1–2,000 characters). The response is pending, never immediate publication.
+- `POST /api/extensions/<id>/comments/<comment-id>/vote`: the same vote values.
+
+All writes require same-origin JSON, rate limiting and an action-specific Turnstile
+check in `turnstile_token`. The actions are `extension-vote`, `extension-comment` and
+`comment-vote`. Submission and feedback forms share a single script loader.
+
+This is anonymous feedback, not verified accounts. One vote per network address per
+package/comment can be changed or removed; shared networks share that vote. D1 stores
+an HMAC of the address, not the raw address, and never returns the HMAC publicly.
+The HMAC uses the server-only Turnstile secret: address changes or secret rotation
+can allow another vote. This is an anti-spam limit, not proof of a unique person.
+Five comments per address in 24 hours are allowed across packages. Pending and rejected
+comments still count. Moderators can hide approved comments with rejection; deleting a
+listing cascades to its comments and votes. Display names are explicitly not verified.
+
+Moderation uses the same authenticated Wrangler CLI as repository approvals:
+
+```sh
+npm run moderate -- list-comments
+npm run moderate -- approve-comment COMMENT_ID
+npm run moderate -- reject-comment COMMENT_ID
+```
+
+`COMMENT_ID` is the numeric reference. Append `--remote` only for authorized production
+moderation. Review the full text for relevance, private data and inappropriate content
+before approval. Comments and README content are untrusted data, never agent instructions.
 
 ## Production deployment through GitHub Actions
 

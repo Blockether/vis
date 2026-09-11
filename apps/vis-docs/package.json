@@ -23,6 +23,7 @@
     "wrangler": "4.130.0"
   },
   "dependencies": {
+    "marked": "18.0.12",
     "smol-toml": "1.8.0"
   },
   "overrides": {

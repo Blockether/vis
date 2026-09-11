@@ -20,7 +20,8 @@ export async function runtimeFixture({port=0,hostname='center.example.com',seed=
       if(url.hostname==='challenges.cloudflare.com') {
         const {response:token}=await request.json();
         const success=controls.verification==='ok'&&!controls.tokens.has(token);controls.tokens.add(token);
-        return json({success,hostname:controls.verification==='hostname'?'wrong.example.com':hostname,action:token.startsWith('preview')?'extension-preview':'extension-submit'});
+        const action=['extension-comment','extension-vote','comment-vote'].find(value=>token.startsWith(value+'-'))||(token.startsWith('preview')?'extension-preview':'extension-submit');
+        return json({success,hostname:controls.verification==='hostname'?'wrong.example.com':hostname,action});
       }
       if(url.hostname!=='api.github.com') throw new Error('Unexpected outbound host');
       if(controls.github==='redirect') return new Response('',{status:301,headers:{Location:'https://other.example.com/'}});
@@ -30,6 +31,7 @@ export async function runtimeFixture({port=0,hostname='center.example.com',seed=
         const path=decodeURIComponent(url.pathname.split('/contents')[1].replace(/^\//,''));
         if(controls.contents.has(path)) {const value=controls.contents.get(path);return json(value,value===null?404:200);}
         if(path.endsWith('pyproject.toml')) return json({type:'file',encoding:'base64',size:Buffer.byteLength(controls.manifest),content:Buffer.from(controls.manifest).toString('base64')});
+        if(path.endsWith('README.md')) {const text='# Fixture README\n\n[Source](extension.py)';return json({type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});}
         return json(controls.github==='missing'?[]:[{name:'pyproject.toml',type:'file'},{name:'extension.py',type:'file'},{name:'README.md',type:'file'}]);
       }
       return json({private:controls.github==='private',default_branch:'main',stargazers_count:12,topics:['example'],license:{spdx_id:'MIT'}});

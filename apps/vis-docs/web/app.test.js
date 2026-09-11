@@ -316,4 +316,11 @@ test('documentation navigation leaves the catalog router in the same tab', async
     document.addEventListener('click',listener,{once:true});
     link.click();expect(prevented).toBe(false);
   }
+ });
+
+test('repository scrolling remains scoped after visiting feedback on a detail page',async()=>{
+  setup();await tick();$('.card-main').click();await tick();$('#back-to-catalog').click();
+  const feedbackBody=$('.feedback-dialog .dialog-body');feedbackBody.scrollTop=77;
+  $('#submit-open').click();const repositoryBody=$('#submit-dialog .dialog-body');repositoryBody.scrollTop=200;
+  $('#submit-close').click();expect(repositoryBody.scrollTop).toBe(0);expect(feedbackBody.scrollTop).toBe(77);
 });

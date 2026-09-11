@@ -1,7 +1,16 @@
 /* Shared typography, page shell and prose styles come from the docs theme. */
 :root { color-scheme: light; }
 [hidden] { display: none !important; }
-input:not([type=checkbox]), select { min-width: 0; width: 100%; padding: .5rem .625rem; border: 1px solid var(--faint); border-radius: var(--r-sm); background: var(--bg); font-size: var(--text-small); line-height: 1.5; }
+input:not([type=checkbox]), select, textarea { min-width: 0; width: 100%; padding: .5rem .625rem; border: 1px solid var(--faint); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--text-small); line-height: 1.5; }
+textarea { resize: vertical; }
+.community form label { display: block; margin: 1rem 0 .5rem; }
+.community form button { margin-top: 1rem; }
+.feedback-votes { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: var(--text-small); }
+.feedback-votes button[aria-pressed=true] { background: var(--code-bg); border-color: var(--fg); }
+.feedback-comment { padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
+.feedback-comment time { color: var(--dim); font-size: var(--text-small); }
+.feedback-comment .comment-body { white-space: pre-wrap; overflow-wrap: anywhere; text-align: start; }
+.package-readme { overflow-wrap: anywhere; }
 input::placeholder { color: var(--dim); opacity: 1; }
 label { font-size: var(--text-small); }
 label input { display: block; margin-top: .5rem; }
@@ -71,7 +80,7 @@ dialog form label { display: block; margin-top: 1.25rem; }
 @media (pointer: coarse) {
   .sort-field select { height: 2.75rem; }
   .repository-link, .actions a { min-height: 2.75rem; }
-  input:not([type=checkbox]), select { font-size: 1rem; }
+  input:not([type=checkbox]), select, textarea { font-size: 1rem; }
   .actions a { display: inline-flex; align-items: center; }
   kbd { display: none; }
 }

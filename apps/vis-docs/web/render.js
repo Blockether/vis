@@ -1,8 +1,11 @@
 /** HTML shared by the Worker and browser. Every metadata value is escaped. */
 import { catalogMetadata, extensionIcon } from './discovery.js';
+import { escapeHTML } from './html.js';
+import { readmeHTML } from './readme.js';
+import { communityHTML } from './community.js';
 export const categories = {all:'All extensions', tools:'Tools', providers:'Providers', workflows:'Workflows'};
 export const sorts = {stars:'Most stars', updated:'Recently updated', newest:'Recently added', name:'Name: A–Z'};
-export const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export { escapeHTML } from './html.js';
 export function safeURL(value, githubOnly=false) {
   try { const url=new URL(value); if(url.protocol==='https:' && !url.username && !url.password && (!githubOnly || (url.hostname==='github.com' && !url.port))) return url.href; } catch { /* Metadata is not trusted markup. */ }
   return '';
@@ -41,10 +44,11 @@ export function previewHTML(item) {
 export function detailHTML(item) {
   return `<div class="detail-heading"><h1 tabindex="-1">${escapeHTML(item.name)}</h1><p>${escapeHTML(item.description)}</p><span class="tag">${escapeHTML(categories[item.category])}</span>${link(item.repository,item.repository_url,'repository-link')}</div>
     <section class="install-section"><h2 id="install">Install</h2><p>This command installs the exact commit shown here.</p><pre id="install-command"><code class="language-bash">${escapeHTML(installCommand(item))}</code></pre><button id="copy-command" type="button" class="primary" aria-live="polite">Copy install command</button><p class="help">Then start Vis or use /reload. Dependencies are prepared automatically.</p><p class="security-note">Review the source first. --trust allows extension code and build backends to run with your permissions.</p></section>
-    <div class="project-details"><h2 id="project-details">Project details</h2><dl class="facts">${fact('Version',item.version)+fact('Author',item.owner)+fact('Project folder',item.subdirectory||'Repository root')+fact('License',item.license&&item.license!=='NOASSERTION'?item.license:'Not specified')+fact('GitHub stars',item.stars)+fact('Updated',dateLabel(item.updated_at))}<dt>Reviewed commit</dt><dd>${link(item.revision.slice(0,12),item.repository_url+'/commit/'+item.revision)}</dd>${item.checked_at?fact('Metadata checked',dateLabel(item.checked_at)):''}${item.archived?fact('Repository status','Archived on GitHub'):''}</dl><div class="actions">${link('View source on GitHub',item.source_url,'','source-link')}${link('pyproject.toml',item.manifest_url)}${item.readme_url?link('Read README',item.readme_url):''}</div><h2 id="dependencies">Dependencies</h2><p>Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map(dep=>`<li>${escapeHTML(dep)}</li>`).join('')}</ul><div class="topics">${item.topics.map(topic=>`<span class="tag">${escapeHTML(topic)}</span>`).join('')}</div></div>`;
+    <div class="project-details"><h2 id="project-details">Project details</h2><dl class="facts">${fact('Version',item.version)+fact('Author',item.owner)+fact('Project folder',item.subdirectory||'Repository root')+fact('License',item.license&&item.license!=='NOASSERTION'?item.license:'Not specified')+fact('GitHub stars',item.stars)+fact('Updated',dateLabel(item.updated_at))}<dt>Reviewed commit</dt><dd>${link(item.revision.slice(0,12),item.repository_url+'/commit/'+item.revision)}</dd>${item.checked_at?fact('Metadata checked',dateLabel(item.checked_at)):''}${item.archived?fact('Repository status','Archived on GitHub'):''}</dl><div class="actions">${link('View source on GitHub',item.source_url,'','source-link')}${link('pyproject.toml',item.manifest_url)}${item.readme_url?link('Read README',item.readme_url):''}</div><h2 id="dependencies">Dependencies</h2><p>Python ${escapeHTML(item.requires_python)}</p><ul class="dependencies">${item.dependencies.map(dep=>`<li>${escapeHTML(dep)}</li>`).join('')}</ul><div class="topics">${item.topics.map(topic=>`<span class="tag">${escapeHTML(topic)}</span>`).join('')}</div></div>
+    <section class="package-readme" aria-labelledby="readme"><h2 id="readme">README</h2>${readmeHTML(item)}</section>${communityHTML()}`;
 }
 export function tocHTML(detail=false) {
-  const entries=detail?[['install','Install'],['project-details','Project details'],['dependencies','Dependencies']]:[['explore','Explore extensions'],['share','Share a repository']];
+  const entries=detail?[['install','Install'],['project-details','Project details'],['dependencies','Dependencies'],['readme','README'],['feedback','Community feedback']]:[['explore','Explore extensions'],['share','Share a repository']];
   return '<div class="lbl">On this page</div>'+entries.map(([id,label])=>`<a href="#${id}">${label}</a>`).join('');
 }
 export function shellHTML({items=[], item=null, search='', error='', detailError=false, siteKey=''}={}) {
