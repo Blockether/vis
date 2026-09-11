@@ -60,6 +60,7 @@ dialog.content p, dialog.content li { text-align: start; hyphens: none; }
 dialog form label { display: block; margin-top: 1.25rem; }
 .optional { color: var(--dim); margin-left: .5rem; }
 #folder-help { margin: .625rem 0 1.5rem; }
+#turnstile-widget { margin-top: 1.5rem; }
 #submit-status { color: var(--dim); font-size: var(--text-small); }
 #submit-status:empty { margin: 0; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: .5rem; }

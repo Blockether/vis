@@ -93,6 +93,14 @@ test('catalog CSS uses a two-column grid on wide screens and border-separated ro
   expect(style.textContent).not.toMatch(/data-view|view-switch/);
 });
 
+test('repository anti-spam check is separated from the review button', () => {
+  const style=document.createElement('style');
+  style.textContent=readFileSync('web/style.css','utf8');
+  document.body.append(style);
+  const rule=[...style.sheet.cssRules].find(rule=>rule.selectorText==='#turnstile-widget');
+  expect(rule?.style.getPropertyValue('margin-top')).toBe('1.5rem');
+});
+
 test('detail page has GitHub source, a pinned subdirectory command and working back navigation', async () => {
   setup(); await tick();
   $(`[data-name="${item.name}"] .card-main`).click(); await tick();
