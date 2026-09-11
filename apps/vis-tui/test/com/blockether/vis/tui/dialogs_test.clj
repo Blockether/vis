@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.dialogs-test
   (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
+            [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.table :as table]
@@ -13,7 +14,8 @@
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal
+            VirtualTerminalListener]))
 
 ;; Most dialog functions require a live TerminalScreen, so direct unit
 ;; testing is narrow. The bracketed-paste fix in text-input-dialog!
@@ -1329,6 +1331,249 @@
             [{"id" "b" "title" "B"} {"id" "c" "title" "C"}]]
 
         (expect (= ["a" "b" "c"] (mapv #(get % "id") (merge-sessions held incoming)))))))
+
+(defn- capture-navigator!
+  "Capture production frames and drive input from terminal flushes."
+  [opts on-flush!]
+  (cap/capture! {:cols 120
+                 :rows 32
+                 :paint! (fn [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}]
+                           (.addVirtualTerminalListener terminal
+                                                        (reify
+                                                          VirtualTerminalListener
+                                                            (onFlush [_] (on-flush! terminal))
+                                                            (onBell [_])
+                                                            (onClose [_])
+                                                            (onResized [_ _terminal _size])))
+                           (try (dlg/navigator-dialog! screen opts)
+                                (finally (.stopScreen screen))))}))
+
+(defdescribe
+  navigator-page-responsiveness-test
+  ;; Regression #206: paging ran on the input thread, before the next frame.
+  (it
+    "keeps loaded rows, typing and Escape usable while the next page is blocked"
+    (let [entered
+          (promise)
+
+          release
+          (promise)
+
+          finished
+          (promise)
+
+          calls
+          (atom [])
+
+          paints
+          (atom 0)
+
+          task
+          (future (capture-navigator! {:sessions
+                                       [{"id" "a" "title" "Available session" "turn_count" 1}]
+                                       :next-cursor "after-a"
+                                       :load-more (fn [cursor]
+                                                    (swap! calls conj cursor)
+                                                    (deliver entered true)
+                                                    (try @release
+                                                         {:sessions [] :next-cursor nil}
+                                                         (finally (deliver finished true))))}
+                                      (fn [^DefaultVirtualTerminal terminal]
+                                        (when (= 1 (swap! paints inc))
+                                          (deref entered 1000 nil)
+                                          (dotimes [_ 3]
+                                            (.addInput terminal (cap/key-stroke :down)))
+                                          (.addInput terminal (cap/key-stroke \A))
+                                          (.addInput terminal (cap/key-stroke :esc))))))]
+
+      (try (expect (= true (deref entered 1000 ::timeout)))
+           (let [capture (deref task 1000 ::blocked)]
+             (expect (map? capture))
+             (when (map? capture)
+               (expect (nil? (:error capture)))
+               (expect (nil? (:ret capture)))
+               (expect (str/includes? (cap/frame-text capture :first) "Available session"))
+               (expect (str/includes? (cap/frame-text capture :first) "Loading more sessions"))
+               (expect (>= (count (:frames capture)) 2))))
+           (expect (= ["after-a"] @calls))
+           (expect (= true (deref finished 1000 ::timeout)))
+           (finally (deliver release true) (deref task 2000 nil) (future-cancel task))))))
+
+(defdescribe
+  navigator-initial-page-test
+  ;; Regression #206: the first gateway page must not delay the opening frame.
+  (it
+    "paints loading and accepts typing, Enter, new and Escape across store sizes"
+    (doseq [store-size
+            [1 50 1000]
+
+            [exit-key expected]
+            [[:esc nil] [(KeyStroke. (Character/valueOf \n) true false false) {:action :new}]]]
+
+      (let [entered
+            (promise)
+
+            release
+            (promise)
+
+            cancelled
+            (promise)
+
+            paints
+            (atom 0)
+
+            task
+            (future (capture-navigator!
+                      {:load-initial
+                       (fn []
+                         (deliver entered true)
+                         (try @release
+                              {:sessions (mapv (fn [i]
+                                                 {"id" (str i) "title" (str "Session " i)})
+                                               (range (min 50 store-size)))}
+                              (catch InterruptedException e (deliver cancelled true) (throw e))))}
+                      (fn [^DefaultVirtualTerminal terminal]
+                        (when (= 1 (swap! paints inc))
+                          (deref entered 1000 nil)
+                          (doseq [k [\x :enter exit-key]]
+                            (.addInput terminal (cap/key-stroke k)))))))]
+
+        (try (expect (= true (deref entered 1000 ::timeout)))
+             (let [capture (deref task 1000 ::blocked)]
+               (expect (map? capture))
+               (expect (nil? (:error capture)))
+               (expect (= expected (:ret capture)))
+               (expect (str/includes? (cap/frame-text capture :first) "Loading sessions"))
+               (expect (not (str/includes? (cap/frame-text capture) "No sessions yet")))
+               (expect (str/includes? (cap/frame-text capture) "x"))
+               (expect (>= (count (:frames capture)) 3)))
+             (expect (= true (deref cancelled 1000 ::timeout)))
+             (finally (deliver release true) (deref task 2000 nil) (future-cancel task))))))
+  (it "repaints completed and empty pages without a keystroke or fleet subscription"
+      (doseq [sessions [[] [{"id" "a" "title" "Loaded session" "turn_count" 1}]]]
+        (let [release (promise)
+              paints (atom 0)
+              task (future (capture-navigator!
+                             {:load-initial (fn []
+                                              @release
+                                              {:sessions sessions :next-cursor nil})}
+                             (fn [^DefaultVirtualTerminal terminal]
+                               (case (swap! paints inc)
+                                 1
+                                 (deliver release true)
+
+                                 2
+                                 (.addInput terminal
+                                            (cap/key-stroke (if (seq sessions) :enter :esc)))
+
+                                 nil))))]
+
+          (try (let [capture (deref task 2000 ::blocked)]
+                 (expect (map? capture))
+                 (expect (nil? (:error capture)))
+                 (expect (= (when (seq sessions) {:action :switch :id "a"}) (:ret capture)))
+                 (expect (str/includes? (cap/frame-text capture :first) "Loading sessions"))
+                 (expect (str/includes? (cap/frame-text capture)
+                                        (if (seq sessions) "Loaded session" "No sessions yet")))
+                 (expect (not (str/includes? (cap/frame-text capture) "Loading sessions"))))
+               (finally (deliver release true) (future-cancel task))))))
+  (it
+    "shows failures without discarding rows and retries only when requested"
+    (doseq [initial? [true false]]
+      (let [release (promise)
+            retry-release (promise)
+            calls (atom 0)
+            paints (atom 0)
+            load! (fn []
+                    (case (swap! calls inc)
+                      1
+                      (do @release (throw (ex-info "Gateway unavailable" {})))
+
+                      2
+                      (do @retry-release
+                          {:sessions [{"id" "b" "title" "Loaded session" "turn_count" 1}]
+                           :next-cursor nil})))
+            task (future
+                   (capture-navigator!
+                     (if initial?
+                       {:load-initial load!}
+                       {:sessions [{"id" "a" "title" "Available session" "turn_count" 1}]
+                        :next-cursor "after-a"
+                        :load-more (fn [_]
+                                     (load!))})
+                     (fn [^DefaultVirtualTerminal terminal]
+                       (case (swap! paints inc)
+                         1
+                         (deliver release true)
+
+                         2
+                         (.addInput terminal (KeyStroke. (Character/valueOf \r) true false false))
+
+                         3
+                         (deliver retry-release true)
+
+                         4
+                         (.addInput terminal (cap/key-stroke :enter))
+
+                         nil))))]
+
+        (try (let [capture (deref task 2000 ::blocked)]
+               (expect (map? capture))
+               (expect (nil? (:error capture)))
+               (expect (= {:action :switch :id (if initial? "b" "a")} (:ret capture)))
+               (expect (= 2 @calls))
+               (expect (str/includes? (cap/frame-text capture 1) "Could not load sessions"))
+               (expect (str/includes? (cap/frame-text capture 1) "C-r retry"))
+               (expect (str/includes? (cap/frame-text capture) "Loaded session"))
+               (when-not initial?
+                 (expect (str/includes? (cap/frame-text capture 1) "Available session"))))
+             (finally (deliver release true) (deliver retry-release true) (future-cancel task))))))
+  (it
+    "continues the initial cursor once and repaints the next page automatically"
+    (let [first-release
+          (promise)
+
+          next-release
+          (promise)
+
+          calls
+          (atom [])
+
+          paints
+          (atom 0)
+
+          task
+          (future
+            (capture-navigator!
+              {:load-initial (fn []
+                               @first-release
+                               {:sessions [{"id" "a" "title" "First page"}] :next-cursor "after-a"})
+               :load-more (fn [cursor]
+                            (swap! calls conj cursor)
+                            @next-release
+                            {:sessions [{"id" "b" "title" "Second page"}] :next-cursor nil})}
+              (fn [^DefaultVirtualTerminal terminal]
+                (case (swap! paints inc)
+                  1
+                  (deliver first-release true)
+
+                  2
+                  (deliver next-release true)
+
+                  3
+                  (.addInput terminal (cap/key-stroke :esc))
+
+                  nil))))]
+
+      (try
+        (let [capture (deref task 2000 ::blocked)]
+          (expect (map? capture))
+          (expect (nil? (:error capture)))
+          (expect (= ["after-a"] @calls))
+          (expect (str/includes? (cap/frame-text capture 1) "First page"))
+          (expect (str/includes? (cap/frame-text capture 1) "Loading more sessions"))
+          (expect (str/includes? (cap/frame-text capture) "Second page")))
+        (finally (deliver first-release true) (deliver next-release true) (future-cancel task))))))
 
 (defdescribe
   navigator-fleet-frame-test

@@ -4870,11 +4870,51 @@
    naming the page after them (`nil` when the walk is over). The gateway owns the order,
    so the page is painted as it arrives."
   [opts]
-  (try (let [page (vis/gateway-list-sessions-page opts)]
-         {:sessions (mapv enrich-session-row
-                          (latest-modified-first (map session-summary (:sessions page))))
-          :next-cursor (:next-cursor page)})
-       (catch Throwable _ {:sessions [] :next-cursor nil})))
+  (let [page (vis/gateway-list-sessions-page opts)]
+    {:sessions (mapv enrich-session-row
+                     (latest-modified-first (map session-summary (:sessions page))))
+     :next-cursor (:next-cursor page)}))
+
+(defn- show-session-picker!
+  "Open the navigator without gateway I/O on the input thread. The dialog owns
+   page loading, retry and cancellation; search hydrates only its missing rows."
+  [screen active-id db]
+  (with-dialog-lock
+    #(dlg/navigator-dialog!
+       screen
+       {:load-initial (fn []
+                        (tui-session-page {:limit picker-page-size}))
+        :load-more (fn [cursor]
+                     (tui-session-page {:limit picker-page-size :after cursor}))
+        :fetch-sessions (fn [ids]
+                          (:sessions (tui-session-page {:ids (vec ids)})))
+        :watch-fleet (fn [sink]
+                       (try (vis/gateway-fleet-subscribe! sink)
+                            (catch Throwable _
+                              (fn []))))
+        :active-session-id active-id
+        :db db
+        :search-transcript-ids
+        (fn [q]
+          (try (into {}
+                     (map-indexed (fn [idx
+                                       {:keys [id rank in-title? in-request? in-reply? in-thinking?
+                                               request-snippet reply-snippet hits]}]
+                                    [id
+                                     {:rank rank
+                                      ;; Retain the gateway's ordering when hydrating missing rows.
+                                      :order idx
+                                      :kind (cond in-title? :title
+                                                  (and in-request? in-reply?) :both
+                                                  in-request? :request
+                                                  in-reply? :reply
+                                                  in-thinking? :thinking
+                                                  :else :both)
+                                      :request-snippet request-snippet
+                                      :reply-snippet reply-snippet
+                                      :hits hits}]))
+                     (vis/gateway-search-session-matches q))
+               (catch Throwable _ nil)))})))
 
 (def ^:private startup-session-window
   "How many newest rows a STARTUP lookup reads from the gateway. The gateway owns the
@@ -5938,73 +5978,11 @@
                  show-sessions!
                  (fn show-sessions! []
                    (when-not (:dialog-open? @state/app-db)
-                     (let [page (tui-session-page {:limit picker-page-size})]
-                       (when-let [choice
-                                  (with-dialog-lock
-                                    #(dlg/navigator-dialog!
-                                       screen
-                                       {:sessions (:sessions page)
-                                        ;; The picker opens on ONE window and walks the
-                                        ;; gateway's cursor from there: a thousand-session
-                                        ;; store is read a screen at a time instead of
-                                        ;; downloaded whole to paint one dialog.
-                                        :next-cursor (:next-cursor page)
-                                        :load-more (fn [cursor]
-                                                     (tui-session-page {:limit picker-page-size
-                                                                        :after cursor}))
-                                        ;; Search is ranked over the WHOLE store, so a hit
-                                        ;; can name a session this window does not hold.
-                                        ;; Those rows come back by id, not by a fleet read.
-                                        :fetch-sessions (fn [ids]
-                                                          (:sessions (tui-session-page
-                                                                       {:ids (vec ids)})))
-                                        ;; The window is read ONCE. What happens after it
-                                        ;; — a session going live, parking on a human, or
-                                        ;; being renamed — arrives as fleet frames on one
-                                        ;; stream, so no row is ever asked about again.
-                                        :watch-fleet (fn [sink]
-                                                       (try (vis/gateway-fleet-subscribe! sink)
-                                                            (catch Throwable _
-                                                              (fn []))))
-                                        :active-session-id (current-session-id)
-                                        :db @state/app-db
-                                        :search-transcript-ids
-                                        (fn [q]
-                                          (try (into {}
-                                                     (map-indexed
-                                                       (fn [idx
-                                                            {:keys [id rank in-title? in-request?
-                                                                    in-reply? in-thinking?
-                                                                    request-snippet reply-snippet
-                                                                    hits]}]
-                                                         [id
-                                                          {;; The gateway RANKED this row (0 title, 1 request, 2 reply,
-                                                           ;; 3 thinking) — the picker paints that order and never
-                                                           ;; invents one of its own.
-                                                           :rank rank
-                                                           ;; Where the SERVER put this hit in
-                                                           ;; its own answer, so a picker that
-                                                           ;; must fetch missing rows fetches
-                                                           ;; the freshest ones first.
-                                                           :order idx
-                                                           :kind (cond in-title? :title
-                                                                       (and in-request? in-reply?)
-                                                                       :both
-                                                                       in-request? :request
-                                                                       in-reply? :reply
-                                                                       in-thinking? :thinking
-                                                                       :else :both)
-                                                           :request-snippet request-snippet
-                                                           :reply-snippet reply-snippet
-                                                           ;; Every hit the server sent, newest first — the
-                                                           ;; picker previews several per session, not one.
-                                                           :hits hits}]))
-                                                     (vis/gateway-search-session-matches q))
-                                               (catch Throwable _ nil)))}))]
-                         (switch-session! choice)
-                         ;; After a delete, reopen the picker on the
-                         ;; refreshed list so pruning can continue.
-                         (when (#{:delete :project :reorder} (:action choice)) (show-sessions!))))))
+                     (when-let [choice
+                                (show-session-picker! screen (current-session-id) @state/app-db)]
+                       (switch-session! choice)
+                       ;; Refresh after mutations so pruning can continue.
+                       (when (#{:delete :project :reorder} (:action choice)) (show-sessions!)))))
                  ;; Per-session model PICKER (C-x o + palette "Choose Model…").
                  ;; Mirrors the web footer chooser: a searchable list of every
                  ;; configured model (active one marked) plus a "★ router

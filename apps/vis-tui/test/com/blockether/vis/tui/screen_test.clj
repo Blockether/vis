@@ -11,6 +11,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.attachment-intake-test :as intake-fixture]
+            [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.file-picker :as picker]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.live-view-test :as live-fixture]
@@ -1061,6 +1062,50 @@
   (it "stamps a session nothing has touched with its creation time"
       (let [row (session-summary {"id" "fresh" "created_at" #inst "2024-02-01T00:00:00.000-00:00"})]
         (expect (= #inst "2024-02-01T00:00:00.000-00:00" (get row "modified_at"))))))
+
+(defdescribe
+  session-picker-loading-test
+  ;; Regression #206: C-x s fetched a page before opening the dialog.
+  (it
+    "opens before any gateway request and supplies bounded page callbacks"
+    (doseq [store-size [1 50 1000]]
+      (let [requests (atom [])
+            options (atom nil)
+            db {:session {:id "active"}}]
+
+        (with-redefs-fn {#'screen/with-dialog-lock (fn [f]
+                                                     (f))
+                         #'dlg/navigator-dialog! (fn [_ opts]
+                                                   (expect (empty? @requests))
+                                                   (reset! options opts)
+                                                   {:action :new})
+                         #'vis/gateway-list-sessions-page
+                         (fn [opts]
+                           (swap! requests conj opts)
+                           {:sessions (mapv (fn [i]
+                                              {"id" (str i)
+                                               "title" (str "Session " i)
+                                               "turn_count" 1
+                                               "workspace" {"root" "/workspace/project"}})
+                                            (range (min store-size (or (:limit opts) 1))))
+                            :next-cursor (when (> store-size 50) "next")})}
+          (fn []
+            (expect (= {:action :new} (#'screen/show-session-picker! nil "active" db)))
+            (expect (= "active" (:active-session-id @options)))
+            (expect (= db (:db @options)))
+            (let [page ((:load-initial @options))]
+              (expect (= (min 50 store-size) (count (:sessions page))))
+              (expect (= "/workspace/project" (:work-dir (first (:sessions page)))))
+              (expect (= (when (> store-size 50) "next") (:next-cursor page))))
+            ((:load-more @options) "next")
+            ((:fetch-sessions @options) ["matched"])
+            (expect (= [{:limit 50} {:limit 50 :after "next"} {:ids ["matched"]}] @requests)))))))
+  (it "does not turn a gateway failure into a successful empty page"
+      (with-redefs [vis/gateway-list-sessions-page (fn [_]
+                                                     (throw (ex-info "Unavailable" {})))]
+        (expect (= "Unavailable"
+                   (try (#'screen/tui-session-page {:limit 50})
+                        (catch clojure.lang.ExceptionInfo e (ex-message e))))))))
 
 (defdescribe
   submit-input-test

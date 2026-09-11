@@ -4959,20 +4959,16 @@
   60)
 
 (defn- read-navigator-key!
-  "Keep input responsive while something arrives in the BACKGROUND: a debounced
-   transcript lookup, or a fleet frame. Poll during either, so a completed search and a
-   changed row repaint without waiting for another keystroke; otherwise use Lanterna's
-   blocking modal read. `pending?` answers whether the fleet stream left something to
-   fold in, and is nil when the picker is not watching."
+  "Wait for input or a background page, search result or fleet frame. `pending?`
+   reports background updates; while present it also keeps the modal read polling."
   [^TerminalScreen screen task result pending?]
   (loop []
 
     (cond (some? @result) nil
           (and pending? (pending?)) nil
           (modal-input-pending? screen) (read-modal-key! screen)
-          (some? @task)
-          (if (future-done? @task) (read-modal-key! screen) (do (Thread/sleep 12) (recur)))
-          pending? (do (Thread/sleep (long navigator-live-poll-ms)) (recur))
+          (or pending? (and @task (not (future-done? @task))))
+          (do (Thread/sleep (if pending? (long navigator-live-poll-ms) 12)) (recur))
           :else (read-modal-key! screen))))
 
 (defn- navigator-stamp
@@ -5484,8 +5480,10 @@
           (recur (rest segments) (+ (long cx) segment-w) (- (long remaining) segment-w)))))))
 
 (defn navigator-dialog!
-  "Global C-g session picker. Full-width project/session hierarchy; transcript
-   lookup is debounced and asynchronous so typing never waits on the gateway."
+  "C-x s session picker. `:load-initial` and `:load-more` fetch pages off the
+   paint/input thread; the latter takes a cursor. Loading and failure retain the
+   current rows and keyboard input; C-r retries a failed page. Transcript search
+   is debounced. Closing cancels outstanding page and search work."
   [^TerminalScreen screen opts]
   (let [query
         (atom "")
@@ -5510,6 +5508,15 @@
 
         page-cursor
         (atom (:next-cursor opts))
+
+        page-task
+        (atom nil)
+
+        page-result
+        (atom nil)
+
+        page-error
+        (atom nil)
 
         load-more
         (:load-more opts)
@@ -5579,18 +5586,30 @@
                  (reset! search-result nil))
              (schedule-navigator-search! search-task search-generation search-result q search-fn))))
        (reset-list! [search?] (reset! selected 0) (reset! scroll 0) (when search? (start-search!)))
+       (start-page! [load!]
+         (reset! page-error nil)
+         (reset! page-task (future (try (reset! page-result {:page (load!)})
+                                        (catch InterruptedException _ nil)
+                                        (catch Throwable _ (reset! page-result {:retry load!}))))))
        (page-in! [total]
          (when (and load-more
+                    (nil? @page-task)
+                    (nil? @page-error)
                     (navigator-page-in?
                       {:query @query :selected @selected :total total :next-cursor @page-cursor}))
-           ;; A page that answers nothing ends the walk: the same cursor is never asked twice.
-           (let [page (try (load-more @page-cursor) (catch Throwable _ nil))]
-             (reset! page-cursor (:next-cursor page))
-             (when (seq (:sessions page))
-               (swap! loaded-sessions navigator-merge-sessions (:sessions page))))))]
+           (let [cursor @page-cursor]
+             (start-page! #(load-more cursor)))))]
       (try
+        (when-let [load-initial (:load-initial opts)]
+          (start-page! load-initial))
         (loop []
 
+          (when-let [{:keys [page retry]} (first (swap-vals! page-result (constantly nil)))]
+            (reset! page-task nil)
+            (reset! page-error retry)
+            (when-not retry
+              (reset! page-cursor (:next-cursor page))
+              (swap! loaded-sessions navigator-merge-sessions (:sessions page))))
           (when (seq @fleet-frames)
             (let [frames (first (swap-vals! fleet-frames empty))]
               (swap! loaded-sessions #(reduce navigator-apply-fleet-frame % frames))))
@@ -5683,7 +5702,12 @@
                 (navigator-visible-blocks visible-rows @scroll list-budget)
 
                 page-rows
-                (max 1 (count blocks))]
+                (max 1 (count blocks))
+
+                page-status
+                (cond @page-error "Could not load sessions · C-r retry"
+                      @page-task
+                      (if (seq @loaded-sessions) "Loading more sessions…" "Loading sessions…"))]
 
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
@@ -5695,16 +5719,20 @@
                                                      (count @query))]
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/draw-separator! g left right (inc (long content-top)))
+              (when (and page-status (pos? total))
+                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                (p/put-str! g body-x (inc (long content-top)) (ellipsize page-status body-w)))
               (if (zero? total)
                 (let [hidden-count (count (filter empty-untitled-session? @loaded-sessions))
-                      message (cond (not (str/blank? @query)) "No matches"
+                      message (cond page-status page-status
+                                    (not (str/blank? @query)) "No matches"
                                     (and (pos? hidden-count) (not @show-empty-untitled?))
                                     "Only empty untitled sessions hidden"
                                     :else "No sessions yet")
                       message-x (+ body-x (long (max 0 (quot (- body-w (count message)) 2))))]
 
                   (p/set-colors! g t/dialog-hint t/dialog-bg)
-                  (p/put-str! g message-x (+ body-top 1) message))
+                  (p/put-str! g message-x (+ body-top 1) (ellipsize message body-w)))
                 (loop [remaining blocks
                        row body-top]
 
@@ -5748,7 +5776,8 @@
             (let [key (read-navigator-key! screen
                                            search-task
                                            search-result
-                                           (when stop-fleet! #(seq @fleet-frames)))]
+                                           (when (or stop-fleet! @page-task @page-result)
+                                             #(or (seq @fleet-frames) @page-result)))]
               (if-not key
                 (recur)
                 (cond
@@ -5816,6 +5845,7 @@
                   (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                     {:action :project :id id}
                     (recur))
+                  (and (input/ctrl-char? key \r) @page-error) (do (start-page! @page-error) (recur))
                   (input/ctrl-char? key \u)
                   (do (swap! show-empty-untitled? not) (reset-list! false) (recur))
                   (= KeyType/PasteStart (.getKeyType ^KeyStroke key))
@@ -5839,7 +5869,7 @@
                         {:action :reorder :id id :dir :down}
                         (recur))
                       (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
-                    KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
+                    KeyType/Enter (if (pos? total) (:target (nth visible-rows @selected)) (recur))
                     KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
                                           (reset-list! true)
                                           (recur))
@@ -5854,6 +5884,8 @@
                     (recur)))))))
         (finally (swap! search-generation inc)
                  (when-let [running @search-task]
+                   (future-cancel running))
+                 (when-let [running @page-task]
                    (future-cancel running))
                  (when stop-fleet! (stop-fleet!)))))))
 
