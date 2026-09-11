@@ -764,12 +764,12 @@
                    (expect (nil? (authenticated-provider-config))))))
 
 (defn- assert-first-frame-before-startup-session!
-  [opts]
+  [opts overflowing? row-delta]
   (let [old-db
         @state/app-db
 
         terminal
-        (DefaultVirtualTerminal. (TerminalSize. 80 30))
+        (DefaultVirtualTerminal. (TerminalSize. 80 (if overflowing? 24 30)))
 
         gateway-entered
         (promise)
@@ -937,28 +937,39 @@
              (swap! state/app-db assoc ::published-before-mouse true))
            (finally (.unlock draw-lock)))
       (expect (true? (::published-before-mouse (deref mouse-input-db 2000 {}))))
-      ;; Selecting visible text must not pause follow or move a transcript that fits.
+      ;; A horizontal selection at a viewport edge must not start vertical scrolling.
       (swap! state/app-db #(-> %
-                               (assoc :messages [{:role :user :text "Copy: visible text"}])
+                               (assoc :messages (vec (repeat (if overflowing? 3 1)
+                                                             {:role :user
+                                                              :text "Copy: visible text"})))
                                (assoc-in [:settings :mouse-selection-copy] true)))
       (state/dispatch [:bump-render-version])
-      (expect (true? (await-pred #(seq (get-in @state/app-db
-                                               [:layout :transcript-selectable-ranges]))
-                                 2000)))
+      (expect (true? (await-pred
+                       #(let [{:keys [total-h inner-h transcript-selectable-ranges]}
+                              (:layout @state/app-db)] (and
+                                                         (seq transcript-selectable-ranges)
+                                                         ((if overflowing? > <) total-h inner-h)))
+                       2000))
+              (pr-str (select-keys (:layout @state/app-db)
+                                   [:total-h :inner-h :eff-scroll :viewport-top])))
       (let [{:keys [total-h inner-h transcript-selectable-ranges]}
             (:layout @state/app-db)
 
             {:keys [row col]}
             (first transcript-selectable-ranges)]
 
-        (expect (< total-h inner-h))
-        (doseq [[action x] [[MouseActionType/CLICK_DOWN col] [MouseActionType/DRAG (+ col 3)]
-                            [MouseActionType/CLICK_RELEASE (+ col 3)]]]
-          (.addInput terminal (MouseAction. action 1 (TerminalPosition. (int x) (int row))))))
+        (expect ((if overflowing? > <) total-h inner-h))
+        (doseq [[action x dy] [[MouseActionType/CLICK_DOWN col 0]
+                               [MouseActionType/DRAG (+ col 3) row-delta]
+                               [MouseActionType/CLICK_RELEASE (+ col 3) row-delta]]]
+          (.addInput terminal
+                     (MouseAction. action 1 (TerminalPosition. (int x) (int (+ row dy)))))))
       (let [copied (deref selection-copied 2000 ::timeout)]
-        (expect (= :follow (get-in @state/app-db [:scroll :mode]))
-                "A drag must not auto-scroll when the entire transcript is visible")
-        (expect (= "Copy" copied)))
+        (expect (= (if (zero? row-delta) :follow :at) (get-in @state/app-db [:scroll :mode]))
+                "Only a vertical drag may auto-scroll the transcript")
+        (if (zero? row-delta)
+          (expect (= "Copy" copied))
+          (expect (and (string? copied) (not (str/blank? copied)) (not= "Copy" copied)))))
       ;; Enter before the session exists is durable intent: it leaves the editor,
       ;; appears in the local queue, and cannot reach the model yet.
       (.addInput terminal (KeyStroke. KeyType/Enter))
@@ -977,9 +988,13 @@
 
 (defdescribe startup-first-frame-test
              (it "paints the editor and queues input before a new gateway session is ready"
-                 (assert-first-frame-before-startup-session! {}))
+                 (assert-first-frame-before-startup-session! {} false 0))
              (it "paints before resolving an explicit --session-id through the gateway"
-                 (assert-first-frame-before-startup-session! {:session-id "abcd1234"})))
+                 (assert-first-frame-before-startup-session! {:session-id "abcd1234"} false 0))
+             (it "keeps horizontal drag-copy stable near an overflowing transcript edge"
+                 (assert-first-frame-before-startup-session! {} true 0))
+             (it "keeps vertical drag auto-scroll working for an overflowing transcript"
+                 (assert-first-frame-before-startup-session! {} true -1)))
 
 (defdescribe startup-resume-test
              (it "--session-id reconciles orphaned running turns before rebuilding history"
