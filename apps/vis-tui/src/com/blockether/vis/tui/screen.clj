@@ -5077,12 +5077,16 @@
 (defn- project-sidebar-key!
   "Apply a rail action, returning whether it consumed the key."
   [key select! add! refresh!]
+  (when (and (instance? MouseAction key)
+             (= MouseActionType/MOVE (.getActionType ^MouseAction key))
+             (.updateHovered projects/hit-map ^MouseAction key))
+    (state/dispatch [:bump-render-version]))
   (when-let [[action value] (projects/key-action @state/app-db key)]
     (case action
       :select
       (select! value)
 
-      :input
+      :session
       (let [before (:active-tab-id @state/app-db)]
         ;; Invalidate a slower project lookup before focusing this exact session.
         (state/dispatch [:project-sidebar {:opening nil :request-id nil :focused? false}])

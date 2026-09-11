@@ -133,6 +133,7 @@
    :status-ok [31 125 47]
    :status-bad [193 44 44]
    :warning-bg [255 245 180]
+   :warning-button-bg [255 196 32]
    :warning-fg [80 60 0]
    :warning-border [142 112 30]
    :cancelled-bg [240 240 240]
@@ -237,6 +238,7 @@
    :status-ok [74 222 128]
    :status-bad [248 116 116]
    :warning-bg [71 49 10]
+   :warning-button-bg [255 196 32]
    :warning-fg [253 230 138]
    :warning-border [245 158 11]
    :cancelled-bg [31 41 55]
@@ -505,6 +507,7 @@
    :status-ok [93 109 0]
    :status-bad [177 40 38]
    :warning-bg [245 234 193]
+   :warning-button-bg [255 196 32]
    :warning-fg [88 66 0]
    :warning-border [129 98 0]
    :cancelled-bg [238 232 213]
@@ -599,6 +602,7 @@
    :status-ok [144 163 24]
    :status-bad [239 136 134]
    :warning-bg [51 44 7]
+   :warning-button-bg [255 196 32]
    :warning-fg [222 188 80]
    :warning-border [189 150 27]
    :cancelled-bg [7 54 66]
@@ -810,6 +814,7 @@
        :status-ok green-text
        :status-bad red-text
        :warning-bg subtle-bg
+       :warning-button-bg (if dark? yellow [255 196 32])
        :warning-fg yellow-text
        :warning-border orange-text
        :cancelled-bg subtle-bg

@@ -108,6 +108,8 @@
 
 (def warning-bg (rgb :warning-bg))
 
+(def warning-button-bg (rgb :warning-button-bg))
+
 (def warning-fg (rgb :warning-fg))
 
 (def warning-border (rgb :warning-border))
@@ -212,26 +214,6 @@
 
 (def footer-error-fg (rgb :footer-error-fg))
 
-(defn chip-tint
-  "Foreground/background pair for a semantically COLOURED button chip
-   (`components/button!`'s `:tint`). The cap is FILLED with the accent colour and
-   the label painted in the inverse-tab foreground for contrast — the same
-   filled-cap treatment hovered header buttons use, so a tinted chip reads as a
-   real button, not decoration. Unknown tints fall back to the neutral button
-   palette."
-  [tint]
-  (case tint
-    :git
-    [header-active-tab-fg code-success-fg]
-
-    (:draft :warning)
-    [header-active-tab-fg footer-warning-fg]
-
-    :error
-    [header-active-tab-fg footer-error-fg]
-
-    [button-fg button-bg]))
-
 (defn- relative-luminance
   "Perceived luminance of a palette colour, 0.0 (black) to 1.0 (white)."
   ^double [^com.googlecode.lanterna.TextColor$RGB c]
@@ -255,6 +237,25 @@
         (abs (- l (relative-luminance dialog-bg)))]
 
     (if (>= ink-gap surface-gap) dialog-fg dialog-bg)))
+
+(defn chip-tint
+  "Foreground/background pair for a semantic filled button. Warning buttons use
+   yellow fill with contrasting ink, not the darker warning text colour."
+  [tint]
+  (case tint
+    :git
+    [header-active-tab-fg code-success-fg]
+
+    :draft
+    [header-active-tab-fg footer-warning-fg]
+
+    :warning
+    [(contrast-ink warning-button-bg) warning-button-bg]
+
+    :error
+    [header-active-tab-fg footer-error-fg]
+
+    [button-fg button-bg]))
 
 (defn- mix-channel
   "One colour channel `a` moved `t` of the way toward `b`."
@@ -359,6 +360,7 @@
    :status-ok #'status-ok
    :status-bad #'status-bad
    :warning-bg #'warning-bg
+   :warning-button-bg #'warning-button-bg
    :warning-fg #'warning-fg
    :warning-border #'warning-border
    :cancelled-bg #'cancelled-bg

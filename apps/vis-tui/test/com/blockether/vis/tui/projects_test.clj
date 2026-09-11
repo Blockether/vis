@@ -60,6 +60,17 @@
                                :fields [{:id "platform" :type :plaintext :label "Platform"}]
                                :is-cancellable true}))))
 
+(defn news-fixture-db
+  "Waiting, running and a finished unread reply in one background project."
+  []
+  (-> (attention-fixture-db)
+      (update :tabs conj {:id :tab-5 :label "Keyboard navigation" :project-id "b" :unread? true})
+      (assoc-in [:tab-locals :tab-5]
+                {:session {:id "b3"}
+                 :messages [{:role :assistant
+                             :text "Keyboard navigation is ready."
+                             :content [{:type :text :text "Keyboard navigation is ready."}]}]})))
+
 (deftest project-view-isolation-test
   (with-redefs [state/app-db (atom (fixture-db))]
     (let [background (get-in @state/app-db [:tab-locals :tab-3])]
@@ -369,7 +380,7 @@
                 (constantly nil)]
 
     (doseq [db
-            [(fixture-db) (attention-fixture-db)]
+            [(fixture-db) (attention-fixture-db) (news-fixture-db)]
 
             cols
             [24 26 40 80 85 86 96 120 144]]
@@ -562,7 +573,7 @@
                                  (projects/sidebar-entries @state/app-db)))]
       (is (= [{:tab-count 2 :running 0 :needs-input 0} {:tab-count 2 :running 1 :needs-input 1}]
              (summary)))
-      (is (= [:select :select :input]
+      (is (= [:select :select :session]
              (mapv (comp first :action) (projects/sidebar-entries @state/app-db))))
       (let [form (get-in @state/app-db [:tab-locals :tab-3 :human-input])]
         (state/dispatch [:human-input-open (assoc-in form [:request :id] "request-b-next")]))
@@ -615,10 +626,9 @@
           (is (re-find #"Companion +2 tabs · 1 running · 1 needs input" text))
           (is (re-find #"! Mobile navigation +needs input" text))
           (is (= 6 row) "The alert appears immediately below its project")
-          (is (= [(.getRed ^com.googlecode.lanterna.TextColor theme/warning-fg)
-                  (.getGreen ^com.googlecode.lanterna.TextColor theme/warning-fg)
-                  (.getBlue ^com.googlecode.lanterna.TextColor theme/warning-fg)]
-                 (get-in capture [:frames 0 row 43 :fg])))
+          (is (= (#'theme-test/rgb-tuple theme/warning-button-bg)
+                 (get-in capture [:frames 0 row 43 :bg])))
+          (is (true? (get-in capture [:frames 0 row 43 :bold])))
           (if pointer?
             (handle!
               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row))))
@@ -657,7 +667,7 @@
     (is (= :project-select (:kind (first visible)))
         "Keep the parent visible above a long waiting group")
     (is (= 31 (:index (last visible))))
-    (is (= [:input "29"] (projects/key-action db (cap/key-stroke :enter))))
+    (is (= [:session "29"] (projects/key-action db (cap/key-stroke :enter))))
     (is (empty? (projects/visible-entries db 8)))))
 
 (deftest project-input-band-keeps-docked-sidebar-test
@@ -734,5 +744,176 @@
 
              (is (>= (#'theme-test/contrast-ratio fg bg) 4.5) (str id " sidebar text")))
            (is (>= (#'theme-test/contrast-ratio theme/dialog-hint theme/terminal-bg) 4.5)
-               (str id " sidebar hints and borders")))
+               (str id " sidebar hints and borders"))
+           (let [[fg bg] (theme/chip-tint :warning)]
+             (is (>= (#'theme-test/contrast-ratio fg bg) 4.5) (str id " yellow button text"))
+             (is (= theme/warning-button-bg bg))
+             (is (> (.getGreen ^com.googlecode.lanterna.TextColor bg)
+                    (.getBlue ^com.googlecode.lanterna.TextColor bg)))))
          (finally (theme/apply-theme! before)))))
+
+(deftest project-unread-completion-and-read-test
+  ;; Completed background replies were marked in the tab strip but absent from Projects.
+  (with-redefs [state/app-db (atom (attention-fixture-db))]
+    (let [entries #(projects/sidebar-entries @state/app-db)
+          summary #(first (filter (fn [entry]
+                                    (= project-b (:project entry)))
+                                  (entries)))
+          answer [{:type :text :text "Snapshot tests passed."}]]
+
+      (state/dispatch [:message-received :tab-4 answer {:status :completed}])
+      (is (= {:running 0 :needs-input 1 :unread 1}
+             (select-keys (summary) [:running :needs-input :unread])))
+      (is (= [[:select project-a] [:select project-b] [:session "b1"] [:session "b2"]]
+             (mapv :action (entries))))
+      (is (pos? (long (:render-version @state/app-db 0))) "A background answer repaints the rail")
+      (state/dispatch [:select-tab-by-session "a2"])
+      (is (= 1 (:unread (summary))) "Reading another tab must not clear NEW")
+      (state/dispatch [:select-tab-by-session "b1"])
+      (is (= 1 (:unread (summary))) "Opening the waiting tab must not clear a different reply")
+      (state/dispatch [:select-tab-by-session "b2"])
+      (is (= 0 (:unread (summary))))
+      (is (not-any? #(= :project-unread (:kind %)) (entries)))
+      (is (= answer (:content (last (:messages @state/app-db)))))
+      (state/dispatch [:select-tab-by-session "a1"])
+      (is (= 0 (:unread (summary))) "NEW does not return after leaving a read reply")
+      (state/dispatch [:message-received :tab-1 answer {:status :completed}])
+      (is (every? #(zero? (:unread %)) (filter #(= :project-select (:kind %)) (entries)))))))
+
+(deftest project-unread-cancel-and-replay-test
+  (with-redefs [state/app-db (atom (attention-fixture-db))]
+    (state/dispatch [:message-received :tab-4 [] {:status :cancelled}])
+    (is (not-any? #(= :project-unread (:kind %)) (projects/sidebar-entries @state/app-db)))
+    (state/dispatch [:message-received :tab-4 [{:type :text :text "Old result"}]
+                     {:status :completed :client-turn-id "already-settled"}])
+    (is (not-any? #(= :project-unread (:kind %)) (projects/sidebar-entries @state/app-db)))))
+
+(deftest project-unread-grid-and-navigation-test
+  (doseq [pointer? [true false]]
+    (let [refreshes (atom [])]
+      (with-redefs [state/app-db (atom (assoc (news-fixture-db) :project-active-tabs {"b" :tab-4}))]
+        (state/dispatch [:project-sidebar {:focused? true :index 3}])
+        (let [waiting (get-in @state/app-db [:tab-locals :tab-3])
+              running (get-in @state/app-db [:tab-locals :tab-4])
+              capture (cap/capture!
+                        {:cols 144
+                         :rows 24
+                         :paint!
+                         (fn [{:keys [screen]}]
+                           (projects/paint! (.newTextGraphics screen) @state/app-db 144 24))})
+              text (cap/frame-text capture)
+              hit (first (filter #(= :project-unread (:kind %)) (.current projects/hit-map)))
+              row (get-in hit [:bounds :row])
+              handle! #(#'screen/project-sidebar-key!
+                         %
+                         (fn [_]
+                           (throw (ex-info "Must open the exact unread session" {})))
+                         (fn []
+                           (throw (ex-info "Must not add a project" {})))
+                         (fn [notify?]
+                           (swap! refreshes conj notify?)))]
+
+          (is (nil? (:error capture)))
+          (is (str/includes? text "3 tabs · 1 run · 1 input · 1 NEW"))
+          (is (re-find #"Keyboard navigation +NEW" text))
+          (is (= 7 row))
+          (is (= (#'theme-test/rgb-tuple theme/warning-button-bg)
+                 (get-in capture [:frames 0 row 51 :bg])))
+          (if pointer?
+            ;; Click the yellow cap, not only the row's title.
+            (handle! (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 51 (int row))))
+            (do (handle! (cap/key-stroke :down)) (handle! (cap/key-stroke :enter))))
+          (is (= :tab-5 (:active-tab-id @state/app-db)))
+          (is (= "b" (:active-project-id @state/app-db)))
+          (is (= "Keyboard navigation is ready." (:text (last (:messages @state/app-db)))))
+          (is (not-any? #(= :project-unread (:kind %)) (projects/sidebar-entries @state/app-db)))
+          (is (= waiting (get-in @state/app-db [:tab-locals :tab-3])))
+          (is (= running (get-in @state/app-db [:tab-locals :tab-4])))
+          (is (= "Keep this draft"
+                 (input/input->text (get-in @state/app-db [:tab-locals :tab-1 :input]))))
+          (is (= [false] @refreshes)))))))
+
+(deftest project-unread-and-input-share-one-row-test
+  (let [db
+        (update (news-fixture-db)
+                :tabs
+                #(mapv (fn [tab]
+                         (cond-> tab
+                           (= :tab-3 (:id tab))
+                           (assoc :unread? true)))
+                       %))
+
+        entries
+        (projects/sidebar-entries db)
+
+        capture
+        (cap/capture! {:cols 144
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (projects/paint! (.newTextGraphics screen) db 144 24))})]
+
+    (is (= 2 (:unread (second entries))))
+    (is (= 1 (count (filter #(= :tab-3 (:tab-id %)) entries))))
+    (is (str/includes? (cap/frame-text capture) "NEW · needs input"))))
+
+(deftest project-alert-buttons-hover-and-width-test
+  (let [before @theme/active-theme-id]
+    (try
+      (doseq [id (shared-theme/available-theme-ids)
+              cols [40 44 80 144]]
+
+        (theme/apply-theme! (keyword id))
+        (with-redefs [state/app-db (atom (news-fixture-db))]
+          (let [paint! (fn [{:keys [screen]}]
+                         (projects/paint! (.newTextGraphics screen) @state/app-db cols 24))
+                initial (cap/capture! {:cols cols :rows 24 :paint! paint!})
+                width (:width (projects/geometry @state/app-db cols 24))
+                col (- width 4)
+                hover! #(#'screen/project-sidebar-key!
+                          (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. (int %) (int %2)))
+                          identity
+                          (constantly nil)
+                          (constantly nil))]
+
+            (is (nil? (:error initial)))
+            (is (str/includes? (cap/frame-text initial) "needs input"))
+            (is (str/includes? (cap/frame-text initial) "NEW"))
+            (when (= cols 44)
+              (is (str/includes? (cap/frame-text initial) "Companion"))
+              (is (str/includes? (cap/frame-text initial) "3 tabs 1 run 1 input 1 NEW")))
+            (doseq [row [6 7]]
+              (hover! col row)
+              (let [hovered (cap/capture! {:cols cols :rows 24 :paint! paint!})
+                    cell (get-in hovered [:frames 0 row col])]
+
+                (is (= (#'theme-test/rgb-tuple theme/warning-button-bg) (:bg cell)))
+                (is (true? (:bold cell)))
+                (is (true? (:underline cell)))))
+            (hover! 0 0)
+            (let [away (cap/capture! {:cols cols :rows 24 :paint! paint!})]
+              (is (false? (get-in away [:frames 0 7 col :underline])))))))
+      (finally (theme/apply-theme! before)))))
+
+(deftest project-unread-scroll-keeps-parent-test
+  (let [tabs
+        (mapv (fn [n]
+                {:id n :project-id "b" :label (str "Reply " n) :unread? true})
+              (range 30))
+
+        db
+        (assoc (fixture-db)
+          :tabs tabs
+          :tab-locals (into {}
+                            (map (fn [{:keys [id]}]
+                                   [id {:session {:id (str id)}}])
+                                 tabs))
+          :project-sidebar {:open? true :focused? true :index 31 :items [project-b]})
+
+        visible
+        (projects/visible-entries db 16)]
+
+    (is (= 8 (count visible)))
+    (is (= :project-select (:kind (first visible))))
+    (is (= 30 (:unread (first visible))))
+    (is (= 31 (:index (last visible))))
+    (is (= [:session "29"] (projects/key-action db (cap/key-stroke :enter))))))

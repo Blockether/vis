@@ -17,7 +17,7 @@
   (if (= (:id tab) (:active-tab-id db)) db (get-in db [:tab-locals (:id tab)])))
 
 (defn geometry
-  "Use 40–56 cells on the left, reserving 56 for input alerts; keep 60 for chat."
+  "Use 40–56 cells on the left, reserving 56 for session alerts; keep 60 for chat."
   [db cols rows]
   (when (get-in db [:project-sidebar :open?])
     (let [cols
@@ -25,7 +25,7 @@
 
           width
           (min cols
-               (max (if (some #(:human-input (tab-state db %)) (:tabs db)) 56 40)
+               (max (if (some #(or (:human-input (tab-state db %)) (:unread? %)) (:tabs db)) 56 40)
                     (min 56 (quot cols 3))))
 
           remaining
@@ -60,8 +60,8 @@
     key))
 
 (defn sidebar-entries
-  "Project counters and their waiting tabs, in shared paint/keyboard order.
-   A paused tab needs input, not CPU: count it once even with queued requests."
+  "Project counters and actionable sessions, in shared paint/keyboard order.
+   Waiting tabs are not running. Unread replies persist until their tab is opened."
   [db]
   (->> (get-in db [:project-sidebar :items])
        (mapcat
@@ -75,6 +75,9 @@
                  waiting
                  (filterv #(:human-input (tab-state db %)) tabs)
 
+                 unread
+                 (set (filter #(and (:unread? %) (not= (:id %) (:active-tab-id db))) tabs))
+
                  running
                  (count (filter #(let [local (tab-state db %)] (and (:loading? local)
                                                                     (not (:human-input local))))
@@ -86,6 +89,7 @@
                      :tab-count (if (seq tabs) (count tabs) (get project "session_count" 0))
                      :running running
                      :needs-input (count waiting)
+                     :unread (count unread)
                      :action [:select project]}]
                    (map (fn [tab]
                           (let [local
@@ -95,12 +99,14 @@
                                 (or (get-in local [:session :id])
                                     (get-in local [:human-input :request :session-id]))]
 
-                            {:kind :project-input
+                            {:kind (if (:human-input local) :project-input :project-unread)
                              :project project
                              :tab-id (:id tab)
+                             :unread? (contains? unread tab)
                              :label (model/title-or-placeholder (:label tab))
-                             :action [:input (str session-id)]}))
-                        waiting)))))
+                             :action [:session (str session-id)]}))
+                        (filter #(or (:human-input (tab-state db %)) (contains? unread %))
+                                tabs))))))
        (map-indexed #(assoc %2 :index (inc (long %1))))
        vec))
 
@@ -125,7 +131,7 @@
         visible
         (subvec entries start end)]
 
-    (if (and (> capacity 1) (= :project-input (:kind (first visible))))
+    (if (and (> capacity 1) (#{:project-input :project-unread} (:kind (first visible))))
       (into [(first (filter #(and (= :project-select (:kind %))
                                   (= (:project (first visible)) (:project %)))
                             entries))]
@@ -134,21 +140,35 @@
 
 (defn- row-status
   [entry opening width]
-  (if (= :project-input (:kind entry))
-    "needs input"
-    (let [{:keys [tab-count running needs-input project]} entry]
-      (str tab-count
-           (if (= 1 tab-count) " tab" " tabs")
-           (when (pos? (long running))
-             (str " · "
-                  running
-                  (if (and (pos? (long needs-input)) (< (long width) 48)) " run" " running")))
-           (when (pos? (long needs-input)) (str " · " needs-input " needs input"))
-           (when (= (get project "id") opening) " · Loading…")))))
+  (case (:kind entry)
+    :project-input
+    (if (:unread? entry) " NEW · needs input " " needs input ")
+
+    :project-unread
+    " NEW "
+
+    (let [{:keys [tab-count running needs-input unread project]}
+          entry
+
+          compact?
+          (or (< (long width) 48) (pos? (long unread)))
+
+          separator
+          (if (and (< (long width) 48) (pos? (long unread))) " " " · ")]
+
+      (str
+        tab-count
+        (if (= 1 tab-count) " tab" " tabs")
+        (when (pos? (long running))
+          (str separator running (if (and (pos? (long needs-input)) compact?) " run" " running")))
+        (when (pos? (long needs-input))
+          (str separator needs-input (if (pos? (long unread)) " input" " needs input")))
+        (when (pos? (long unread)) (str separator unread " NEW"))
+        (when (= (get project "id") opening) " · Loading…")))))
 
 (defn paint!
   "Use the main view's three-row header, bordered container and inset footer.
-   Waiting sessions are indented, independently focusable rows, not project actions."
+   Waiting and unread sessions have filled buttons and independently focusable rows."
   [g db cols rows]
   (binding [interactions/hit-map
             hit-map
@@ -185,7 +205,7 @@
         (doseq [[offset {:keys [index project kind label] :as entry}]
                 (map-indexed vector (visible-entries db rows))
                 :let [row (+ 4 (long offset))
-                      child? (= :project-input kind)
+                      child? (not= :project-select kind)
                       active? (if child?
                                 (= (:tab-id entry) (:active-tab-id db))
                                 (= (str (get project "id")) (:active-project-id db)))
@@ -205,13 +225,25 @@
                                                 row
                                                 name-width
                                                 (and (:focused? sidebar) (= index (:index sidebar)))
-                                                (str (if child? "! " (dlg/choice-mark true active?))
+                                                (str (if child?
+                                                       (if (= :project-input kind) "! " "● ")
+                                                       (dlg/choice-mark true active?))
                                                      label)))
-            (p/set-colors!
-              g
-              (if (or child? (pos? (long (:needs-input entry 0)))) t/warning-fg t/dialog-hint-key)
-              t/dialog-bg)
-            (p/put-str! g status-col row status))
+            (if child?
+              (components/button!
+                g
+                status-col
+                row
+                status
+                kind
+                {:tint :warning :register? false :extra {:tab-id (:tab-id entry)}})
+              (do (p/set-colors! g
+                                 (if (or (pos? (long (:needs-input entry)))
+                                         (pos? (long (:unread entry))))
+                                   t/warning-fg
+                                   t/dialog-hint-key)
+                                 t/dialog-bg)
+                  (p/put-str! g status-col row status))))
           (.register interactions/hit-map
                      (assoc entry
                        :bounds {:col (inc left) :row row :width (max 0 (- width 2)) :height 1})))
@@ -258,14 +290,15 @@
               hit
               (.lookup hit-map (.getColumn pos) (.getRow pos))]
 
-          (if (#{:project-rail :project-select :project-input :project-add :project-hide}
+          (if (#{:project-rail :project-select :project-input :project-unread :project-add
+                 :project-hide}
                (:kind hit))
             (cond (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
                   [:move (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
                   (and (= MouseActionType/CLICK_DOWN (.getActionType mouse))
                        (= 1 (.getButton mouse)))
                   (case (:kind hit)
-                    (:project-select :project-input)
+                    (:project-select :project-input :project-unread)
                     (:action hit)
 
                     :project-add
