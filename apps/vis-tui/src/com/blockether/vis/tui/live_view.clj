@@ -1847,6 +1847,13 @@
                rule-at (long foot-row)
                hint-rule-at (dec hint-at)
                visible (max 1 (dec (long visible)))
+               ;; Expanded headings reserve a blank row on each side. On a very
+               ;; short terminal, keep one content row and use the compact title.
+               heading-h
+               (if (and (not is-minimized) (>= (- visible (count collapsed) (if stop 2 0)) 4)) 3 0)
+               title-row (if (pos? heading-h) (inc (long body-top)) (long sep-row))
+               body-top (+ (long body-top) heading-h)
+               visible (- visible heading-h)
                body-visible (max 1 (- visible (count collapsed) (if stop 2 0)))
                total (count rows-plan)
                start (if (and front (not is-minimized)) (offset front rows-plan body-visible) 0)
@@ -1854,15 +1861,13 @@
                view-id (view-id front)]
 
            (tr/clear-rows! g region (max 0 (long sep-row)) rule-at)
-           ;; The title is the rule's own label — `── CI · 1m 12s ──` — so the
-           ;; first row is chrome and every row under it is the view.
            (when (>= (long sep-row) (long top-limit))
-             (tr/draw-rule! g
-                            region
-                            sep-row
-                            (p/ellipsize (band-title (or front (last panes)) now-ms)
-                                         (max 1 (- inner-w 10))))
-             (paint-fold-control! g region sep-row front))
+             (let [title (p/ellipsize (band-title (or front (last panes)) now-ms)
+                                      (max 1 (- inner-w 10)))]
+               (tr/draw-rule! g region sep-row (when (zero? heading-h) title))
+               (when (pos? heading-h)
+                 (paint-styled! g left title-row body-w t/dialog-fg [p/BOLD] title))
+               (paint-fold-control! g region title-row front)))
            (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))
            (when (> (long hint-rule-at) (max (long sep-row) (long top-limit)))
              (tr/draw-rule! g region hint-rule-at))
@@ -1928,7 +1933,8 @@
               :widths (:widths (meta rows-plan))})))))))
 
 (defn paint!
-  "Paint the newest expanded Live View."
+  "Paint the newest expanded Live View with one empty row above and below its title.
+   Minimized views and terminals too short for the padding keep a compact titled rule."
   ([g cols rows panes content-top prompt-h]
    (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]

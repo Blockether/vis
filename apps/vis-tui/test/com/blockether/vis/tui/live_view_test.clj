@@ -680,6 +680,61 @@
              (is (every? #(= "view-1" (:view-id %)) controls)))
            (finally (.reset interactions/hit-map))))))
 
+;; Regression: the expanded title touched the top border and its description.
+(deftest live-view-heading-spacing-test
+  (doseq [cols
+          [40 80 120]
+
+          :let [p
+                (lv/opened (mounted {:title "Release checks" :description "Three jobs"}
+                                    (fixture/status "now" "Watching" {:tone :running})))
+
+                {:keys [frames error]}
+                (paint-frames [p] cols 36)
+
+                lines
+                (str/split-lines (cap/frame-text (last frames)))
+
+                [from _]
+                (lv/band-rows cols 36 [p] 1 3)
+
+                title-row
+                (+ (long from) 2)
+
+                controls
+                (filterv #(= :live-minimize (:kind %)) (.current interactions/hit-map))]]
+
+    (is (nil? error))
+    (is (str/includes? (nth lines from) "┌"))
+    (is (not (str/includes? (nth lines from) "Release checks")))
+    (is (str/blank? (str/replace (nth lines (inc (long from))) "│" ""))
+        "one empty row separates the border from the title")
+    (is (str/includes? (nth lines title-row) "Release checks"))
+    (is (str/blank? (str/replace (nth lines (inc title-row)) "│" ""))
+        "one empty row separates the title from its description")
+    (is (str/includes? (nth lines (+ title-row 2)) "Three jobs"))
+    (is (= [title-row] (mapv #(get-in % [:bounds :row]) controls))
+        "the minimize hit target follows the title")))
+
+(deftest live-view-short-heading-test
+  (let [p
+        (lv/opened (mounted {:title "Release checks" :description ""}
+                            (fixture/status "now" "Watching" {:tone :running})))
+
+        {:keys [frames geometry error]}
+        (paint-frames [p] 80 12)
+
+        lines
+        (str/split-lines (cap/frame-text (last frames)))
+
+        [from to]
+        (lv/band-rows 80 12 [p] 1 3)]
+
+    (is (nil? error))
+    (is (str/includes? (nth lines from) "Release checks"))
+    (is (str/includes? (str/join "\n" (subvec (vec lines) from (inc (long to)))) "Watching"))
+    (is (pos? (long (:visible geometry))))))
+
 ;;; ── The screenshot gate ─────────────────────────────────────────────────────
 
 (deftest live-view-paint-test
@@ -1027,8 +1082,10 @@
           [from to]
           (lv/band-rows 96 40 [p] 1 3)]
 
-      (is (str/includes? (nth lines from) "CI · fix(loop): move the session pick")
-          "the first row it claims is the band's own titled rule")
+      (is (str/includes? (nth lines from) "┌")
+          "the first row it claims is the band's opening border")
+      (is (str/includes? (nth lines (+ (long from) 2)) "CI · fix(loop): move the session pick")
+          "the padded heading remains inside the wheel's band")
       (is (str/includes? (nth lines to) "└") "the last is the rule that closes it")
       (is (every? str/blank? (take from lines))
           "and nothing of the band is painted above the rows the wheel owns")))

@@ -66,13 +66,13 @@
           pane)]
 
     (cap/capture! {:cols 80
-                   :rows 30
+                   :rows 36
                    :paint! (fn [{:keys [screen]}]
                              (.beginFrame interactions/hit-map)
                              (let [g (.newTextGraphics ^TerminalScreen screen)]
                                (if (= kind :ask)
-                                 (hi/paint! g 80 30 (ask-form))
-                                 (lv/paint! g 80 30 [pane] 1 3 12000))
+                                 (hi/paint! g 80 36 (ask-form))
+                                 (lv/paint! g 80 36 [pane] 1 3 12000))
                                (.commitFrame interactions/hit-map)
                                (.refresh ^TerminalScreen screen)))})))
 
@@ -88,21 +88,24 @@
                         :font-size 18})))
         [:ask :live-running :live-stop]))
 
-(defdescribe documentation-captures-test
-             (it "renders the documented controls and masks the example password"
-                 (doseq [[kind labels]
-                         [[:ask
-                           ["Deploy" "Target" "staging" "Release notes" "Deploy token" "Submit"]]
-                          [:live-running ["CI · run 42" "Tests" "Lint" "Build" "in_progress"]]
-                          [:live-stop ["Check the failing job first"]]]
+(defdescribe
+  documentation-captures-test
+  (it "renders the documented controls and masks the example password"
+      (doseq [[kind labels]
+              [[:ask ["Deploy" "Target" "staging" "Release notes" "Deploy token" "Submit"]]
+               [:live-running
+                ["CI · run 42" "3 jobs" "Watching" "Tests" "Lint" "Build" "in_progress" "This run"]]
+               [:live-stop
+                ["CI · run 42" "3 jobs" "Watching" "Tests" "Lint" "Build" "This run"
+                 "Check the failing job first"]]]
 
-                         :let [capture
-                               (capture-pane kind)
+              :let [capture
+                    (capture-pane kind)
 
-                               text
-                               (cap/frame-text (last (:frames capture)))]]
+                    text
+                    (cap/frame-text (last (:frames capture)))]]
 
-                   (expect (nil? (:error capture)))
-                   (doseq [label labels]
-                     (expect (str/includes? text label) (str kind ": " label)))
-                   (expect (not (str/includes? text "example-only"))))))
+        (expect (nil? (:error capture)))
+        (doseq [label labels]
+          (expect (str/includes? text label) (str kind ": " label)))
+        (expect (not (str/includes? text "example-only"))))))
