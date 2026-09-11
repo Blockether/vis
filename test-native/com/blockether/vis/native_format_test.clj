@@ -23,6 +23,16 @@
          calls (atom 0)
          code
          (str
+           ;; #197: typed namespace kwargs must survive the native agent/worker boundary.
+           "assert await probe.echo(value='hello') == 'hello!'\n"
+           "assert await probe.echo('hello', suffix='?') == 'hello?'\n"
+           "assert await probe.echo(value='hello', suffix='.') == 'hello.'\n"
+           "assert await probe.echo() == 'default!'\n"
+           "assert (await probe.mapping({'payload': 'unchanged'}))['payload'] == 'unchanged'\n"
+           "assert (await probe.mapping(payload={'x': 1}))['x'] == 1\n"
+           "assert await gather(probe.echo(value='a'), probe.echo(value='b')) == ['a!', 'b!']\n"
+           "assert await asyncio.to_thread(probe.echo, value='thread') == 'thread!'\n"
+           "print('NATIVE_KEYWORDS_READY')\n"
            (str/join
              "\n"
              ["def check_tests(runner):"
@@ -107,6 +117,22 @@
                    ((if stream? stream whole) text)))]
 
         (try
+          (let [entry (io/file dir ".vis/extensions/keyword_probe.py")]
+            (io/make-parents entry)
+            (spit entry
+                  (str "from __future__ import annotations\n"
+                       "import blockether.vis.extension as vis\n" "class Probe:\n"
+                       "    @vis.method()\n"
+                       "    def echo(self, value: str='default', *, suffix: str='!') -> str:\n"
+                       "        \"Echo a string with a suffix.\"\n"
+                       "        if not isinstance(value, str): raise TypeError('expected str')\n"
+                       "        return value + suffix\n" "    @vis.method()\n"
+                       "    def mapping(self, payload):\n"
+                       "        \"Echo a positional mapping unchanged.\"\n"
+                       "        return payload\n"
+                       "vis.register(vis.Extension(name='keyword-probe', alias='probe', "
+                       "description='Native keyword transport fixture', "
+                       "symbols=[vis.Symbol(Probe(), name='probe')]))\n")))
           (io/make-parents (io/file dir "configured/example.clj"))
           (spit (io/file dir "default.clj") source)
           (spit (io/file dir "configured/example.clj") source)
@@ -177,7 +203,7 @@
                                   output)
                           (expect (str/includes? (pr-str tool-results) "NATIVE_FFF_READY") output)
                           (expect (str/includes? (pr-str tool-results) "NATIVE_LINT_READY") output)
-                          (doseq [marker ["NATIVE_PYTHON_REPL_READY"
+                          (doseq [marker ["NATIVE_KEYWORDS_READY" "NATIVE_PYTHON_REPL_READY"
                                           "NATIVE_PYTHON_TESTS_COLD_READY"
                                           "NATIVE_PYTHON_TESTS_RESTART_READY"]]
                             (expect (str/includes? (pr-str tool-results) marker) output))

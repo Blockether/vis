@@ -45,8 +45,8 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
     )
     assert "loud: bool" in tool["doc"]
     assert tool["params"] == ["name"]
-    # Folded keyword arguments are how the engine invokes the same tool.
-    result = tool["fn"]("Ada", {"loud": True})
+    # #197: the engine preserves keyword arguments rather than folding maps.
+    result = tool["fn"]("Ada", loud=True)
     assert isinstance(result, module["Greeting"])
     assert result.text == "HELLO ADA"
     with pytest.raises(FrozenInstanceError):

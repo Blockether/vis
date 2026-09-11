@@ -91,10 +91,11 @@ def __vis_unseal_host__(value):
     return value
 
 
-def __vis_call__(cid, args_json):
+def __vis_call__(cid, args_json, kwargs_json):
     """Invoke a sealed callable, await its completion, then seal the public result."""
     args = __vis_unseal_host__(_vis_json.loads(args_json))
-    result = _vis_callables[cid](*args)
+    kwargs = __vis_unseal_host__(_vis_json.loads(kwargs_json))
+    result = _vis_callables[cid](*args, **kwargs)
     if _vis_inspect.isawaitable(result):
 
         async def resolve():

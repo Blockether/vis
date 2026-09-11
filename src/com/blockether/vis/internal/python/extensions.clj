@@ -165,15 +165,15 @@
     (when (and text (not= "null" text)) (json/read-json text :key-fn identity))))
 
 (defn- python-call-expr
-  "The Python expression that invokes sealed callable `cid` on `args`.
-
-   Args cross as ONE JSON string rather than as spliced literals: an argument is
-   arbitrary data, and only the JSON encoder is allowed to decide how it spells."
-  [cid args]
+  "Invoke sealed callable `cid` with separate positional and keyword JSON data.
+   Only the JSON encoder decides how an argument is spelled in Python source."
+  [cid args kwargs]
   (str "__vis_call__("
        (python-string-literal (str cid))
        ", "
        (python-string-literal (json/write-json-str (vec args)))
+       ", "
+       (python-string-literal (json/write-json-str kwargs))
        ")"))
 
 (def ^:private host-callable-key
@@ -235,13 +235,18 @@
   ([sess path x]
    (cond (and (map? x) (= 1 (count x)) (contains? x callable-key))
          (let [cid (str (get x callable-key))]
-           (with-meta (fn [args]
-                        (let [[sealed callbacks] (sealed-args args)]
-                          (when (seq callbacks)
-                            (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
-                          (try (unseal sess (run-in sess (python-call-expr cid sealed)))
-                               (finally (when (seq callbacks)
-                                          (release-callbacks! sess (keys callbacks)))))))
+           (with-meta
+             (fn [args]
+               (let [keyword-arguments? (::python-host/keyword-arguments (meta (peek args)))
+                     ;; Only the host wire can mark kwargs; positional maps stay data.
+                     [sealed callbacks]
+                     (sealed-args (if keyword-arguments? [(pop args) (peek args)] [args {}]))]
+
+                 (when (seq callbacks)
+                   (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
+                 (try (unseal sess
+                              (run-in sess (python-call-expr cid (first sealed) (second sealed))))
+                      (finally (when (seq callbacks) (release-callbacks! sess (keys callbacks)))))))
              {callable-path-key path}))
          (map? x) (into {}
                         (map (fn [[k v]]

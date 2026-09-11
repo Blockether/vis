@@ -941,15 +941,18 @@ vis.register(vis.Extension(
 
 (defdescribe
   python-kwargs-test
-  (it "keyword args folded into ONE trailing map are re-expanded onto the signature — #83"
+  (it "explicit host keyword arguments are preserved — #83, #197"
       (with-loaded {"kwargs.py" kwargs-py}
                    (fn [_ _]
                      (let [probe
                            (symbol-fn (registered "kwargs") 'kw_probe)
 
                            result
-                           ;; how the sandbox delivers probe(g, mode=deep, is_deep=True)
-                           (probe "g" {"mode" "deep" "is_deep" true})]
+                           ;; The wire marks kwargs; a plain positional dict is never guessed.
+                           (probe "g"
+                                  (with-meta {"mode" "deep" "is_deep" true}
+                                    {:com.blockether.vis.internal.python.host/keyword-arguments
+                                     true}))]
 
                        (expect (extension/envelope-success? result))
                        (expect (= "g" (get-in result [:result "name"])))
@@ -4779,3 +4782,54 @@ vis.register(vis.Extension(
                               "    print('handled')\n" "time.sleep(0.6)\nprint('resumed')\n"))]
             (expect (nil? (:error result)) (pr-str result))
             (expect (= "handled\nresumed" (str/trim (or (:stdout result) "")))))))))
+
+(defdescribe
+  python-keyword-transport-test
+  ;; #197: exercise the sandbox, host wire and trusted namespace worker together.
+  (it
+    "preserves Python argument binding without reinterpreting positional maps"
+    (with-fresh-loaded
+      {"keyword_transport.py"
+       (str
+         "from __future__ import annotations\n"
+         "import blockether.vis.extension as vis\n" "class Probe:\n"
+         "    @vis.method()\n"
+         "    def echo(self, value: str='default', *, suffix: str='!') -> str:\n"
+         "        \"Echo a string with a suffix.\"\n"
+         "        if not isinstance(value, str): raise TypeError('expected str')\n"
+         "        return value + suffix\n" "    @vis.method()\n"
+         "    def mapping(self, payload):\n" "        \"Echo a positional mapping unchanged.\"\n"
+         "        return payload\n"
+         "vis.register(vis.Extension(name='keyword-transport', description='Keyword transport fixture.', alias='probe', symbols=[vis.Symbol(Probe(), name='probe')]))\n")}
+      (fn [result _]
+        (expect (= 1 (:loaded result)) (pr-str result))
+        (let [ctx
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              ext
+              (registered "keyword-transport")
+
+              env
+              {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+          (try
+            (lp/sync-active-extension-symbols! env [ext])
+            (let
+              [answer
+               (ep/run-python-block
+                 ctx
+                 (str
+                   "print(probe.echo('positional'))\n" "print(probe.echo(value='keyword'))\n"
+                   "assert await probe.echo(value='hello') == 'hello!'\n"
+                   "assert await probe.echo('hello', suffix='?') == 'hello?'\n"
+                   "assert await probe.echo(value='hello', suffix='.') == 'hello.'\n"
+                   "assert await probe.echo() == 'default!'\n"
+                   "mapping = await probe.mapping({'payload': 'untouched'})\n"
+                   "assert mapping['payload'] == 'untouched', repr(mapping)\n"
+                   "assert (await probe.mapping(payload={'x': 1}))['x'] == 1\n"
+                   "assert await gather(probe.echo(value='a'), probe.echo(value='b')) == ['a!', 'b!']\n"
+                   "assert await asyncio.to_thread(probe.echo, value='thread', suffix='?') == 'thread?'\n"
+                   "print('ok')"))]
+              (expect (nil? (:error answer)) (pr-str answer))
+              (expect (= "positional!\nkeyword!\nok\n" (:stdout answer))))
+            (finally (ep/dispose-python-context! ctx))))))))

@@ -168,7 +168,11 @@
         (if (str/blank? (str caller)) nil caller)
 
         args
-        (vec (get request "args"))
+        ;; Clojure tools consume options maps; Python callables recover the marked
+        ;; kwargs before invocation. User positional maps never carry this metadata.
+        (cond-> (vec (get request "args"))
+          (seq (get request "kwargs"))
+          (conj (with-meta (get request "kwargs") {::keyword-arguments true})))
 
         f
         (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]

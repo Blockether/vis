@@ -652,23 +652,6 @@ def host_env(name, default=None):
     return default if v is None else v
 
 
-def _kwargs_dict(x):
-    # The folded-kwargs map crosses the host boundary as a FOREIGN hash map, not a
-    # Python dict, so duck-type it (keys + item access) instead of isinstance().
-    if isinstance(x, (str, bytes, bytearray, list, tuple)) or not hasattr(x, "keys"):
-        return None
-    try:
-        pairs = {k: x[k] for k in list(x.keys())}
-    except Exception:
-        return None
-    if not pairs:
-        return None
-    for k in pairs:
-        if not isinstance(k, str) or not k.isidentifier():
-            return None
-    return pairs
-
-
 def _annotation_target(fn):
     """Follow the signature's wrapper chain while preserving method binding."""
     target = inspect.unwrap(fn, stop=lambda f: hasattr(f, "__signature__"))
@@ -706,37 +689,6 @@ def _inert_signature(fn):
             return_annotation=unknown,
         )
     return inspect.signature(fn, eval_str=False)
-
-
-def _kwargs_call(fn):
-    # KEYWORD ARGUMENTS for a Python-backed tool. Host tool callables are
-    # positional-only proxies, so the sandbox folds a caller's **kwargs into ONE
-    # TRAILING DICT positional: `mytool('g', want_json=True)` reaches Python as
-    # ('g', {'want_json': True}) and every keyword parameter silently keeps its
-    # default. Re-expand that trailing map whenever THIS signature binds it by
-    # keyword; a genuine dict positional (no such parameter, a positional-only
-    # slot, non-identifier keys) fails the bind and passes through untouched.
-    try:
-        sig = _inert_signature(fn)
-    except (TypeError, ValueError):
-        return fn
-
-    def _call(*args):
-        if args:
-            kw = _kwargs_dict(args[-1])
-            if kw is not None:
-                head = args[:-1]
-                try:
-                    sig.bind(*head, **kw)
-                except TypeError:
-                    pass
-                else:
-                    return fn(*head, **kw)
-        return fn(*args)
-
-    _call.__name__ = getattr(fn, "__name__", "symbol")
-    _call.__doc__ = fn.__doc__
-    return _call
 
 
 def _annotation_name(node, namespace):
@@ -1030,7 +982,7 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None):
     varargs = any(p["kind"] == "var_positional" for p in contract["parameters"])
     return {
         "marker": "symbol",
-        "fn": _kwargs_call(_activity_call(fn, activity)),
+        "fn": _activity_call(fn, activity),
         "name": public_name,
         "tag": tag,
         "hidden": bool(is_hidden),
