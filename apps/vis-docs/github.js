@@ -70,13 +70,16 @@ export function githubClient(env) {
   };
 }
 export async function inspectRepository(source,env) {
-  const repository_url=repositoryURL(source.repository_url), subdirectory=projectFolder(source.subdirectory);
+  const submittedURL=repositoryURL(source.repository_url), subdirectory=projectFolder(source.subdirectory);
   assert(source.revision===undefined||/^[0-9a-f]{40}$/.test(source.revision),'revision must be a full Git commit SHA.');
-  const repository=repository_url.slice('https://github.com/'.length), owner=repository.split('/')[0], api='/repos/'+repository;
+  const submittedRepository=submittedURL.slice('https://github.com/'.length), api='/repos/'+submittedRepository;
   assert(source.release_tag===undefined||typeof source.release_tag==='string'&&/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(source.release_tag),'Use a GitHub release tag, such as v1.2.0.');
   const github=githubClient(env);
   const repo=await github(api);
   assert(repo.private===false,'Only public GitHub repositories can be listed.');
+  const repository=repo.full_name, owner=repo.owner?.login;
+  assert(typeof owner==='string'&&typeof repo.name==='string'&&repository===owner+'/'+repo.name&&repository.toLowerCase()===submittedRepository.toLowerCase(),'GitHub repository owner or name could not be verified. Submit its current URL.');
+  const repository_url=repositoryURL('https://github.com/'+repository);
   const release=await github(api+(source.release_tag?'/releases/tags/'+encodeURIComponent(source.release_tag):'/releases/latest'));
   assert(release.draft===false&&typeof release.prerelease==='boolean'&&typeof release.tag_name==='string'&&release.tag_name.length<=200&&!Number.isNaN(Date.parse(release.published_at)),'Choose a published GitHub Release, not a draft or an unpublished tag.');
   assert(!source.release_tag||release.tag_name===source.release_tag,'GitHub returned a different release tag.');

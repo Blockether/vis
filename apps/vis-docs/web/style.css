@@ -32,7 +32,7 @@ kbd { position: absolute; right: .625rem; top: 50%; transform: translateY(-50%);
 .card-main:hover h3 { color: var(--link-hover); }
 .card-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: var(--dim); font-size: var(--text-small); }
 .tag { color: var(--dim); font-size: var(--text-small); }
-.content .card-main h3 { font-size: var(--text-body); margin: .5rem 0; color: var(--link); text-decoration: underline; text-decoration-color: var(--sel); text-underline-offset: 2px; }
+.content .card-main h3 { overflow-wrap: anywhere; font-size: var(--text-body); margin: .5rem 0; color: var(--link); text-decoration: underline; text-decoration-color: var(--sel); text-underline-offset: 2px; }
 .content .card-description { color: var(--dim); font-size: var(--text-small); margin: .5rem 0; text-align: start; }
 .repository-link { display: inline-flex; align-items: center; min-height: 2rem; width: fit-content; max-width: 100%; color: var(--dim); font-size: var(--text-small); overflow-wrap: anywhere; }
 .card-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--line-soft); color: var(--dim); font-size: var(--text-small); }
@@ -41,7 +41,7 @@ kbd { position: absolute; right: .625rem; top: 50%; transform: translateY(-50%);
 .content .empty h2 { border: 0; padding: 0; margin: 1rem 0; }
 .back-button, button.quiet { border-color: transparent; background: transparent; color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 .back-button { display: inline-flex; align-items: center; min-height: 2.75rem; margin: 0 0 1rem; padding-left: 0; }
-.content .detail-heading h1 { margin-bottom: 1rem; }
+.content .detail-heading h1 { overflow-wrap: anywhere; margin-bottom: 1rem; }
 .content .detail-heading p { margin: 0 0 1rem; }
 .content :is(#catalog-page, .detail-heading, .install-section, .project-details, .community) p { text-align: start; hyphens: none; }
 .install-section { display: grid; gap: 1rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line-soft); }

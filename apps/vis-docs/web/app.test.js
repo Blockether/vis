@@ -33,7 +33,7 @@ test('catalog opens as responsive results, not a selected split pane, and filter
   expect($('#results').hasAttribute('data-view')).toBe(false);
   expect(names()).toHaveLength(6);
   $('[data-category="providers"]').click();
-  expect(names()).toEqual(['vis-local-models']);
+  expect(names()).toEqual(['example/local-models']);
   $('[data-category="all"]').click();
   change('#search', 'example'); expect(names()).toHaveLength(6);
   change('#search', 'vis-agent'); expect(names()).toHaveLength(6);
@@ -41,18 +41,30 @@ test('catalog opens as responsive results, not a selected split pane, and filter
   expect($('#results').textContent).toContain('No matching extensions');
   $('#clear-filters').click(); expect(names()).toHaveLength(6);
 });
+test('every extension uses its GitHub owner/repository as its catalog name',async()=>{
+  setup();await tick();
+  expect([...document.querySelectorAll('.card-main h3')].map(node=>node.textContent).sort()).toEqual(fixtures.map(entry=>entry.repository.toLowerCase()).sort());
+  expect($(`[data-name="${item.repository.toLowerCase()}"] .repository-link`).textContent).toBe(item.subdirectory);
+  expect($(`[data-name="${item.repository.toLowerCase()}"] .repository-link`).href).toBe(item.source_url);
+  $(`[data-name="${item.repository.toLowerCase()}"] .card-main`).click();await tick();
+  expect($('#detail h1').textContent).toBe(item.repository.toLowerCase());
+  expect($('#github-owner').textContent).toBe(item.owner);
+  expect($('#github-owner').href).toBe('https://github.com/'+item.owner);
+  expect($('#detail').textContent).toContain('Python package');
+  for(const command of ['versions','update','rollback']) expect($('#detail').textContent).toContain(`vis-agent extension ${command} '${item.name}'`);
+});
 
 test('sort controls affect real results and persist when the search form is submitted', async () => {
   setup(); await tick();
-  expect(names()[0]).toBe('vis-github');
-  for (const [sort, expected] of [['updated','vis-greeter'],['newest','vis-greeter'],['name','vis-browser']]) {
+  expect(names()[0]).toBe('example/github-tools');
+  for (const [sort, expected] of [['updated','example/extension-examples'],['newest','example/extension-examples'],['name','example/browser-tools']]) {
     change('#sort',sort,'change'); expect(names()[0]).toBe(expected);
   }
   const submit=new window.Event('submit',{bubbles:true,cancelable:true});
   $('#filters').dispatchEvent(submit);
   expect(submit.defaultPrevented).toBe(true);
   expect(window.location.search).toBe('?sort=name');
-  expect(names()[0]).toBe('vis-browser');
+  expect(names()[0]).toBe('example/browser-tools');
 });
 
 test.each(['grid','list'])('the catalog has no manual layout controls or state, including with view=%s in the URL', async view => {
@@ -68,7 +80,7 @@ test.each(['grid','list'])('the catalog has no manual layout controls or state, 
   window.history.replaceState(null,'','/extensions/'+search);
   setup(); await tick();
   expect($('.view-switch,[name=view],[data-view]')).toBeNull();
-  expect(names()[0]).toBe('vis-browser');
+  expect(names()[0]).toBe('example/browser-tools');
   change('#sort','updated','change');
   expect(window.location.search).toBe('?sort=updated');
   expect($('.view-switch,[name=view],[data-view]')).toBeNull();
@@ -126,11 +138,11 @@ test('repository anti-spam check is separated from the review button', () => {
 
 test('detail page has GitHub source, a pinned subdirectory command and working back navigation', async () => {
   setup(); await tick();
-  $(`[data-name="${item.name}"] .card-main`).click(); await tick();
+  $(`[data-name="${item.repository.toLowerCase()}"] .card-main`).click(); await tick();
   expect($('#catalog-page').hidden).toBe(true);
   expect($('#detail-page').hidden).toBe(false);
   expect($('link[rel="canonical"]').href).toBe('https://vis.blockether.com/extensions/'+item.id);
-  expect($('meta[property="og:title"]').content).toBe(item.name+' by '+item.owner+' · Vis · Blockether');
+  expect($('meta[property="og:title"]').content).toBe(item.repository.toLowerCase()+' · Vis · Blockether');
   expect($('meta[name="description"]').content).toBe(item.description);
   expect($('#install-command').textContent).toBe(installCommand(item));
   expect(installCommand(item)).toContain("--subdirectory 'extensions/greeting'");
@@ -272,7 +284,7 @@ test('the mobile documentation drawer traps focus, closes on Escape and applies 
   expect($('.main').inert).toBe(false);
   expect(document.body.style.overflow).toBe('');
   open(); $('[data-category="providers"]').click();
-  expect(names()).toEqual(['vis-local-models']);
+  expect(names()).toEqual(['example/local-models']);
   expect(toggle.checked).toBe(false);
   expect(document.activeElement).toBe($('#search'));
 });

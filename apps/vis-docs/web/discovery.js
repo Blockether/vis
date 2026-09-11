@@ -1,5 +1,7 @@
 /** Public-site metadata shared by generated docs, Worker SSR and client navigation. */
 export const origin = 'https://vis.blockether.com';
+/** Catalog identity is the GitHub namespace, not the Python distribution name. */
+export const extensionName = item => item.repository.toLowerCase();
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const json = value => JSON.stringify(value).replace(/</g, '\\u003c');
 // Lucide grid-2x2; the sidebar retains the full navigation label.
@@ -28,10 +30,10 @@ export function metadataHead({title, description, path, type='WebPage', noindex=
     `<script data-discovery type="application/ld+json">${json({'@context':'https://schema.org','@type':type,name:title,description,url,inLanguage:'en',publisher:{'@type':'Organization',name:'Blockether',url:'https://blockether.com/'},isPartOf:{'@type':'WebSite',name:'Vis',url:origin+'/'},...(mainEntity?{mainEntity}:{})})}</script>`;
 }
 export function catalogMetadata({item, error, detailError}={}) {
-  return metadataHead({title:(item?item.name+' by '+item.owner:'Extension Center')+' · Vis · Blockether',
+  return metadataHead({title:(item?extensionName(item):'Extension Center')+' · Vis · Blockether',
     description:item?.description||'Browse public GitHub extensions for Vis by Blockether. Find tools, model providers and workflows, review the source and install a specific commit.',
     path:item?'/extensions/'+item.id:'/extensions/', type:item?'WebPage':'CollectionPage',
-    mainEntity:item?{'@type':'SoftwareSourceCode',name:item.name,description:item.description,codeRepository:item.repository_url,version:item.version,programmingLanguage:'Python'}:undefined,
+    mainEntity:item?{'@type':'SoftwareSourceCode',name:extensionName(item),description:item.description,codeRepository:item.repository_url,version:item.version,programmingLanguage:'Python'}:undefined,
     noindex:!!error||!!detailError});
 }
 export function sitemap(paths, index=false) {
@@ -43,5 +45,5 @@ export function sitemap(paths, index=false) {
 export function catalogText(items) {
   return '# Vis Extension Center\n\n> Public, moderated GitHub listings for Vis tools, providers and workflows.\n\nListing is not an endorsement or a code audit. Review source and dependencies before trusting an extension.\n\n'+
     `- [Documentation](${origin}/llms.txt)\n- [Authoring guide](${origin}/extending.md)\n- [Catalog JSON API](${origin}/api/extensions)\n\n## Extensions\n\n`+
-    items.map(item=>`- [${String(item.name).replace(/[\r\n[\]\\]/g,' ')}](${origin}/extensions/${item.id})\n`).join('');
+    items.map(item=>`- [${extensionName(item).replace(/[\r\n[\]\\]/g,' ')}](${origin}/extensions/${item.id})\n`).join('');
 }

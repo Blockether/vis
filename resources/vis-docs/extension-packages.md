@@ -175,6 +175,12 @@ explicitly before installing it as a managed package.
 
 ### Publish and maintain releases
 
+Extension Center displays each extension as lowercase `owner/repository`, using
+GitHub's repository owner rather than a package author or submitter-provided name.
+The project folder distinguishes packages in a monorepo. This catalog name is
+separate from `project.name`: keep the Python package name for installation,
+`versions`, `update`, `rollback` and package-prefixed release tags.
+
 1. Keep `pyproject.toml`, `extension.py`, required source and optional skills together.
    Use a static `project.version`, and commit `uv.lock` for reproducible dependencies.
 2. Test the package with the supported Vis and Python versions. Bump the manifest version

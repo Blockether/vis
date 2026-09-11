@@ -108,6 +108,15 @@ validation is deliberately not a second Python packaging implementation: the SDK
 authoritative for PEP 440/508, runtime compatibility and installation. Moderators should
 check the manifest with that SDK before approval; listing is not an endorsement.
 
+Catalog names use the lowercase GitHub `owner/repository`, not `project.name`.
+Inspection requires GitHub's `owner.login`, repository `name` and `full_name` to
+agree with the submitted URL. The owner is a GitHub account or organization,
+not a claimed package author or an authenticated submitter. Cards, detail and
+review headings, search ordering and discovery metadata use that same namespace.
+Project folders distinguish multiple packages in a monorepo. The API's `name`
+remains the Python package identifier used by installation and release tags;
+`repository` and `owner` carry the inspected GitHub identity.
+
 Only approved listings, releases and comments are public. Pending entries live in
 `submissions`, without an anonymous read API. A repository/folder pair identifies a
 listing; repeated submissions of the same commit are idempotent. Every reviewed

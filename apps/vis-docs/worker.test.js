@@ -9,7 +9,7 @@ import { identity, manifestMetadata, projectFolder, repositoryURL } from './gith
 let fixture, serial=0;
 beforeAll(async()=>{fixture=await runtimeFixture();});
 afterAll(async()=>{await fixture?.runtime.dispose();});
-beforeEach(async()=>{fixture.controls.github='ok';fixture.controls.verification='ok';fixture.controls.requests=[];fixture.controls.tokens.clear();fixture.controls.contents.clear();fixture.controls.manifest=readFileSync('examples/vis-greeter/pyproject.toml','utf8');await fixture.db.batch(['DELETE FROM submissions','DELETE FROM releases','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));await fixture.runtime.purgeCache();});
+beforeEach(async()=>{fixture.controls.github='ok';fixture.controls.repository=null;fixture.controls.verification='ok';fixture.controls.requests=[];fixture.controls.tokens.clear();fixture.controls.contents.clear();fixture.controls.manifest=readFileSync('examples/vis-greeter/pyproject.toml','utf8');await fixture.db.batch(['DELETE FROM submissions','DELETE FROM releases','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));await fixture.runtime.purgeCache();});
 function post(path,source={},headers={}) {
   const token=(path==='/api/preview'?'preview':'submit')+'-'+(++serial);
   return fixture.runtime.dispatchFetch('https://center.example.com'+path,{method:'POST',headers:{Origin:'https://center.example.com','Content-Type':'application/json','CF-Connecting-IP':'10.0.0.'+(serial%250+1),...headers},body:JSON.stringify({repository_url:'https://github.com/example/extensions',subdirectory:'plugins/greeting',turnstile_token:token,...source})});
@@ -52,6 +52,27 @@ test('root and monorepo previews use pinned GitHub metadata only',async()=>{
   for(const subdirectory of ['', 'plugins/greeting']) {const response=await post('/api/preview',{subdirectory});const data=await response.json();expect(response.status,JSON.stringify(data)).toBe(200);expect(data.subdirectory).toBe(subdirectory);expect(data.revision).toBe(fixture.revision);expect(data.name).toBe('vis-greeter');expect(data.manifest_url).toContain('/blob/'+fixture.revision+'/');}
   expect(fixture.controls.requests.filter(url=>url.includes('/contents')).every(url=>url.endsWith('?ref='+fixture.revision))).toBe(true);
 });
+test('catalog ownership comes from the GitHub repository, not the package or submitter',async()=>{
+  fixture.controls.repository={name:'Extensions',full_name:'Example/Extensions',owner:{login:'Example'}};
+  const response=await post('/api/preview');
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({owner:'Example',repository:'Example/Extensions',repository_url:'https://github.com/Example/Extensions',name:'vis-greeter'});
+  expect((await post('/api/preview',{owner:'someone-else'})).status).toBe(400);
+});
+test.each([
+  {owner:null},
+  {owner:{login:'someone-else'}},
+  {name:'different',full_name:'example/different'},
+  {full_name:null},
+])('both review steps require matching GitHub ownership: %j',async repository=>{
+  fixture.controls.repository=repository;
+  for(const path of ['/api/preview','/api/submissions']) {
+    const response=await post(path,{revision:fixture.revision});
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain('GitHub repository owner');
+  }
+  expect((await fixture.db.prepare('SELECT COUNT(*) AS n FROM submissions').first()).n).toBe(0);
+});
 test('pending submissions and their refreshes cannot publish or replace a public listing',async()=>{
   const source={revision:fixture.revision};const response=await post('/api/submissions',source);expect(response.status).toBe(202);const pending=await response.json();
   expect((await post('/api/submissions',source)).status).toBe(202);
@@ -72,7 +93,7 @@ test('SSR supports search, categories, sort, views and executable-free metadata'
   const items=JSON.parse(readFileSync('web/catalog.fixture.json','utf8'));
   for(const item of items) await fixture.db.prepare('INSERT INTO extensions VALUES (?, ?, ?)').bind(item.id,JSON.stringify(item),item.added_at).run();
   const html=await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/?category=providers&view=list&q=local')).text();
-  expect(html).not.toMatch(/data-view=|class="view-switch"|name="view"/);expect(html.match(/class="extension-card"/g)).toHaveLength(1);expect(html).toContain('data-name="vis-local-models"');
+  expect(html).not.toMatch(/data-view=|class="view-switch"|name="view"/);expect(html.match(/class="extension-card"/g)).toHaveLength(1);expect(html).toContain('data-name="example/local-models"');
   const malicious={...items[0],description:'</script><b>untrusted metadata</b>'};
   await fixture.db.prepare('UPDATE extensions SET metadata=? WHERE id=?').bind(JSON.stringify(malicious),malicious.id).run();await fixture.runtime.purgeCache();
   const detail=await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/'+malicious.id)).text();
@@ -187,13 +208,13 @@ test('every approved extension has a crawlable, server-rendered detail page',asy
     for(const item of items) {
       const path='/extensions/'+item.id, canonical='https://vis.blockether.com'+path;
       expect(index).toContain('<loc>'+canonical+'</loc>');
-      expect(catalog.window.document.querySelector('.card-main[href="'+path+'"]').textContent).toContain(item.name);
+      expect(catalog.window.document.querySelector('.card-main[href="'+path+'"]').textContent).toContain(item.repository.toLowerCase());
       const response=await fixture.runtime.dispatchFetch('https://center.example.com'+path+'?view=list');
       expect(response.status).toBe(200);expect(response.headers.get('x-robots-tag')).toBeNull();
       const detail=new JSDOM(await response.text());
       try {
         const d=detail.window.document;
-        expect(d.querySelector('#detail h1').textContent).toBe(item.name);
+        expect(d.querySelector('#detail h1').textContent).toBe(item.repository.toLowerCase());
         expect(d.querySelector('#install-command').textContent).toContain("--version '"+item.version+"'");
         expect(d.querySelector('#source-link').href).toContain(item.revision);
         expect(d.querySelector('link[rel="canonical"]').href).toBe(canonical);

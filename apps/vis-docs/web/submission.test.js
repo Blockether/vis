@@ -38,6 +38,7 @@ function review(subdirectory='') {
 test.each(['','plugins/greeting'])('browser review, submission, approval and catalog agree for folder "%s"',async subdirectory=>{
   await start();review(subdirectory);
   await vi.waitFor(()=>expect($('#submit-confirm').hidden).toBe(false));
+  expect($('#preview h3').textContent).toBe('example/extensions · v1.0.0');
   expect($('#preview').textContent).toContain('Repository checks passed');
   expect($('#preview').textContent).toContain(fixture.revision);
   expect($('#preview a').href).toContain('/tree/'+fixture.revision);

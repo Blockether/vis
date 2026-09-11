@@ -90,7 +90,7 @@ test('docs and catalog previews use a separate opaque social image with room aro
   expect(info.height).toBeGreaterThan(300);expect(info.height).toBeLessThanOrEqual(480);
 });
 test('catalog SSR supplies item-specific metadata and never turns metadata into executable markup',()=>{
-  const item={...items[0],name:'Quoted "name"',description:'Text <tag> & punctuation'};
+  const item={...items[0],repository:'Example/GitHub-Tools',owner:'Example',name:'Quoted "name"',description:'Text <tag> & punctuation'};
   const dom=new JSDOM(renderPage({items:[item],item}));
   try {
     const d=dom.window.document;
@@ -99,8 +99,8 @@ test('catalog SSR supplies item-specific metadata and never turns metadata into 
     const schema=JSON.parse(d.querySelector('script[type="application/ld+json"]').textContent);
     expect(schema.description).toBe(item.description);
     expect(schema.publisher.url).toBe('https://blockether.com/');
-    expect(schema.mainEntity).toMatchObject({'@type':'SoftwareSourceCode',name:item.name,codeRepository:item.repository_url,version:item.version,programmingLanguage:'Python'});
-    expect(d.title).toBe(item.name+' by '+item.owner+' · Vis · Blockether');
+    expect(schema.mainEntity).toMatchObject({'@type':'SoftwareSourceCode',name:item.repository.toLowerCase(),codeRepository:item.repository_url,version:item.version,programmingLanguage:'Python'});
+    expect(d.title).toBe(item.repository.toLowerCase()+' · Vis · Blockether');
     expect(d.querySelectorAll('head script')).toHaveLength(1);
     expect(d.querySelector('link[rel="icon"][sizes="48x48"]').getAttribute('href')).toBe('/favicon-48.png');
   } finally {dom.window.close();}
