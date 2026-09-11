@@ -57,7 +57,9 @@ export const HealthInteractions: Story = {
     const roots = canvas.getByRole("button", { name: /Linked filesystems/ });
     await userEvent.click(roots);
     await expect(canvas.getByText("~/library")).toBeVisible();
-    await expect(canvas.getByText("AGENTS.md · ≈1.2k tokens on disk")).toBeVisible();
+    await expect(
+      canvas.getByText("AGENTS.md · ≈1.2k tokens on disk"),
+    ).toBeVisible();
     await expect(canvas.getByText("No AGENTS.md or CLAUDE.md")).toBeVisible();
     await expect(canvas.getByText(/Could not read guidance/)).toBeVisible();
     // Expanded details must leave the totals reachable inside the fixed viewport.
@@ -68,6 +70,31 @@ export const HealthInteractions: Story = {
     );
     await userEvent.click(parts);
     await userEvent.click(roots);
+  },
+};
+
+/** #186: the local estimate can exceed budget while measured context does not. */
+export const EstimateDrift: Story = {
+  args: {
+    usage: STORY_HEALTH_USAGE,
+    health: {
+      ...STORY_SESSION_HEALTH,
+      lastRequestTokens: 162_177,
+      call: 33,
+      breakdown: [
+        { label: "Conversation and tool results", tokens: 216_546 },
+        { label: "Tool declarations", tokens: 404 },
+      ],
+    },
+  },
+  play: async ({ canvas }) => {
+    await userEvent.click(
+      canvas.getByRole("button", { name: /Context breakdown/ }),
+    );
+    await expect(canvas.getByText("+54,773 tokens (+33.8%)")).toBeVisible();
+    await expect(canvas.getByText("81%")).toBeVisible();
+    await expect(canvas.getByRole("meter")).toHaveAttribute("value", "162177");
+    await expect(canvas.queryByText("Over budget")).not.toBeInTheDocument();
   },
 };
 

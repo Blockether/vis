@@ -896,12 +896,13 @@
                      (catch Exception _ {:status "error"})))))
 
 (defn request-health
-  "Content-free provenance for the logical request sent to Svar.
+  "Content-free provenance for the logical request handed to Svar, BEFORE adaptation.
 
-   Counts canonical content with Svar's tokenizer, including nested tool payloads,
-   images, reasoning and estimated message framing. Provider usage remains the
-   authoritative total: model tokenizers and wire framing may differ. Metadata
-   attributes guidance from the sent message without rereading or double-counting it.
+   The breakdown and its total include tools and canonical messages. Svar tokenizes
+   text/tool payloads and estimates images, reasoning and message framing. This is
+   NOT Svar's prepared-request preflight count: adapters may drop or reshape replay
+   content. Neither estimate replaces same-request provider usage for utilization.
+   Metadata attributes sent guidance without rereading or double-counting it.
    An absent model uses Svar's fallback encoding. Root guidance is disk-only."
   [environment messages tools & [model]]
   (try
@@ -957,6 +958,8 @@
 
       {:token-count-source :svar-estimate
        :token-count-model model
+       :counted-projection :logical-request
+       :estimated-input-tokens (reduce + 0 (map :tokens parts))
        :breakdown (mapv (fn [key]
                           (let [rows (get groups key)]
                             (assoc (select-keys (first rows) [:label :path])
@@ -970,5 +973,6 @@
     (catch Exception _
       {:token-count-source :unavailable
        :token-count-model (or model "unknown")
+       :counted-projection :logical-request
        :breakdown []
        :roots []})))

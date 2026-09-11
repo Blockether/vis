@@ -164,6 +164,9 @@
         counted
         (atom [])
 
+        result
+        (atom nil)
+
         svar-log-data
         (atom nil)]
 
@@ -173,6 +176,8 @@
               (with-redefs [svar-router/count-messages (fn ^long [model request]
                                                          (swap! counted conj [model request])
                                                          (long (counter model request)))
+                            svar-router/count-tokens (fn ^long [_ _]
+                                                       20)
                             svar/ask-code!
                             (fn [_ _]
                               (reset! svar-log-data (#'svar-llm/log-data
@@ -186,17 +191,19 @@
                                  :api-usage (when (some? input-tokens)
                                               {:input-tokens input-tokens :output-tokens 1})}))]
 
-                (try (lp/run-iteration environment
-                                       messages
-                                       {:iteration 2
-                                        :resolved-model {:provider :lmstudio :name "gpt-4o"}
-                                        :request-context {:request-id "request-3"
-                                                          :context-recovery-attempt 1
-                                                          :prompt-base :resumed
-                                                          :base-message-count 2
-                                                          :trailer-iteration-count 0}})
+                (try (reset! result (lp/run-iteration
+                                      environment
+                                      messages
+                                      {:iteration 2
+                                       :resolved-model {:provider :lmstudio :name "gpt-4o"}
+                                       :request-context {:request-id "request-3"
+                                                         :context-recovery-attempt 1
+                                                         :prompt-base :resumed
+                                                         :base-message-count 2
+                                                         :trailer-iteration-count 0}}))
                      (catch Exception e (reset! caught e)))))]
         {:observations (filterv #(= ::lp/context-token-counts (:id %)) signals)
+         :health (:request-health @result)
          :error @caught
          :counted @counted
          :svar-log-data @svar-log-data
@@ -206,40 +213,44 @@
 
 (defdescribe
   context-token-logging-test
-  (it
-    "compares the same request in both directions and correlates the served route"
-    (doseq [[input delta ratio] [[400 600 2.5] [2500 -1500 0.4]]]
-      (let [{:keys [observations error counted messages session-id svar-log-data]}
-            (context-token-observations {:input-tokens input :served-model "gpt-4.1"})
-            {:keys [level data]} (first observations)]
+  (it "compares the same request in both directions and correlates the served route"
+      ;; #186: logs and persisted breakdown must compare the same logical scope, including tools.
+      (doseq [[input delta ratio] [[400 620 2.55] [2500 -1480 0.408]]]
+        (let [{:keys [observations error health counted messages session-id svar-log-data]}
+              (context-token-observations {:input-tokens input :served-model "gpt-4.1"})
+              {:keys [level data]} (first observations)]
 
-        (expect (nil? error))
-        (expect (= 1 (count observations)))
-        (expect (= :info level))
-        (expect (= :succeeded (:outcome data)))
-        (expect (= session-id (:session-id data)))
-        (expect (= "request-3" (:request-id data)))
-        (expect (= (:request-id data) (:query-id svar-log-data)))
-        (expect (= (:iteration data) (:iteration svar-log-data)))
-        (expect (= "upstream-request" (:request-id svar-log-data)))
-        (expect (= 3 (:iteration data)))
-        (expect (= 1 (:context-recovery-attempt data)))
-        (expect (= :resumed (:prompt-base data)))
-        (expect (= 0 (:trailer-iteration-count data)))
-        (expect (= :lmstudio (:provider data)))
-        (expect (= "gpt-4.1" (:model data)))
-        (expect (= "gpt-4.1" (:local-estimate-model data)))
-        (expect (some #{["gpt-4.1" messages]} counted))
-        (expect (= :svar-message-estimate (:local-count-source data)))
-        (expect (= 1000 (:local-input-tokens data)))
-        (expect (= :provider-usage (:provider-count-source data)))
-        (expect (= input (:provider-input-tokens data)))
-        (expect (= delta (:local-minus-provider-tokens data)))
-        (expect (= ratio (:local-to-provider-ratio data)))
-        (expect (= 1 (:thinking-block-count data)))
-        (expect (= (count "opaque-signed-reasoning") (:thinking-signature-chars data)))
-        (expect (not-any? #(str/includes? (pr-str data) %)
-                          ["private-user-text" "private-reasoning" "opaque-signed-reasoning"])))))
+          (expect (nil? error))
+          (expect (= 1 (count observations)))
+          (expect (= :info level))
+          (expect (= :succeeded (:outcome data)))
+          (expect (= session-id (:session-id data)))
+          (expect (= "request-3" (:request-id data)))
+          (expect (= (:request-id data) (:query-id svar-log-data)))
+          (expect (= (:iteration data) (:iteration svar-log-data)))
+          (expect (= "upstream-request" (:request-id svar-log-data)))
+          (expect (= 3 (:iteration data)))
+          (expect (= 1 (:context-recovery-attempt data)))
+          (expect (= :resumed (:prompt-base data)))
+          (expect (= 0 (:trailer-iteration-count data)))
+          (expect (= :lmstudio (:provider data)))
+          (expect (= "gpt-4.1" (:model data)))
+          (expect (= "gpt-4.1" (:local-estimate-model data)))
+          (expect (some #{["gpt-4.1" [(first messages)]]} counted))
+          (expect (= :logical-request (:counted-projection data)))
+          (expect (= :svar-estimate (:local-count-source data)))
+          (expect (= 1020 (:local-input-tokens data)))
+          (expect (= (:local-input-tokens data)
+                     (:estimated-input-tokens health)
+                     (reduce + (map :tokens (:breakdown health)))))
+          (expect (= :provider-usage (:provider-count-source data)))
+          (expect (= input (:provider-input-tokens data)))
+          (expect (= delta (:local-minus-provider-tokens data)))
+          (expect (= ratio (:local-to-provider-ratio data)))
+          (expect (= 1 (:thinking-block-count data)))
+          (expect (= (count "opaque-signed-reasoning") (:thinking-signature-chars data)))
+          (expect (not-any? #(str/includes? (pr-str data) %)
+                            ["private-user-text" "private-reasoning" "opaque-signed-reasoning"])))))
   (it "keeps missing and zero provider counts distinct, without manufacturing a ratio"
       (doseq [input [nil 0]]
         (let [{:keys [observations error]} (context-token-observations {:input-tokens input})
@@ -293,7 +304,7 @@
                      (:reported-count-source data)))
           (expect (= 276317 (:reported-input-tokens data)))
           (expect (= 272000 (:reported-input-limit data)))
-          (expect (= 1000 (:local-input-tokens data)))
+          (expect (= 1020 (:local-input-tokens data)))
           (expect (= :unavailable (:provider-count-source data)))
           (expect (nil? (:provider-input-tokens data)))
           (expect (nil? (:local-to-provider-ratio data)))
@@ -385,6 +396,10 @@
                  (expect (= expected-budget (:budget-tokens health)))
                  (expect (= (* 3/4 expected-budget) (:reminder-tokens health)))
                  (expect (seq (:breakdown health)))
+                 ;; #186: retain the estimate's scope and total alongside its own measured input.
+                 (expect (= :logical-request (:counted-projection health)))
+                 (expect (= (:estimated-input-tokens health)
+                            (reduce + (map :tokens (:breakdown health)))))
                  (expect (false? (:stale health))))))
            (expect (= 36000 (:input-tokens (persistance/db-session-usage-stats db sid))))
            (finally (lp/dispose-environment! environment))))))

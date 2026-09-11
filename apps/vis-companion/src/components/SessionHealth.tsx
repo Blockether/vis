@@ -4,7 +4,8 @@ import { Disclosure } from "./ui";
 
 /** Presentation data for one persisted request, never the lifetime usage rollup.
  * Optional fields remain unknown for measurements made before they were recorded.
- * Breakdown rows estimate disjoint message text, not disk sizes or image tokens.
+ * Breakdown rows estimate the logical request before provider adaptation, including
+ * tool payloads, images, reasoning and framing. They do not partition measured usage.
  * Linked guidance estimates describe disk contents, not model read receipts.
  */
 export interface SessionHealthSnapshot {
@@ -24,7 +25,11 @@ export interface SessionHealthSnapshot {
 }
 
 /** Context pressure, prompt provenance and filesystem access in session metrics. */
-export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }) {
+export function SessionHealth({
+  snapshot,
+}: {
+  snapshot?: SessionHealthSnapshot;
+}) {
   const [partsOpen, setPartsOpen] = useState(false);
   const [rootsOpen, setRootsOpen] = useState(false);
   const id = useId();
@@ -49,6 +54,17 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
     breakdown,
     roots,
   } = snapshot;
+  const estimatedInput = breakdown?.length
+    ? breakdown.reduce((total, part) => total + part.tokens, 0)
+    : undefined;
+  const difference =
+    estimatedInput === undefined ? undefined : estimatedInput - input;
+  const differenceSign =
+    difference === undefined || difference === 0
+      ? ""
+      : difference > 0
+        ? "+"
+        : "−";
   const hasBudget = budget !== undefined && budget > 0;
   const percent = hasBudget ? Math.round((input / budget) * 100) : undefined;
   const atLimit = limit !== undefined && input >= limit;
@@ -127,7 +143,7 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
       </div>
 
       <div className="mt-4 space-y-2 border-t border-dialog-edge pt-1">
-        {breakdown ? (
+        {estimatedInput !== undefined ? (
           <>
             <Disclosure
               tone="branch"
@@ -138,23 +154,51 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
               <span className="min-w-0 py-2.5">
                 <span className="block">Context breakdown</span>
                 <span className="block text-ui font-normal text-dialog-hint">
-                  Instructions, tools and history · estimates
+                  Logical request · not measured usage
                 </span>
               </span>
             </Disclosure>
             {partsOpen && (
               <div id={`${id}-parts`} className="pb-3">
+                <dl className="mb-4 space-y-2 text-ui">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <dt className="text-dialog-hint">Local estimate</dt>
+                    <dd className="tabular-nums text-white">
+                      {estimatedInput.toLocaleString("en-US")} tokens
+                    </dd>
+                  </div>
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <dt className="text-dialog-hint">
+                      Provider-reported input
+                    </dt>
+                    <dd className="tabular-nums text-white">
+                      {input.toLocaleString("en-US")} tokens
+                    </dd>
+                  </div>
+                  {difference !== undefined && (
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                      <dt className="text-dialog-hint">Estimate − reported</dt>
+                      <dd className="tabular-nums text-white">
+                        {differenceSign}
+                        {Math.abs(difference).toLocaleString("en-US")} tokens
+                        {input > 0 &&
+                          ` (${differenceSign}${Math.abs((difference / input) * 100).toFixed(1)}%)`}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
                 <dl className="space-y-3 text-ui">
-                  {breakdown.map((part) => (
-                    <div key={`${part.label}:${part.path ?? ""}`}>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <dt className="text-white">{part.label}</dt>
-                        <dd className="shrink-0 tabular-nums text-white">
-                          ≈{humanizeCount(part.tokens)}
-                        </dd>
-                      </div>
+                  {breakdown?.map((part) => (
+                    <div
+                      key={`${part.label}:${part.path ?? ""}`}
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3"
+                    >
+                      <dt className="text-white">{part.label}</dt>
+                      <dd className="tabular-nums text-white">
+                        ≈{humanizeCount(part.tokens)}
+                      </dd>
                       {part.path && (
-                        <dd className="mt-0.5 break-all text-dialog-hint">
+                        <dd className="col-span-2 mt-0.5 break-all text-dialog-hint">
                           {part.path}
                         </dd>
                       )}
@@ -162,9 +206,13 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
                   ))}
                 </dl>
                 <p className="mt-3 text-ui text-dialog-hint">
-                  ≈ Text estimates at four characters per token; image tokens
-                  and provider overhead are excluded. They need not sum to
-                  provider-reported input above.
+                  ≈ Local estimates describe logical messages and tools before
+                  provider adaptation, not the prepared request used for
+                  preflight. Svar tokenizes text and tool payloads and estimates
+                  images, reasoning and framing. Adapters may drop or reshape
+                  content. Provider-reported input for this same call, including
+                  cached input, determines context pressure above; estimates do
+                  not.
                 </p>
               </div>
             )}
@@ -186,8 +234,8 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
               <span className="min-w-0 py-2.5">
                 <span className="block">Linked filesystems</span>
                 <span className="block text-ui font-normal text-dialog-hint">
-                  {roots.length} available ·{" "}
-                  {estimatedRoots} with guidance estimates
+                  {roots.length} available · {estimatedRoots} with guidance
+                  estimates
                 </span>
               </span>
             </Disclosure>
@@ -211,7 +259,8 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
                 </ul>
                 <p className="mt-3 text-ui text-dialog-hint">
                   Disk estimates do not add to context usage or imply that the
-                  agent loaded the file. Main workspace guidance is listed above.
+                  agent loaded the file. Main workspace guidance is listed
+                  above.
                 </p>
               </div>
             )}

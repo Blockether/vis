@@ -48,7 +48,9 @@ describe("session health in metrics", () => {
       screen.getByRole("button", { name: /Linked filesystems/ }),
     );
     expect(screen.getByText("~/library")).toBeInTheDocument();
-    expect(screen.getByText("AGENTS.md · ≈1.2k tokens on disk")).toBeInTheDocument();
+    expect(
+      screen.getByText("AGENTS.md · ≈1.2k tokens on disk"),
+    ).toBeInTheDocument();
     expect(screen.getByText("No AGENTS.md or CLAUDE.md")).toBeInTheDocument();
     expect(screen.getByText(/Could not read guidance/)).toBeInTheDocument();
     expect(screen.getByRole("meter")).toHaveAttribute("value", "138020");
@@ -61,17 +63,70 @@ describe("session health in metrics", () => {
     expect(screen.queryByText("Main AGENTS.md")).not.toBeInTheDocument();
   });
 
+  // #186: a large local estimate must not look like measured context pressure.
+  it("compares the logical estimate with the same request, not cumulative input", async () => {
+    paint({
+      ...STORY_SESSION_HEALTH,
+      lastRequestTokens: 162177,
+      breakdown: [
+        { label: "Conversation and tool results", tokens: 216546 },
+        { label: "Tool declarations", tokens: 404 },
+      ],
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: /Context breakdown/ }),
+    );
+    expect(screen.getByText("216,950 tokens")).toBeInTheDocument();
+    expect(screen.getByText("162,177 tokens")).toBeInTheDocument();
+    expect(screen.getByText("+54,773 tokens (+33.8%)")).toBeInTheDocument();
+    expect(screen.getByText(/before provider adaptation/)).toBeInTheDocument();
+    expect(screen.getByText(/including cached input/)).toBeInTheDocument();
+    expect(screen.getByText("81%")).toBeInTheDocument();
+    expect(screen.getByText("Fold reminder")).toBeInTheDocument();
+    expect(screen.queryByText("Over budget")).not.toBeInTheDocument();
+    expect(screen.getByRole("meter")).toHaveAttribute("value", "162177");
+    expect(
+      screen.queryByText(/four characters per token/),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [100, 90, "−10 tokens (−10.0%)"],
+    [100, 100, "0 tokens (0.0%)"],
+    [0, 100, "+100 tokens"],
+  ])(
+    "compares %i measured tokens with an estimate of %i",
+    async (input, estimate, difference) => {
+      paint({
+        ...STORY_SESSION_HEALTH,
+        lastRequestTokens: input,
+        breakdown: [{ label: "System instructions", tokens: estimate }],
+      });
+      await userEvent.click(
+        screen.getByRole("button", { name: /Context breakdown/ }),
+      );
+      expect(screen.getByText(difference)).toBeInTheDocument();
+    },
+  );
+
+  it("does not present an unavailable empty breakdown as a zero estimate", () => {
+    paint({ ...STORY_SESSION_HEALTH, breakdown: [] });
+    expect(
+      screen.getByText("Prompt breakdown unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Context breakdown/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it.each([
     [150000, "Fold reminder"],
     [207000, "Over budget"],
     [272000, "Input limit reached"],
-  ])(
-    "shows the state at %i tokens",
-    (lastRequestTokens, state) => {
-      paint({ ...STORY_SESSION_HEALTH, lastRequestTokens });
-      expect(screen.getByText(state)).toBeInTheDocument();
-    },
-  );
+  ])("shows the state at %i tokens", (lastRequestTokens, state) => {
+    paint({ ...STORY_SESSION_HEALTH, lastRequestTokens });
+    expect(screen.getByText(state)).toBeInTheDocument();
+  });
 
   it("does not replace missing health telemetry with total input or zero", () => {
     render(

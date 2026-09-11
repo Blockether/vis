@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.context.prompt-test
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
+            [com.blockether.svar.internal.llm :as svar-llm]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.python.env :as env-python]
@@ -49,6 +51,36 @@
         (expect (= (svar-router/count-messages "gpt-4o" messages)
                    (reduce + (map :tokens (:breakdown health)))))
         (expect (not (str/includes? (pr-str health) payload)))))
+  ;; #186: a logical breakdown is not the prepared Responses request or measured usage.
+  (it "labels and totals the logical projection without claiming a prepared count"
+      (let [model
+            "gpt-6-astra"
+
+            signature
+            (json/write-json-str
+              {:type "reasoning" :id "not_rs" :encrypted_content (apply str (repeat 10000 "A"))})
+
+            messages
+            [{:role "user" :content "go"}
+             {:role "assistant"
+              :model model
+              :content [{:type "thinking" :thinking "brief" :thinking-signature signature}
+                        {:type "text" :text "done"}]} {:role "user" :content "continue"}]
+
+            tools
+            [{:name "run" :description "Run code" :schema {:type "object"}}]
+
+            health
+            (prompt/request-health {} messages tools model)
+
+            prepared
+            (#'svar-llm/build-openai-responses-request-body messages model {:svar/tools tools})]
+
+        (expect (= :logical-request (:counted-projection health)))
+        (expect (= (reduce + (map :tokens (:breakdown health))) (:estimated-input-tokens health)))
+        (expect (< (+ 1000 (svar-router/count-responses-request model prepared))
+                   (reduce + (map :tokens (:breakdown health)))))
+        (expect (not (str/includes? (pr-str health) signature)))))
   (it "names foldable prior-turn recaps separately from user requests"
       (let [messages
             (prompt/assemble-initial-messages
@@ -71,12 +103,15 @@
   (it "keeps unavailable token counts diagnostic-only and never exposes the failing content"
       (with-redefs [svar-router/count-messages (fn [_ _]
                                                  (throw (ex-info "private request content" {})))]
-        (expect
-          (= {:token-count-source :unavailable :token-count-model "gpt-4" :breakdown [] :roots []}
-             (prompt/request-health {}
-                                    [{:role "user" :content "private request content"}]
-                                    []
-                                    "gpt-4")))))
+        (expect (= {:token-count-source :unavailable
+                    :token-count-model "gpt-4"
+                    :counted-projection :logical-request
+                    :breakdown []
+                    :roots []}
+                   (prompt/request-health {}
+                                          [{:role "user" :content "private request content"}]
+                                          []
+                                          "gpt-4")))))
   (it "attributes sent primary guidance once without rereading it"
       (with-redefs [agents/primary-instructions
                     (constantly {:files [{:scope :project

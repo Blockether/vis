@@ -5043,12 +5043,12 @@
             :iteration (inc (long (or iteration 0)))})))
 
 (defn- log-context-token-counts!
-  "Compare one logical request's local estimate with its own response usage, not a
-   previous request or retry. Tools/provider shaping are outside the local estimate;
-   reasoning payloads contribute only sizes to the log. Estimator failure is non-fatal."
-  [messages provider model request-context observation]
+  "Compare the persisted logical-request estimate (including tools) with its own
+   response usage, not a previous request or retry. Neither is the prepared-request
+   preflight count. Reasoning contributes only sizes to the log; failure is non-fatal."
+  [messages health provider model request-context observation]
   (let [local-tokens
-        (try (svar-router/count-messages model messages) (catch Exception _ nil))
+        (:estimated-input-tokens health)
 
         provider-tokens
         (:provider-input-tokens observation)
@@ -5070,9 +5070,9 @@
           request-context
           {:provider provider
            :model model
-           :counted-projection :logical-messages
+           :counted-projection (:counted-projection health)
            :local-estimate-model model
-           :local-count-source (if (some? local-tokens) :svar-message-estimate :unavailable)
+           :local-count-source (:token-count-source health)
            :local-input-tokens local-tokens
            :provider-count-source (if (number? provider-tokens) :provider-usage :unavailable)
            :message-count (count messages)
@@ -5344,13 +5344,16 @@
                                                       first-output-timeout-ms)
                  (catch Exception e
                    (when (perr/context-overflow-error? e)
-                     (log-context-token-counts!
-                       messages
-                       (:provider resolved-model)
-                       (or (:model (ex-data e)) (:name resolved-model) (:model resolved-model))
-                       request-context
-                       (merge {:outcome :context-overflow :route-source :resolved}
-                              (context-overflow-token-data (ex-data e)))))
+                     (let [model
+                           (or (:model (ex-data e)) (:name resolved-model) (:model resolved-model))]
+                       (log-context-token-counts!
+                         messages
+                         (prompt/request-health environment messages provider-tools model)
+                         (:provider resolved-model)
+                         model
+                         request-context
+                         (merge {:outcome :context-overflow :route-source :resolved}
+                                (context-overflow-token-data (ex-data e))))))
                    (throw e))))
           ask-result (prepend-routing-trace ask-result-raw
                                             (into (vec @empty-reply-resend-events)
@@ -5403,6 +5406,7 @@
             fold-measurement
             (assoc :fold-measurement fold-measurement))
           _ (log-context-token-counts! messages
+                                       request-health
                                        actual-provider
                                        actual-model
                                        request-context
