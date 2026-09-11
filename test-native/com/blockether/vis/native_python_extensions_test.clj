@@ -36,7 +36,9 @@
                "import hashlib, package_paths, re\nfrom pathlib import Path\n"
                "assert VIS_VERSION == VIS_PYTHON_SDK_VERSION != 'dev'\n"
                "assert re.fullmatch(r'[0-9a-f]{40}(-dirty)?', VIS_SHA_RELEASE)\n"
-               "assert re.fullmatch(r'\\d+\\.\\d+\\.\\d+', VIS_PYTHON_RUNTIME_VERSION)\n"
+               "assert VIS_PYTHON_RUNTIME_VERSION == "
+               (pr-str (str/trim (slurp (io/resource "vis-python-runtime/VERSION"))))
+               "\n"
                "print(hashlib.sha256(Path(package_paths.__file__).read_bytes()).hexdigest())\n")])]
           (try (expect (.waitFor child 60 TimeUnit/SECONDS) "native source probe timed out")
                (let [output (slurp log)]
