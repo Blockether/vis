@@ -312,6 +312,30 @@
               (expect (= "coloured\nlast" (str/trim (get r "out"))))
               (expect (not (str/includes? (get r "out") "\u001b")))))))))
 
+;; Regression: macOS release CI split an ANSI colour sequence between wait reads.
+(defdescribe
+  shell-wait-split-controls-test
+  (it "normalizes terminal controls after joining bounded wait reads"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid "shell-wait-split-controls"
+              env {:session-id sid}
+              command "printf '\\033[32mgreen\\033[0m\\nfirst\\rlast\\n\\033]0;title\\007body\\n'"
+              plain "green\nlast\nbody\n"]
+
+          (try (doseq [limit [1 2 3 4 5 7]]
+                 (let [id (str "split-" limit)]
+                   (shell-bg* env id command)
+                   (with-redefs-fn {#'shell/wait-chunk-limit limit}
+                     (fn []
+                       (let [waited (wait* env id)
+                             logged (:result (shell-logs* env id {:offset 0}))]
+
+                         (expect (= 0 (get waited "exit")))
+                         (expect (= plain (get waited "out")))
+                         (expect (= plain (get logged "out")))
+                         (expect (str/includes? (slurp (get logged "log_path")) "\u001b[")))))))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
+
 ;; Regression: parsing log_path skipped coloured +++ headers and raised KeyError.
 ;; Every programmatic shell read must expose the same plain diff while the file
 ;; retains the terminal bytes; callers need no colour-disabling flags.

@@ -1988,7 +1988,7 @@
    it waits, so a batch that ended inside its wait still has a log to read, and the
    file is what answers once the registry entry is gone."
   ([env id] (shell-logs-impl env id nil))
-  ([env id {:keys [offset limit lines sample-usage?] :or {sample-usage? true}}]
+  ([env id {:keys [offset limit lines sample-usage?] :or {sample-usage? true} :as opts}]
    (let [session
          (:session-id env)
 
@@ -2024,7 +2024,9 @@
                     ;; sent because isatty() was true. The model reads TEXT, so this window
                     ;; is the terminal's own reading of those bytes — the raw stream stays
                     ;; whole on disk at `log_path` for anyone who wants it.
-                    "out" (normalize-terminal-output (:text chunk))
+                    "out" (cond-> (:text chunk)
+                            (not (::raw-output? opts))
+                            normalize-terminal-output)
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk))
@@ -2121,7 +2123,7 @@
                                           "stage" "wait"
                                           "offset" start
                                           "next_offset" nxt
-                                          "out" (:text snap)
+                                          "out" (normalize-terminal-output (:text snap))
                                           "out_omitted_chars" (long (or (:omitted snap) 0))
                                           ;; The WAIT expired, not the process: a still-running child means
                                           ;; the deadline ended this call and the shell keeps its id.
@@ -2161,7 +2163,9 @@
                                        ;; per-iteration `ps` fork buys a number no one
                                        ;; reads. `finish` takes the one sample that
                                        ;; reaches a caller.
-                                       :sample-usage? false}))
+                                       :sample-usage? false
+                                       ;; Terminal controls and CR redraws can span reads.
+                                       ::raw-output? true}))
 
             text
             (or (get res "out") "")
