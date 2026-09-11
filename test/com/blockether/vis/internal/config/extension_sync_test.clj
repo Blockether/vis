@@ -6,9 +6,9 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (deftest extension-declarations-are-closed-and-explicit
-  (is (validation/valid? {"extensions" {"vis-spel" {"source" "https://github.com/Blockether/spel"
-                                                    "subdirectory" "extensions/vis-spel"
-                                                    "version" "0.1.0"}}}))
+  (is (validation/valid? {"extensions" {"vis-tools" {"source" "https://github.com/example/vis-tools"
+                                                     "subdirectory" "extensions/vis-tools"
+                                                     "version" "0.1.0"}}}))
   (doseq [entry [{"source" "./tools" "trust" true} {"source" "./tools" "revision" "main"}
                  {"source" "./tools" "version" "1" "revision" (apply str (repeat 40 "a"))} {}]]
     (is (not (validation/valid? {"extensions" {"vis-tools" entry}}))))

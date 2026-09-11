@@ -4104,7 +4104,8 @@
                  (wire/parse-json (:body (call :get "" nil)))
 
                  request
-                 {:kind "potential_issue"
+                 ;; Complaint kinds use the current wire contract.
+                 {:kind "complain"
                   :content "Wire roundtrip"
                   :activation_id (get binding "activation_id")
                   :idempotency_key "wire-retry"}
@@ -4118,12 +4119,12 @@
                  id
                  (get entry "entry_id")]
 
-             (is (= 200 (:status response)))
+             (is (= 200 (:status response)) (:body response))
              (is (= sid (get entry "author_session_id")))
              (is (= "sdk" (get entry "source")))
-             (is (= "potential_issue" (get entry "kind")))
+             (is (= "complain" (get entry "kind")))
              (is (not (contains? entry "id")))
-             (doseq [kind [nil "question" 7]]
+             (doseq [kind [nil "question" "potential_issue" 7]]
                (is (= 400 (:status (call :post "/entries" (assoc request :kind kind))))))
              (is (= 400 (:status (call :post "/entries" (dissoc request :kind)))))
              (is (= id

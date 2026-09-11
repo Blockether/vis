@@ -39,15 +39,15 @@ Use the same `extensions` map in project `vis.yml` and global `~/.vis/config.yml
 
 ```yaml
 extensions:
-  vis-spel:
-    source: https://github.com/Blockether/spel
-    subdirectory: extensions/vis-spel
+  vis-tools:
+    source: https://github.com/example/vis-tools
+    subdirectory: extensions/vis-tools
     version: "0.1.0"
   vis-greeter:
     source: ./tools/greeter
 ```
 
-Replace the example version with a reviewed, approved release. A declaration accepts
+Replace the example repository and version with a reviewed, approved release. A declaration accepts
 `source`, optional `subdirectory`, and either `version` or a full lowercase Git
 `revision`. Selectors apply only to GitHub sources. Local paths are relative to the
 YAML file declaring them, not the shell's working directory.

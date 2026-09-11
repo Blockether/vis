@@ -295,9 +295,9 @@ def test_op_answers_one_entry_or_nothing():
 def test_extension_declarations_use_the_canonical_config_contract():
     declaration = {
         "extensions": {
-            "vis-spel": {
-                "source": "https://github.com/Blockether/spel",
-                "subdirectory": "extensions/vis-spel",
+            "vis-tools": {
+                "source": "https://github.com/example/vis-tools",
+                "subdirectory": "extensions/vis-tools",
                 "version": "0.1.0",
             }
         }
@@ -310,4 +310,4 @@ def test_extension_declarations_use_the_canonical_config_contract():
         {"source": "./tools", "version": "1.0.0", "revision": "a" * 40},
     ):
         with pytest.raises(ValueError):
-            _contracts.validate("config", "config", {"extensions": {"vis-spel": spec}})
+            _contracts.validate("config", "config", {"extensions": {"vis-tools": spec}})
