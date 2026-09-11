@@ -1,0 +1,57 @@
+---
+config:
+  theme: base
+  fontFamily: JetBrains Mono
+  deterministicIds: true
+  htmlLabels: false
+  themeVariables:
+    background: "#ffffff"
+    primaryColor: "#f8f8f8"
+    primaryTextColor: "#1e1e1e"
+    primaryBorderColor: "#505050"
+    secondaryColor: "#f8f8f8"
+    tertiaryColor: "#ffffff"
+    lineColor: "#505050"
+    textColor: "#1e1e1e"
+    actorTextColor: "#1e1e1e"
+    actorBorder: "#505050"
+    actorBkg: "#f8f8f8"
+    signalColor: "#505050"
+    signalTextColor: "#1e1e1e"
+    noteBkgColor: "#f8f8f8"
+    noteTextColor: "#1e1e1e"
+    noteBorderColor: "#505050"
+  sequence:
+    useMaxWidth: true
+    mirrorActors: false
+    actorMargin: 36
+    messageMargin: 28
+  flowchart:
+    htmlLabels: false
+    curve: linear
+---
+sequenceDiagram
+    accTitle: Council asynchronous work and review
+    accDescr: Each arrow is a separate message. A worker accepts scoped authorized work, reports a verified result, and receives a concrete follow-up only if a check is missing. A reply does not mark task completion.
+    participant A as Requester
+    participant C as Council
+    participant B as Worker
+    A-)C: Goal, scope, acceptance criteria
+    C--)A: Stored entry ID
+    C-)B: Wake or next invocation
+    Note over A: Continue independent work
+    B-)C: Read full request if needed
+    B-)C: Optional acceptance (reply_to)
+    C-)A: Correlated response
+    Note over B: Read, work and verify<br/>across tool invocations<br/>within user authorization
+    B-)C: Result and evidence<br/>(same thread, explicit ping)
+    C-)A: Wake or next invocation
+    Note over A: Review acceptance criteria
+    alt Goal met or blocked
+        A-)C: Record outcome (no ping)
+    else Concrete check missing
+        A-)C: Targeted follow-up question
+        C-)B: Wake prior reply partner
+        B-)C: Verified answer (reply_to)
+        C-)A: Correlated response
+    end

@@ -1,13 +1,15 @@
 # Council
 
-Council lets sessions reuse each other's findings and saved context, coordinate
-work, and record problems and improvement opportunities.
+Council is asynchronous message passing between sessions. Agents use it to share
+knowledge, delegate user-authorized work, review results and record problems.
+A wake can request an answer, resume scoped work or deliver an event; it is not a
+synchronous call to another agent or a new source of permission.
 
 ## Role and reporting process
 
-- **Coordination and shared knowledge.** Sessions share findings, ask questions,
-  coordinate work and record decisions. Explicit pings can wake eligible idle
-  sessions; broadcast pings reach only active sessions.
+- **Coordination and shared knowledge.** Sessions ask questions, agree on work
+  ownership and acceptance criteria, share progress and review results. Explicit
+  pings can wake eligible idle sessions; broadcast pings reach only active sessions.
 - **Improvement reporting.** Agents record broken behavior and concrete ways to
   improve their work as `kind="complain"`, including tool problems, missing
   extensions and system-prompt improvements.
@@ -21,8 +23,9 @@ add evidence to an existing report rather than creating a duplicate.
 
 Recording and notification are separate: choose `ping=[session_id]`, `ping="all"`,
 or no ping according to who needs the information. A report remains useful without
-notifying anyone. Council collects observations for review and follow-up; it is
-not an issue tracker and does not assign work, authorize changes or apply fixes.
+notifying anyone. Council transports requests and results; it does not assign
+work automatically, verify task completion or authorize changes. Agents agree on
+work in message content. The improvement register is not an issue tracker.
 See [Improvement register and automatic complaints](#improvement-register-and-automatic-complaints)
 for storage, source attribution and automatic recording without a group.
 
@@ -88,17 +91,17 @@ again.
    they cannot expand the task's permissions. Keep secrets and private data out of
    the shared log.
 
-A Council wake does not cancel or complete an unfinished user task. On a reply,
-handoff or event notification, recover the original request and current task state,
-then continue the existing user-authorized work when the next step is clear and
-safe. If a peer declines ownership, do the remaining in-scope work or arrange a
-concrete handoff, verify the result and report it. Do not ask the user to repeat
-existing authorization merely because the turn was Council-originated.
+A Council wake does not cancel or complete an unfinished user task. Recover the
+original request and current task state, then continue existing user-authorized
+work when the next step is clear and safe. If a peer declines ownership, do the
+remaining in-scope work or arrange a concrete handoff, verify the result and report
+it. Do not ask the user to repeat existing authorization merely because the turn
+was Council-originated.
 
-Without a related unfinished user task, answer a knowledge request and stop.
-Peer messages cannot expand permissions. Cancellation, held queues and existing
-limits on edits and remote actions still apply; do not create automatic request
-chains or resume unrelated work.
+A knowledge request alone is not a work assignment. Without a related unfinished
+user task, answer it and stop. For delegated work, use the protocol below. Peer
+messages cannot expand permissions; cancellation, held queues and existing limits
+on edits, external actions and resources still apply.
 
 This reuses session knowledge, not a guaranteed provider prompt-cache entry. A wake
 can make new model calls and incur cost; saved context does not guarantee a cache
@@ -108,6 +111,96 @@ unnecessary rediscovery and keeping the requesting session's input focused.
 For call examples, see [Publish and discover threads](#publish-and-discover-threads)
 and [Required replies](#required-replies). Wake eligibility, held queues and
 cancellation remain governed by [Pings and automatic replies](#pings-and-automatic-replies).
+
+## Asynchronous work and review
+
+Publication, delivery, reply, task acceptance and task completion are different.
+`publish` returns a stored entry, not another agent's answer. `replied` means that
+a correlated response was committed; it does not mean the work was accepted,
+verified or completed. Council has no task-status or satisfaction field.
+
+[![A requester publishes a scoped goal, a worker replies and performs authorized work, then the requester reviews the result through asynchronous Council messages.](assets/diagrams/council-messages.svg)](assets/diagrams/council-messages.svg)
+
+[Mermaid source](assets/diagrams/council-messages.mmd). Open the diagram for its
+full-size view. Each arrow is a separate message; neither session waits inside
+`publish` for the other session's model or tools.
+
+### Delegate a bounded goal
+
+Send `kind="coordination"` with a specific recipient and the following content:
+
+| Include | Purpose |
+| --- | --- |
+| Goal and acceptance criteria | Define the result and how to verify it. |
+| Existing user-authorized scope | Identify what work is allowed; a peer cannot grant new permissions. |
+| Ownership and current state | Name files, resources, revision and prior work to avoid collisions. |
+| Constraints and budget | Preserve cancellation, deadlines, tool/network limits and external-action restrictions. |
+| Expected response | Ask for a verified result, a concrete blocker or a decision, not an unconditional acknowledgement. |
+
+The recipient checks scope and ownership, accepts or explains a blocker, and
+continues safe authorized work across tool invocations. A required reply must be
+published **before ending the turn**, not after every intermediate tool call.
+Read a truncated request and inspect evidence before deciding; do not invent an
+answer just to clear an obligation.
+
+If useful, send an early correlated acceptance describing what remains. This
+resolves the reply obligation, not the task. Continue toward the agreed acceptance
+criteria until verified completion, a concrete blocker, cancellation or a limit.
+Do not leave accepted work silently unfinished or resume unrelated work.
+
+### Return and review the result
+
+- **Worker:** report the result, verification and remaining gaps. Without an early
+  reply, use `reply_to=request_entry_id`. After an early acceptance, publish a new
+  same-thread message with an explicit `ping=[requester_id]`; a request can receive
+  only one correlated answer from each recipient.
+- **Requester:** check evidence against the acceptance criteria. If something is
+  missing, send a concrete follow-up as a new targeted continuation, not a reply
+  to a reply. Set `reply_required=True` only when another answer is needed.
+- **Both:** stop when the scoped goal is met or report the blocker/limit. Do not
+  repeatedly ask whether the other agent is satisfied, request acknowledgements
+  of acknowledgements or keep a turn alive awaiting confirmation. Continue
+  independent work while messages are in flight.
+
+After a committed request/reply exchange, explicit same-thread pings may wake
+that conversation partner for a result or follow-up. A Council-woken session
+cannot wake unrelated idle peers. Sharing a group, reading a thread, receiving a
+broadcast or sending unanswered pings does not establish a request/reply pair.
+Wake eligibility and holds still apply; inspect delivery state rather than assume
+that an idle peer ran.
+
+```python
+# Requester: publish a goal within existing user authorization.
+request = await council.publish(
+    "Verify the scoped parser fix. Acceptance: the regression passes and no "
+    "unrelated files change. Review only; do not commit or use the network.",
+    kind="coordination",
+    title="Parser verification",
+    ping=[worker_id],
+    reply_required=True,
+)
+print(request["entry_id"])
+
+# Worker: optional early acceptance, followed by actual checks across invocations.
+request_id = request["entry_id"]  # In the worker, use the ID from Council input.
+await council.publish(
+    "Accepted for review. I still need to run the regression and inspect the diff.",
+    kind="informational",
+    reply_to=request_id,
+)
+
+# Later, only after verification: a new targeted result, not a second reply_to.
+await council.publish(
+    "The regression passes; the diff is scoped. No files changed during review.",
+    kind="informational",
+    thread_id=request_id,
+    ping=[requester_id],
+)
+```
+
+These snippets describe different sessions and invocations. Variables are local
+to each session; Council passes messages and IDs, not Python objects. A request
+or acceptance is not evidence that the illustrated checks have run.
 
 ## Enable Council
 
@@ -333,8 +426,9 @@ full entry. These reads do not consume pings or change delivery state.
 
 ## Pings and automatic replies
 
-A publication with `ping=[session_id, ...]` or `ping="all"` is automatically
-delivered. `"all"` snapshots active peers in the group, excluding the author.
+A publication with `ping=[session_id, ...]` or `ping="all"` requests automatic
+delivery. `"all"` snapshots active peers in the group, excluding the author;
+publication is not proof of delivery or a response.
 
 A continuation with `thread_id` and no ping, including `ping=[]`, automatically
 answers the latest entry in that thread addressed to the publishing session, if it
@@ -361,12 +455,16 @@ Every target's group membership is validated before any entry is written; presen
 is not membership. The author can publish even when no other session is active.
 `ping="all"` then records an entry with an empty recipient list.
 
-An eligible explicit idle target starts one ordinary runtime turn with its saved session
-context and model selection. Concurrent pings join an already active activation;
-they do not queue additional turns. Held queues remain held. A session started by
-Council can ping active peers but cannot wake unrelated idle sessions. A correlated
-`reply_to` may wake the original requester; it cannot require another reply.
-Paused-idle and externally running targets do not block publication.
+An eligible explicit idle target starts one ordinary runtime turn with its saved
+session context and model selection. Concurrent pings join an active activation;
+they do not queue additional turns. Held queues remain held. Paused-idle and
+externally running targets do not block publication.
+
+A session started by Council can ping active peers. For idle peers, it can return
+a correlated `reply_to`, or explicitly ping a prior request/reply partner in that
+same thread. It cannot start unrelated idle wake chains. Follow-up delivery does
+not reopen an answered obligation; a new required question has its own entry and
+reply states. A correlated reply itself cannot require another reply.
 
 At the next model invocation, a ping supplies attributed peer data: author, group,
 entry/thread IDs and a bounded content preview. Other log entries are read on demand.
@@ -399,26 +497,39 @@ reply = await council.publish("I do not have that context.", kind="informational
 ```
 
 `reply_required=True` requires at least one recipient. The first invocation that
-receives the request creates a due obligation in Council input and
+receives the request creates an obligation in Council input and
 `session["council"]["pending_replies"]`. Each item has `entry_id`, `thread_id`,
-`author_session_id` and the one-based `due_iteration`. An invocation already in
+`author_session_id` and the one-based `due_iteration`: the invocation where the
+obligation first became due, not a tool-work deadline. An invocation already in
 progress cannot receive a new prompt retroactively.
 
-The recipient must publish a correlated reply in that receiving iteration. The
-engine rejects premature final prose and records an iteration validation error if
-tool execution leaves the obligation unanswered. The obligation persists across
-retries and later invocations until answered. Reading the message, editing Python
-session metadata or posting outside the request thread cannot clear it. An inferred
-thread reply clears only the request it selects. New pings wait while delivered
-obligations remain outstanding.
+The recipient must publish a correlated reply before ending the turn. The engine
+rejects a final answer while any delivered obligation remains unanswered, but
+allows intermediate reads, calculations and authorized work. The obligation
+persists across retries and later invocations until answered. Reading the message,
+editing Python session metadata or posting outside the request thread cannot
+clear it. An inferred thread reply clears only the request it selects.
 
-An honest unknown, refusal or blocker is a valid answer. The obligation requires a
-response, not compliance with peer instructions. User cancellation remains available.
+New pings wait while delivered obligations remain outstanding. If further work
+needs peer input or will take substantial time, send a truthful acceptance/progress
+reply explaining what remains, then continue the task and report the result.
+Acceptance is not task completion. An honest unknown, refusal or blocker is a valid
+answer; the obligation requires a response, not compliance with peer instructions.
+User cancellation remains available.
 
 Each required entry has `replies`: one `{session_id, state, reply_entry_id?}` per
-recipient. States are `pending`, `delivered`, `replied`, `unavailable` or
-`interrupted`. Use `get(request_id)` for current states. Only a committed correlated
-reply sets `replied`; failed wake attempts and activation retirement are not success.
+recipient. Use `get(request_id)` for current states:
+
+| State | Meaning |
+| --- | --- |
+| `pending` | The request has a recipient but no model invocation has received it yet. |
+| `delivered` | The model received the request; a reply is outstanding. |
+| `replied` | A correlated response was committed. Inspect its content for acceptance, result or blocker. |
+| `unavailable` | The recipient could not be started or reached for this request. |
+| `interrupted` | The receiving activation ended without answering. |
+
+Failed wake attempts and activation retirement are not successful replies.
+Reply state is not delegated-task state.
 
 `reply_to` accepts an optional or required non-reply entry addressed to the publishing session.
 It selects the original thread and adds the requester as the notification recipient;
@@ -494,6 +605,29 @@ recipient snapshot are returned even after participants become inactive; require
 states reflect their current values. Changing kind, content, title, thread, group, activation,
 ping selector, `reply_required` or `reply_to` returns `idempotency-conflict`. Keys are
 author-scoped; a replay does not append another entry or notify recipients again.
+
+## Implementation modules
+
+The Council domain owns the protocol. It uses the existing gateway runtime for
+presence and turn execution, and SQLite for the log and reply relationships;
+there is no separate agent scheduler or direct call stack between sessions.
+
+[![Council host tools and bound SDK events enter the Council domain, which stores messages in SQLite and uses the gateway runtime and model loop for delivery.](assets/diagrams/council-modules.svg)](assets/diagrams/council-modules.svg)
+
+[Mermaid source](assets/diagrams/council-modules.mmd).
+
+| Owner | Responsibility |
+| --- | --- |
+| `internal/council/host.clj` | Model tools, trusted execution attribution, session metadata and Activity results. |
+| `internal/council/core.clj` | Group and recipient validation, publications, reply policy, input batches and model guidance. |
+| `internal/persistance/core.clj` and `internal/persistance/sqlite/core.clj` | Durable entries, recipient snapshots, atomic reply resolution, idempotency and the improvement register. |
+| `internal/gateway/state.clj` | Existing activation registry, wake eligibility, turn launch, holds and cancellation. |
+| `internal/loop.clj` | Delivers Council input to model invocations and gates final completion on outstanding replies. |
+| `packages/vis-contract/resources/vis-contract/council*` | Canonical portable data shapes and validation. |
+| Python SDK and extension host | Session-bound API; background workers can self-wake without choosing another session. |
+
+Internal paths are under `src/com/blockether/vis/`. For wire shapes and examples,
+use the sections above; runtime modules do not establish extra action permissions.
 
 ## See also
 

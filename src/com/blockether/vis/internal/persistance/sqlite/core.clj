@@ -4973,6 +4973,19 @@
   [db id]
   (first (council-rows db (query! db {:select [:*] :from [:council_entry] :where [:= :id id]}))))
 
+(defn db-council-exchanged?
+  "Whether two sessions have a committed request/reply pair in this exact thread.
+   A shared broadcast, log read or unanswered outgoing ping is not an exchange."
+  [db thread a b]
+  (some? (query-one! db
+                     {:select [:e.id]
+                      :from [[:council_entry :e]]
+                      :join [[:council_entry :r] [:= :r.id :e.reply_to]]
+                      :where [:and [:= :e.thread_id thread]
+                              [:or [:and [:= :e.author_sid a] [:= :r.author_sid b]]
+                               [:and [:= :e.author_sid b] [:= :r.author_sid a]]]]
+                      :limit 1})))
+
 (defn db-council-replay
   [db sid key]
   (when-let [row (query-one! db

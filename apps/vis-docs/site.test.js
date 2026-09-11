@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { JSDOM } from 'jsdom';
 import { security } from './headers.js';
 import { createTestHarness } from 'wrangler';
@@ -50,6 +51,38 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
     }
   }
 });
+
+test('Council diagrams are accessible, self-contained and match their Mermaid sources', () => {
+  const font = readFileSync('../../resources/vis-docs/assets/fonts/jetbrains-mono.woff2').toString(
+    'base64',
+  );
+  for (const name of ['council-messages', 'council-modules']) {
+    const source = readFileSync(`dist/assets/diagrams/${name}.mmd`);
+    const svg = readFileSync(`dist/assets/diagrams/${name}.svg`, 'utf8');
+    expect(source).toEqual(readFileSync(`../../resources/vis-docs/assets/diagrams/${name}.mmd`));
+    expect(svg).toBe(readFileSync(`../../resources/vis-docs/assets/diagrams/${name}.svg`, 'utf8'));
+    const dom = new JSDOM(svg, {
+      contentType: 'image/svg+xml',
+      url: `https://gateway.example.com/assets/diagrams/${name}.svg`,
+    });
+    try {
+      const image = dom.window.document.documentElement;
+      expect(image.getAttribute('data-source-sha256')).toBe(
+        createHash('sha256').update(source).digest('hex'),
+      );
+      for (const attribute of ['aria-labelledby', 'aria-describedby']) {
+        const label = dom.window.document.getElementById(image.getAttribute(attribute));
+        expect(label?.textContent.length).toBeGreaterThan(20);
+      }
+      expect(dom.window.document.querySelectorAll('script, foreignObject, image').length).toBe(0);
+      expect(svg).toContain(`data:font/woff2;base64,${font}`);
+      expect(svg).not.toMatch(/(?:href|src)="https?:/);
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+
 test('docs shortcuts and catalog buttons use one shared control and font contract', () => {
   const dom = new JSDOM(
     '<style>' +

@@ -15,8 +15,9 @@
 
 (deftest required-reply-model-loop-test
   ;; #182: a plain thread reply must also resolve the obligation across the Python boundary.
+  ;; Session 29ac86ff t4: reading and calculating before a reply must not fail tool iterations.
   (doseq [first-action
-          [:final :tool]
+          [:final :tool :read :research :read-final]
 
           reply-mode
           ["reply_to" "thread_id"]]
@@ -63,70 +64,85 @@
                       (fn [id]
                         (= "council" id))]
 
-          (let [active
-                (get (council/runtime db) aid)
+          (let
+            [active
+             (get (council/runtime db) aid)
 
-                request
-                (council/publish!
-                  db
-                  #(council/runtime db)
-                  {:session-id aid :activation-id (:activation-id active) :source "sdk"}
-                  {:kind "coordination"
-                   :content "Do you have evidence for the reported issue?"
-                   :ping [bid]
-                   :reply_required true})
+             request
+             (council/publish!
+               db
+               #(council/runtime db)
+               {:session-id aid :activation-id (:activation-id active) :source "sdk"}
+               {:kind "coordination"
+                :content "Do you have evidence for the reported issue?"
+                :ping [bid]
+                :reply_required true})
 
-                tid
-                (ps/db-store-session-turn! db
-                                           {:parent-session-id (:session-id b)
-                                            :user-request "Continue your task"})
+             tid
+             (ps/db-store-session-turn! db
+                                        {:parent-session-id (:session-id b)
+                                         :user-request "Continue your task"})
 
-                reply-code
-                (str "pending = session['council']['pending_replies']\n"
-                     "assert len(pending) == 1\n"
-                     "assert pending[0]['entry_id'] == "
-                     (:entry_id request)
-                     "\n"
-                     "assert pending[0]['due_iteration'] == 1\n"
-                     "await council.publish('I do not have evidence.', kind='informational', "
-                     reply-mode
-                     "="
-                     (:entry_id request)
-                     ")\n")
+             reply-at
+             (if (#{:research :read-final} first-action) 3 2)
 
-                result
-                (with-redefs
-                  [svar/ask-code!
-                   (fn [_ opts]
-                     (swap! prompts conj (:messages opts))
-                     (let [n (swap! calls inc)
-                           code (cond
-                                  (= n 2) reply-code
-                                  (and (= n 1) (= first-action :tool))
-                                  "session['council']['pending_replies'] = []\nprint('unrelated')")]
+             reply-code
+             (str "pending = session['council']['pending_replies']\n"
+                  "assert len(pending) == 1\n"
+                  "assert pending[0]['entry_id'] == "
+                  (:entry_id request)
+                  "\n"
+                  "assert pending[0]['due_iteration'] == 1\n"
+                  "await council.publish('I do not have evidence.', kind='informational', "
+                  reply-mode
+                  "="
+                  (:entry_id request)
+                  ")\n")
 
-                       (if code
-                         {:stop-reason :tool-calls
-                          :tokens {}
-                          :tool-calls
-                          [{:id (str "reply-" n) :name "python_execution" :input {:code code}}]}
-                         {:stop-reason :end :tokens {} :content "done" :tool-calls []})))]
-                  (lp/iteration-loop b "Continue your task" {:session-turn-id tid}))
+             result
+             (with-redefs
+               [svar/ask-code!
+                (fn [_ opts]
+                  (swap! prompts conj (:messages opts))
+                  (let
+                    [n (swap! calls inc)
+                     code
+                     (cond
+                       (= n reply-at) reply-code
+                       (and (= n 1) (= first-action :tool))
+                       "session['council']['pending_replies'] = []\nprint('unrelated')"
+                       (and (= n 1) (#{:read :research :read-final} first-action))
+                       (str "entry = await council.get("
+                            (:entry_id request)
+                            ")\nprint(entry['content'])")
+                       (and (= n 2) (= first-action :research))
+                       "assert len(session['council']['pending_replies']) == 1\nprint(sum(range(4)))")]
 
-                iterations
-                (ps/db-list-session-turn-iterations db tid)
+                    (if code
+                      {:stop-reason :tool-calls
+                       :tokens {}
+                       :tool-calls
+                       [{:id (str "reply-" n) :name "python_execution" :input {:code code}}]}
+                      {:stop-reason :end :tokens {} :content "done" :tool-calls []})))]
+               (lp/iteration-loop b "Continue your task" {:session-turn-id tid}))
 
-                request-now
-                (council/get-entry db aid {:entry_id (:entry_id request)})
+             iterations
+             (ps/db-list-session-turn-iterations db tid)
 
-                reply-id
-                (get-in request-now [:replies 0 :reply_entry_id])]
+             request-now
+             (council/get-entry db aid {:entry_id (:entry_id request)})
+
+             reply-id
+             (get-in request-now [:replies 0 :reply_entry_id])]
 
             (is (= {:answer "done"} (:answer result)))
             (is (true? (:final? (last (:trace result)))))
-            (is (= 3 @calls)
-                "Neither premature final prose nor an unrelated tool block is accepted")
-            (is (str/includes? (pr-str (:forms (first iterations))) "Council reply required"))
+            (is (= (inc reply-at) @calls))
+            (doseq [[index iteration] (map-indexed vector iterations)]
+              (is (= (or (and (= first-action :final) (zero? index))
+                         (and (= first-action :read-final) (= index 1)))
+                     (str/includes? (pr-str (:forms iteration)) "Council reply required"))
+                  "Only an unanswered final answer is rejected, not read/research/tool iterations"))
             (is (= [(:entry_id request)]
                    (mapv :entry_id (:pending_replies (:council-input (first iterations))))))
             (is (str/includes? (pr-str (first @prompts)) "pending_replies"))

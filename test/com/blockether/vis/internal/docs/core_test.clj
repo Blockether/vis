@@ -67,6 +67,52 @@
                    (with-open [body ^java.io.InputStream (:body response)]
                      (expect (= [137 80 78 71 13 10 26 10] (vec (repeatedly 8 #(.read body)))))))))
 
+(defdescribe
+  council-diagrams-test
+  (it
+    "serves accessible SVG diagrams and Mermaid sources in static and live docs"
+    (let [{:keys [pages] :as site}
+          (docs/collect)
+
+          page
+          (first (filter #(= "council" (:slug %)) pages))]
+
+      (doseq [name
+              ["council-messages" "council-modules"]
+
+              ext
+              ["svg" "mmd"]
+
+              :let [rel
+                    (str "diagrams/" name "." ext)
+
+                    response
+                    (docs/handle {:uri (str "/docs/assets/" rel)})]]
+
+        (expect (= (str "assets/" rel) (get @#'docs/asset-files (str "vis-docs/assets/" rel))))
+        (expect (= 200 (:status response)))
+        (expect (= (if (= ext "svg") "image/svg+xml" "text/plain; charset=utf-8")
+                   (get-in response [:headers "content-type"])))
+        (with-open [body ^java.io.InputStream (:body response)]
+          (let [text (slurp body)]
+            (if (= ext "svg")
+              (do (expect (str/includes? text "<svg"))
+                  (expect (str/includes? text "aria-labelledby="))
+                  (expect (str/includes? text "aria-describedby="))
+                  (expect (not (str/includes? text "<script"))))
+              (expect (str/includes? text "accTitle: Council")))))
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site page mode)
+
+                      path
+                      (str (when (= mode :live) "/docs/") "assets/" rel)]]
+
+          (expect (str/includes? html (str "href=\"" path "\"")))
+          (when (= ext "svg") (expect (str/includes? html (str "src=\"" path "\"")))))))))
+
 (def ^:private rewrite-md-links @#'docs/rewrite-md-links)
 
 (defdescribe rewrite-md-links-test

@@ -23,7 +23,7 @@
      :page "queue-and-cancel"
      :title "Controlling a session"}
     {:blurb
-     "Coordinate Vis sessions, share knowledge and record problems or improvement opportunities as complaints in Council and the improve register."
+     "Coordinate sessions through asynchronous messages, delegate authorized work, review results and record improvement opportunities."
      :page "council"
      :title "Council"}
     {:blurb

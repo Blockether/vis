@@ -2013,6 +2013,122 @@
             (council 'acknowledge-input! db a active ["later" 0])
             (is (empty? (ps/db-council-pending db a "another" gid 0 20)))))))))
 
+(deftest same-thread-follow-up-wake-test
+  (with-council
+    (let [{:keys [db ids fleet] :as w}
+          (world 4)
+
+          [a b c d]
+          ids
+
+          request
+          (publish w
+                   {:kind "coordination"
+                    :content "Check the scoped change"
+                    :ping "all"
+                    :reply_required true})
+
+          thread
+          (:entry_id request)
+
+          other
+          (publish w {:kind "coordination" :content "Different task"})
+
+          receiver
+          (assoc w
+            :actor {:session-id b :activation-id (get-in @fleet [b :activation-id]) :source "host"})
+
+          eligible?
+          (atom true)
+
+          wakes
+          (atom [])]
+
+      ;; A and C have their own exchange; B must not inherit it. D only saw the broadcast.
+      (publish (assoc w
+                 :actor
+                 {:session-id c :activation-id (get-in @fleet [c :activation-id]) :source "host"})
+               {:kind "informational" :content "No findings" :reply_to thread})
+      (swap! fleet assoc-in [b :wake?] true)
+      (swap! fleet dissoc a c d)
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core 'runtime-waker)
+                       (atom {:eligible? (fn [_ _]
+                                           @eligible?)
+                              :wake! (fn [_ sid entry]
+                                       (swap! wakes conj [sid (:entry_id entry)])
+                                       true)})}
+        (fn []
+          (let [acceptance
+                (publish receiver
+                         {:kind "informational"
+                          :content "Accepted; verification is still pending"
+                          :reply_to thread})
+
+                result-opts
+                {:kind "informational"
+                 :content "Verified result"
+                 :thread_id thread
+                 :ping [a]
+                 :idempotency_key "result"}
+
+                result
+                (publish receiver result-opts)]
+
+            (is (= [[a (:entry_id acceptance)] [a (:entry_id result)]] @wakes))
+            (is (nil? (:reply_to result)))
+            (is (not (:reply_required result)))
+            (is (= result (publish receiver result-opts)))
+            (is (= "replied"
+                   (:state (first (filter #(= b (:session_id %))
+                                          (:replies
+                                            (council 'get-entry db a {:entry_id thread})))))))
+            ;; Log-only acknowledgements and broadcasts never start another idle wake.
+            (publish receiver {:kind "informational" :content "Recorded" :thread_id thread})
+            (publish
+              receiver
+              {:kind "informational" :content "Active peers only" :thread_id thread :ping "all"})
+            ;; An outgoing ping cannot manufacture a relationship with a third participant.
+            (doseq [_
+                    (range 2)
+
+                    target
+                    [c d]]
+
+              (publish
+                receiver
+                {:kind "coordination" :content "Unrelated peer" :thread_id thread :ping [target]}))
+            (publish
+              receiver
+              {:kind "coordination" :content "Wrong thread" :thread_id (:entry_id other) :ping [a]})
+            (is (= 2 (count @wakes)))
+            ;; Prior conversation does not override hold/cancellation eligibility.
+            (reset! eligible? false)
+            (let [blocked (publish receiver
+                                   {:kind "coordination"
+                                    :content "A concrete check"
+                                    :thread_id thread
+                                    :ping [a]
+                                    :reply_required true})]
+              (is (= "unavailable" (get-in blocked [:replies 0 :state])))
+              (is (= 2 (count @wakes))))
+            (reset! eligible? true)
+            ;; A requester woken by the answer can ask a concrete follow-up in the same thread.
+            (swap! fleet assoc a {:activation-id "review" :group-id (:gid w) :wake? true})
+            (swap! fleet dissoc b)
+            (let [reviewer
+                  (assoc w :actor {:session-id a :activation-id "review" :source "host"})
+
+                  review
+                  (publish reviewer
+                           {:kind "coordination"
+                            :content "Check the missing case"
+                            :thread_id thread
+                            :ping [b]
+                            :reply_required true})]
+
+              (is (= [b (:entry_id review)] (last @wakes)))
+              (is (= "pending" (get-in review [:replies 0 :state]))))))))))
+
 (deftest thread-reply-wakes-requester-test
   ;; #182: a no-ping continuation must return to an idle requester, without reply_to.
   (with-council

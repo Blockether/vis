@@ -19,6 +19,15 @@ The Worker and browser share the catalog renderer in `web/render.js`; all docume
 The catalog link is public-site-only. It is neither a `doc()` entry nor a page served
 by the embedded documentation. Local/live documentation rendering remains supported.
 
+## Council diagrams
+
+`npm run diagrams` regenerates the two committed Council SVGs from the Mermaid
+sources in `resources/vis-docs/assets/diagrams/`. The generator uses Mermaid CLI
+11.17.0 through `npm exec` (network required on first use), embeds the existing
+JetBrains Mono font and records each source hash. Run this after changing a diagram,
+then `npm test`. The static and embedded docs serve the same SVG and source files;
+no Mermaid runtime, remote renderer or browser script is loaded by readers.
+
 ## Public discovery
 
 `npm run build` regenerates metadata and discovery from the engine's collected documentation

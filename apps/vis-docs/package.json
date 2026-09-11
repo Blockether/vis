@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "npm run build && wrangler dev --ip 127.0.0.1 --port 4178",
     "build": "node build.mjs",
+    "diagrams": "node diagrams.mjs",
     "db:init": "wrangler d1 execute vis-extension-center --local --file schema.sql",
     "moderate": "node moderate.mjs",
     "test": "npm run build && vitest run",

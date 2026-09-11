@@ -1,0 +1,42 @@
+---
+config:
+  theme: base
+  fontFamily: JetBrains Mono
+  deterministicIds: true
+  htmlLabels: false
+  themeVariables:
+    background: "#ffffff"
+    primaryColor: "#f8f8f8"
+    primaryTextColor: "#1e1e1e"
+    primaryBorderColor: "#505050"
+    secondaryColor: "#f8f8f8"
+    tertiaryColor: "#ffffff"
+    lineColor: "#505050"
+    textColor: "#1e1e1e"
+    actorTextColor: "#1e1e1e"
+    actorBorder: "#505050"
+    actorBkg: "#f8f8f8"
+    signalColor: "#505050"
+    signalTextColor: "#1e1e1e"
+    noteBkgColor: "#f8f8f8"
+    noteTextColor: "#1e1e1e"
+    noteBorderColor: "#505050"
+  sequence:
+    useMaxWidth: true
+    mirrorActors: false
+    actorMargin: 36
+    messageMargin: 28
+  flowchart:
+    curve: linear
+---
+flowchart TB
+    accTitle: Council implementation modules
+    accDescr: Model tools and bound SDK or extension events enter the Council domain. Canonical contracts validate data, SQLite persists messages and replies, and the existing gateway runtime and model loop deliver them. There is no separate agent scheduler.
+    Host["Model tools<br/>council/host"] --> Core["Council policy<br/>council/core"]
+    SDK["Bound SDK / extension<br/>publish and self-wake"] --> Core
+    Contracts["Portable contracts<br/>vis-contract/council"] -. validation .-> Core
+    Core <-->|entries, pings, replies| Store[("SQLite<br/>log and improve")]
+    Core -->|eligible wake| Runtime["Gateway runtime<br/>state"]
+    Runtime -->|ordinary turn| Loop["Model loop<br/>input and final-answer gate"]
+    Core -->|attributed input| Loop
+    Loop -->|tool execution| Host

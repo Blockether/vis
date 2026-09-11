@@ -132,7 +132,7 @@ or `vis-agent update --track dev` for the other tracks. See
 - [Drafts](drafts.md) — let the agent work in an isolated copy and land its changes on a branch.
 - [Exporting sessions](exporting-sessions.md) — save or share a session.
 - [Remote access and the Companion app](gateway.md) — use Vis from your phone or another machine.
-- [Council](council.md) — exchange classified project messages, correlate replies and notify active or eligible idle sessions.
+- [Council](council.md) — share knowledge, delegate authorized work and review results through asynchronous messages.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
 ### Extensions

@@ -391,6 +391,10 @@
    "vis-docs/assets/screenshots/ask.png" "assets/screenshots/ask.png"
    "vis-docs/assets/screenshots/live-running.png" "assets/screenshots/live-running.png"
    "vis-docs/assets/screenshots/live-stop.png" "assets/screenshots/live-stop.png"
+   "vis-docs/assets/diagrams/council-messages.svg" "assets/diagrams/council-messages.svg"
+   "vis-docs/assets/diagrams/council-messages.mmd" "assets/diagrams/council-messages.mmd"
+   "vis-docs/assets/diagrams/council-modules.svg" "assets/diagrams/council-modules.svg"
+   "vis-docs/assets/diagrams/council-modules.mmd" "assets/diagrams/council-modules.mmd"
    "vis-docs/assets/fonts/jetbrains-mono.woff2" "assets/fonts/jetbrains-mono.woff2"
    "vis-docs/assets/theme.css" "assets/theme.css"
    "vis-docs/assets/docs.js" "assets/docs.js"
@@ -454,6 +458,7 @@
     (let [ct (cond (str/ends-with? rel ".woff2") "font/woff2"
                    (str/ends-with? rel ".png") "image/png"
                    (str/ends-with? rel ".svg") "image/svg+xml"
+                   (str/ends-with? rel ".mmd") "text/plain; charset=utf-8"
                    :else "application/octet-stream")]
       {:status 200
        :headers {"content-type" ct "cache-control" "public,max-age=31536000,immutable"}

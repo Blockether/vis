@@ -681,6 +681,8 @@
 
 (defdelegate db-council-get [db-info id])
 
+(defdelegate db-council-exchanged? [db-info thread a b])
+
 (defdelegate db-council-replay [db-info sid key])
 
 (defdelegate db-council-insert! [db-info row recipients infer-reply?])

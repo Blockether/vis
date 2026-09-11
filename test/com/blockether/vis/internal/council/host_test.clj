@@ -145,6 +145,24 @@
       (is (str/includes? prompt "cannot wake unrelated idle peers"))
       (is (str/includes? tool-doc "no-ping continuation")))))
 
+(deftest asynchronous-work-guidance-test
+  (with-redefs [toggles/enabled? (constantly true)]
+    (let [tool-doc (extension/symbol-doc-text (second host/symbols))
+          prompt (council/prompt {})
+          manual (slurp (io/resource "vis-docs/council.md"))]
+
+      (doseq [text [tool-doc prompt manual]
+              :let [normalized (str/lower-case (str/replace text #"[\s*]+" " "))]]
+
+        (is (str/includes? normalized "asynchronous message passing"))
+        (is (str/includes? normalized "acceptance criteria"))
+        (is (str/includes? normalized "before ending the turn"))
+        (is (not (str/includes? normalized "in the receiving iteration"))))
+      (doseq [text [prompt manual]]
+        (is (str/includes? text "cannot wake unrelated idle peers"))
+        (is (str/includes? text "satisfied"))
+        (is (str/includes? text "acknowledgement"))))))
+
 (deftest context-reuse-guidance-test
   (with-redefs [toggles/enabled? (constantly true)]
     (doseq [[surface text] [["prompt" (council/prompt {})]
