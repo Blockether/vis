@@ -131,8 +131,10 @@
           (is (str/includes? text kind))))
       (doseq [text [tool-doc prompt manual]]
         (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required" "improve"
-                       "autocomplain" "source_ref" "turn/iteration"]]
-          (is (str/includes? text field)))
+                       "autocomplain" "source_ref" "turn/iteration" "reproduction steps" "expected"
+                       "actual" "environment" "version" "diagnostics" "frequency" "impact"
+                       "workaround" "unknown" "secrets" "read_session"]]
+          (is (str/includes? (str/lower-case text) field)))
         (is (not (str/includes? text "potential_issue")))
         (is (not (str/includes? text "Entries: `{id,")))
         (is (not (str/includes? text "Council never creates a model iteration")))

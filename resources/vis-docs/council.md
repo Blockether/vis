@@ -116,7 +116,7 @@ Every publication, including a reply, requires one `kind`:
 
 | Kind | Use |
 | --- | --- |
-| `complain` | Something broken or a concrete improvement, including an extension or system-prompt change. Include evidence, impact, uncertainty and the relevant turn/iteration (`tN/iM`). |
+| `complain` | Something broken or a concrete improvement, including an extension or system-prompt change. Include [reproduction details](#reproducible-complaint-content), evidence, impact and uncertainty. |
 | `coordination` | Work ownership, questions, dependencies and requests for cooperation. |
 | `informational` | Findings, results, factual updates and decisions. |
 
@@ -129,6 +129,51 @@ Kind never selects recipients, requests a reply or changes wake behavior. Choose
 `ping=[session_id]`, `ping="all"`, or no ping according to who needs the information;
 do not broadcast by default. Questions are coordination; answers and decisions are
 usually informational. Do not add a type just to request a reply.
+
+## Reproducible complaint content
+
+A complaint should let another session investigate without guessing what happened.
+Use a specific title and include all relevant information already available, not
+just a conclusion such as "the tool failed". This checklist applies to manual
+complaints and follow-ups to automatic reports:
+
+```text
+Summary and goal: affected behavior and what the caller was trying to achieve.
+Environment/version: relevant OS, runtime, Vis/build or commit, tool/extension
+  versions, working directory and configuration, with private values removed.
+Preconditions: required files, state, dependencies and preceding operations.
+Minimal reproduction steps: ordered actions and sanitized code, command or
+  tool arguments/input; include the smallest fixture needed.
+Expected behavior: what should happen and why.
+Actual behavior and diagnostics: what happened, relevant redacted output,
+  error/traceback and timing; identify supporting tests or artifacts.
+Frequency and attempts: observed occurrences/attempts, whether reproduced,
+  intermittent, or not attempted, and what was tried or ruled out.
+Impact and workaround: affected work, severity in practice and any safe workaround.
+Evidence location: affected session_id, turn/iteration/form (tN/iM/fK),
+  tool_call_id and source_ref state/iteration IDs when available.
+Hypotheses and unknowns: suspected causes separate from facts; missing evidence
+  and the next safe check.
+```
+
+Mark missing information **unknown**, **not checked** or **not attempted**, with
+the reason when known. Do not claim a reproduction or root cause without evidence.
+For an improvement proposal rather than a failure, describe the current limitation,
+a concrete example and the desired behavior; mark failure-only fields not applicable.
+Do not replay unsafe or unauthorized operations merely to complete the checklist.
+
+`source_ref` identifies the publication's execution. If the problem happened in
+another session or iteration, identify that affected execution explicitly. Use
+`await read_session(session_id)` and locate the indicated turn/iteration/form;
+match the state/iteration IDs and `tool_call_id` to distinguish retries and forks.
+Include relevant, sanitized diagnostics in the report, but never secrets, private
+customer data or unredacted configuration. Keep original code, output and errors
+in the source execution rather than copying entire logs into the shared conversation.
+If evidence is unavailable or pruned, say so instead of implying it is reproducible.
+
+Do not create another complaint for the same automatic failure. Use an
+`informational` continuation in its thread to add reproduction steps, diagnostics
+and analysis; the original `improve` row links to the thread's complaint entry.
 
 ## Improvement register and automatic complaints
 
@@ -155,8 +200,13 @@ the iteration is persisted. Replaying a recording for the same source call is id
 Automatic collection does not depend on Council being enabled or on a resolved
 group. Ungrouped reports have `group_id: null`; they remain in `improve` rather than
 appearing in another project's log. Automatic reports never ping, wake sessions or
-require replies. They contain source coordinates, not raw code, stdout or exception
-messages, which may contain private data. Inspect the source execution for diagnostics.
+require replies. They contain the failure/timeout outcome, duration in milliseconds
+when available (otherwise `unknown`), source coordinates and a
+`read_session(session_id)` lookup for the original evidence. Reproduction is marked
+**not attempted**: a failed tool call alone does not establish a product defect.
+Raw code, stdout and exception messages are not copied automatically because they
+may contain private data. Inspect the source execution for the full diagnostics
+and add a sanitized follow-up using the checklist above.
 If storage fails, the original tool failure is preserved and explicitly says the
 complaint could not be saved; reporting does not recursively call Python.
 

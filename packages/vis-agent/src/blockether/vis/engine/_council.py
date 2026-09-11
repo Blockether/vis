@@ -148,10 +148,17 @@ class Council:
 
         complain records failures or concrete improvements in the persistent improve
         register; coordination covers work/questions and informational findings/decisions.
-        Every entry has host-owned source_ref; unavailable execution coordinates are null.
-        Include the relevant turn/iteration when discussing another execution. Select
-        individual pings, all, or none; no kind creates a tracker issue. Failed
-        python_execution calls are already recorded as autocomplain without pings.
+        Include the goal, environment/version, preconditions, minimal reproduction steps
+        and sanitized input/tool arguments, expected versus actual behavior, diagnostics,
+        frequency, impact and workaround. Separate evidence from hypotheses; mark missing
+        facts unknown or not attempted. Identify the affected session and turn/iteration/form.
+        Every entry has host-owned source_ref for this publication, not another execution.
+        Inspect original evidence with read_session(session_id); never copy secrets or
+        private data into the report or replay unsafe operations. Select individual pings,
+        all, or none; no kind creates a tracker issue. Failed python_execution calls are
+        already recorded as autocomplain without pings, with failure/timeout, duration and
+        a source-session lookup. Enrich their thread with an informational continuation
+        instead of duplicating the report.
 
         A no-ping thread continuation answers the latest addressed entry only if it
         is an unanswered request, notifying its author. reply_to selects a request

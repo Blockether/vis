@@ -2,6 +2,7 @@
   "Council uses real SQLite; only runtime scheduling is controlled by the fixture."
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.state]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -2277,6 +2278,9 @@
           (is (= result (record! tool failure)))
           (is (= ["complain" "autocomplain" gid []] ((juxt :kind :source :group_id :ping) entry)))
           (is (re-find #"t1/i1/f1" (:content entry)))
+          (is (re-find #"Duration: 1 ms" (:content entry)))
+          (is (re-find #"Reproduction status: not attempted" (:content entry)))
+          (is (.contains ^String (:content entry) (str "await read_session(\"" sid "\")")))
           (is (not (re-find #"private diagnostic" (:content entry))))
           (is (re-find #"t1/i1/f1" (get-in result [:error :message])))
           (is (= 1 (h/raw-count db :improve)))
@@ -2303,6 +2307,44 @@
                                                                                          (:group_id
                                                                                            entry)))
              (is (= "autocomplain" (:source entry))) (is (= 2 (h/raw-count db :improve)))))))))
+
+(deftest automatic-complain-timeout-context-test
+  (with-council
+    (let [{:keys [db actor]}
+          (world)
+
+          sid
+          (:session-id actor)
+
+          tid
+          (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Timeout"})
+
+          env
+          {:db-info db
+           :session-id sid
+           :turn-state-atom (atom
+                              {:session-turn-id tid :turn-position 1 :iteration 1 :form-idx 0})}]
+
+      (doseq [duration [42 nil -1 "private duration"]]
+        (let [execution {:timeout? true
+                         :duration-ms duration
+                         :stdout "private output"
+                         :error {:message "private diagnostic" :data {:code "private code"}}}
+              result (council 'record-failure!
+                              env
+                              {:svar/tool-call-id (str (random-uuid))
+                               :vis/tool-name "python_execution"}
+                              execution)
+              entry (ps/db-council-get db (get-in result [:error :complain_entry_id]))
+              content (:content entry)]
+
+          (is (re-find #"Observed behavior: execution timed out" content))
+          (is (re-find #"Reproduction status: not attempted" content))
+          (is (.contains ^String content (str "Duration: " (if (= 42 duration) "42 ms" "unknown"))))
+          (is (not (re-find #"private (duration|output|diagnostic|code)" (pr-str entry))))
+          (is (= "private diagnostic" (last (str/split-lines (get-in result [:error :message])))))
+          (is (empty? (:ping entry)))))
+      (is (= 4 (h/raw-count db :improve))))))
 
 (deftest complain-store-failure-test
   (with-council
@@ -2406,4 +2448,101 @@
               (finally (ps/db-dispose-connection! reopened)))))
         (finally (ps/db-dispose-connection! db)
                  (doseq [^java.io.File f (reverse (file-seq file))]
+                   (.delete f)))))))
+
+(deftest complain-details-survive-reopen-test
+  ;; The report body lives in council_entry; improve must keep its exact provenance link.
+  (with-council
+    (let [directory
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-complain-details"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          db
+          (ps/db-create-connection! (.getPath directory))]
+
+      (try
+        (let [{:keys [actor] :as w}
+              (world db 1)
+
+              sid
+              (:session-id actor)
+
+              _
+              (ps/db-claim-session! db sid)
+
+              tid
+              (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Reproduce"})
+
+              env
+              {:db-info db
+               :session-id sid
+               :turn-state-atom (atom
+                                  {:session-turn-id tid :turn-position 1 :iteration 1 :form-idx 0})}
+
+              w
+              (assoc-in w [:actor :source-ref] (council 'source-ref env))
+
+              content
+              (str "Goal: inspect a missing fixture.\n" "Steps: call cat with the fixture path.\n"
+                   "Expected: fixture contents. Actual: file not found.\n"
+                   (apply str (repeat 200 "Evidence: the fixture does not exist.\n")))
+
+              opts
+              {:kind "complain" :content content :idempotency_key "detailed-report"}
+
+              manual
+              (publish w opts)
+
+              tool
+              {:svar/tool-call-id "durable-call" :vis/tool-name "python_execution"}
+
+              failure
+              {:error {:message "private diagnostic"} :duration-ms 7}
+
+              recorded
+              (council 'record-failure! env tool failure)
+
+              automatic-id
+              (get-in recorded [:error :complain_entry_id])
+
+              iid
+              (ps/db-store-iteration! db
+                                      {:session-turn-id tid
+                                       :code "raise RuntimeError()"
+                                       :council-publications [{:entry_id (:entry_id manual)}]
+                                       :forms [{:scope "t1/i1/f1"
+                                                :src "raise RuntimeError()"
+                                                :error (:error recorded)
+                                                :svar/tool-call-id "durable-call"}]})
+
+              ids
+              [(:entry_id manual) automatic-id]
+
+              entries
+              (mapv #(ps/db-council-get db %) ids)
+
+              rows
+              (h/raw-query db {:select [:*] :from [:improve] :order-by [:entry_id]})]
+
+          (is (= ids (mapv :entry_id rows)))
+          (is (= [sid sid] (mapv :session_soul_id rows)))
+          (is (= [(str iid) (str iid)] (mapv :session_turn_iteration_id rows)))
+          (is (= [[1 1 1] [1 1 1]] (mapv (juxt :turn :iteration :form) rows)))
+          (is (= "durable-call" (:tool_call_id (second rows))))
+          (ps/db-dispose-connection! db)
+          (let [reopened (ps/db-create-connection! (.getPath directory))]
+            (try (is (= rows
+                        (h/raw-query reopened
+                                     {:select [:*] :from [:improve] :order-by [:entry_id]})))
+                 (is (= entries (mapv #(ps/db-council-get reopened %) ids)))
+                 (is (= content (:content (first entries))))
+                 (is (re-find #"Duration: 7 ms" (:content (second entries))))
+                 (is (= (first entries) (publish (assoc w :db reopened) opts)))
+                 (is (= recorded
+                        (council 'record-failure! (assoc env :db-info reopened) tool failure)))
+                 (is (= 2 (h/raw-count reopened :improve) (h/raw-count reopened :council_entry)))
+                 (finally (ps/db-dispose-connection! reopened)))))
+        (finally (ps/db-dispose-connection! db)
+                 (doseq [^java.io.File f (reverse (file-seq directory))]
                    (.delete f)))))))
