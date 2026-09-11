@@ -721,9 +721,12 @@ update_source() {
   changes="$(git -C "$managed_src" status --porcelain --untracked-files=all)" || \
     die "update: cannot inspect source at $managed_src. Repair the checkout and retry."
   if [[ -n "$changes" ]]; then
-    say "modified managed source; preserving it and downloading a fresh checkout"
-    recover_source "$ref"
-    return
+    die "update: managed source has local changes or unresolved conflicts: $managed_src" \
+      "Automatic source update stopped; checkout and source pin unchanged." \
+      "Review with: git -C $(printf '%q' "$managed_src") status" \
+      "Resolve conflicts and commit or stash your local changes (including untracked files) manually." \
+      "Then retry the same 'vis-agent update' command, including any --track option." \
+      "For a manual pull, choose an explicit branch/ref; managed source is a detached pin."
   fi
   git -C "$managed_src" remote add origin "$vis_repo_url" 2>/dev/null \
     || git -C "$managed_src" remote set-url origin "$vis_repo_url" || exit 1
@@ -857,13 +860,13 @@ update_native() {
   if [[ -e "$managed_src" ]]; then
     [[ "$native_commit" =~ ^[0-9a-f]{40}$ ]] || \
       die "update: build stamp has no exact source commit; native installation unchanged."
-    # Refresh source before replacing native; preserve local changes through recovery.
+    # Refresh source before replacing native; local changes stop the update.
     # A subshell contains update_source's exit paths and keeps native launcher ownership.
     if ! (
       update_source "$native_commit"
     ); then
       die "update: source refresh failed for native $native_version revision $native_commit." \
-        "Native installation and selected track unchanged; resolve the source error and retry."
+        "Native installation and selected track unchanged."
     fi
     say "source $(cat "$managed_src/VIS_VERSION" 2>/dev/null || printf unknown) revision $native_commit"
   else

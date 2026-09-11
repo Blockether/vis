@@ -54,11 +54,17 @@ A missing native TUI fails rather than starting a JVM client.
 
 If managed source already exists in `~/.vis/install/src`, a native update also pins
 it to the selected native build's exact commit. This requires Git; native-only
-installations do not download source. Native and dev updates preserve modified
-managed source at `~/.vis/install/src-recovery.XXXXXX/previous` and report that path,
-then replace it with a verified clean checkout. Staged, unstaged, untracked and
-ignored files remain in the preserved directory. If fetching the replacement fails,
-the original source, native installation and selected track remain unchanged.
+installations do not download source. For native and dev updates, staged, unstaged
+or untracked changes stop the update with the checkout path and instructions to
+inspect it with `git status`. Resolve conflicts and commit or stash local changes
+(including untracked files) manually, then retry with the same track options. The
+source checkout and pin, native installation and selected track remain unchanged;
+the updater does not replace dirty source with a fresh checkout.
+
+Managed source is a detached pin, not a tracking branch. A manual pull needs an
+explicit branch/ref. Rerunning the updater after resolving local changes selects
+the correct pin: the exact native build commit for release/beta, or newest main
+for dev. A source fetch failure also leaves the installed versions and track unchanged.
 
 By default an update releases an idle managed gateway using its old executable
 before replacing it. Busy or user-owned gateways are never stopped. Add

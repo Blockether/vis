@@ -430,8 +430,8 @@
             (expect (str/includes?
                       (:output (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env))
                       "new-runtime"))))))
-  ;; #195 follow-up: managed local changes must survive without blocking native updates.
-  (it "preserves dirty source in a backup and updates release and beta to the exact native pin"
+  ;; #195: local changes require manual attention, not automatic source replacement.
+  (it "stops release and beta updates on dirty source with actionable instructions"
       (doseq [track
               ["release" "beta"]
 
@@ -440,30 +440,26 @@
 
         (with-native-source-fixture
           {:track track :dirty dirty}
-          (fn [{:keys [exit output old selected src native]}]
-            (expect (zero? exit) output)
-            (expect (= selected (git! src "rev-parse" "HEAD")))
-            (expect (= (str selected "\n") (slurp (io/file src ".." "ref"))))
-            (expect (= (str track "\n") (slurp (io/file src ".." "track"))))
-            (expect (= "9.9.9\n" (slurp (io/file src "VIS_VERSION"))))
-            (expect (str/blank? (git! src "status" "--porcelain" "--untracked-files=all")))
-            (expect (str/includes? (slurp native) "new-runtime"))
-            (expect (not (str/includes? output "Commit or stash")) output)
-            (let [backups (filter #(str/starts-with? (.getName ^java.io.File %) "src-recovery.")
-                                  (.listFiles (.getParentFile ^java.io.File src)))]
-              (expect (= 1 (count backups)))
-              (when-let [backup (first backups)]
-                (let [previous (io/file backup "previous")]
-                  (expect (str/includes? output (.getAbsolutePath previous)) output)
-                  (expect (= old (git! previous "rev-parse" "HEAD")))
-                  (expect (= "local work\n"
-                             (slurp (io/file
-                                      previous
-                                      (if (= dirty :untracked) "local-work" "VIS_VERSION")))))
-                  (expect (= (if (= dirty :staged) "local work" "9.9.8")
-                             (git! previous "show" ":VIS_VERSION")))
-                  (expect (= "cached data\n" (slurp (io/file previous "ignored-cache")))))))))))
-  (it "keeps dirty source, native and track intact if its replacement cannot be fetched"
+          (fn [{:keys [exit output old src native]}]
+            (expect (not (zero? exit)) output)
+            (expect (= old (git! src "rev-parse" "HEAD")))
+            (expect (= (str old "\n") (slurp (io/file src ".." "ref"))))
+            (expect (= "beta\n" (slurp (io/file src ".." "track"))))
+            (expect (= "local work\n"
+                       (slurp (io/file src (if (= dirty :untracked) "local-work" "VIS_VERSION")))))
+            (expect (= (if (= dirty :staged) "local work" "9.9.8")
+                       (git! src "show" ":VIS_VERSION")))
+            (expect (= "cached data\n" (slurp (io/file src "ignored-cache"))))
+            (expect (str/includes? (slurp native) "old-runtime"))
+            (doseq [message ["local changes" (.getAbsolutePath src) "git -C" "status"
+                             "commit or stash" "untracked files" "manually" "detached pin"
+                             "same 'vis-agent update' command" "--track"
+                             "Native installation and selected track unchanged"]]
+              (expect (str/includes? output message) output))
+            (expect (not (str/includes? output "installed the")) output)
+            (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) "src-recovery.")
+                                    (.listFiles (.getParentFile ^java.io.File src)))))))))
+  (it "reports local changes before trying to fetch source even when the remote is unavailable"
       (with-native-source-fixture
         {:dirty :staged :fetch-failure? true}
         (fn [{:keys [exit output old src native]}]
@@ -475,7 +471,9 @@
           (expect (= "local work" (git! src "show" ":VIS_VERSION")))
           (expect (= "cached data\n" (slurp (io/file src "ignored-cache"))))
           (expect (str/includes? (slurp native) "old-runtime"))
-          (expect (str/includes? output "source recovery failed") output)
+          (expect (str/includes? output "local changes") output)
+          (expect (not (str/includes? output "fetching")) output)
+          (expect (not (str/includes? output "source recovery")) output)
           (expect (not (str/includes? output "installed the release track")) output))))
   (it "reports source fetch failure without claiming synchronization or replacing native"
       (with-native-source-fixture
@@ -546,21 +544,23 @@
           (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
           (expect (not (str/includes? output "Update the gateway")) output)
           (expect (not (str/includes? output "leaving 1 commit behind")) output))))
-  ;; #195 follow-up: dev uses the same managed-source preservation as native updates.
-  (it "preserves modified managed source before updating dev"
+  ;; #195: dev must stop for the same local changes as release and beta.
+  (it "leaves dirty managed source in place and requires manual attention before updating dev"
       (with-source-update-fixture
         {:dirty? true :keep-gateway? true}
-        (fn [{:keys [exit output old-commit new-commit managed-src]}]
-          (expect (zero? exit) output)
-          (expect (= new-commit (git! managed-src "rev-parse" "HEAD")))
-          (expect (= new-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
-          (expect (= "new\n" (slurp (io/file managed-src "update-marker"))))
-          (let [backups (filter #(str/starts-with? (.getName ^java.io.File %) "src-recovery.")
-                                (.listFiles (.getParentFile ^java.io.File managed-src)))]
-            (expect (= 1 (count backups)))
-            (when-let [backup (first backups)]
-              (expect (= old-commit (git! (io/file backup "previous") "rev-parse" "HEAD")))
-              (expect (= "local work\n" (slurp (io/file backup "previous" "update-marker")))))))))
+        (fn [{:keys [exit output old-commit managed-src]}]
+          (expect (not (zero? exit)) output)
+          (expect (= old-commit (git! managed-src "rev-parse" "HEAD")))
+          (expect (= old-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
+          (expect (= "local work\n" (slurp (io/file managed-src "update-marker"))))
+          (doseq [message ["local changes" (.getAbsolutePath managed-src) "git -C" "status"
+                           "commit or stash" "manually" "detached pin"
+                           "same 'vis-agent update' command" "--track"]]
+            (expect (str/includes? output message) output))
+          (expect (not (str/includes? output "fetching")) output)
+          (expect (not (str/includes? output "installed the dev track")) output)
+          (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) "src-recovery.")
+                                  (.listFiles (.getParentFile ^java.io.File managed-src))))))))
   (it "retries the pinned fetch without pretending main is unadvertised"
       (with-source-update-fixture
         {:fetch-failures 1 :keep-gateway? true}
