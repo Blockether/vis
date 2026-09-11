@@ -49,7 +49,7 @@
 
 (defdescribe
   native-editable-sdk-startup-test
-  ;; #194: both the injected SDK and its host-bound session must survive refresh.
+  ;; #194/#196: both the injected SDK and managed extension contexts must survive refresh.
   (it
     "registers extensions from an editable cwd without installing another SDK"
     (let [home
@@ -72,11 +72,17 @@
 
       (try (spit (io/file home "vis.yml") "{}\n")
            (spit (io/file packages "cwd.pth") (str (.getCanonicalPath home) "\n"))
+           (let [metadata (io/file packages "editable-0.0.1.dist-info/direct_url.json")]
+             (io/make-parents metadata)
+             (spit metadata
+                   (str "{\"dir_info\":{\"editable\":true},\"url\":"
+                        (pr-str (str (.toURI (.getCanonicalFile home))))
+                        "}")))
            (doseq [name names]
              (spit
                (io/file entries (str name ".py"))
                (str
-                 "import hashlib, package_paths\nfrom pathlib import Path\n"
+                 "import hashlib, package_paths, sys\nfrom pathlib import Path\n"
                  "assert hashlib.sha256(Path(package_paths.__file__).read_bytes()).hexdigest() == "
                  (pr-str (util/sha256-hex (slurp (io/resource "vis-python/package_paths.py"))))
                  ", package_paths.__file__\n"
@@ -84,6 +90,12 @@
                  "assert VIS_VERSION == VIS_PYTHON_SDK_VERSION != 'dev'\n"
                  "assert len(VIS_SHA_RELEASE) >= 40\n"
                  "assert VIS_PYTHON_RUNTIME_VERSION != 'dev'\n"
+                 "assert callable(__vis_registration__) and callable(__vis_host_live__)\n"
+                 "contexts = getattr(package_paths, '_test_extension_contexts', [])\n"
+                 "contexts.append(sys.modules[__name__])\n"
+                 "package_paths._test_extension_contexts = contexts\n"
+                 "assert all(sys.modules.get(ctx.__name__) is ctx for ctx in contexts)\n"
+                 "assert all(callable(ctx.__vis_registration__) for ctx in contexts)\n"
                  "vis.register(vis.Extension(name=" (pr-str name)
                  ", description='Native editable SDK fixture'))\n"
                  "Path(__file__).with_suffix('.loaded').write_text('registered')\n")))
