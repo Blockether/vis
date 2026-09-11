@@ -144,7 +144,7 @@ def manifest_metadata(text, vis_version=None, python_version=None):
 
 
 def inspect_source(directory, vis_version=None, python_version=None):
-    """Validate a checkout without importing its entry point or build backend."""
+    """Validate source without importing code; managed installs retain their GitHub identity."""
     directory = Path(directory).resolve(strict=True)
     for name in ("pyproject.toml", "extension.py"):
         file = directory / name
@@ -173,6 +173,15 @@ def inspect_source(directory, vis_version=None, python_version=None):
                     "skills and their resources must stay inside the project"
                 )
             _relative(resource.relative_to(directory).as_posix())
+    snapshot = directory.parent
+    store = snapshot.parent.parent
+    if directory.name == "project" and store.name == ".versions":
+        active = store.parent / metadata["name"]
+        if active.is_symlink() and active.resolve() == directory:
+            _, record = _managed(store.parent, metadata["name"])
+            metadata["repository"] = github_repository(record["repository_url"])[
+                len("https://github.com/") :
+            ].lower()
     return metadata
 
 

@@ -872,38 +872,43 @@
   native-installs-github-project-test
   (it
     "fetches a pinned Git revision and installs only its selected project through the binary"
-    (let [bin
-          (require-binary)
+    (let
+      [bin
+       (require-binary)
 
-          dir
-          (temp-dir "vis-native-github")
+       dir
+       (temp-dir "vis-native-github")
 
-          repository
-          (doto (io/file dir "repository") .mkdirs)
+       repository
+       (doto (io/file dir "repository") .mkdirs)
 
-          project
-          (doto (io/file repository "plugins/greeting") .mkdirs)
+       project
+       (doto (io/file repository "plugins/greeting") .mkdirs)
 
-          shim-dir
-          (doto (io/file dir "fixture-bin") .mkdirs)
+       shim-dir
+       (doto (io/file dir "fixture-bin") .mkdirs)
 
-          git
-          (some (fn [path]
-                  (let [candidate (io/file path "git")]
-                    (when (.canExecute candidate) (.getAbsolutePath candidate))))
-                (str/split (System/getenv "PATH") (re-pattern File/pathSeparator)))
+       git
+       (some (fn [path]
+               (let [candidate (io/file path "git")]
+                 (when (.canExecute candidate) (.getAbsolutePath candidate))))
+             (str/split (System/getenv "PATH") (re-pattern File/pathSeparator)))
 
-          extension-source
-          "raise RuntimeError('install must not execute source')\n"
+       extension-source
+       (str
+         "from pathlib import Path\nimport blockether.vis.extension as vis\n"
+         "Path(" (pr-str (str (io/file dir "imported")))
+         ").write_text('loaded')\n"
+         "vis.register(vis.Extension(name='native-github-example', description='Git fixture'))\n")
 
-          url
-          "https://github.com/example/extensions"
+       url
+       "https://github.com/example-owner/extensions"
 
-          environment
-          (native-environment)
+       environment
+       (native-environment)
 
-          destination
-          (io/file dir ".vis/extensions/native-github-example")]
+       destination
+       (io/file dir ".vis/extensions/native-github-example")]
 
       (try
         (spit (io/file project "pyproject.toml")
@@ -952,6 +957,7 @@
                                         120)]
               (expect (= 0 (:exit installed)) (:output installed))
               (expect (str/includes? (:output installed) "(github)"))
+              (expect (not (.exists (io/file dir "imported"))))
               ;; Git installs use a copied managed snapshot, not a link to the source checkout.
               (expect (Files/isSymbolicLink (.toPath destination)))
               (let [^File snapshot-project (.getCanonicalFile destination)
@@ -974,7 +980,22 @@
               (spit (io/file project "extension.py") "VALUE = 'changed after installation'\n")
               (expect (= extension-source (slurp (io/file destination "extension.py"))))
               (expect (not (.exists (io/file destination ".git"))))
-              (expect (not (.exists (io/file destination "unrelated.txt")))))))
+              (expect (not (.exists (io/file destination "unrelated.txt"))))
+              ;; The GitHub identity must survive install and registration without renaming the package.
+              (let [listed (run-binary dir
+                                       [(.getAbsolutePath bin)
+                                        (str "-Duser.home=" (.getAbsolutePath dir)) "extension"
+                                        "list"]
+                                       180)]
+                (expect (= 0 (:exit listed)) (:output listed))
+                (expect (.exists (io/file dir "imported")))
+                (expect (str/includes? (:output listed) "example-owner/extensions")
+                        (:output listed))
+                (expect (re-find #"example-owner/extensions[^\n]+│ example-owner\s+│"
+                                 (:output listed))
+                        (:output listed))
+                (expect (str/includes? (:output listed) "native-github-example")
+                        (:output listed))))))
         (finally (delete-tree! dir))))))
 
 (defn- package-check-result

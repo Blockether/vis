@@ -200,23 +200,26 @@
 (defn list-extensions
   "Return all registered extensions with their metadata (table rows).
 
-   `:namespace` is shortened with the `v/` prefix (see
-   `short-ext-ns`). `:kind` carries the categorical bucket
-   (`providers`, `channels`, `foundation`, ...) used to render the
-   table in grouped sections. `:group` is a finer label *inside* the
-   kind (provider label / channel cmd / persistance id), blank for
-   kinds that don't have one. `:author`, `:owner`, and `:license` come
-   straight from the extension manifest; `:owner` identifies the
-   package's distribution (\"vis\" for everything bundled here), and `:license` carries the SPDX
-   identifier (e.g. `Apache-2.0`)."
+   Managed GitHub packages show their lowercase owner/repository and keep the
+   technical package name in parentheses. Other namespaces use the `v/` prefix
+   (see `short-ext-ns`). `:kind` groups rows; `:group` labels a contribution inside
+   that kind. Managed packages derive `:owner` from the recorded GitHub source.
+   Other owner, author and license values come from the extension manifest;
+   bundled extensions use the distribution name (\"vis\") as their owner."
   []
   (mapv (fn [e]
-          {:namespace (short-ext-ns (:ext/name e))
+          {:namespace (if-let [repository (:ext/repository e)]
+                        (str repository " (" (:ext/name e) ")")
+                        (short-ext-ns (:ext/name e)))
            :doc (:ext/description e)
            :kind (or (:ext/kind e) "uncategorized")
            :group (per-kind-group e)
            :author (or (:ext/author e) "-")
-           :owner (or (:ext/owner e) "-")
+           :owner (or (some-> (:ext/repository e)
+                              (str/split #"/")
+                              first)
+                      (:ext/owner e)
+                      "-")
            :license (or (:ext/license e) "-")
            :version (or (:ext/version e) "-")})
         (extension/registered-extensions)))
@@ -2606,10 +2609,10 @@
 ;;; ── `vis-agent extension` ───────────────────────────────────────────────────────────
 
 (def ^:private extensions-table-cols
-  [{:key :namespace :label "Namespace" :width 28 :align :left}
+  [{:key :namespace :label "Extension" :width 28 :align :left}
    {:key :group :label "Group" :width 18 :align :left}
    {:key :author :label "Author" :width 12 :align :left}
-   {:key :owner :label "Owner" :width 8 :align :left}
+   {:key :owner :label "Owner" :width 16 :align :left}
    {:key :license :label "License" :width 10 :align :left}
    {:key :doc :label "Description" :width 36 :align :left :grow? true}
    {:key :version :label "Version" :width 10 :align :left}])

@@ -1,6 +1,7 @@
 """GitHub and local project admission share one inert manifest contract."""
 
 import io
+import json
 import subprocess
 from types import SimpleNamespace
 
@@ -64,9 +65,18 @@ def test_subdirectory_cannot_escape_the_repository(directory):
 
 
 def test_manifest_inspection_never_imports_code(tmp_path):
-    metadata = package.inspect_source(project(tmp_path / "source"))
+    source = project(tmp_path / "source")
+    with (source / "pyproject.toml").open("a") as manifest:
+        manifest.write(
+            '\n[project.urls]\nRepository = "https://github.com/other/project"\n'
+        )
+    (source.parent / "receipt.json").write_text(
+        json.dumps({"repository_url": "https://github.com/other/project"})
+    )
+    metadata = package.inspect_source(source)
     assert metadata["name"] == "vis-greeter"
     assert metadata["category"] == "tools"
+    assert "repository" not in metadata
 
 
 @pytest.mark.parametrize(
@@ -325,6 +335,12 @@ def test_version_install_update_and_rollback_use_real_pinned_checkouts(releases)
     active = target / "vis-greeter"
     initial = active.resolve()
     assert first["revision"] == metadata[0]["revision"]
+    inspected = package.inspect_source(active)
+    assert inspected["name"] == "vis-greeter"
+    assert (
+        inspected["repository"]
+        == REPOSITORY.removeprefix("https://github.com/").lower()
+    )
     assert active.is_symlink()
     assert '"1.0.0"' in (active / "src/greeter.py").read_text()
     status = package.versions("vis-greeter", directory=target)
@@ -339,6 +355,7 @@ def test_version_install_update_and_rollback_use_real_pinned_checkouts(releases)
     assert not package.versions("vis-greeter", directory=target)["update_available"]
     restored = package.rollback("vis-greeter", target, trust=True)
     assert restored["revision"] == first["revision"]
+    assert package.inspect_source(active)["repository"] == inspected["repository"]
     assert '"1.0.0"' in (active / "src/greeter.py").read_text()
     assert all(args[-1] != "HEAD" for args in commands if "fetch" in args)
     assert len([args for args in commands if "fetch" in args]) == 3

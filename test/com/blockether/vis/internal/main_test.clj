@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -23,6 +24,22 @@
                (when-let [[_ _ _ doc] (re-matches #"^ {2}(\S.*?)( {2,})(\S.*)$" line)]
                  (- (count line) (count doc)))))
        set))
+
+(defdescribe
+  extension-list-github-identity-test
+  (it "shows GitHub identity while retaining the package name used by lifecycle commands"
+      (with-redefs [extension/registered-extensions
+                    (constantly [{:ext/name "vis-greeter"
+                                  :ext/description "Greeting tools"
+                                  :ext/repository "example/extensions"
+                                  :ext/owner "unverified"}
+                                 {:ext/name "local-tools" :ext/description "Local tools"}
+                                 {:ext/name "bundled-tools"
+                                  :ext/description "Bundled tools"
+                                  :ext/owner "vis"}])]
+        (expect (= [{:namespace "example/extensions (vis-greeter)" :owner "example"}
+                    {:namespace "local-tools" :owner "-"} {:namespace "bundled-tools" :owner "vis"}]
+                   (mapv #(select-keys % [:namespace :owner]) (main/list-extensions)))))))
 
 (defdescribe
   root-help-test

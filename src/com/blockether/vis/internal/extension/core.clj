@@ -622,7 +622,7 @@
        (optional-field? x :ext/settings #(vector-of? setting-entry? %))
        (optional-field? x :ext/theme theme/extension-theme-map?)
        (every? #(optional-field? x % non-blank-string?)
-               [:ext/version :ext/author :ext/owner :ext/license])
+               [:ext/version :ext/author :ext/owner :ext/license :ext/repository])
        (optional-field? x :ext/cli #(vector-of? registry/command? %))
        (optional-field? x :ext/channels #(vector-of? registry/channel? %))
        (optional-field? x :ext/providers #(vector-of? provider-entry? %))

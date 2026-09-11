@@ -2190,11 +2190,13 @@
                _ (when (and metadata (not= (get metadata "name") (:ext/name spec)))
                    (throw (ex-info "Extension name must match normalized project.name" {})))
                spec (if metadata
-                      (assoc spec
-                        :ext/version (get metadata "version")
-                        :ext/kind (get metadata "category")
-                        :ext/description (get metadata "description")
-                        :ext/skills (discovery/read-package-skills snap metadata))
+                      (cond-> (assoc spec
+                                :ext/version (get metadata "version")
+                                :ext/kind (get metadata "category")
+                                :ext/description (get metadata "description")
+                                :ext/skills (discovery/read-package-skills snap metadata))
+                        (get metadata "repository")
+                        (assoc :ext/repository (get metadata "repository")))
                       spec)
                validated (extension/register-extension! spec)]
 
