@@ -97,7 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
       actions: read
     outputs:
       sha: ${{ steps.verify.outputs.sha }}

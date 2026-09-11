@@ -2491,6 +2491,15 @@
           (expect (str/includes? workflow needle) needle))
         (expect (not (str/includes? workflow "continue-on-error:")))
         (expect (not (str/includes? workflow "git tag -f")))))
+  (it "grants recovery access to unpublished draft metadata and native job logs"
+      (let [recovery (-> (slurp ".github/workflows/release.yml")
+                         (str/split #"\n  recover:\n" 2)
+                         second
+                         (str/split #"\n  publish:\n" 2)
+                         first)]
+        ;; GitHub hides draft releases from a read-only GITHUB_TOKEN.
+        (expect (str/includes? recovery "      contents: write\n"))
+        (expect (str/includes? recovery "      actions: read\n"))))
   (it
     "refuses failed, partial, foreign and different-source recovery evidence"
     (let
