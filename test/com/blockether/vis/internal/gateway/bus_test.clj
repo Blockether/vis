@@ -457,14 +457,20 @@
                 prod
                 (str (random-uuid))
 
+                poll-thread
+                (Thread/currentThread)
+
                 pid
                 (.pid (java.lang.ProcessHandle/current))]
 
             (bus/set-deliver-fn! (fn [s _store? _ev]
                                    (swap! seen conj s)))
             (bus/set-relevant-sids-fn! (fn []
-                                         [sid]))
+                                         (when (identical? poll-thread (Thread/currentThread))
+                                           [sid])))
             (try (write! sid [(turn-started prod pid (str sid) "T-mirror")])
+                 ;; A tailer started by an earlier suite test must not consume this fixture.
+                 (expect (false? @(future (#'bus/poll-once!))))
                  (expect (true? (#'bus/poll-once!)))
                  (expect (= [sid] @seen))
                  (finally (bus/set-relevant-sids-fn! nil))))))))
