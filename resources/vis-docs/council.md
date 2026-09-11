@@ -204,9 +204,11 @@ require replies. They contain the failure/timeout outcome, duration in milliseco
 when available (otherwise `unknown`), source coordinates and a
 `read_session(session_id)` lookup for the original evidence. Reproduction is marked
 **not attempted**: a failed tool call alone does not establish a product defect.
+
 Raw code, stdout and exception messages are not copied automatically because they
 may contain private data. Inspect the source execution for the full diagnostics
 and add a sanitized follow-up using the checklist above.
+
 If storage fails, the original tool failure is preserved and explicitly says the
 complaint could not be saved; reporting does not recursively call Python.
 
