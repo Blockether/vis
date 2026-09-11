@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeGatewayUrl } from './endpoints';
+import { bestAddress, isUpgrade, normalizeGatewayUrl } from './endpoints';
 
 describe('normalizeGatewayUrl', () => {
   it('supplies the scheme a human leaves out', () => {
@@ -37,5 +37,27 @@ describe('normalizeGatewayUrl', () => {
     expect(normalizeGatewayUrl('two words')).toBeNull();
     expect(normalizeGatewayUrl('vis://gateway?url=http%3A%2F%2F10.0.0.5%3A7890')).toBeNull();
     expect(normalizeGatewayUrl('ftp://10.0.0.5')).toBeNull();
+  });
+});
+
+// Regression: opening a domain-based pairing link switched to an advertised IP.
+describe('gateway address preference', () => {
+  const domain = 'https://gateway.example.com';
+  const tailnet = 'http://100.64.0.10:7890';
+  const lan = 'http://10.0.0.5:7890';
+  const loopback = 'http://127.0.0.1:7890';
+
+  it('prefers a public hostname over physical addresses during pairing', () => {
+    expect(bestAddress([tailnet, lan, domain])).toBe(domain);
+    expect(isUpgrade(tailnet, domain)).toBe(false);
+    expect(isUpgrade(lan, domain)).toBe(false);
+    expect(isUpgrade(domain, tailnet)).toBe(true);
+  });
+
+  it('still prefers the tailnet over LAN and never moves off working loopback', () => {
+    expect(bestAddress([lan, tailnet, loopback])).toBe(tailnet);
+    expect(isUpgrade(tailnet, lan)).toBe(true);
+    expect(isUpgrade(domain, loopback)).toBe(false);
+    expect(isUpgrade(tailnet, loopback)).toBe(false);
   });
 });

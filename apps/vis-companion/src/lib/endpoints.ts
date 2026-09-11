@@ -9,17 +9,17 @@
  * to the most fragile address, because at pairing time the phone is standing
  * next to the machine and the LAN address is the fastest to reply.
  *
- * So the app carries an explicit preference and re-applies it whenever it
- * learns a better address: tailnet first, then a public tunnel hostname, then
- * LAN, then anything else, loopback last (only the machine itself can use it).
+ * Prefer a public hostname, which does not require a local network or VPN,
+ * then the tailnet, LAN, other addresses and loopback. An advertised physical
+ * address must not replace a working domain from a pairing link.
  */
 
 export type Reach = 'tailscale' | 'tunnel' | 'lan' | 'loopback' | 'other';
 
 /** Lower is more durable. Used for both selection and display order. */
 const RANK: Record<Reach, number> = {
-  tailscale: 0,
-  tunnel: 1,
+  tunnel: 0,
+  tailscale: 1,
   lan: 2,
   other: 3,
   loopback: 4,

@@ -36,6 +36,8 @@ let origins = 0;
 
 export function renderApp({
   machines = [{}] as AppMachine[],
+  /** False for a first import: gateways answer, but this device has no pairing yet. */
+  initiallyPaired = true,
   /** Addresses that answer nothing at all — a LAN address from another network. */
   unreachable = [] as string[],
   /** The machine saved as both primary and current, by fixture index. */
@@ -64,9 +66,12 @@ export function renderApp({
   const dead = new Set(unreachable.map((address) => new URL(address).origin));
   // Both mirrors: the sync read is plain web storage, the async one comes back
   // through Capacitor Preferences, whose web implementation prefixes its keys.
-  const primaryConn = conns[primary] ?? conns[0];
+  const primaryConn = initiallyPaired ? conns[primary] ?? conns[0] : undefined;
   for (const prefix of ["", "CapacitorStorage."]) {
-    localStorage.setItem(`${prefix}vis.connections`, JSON.stringify(conns));
+    localStorage.setItem(
+      `${prefix}vis.connections`,
+      JSON.stringify(initiallyPaired ? conns : []),
+    );
     localStorage.setItem(`${prefix}vis.activeConnection`, primaryConn?.url ?? "");
     localStorage.setItem(`${prefix}vis.primaryConnection`, primaryConn?.url ?? "");
   }
@@ -122,6 +127,7 @@ export function renderApp({
     if (url.pathname === "/v1/capabilities")
       return answer({
         version: 1,
+        addresses: [entry.conn.url, ...(entry.conn.alts ?? [])],
         protocol,
         compatibility: { is_compatible: true },
         features: {

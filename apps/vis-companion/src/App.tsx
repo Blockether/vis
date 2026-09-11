@@ -43,6 +43,7 @@ import {
   hostOf,
   isUpgrade,
   mergeAddresses,
+  normalizeAddress,
 } from "./lib/endpoints";
 import { machineOutage } from "./lib/fleet-outage";
 import { onAway, onWake } from "./lib/wake";
@@ -616,12 +617,20 @@ export function App() {
   // rewrite whatever they were handed into.
   useEffect(() => {
     let dispose = () => {};
-    void onPairingLink((url) => {
+    void onPairingLink(async (url) => {
       const parsed = parsePairing(url);
       if (parsed) {
-        // Keep `alts`: they are the other addresses this gateway answers on,
-        // and the app needs them to move off a LAN-only address later.
-        void addConnection(parsed);
+        const connections = await loadConnections();
+        const address = normalizeAddress(parsed.url);
+        // Reopening a pairing link must not reconfigure an imported machine,
+        // including one whose selected address has changed since the import.
+        if (
+          connections.some((conn) =>
+            mergeAddresses([conn.url], conn.alts).includes(address),
+          )
+        ) return;
+        // Keep alternatives so a new pairing can recover on another network.
+        await addConnection(parsed);
         return;
       }
       const shared = parseShareLink(url);
