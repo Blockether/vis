@@ -205,7 +205,17 @@
         (if (seq values) (str/join "\n" values) (field value "value"))
 
         result
-        (if (nil? result) (if (= language "clojure") "nil" "None") (scalar result))
+        (when-not (or (nil? result)
+                      (= result
+                         (case language
+                           "clojure"
+                           "nil"
+
+                           "python"
+                           "None"
+
+                           nil)))
+          (scalar result))
 
         section
         (fn [title text syntax]

@@ -186,11 +186,23 @@
           (expect (= ["source" "hello\n" "warning\n" "42"]
                      (mapv #(get % "text") (filter #(= "code" (get % "type")) blocks)))))))
   (it "omits empty streams without losing false or zero results"
-      (doseq [value ["false" "0" "None" "nil"]]
+      (doseq [value [false 0 "false" "0" "\"nil\"" "\"None\""]]
         (let [view (presenter/result-presentation
                      {:operation :repl_eval}
                      {"language" "python" "code" "source" "value" value "out" "" "err" ""})]
           (expect (= ["Program" "Result"]
+                     (mapv #(get % "text")
+                           (filter #(= "heading" (get % "type")) (get view "content"))))))))
+  (it "omits nil results without losing the program or streams"
+      (doseq [[language result] [["clojure" {}] ["clojure" {"value" nil}]
+                                 ["clojure" {"value" "nil"}] ["clojure" {"values" ["nil"]}]
+                                 ["python" {}] ["python" {"value" nil}]
+                                 ["python" {"value" "None"}]]]
+        (let [view (presenter/result-presentation
+                     {:operation :repl_eval}
+                     (merge {"language" language "code" "source" "out" "hello\n" "err" "warning\n"}
+                            result))]
+          (expect (= ["Program" "Stdout" "Stderr"]
                      (mapv #(get % "text")
                            (filter #(= "heading" (get % "type")) (get view "content"))))))))
   (it "keeps partial streams with errors and timeouts, not a successful result"
