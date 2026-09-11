@@ -53,7 +53,7 @@
                               opts)))))
 
 (defn publish
-  "Publish an entry with required kind: potential_issue, coordination or informational. Kind classifies this message, never its delivery. A no-ping continuation answers the latest entry addressed to this session if it is an unanswered request, and notifies its author; reply_to selects a request explicitly. reply_required=True requires an answer in the receiving iteration. Explicit ping IDs can wake idle peers; all selects active peers only."
+  "Publish an entry with required kind: complain for failures or concrete improvements, coordination for work/questions, or informational for results/decisions. Complaints enter the persistent improve register. Include evidence and the relevant turn/iteration; source_ref automatically stamps this publication for every kind. Select individual pings, all, or none; kind never selects recipients. FAILED python_execution is already recorded as autocomplain without pings. A no-ping continuation answers the latest entry addressed to this session if it is an unanswered request, and notifies its author; reply_to selects a request explicitly. reply_required=True requires an answer in the receiving iteration. Explicit ping IDs can wake idle peers; all selects active peers only."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db
@@ -66,7 +66,7 @@
          (:council (ctx-loop/read-turn-state env))
 
          source
-         (cond-> {:session_id sid :scope (ctx-loop/cursor-snapshot env)}
+         (cond-> (council/source-ref env)
            extension/*current-invocation-id*
            (assoc :operation_id extension/*current-invocation-id*))
 

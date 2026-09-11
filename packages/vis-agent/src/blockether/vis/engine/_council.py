@@ -8,26 +8,36 @@ from uuid import uuid4
 
 from blockether.vis._contracts import validate
 
-CouncilKind = Literal["potential_issue", "coordination", "informational"]
+CouncilKind = Literal["complain", "coordination", "informational"]
 
 
 @dataclass(frozen=True, slots=True)
 class CouncilSource:
     session_id: str
-    turn: int
-    iteration: int
-    form: int
+    turn: int | None
+    iteration: int | None
+    form: int | None
     operation_id: str | None = None
+    session_state_id: str | None = None
+    session_turn_soul_id: str | None = None
+    session_turn_state_id: str | None = None
+    session_turn_iteration_id: str | None = None
+    tool_call_id: str | None = None
 
     @classmethod
     def from_wire(cls, data):
         validate("council", "source_ref", data)
         return cls(
             data["session_id"],
-            data["scope"]["turn"],
-            data["scope"]["iter"],
-            data["scope"]["next_form"],
+            (data["scope"] or {}).get("turn"),
+            (data["scope"] or {}).get("iter"),
+            (data["scope"] or {}).get("next_form"),
             data.get("operation_id"),
+            data.get("session_state_id"),
+            data.get("session_turn_soul_id"),
+            data.get("session_turn_state_id"),
+            data.get("session_turn_iteration_id"),
+            data.get("tool_call_id"),
         )
 
 
@@ -43,7 +53,7 @@ class CouncilEntry:
     entry_id: int
     kind: CouncilKind
     thread_id: int
-    group_id: str
+    group_id: str | None
     content: str
     author_session_id: str
     created_at: int
@@ -136,8 +146,12 @@ class Council:
     ) -> CouncilEntry:
         """Publish with an explicit per-message kind, independently of ping/reply policy.
 
-        potential_issue records an unverified concern, coordination covers work/questions,
-        and informational records findings/decisions. No kind creates a backlog issue.
+        complain records failures or concrete improvements in the persistent improve
+        register; coordination covers work/questions and informational findings/decisions.
+        Every entry has host-owned source_ref; unavailable execution coordinates are null.
+        Include the relevant turn/iteration when discussing another execution. Select
+        individual pings, all, or none; no kind creates a tracker issue. Failed
+        python_execution calls are already recorded as autocomplain without pings.
 
         A no-ping thread continuation answers the latest addressed entry only if it
         is an unanswered request, notifying its author. reply_to selects a request

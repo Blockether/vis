@@ -413,23 +413,50 @@
         sql-texts))
 
 (defn- dependent-objects
-  "Every schema object OTHER than `table` whose own DDL names `column`: the FTS5
-   index that mirrors the row and the triggers that feed it. SQLite REFUSES
-   `ALTER TABLE … DROP COLUMN` while a trigger still reads it, which is exactly
-   why a retired column used to survive every open on a store that already
-   existed."
+  "Indexes, views, triggers and external-content FTS tables that use this column.
+   Never drop ordinary tables: a same-named column or a comment is not a dependency."
   [^java.sql.Connection conn ^String table ^String column]
-  (with-open [st (.prepareStatement conn
-                                    (str "SELECT type, name FROM sqlite_master"
-                                         " WHERE type IN ('table','trigger','view','index')"
-                                         " AND name <> ? AND sql LIKE ?"))]
-    (.setString st 1 table)
-    (.setString st 2 (str "%" column "%"))
-    (with-open [rs (.executeQuery st)]
-      (loop [acc []]
-        (if (.next rs)
-          (recur (conj acc {:kind (.getString rs "type") :name (.getString rs "name")}))
-          acc)))))
+  (let [column-re
+        (re-pattern (str "(?i)\\b" (java.util.regex.Pattern/quote column) "\\b"))
+
+        table-re
+        (re-pattern (str "(?i)\\b" (java.util.regex.Pattern/quote table) "\\b"))
+
+        content-re
+        (re-pattern
+          (str "(?i)\\bcontent\\s*=\\s*['\"]" (java.util.regex.Pattern/quote table) "['\"]"))]
+
+    (with-open
+      [st
+       (.prepareStatement
+         conn
+         (str
+           "SELECT type, name, tbl_name, sql FROM sqlite_master"
+           " WHERE type IN ('table','trigger','view','index') AND name <> ? AND sql IS NOT NULL"))]
+      (.setString st 1 table)
+      (with-open [rs (.executeQuery st)]
+        (loop [acc []]
+          (if (.next rs)
+            (let [kind (.getString rs "type")
+                  definition (strip-sql-comments (.getString rs "sql"))
+                  dependent? (and (re-find column-re definition)
+                                  (case kind
+                                    "table"
+                                    (and (re-find #"(?i)^CREATE\s+VIRTUAL\s+TABLE" definition)
+                                         (re-find content-re definition))
+
+                                    "index"
+                                    (= table (.getString rs "tbl_name"))
+
+                                    ("trigger" "view")
+                                    (re-find table-re definition)
+
+                                    false))]
+
+              (recur (cond-> acc
+                       dependent?
+                       (conj {:kind kind :name (.getString rs "name")}))))
+            acc))))))
 
 (defn- execute-ddl!
   [^java.sql.Connection conn ^String sql]

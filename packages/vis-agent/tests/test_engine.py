@@ -529,9 +529,12 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     assert entry.title == "SDK"
                     assert (
                         entry.source == "sdk"
-                        and entry.source_ref is None
+                        and entry.source_ref.session_id == session.id
                         and entry.ping == ()
                     )
+                    assert entry.source_ref.session_state_id
+                    assert entry.source_ref.turn == 1
+                    assert entry.source_ref.iteration == 1
                     thread_id = bound.threads().entries[0].thread_id
                     assert thread_id == entry.thread_id
                     continuation = bound.publish(
@@ -612,6 +615,11 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
         ]
         assert len(host_entries) == 2
         assert all(row.source_ref.session_id == session.id for row in host_entries)
+        assert [row.source_ref.turn for row in host_entries] == [1, 2]
+        assert all(row.source_ref.iteration == 1 for row in host_entries)
+        assert all(row.source_ref.session_turn_soul_id for row in host_entries)
+        assert all(row.source_ref.session_turn_state_id for row in host_entries)
+        assert all(row.source_ref.session_turn_iteration_id for row in host_entries)
         assert all(
             str(row.entry_id) in str(transcript)
             and row.source_ref.operation_id in str(transcript)

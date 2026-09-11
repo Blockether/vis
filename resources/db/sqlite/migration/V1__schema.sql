@@ -841,11 +841,11 @@ INSERT INTO transcript_reply_fts(transcript_reply_fts) VALUES ('rebuild');
 -- Council is an append-only project log. Activation identities are process-local targets.
 CREATE TABLE council_entry (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  group_id TEXT NOT NULL,
+  group_id TEXT,
   author_sid TEXT NOT NULL,
   activation_id TEXT NOT NULL,
-  source TEXT NOT NULL CHECK (source IN ('host', 'sdk')),
-  kind TEXT NOT NULL DEFAULT 'informational' CHECK (kind IN ('potential_issue', 'coordination', 'informational')),
+  source TEXT NOT NULL DEFAULT 'host' CHECK (source IN ('host', 'sdk', 'autocomplain')),
+  kind TEXT NOT NULL DEFAULT 'informational' CHECK (kind IN ('complain', 'coordination', 'informational')),
   source_ref BLOB,
   thread_id INTEGER REFERENCES council_entry(id),
   reply_required INTEGER NOT NULL DEFAULT 0 CHECK (reply_required IN (0, 1)),
@@ -872,3 +872,20 @@ CREATE TABLE council_ping (
 );
 
 CREATE INDEX idx_council_ping_entry ON council_ping(entry_id, recipient_sid);
+
+-- One register row per complaint; content, group and origin live on council_entry.
+-- Source identities are retained even when execution history is pruned.
+CREATE TABLE improve (
+  entry_id INTEGER PRIMARY KEY REFERENCES council_entry(id) ON DELETE CASCADE,
+  session_soul_id TEXT NOT NULL,
+  session_state_id TEXT,
+  session_turn_soul_id TEXT,
+  session_turn_state_id TEXT,
+  session_turn_iteration_id TEXT,
+  turn INTEGER CHECK (turn IS NULL OR turn > 0),
+  iteration INTEGER CHECK (iteration IS NULL OR iteration > 0),
+  form INTEGER CHECK (form IS NULL OR form > 0),
+  tool_call_id TEXT
+);
+CREATE INDEX idx_improve_session ON improve(session_soul_id, entry_id);
+CREATE INDEX idx_improve_iteration ON improve(session_turn_iteration_id, entry_id);

@@ -5544,7 +5544,15 @@
       (council/get-entry db sid opts)
 
       :publish
-      (council/publish! db
-                        #(council/runtime db)
-                        {:session-id sid :activation-id (:activation_id opts) :source "sdk"}
-                        opts))))
+      (let [environment
+            (live-env sid)
+
+            source
+            (when (:council (ctx-loop/read-turn-state environment))
+              (council/source-ref environment))]
+
+        (council/publish!
+          db
+          #(council/runtime db)
+          {:session-id sid :activation-id (:activation_id opts) :source "sdk" :source-ref source}
+          opts)))))

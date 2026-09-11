@@ -2656,6 +2656,14 @@
                           (mapv :src forms)))
                (expect (str/includes? (str (:stdout (first forms))) "before native wait"))
                (expect (every? :error forms))
+               (let [ids (mapv #(get-in % [:error :complain_entry_id]) forms)
+                     complaints (mapv #(persistance/db-council-get db %) ids)]
+
+                 (expect (every? pos-int? ids))
+                 (expect (every? #(= "autocomplain" (:source %)) complaints))
+                 (expect (every? #(= [1 1] ((juxt :turn :iter) (get-in % [:source_ref :scope])))
+                                 complaints))
+                 (expect (every? #(get-in % [:source_ref :session_turn_iteration_id]) complaints)))
                (expect (= (if same-response? 2 1)
                           (count (filter #(= :form-result (:phase %)) @chunks)))))
              (finally (lp/dispose-environment! environment)))))))
@@ -10528,3 +10536,86 @@
              (expect (nil? (:error stored)))
              (expect (= [::lp/turn-outcome-persist-failed] (mapv :id signals))))
            (finally (lp/dispose-environment! environment))))))
+
+(defdescribe
+  python-autocomplain-boundary-test
+  (it
+    "records real failed Python calls once without Council, keeping execution provenance"
+    (let [environment
+          (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+          db
+          (:db-info environment)
+
+          sid
+          (str (:session-id environment))
+
+          _
+          (persistance/db-store-session-turn! db
+                                              {:parent-session-id sid :user-request "Earlier turn"})
+
+          tid
+          (persistance/db-store-session-turn! db
+                                              {:parent-session-id sid
+                                               :user-request "Check failures"})
+
+          requests
+          (atom [])
+
+          calls
+          (atom 0)
+
+          codes
+          ["print('before failure'); 1 / 0"
+           "try:\n    raise ValueError('caught')\nexcept ValueError:\n    print({'is_pass': False})"
+           "if True print('syntax')" "raise RuntimeError('second failure')" " "
+           "cat(project_root_path / 'missing-autocomplain-fixture')"]]
+
+      (try
+        (with-redefs [toggles/enabled?
+                      (constantly false)
+
+                      vis/toggle-enabled?
+                      (constantly false)
+
+                      svar/ask-code!
+                      (fn [_ opts]
+                        (swap! requests conj (:messages opts))
+                        (if (= 1 (swap! calls inc))
+                          {:stop-reason :tool-calls
+                           :tokens {}
+                           :tool-calls (mapv (fn [idx code]
+                                               {:id (str "call-" idx)
+                                                :name "python_execution"
+                                                :input {:code code}})
+                                             (range)
+                                             codes)}
+                          {:stop-reason :end :content "done" :tokens {}}))]
+
+          (let [result
+                (lp/iteration-loop environment "Check failures" {:session-turn-id tid})
+
+                rows
+                ((requiring-resolve
+                   'com.blockether.vis.internal.persistance.sqlite.test-helpers/raw-query)
+                  db
+                  {:select [:*] :from [:improve] :order-by [:entry_id]})
+
+                entries
+                (mapv #(persistance/db-council-get db (:entry_id %)) rows)]
+
+            (expect (= 2 (:iteration-count result)))
+            (expect (= 5 (count rows)))
+            (expect (= [1 3 4 5 6] (mapv :form rows)))
+            (expect (every? #(= [sid (str tid) 2 1]
+                                ((juxt :session_soul_id :session_turn_soul_id :turn :iteration) %))
+                            rows))
+            (expect (= 1 (count (distinct (map :session_turn_iteration_id rows)))))
+            (expect (every? :session_turn_iteration_id rows))
+            (expect (every? #(= ["complain" "autocomplain" []] ((juxt :kind :source :ping) %))
+                            entries))
+            (expect (not (str/includes? (pr-str entries) "before failure")))
+            (expect (not (str/includes? (pr-str entries) "second failure")))
+            (expect (str/includes? (pr-str (last @requests)) "t2/i1/f1"))
+            (expect (str/includes? (pr-str (last @requests)) "autocomplain #"))))
+        (finally (lp/dispose-environment! environment))))))

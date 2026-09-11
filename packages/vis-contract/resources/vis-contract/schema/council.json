@@ -210,7 +210,10 @@
           "minLength": 1
         },
         "scope": {
-          "type": "object",
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
             "turn": {
               "type": "integer",
@@ -235,6 +238,26 @@
         "operation_id": {
           "type": "string",
           "minLength": 1
+        },
+        "session_state_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_turn_soul_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_turn_state_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_turn_iteration_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_call_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -250,7 +273,10 @@
           "$ref": "#/$defs/entry_id"
         },
         "group_id": {
-          "type": "string",
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1
         },
         "content": {
@@ -268,7 +294,8 @@
         "source": {
           "enum": [
             "host",
-            "sdk"
+            "sdk",
+            "autocomplain"
           ]
         },
         "ping": {
@@ -387,6 +414,16 @@
         },
         "kind": {
           "$ref": "#/$defs/kind"
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_ref"
+        },
+        "source": {
+          "enum": [
+            "host",
+            "sdk",
+            "autocomplain"
+          ]
         }
       },
       "required": [
@@ -593,7 +630,7 @@
     },
     "kind": {
       "enum": [
-        "potential_issue",
+        "complain",
         "coordination",
         "informational"
       ],

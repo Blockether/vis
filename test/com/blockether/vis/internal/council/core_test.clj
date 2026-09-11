@@ -85,7 +85,7 @@
 
           issue
           (publish! {:content "Possible regression; not yet confirmed."
-                     :kind "potential_issue"
+                     :kind "complain"
                      :ping [b]
                      :idempotency_key "kind"})
 
@@ -112,13 +112,12 @@
       (is (pos-int? (:entry_id issue)))
       (is (not (contains? issue :id)))
       (is (= (:entry_id issue) (:thread_id issue) (:thread_id update) (:thread_id note)))
-      (is (= ["potential_issue" "coordination" "informational"]
-             (mapv :kind (:entries (page w {})))))
-      (is (= "potential_issue" (:kind (first (:entries input)))))
+      (is (= ["complain" "coordination" "informational"] (mapv :kind (:entries (page w {})))))
+      (is (= "complain" (:kind (first (:entries input)))))
       (is (= issue (council 'get-entry db (:session-id actor) {:entry_id (:entry_id issue)})))
       (is (= issue
              (publish! {:content "Possible regression; not yet confirmed."
-                        :kind "potential_issue"
+                        :kind "complain"
                         :ping [b]
                         :idempotency_key "kind"})))
       (is (rejected? :idempotency-conflict
@@ -134,8 +133,7 @@
                        #(council 'get-entry db (:session-id actor) {:entry_id id}))))
       (is (= [update note]
              (:entries (page w {:thread_id (:thread_id issue) :after (:entry_id issue)}))))
-      (is (= "potential_issue"
-             (:kind (first (:entries (council 'threads db (:session-id actor) {}))))))
+      (is (= "complain" (:kind (first (:entries (council 'threads db (:session-id actor) {}))))))
       (is (not (document/valid? "council" "entry" (dissoc issue :kind))))
       (is (not (document/valid? "council"
                                 "entry"
@@ -2202,3 +2200,210 @@
                      w
                      {:kind "coordination" :content "Evidence?" :ping [b] :reply_required true})
                    [:replies 0 :state]))))))))
+
+(deftest complain-register-test
+  (with-council
+    (let [{:keys [db actor ids] :as w}
+          (world)
+
+          sid
+          (:session-id actor)
+
+          tid
+          (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Investigate"})
+
+          source
+          {:session_id sid :session_turn_soul_id (str tid) :scope {:turn 1 :iter 2 :next_form 1}}
+
+          w
+          (assoc-in w [:actor :source-ref] source)
+
+          opts
+          {:kind "complain"
+           :content "An extension could avoid repeated manual parsing."
+           :ping [(second ids)]
+           :idempotency_key "improvement"}
+
+          entry
+          (publish w opts)
+
+          rows
+          (h/raw-query db {:select [:*] :from [:improve]})]
+
+      (is (= "complain" (:kind entry)))
+      (is (= entry (publish w opts)))
+      (is (= 1 (count rows) (h/raw-count db :improve)))
+      (is (= (:entry_id entry) (:entry_id (first rows))))
+      (is (= sid (:session_soul_id (first rows))))
+      (is (= (str tid) (:session_turn_soul_id (first rows))))
+      (is (= [1 2 1] ((juxt :turn :iteration :form) (first rows))))
+      (is (string? (:session_turn_state_id (first rows))))
+      (is (rejected? :invalid-request
+                     #(publish w {:kind "potential_issue" :content "Retired kind"})))
+      (publish w {:kind "informational" :content "No new report."})
+      (is (= 1 (h/raw-count db :improve))))))
+
+(deftest automatic-complain-register-test
+  (with-council
+    (let [{:keys [db actor gid]}
+          (world)
+
+          sid
+          (:session-id actor)
+
+          tid
+          (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Execute"})
+
+          env
+          {:db-info db
+           :session-id sid
+           :turn-state-atom (atom {:session-turn-id tid :turn-position 1 :iteration 1 :form-idx 0})}
+
+          tool
+          {:svar/tool-call-id "failed-call" :vis/tool-name "python_execution"}
+
+          failure
+          {:error {:message "private diagnostic"} :duration-ms 1}
+
+          record!
+          #(council 'record-failure! env %1 %2)]
+
+      (with-redefs [toggles/enabled? (constantly false)]
+        (let [result (record! tool failure)
+              id (get-in result [:error :complain_entry_id])
+              entry (ps/db-council-get db id)]
+
+          (is (pos-int? id))
+          (is (= result (record! tool failure)))
+          (is (= ["complain" "autocomplain" gid []] ((juxt :kind :source :group_id :ping) entry)))
+          (is (re-find #"t1/i1/f1" (:content entry)))
+          (is (not (re-find #"private diagnostic" (:content entry))))
+          (is (re-find #"t1/i1/f1" (get-in result [:error :message])))
+          (is (= 1 (h/raw-count db :improve)))
+          (is (= {:stdout "False"} (record! tool {:stdout "False"})))
+          (is (= 1 (h/raw-count db :improve)))
+          (let [iid (ps/db-store-iteration! db
+                                            {:session-turn-id tid
+                                             :code "raise RuntimeError()"
+                                             :forms [{:scope "t1/i1/f1"
+                                                      :src "raise RuntimeError()"
+                                                      :error (:error result)
+                                                      :svar/tool-call-id "failed-call"}]})
+                row (first (h/raw-query db {:select [:*] :from [:improve]}))]
+
+            (is (= (str iid) (:session_turn_iteration_id row)))
+            (is (= (str iid)
+                   (get-in (ps/db-council-get db id) [:source_ref :session_turn_iteration_id])))))
+        (swap! (:turn-state-atom env) assoc :form-idx 1)
+        (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core 'session-group)
+                         (constantly nil)}
+          #(let [result (record! (assoc tool :svar/tool-call-id "ungrouped") failure) entry
+                 (ps/db-council-get db (get-in result [:error :complain_entry_id]))] (is
+                                                                                       (nil?
+                                                                                         (:group_id
+                                                                                           entry)))
+             (is (= "autocomplain" (:source entry))) (is (= 2 (h/raw-count db :improve)))))))))
+
+(deftest complain-store-failure-test
+  (with-council
+    (let [{:keys [db actor] :as w}
+          (world)
+
+          sid
+          (:session-id actor)
+
+          tid
+          (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Failure"})
+
+          env
+          {:db-info db
+           :session-id sid
+           :turn-state-atom (atom
+                              {:session-turn-id tid :turn-position 1 :iteration 1 :form-idx 0})}]
+
+      (jdbc/execute! (:datasource db) ["DROP TABLE improve"])
+      (is (try (publish w {:kind "complain" :content "Must commit atomically"})
+               false
+               (catch Exception _ true)))
+      (is (zero? (h/raw-count db :council_entry)))
+      (let [result
+            (atom nil)
+
+            {:keys [signals]}
+            (tel/with-signals (reset! result (council 'record-failure!
+                                                      env
+                                                      {:svar/tool-call-id "call"
+                                                       :vis/tool-name "python_execution"}
+                                                      {:error {:message "original error"}})))]
+
+        (is (re-find #"original error" (get-in @result [:error :message])))
+        (is (re-find #"autocomplain could not be saved" (get-in @result [:error :message])))
+        (is (= 1 (count signals)))
+        (is (zero? (h/raw-count db :council_entry)))))))
+
+(deftest complain-register-reopen-test
+  (with-council
+    (let [file
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-complain"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          db
+          (ps/db-create-connection! (.getPath file))]
+
+      (try
+        (let [{:keys [actor] :as w}
+              (world db 1)
+
+              entry
+              (publish w {:kind "informational" :content "Existing entry"})]
+
+          (ps/db-claim-session! db (:session-id actor))
+          (ps/db-store-session-turn! db
+                                     {:parent-session-id (:session-id actor)
+                                      :user-request "Keep session"})
+          (is (= 1 (h/raw-count db :session_soul)))
+          ;; Existing stores realign to canonical constraints without an obsolete API migration.
+          (jdbc/execute! (:datasource db) ["DROP TABLE improve"])
+          (jdbc/execute! (:datasource db) ["ALTER TABLE council_entry DROP COLUMN kind"])
+          (jdbc/execute!
+            (:datasource db)
+            ["ALTER TABLE council_entry ADD COLUMN kind TEXT NOT NULL DEFAULT 'informational' CHECK (kind IN ('potential_issue', 'coordination', 'informational'))"])
+          (jdbc/execute! (:datasource db) ["ALTER TABLE council_entry DROP COLUMN source"])
+          (jdbc/execute!
+            (:datasource db)
+            ["ALTER TABLE council_entry ADD COLUMN source TEXT NOT NULL DEFAULT 'host' CHECK (source IN ('host', 'sdk'))"])
+          (ps/db-dispose-connection! db)
+          (let [reopened (ps/db-create-connection! (.getPath file))]
+            (try
+              (let [stored (ps/db-council-get reopened (:entry_id entry))]
+                (is (= "informational" (:kind stored)))
+                (is (= (:content entry) (:content stored)))
+                (is (zero? (h/raw-count reopened :improve)))
+                (is (= (:session-id actor)
+                       (str (:id (ps/db-get-session reopened (:session-id actor)))))
+                    (pr-str {:session (ps/db-get-session reopened (:session-id actor))
+                             :sessions (h/raw-count reopened :session_soul)
+                             :projects (h/raw-count reopened :project)}))
+                (is (= "complain"
+                       (:kind (publish (assoc w :db reopened)
+                                       {:kind "complain" :content "New improvement"}))))
+                (let [sid (:session-id actor)
+                      tid (ps/db-store-session-turn! reopened
+                                                     {:parent-session-id sid
+                                                      :user-request "Failure"})
+                      env {:db-info reopened
+                           :session-id sid
+                           :turn-state-atom
+                           (atom {:session-turn-id tid :turn-position 1 :iteration 1 :form-idx 0})}
+                      result (council 'record-failure!
+                                      env
+                                      {:svar/tool-call-id "call" :vis/tool-name "python_execution"}
+                                      {:error {:message "original error"}})]
+
+                  (is (pos-int? (get-in result [:error :complain_entry_id])))
+                  (is (= 2 (h/raw-count reopened :improve)))))
+              (finally (ps/db-dispose-connection! reopened)))))
+        (finally (ps/db-dispose-connection! db)
+                 (doseq [^java.io.File f (reverse (file-seq file))]
+                   (.delete f)))))))

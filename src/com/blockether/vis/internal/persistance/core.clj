@@ -677,6 +677,8 @@
     (try (db-dispose-connection! c) (catch Exception _ nil))
     (reset! shared-conn nil)))
 
+(defdelegate db-council-source [db-info sid source])
+
 (defdelegate db-council-get [db-info id])
 
 (defdelegate db-council-replay [db-info sid key])

@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
@@ -70,6 +71,81 @@
   [db sid]
   (or (session-group db (ps/db-get-session db sid))
       (fail! :group-not-found "Council requires a persisted session with a project or workspace")))
+
+(defn source-ref
+  "Snapshot the publishing execution, not Python's mutable session dictionary.
+   The iteration row is allocated after execution and linked by the store."
+  [env]
+  (let [state (ctx-loop/read-turn-state env)]
+    (cond-> {:session_id (str (:session-id env))
+             :scope (when (:iteration state) (ctx-loop/cursor-snapshot env))}
+      (:session-turn-id state)
+      (assoc :session_turn_soul_id (str (:session-turn-id state))))))
+
+(defn record-failure!
+  "Record each failed python_execution once, independently of Council delivery/toggles.
+   Shared content carries coordinates, not raw code, stdout or exception messages."
+  [env entry execution]
+  (if-not (and (:error execution)
+               (= "python_execution" (:vis/tool-name entry))
+               (:db-info env)
+               (:session-id env))
+    execution
+    (let [db
+          (:db-info env)
+
+          sid
+          (str (:session-id env))
+
+          scope
+          (ctx-loop/cursor-snapshot env)
+
+          at
+          (str "t" (get scope "turn") "/i" (get scope "iter") "/f" (get scope "next_form"))]
+
+      (try
+        (let [source
+              (ps/db-council-source db
+                                    sid
+                                    (assoc (source-ref env)
+                                      :tool_call_id (:svar/tool-call-id entry)))
+
+              key
+              (str "autocomplain:"
+                   (util/sha256-hex (pr-str [sid (:session_turn_state_id source) (:scope source)
+                                             (:svar/tool-call-id entry)])))
+
+              row
+              {:author_sid sid
+               :group_id (session-group db (ps/db-get-session db sid))
+               :activation_id "autocomplain"
+               :source "autocomplain"
+               :kind "complain"
+               :source_ref source
+               :created_at (util/now-ms)
+               :idempotency_key key
+               :fingerprint key
+               :title (str "Python execution failed at " at)
+               :content (str "Autocomplain: python_execution failed at "
+                             at
+                             (when (:timeout? execution) " (timeout)")
+                             ". Inspect source_ref for the original diagnostics.")}
+
+              id
+              (get-in (ps/db-council-insert! db row [] false) [:entry :entry_id])]
+
+          (-> execution
+              (assoc-in [:error :complain_entry_id] id)
+              (update-in [:error :message]
+                         #(str "python_execution failed at " at " (autocomplain #" id ").\n" %))))
+        (catch Exception e
+          (tel/log! {:level :error
+                     :id ::autocomplain-failed
+                     :data {:session-id sid :scope at :error-class (.getName (class e))}})
+          (update-in execution
+                     [:error :message]
+                     #(str "python_execution failed at " at
+                           "; autocomplain could not be saved.\n" %)))))))
 
 (defn- group!
   [db sid requested]
@@ -248,8 +324,8 @@
                         (clip (first (remove str/blank? (map str/trim (str/split-lines content))))
                               (get limits "title_bytes"))))
 
-                  source-ref
-                  (assoc :source_ref source-ref))
+                  true
+                  (assoc :source_ref (ps/db-council-source db session-id source-ref)))
                 (mapv (fn [id]
                         [id (or (get-in fleet [id :activation-id]) "council-wake")])
                       targets)
@@ -542,7 +618,9 @@
     (str
       "## Council: session conversation\n"
       "- IDs have separate domains: `entry_id` is a positive store-local integer; `thread_id` is the root entry_id; `after` is an exclusive integer cursor (0 initially). `session_id` and `group_id` are opaque strings, not entry numbers. Use returned IDs, never titles or invented UUIDs. Missing group_id uses `session['council']['default_group_id']`. Discover active peers with `await council.members()` and past sessions with `await list_sessions(search=...)`.\n"
-      "- Every `publish` requires `kind`: `potential_issue` for an unverified concern with evidence, `coordination` for work ownership/questions/dependencies, `informational` for facts/results/decisions. Classify each message, not the thread. Kind never changes delivery or requires a reply; potential_issue does not create a backlog issue.\n"
+      "- Every `publish` requires `kind`: `complain` for something broken or a concrete improvement (including an extension or system-prompt change), `coordination` for work ownership/questions/dependencies, `informational` for facts/results/decisions. Classify each message, not the thread. Complaints are persisted in the improve register, not external tracker issues or authorization to act.\n"
+      "- Report observed problems and concrete improvements with kind=\"complain\"; give evidence, impact, uncertainty and the relevant turn/iteration (tN/iM). Choose ping=[session_id], ping='all', or no ping according to who needs the information. Do not broadcast by default. For every kind, identify the source turn/iteration when discussing another execution; the host stamps this publication's source_ref automatically. Never invent positions or soul IDs.\n"
+      "- Each FAILED python_execution is already recorded as kind=\"complain\", source=\"autocomplain\", with session/turn/state identities and turn/iteration/form. This also works without a group or with Council disabled, and never pings or wakes peers. Do not duplicate the automatic report; add useful analysis in its thread when a group is available. Raw code/stdout/error messages are not copied into the shared report.\n"
       "- Start a thread with `await council.publish(content, kind=\"coordination\", title=..., ping=[session_id], reply_required=True)` when an answer is needed. Omit reply_required for an optional update. Explicit IDs can wake eligible idle peers; `ping='all'` snapshots active peers only. Check the returned `replies` states; unavailable delivery is not an answer.\n"
       "- At each invocation, handle every `pending_replies` item shown in Council input or `session['council']['pending_replies']` in that iteration: `await council.publish(content, kind=\"informational\", reply_to=entry_id)`. Fetch missing context with `council.get(entry_id)` only if the preview is insufficient. The engine rejects completion while a delivered obligation is unanswered. State uncertainty, refuse or report a blocker when needed; do not invent findings.\n"
       "- `reply_to` selects the original thread and automatically notifies the requester, including after its activation ends. A continuation with `thread_id` and no ping (or `ping=[]`) answers the latest entry addressed to you in that thread only if it is an unanswered request, whether required or optional. Follow-ups and acknowledgements do not fall back to older requests; use `reply_to` for those. Do not add a return ping or request a reply to a reply. A Council-woken session cannot wake unrelated idle peers. Held queues and user cancellation remain authoritative.\n"

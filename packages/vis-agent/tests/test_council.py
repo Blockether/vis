@@ -192,7 +192,7 @@ def test_required_reply_and_automatic_return_notification():
             council.publish("Wrong", kind="coordination", reply_required="true")
 
 
-@pytest.mark.parametrize("kind", ["potential_issue", "coordination", "informational"])
+@pytest.mark.parametrize("kind", ["complain", "coordination", "informational"])
 def test_explicit_message_kind_and_identifier_domains(kind):
     from typing import get_args
 
@@ -221,7 +221,7 @@ def test_explicit_message_kind_and_identifier_domains(kind):
     assert entry.kind == kind
     assert not hasattr(entry, "id")
     assert set(get_args(CouncilKind)) == {
-        "potential_issue",
+        "complain",
         "coordination",
         "informational",
     }
@@ -246,4 +246,49 @@ def test_explicit_message_kind_and_identifier_domains(kind):
                 "source": "sdk",
                 "ping": [],
             }
+        )
+
+
+@pytest.mark.parametrize("scope", [None, {"turn": 2, "iter": 3, "next_form": 4}])
+def test_source_identity_and_automatic_complain(scope):
+    from blockether.vis.engine import CouncilEntry
+
+    source = {
+        "session_id": "session-soul",
+        "scope": scope,
+        "session_state_id": "session-state",
+        "session_turn_soul_id": "turn-soul",
+        "session_turn_state_id": "turn-state",
+        "session_turn_iteration_id": "iteration",
+        "tool_call_id": "call",
+    }
+    entry = CouncilEntry.from_wire(
+        {
+            "entry_id": 8,
+            "thread_id": 8,
+            "kind": "complain",
+            "group_id": None,
+            "author_session_id": "session-soul",
+            "content": "Python execution failed at t2/i3/f4",
+            "created_at": 1,
+            "source": "autocomplain",
+            "source_ref": source,
+            "ping": [],
+        }
+    )
+    assert entry.source_ref.session_turn_soul_id == "turn-soul"
+    assert entry.source_ref.session_turn_state_id == "turn-state"
+    assert entry.source_ref.session_turn_iteration_id == "iteration"
+    assert entry.source_ref.tool_call_id == "call"
+    assert entry.source_ref.turn == (2 if scope else None)
+    assert entry.source_ref.iteration == (3 if scope else None)
+    assert entry.source_ref.form == (4 if scope else None)
+    assert entry.group_id is None
+    with pytest.raises(ValueError):
+        validate("council", "kind", "potential_issue")
+    with pytest.raises(ValueError):
+        validate(
+            "council",
+            "publish",
+            {"kind": "complain", "content": "Report", "source_ref": source},
         )

@@ -22,6 +22,7 @@
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
             [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -3714,6 +3715,86 @@
                                          payload)]})
               {:id id :version version :position position})))))))
 
+(defn db-council-source
+  "Resolve immutable execution identities from trusted host coordinates, never client fields.
+   Missing execution coordinates stay nil; session_id is the session soul identity."
+  [db sid source]
+  (let [source
+        (walk/keywordize-keys source)
+
+        state-id
+        (latest-state-id db sid)
+
+        tid
+        (:session_turn_soul_id source)
+
+        turn
+        (when (or tid (get-in source [:scope :turn]))
+          (query-one! db
+                      {:select [:ts.id :ts.session_state_id]
+                       :from [[:session_turn_soul :ts]]
+                       :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
+                       :where [:and [:= :ss.session_soul_id sid]
+                               (if tid
+                                 [:= :ts.id tid]
+                                 [:and [:= :ts.session_state_id state-id]
+                                  [:= :ts.position (get-in source [:scope :turn])]])]}))
+
+        turn-state
+        (when turn (latest-session-turn-state db (:id turn)))]
+
+    (cond-> (assoc (select-keys source [:operation_id :tool_call_id])
+              :session_id sid
+              :scope (:scope source))
+      state-id
+      (assoc :session_state_id state-id)
+
+      turn
+      (assoc :session_state_id
+        (:session_state_id turn) :session_turn_soul_id
+        (:id turn) :session_turn_state_id
+        (:id turn-state)))))
+
+(defn- insert-improve!
+  "The register is part of the publication transaction, including idempotent replays."
+  [db id row]
+  (when (= "complain" (:kind row))
+    (let [{:keys [scope] :as source} (:source_ref row)]
+      (execute! db
+                {:insert-into :improve
+                 :values [(merge (select-keys source
+                                              [:session_state_id :session_turn_soul_id
+                                               :session_turn_state_id :session_turn_iteration_id
+                                               :tool_call_id])
+                                 {:entry_id id
+                                  :session_soul_id (:author_sid row)
+                                  :turn (:turn scope)
+                                  :iteration (:iter scope)
+                                  :form (:next_form scope)})]}))))
+
+(defn- link-council-iteration!
+  "Attach the final iteration identity to publications made during its execution."
+  [db opts tid turn-state-id iteration-id]
+  (doseq [id
+          (distinct (concat (map :entry_id (:council-publications opts))
+                            (keep #(get-in % [:error :complain_entry_id]) (:forms opts))))
+
+          :let [row
+                (query-one! db {:select [:source_ref] :from [:council_entry] :where [:= :id id]})
+
+                source
+                (<-blob (:source_ref row))]
+          :when (and (= tid (:session_turn_soul_id source))
+                     (= turn-state-id (:session_turn_state_id source)))]
+
+    (execute! db
+              {:update :council_entry
+               :set {:source_ref (->blob (assoc source :session_turn_iteration_id iteration-id))}
+               :where [:= :id id]})
+    (execute!
+      db
+      {:update :improve :set {:session_turn_iteration_id iteration-id} :where [:= :entry_id id]})))
+
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 
 (defn db-store-iteration!
@@ -3853,6 +3934,11 @@
             (execute! tx-info
                       {:insert-into :llm_routing_event
                        :values [(routing-event-row iteration-id-s now idx event)]}))
+          (link-council-iteration! tx-info
+                                   opts
+                                   session-turn-soul-id-s
+                                   session-turn-state-id-s
+                                   iteration-id-s)
           iteration-id)))))
 
 ;; Read helpers
@@ -4964,6 +5050,7 @@
                          :set {:state "replied" :reply_entry_id id}
                          :where [:and [:= :entry_id reply-to]
                                  [:= :recipient_sid (:author_sid row)]]}))
+            (insert-improve! tx id row)
             {:fingerprint (:fingerprint row) :entry (db-council-get tx id) :inserted? true}))))))
 
 (defn db-council-bind-wake!
@@ -5015,7 +5102,10 @@
   "Normal pings are activation-scoped. Unacknowledged reply notifications survive activation changes."
   [db sid activation gid after limit]
   (mapv (fn [row]
-          (cond-> (dissoc row :reply_required :reply_to)
+          (cond-> (dissoc row :reply_required :reply_to :source_ref)
+            (:source_ref row)
+            (assoc :source_ref (<-blob (:source_ref row)))
+
             (= 1 (:reply_required row))
             (assoc :reply_required true)
 
@@ -5023,8 +5113,9 @@
             (assoc :reply_to (:reply_to row))))
         (query! db
                 {:select [[:e.id :entry_id] :e.kind [[:coalesce :e.thread_id :e.id] :thread_id]
-                          :e.group_id [:e.author_sid :author_session_id] :e.created_at
-                          :e.reply_required :e.reply_to [[:substr :e.content 1 1025] :content]
+                          :e.group_id [:e.author_sid :author_session_id] :e.created_at :e.source
+                          :e.source_ref :e.reply_required :e.reply_to
+                          [[:substr :e.content 1 1025] :content]
                           [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
                  :from [[:council_ping :p]]
                  :join [[:council_entry :e] [:= :e.id :p.entry_id]]

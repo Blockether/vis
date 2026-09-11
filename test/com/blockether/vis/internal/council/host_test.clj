@@ -125,13 +125,15 @@
 
       (is (= 'council.publish (:ext.symbol/symbol publication)))
       (is (= {:name "kind" :required? true} (first (:ext.symbol/params publication))))
-      (doseq [kind ["potential_issue" "coordination" "informational"]]
+      (doseq [kind ["complain" "coordination" "informational"]]
         (is (document/valid? "council" "kind" kind))
         (doseq [text [tool-doc prompt manual]]
           (is (str/includes? text kind))))
       (doseq [text [tool-doc prompt manual]]
-        (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required"]]
+        (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required" "improve"
+                       "autocomplain" "source_ref" "turn/iteration"]]
           (is (str/includes? text field)))
+        (is (not (str/includes? text "potential_issue")))
         (is (not (str/includes? text "Entries: `{id,")))
         (is (not (str/includes? text "Council never creates a model iteration")))
         (is (not (str/includes? text "Only explicit ping targets are notified"))))

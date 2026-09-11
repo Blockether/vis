@@ -1944,3 +1944,52 @@ operator authentication. No bypass was added. This task did not publish a Vis re
 restart services, deploy the catalog, commit or push. The new CLI requires a matching
 Vis build; a catalog deployment alone cannot add flags to an older binary.
 Unrelated TUI, Companion, dependency and runtime work remains outside this task.
+
+# Council complaints and execution provenance
+
+Phrase: persist improvement reports with their source execution.
+
+## Context
+
+Council currently accepts `potential_issue` but has no dedicated complaint register.
+`internal/council`, the SQLite store, `internal/loop.clj`, the Council contract and SDK
+own publication, failure handling and attribution. Keep `coordination` and
+`informational`; rename the report kind to `complain`. Do not build a tracker, UI,
+automatic remediation, or broadcast every failure. Session IDs name session souls;
+turn/state/iteration IDs and human-readable positions serve separate purposes.
+
+## 1. Persist complaints and source references
+- Rationale: manual reports and automatic failures need one durable register.
+- Data: canonical V1 SQL, Council entry/source schema, SQLite publication transaction.
+- Acceptance criteria: `improve` records each complaint once, retains source identities,
+  supports nullable groups, and does not duplicate the Council message body.
+- Unknowns: source fields unavailable before a running execution remain explicitly absent.
+
+## 2. Capture failed Python execution and align guidance
+- Rationale: collection cannot depend on an agent remembering to publish after failure.
+- Data: the common Python execution-result path, host/SDK bindings, prompts and docs.
+- Acceptance criteria: each failed call becomes `complain` from `autocomplain`, with
+  turn/iteration/form; successes and caught exceptions do not; no recursive reporting,
+  implicit broadcast, or duplicated raw code/stdout in the shared log.
+- Unknowns: persistence failures must remain visible without hiding the original error.
+
+## 3. Cross-validate and publish
+- Rationale: behavior must agree across SQLite, Python execution, SDK and model guidance.
+- Data: regression, host/loop, schema and SDK tests; formatting, lint/reflection and diff checks.
+- Acceptance criteria: affected checks pass, captured Git scope stays separable, safe commit/push.
+- Unknowns: none in the implementation. Runtime 0.5.10 release assets are now available;
+  initial dependency/native-test files are unchanged from the captured add-all scope.
+
+## Plan state
+
+Implementation and local verification complete. The `improve` register captures manual and automatic complaints,
+including disabled Council, missing groups, preflight/host/Python errors and timeouts.
+All publication kinds carry source attribution; persisted iterations complete source IDs.
+Schema realignment preserves unrelated tables and session history.
+
+Verification: 695 affected JVM tests, 35 Python SDK/contract tests and 8 real HTTP/stdio
+Council cases pass. The initial runtime pin passes 6 audit and 2 native tests. Formatting
+and lint/reflection pass. Publication is limited to the captured Git scope below.
+Initial Git scope: `audit/README.md`, `deps.edn`, and
+`test-native/com/blockether/vis/native_python_extensions_test.clj`, plus this task's changes.
+Later unrelated edits are excluded. No release or service restart is authorized.

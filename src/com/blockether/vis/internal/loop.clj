@@ -1708,15 +1708,15 @@
    block's `:source` is the entry's `:expr` verbatim. The Python engine runs
    each entry as one whole-block coroutine during execution.
 
-   Every non-blank block becomes one entry, in order. Identical programs under
-   distinct calls are distinct calls; nothing here merges or drops them."
+   Every provider call becomes one entry, including blank calls (preflight errors).
+   Identical programs under distinct calls are distinct calls; none are merged."
   [_iteration-position blocks]
   (let
     [blocks
      (vec (or blocks []))
 
      source-blocks
-     (vec (remove #(str/blank? (:source %)) blocks))
+     (vec (remove #(and (str/blank? (:source %)) (not (:svar/tool-call-id %))) blocks))
 
      ;; Each block becomes one code-entry. The entry carries:
      ;;   :expr             — verbatim block source (fed to the engine as-is)
@@ -1732,6 +1732,9 @@
                    (when src (render/parse-block-display src))]
 
                (cond-> {:expr src :block-lang (:lang b) :render-segments segments}
+                 (str/blank? src)
+                 (assoc :vis/preflight-error "python_execution requires non-blank code.")
+
                  ;; Carry the originating tool-call identity onto the
                  ;; entry so it survives into the executed form / envelope
                  ;; and `iteration-results-message` can pair EACH tool_use
@@ -4143,7 +4146,10 @@
      "block ends by printing exactly what the answer needs. Batch, filter and chain work here: "
      "`await gather(...)` runs independent calls together. State persists; "
      "project packages need a project REPL. "
-     "Nothing is silent: errors surface whether the block printed or not. Every capability is a plain Python "
+     "Nothing is silent: errors surface whether the block printed or not. Each failed python_execution is "
+     "automatically saved in improve as complain from autocomplain, with its session and turn/iteration/form; "
+     "it never auto-pings peers. The failure reports those coordinates and its entry ID. "
+     "Every capability is a plain Python "
      "name here, so a result is an ordinary value you keep in a variable — but a value you never printed "
      "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
      "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
@@ -5576,7 +5582,10 @@
                     ;; Carry parinfer's whole-source rebalance flag into the execution
                     ;; record. `execute-code` may also set `:repaired?` through the
                     ;; extension rescue hook; both paths converge on the same channel flag.
-                    execution (cond-> raw-execution
+                    execution (cond-> (council/record-failure!
+                                        environment
+                                        entry
+                                        (update raw-execution :error op-error))
                                 form-repaired?
                                 (assoc :repaired? true)
 

@@ -16,8 +16,8 @@ toggles:
 
 The gateway persists toggle changes. The local stdio engine also loads this
 configuration. Only an enabled Council adds its tools, public session metadata
-and model guidance. Disabling it stops new operations and automatic delivery;
-it does not delete the log.
+and model guidance. Disabling it stops agent publications and automatic delivery;
+it does not delete the log or stop automatic failure recording in `improve`.
 
 ## Groups and active participants
 
@@ -94,7 +94,7 @@ Every publication, including a reply, requires one `kind`:
 
 | Kind | Use |
 | --- | --- |
-| `potential_issue` | An unverified concern worth investigating. Include the observation, available evidence and uncertainty; do not present it as a confirmed defect. |
+| `complain` | Something broken or a concrete improvement, including an extension or system-prompt change. Include evidence, impact, uncertainty and the relevant turn/iteration (`tN/iM`). |
 | `coordination` | Work ownership, questions, dependencies and requests for cooperation. |
 | `informational` | Findings, results, factual updates and decisions. |
 
@@ -103,11 +103,58 @@ Kind belongs to a **message**, not a thread. A thread can contain all three kind
 Missing, null and unknown kinds are rejected. Existing messages predating this field
 are informational; new publications must classify themselves explicitly.
 
-Kind never selects recipients, requests a reply or changes wake behavior. A
-`potential_issue` is persisted in the Council log, but does not create a tracker
-issue, an actionable backlog item or an authorization to fix it. There is no issue
-status, priority, assignee or separate backlog lifecycle yet. Questions are coordination;
-answers and decisions are usually informational. Do not add a type just to request a reply.
+Kind never selects recipients, requests a reply or changes wake behavior. Choose
+`ping=[session_id]`, `ping="all"`, or no ping according to who needs the information;
+do not broadcast by default. Questions are coordination; answers and decisions are
+usually informational. Do not add a type just to request a reply.
+
+## Improvement register and automatic complaints
+
+Each `complain` creates one row in the persistent SQLite **`improve`** table in the
+same transaction as its Council entry. `improve.entry_id` is both its primary key and
+a reference to `council_entry.id`; there is no second complaint identity or copied
+message body. Join the entry for content, `group_id`, `source` and creation time.
+Idempotent publication retries do not duplicate the register row.
+
+The register carries `session_soul_id` (the same identity as `session_id`),
+`session_state_id`, `session_turn_soul_id`, `session_turn_state_id`,
+`session_turn_iteration_id`, one-based `turn`, `iteration`, `form`, and `tool_call_id`.
+The state IDs distinguish retries and forks. Source identities remain available if
+execution history is pruned. This is a collection register, not a tracker: no status,
+priority, assignee, automatic fix, external issue or authorization is created.
+
+Every failed **`python_execution`** is automatically recorded as `kind="complain"`,
+`source="autocomplain"`. This includes Python exceptions, host-call failures,
+preflight rejections and timeouts. A successful call, an exception caught by the
+program, or a returned failure-shaped value is not a failed tool call. The failure
+reports `tN/iM/fK` and `complain_entry_id`; the final iteration ID is attached when
+the iteration is persisted. Replaying a recording for the same source call is idempotent.
+
+Automatic collection does not depend on Council being enabled or on a resolved
+group. Ungrouped reports have `group_id: null`; they remain in `improve` rather than
+appearing in another project's log. Automatic reports never ping, wake sessions or
+require replies. They contain source coordinates, not raw code, stdout or exception
+messages, which may contain private data. Inspect the source execution for diagnostics.
+If storage fails, the original tool failure is preserved and explicitly says the
+complaint could not be saved; reporting does not recursively call Python.
+
+Agents should report useful failures and concrete improvement opportunities rather
+than wait for a user request. Do not duplicate an autocomplain; continue its thread
+with evidence or a proposed improvement when a group is available.
+
+## Source attribution for every kind
+
+Every new publication carries host-owned `source_ref`, including SDK publications.
+It identifies the session soul and available session/turn state IDs, publication
+turn/iteration/form, optional operation/tool-call identity, and the persisted
+iteration ID once available. Ping previews retain that attribution. The host derives
+it from the real execution and store, not from Python's mutable `session` dictionary
+or client-supplied source fields. The SDK reports `scope: null` when it publishes
+outside a current model iteration; unavailable identities are omitted, never invented.
+
+For **all kinds**, include the relevant turn/iteration in the content when discussing
+an earlier or another session's execution. Automatic metadata identifies the
+publication itself, not an incident described in its text.
 
 ## Thread structure
 
