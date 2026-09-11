@@ -9847,7 +9847,18 @@
         (titling/maybe-auto-title! env user-request)
 
         goal-at-turn-start
-        (goals/check-goal env)
+        (let [sid
+              (str (:session-id env))
+
+              council-wake?
+              (get-in (council/runtime (:db-info env) sid) [sid :wake?])]
+
+          (if (or council-wake?
+                  (some-> (:cancel-atom loop-opts)
+                          deref)
+                  (cancellation/cancelled? (:cancel-token loop-opts)))
+            (goals/check-goal env)
+            (goals/resume-for-user-turn! env)))
 
         result
         (try

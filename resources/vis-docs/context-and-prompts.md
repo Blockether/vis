@@ -107,8 +107,12 @@ While a goal is active, a final reply without tools is rejected with feedback an
 engine continues **the same turn**. An empty reply also counts as an iteration. Repeated
 empty replies stop the turn and pause an unresolved goal rather than leaving it active
 or declaring completion. A spent iteration budget instead leaves it `budget_limited`.
-Goals never add permission to act or override a new user instruction. There is no
-background scheduler or automatic restart. `/goal --resume` starts a normal turn again.
+Goals never add permission to act or override a new user instruction. A new user message
+resumes an existing `paused` or `blocked` goal before the model runs, as long as its iteration
+budget is not exhausted. The objective, budget and usage are preserved. `/goal --resume`
+remains available to resume without adding instructions. Command-only turns and Council wakes
+do not resume goals. Completed, cancelled and budget-limited goals stay stopped. There is no
+background scheduler or restart without a new user message.
 
 ### Iteration budget
 

@@ -51,6 +51,65 @@
       (is (= "cancelled" (get (goals/control! db-info session-id :cancel) "status")))
       (is (rejected? #(goals/control! db-info session-id :resume))))))
 
+(deftest user-turn-resume-keeps-nonresumable-goals-unchanged-test
+  (is (nil? (goals/resume-for-user-turn! (environment))))
+  (doseq [status [:active :complete :cancelled :budget-limited :paused-exhausted
+                  :blocked-exhausted]]
+    (let [{:keys [db-info session-id] :as env} (environment)
+          goal (goals/set-goal! db-info session-id "Preserve the goal and its budget" 1)]
+
+      (when (contains? #{:budget-limited :paused-exhausted :blocked-exhausted} status)
+        (goals/account! env goal nil))
+      (case status
+        :active
+        nil
+
+        :complete
+        (goals/update-goal env (get goal "id") (get goal "version") "complete" "Verified.")
+
+        :cancelled
+        (goals/control! db-info session-id :cancel)
+
+        :budget-limited
+        (goals/request-halt-result env goal)
+
+        :paused-exhausted
+        (goals/control! db-info session-id :pause)
+
+        :blocked-exhausted
+        (goals/update-goal env (get goal "id") (get goal "version") "blocked" "Need user input."))
+      (let [before (goals/check-goal env)]
+        (is (= before (goals/resume-for-user-turn! env)))
+        (is (= before (goals/check-goal env)))))))
+
+(deftest user-turn-resume-preserves-concurrent-user-controls-test
+  (doseq [action [:cancel :replace :pause]]
+    (let [{:keys [db-info session-id] :as env} (environment)
+          compare-goal! persistence/db-compare-session-goal!
+          intervened? (atom false)
+          concurrent (atom nil)]
+
+      (goals/set-goal! db-info session-id "Original goal" nil)
+      (goals/control! db-info session-id :pause)
+      (with-redefs [persistence/db-compare-session-goal!
+                    (fn [& args]
+                      (when (compare-and-set! intervened? false true)
+                        (reset! concurrent (case action
+                                             :cancel
+                                             (goals/control! db-info session-id :cancel)
+
+                                             :replace
+                                             (goals/set-goal! db-info session-id "New goal" nil)
+
+                                             :pause
+                                             (do (goals/control! db-info session-id :resume)
+                                                 (goals/control! db-info session-id :pause)))))
+                      (apply compare-goal! args))]
+        (let [result (goals/resume-for-user-turn! env)]
+          (is @intervened?)
+          (is (= @concurrent result))
+          (is (= @concurrent (goals/check-goal env))))))))
+
 (deftest iteration-budget-test
   (let [{:keys [db-info session-id] :as env}
         (environment)

@@ -2,10 +2,12 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
+            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [lazytest.core :refer [around-each set-ns-context!]]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.session.goals :as goals]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
@@ -184,6 +186,128 @@
            (is (= "An ordinary answer."
                   (get-in (lp/run-turn! env "Explain this" {}) [:answer :answer])))
            (is (nil? (goals/check-goal env))))
+         (finally (lp/dispose-environment! env)))))
+
+(deftest user-message-resumes-goal-before-model-request-test
+  ;; A follow-up must resume the existing goal, not silently become a one-reply turn.
+  (doseq [status ["paused" "blocked"]]
+    (let [{:keys [db-info session-id] :as env} (environment)
+          requests (atom 0)
+          snapshots (atom [])]
+
+      (try
+        (let [goal (goals/set-goal! db-info session-id "Verify all acceptance criteria" 10)]
+          (goals/account! env goal {:input-tokens 10 :output-tokens 5})
+          (if (= "paused" status)
+            (goals/control! db-info session-id :pause)
+            (goals/update-goal env
+                               (get goal "id")
+                               (get goal "version")
+                               "blocked"
+                               "Need user input."))
+          (let [before (goals/check-goal env)]
+            (with-redefs
+              [svar/ask-code!
+               (fn [_ _]
+                 (swap! snapshots conj (get (ctx-loop/session-snapshot env) "session_goal"))
+                 (case (swap! requests inc)
+                   1
+                   {:stop-reason :end :content "Premature answer"}
+
+                   2
+                   {:stop-reason :tool-calls
+                    :tool-calls
+                    [{:id "finish-resumed-goal"
+                      :name "python_execution"
+                      :input
+                      {:code
+                       "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All acceptance criteria verified.'))"}}]}
+
+                   3
+                   {:stop-reason :end :content "Verified and complete."}
+
+                   (throw (AssertionError. "Unexpected goal continuation"))))]
+              (let [result (lp/run-turn! env "Use this new information and continue" {})
+                    resumed (first @snapshots)
+                    preserved ["id" "objective" "iteration_budget" "iterations_used" "tokens_used"
+                               "time_used_ms" "created_at"]]
+
+                (is (= "Verified and complete." (get-in result [:answer :answer])))
+                (is (= 3 @requests))
+                (is (= "active" (get resumed "status")))
+                (is (nil? (get resumed "reason")))
+                (is (= (inc (get before "version")) (get resumed "version")))
+                (is (= (inc (get before "revision")) (get resumed "revision")))
+                (is (= (select-keys before preserved) (select-keys resumed preserved)))
+                (is (= "complete" (get (goals/check-goal env) "status")))
+                (is (= 4 (get (goals/check-goal env) "iterations_used")))))))
+        (finally (lp/dispose-environment! env))))))
+
+(deftest non-user-and-cancelled-turns-do-not-resume-goal-test
+  (doseq [status
+          ["paused" "blocked"]
+
+          source
+          [:council :cancelled :cancel-token]]
+
+    (let [{:keys [db-info session-id] :as env}
+          (environment)
+
+          token
+          (cancellation/cancellation-token)]
+
+      (try (let [goal (goals/set-goal! db-info session-id "Keep the stopped goal" nil)]
+             (if (= "paused" status)
+               (goals/control! db-info session-id :pause)
+               (goals/update-goal env
+                                  (get goal "id")
+                                  (get goal "version")
+                                  "blocked"
+                                  "Need user input."))
+             (when (= :cancel-token source) (cancellation/cancel! token))
+             (let [before (goals/check-goal env)]
+               (with-redefs [council/runtime (fn [_ sid]
+                                               (when (= :council source) {sid {:wake? true}}))
+                             lp/iteration-loop (fn [turn-env _ _]
+                                                 (is (= before (goals/check-goal turn-env)))
+                                                 {:status
+                                                  (if (= :council source) :success :cancelled)
+                                                  :answer {:answer "No goal work started."}
+                                                  :trace []
+                                                  :iteration-count 0
+                                                  :duration-ms 0})]
+
+                 (lp/run-turn! env
+                               "Synthetic or cancelled input"
+                               (case source
+                                 :council
+                                 {}
+
+                                 :cancelled
+                                 {:cancel-atom (atom true)}
+
+                                 :cancel-token
+                                 {:cancel-token token}))
+                 (is (= before (goals/check-goal env))))))
+           (finally (lp/dispose-environment! env))))))
+
+(deftest command-only-turns-do-not-resume-goal-test
+  (let [{:keys [db-info session-id] :as env} (environment)]
+    (try (let [goal (goals/set-goal! db-info session-id "Await user input" nil)
+               blocked (goals/update-goal env
+                                          (get goal "id")
+                                          (get goal "version")
+                                          "blocked"
+                                          "Need user input.")]
+
+           (with-redefs [svar/ask-code! (fn [& _]
+                                          (throw (AssertionError.
+                                                   "Command-only turn called provider")))]
+             (doseq [request ["/goal" "/goal --unknown" "/goal --pause"]]
+               (lp/run-turn! env request {})
+               (is (= blocked (goals/check-goal env))))
+             (lp/run-turn! env "/goal --cancel" {})
+             (is (= "cancelled" (get (goals/check-goal env) "status")))))
          (finally (lp/dispose-environment! env)))))
 
 (deftest user-stop-pauses-active-goal-test

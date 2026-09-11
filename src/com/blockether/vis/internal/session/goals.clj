@@ -113,6 +113,27 @@
                           "reason" nil)
                    (update "version" inc))))))
 
+(defn resume-for-user-turn!
+  "Resume an existing paused/blocked goal for a new user message. Preserve usage and
+   budget; no goal, exhausted or terminal goals and newer user controls are unchanged.
+   The caller must exclude synthetic wakes, command-only turns and cancelled turns."
+  [env]
+  (let [started-goal (check-goal env)]
+    (if (contains? #{"paused" "blocked"} (get started-goal "status"))
+      (change! (:db-info env)
+               (:session-id env)
+               (fn [goal]
+                 (if (and (= (get started-goal "id") (get goal "id"))
+                          (= (get started-goal "version") (get goal "version"))
+                          (contains? #{"paused" "blocked"} (get goal "status"))
+                          (not (budget-reached? goal)))
+                   (-> goal
+                       (assoc "status" "active"
+                              "reason" nil)
+                       (update "version" inc))
+                   goal)))
+      started-goal)))
+
 (defn update-goal
   "Internal completion tool. Pass id and version from session['goal'], status
    'complete' or 'blocked', and a concise evidence/reason string. Complete means
@@ -232,6 +253,8 @@ update_goal(goal_id, version, status, reason), with id/version from session['goa
 Declare status='complete' only with concise evidence for every requirement; a genuine
 impasse is status='blocked' with the concrete blocker, not complete. The model cannot
 cancel, replace, resume or enlarge a goal; /goal --pause, --resume and --cancel are user controls.
+A new user message resumes an existing paused or blocked goal if its iteration budget remains.
+Command-only turns and Council wakes do not resume goals; completed or cancelled goals stay stopped.
 iteration_budget is a count of loop iterations, not tokens; null means no goal-specific limit.
 iterations_used counts each model response and its tools, including prose, empty responses
 and the completion summary. Provider retries within one request are not separate iterations.
