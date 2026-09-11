@@ -2019,14 +2019,14 @@ Keep manual source links and other sessions' changes intact; do not restart the 
 - Data: bounded cached GitHub metadata, approved release catalog, Spel's published source.
 - Acceptance criteria: detail/list/version views agree; outages retain last known values;
   reviewed Spel release is publicly installable without bypassing public moderation controls.
-- Unknowns: operator credentials may require the existing authenticated deployment workflow.
+- Unknowns: resolved through the authenticated publication workflow and public API checks.
 
 ## 3. Cross-validate, verify Linux installation and publish
 - Rationale: unit tests alone cannot prove CLI, native worker and remote installation behavior.
 - Data: schema/merge/installer tests, host and native integration, cache measurements, remote CLI.
 - Acceptance criteria: affected format/lint/reflection pass; isolated remote sync/tool smoke test;
   no live service restart; task-only commit/push and required CI verified.
-- Unknowns: the remote installed CLI predates sync; a checked new Linux binary is required.
+- Unknowns: resolved with an isolated JVM CLI; the installed remote Vis binary is unchanged.
 
 ## Plan state
 
@@ -2039,10 +2039,17 @@ pass. Native testing exposed eager entrypoint loading before sync; startup now d
 The rebuilt CE 25.3.4.1 image passes all three affected native tests, including no-import
 markers, both configuration scopes, warm sync and guarded pruning. Warm sync: 539 ms.
 
-Repository star refresh and authenticated operator publication are committed in 83eef4c0e;
-the production Docs workflow passed. Marketplace: 141 tests passed, lint and Wrangler
-dry-run passed; workflow actionlint passed. Spel 0.1.0 at
-f0f8d51cb65b51475251d095f845945a9cdf66d4 is installed in an isolated Linux project,
-with verified native Spel 0.9.33 and browsers; both native browser/CDP tests passed.
-No live gateway restart or global extension mutation. Remaining: sync commit/push,
-authenticated public catalog publication (workflow running) and remote new-CLI sync.
+Implementation is committed and pushed in 83eef4c0e and e8223a0d1. Marketplace: 141 tests,
+lint, Wrangler dry-run and workflow actionlint pass. Production Docs and authenticated
+publication workflows passed. Public Spel 0.1.0 resolves to
+f0f8d51cb65b51475251d095f845945a9cdf66d4; catalog, detail, version and HTML views agree.
+The scheduled refresh produced 65 stars, matching GitHub, with a current check timestamp.
+
+On an isolated Linux project, the staged JVM CLI installed Spel from the declared approved
+version. Warm and offline sync both reused the source and uv environment without changing
+receipt, lock or environment hashes or timestamps. Sync work took 2.4–2.6 seconds; full JVM
+startup took 14–15 seconds. Extension registration succeeded, and both native browser/CDP
+tests passed again against the sync-prepared environment in 5.55 seconds. The installed
+remote Vis binary and live gateway were not replaced or restarted. Native local warm sync
+remains 539 ms. Affected checks are complete; broader main CI was superseded by concurrent
+pushes and is monitored on the latest descendant.
