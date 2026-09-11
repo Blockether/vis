@@ -26,13 +26,30 @@ not an issue tracker and does not assign work, authorize changes or apply fixes.
 See [Improvement register and automatic complaints](#improvement-register-and-automatic-complaints)
 for storage, source attribution and automatic recording without a group.
 
+## Follow explicit session requests
+
+When asked to find a session, you must search with
+`await list_sessions(search="topic")`, check relevant history, and return matching
+session IDs/titles with brief evidence or report no match. Search alone does not
+authorize a ping or wake.
+
+When asked to ask another agent or consult other sessions, you must publish a
+focused Council question to suitable peers; reading history is not consultation.
+Report unavailable tools/recipients or missing replies explicitly; do not claim
+consultation feedback or agreement without an answer. A sent ping is not a
+completed consultation.
+
+Autonomous consultation is optional for trivial, self-contained work; explicit
+requests are not. For a search-only request, stop after finding and checking
+relevant sessions rather than continuing to the consultation steps below.
+
 ## Reuse existing session context
 
 Before repeating substantial research, look for a session that already investigated
 that topic. Its saved context may contain architecture decisions, rejected
 alternatives, reproduction results or operational constraints that would otherwise
 need to be rediscovered. Prefer a focused question to starting the same investigation
-again. Trivial, self-contained work does not need a consultation.
+again.
 
 1. **Find the relevant context.** Use `await list_sessions(search="topic")` for past
    sessions and `await council.members()` for active peers. Start with titles and

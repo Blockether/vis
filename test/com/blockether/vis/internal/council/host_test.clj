@@ -150,10 +150,19 @@
     (doseq [[surface text] [["prompt" (council/prompt {})]
                             ["manual" (slurp (io/resource "vis-docs/council.md"))]]]
       (let [normalized (str/replace text #"\s+" " ")]
-        (doseq [guidance ["Before repeating substantial research" "list_sessions(search="
-                          "council.members()" "same group" "saved context" "focused question"
-                          "revision" "evidence" "uncertainties" "reply_required=True" "reply_to="
-                          "Continue independent work" "unavailable" "interrupted"
-                          "Do not resume unrelated work" "provider prompt-cache"]]
+        (doseq
+          [guidance
+           ["Before repeating substantial research" "list_sessions(search=" "council.members()"
+            "same group" "saved context" "focused question" "revision" "evidence" "uncertainties"
+            "reply_required=True" "reply_to=" "Continue independent work" "unavailable"
+            "interrupted" "Do not resume unrelated work" "provider prompt-cache"
+            "When asked to find a session" "you must search" "check relevant history"
+            "return matching session IDs/titles" "Search alone does not authorize a ping or wake"
+            "ask another agent or consult other sessions"
+            "you must publish a focused Council question" "reading history is not consultation"
+            "Report unavailable tools/recipients or missing replies explicitly"
+            "do not claim consultation feedback or agreement without an answer"
+            "A sent ping is not a completed consultation"
+            "Autonomous consultation is optional for trivial, self-contained work; explicit requests are not"]]
           (is (str/includes? normalized guidance)
               (str surface " is missing context-reuse guidance: " guidance)))))))
