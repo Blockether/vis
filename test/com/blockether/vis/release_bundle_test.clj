@@ -2049,6 +2049,34 @@
                                "bin/verify-linux-abi target/vis target/vis-agent-python")))))
 
 (defdescribe
+  native-tui-terminal-query-test
+  (it
+    "preserves partial cursor queries across PTY resize boundaries"
+    (let
+      [{:keys [exit output]}
+       (run-bash
+         ["python3" "-c"
+          (str/join
+            "\n"
+            ["import runpy, tempfile" "from contextlib import ExitStack"
+             "from unittest.mock import patch"
+             "m = runpy.run_path('test-native/com/blockether/vis/fixtures/tui_resize.py')"
+             "esc = bytes([27]); move = esc + b'[999;999H'" "class Finished(Exception): pass"
+             "for split in range(len(move)):" "    replies = []" "    def capture(fd, data):"
+             "        replies.append(data)" "        raise Finished()"
+             "    chunks = [esc + b'[24;80H' + move[:split], move[split:] + esc + b'[6n']"
+             "    with tempfile.TemporaryDirectory() as home, ExitStack() as stack:"
+             "        mocks = {'pty.fork': {'return_value': (123, 9)}, 'fcntl.ioctl': {}, 'select.select': {'return_value': ([9], [], [])}, 'os.read': {'side_effect': chunks}, 'os.write': {'side_effect': capture}, 'os.close': {}, 'os.kill': {}, 'os.waitpid': {}}"
+             "        for target, options in mocks.items(): stack.enter_context(patch(target, **options))"
+             "        try: m['check_resize']('unused', home, 'unused')"
+             "        except Finished: pass"
+             "        else: raise AssertionError('fixture did not answer the cursor query')"
+             "    assert replies == [esc + b'[45;120R'], (split, replies)"
+             "print('Cursor reports preserve all fragmented resize boundaries')"])]
+         {})]
+      (expect (zero? exit) output))))
+
+(defdescribe
   native-test-tools-test
   ;; Release 34630933135 failed on both Linux runners because the test command uses bb.
   (it

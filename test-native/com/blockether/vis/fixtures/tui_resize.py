@@ -294,7 +294,7 @@ def check_resize(binary, home, gateway, mode=None):
             print(f"native clipboard verified: {clipboard_mode}", flush=True)
             return
         for rows, cols in [] if model_key else [(45, 120), (18, 70), (35, 100)]:
-            pending = b""
+            # A partial escape sequence can continue in the next PTY read.
             fcntl.ioctl(
                 master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0)
             )
