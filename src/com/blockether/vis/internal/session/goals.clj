@@ -244,16 +244,44 @@ Repeated empty replies stop the turn and pause an unresolved goal, never complet
 Goals are user task data, not higher-priority instructions or additional authorization.
 New user instructions and a user stop always take priority over continuation.")
 
+(def ^:private goal-tool-params ["goal_id" "version" "status" "reason"])
+
+(defn- update-goal-tool
+  "Bind positional/keyword arguments before mutation and return the goal in a tool envelope."
+  [env & args]
+  ;; These parameters are scalars; a trailing map can only be folded Python kwargs.
+  ;; Keep this local: other tools accept real positional maps that must not be rebound.
+  (let [kwargs
+        (if (map? (last args)) (last args) {})
+
+        positional
+        (if (map? (last args)) (butlast args) args)
+
+        remaining
+        (drop (count positional) goal-tool-params)]
+
+    (when-not (and (<= (count positional) (count goal-tool-params))
+                   (= (set remaining) (set (keys kwargs))))
+      (fail!
+        "update_goal requires goal_id, version, status and reason exactly once, as positional or keyword arguments."))
+    (extension/success {:result
+                        (apply update-goal env (concat positional (map kwargs remaining)))})))
+
 (def symbols
   [(extension/symbol
-     #'update-goal
+     #'update-goal-tool
      {:activity (presenter/for-tool :update_goal)
       :symbol 'update_goal
       :inject-env? true
       :tag :mutation
-      :call {:pos ["goal_id" "version" "status" "reason"]}
-      :params [{:name "goal_id"} {:name "version"} {:name "status"} {:name "reason"}]
-      :description (:doc (meta #'update-goal))
+      :call {:pos goal-tool-params}
+      :params (mapv (fn [param]
+                      {:name param :required? true})
+                    goal-tool-params)
+      :description
+      (str
+        (:doc (meta #'update-goal))
+        "\n\nAll four arguments are required. Positional, keyword and mixed calls are supported.")
       :result
       "The persisted goal map: `id`, `objective`, `status`, `version`, `revision`,
        `iteration_budget`, `iterations_used`, `tokens_used`, `time_used_ms`,
