@@ -32,7 +32,8 @@ describe("session health in metrics", () => {
     expect(screen.getByText("Within budget")).toBeInTheDocument();
     expect(screen.getByText("Total input")).toBeInTheDocument();
     expect(screen.getByText("2.1M")).toBeInTheDocument();
-    expect(screen.getByText(/Last measured call · #23/)).toBeInTheDocument();
+    expect(screen.getByText("Last measured call · #23")).toBeInTheDocument();
+    expect(screen.queryByText(/not live/i)).not.toBeInTheDocument();
   });
 
   it("opens the estimated prompt parts and distinguishes access from loaded guidance", async () => {

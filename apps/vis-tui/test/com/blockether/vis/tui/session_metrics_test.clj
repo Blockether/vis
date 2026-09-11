@@ -66,7 +66,8 @@
         text
         (str/replace (lines component full 100 45) #"\s+" " ")]
 
-    (doseq [label ["Session health" "Fold reminder" "Last measured call" "#24" "not live"
+    (is (not (str/includes? text "not live")))
+    (doseq [label ["Session health" "Fold reminder" "Last measured call" "#24"
                    "Context / working budget" "96000 / 120000" "80%" "24000 budget left"
                    "Reminder at 90000" "200000" "Instructions" "Tool definitions" "History"
                    "4 available" "1 with guidance estimates" "840 tokens on disk"

@@ -77,7 +77,7 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
       </div>
       <p className="mt-1 text-ui text-dialog-hint">
         {snapshot.stale ? "Earlier measurement" : "Last measured call"} · #
-        {snapshot.call} · not live
+        {snapshot.call}
       </p>
       <div className="mt-4 flex flex-wrap items-end justify-between gap-2">
         <div>

@@ -1165,8 +1165,7 @@
                               :else :heading)}
                  (hint (str (if (get health "stale") "Earlier measurement" "Last measured call")
                             " · #"
-                            (get health "call")
-                            " · not live"))
+                            (get health "call")))
                  (stat "Context / working budget"
                        (str (metric-count input)
                             " / "
