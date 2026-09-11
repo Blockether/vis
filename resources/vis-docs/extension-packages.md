@@ -126,7 +126,7 @@ explicitly before installing it as a managed package.
    for each new release; update the lockfile when needed.
 3. Tag that commit and **publish a GitHub Release**, not only a Git tag or a draft.
    Use `v1.2.0`, or `PACKAGE-NAME/v1.2.0` for an independently versioned monorepo package.
-   For example, Spel's `extensions/vis-spel` package uses `vis-spel/v0.1.0`.
+   For example, an `extensions/vis-greeting` package can use `vis-greeting/v1.2.0`.
    The version suffix must exactly match `project.version`.
 4. Submit the repository and project folder to Extension Center **once**. The optional
    **Release tag** field selects a monorepo release or prerelease; otherwise review uses
