@@ -357,6 +357,41 @@ print(worker_value)"))))
                      (expect (empty? @(:serving peer)))))))
 
 (defdescribe
+  background-wake-authorization-test
+  ;; #202: connection ownership survives a trusted thread's missing activation;
+  ;; it never grants an unbound sandbox thread access to host tools.
+  (it "admits only Council wake from a trusted worker's assigned namespace"
+      (doseq [[trusted? caller tool payload assigned? allowed?]
+              [[true "" "__vis_host_council_wake__" "{\"session\":\"owned\"}" true true]
+               [false "" "__vis_host_council_wake__" "{\"session\":\"owned\"}" true false]
+               [true "" "__vis_host_shell__" "{\"session\":\"owned\"}" true false]
+               [true "" "__vis_host_council_wake__" "{\"session\":\"other\"}" true false]
+               [true "" "__vis_host_council_wake__" "{\"session\":\"owned\"}" false false]
+               [true "other" "__vis_host_council_wake__" "{\"session\":\"owned\"}" true false]
+               [true nil "__vis_host_council_wake__" "{\"session\":\"owned\"}" true false]
+               [true "" "__vis_host_council_wake__" "invalid" true false]
+               [true "" "__vis_host_council_wake__" "{}" true false]]]
+        (let [peer {:serving (atom {})
+                    :host-sessions (atom (if assigned? #{"owned"} #{}))
+                    :trusted? trusted?}
+              calls (atom [])
+              replies (atom [])]
+
+          (with-redefs [python-host/dispatch (fn [caller tool payload]
+                                               (swap! calls conj [caller tool payload])
+                                               "ok")
+                        worker-peer/send-line! (fn [_ reply]
+                                                 (swap! replies conj reply))]
+
+            (#'worker/serve-host-call! peer {"id" 1 "session" caller "tool" tool "payload" payload})
+            (expect (= allowed? (boolean (seq @calls))))
+            (expect (= (if allowed?
+                         {"id" 1 "value" "ok"}
+                         {"id" 1 "error" "Worker is not authorized for this host session"})
+                       (first @replies)))
+            (expect (empty? @(:serving peer))))))))
+
+(defdescribe
   worker-host-authorization-lifecycle-test
   (it "assigns on host bootstrap, revokes on close, and rolls back failed bootstrap"
       (let [sessions

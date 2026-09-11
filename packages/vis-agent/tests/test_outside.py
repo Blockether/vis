@@ -93,14 +93,14 @@ def test_a_refusing_op_raises_the_refusal_the_contract_states():
         if op["outside"] != "refuse":
             continue
         with pytest.raises(_outside.Refused) as raised:
-            getattr(vis, op["name"])({"command": "true"})
+            getattr(vis._host, op["name"])({"command": "true"})
         assert str(raised.value) == op["refusal"]
         assert op["name"] in op["refusal"]
 
 
-def test_the_jailed_shells_are_the_only_refusals():
+def test_session_bound_operations_refuse_without_the_host():
     refused = {op["name"] for op in CONTRACT["ops"] if op["outside"] == "refuse"}
-    assert refused == {"jailed_shell", "jailed_shell_session"}
+    assert refused == {"jailed_shell", "jailed_shell_session", "council_wake"}
 
 
 # -- State, logs, secrets, environment -----------------------------------------

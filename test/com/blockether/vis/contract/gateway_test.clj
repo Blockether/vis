@@ -31,11 +31,11 @@
     (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
-    (expect (= 110 (count contract/route-table)))
-    (expect (= 134 (count (contract/route-methods))))
-    (expect (= {:none 95 :json 35 :binary 4}
+    (expect (= 111 (count contract/route-table)))
+    (expect (= 135 (count (contract/route-methods))))
+    (expect (= {:none 95 :json 36 :binary 4}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 117 :resource 2 :sse 5 :empty 3 :binary 4 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 118 :resource 2 :sse 5 :empty 3 :binary 4 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 34 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
@@ -75,6 +75,8 @@
         (expect (= {:request :none :response :negotiated} (operation :get "/metrics")))
         (expect (= {:request :binary :response :json} (operation :post "/v1/speech/voices")))
         (expect (= {:request :none :response :empty} (operation :delete "/v1/sessions/:sid")))
+        (expect (= {:request :json :response :json}
+                   (operation :post "/v1/sessions/:sid/council/wake")))
         (expect (= {:request :none :response :sse} (operation :get "/v1/events")))
         (expect (= {:request :none :response :binary}
                    (operation :get "/v1/sessions/:sid/speech/jobs/:job-id/audio")))))

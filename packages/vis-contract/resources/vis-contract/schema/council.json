@@ -97,6 +97,34 @@
       ],
       "additionalProperties": false
     },
+    "wake": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/publish/properties/content"
+        },
+        "kind": {
+          "$ref": "#/$defs/publish/properties/kind"
+        },
+        "group_id": {
+          "$ref": "#/$defs/publish/properties/group_id"
+        },
+        "thread_id": {
+          "$ref": "#/$defs/publish/properties/thread_id"
+        },
+        "title": {
+          "$ref": "#/$defs/publish/properties/title"
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/publish/properties/idempotency_key"
+        }
+      },
+      "required": [
+        "content",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
     "page_request": {
       "type": "object",
       "properties": {

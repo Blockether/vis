@@ -92,7 +92,18 @@
         (get message "id")
 
         caller
-        (get message "session")]
+        (get message "session")
+
+        ;; Guest-created threads have no runtime activation identity. Only the
+        ;; explicitly session-bound Council wake may use a trusted connection's
+        ;; assigned namespace; model workers and every other host op still refuse.
+        caller
+        (if (and (= "" caller)
+                 (true? (:trusted? peer))
+                 (= "__vis_host_council_wake__" (get message "tool")))
+          (try (get (json/read-json (str (get message "payload"))) "session")
+               (catch Exception _ nil))
+          caller)]
 
     (swap! (:serving peer) assoc id (Thread/currentThread))
     (let [reply (if (and (string? caller) (contains? @(:host-sessions peer) caller))
@@ -343,7 +354,9 @@
               (.destroy process)
               (throw (ex-info "the python worker did not start"
                               {:type :vis/python-worker :log (.getAbsolutePath log)})))
-            (let [peer (assoc (child/peer-over accepted) :host-sessions (atom #{}))
+            (let [peer (assoc (child/peer-over accepted)
+                         :host-sessions (atom #{})
+                         :trusted? (trusted-worker? k))
                   state {:process process :peer peer :log log}
                   thread (Thread. ^Runnable
                                   #(child/pump! peer

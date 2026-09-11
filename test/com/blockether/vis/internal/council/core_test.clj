@@ -1285,6 +1285,86 @@
                                               opts))))
                     (is (rejected? :invalid-request #(council 'binding-info db sid opts)))))))
 
+(deftest bound-session-self-wake-test
+  ;; #202: an extension/SDK event wakes its bound session without an active author.
+  (with-council
+    (let [{:keys [db ids gid]}
+          (world)
+
+          [sid other]
+          ids
+
+          update!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
+
+          drop!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+
+          launched
+          (atom [])
+
+          snapshot
+          #(council 'runtime db)
+
+          actor
+          {:session-id sid :source "sdk"}
+
+          wake!
+          #(council 'wake! db snapshot actor %)
+
+          request
+          {:kind "informational" :content "Build finished" :idempotency_key "build-1"}]
+
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.loop 'db-info) (constantly db)
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'session-model)
+                       (constantly {:provider "fixture" :model "fixture"})
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'fresh-entry)
+                       (fn [_]
+                         {:next-seq 0 :turns {} :turn-order []})
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'launch-turn-worker!)
+                       (fn [sid tid request opts]
+                         (swap! launched conj [sid tid request opts]))}
+        (fn []
+          (try
+            (let [entry
+                  (wake! request)
+
+                  active
+                  (get (snapshot) sid)]
+
+              (is (= sid (:author_session_id entry)))
+              (is (= [sid] (:ping entry)))
+              (is (= gid (:group_id entry)))
+              (is (= [sid] (mapv first @launched)))
+              (is (true? (:wake? active)))
+              (is (= [(:entry_id entry)]
+                     (mapv :entry_id
+                           (ps/db-council-pending db sid (:activation-id active) gid 0 20))))
+              (is (= entry (wake! request)))
+              (let [next-entry (wake! (assoc request :idempotency_key "build-2"))]
+                (is (not= (:entry_id entry) (:entry_id next-entry)))
+                (is (= 1 (count @launched))))
+              (doseq [extra [{:session_id other} {:ping [other]} {:activation_id "old"}
+                             {:reply_required true} {:reply_to (:entry_id entry)}]]
+                (is (rejected? :invalid-request #(wake! (merge request extra)))))
+              (is (rejected? :invalid-recipient
+                             #(council
+                                'publish!
+                                db
+                                snapshot
+                                (assoc actor :activation-id (:activation-id active))
+                                {:kind "informational" :content "Model self ping" :ping [sid]})))
+              (is (rejected? :idempotency-conflict #(wake! (assoc request :content "Changed"))))
+              (drop! sid)
+              (is (= entry (wake! request)))
+              (is (= 1 (count @launched)))
+              (update! sid (constantly {:queue-paused true :turns {} :turn-order []}))
+              (wake! (assoc request :idempotency_key "held"))
+              (is (= 1 (count @launched)))
+              (with-redefs [toggles/enabled? (constantly false)]
+                (is (rejected? :disabled #(wake! (assoc request :idempotency_key "disabled"))))))
+            (finally (run! drop! ids))))))))
+
 (deftest explicit-idle-ping-wakes-once-test
   ;; Explicit IDs may start a turn; broadcasts and idempotent retries may not.
   (with-council

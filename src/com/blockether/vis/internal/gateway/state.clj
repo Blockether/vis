@@ -4099,9 +4099,10 @@
          sid
          {:request
           (str
-            "Council wake — " (if (:reply_to entry)
-                                "a peer replied to your request. "
-                                "a peer session has asked for your knowledge. ")
+            "Council wake — " (cond (= (str sid) (:author_session_id entry))
+                                    "an extension or SDK event notified this session. "
+                                    (:reply_to entry) "a peer replied to your request. "
+                                    :else "a peer session has asked for your knowledge. ")
             "Read the attributed Council input; if absent, use council.get(" (:entry_id entry)
             "). "
             (when (:reply_required entry)
@@ -5618,6 +5619,9 @@
 
       :get
       (council/get-entry db sid opts)
+
+      :wake
+      (council/wake! db #(council/runtime db) {:session-id sid :source "sdk"} opts)
 
       :publish
       (let [environment

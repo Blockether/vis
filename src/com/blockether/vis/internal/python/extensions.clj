@@ -497,8 +497,29 @@
    `label` is the file's name — used only for log context; durable state lives in
    the `extension_aggregate` table, owned by the running extension's identity
    (see `*state-env*`)."
-  [sess label]
-  (let [g (volatile! {})]
+  [sess label bound-env]
+  (let [g
+        (volatile! {})
+
+        bound-session
+        (select-keys bound-env [:session-id :db-info])]
+
+    (put! g
+          "__vis_host_council_wake__"
+          (fn [opts]
+            (let [{:keys [session-id db-info]} bound-session]
+              (when-not (and session-id db-info)
+                (throw (ex-info "vis.council.wake needs a bound Vis session"
+                                {:error :session-not-bound})))
+              (stringify-deep
+                ((requiring-resolve 'com.blockether.vis.internal.council.core/wake!)
+                  db-info
+                  #((requiring-resolve 'com.blockether.vis.internal.council.core/runtime) db-info)
+                  {:session-id (str session-id) :source "host"}
+                  (into {}
+                        (map (fn [[k v]]
+                               [(keyword k) v]))
+                        opts))))))
     (put! g
           "__vis_host_state_get__"
           (fn [k]
@@ -570,14 +591,16 @@
           ;; confirms. Only a field name, an index and the value being judged
           ;; cross, as JSON, so the verdict path has no marshalling surprises.
           (fn [request-json validators-json runner]
-            (let [validator (unseal sess runner)
-                  run (when (fn? validator)
-                        (fn [field-name index value values]
-                          (let [verdict (validator [(str field-name) (long index)
-                                                    (json/write-json-str value)
-                                                    (json/write-json-str values)])]
-                            (when (some? verdict)
-                              (json/read-json (str verdict) :key-fn identity)))))]
+            (let [validator
+                  (unseal sess runner)
+
+                  run
+                  (when (fn? validator)
+                    (fn [field-name index value values]
+                      (let [verdict (validator [(str field-name) (long index)
+                                                (json/write-json-str value)
+                                                (json/write-json-str values)])]
+                        (when (some? verdict) (json/read-json (str verdict) :key-fn identity)))))]
 
               ((requiring-resolve 'com.blockether.vis.internal.view.core/request-json!)
                 request-json
@@ -608,9 +631,11 @@
     (put! g
           "__vis_host_declare_env__"
           (fn [names-json]
-            (let [names (try (json/read-json (str names-json) :key-fn identity)
-                             (catch Throwable _ nil))
-                  resolved (resolve-declared-env names)]
+            (let [names
+                  (try (json/read-json (str names-json) :key-fn identity) (catch Throwable _ nil))
+
+                  resolved
+                  (resolve-declared-env names)]
 
               ;; Log NAMES only -- env values are secrets and never appear in logs.
               (tel/log! {:level :debug
@@ -629,9 +654,10 @@
 (defn ^:no-doc bind-host!
   "Install [[host-doors]] into `sess`, so the bootstrap finds every one of them
    at module level."
-  [sess label]
-  (python-host/install-sync-tools! sess (host-doors sess label) install-sync-tool-in!)
-  sess)
+  ([sess label] (bind-host! sess label nil))
+  ([sess label bound-env]
+   (python-host/install-sync-tools! sess (host-doors sess label bound-env) install-sync-tool-in!)
+   sess))
 
 (defn ^:no-doc bind-test-host!
   "Install the ordinary trusted-extension host, except that a test may not mount a
@@ -763,7 +789,7 @@
    `entry-path` is the canonical source entry file exposed through Python's
    conventional module globals. Returns the unsealed registration without
    touching the Clojure registry."
-  [worker label ^File snap entry-path source packages]
+  [worker label ^File snap entry-path source packages bound-env]
   (let [ctx
         (build-context
           (if packages (pyext/extension-worker-key [worker (.getCanonicalPath snap)]) worker)
@@ -773,7 +799,7 @@
         (.getCanonicalPath (.getParentFile snap))]
 
     (swap! context-lifecycle assoc ctx {:snapshot (.getCanonicalPath snap) :calls 0})
-    (try (bind-host! ctx label)
+    (try (bind-host! ctx label bound-env)
          (locking ctx
            (exec-in! ctx bootstrap-python)
            (exec-in!
@@ -854,7 +880,8 @@
                                                                (io/file (:snapshot entry))
                                                                (:path entry)
                                                                (:source entry)
-                                                               (:packages entry))
+                                                               (:packages entry)
+                                                               effective-env)
                           row (assoc fresh :source-context source-ctx)]
 
                       (swap! session-contexts assoc cache-key row)
@@ -2147,7 +2174,8 @@
                                         snap
                                         path
                                         source
-                                        (:packages frozen))
+                                        (:packages frozen)
+                                        nil)
 
          ctx
          (:context initialized)]

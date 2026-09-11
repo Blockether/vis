@@ -434,6 +434,40 @@ Return a string-keyed dict under a key unique to your extension. Results from
 all extensions are deep-merged. A non-dict return or exception adds no context
 and does not block the turn.
 
+## Session notifications
+
+A trusted extension instance is bound to its invoking session by the host.
+Use that binding to deliver an event, including from extension-owned Python work
+after the tool call has returned:
+
+```python
+import blockether.vis.extension as vis
+
+vis.council.wake(
+    "Build finished",
+    kind="informational",
+    idempotency_key="build-42-finished",
+)
+```
+
+No session ID or active model turn is required. The host retains the session and
+store identity separately from temporary invocation bindings and Python's mutable
+session dictionary. The result is a Council entry mapping. Optional `thread_id`
+continues an existing thread; `title` is only for a new thread.
+
+An eligible idle session starts a Council turn; an active session receives a ping
+without an extra queued turn. Held or paused queues stay held. Publication and
+wake delivery follow [Council's best-effort policy](council.md#wake-the-bound-session).
+Reuse an event's `idempotency_key` for retries, not for different events.
+
+Council must be enabled, but general model shell access need not be. The shared
+registration context and the outside host have no session binding and refuse
+`vis.council.wake`. An external worker with an authenticated SDK session can use
+`sdk_session.council().wake(...)` instead. This API sends a notification; the
+extension remains responsible for starting, stopping and observing its work.
+It does not change worker lifetime: session disposal and extension reload can
+retire the bound instance, and there is no automatic restart recovery.
+
 ## Filesystem and processes
 
 Extension code runs in a trusted process, separate from the model's sandbox.

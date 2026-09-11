@@ -2076,7 +2076,7 @@ class Session:
         return response.json() if response.content else None
 
     def council(self, *, group_id: str | None = None):
-        """Bind a Council handle to this activation, or a read-only handle when idle."""
+        """Bind Council to this session; publish pins the activation, wake works while idle."""
         from ._council import Council
 
         binding = self._call(

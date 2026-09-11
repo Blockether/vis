@@ -15,7 +15,7 @@
    through whatever it is handed, and it used to name each door instead, so a
    door added in vis needed a release of the runtime that only forwarded it."
   []
-  (set (keys (pyx/host-doors "contract-probe" "contract-probe"))))
+  (set (keys (pyx/host-doors "contract-probe" "contract-probe" nil))))
 
 (defn- host-op-names
   "The same doors under the names `vis._host` attributes them: the marker

@@ -672,6 +672,16 @@
       "audience": "sdk",
       "operations": {
         "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/wake"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
           "request": "none",
           "response": "json"
         }

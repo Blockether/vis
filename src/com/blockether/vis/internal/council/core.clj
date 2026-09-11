@@ -219,7 +219,7 @@
 
 (defn publish!
   "Publish atomically. No-ping thread replies answer the latest request addressed to their author."
-  [db snapshot {:keys [session-id activation-id source source-ref]} opts]
+  [db snapshot {:keys [session-id activation-id source source-ref self-wake?]} opts]
   (request! "publish" opts)
   (let [gid
         (group! db session-id (:group_id opts))
@@ -284,9 +284,10 @@
             (get fleet session-id)
 
             _
-            (when-not (and activation-id
-                           (= activation-id (:activation-id author))
-                           (= gid (:group-id author)))
+            (when-not (or self-wake?
+                          (and activation-id
+                               (= activation-id (:activation-id author))
+                               (= gid (:group-id author))))
               (fail! :inactive-session "Council author is not in this active execution"))
 
             targets
@@ -304,7 +305,7 @@
         (when (> (count targets) (long (get limits "recipients")))
           (fail! :invalid-recipient "Too many Council ping recipients"))
         (doseq [id targets]
-          (when (or (= id session-id)
+          (when (or (and (= id session-id) (not self-wake?))
                     (not= gid
                           (or (get-in fleet [id :group-id])
                               (session-group db (ps/db-get-session db id)))))
@@ -357,10 +358,23 @@
                         :delivery
                         {:db db :sid id :activation (:activation-id active)}))))
                 ;; A correlated return may wake its requester, but cannot request another reply.
-                (when-not (and (or (:reply_to entry) (not (:wake? author)))
+                (when-not (and (or self-wake? (:reply_to entry) (not (:wake? author)))
                                (wake-recipient! db id entry))
                   (when required? (ps/db-council-unavailable! db id (:entry_id entry)))))))
           (if required? (ps/db-council-get db (:entry_id entry)) entry))))))
+
+(defn wake!
+  "Publish a trusted extension/SDK event to its bound session, even between activations.
+   Active sessions receive an ordinary ping; eligible idle sessions start a Council turn.
+   Session identity comes from the host binding, never request fields. Retries do not redispatch."
+  [db snapshot {:keys [session-id] :as actor} opts]
+  (request! "wake" opts)
+  (publish! db
+            snapshot
+            (assoc actor
+              :activation-id "council-self-wake"
+              :self-wake? true)
+            (assoc opts :ping [session-id])))
 
 (defn- bounded-page
   [rows after limit bytes id-key]

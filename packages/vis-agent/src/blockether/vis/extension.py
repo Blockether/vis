@@ -57,6 +57,9 @@ class Host(Protocol):
     def notify(self, text: str, level: str) -> Any:
         """Show one notification on the user's channel."""
 
+    def council_wake(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Publish an event to the bound session, waking it when eligible and idle."""
+
     def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
         """Run one canonical shell operation and return its result shape."""
 
@@ -102,6 +105,44 @@ except NameError:  # Installed from PyPI: no host in the room, so bring one.
     from blockether.vis import _outside as outside
 
     _host = outside.host
+
+
+class _Council:
+    """Council operations bound by the host to this extension's owning session."""
+
+    def wake(
+        self,
+        content: str,
+        *,
+        kind: Literal["complain", "coordination", "informational"],
+        thread_id: int | None = None,
+        title: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Mapping[str, Any]:
+        """Notify the bound session without a target ID or an active model turn.
+
+        May run from extension-owned background Python after a tool returns.
+        An eligible idle session starts a Council turn; an active session receives
+        a ping. Held queues are not resumed. Retry an event with the same
+        idempotency_key to avoid duplicate delivery. Registration-only contexts
+        and an outside host have no bound session and refuse this operation.
+        """
+        options = {"content": content, "kind": kind}
+        options.update(
+            {
+                key: value
+                for key, value in {
+                    "thread_id": thread_id,
+                    "title": title,
+                    "idempotency_key": idempotency_key,
+                }.items()
+                if value is not None
+            }
+        )
+        return _host.council_wake(options)
+
+
+council = _Council()
 
 
 # Hosted SDK code has no package-loader dependency; cross-language contract tests

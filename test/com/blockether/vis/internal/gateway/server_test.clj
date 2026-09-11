@@ -4089,69 +4089,87 @@
                             (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str body)
                                                                       "UTF-8")))}))]
 
-    (try (com.blockether.vis.internal.persistance.core/db-set-session-project! db sid gid)
-         (update! sid
-                  (constantly {:current-turn "wire"
-                               :turns {"wire" {:status "running" :cancel-token {}}}}))
-         (with-redefs [lp/db-info
-                       (constantly db)
+    (try
+      (com.blockether.vis.internal.persistance.core/db-set-session-project! db sid gid)
+      (update! sid
+               (constantly {:current-turn "wire"
+                            :turns {"wire" {:status "running" :cancel-token {}}}}))
+      (with-redefs [lp/db-info
+                    (constantly db)
 
-                       toggles/enabled?
-                       (fn [id]
-                         (and @enabled (= id "council")))]
+                    toggles/enabled?
+                    (fn [id]
+                      (and @enabled (= id "council")))]
 
-           (let [binding
-                 (wire/parse-json (:body (call :get "" nil)))
+        (let [binding
+              (wire/parse-json (:body (call :get "" nil)))
 
-                 request
-                 ;; Complaint kinds use the current wire contract.
-                 {:kind "complain"
-                  :content "Wire roundtrip"
-                  :activation_id (get binding "activation_id")
-                  :idempotency_key "wire-retry"}
+              request
+              ;; Complaint kinds use the current wire contract.
+              {:kind "complain"
+               :content "Wire roundtrip"
+               :activation_id (get binding "activation_id")
+               :idempotency_key "wire-retry"}
 
-                 response
-                 (call :post "/entries" request)
+              response
+              (call :post "/entries" request)
 
-                 entry
-                 (wire/parse-json (:body response))
+              entry
+              (wire/parse-json (:body response))
 
-                 id
-                 (get entry "entry_id")]
+              id
+              (get entry "entry_id")]
 
-             (is (= 200 (:status response)) (:body response))
-             (is (= sid (get entry "author_session_id")))
-             (is (= "sdk" (get entry "source")))
-             (is (= "complain" (get entry "kind")))
-             (is (not (contains? entry "id")))
-             (doseq [kind [nil "question" "potential_issue" 7]]
-               (is (= 400 (:status (call :post "/entries" (assoc request :kind kind))))))
-             (is (= 400 (:status (call :post "/entries" (dissoc request :kind)))))
-             (is (= id
-                    (get-in (wire/parse-json (:body (call :get "/threads" nil)))
-                            ["entries" 0 "thread_id"])))
-             (is (= entry (wire/parse-json (:body (call :get (str "/entries/" id) nil)))))
-             (is (= 400
-                    (:status (call :post "/entries" (assoc request :author_session_id "spoof")))))
-             (update! sid #(assoc-in % [:turns "wire" :status] "completed"))
-             (is (= entry (wire/parse-json (:body (call :post "/entries" request)))))
-             (is (= 409 (:status (call :post "/entries" (assoc request :idempotency_key "new")))))
-             (reset! enabled false)
-             (is (= 409 (:status (call :get "/threads" nil))))))
-         (finally (drop! sid)
-                  (com.blockether.vis.internal.persistance.core/db-dispose-connection! db)))))
+          (is (= 200 (:status response)) (:body response))
+          (is (= sid (get entry "author_session_id")))
+          (is (= "sdk" (get entry "source")))
+          (is (= "complain" (get entry "kind")))
+          (is (not (contains? entry "id")))
+          (doseq [kind [nil "question" "potential_issue" 7]]
+            (is (= 400 (:status (call :post "/entries" (assoc request :kind kind))))))
+          (is (= 400 (:status (call :post "/entries" (dissoc request :kind)))))
+          (is (= id
+                 (get-in (wire/parse-json (:body (call :get "/threads" nil)))
+                         ["entries" 0 "thread_id"])))
+          (is (= entry (wire/parse-json (:body (call :get (str "/entries/" id) nil)))))
+          (is (= 400 (:status (call :post "/entries" (assoc request :author_session_id "spoof")))))
+          (update! sid #(assoc-in % [:turns "wire" :status] "completed"))
+          (is (= entry (wire/parse-json (:body (call :post "/entries" request)))))
+          (is (= 409 (:status (call :post "/entries" (assoc request :idempotency_key "new")))))
+          ;; #202: a self-wake route uses the bound sid, not an activation or body target.
+          (let [wake-request
+                {:kind "informational" :content "Build finished" :idempotency_key "self-wake"}
+
+                wake-response
+                (call :post "/wake" wake-request)
+
+                wake-entry
+                (wire/parse-json (:body wake-response))]
+
+            (is (= 200 (:status wake-response)))
+            (is (= sid (get wake-entry "author_session_id")))
+            (is (= [sid] (get wake-entry "ping")))
+            (is (= wake-entry (wire/parse-json (:body (call :post "/wake" wake-request)))))
+            (doseq [extra [{:session_id "other"} {:activation_id "old"} {:ping ["other"]}]]
+              (is (= 400 (:status (call :post "/wake" (merge wake-request extra)))))))
+          (reset! enabled false)
+          (is (= 409 (:status (call :get "/threads" nil))))))
+      (finally (drop! sid)
+               (com.blockether.vis.internal.persistance.core/db-dispose-connection! db)))))
 
 (deftest council-malformed-body-test
   (let [calls
         (atom 0)
 
-        handler
-        ((rv 'council-handler) :publish)]
+        handlers
+        (mapv (rv 'council-handler) [:publish :wake])]
 
     (with-redefs [state/council-operation! (fn [& _]
                                              (swap! calls inc)
                                              {})]
-      (doseq [raw ["{" "[]" "null" "42" "\"text\""]]
+      (doseq [handler handlers
+              raw ["{" "[]" "null" "42" "\"text\""]]
+
         (let [response (try (handler {:path-params {:sid "fixture"}
                                       :body (java.io.ByteArrayInputStream. (.getBytes ^String raw
                                                                                       "UTF-8"))})

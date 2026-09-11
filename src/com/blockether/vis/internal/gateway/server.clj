@@ -2879,7 +2879,7 @@
   [operation]
   (fn [request]
     (try (let [raw
-               (if (= operation :publish)
+               (if (contains? #{:publish :wake} operation)
                  (let [body (try (body-json request) (catch Exception _ nil))]
                    (when-not (map? body)
                      (throw (ex-info "Expected a Council JSON object" {:error :invalid-request})))
@@ -4382,6 +4382,7 @@
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
         [(sid-route "/council") {:get (council-handler :binding)}]
+        [(sid-route "/council/wake") {:post (council-handler :wake)}]
         [(sid-route "/council/members") {:get (council-handler :members)}]
         [(sid-route "/council/threads") {:get (council-handler :threads)}]
         [(sid-route "/council/entries")

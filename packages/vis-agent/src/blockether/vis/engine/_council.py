@@ -194,6 +194,42 @@ class Council:
         validate("council", "publish", body)
         return CouncilEntry.from_wire(self._call("POST", "/entries", body=body))
 
+    def wake(
+        self,
+        content: str,
+        *,
+        kind: CouncilKind,
+        thread_id: int | None = None,
+        title: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> CouncilEntry:
+        """Notify this bound session, including after the handle's activation ends.
+
+        No target or activation ID is needed. An eligible idle session starts a turn;
+        an active session receives a ping. Held queues are not resumed. Reusing an
+        idempotency key returns the original entry without delivering another wake.
+        """
+        body = {
+            "content": content,
+            "kind": kind,
+            "group_id": self.group_id,
+            "idempotency_key": str(uuid4())
+            if idempotency_key is None
+            else idempotency_key,
+        }
+        body.update(
+            {
+                key: value
+                for key, value in {
+                    "thread_id": thread_id,
+                    "title": title,
+                }.items()
+                if value is not None
+            }
+        )
+        validate("council", "wake", body)
+        return CouncilEntry.from_wire(self._call("POST", "/wake", body=body))
+
     def threads(self, *, after: int = 0, limit: int = 50) -> CouncilPage:
         """List roots and their kind in entry-ID order; replies do not reorder roots."""
         query = {"after": after, "limit": limit}

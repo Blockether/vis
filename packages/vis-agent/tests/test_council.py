@@ -91,6 +91,61 @@ def test_council_session_handle_and_thread_workflow():
         assert not any("/turns" in path for _, path, _, _ in calls)
 
 
+@pytest.mark.parametrize("activation", [None, "ended-activation"])
+def test_council_wakes_its_bound_session_between_turns(activation):
+    # #202: a retained extension/SDK handle needs neither a target nor a fresh activation.
+    publications = []
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path == "/v1/sessions/A/council":
+            return 200, {"activation_id": activation, "default_group_id": "G"}
+        assert method == "POST" and path == "/v1/sessions/A/council/wake"
+        request = json.loads(body)
+        validate("council", "wake", request)
+        publications.append(request)
+        return 200, {
+            "entry_id": 1,
+            "thread_id": 1,
+            "group_id": "G",
+            "content": request["content"],
+            "kind": request["kind"],
+            "author_session_id": "A",
+            "created_at": 1,
+            "source": "sdk",
+            "ping": ["A"],
+        }
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        council = client.session("A").council()
+        entry = council.wake(
+            "Build finished", kind="informational", idempotency_key="build-1"
+        )
+        assert entry.ping == ("A",)
+        assert (
+            council.wake(
+                "Build finished", kind="informational", idempotency_key="build-1"
+            )
+            == entry
+        )
+        assert (
+            publications
+            == [
+                {
+                    "content": "Build finished",
+                    "kind": "informational",
+                    "group_id": "G",
+                    "idempotency_key": "build-1",
+                }
+            ]
+            * 2
+        )
+        assert sum(path == "/v1/sessions/A/council" for _, path, _, _ in calls) == 1
+        with pytest.raises(TypeError):
+            council.wake("Wrong target", kind="informational", session_id="B")
+
+
 def test_council_explicit_group_and_read_only_handle():
     def respond(method, path, body):
         if result := compatible(method, path, body):
@@ -292,3 +347,32 @@ def test_source_identity_and_automatic_complain(scope):
             "publish",
             {"kind": "complain", "content": "Report", "source_ref": source},
         )
+
+
+def test_extension_self_wake_uses_only_its_host_binding(monkeypatch):
+    # #202: the extension API supplies no target or activation to its host.
+    from blockether.vis import extension as vis
+
+    requests = []
+    monkeypatch.setattr(
+        vis._host, "council_wake", lambda opts: requests.append(opts) or opts
+    )
+    result = vis.council.wake(
+        "Build finished", kind="informational", idempotency_key="build-1"
+    )
+    assert result == {
+        "content": "Build finished",
+        "kind": "informational",
+        "idempotency_key": "build-1",
+    }
+    assert requests == [result]
+    with pytest.raises(TypeError):
+        vis.council.wake("Wrong target", kind="informational", session_id="B")
+
+
+def test_extension_self_wake_refuses_without_a_host_session():
+    from blockether.vis import _outside
+    from blockether.vis import extension as vis
+
+    with pytest.raises(_outside.Refused, match="bound Vis session"):
+        vis.council.wake("No session", kind="informational")

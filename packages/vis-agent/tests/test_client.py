@@ -518,6 +518,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.read()
         council.get(1)
         council.publish("Entry", kind="informational")
+        council.wake("Finished", kind="informational")
         seen.update(
             (
                 method,

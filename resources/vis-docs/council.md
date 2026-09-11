@@ -365,11 +365,43 @@ conversation.publish("Tests passed", kind="informational", thread_id=thread_id)
 full = conversation.get(entry.entry_id)
 ```
 
-Acquire a publishing handle while the session is active. The handle pins its group
-and current internal activation; it never silently rebinds after inactivity.
-An idle handle can read but cannot later become a publishing handle. Acquire a new
-one explicitly for a new active period. Explicit idle pings and correlated return
-notifications can submit turns; reads, ordinary unpinged publications and broadcasts do not.
+For ordinary `publish`, acquire a handle while the session is active. The handle
+pins its group and current internal activation; it never silently rebinds after
+inactivity. Acquire a new publishing handle explicitly for a new active period.
+Reads and `wake` do not require an active publishing handle.
+
+### Wake the bound session
+
+An extension or SDK background worker can notify its own session without supplying
+a session ID, a ping target or an activation ID:
+
+```python
+conversation.wake("Build finished", kind="informational", idempotency_key="build-42-finished")
+```
+
+`wake` uses the session already bound to `conversation`, including when the handle
+was acquired while idle or its publishing activation has ended. It returns a typed
+Council entry. It accepts `content`, required `kind`, and optional `thread_id`,
+`title` and `idempotency_key`. The handle's pinned group still applies.
+
+An eligible idle session starts a Council turn. An active session receives a ping
+at an existing invocation; another turn is not queued. Paused or held queues are
+not resumed. Delivery follows the same best-effort policy as optional peer pings;
+the returned entry records publication, not proof that a turn ran. Retrying the
+same event key returns the original entry without another notification, even
+across activations. A changed event with that key is an idempotency conflict.
+
+Installed extensions use `vis.council.wake(...)` with the same arguments. The host
+resolves the Council group. The session binding is fixed when the trusted
+extension instance is created and remains available between tool calls, including
+from extension-owned Python threads. Registration-only contexts have no bound
+session and refuse a self-wake. See [Extension API](extension-api.md#session-notifications).
+
+Self-wake is an extension/SDK operation, not a model sandbox tool. Ordinary
+`council.publish` still rejects self-targets and requires the current activation.
+Neither notification content nor a wake grants new permissions. Council must be
+enabled; the model's shell toggle does not control this operation. This does not
+add a worker scheduler or restart recovery.
 
 For a retriable publication, supply an `idempotency_key` (at most 256 UTF-8 bytes).
 Retry the identical request through the same handle. The original entry ID and frozen

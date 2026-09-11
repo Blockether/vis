@@ -884,6 +884,109 @@ vis.register(vis.Extension(
           (expect (not (worker/worker-live? (worker/extension-worker-key ctx))))
           (expect (not (contains? @@#'pyx/session-contexts [ctx "trusted-process"]))))))))
 
+(defdescribe
+  extension-background-self-wake-test
+  ;; #202: exercise the real trusted Python worker after its invoking call has returned.
+  (it
+    "keeps host-bound identity between turns with model shell disabled"
+    (with-fresh-loaded
+      {"council_watch.py"
+       "from pathlib import Path
+import threading
+import time
+import blockether.vis.extension as vis
+
+_outcome = {}
+_thread = None
+
+
+def start_watch(gate):
+    \"\"\"Start a bounded fixture watcher; the host releases it after this call returns.\"\"\"
+    global _thread
+
+    def watch():
+        deadline = time.monotonic() + 10
+        while not Path(gate).exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if Path(gate).exists():
+            try:
+                _outcome[\"entry\"] = vis.council.wake(\"Build finished\", kind=\"informational\", idempotency_key=\"background\")
+            except Exception as error:
+                _outcome[\"error\"] = str(error)
+    _thread = threading.Thread(target=watch, daemon=True)
+    _thread.start()
+    return \"started\"
+
+
+def watch_status():
+    \"\"\"Read the bounded watcher outcome.\"\"\"
+    _thread.join(timeout=2)
+    return _outcome
+
+
+def wake_now():
+    \"\"\"Exercise the registration-only context's missing session binding.\"\"\"
+    return vis.council.wake(\"No session\", kind=\"informational\")
+
+
+vis.register(vis.Extension(
+    name=\"council-watch\", alias=\"watch\", description=\"Bound Council watcher fixture.\",
+    symbols=[
+        vis.Symbol(start_watch, activity=vis.Activity(label=\"Start watcher\", show_start=False)),
+        vis.Symbol(watch_status, activity=vis.Activity(label=\"Read watcher\", show_start=False)),
+        vis.Symbol(wake_now, activity=vis.Activity(label=\"Wake session\", show_start=False)),
+    ],
+))
+"}
+      (fn [_ {:keys [store ext-dir]}]
+        (let [ext
+              (registered "council-watch")
+
+              gid
+              (str (:id (ps/db-create-project! store {:name "Extension watcher"})))
+
+              store-session!
+              (requiring-resolve
+                'com.blockether.vis.internal.persistance.sqlite.test-helpers/store-session!)]
+
+          (with-redefs [toggles/enabled? #(= "council" %)]
+            (let [unbound ((symbol-fn ext 'wake_now))]
+              (expect (false? (:success? unbound)))
+              (expect (str/includes? (pr-str unbound) "needs a bound Vis session")))
+            (doseq [_ (range 2)]
+              (let [sid (str (store-session! store {:channel :api}))
+                    ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                    env {:python-context ctx :session-id sid :db-info store}
+                    gate (io/file ext-dir (str sid ".ready"))
+                    delivered (promise)]
+
+                (ps/db-set-session-project! store sid gid)
+                (try (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core
+                                                  'runtime-waker)
+                                      (atom {:eligible? (constantly true)
+                                             :wake! (fn [db target entry]
+                                                      (deliver delivered
+                                                               [db target entry
+                                                                extension/*current-environment*])
+                                                      true)})}
+                       (fn []
+                         (binding [extension/*current-environment* env]
+                           (expect (= "started"
+                                      (:result ((symbol-fn ext 'start_watch)
+                                                 (.getCanonicalPath gate))))))
+                         ;; There is now no tool call or conveyed invocation frame in the worker.
+                         (spit gate "ready")
+                         (let [[db target entry invocation] (deref delivered 10000 nil)
+                               status (binding [extension/*current-environment* env]
+                                        ((symbol-fn ext 'watch_status)))]
+
+                           (expect (= store db) (pr-str status))
+                           (expect (= sid target (:author_session_id entry)))
+                           (expect (= [sid] (:ping entry)))
+                           (expect (nil? invocation))
+                           (expect (= "Build finished" (:content entry))))))
+                     (finally (ep/dispose-python-context! ctx)))))))))))
+
 ;; Tool adapter — envelope semantics
 
 (defdescribe tool-envelope-test

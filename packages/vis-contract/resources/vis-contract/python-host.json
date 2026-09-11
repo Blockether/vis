@@ -67,6 +67,14 @@
       "refusal": "vis.jailed_shell_session needs the Vis host's jail; nothing outside a Vis process can enforce it. Run the command with vis.shell when an unjailed process is what you meant, or run this extension under vis-agent."
     },
     {
+      "name": "council_wake",
+      "global": "__vis_host_council_wake__",
+      "arity": 1,
+      "summary": "Publish an event to the bound session and wake it when eligible and idle.",
+      "outside": "refuse",
+      "refusal": "vis.council_wake (vis.council.wake) needs a bound Vis session. Outside an extension, use sdk_session.council().wake(...) with an authenticated SDK session."
+    },
+    {
       "name": "request_input",
       "global": "__vis_host_request_input__",
       "arity": 3,
