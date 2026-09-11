@@ -893,6 +893,9 @@
                     (when (.canExecute candidate) (.getAbsolutePath candidate))))
                 (str/split (System/getenv "PATH") (re-pattern File/pathSeparator)))
 
+          extension-source
+          "raise RuntimeError('install must not execute source')\n"
+
           url
           "https://github.com/example/extensions"
 
@@ -907,8 +910,7 @@
               (str "[project]\nname='native-github-example'\nversion='1.0.0'\n"
                    "description='Native Git source fixture'\nrequires-python='>=3.11'\n"
                    "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n"))
-        (spit (io/file project "extension.py")
-              "raise RuntimeError('install must not execute source')\n")
+        (spit (io/file project "extension.py") extension-source)
         (spit (io/file repository "unrelated.txt") "Outside selected project")
         (doseq [args [["init" "--quiet"] ["add" "."]
                       ["-c" "user.name=Test Author" "-c" "user.email=test@example.com" "commit"
@@ -950,9 +952,27 @@
                                         120)]
               (expect (= 0 (:exit installed)) (:output installed))
               (expect (str/includes? (:output installed) "(github)"))
-              (expect (not (Files/isSymbolicLink (.toPath destination))))
-              (expect (= (slurp (io/file project "extension.py"))
-                         (slurp (io/file destination "extension.py"))))
+              ;; Git installs use a copied managed snapshot, not a link to the source checkout.
+              (expect (Files/isSymbolicLink (.toPath destination)))
+              (let [^File snapshot-project (.getCanonicalFile destination)
+                    ^File snapshot (.getParentFile snapshot-project)
+                    receipt
+                    (json/read-json (slurp (io/file snapshot "receipt.json")) :key-fn keyword)]
+
+                (expect (= (.getCanonicalFile
+                             (io/file dir ".vis/extensions/.versions/native-github-example"))
+                           (.getParentFile snapshot)))
+                (expect (= "project" (.getName snapshot-project)))
+                (expect (= {:name "native-github-example"
+                            :version "1.0.0"
+                            :repository_url url
+                            :subdirectory "plugins/greeting"
+                            :revision revision
+                            :release_tag nil
+                            :previous nil}
+                           receipt)))
+              (spit (io/file project "extension.py") "VALUE = 'changed after installation'\n")
+              (expect (= extension-source (slurp (io/file destination "extension.py"))))
               (expect (not (.exists (io/file destination ".git"))))
               (expect (not (.exists (io/file destination "unrelated.txt")))))))
         (finally (delete-tree! dir))))))
