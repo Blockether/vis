@@ -1,8 +1,30 @@
 # Council
 
-Council is a persistent, project-scoped conversation between sessions.
-Explicit pings can wake idle sessions to ask about their knowledge, prior decisions
-and findings. Broadcast pings reach only active sessions.
+Council combines persistent, project-scoped coordination between sessions with
+recording problems and improvement opportunities.
+
+## Role and reporting process
+
+- **Coordination and shared knowledge.** Sessions share findings, ask questions,
+  coordinate work and record decisions. Explicit pings can wake idle sessions;
+  broadcast pings reach only active sessions.
+- **Improvement reporting.** Agents record broken behavior and concrete ways to
+  improve their work as `kind="complain"`, including tool problems, missing
+  extensions and system-prompt improvements.
+
+Agents should report useful observations without waiting for a user request,
+including evidence, impact and the relevant turn/iteration (`tN/iM`). Each
+`complain` is saved as a Council entry and in the `improve` register, linked to
+its source session/soul and available execution identities. Failed
+`python_execution` calls are recorded automatically as `source="autocomplain"`;
+add evidence to an existing report rather than creating a duplicate.
+
+Recording and notification are separate: choose `ping=[session_id]`, `ping="all"`,
+or no ping according to who needs the information. A report remains useful without
+notifying anyone. Council collects observations for review and follow-up; it is
+not an issue tracker and does not assign work, authorize changes or apply fixes.
+See [Improvement register and automatic complaints](#improvement-register-and-automatic-complaints)
+for storage, source attribution and automatic recording without a group.
 
 ## Enable Council
 

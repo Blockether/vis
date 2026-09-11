@@ -23,7 +23,7 @@
      :page "queue-and-cancel"
      :title "Controlling a session"}
     {:blurb
-     "Coordinate Vis sessions with Council: classify project messages, read shared threads, correlate replies and explicitly notify active or eligible idle agents."
+     "Coordinate Vis sessions, share knowledge and record problems or improvement opportunities as complaints in Council and the improve register."
      :page "council"
      :title "Council"}
     {:blurb
