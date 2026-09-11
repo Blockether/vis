@@ -322,10 +322,64 @@
         (sequential? value) (mapv #(select-result fields %) value)
         :else value))
 
+(defn- counted-label [n singular] (str n " " singular (when (not= n 1) "s")))
+
+(defn- format-summary
+  "Summarize complete format results using only counts and outcome flags, never source text."
+  [value]
+  (let [files
+        (field value "files")
+
+        changed
+        (field value "changed")
+
+        incomplete?
+        (or (field value "unbalanced") (some #(field % "unbalanced") files))]
+
+    (cond incomplete? "Formatting incomplete"
+          (and (sequential? files) (empty? files)) "No files to format"
+          (and (sequential? files) (number? changed))
+          (str changed " of " (counted-label (count files) "file") " changed")
+          (true? changed) "Formatting changed"
+          (false? changed) "No formatting changes"
+          :else "No formatting result")))
+
+(defn- lint-summary
+  "Summarize complete severity counts before per-finding evidence is bounded."
+  [value]
+  (let [errors
+        (field value "error")
+
+        warnings
+        (field value "warning")
+
+        info
+        (field value "info")
+
+        files
+        (field value "files")]
+
+    (if (every? number? [errors warnings info])
+      (let [clean? (every? zero? [errors warnings info])]
+        (if (and clean? (= 0 files))
+          "No files to lint"
+          (str (if clean?
+                 "No lint findings"
+                 (str (counted-label errors "error")
+                      " · "
+                      (counted-label warnings "warning")
+                      " · "
+                      info
+                      " info"))
+               (when (number? files) (str " · " (counted-label files "file") " checked")))))
+      "No lint result")))
+
 (defn result-presentation
   "Result view selected explicitly by a built-in binding. Unknown tools have no
-   default view. Input is public, redacted and bounded by the event owner."
-  [{:keys [operation label]} value]
+   default view. Evidence is public, redacted and bounded by the event owner.
+   Only numeric counts and outcome flags use the complete result in details;
+   displayed paths and all body text always come from the bounded public value."
+  [{:keys [operation label result]} value]
   (when (contains? tool-headlines (name operation))
     (let [op
           (name operation)
@@ -348,6 +402,10 @@
                                     (str " · lines " (first read-lines) "–" (last read-lines))))
                 (contains? #{"doc" "defs" "patch" "shell"} op) path
                 (= op "grep") (or (first (str/split-lines (or text ""))) "")
+                (= op "format_code") (str (format-summary (or result value))
+                                          (when-let [target (field value "path")]
+                                            (str " · " target)))
+                (= op "lint_code") (lint-summary (or result value))
                 (and (= op "run_tests") (number? (field value "total")))
                 (str (or (field value "total") 0) " tests · " (or (field value "fail") 0) " failed")
                 :else (str (or (field value "summary") (field value "title") "")))
