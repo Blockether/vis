@@ -9,7 +9,7 @@ import { identity, manifestMetadata, projectFolder, repositoryURL } from './gith
 let fixture, serial=0;
 beforeAll(async()=>{fixture=await runtimeFixture();});
 afterAll(async()=>{await fixture?.runtime.dispose();});
-beforeEach(async()=>{fixture.controls.github='ok';fixture.controls.verification='ok';fixture.controls.requests=[];fixture.controls.tokens.clear();await fixture.db.batch(['DELETE FROM submissions','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));await fixture.runtime.purgeCache();});
+beforeEach(async()=>{fixture.controls.github='ok';fixture.controls.verification='ok';fixture.controls.requests=[];fixture.controls.tokens.clear();fixture.controls.contents.clear();fixture.controls.manifest=readFileSync('examples/vis-greeter/pyproject.toml','utf8');await fixture.db.batch(['DELETE FROM submissions','DELETE FROM extensions'].map(sql=>fixture.db.prepare(sql)));await fixture.runtime.purgeCache();});
 function post(path,source={},headers={}) {
   const token=(path==='/api/preview'?'preview':'submit')+'-'+(++serial);
   return fixture.runtime.dispatchFetch('https://center.example.com'+path,{method:'POST',headers:{Origin:'https://center.example.com','Content-Type':'application/json','CF-Connecting-IP':'10.0.0.'+(serial%250+1),...headers},body:JSON.stringify({repository_url:'https://github.com/example/extensions',subdirectory:'plugins/greeting',turnstile_token:token,...source})});
@@ -107,6 +107,50 @@ test('per-IP rate limit prevents excessive inspection requests',async()=>{
 });
 test.each(['redirect','private','missing','rate'])('GitHub %s is actionable and never creates a submission',async mode=>{
   fixture.controls.github=mode;const response=await post('/api/preview');expect(response.status).toBe(mode==='rate'?503:400);expect((await response.json()).error).toBeTruthy();expect(fixture.controls.requests.every(url=>!url.includes('other.example.com'))).toBe(true);
+});
+test.each([
+  ['invalid TOML', 'manifest', '[project', 'not valid TOML'],
+  ['missing name', 'manifest', 'name = "vis-greeter"', 'project name'],
+  ['missing version', 'manifest', 'version = "1.0.0"', 'static project version'],
+  ['missing description', 'manifest', 'description = "Small greeting tools for Vis."', 'Description'],
+  ['missing Python requirement', 'manifest', 'requires-python = ">=3.11"', 'requires-python'],
+  ['missing SDK dependency', 'manifest', 'dependencies = ["vis-agent>=0.1.45"]', 'dependencies'],
+  ['invalid category', 'append', 'category = "other"', 'category'],
+  ['source paths are not an array', 'append', 'source_paths = false', 'source_paths'],
+  ['skills are not an array', 'append', 'skills = false', 'skills'],
+  ['repeated skill directories', 'append', 'skills = ["skills/greeting", "skills/greeting"]', 'repeat'],
+  ['missing entrypoint', 'plugins/greeting', [{name:'pyproject.toml',type:'file'}], 'extension.py'],
+  ['project is not a directory', 'plugins/greeting', {type:'file'}, 'directory'],
+  ['missing source directory', 'plugins/greeting/src', null, 'not found'],
+  ['missing skill file', 'plugins/greeting/skills/greeting', [], 'SKILL.md'],
+])('both review steps reject %s without saving a submission',async (_name,kind,value,message)=>{
+  if(kind==='manifest') fixture.controls.manifest=value==='[project'?value:fixture.controls.manifest.replace(value,'');
+  else if(kind==='append') fixture.controls.manifest=fixture.controls.manifest.replace('category = "tools"',value.startsWith('category')?value:'category = "tools"\n'+value);
+  else {
+    fixture.controls.contents.set(kind,value);
+    if(kind.endsWith('/src')) fixture.controls.manifest+='\nsource_paths = ["src"]';
+    if(kind.includes('/skills/')) fixture.controls.manifest+='\nskills = ["skills/greeting"]';
+  }
+  for(const path of ['/api/preview','/api/submissions']) {
+    const response=await post(path,{revision:fixture.revision});
+    expect(response.status).toBe(400);expect((await response.json()).error).toContain(message);
+  }
+  expect((await fixture.db.prepare('SELECT COUNT(*) AS n FROM submissions').first()).n).toBe(0);
+});
+test('SDK source and skill directories are checked again at the reviewed commit on submission',async()=>{
+  fixture.controls.manifest=readFileSync('../../packages/vis-agent/examples/greeter/pyproject.toml','utf8');
+  fixture.controls.contents.set('plugins/greeting/skills/greeting',[{name:'SKILL.md',type:'file'}]);
+  const response=await post('/api/preview');expect(response.status).toBe(200);
+  const preview=await response.json();expect(preview.skills).toEqual(['skills/greeting']);
+  fixture.controls.requests=[];
+  expect((await post('/api/submissions',{revision:preview.revision})).status).toBe(202);
+  for(const folder of ['src','skills/greeting']) expect(fixture.controls.requests).toContain('https://api.github.com/repos/example/extensions/contents/plugins/greeting/'+folder+'?ref='+preview.revision);
+  expect(fixture.controls.requests).toContain('https://api.github.com/repos/example/extensions/commits/'+preview.revision);
+});
+test('catalog display metadata accepts the SDK example, including bundled skills',()=>{
+  const metadata=manifestMetadata(readFileSync('../../packages/vis-agent/examples/greeter/pyproject.toml','utf8'));
+  expect(metadata.skills).toEqual(['skills/greeting']);
+  expect(metadata.source_paths).toEqual(['src']);
 });
 test('portable display metadata agrees with the shipped manifest and rejects unsafe paths',()=>{
   const metadata=manifestMetadata(readFileSync('examples/vis-greeter/pyproject.toml','utf8'));expect(metadata.category).toBe('tools');expect(metadata.dependencies.some(d=>d.startsWith('vis-agent'))).toBe(true);

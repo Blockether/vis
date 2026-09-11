@@ -43,6 +43,20 @@ test('docs shortcuts and catalog buttons use one shared control and font contrac
     expect(input.style.getPropertyValue('min-height')).toBe('');
   } finally {dom.window.close();}
 });
+test('phone submission sheets fill the dynamic viewport with a safe-area header and scrolling body',()=>{
+  const dom=new JSDOM('<style>'+readFileSync('../../resources/vis-docs/assets/theme.css','utf8')+'</style><style>'+readFileSync('web/style.css','utf8')+'</style><dialog class="content"></dialog>');
+  try {
+    const rules=[...dom.window.document.styleSheets[1].cssRules];
+    expect(dom.window.getComputedStyle(dom.window.document.querySelector('dialog')).maxWidth).toBe('none');
+    const phone=rules.find(rule=>rule.conditionText?.includes('(pointer: coarse) and (max-height: 560px)'));
+    const sheet=[...phone.cssRules].find(rule=>rule.selectorText==='dialog.content');
+    for(const [name,value] of Object.entries({width:'100%',height:'100dvh','max-width':'none','max-height':'none',margin:'0px',border:'0px'})) expect(sheet.style.getPropertyValue(name),name).toBe(value);
+    expect(rules.find(rule=>rule.selectorText==='dialog[open]').style.getPropertyValue('display')).toBe('flex');
+    expect(rules.find(rule=>rule.selectorText==='.dialog-body').style.getPropertyValue('overflow-y')).toBe('auto');
+    expect(rules.find(rule=>rule.selectorText==='.dialog-head').style.getPropertyValue('padding')).toContain('safe-area-inset-top');
+    expect(rules.find(rule=>rule.selectorText==='.dialog-body').style.getPropertyValue('padding')).toContain('safe-area-inset-bottom');
+  } finally {dom.window.close();}
+});
 test('the static upload contains only public output and the same security policy',()=>{
   const output=readdirSync('dist',{recursive:true});
   expect(output.some(file=>/(^|\/)(?:[^/]*fixture[^/]*|schema\.sql|wrangler[^/]*|\.?deployment[^/]*|package(?:-lock)?\.json|node_modules|\.env[^/]*|\.vars[^/]*)$/.test(file))).toBe(false);

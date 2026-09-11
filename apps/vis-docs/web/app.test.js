@@ -101,6 +101,21 @@ test('loading, failure, retry and empty catalog have recovery actions', async ()
   expect($('#submit-dialog').open).toBe(true);
 });
 
+test('the repository dialog has an accessible X, locks background scrolling and restores focus', async () => {
+  setup(undefined,true); await tick(); $('#submit-open').click();
+  const close=$('#submit-close');
+  expect(close.getAttribute('aria-label')).toBe('Close repository dialog');
+  expect(close.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  expect(document.body.style.overflow).toBe('hidden');
+  expect(document.activeElement).toBe(close);
+  $('.dialog-body').scrollTop=200;
+  close.click();
+  expect($('.dialog-body').scrollTop).toBe(0);
+  expect($('#submit-dialog').open).toBe(false);
+  expect(document.body.style.overflow).toBe('');
+  expect(document.activeElement).toBe($('#submit-open'));
+});
+
 test('submission previews a GitHub link and pins the reviewed revision when adding', async () => {
   const request=setup(); await tick(); $('#submit-open').click();
   const form=$('#repository-form');
@@ -112,7 +127,13 @@ test('submission previews a GitHub link and pins the reviewed revision when addi
   expect(path).toBe('/api/preview');
   expect(JSON.parse(options.body)).toEqual({repository_url:item.repository_url,subdirectory:item.subdirectory,turnstile_token:'fixture-extension-preview'});
   expect($('#submit-confirm').hidden).toBe(false);
-  expect(document.activeElement).toBe($('#submit-confirm'));
+  expect($('#preview').textContent).toContain('Repository checks passed');
+  expect($('#preview').textContent).toContain('Public GitHub repository');
+  expect($('#preview').textContent).toContain('extension.py');
+  expect($('#preview').textContent).toContain('vis-agent');
+  expect($('#preview a[href="'+item.manifest_url+'"]').textContent).toBe('pyproject.toml');
+  expect($('#preview').textContent).toContain('not a code audit');
+  expect(document.activeElement).toBe($('#submit-step'));
   $('#submit-confirm').click(); await tick();
   const submission=request.mock.calls.find(([path,opts])=>path==='/api/submissions' && opts?.method==='POST');
   expect(JSON.parse(submission[1].body).turnstile_token).toBe('fixture-extension-submit');

@@ -16,7 +16,7 @@ export function mount(container,request=fetch,initial) {
   function syncNavigation() {
     const open=mobile.matches&&navigation.checked;
     $('#catalog-navigation').inert=mobile.matches&&!open; $('.main').inert=open; $('.toc').inert=open;
-    navigation.setAttribute('aria-expanded',String(open)); navigation.tabIndex=mobile.matches?0:-1;document.body.style.overflow=open?'hidden':'';
+    navigation.setAttribute('aria-expanded',String(open)); navigation.tabIndex=mobile.matches?0:-1;document.body.style.overflow=open||dialog.open?'hidden':'';
   }
   function closeNavigation() {navigation.checked=false;syncNavigation();}
   navigation.onchange=syncNavigation;mobile.addEventListener('change',syncNavigation);syncNavigation();
@@ -71,12 +71,12 @@ export function mount(container,request=fetch,initial) {
   }
   function resetPreview() {
     ++submissionRevision;preview=null;removeChallenge();$('#preview').replaceChildren();$('#submit-confirm').hidden=true;$('#edit-submission').hidden=true;
-    $('#submit-status').textContent='';$('#review-submit').disabled=false;form.hidden=false;$('#submit-step').textContent='1 of 2 · Repository';
+    $('#submit-status').textContent='';$('#review-submit').disabled=false;form.hidden=false;$('#submit-step').textContent='1 of 2 · Repository';$('.dialog-body').scrollTop=0;
   }
-  function openSubmission() {closeNavigation();resetPreview();dialog.showModal();form.elements.repository_url.focus();challenge('extension-preview');}
+  function openSubmission() {closeNavigation();resetPreview();dialog.showModal();syncNavigation();(window.matchMedia('(pointer: coarse)').matches?$('#submit-close'):form.elements.repository_url).focus({preventScroll:true});challenge('extension-preview');}
   $('#submit-close').onclick=()=>dialog.close();
   $('#edit-submission').onclick=()=>{resetPreview();form.elements.repository_url.focus();challenge('extension-preview');};
-  dialog.addEventListener('close',()=>{resetPreview();form.reset();if(!$('#catalog-page').hidden) $('#submit-open').focus();});
+  dialog.addEventListener('close',()=>{resetPreview();form.reset();syncNavigation();if(!$('#catalog-page').hidden) $('#submit-open').focus({preventScroll:true});});
   async function submit(confirm) {
     if(confirm&&!preview) return;
     if(!token) {$('#submit-status').textContent='Complete the anti-spam check before continuing.';return;}
@@ -88,7 +88,7 @@ export function mount(container,request=fetch,initial) {
       const data=await api(confirm?'/api/submissions':'/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(source)});
       if(disposed||revision!==submissionRevision) return;
       if(confirm) {dialog.close();$('#notice').textContent='Submitted for moderation. It will appear in the catalog only after approval. Reference: '+data.id;}
-      else {preview=data;form.hidden=true;$('#submit-step').textContent='2 of 2 · Review';$('#preview').innerHTML=previewHTML(data);$('#submit-status').textContent='Manifest found. Review the source and submit this commit for moderation.';$('#submit-confirm').hidden=false;$('#submit-confirm').disabled=false;$('#edit-submission').hidden=false;$('#submit-confirm').focus();challenge('extension-submit');}
+      else {preview=data;form.hidden=true;$('#submit-step').textContent='2 of 2 · Review';$('#preview').innerHTML=previewHTML(data);$('#submit-status').textContent='Review the checks and linked source before submitting this commit.';$('#submit-confirm').hidden=false;$('#submit-confirm').disabled=false;$('#edit-submission').hidden=false;$('.dialog-body').scrollTop=0;$('#submit-step').focus({preventScroll:true});challenge('extension-submit');}
     } catch(error) {if(revision===submissionRevision) {$('#submit-status').textContent=error.message;challenge(confirm?'extension-submit':'extension-preview');}}
     finally {if(revision===submissionRevision) {$('#review-submit').disabled=false;$('#submit-confirm').disabled=false;}}
   }

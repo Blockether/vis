@@ -42,11 +42,14 @@ export function manifestMetadata(text) {
   const sdk=p.dependencies.filter(d=>/^vis[-_.]agent(?:\s|[<>=!~[(]|$)/i.test(d));
   assert(sdk.length>0&&sdk.every(d=>!/[;@[\]]/.test(d)),'Declare an unconditional vis-agent version requirement.');
   assert(['tools','providers','workflows'].includes(v.category),'category must be tools, providers or workflows.');
-  assert(Object.keys(v).every(key=>['category','source_paths'].includes(key)),'tool.vis accepts category and source_paths.');
-  const paths=v.source_paths||[];
+  assert(Object.keys(v).every(key=>['category','source_paths','skills'].includes(key)),'tool.vis accepts category, source_paths and skills.');
+  const paths=v.source_paths??[], skills=v.skills??[];
   assert(Array.isArray(paths)&&paths.length<=16,'source_paths must contain at most 16 relative directories.');
   for(const path of paths) assert(projectFolder(path)&&path!=='.','source_paths must name directories inside the project.');
-  return {name:p.name.toLowerCase().replace(/[-_.]+/g,'-'),version:p.version,description:p.description,category:v.category,requires_python:p['requires-python'],dependencies:p.dependencies,source_paths:paths};
+  assert(Array.isArray(skills)&&skills.length<=64,'skills must contain at most 64 relative directories.');
+  for(const path of skills) assert(projectFolder(path)&&path!=='.','skills must name directories inside the project.');
+  assert(new Set(skills).size===skills.length,'skills must not repeat a directory.');
+  return {name:p.name.toLowerCase().replace(/[-_.]+/g,'-'),version:p.version,description:p.description,category:v.category,requires_python:p['requires-python'],dependencies:p.dependencies,source_paths:paths,skills};
 }
 export async function inspectRepository(source,env) {
   const repository_url=repositoryURL(source.repository_url), subdirectory=projectFolder(source.subdirectory);
@@ -80,6 +83,10 @@ export async function inspectRepository(source,env) {
   let text; try {text=new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(manifest.content.replace(/\s/g,'')),c=>c.charCodeAt(0)));} catch {throw new RequestError('pyproject.toml must be valid base64 UTF-8.');}
   const metadata=manifestMetadata(text);
   for(const path of metadata.source_paths) assert(Array.isArray(await contents(prefix+path)),'source_paths must be directories inside the selected project.');
+  for(const path of metadata.skills) {
+    const files=await contents(prefix+path);
+    assert(Array.isArray(files)&&files.some(entry=>entry.name==='SKILL.md'&&entry.type==='file'&&!entry.submodule_git_url),'Each skills directory must contain a SKILL.md file.');
+  }
   const readme=entries.find(e=>/^readme\.(md|rst|txt)$/i.test(e.name)&&e.type==='file'&&!e.submodule_git_url);
   return {...metadata,id:await identity(repository_url.toLowerCase()+'\n'+subdirectory),repository_url,repository,owner,subdirectory,revision:sha,source_url:repository_url+'/tree/'+sha+(subdirectory?'/'+encoded(subdirectory):''),manifest_url:repository_url+'/blob/'+sha+'/'+encoded(prefix+'pyproject.toml'),readme_url:readme?repository_url+'/blob/'+sha+'/'+encoded(prefix+readme.name):null,stars:Number.isSafeInteger(repo.stargazers_count)?Math.max(0,repo.stargazers_count):0,topics:Array.isArray(repo.topics)?repo.topics.filter(t=>typeof t==='string').slice(0,20):[],license:repo.license?.spdx_id||null,archived:!!repo.archived,updated_at:commit.commit.committer.date};
 }

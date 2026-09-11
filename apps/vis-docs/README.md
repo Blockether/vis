@@ -76,13 +76,21 @@ in assets, source control, screenshots or client configuration.
 ## Repository submission and moderation
 
 1. Keep `pyproject.toml` and `extension.py` together in a public GitHub repository.
-   Follow the [project contract](../../resources/vis-docs/extending.md#extension-center-projects).
+   Follow the [project contract](../../resources/vis-docs/extension-packages.md#package-manifest).
 2. Choose **Add a repository**, enter `https://github.com/owner/repository`, and leave
    **Project folder** empty for root or provide a folder such as `extensions/greeting`.
-3. Complete the anti-spam check and choose **Review repository**.
-4. Review the manifest and linked source at the resolved commit. Complete the second
-   anti-spam check and choose **Submit for review**. Retain the submission reference.
+3. Complete the anti-spam check and choose **Review repository**. The Worker checks public
+   access, resolves a full commit SHA, finds `pyproject.toml` and `extension.py`, validates
+   required display metadata and the unconditional `vis-agent` declaration, and checks
+   declared source directories and skill directories containing `SKILL.md`.
+4. Review the displayed checks, dependencies, manifest and linked source at that commit.
+   Complete the second anti-spam check and choose **Submit for review**. The Worker repeats
+   repository checks at the same commit before saving. Retain the submission reference.
 5. A maintainer reviews the pending entry before approving it. Nothing publishes automatically.
+
+The dialog fills the phone viewport in portrait and landscape, keeps its X button visible
+while the body scrolls, and respects safe areas. X or Escape closes it and returns focus to
+**Add a repository**. Opening it on touch devices does not automatically open the keyboard.
 
 The Worker reads metadata only from `api.github.com`, rejects redirects, enforces
 body/response/time limits and pins all source requests to a full commit SHA. It never
