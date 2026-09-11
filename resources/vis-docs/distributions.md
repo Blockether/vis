@@ -52,6 +52,14 @@ Version pins are not accepted with beta or dev. Native updates acquire the engin
 Python worker and TUI from the same immutable release before replacing installed files.
 A missing native TUI fails rather than starting a JVM client.
 
+If managed source already exists in `~/.vis/install/src`, a native update also pins
+it to the selected native build's exact commit. This requires Git; native-only
+installations do not download source. Native and dev updates preserve modified
+managed source at `~/.vis/install/src-recovery.XXXXXX/previous` and report that path,
+then replace it with a verified clean checkout. Staged, unstaged, untracked and
+ignored files remain in the preserved directory. If fetching the replacement fails,
+the original source, native installation and selected track remain unchanged.
+
 By default an update releases an idle managed gateway using its old executable
 before replacing it. Busy or user-owned gateways are never stopped. Add
 `--keep-gateway` to leave even an idle gateway running.

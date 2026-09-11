@@ -685,7 +685,6 @@ drop_moving_refs() {
 recover_source() {
   local ref="$1" recovery pinned
   recovery="$(mktemp -d "$vis_install_dir/src-recovery.XXXXXX")" || exit 1
-  say "damaged source pack; downloading a fresh checkout"
   if ! (
     managed_src="$recovery/src" managed_ref_file="$recovery/ref" update_source "$ref"
     git -C "$recovery/src" fsck --full --no-dangling
@@ -704,16 +703,8 @@ recover_source() {
   say "source recovered; previous source preserved at $recovery/previous"
 }
 
-require_clean_source() {
-  local changes
-  changes="$(git -C "$managed_src" status --porcelain --untracked-files=all)" || \
-    die "update: cannot inspect source at $managed_src. Repair the checkout and retry."
-  [[ -z "$changes" ]] || die "update: local modifications in $managed_src." \
-    "Commit or stash local changes (including untracked files), then retry; no source files were replaced."
-}
-
 update_source() {
-  local ref="${1:-}" target pinned
+  local ref="${1:-}" target pinned changes
   require_cmd git "the source runtime"
   # `latest` is the source runtime's moving main, not a literal Git ref.
   [[ "$ref" != latest ]] || ref=""
@@ -723,10 +714,17 @@ update_source() {
     git -C "$managed_src" init --quiet || exit 1
   fi
   if ! repair_pack_indexes; then
+    say "damaged source pack; downloading a fresh checkout"
     recover_source "$ref"
     return
   fi
-  require_clean_source
+  changes="$(git -C "$managed_src" status --porcelain --untracked-files=all)" || \
+    die "update: cannot inspect source at $managed_src. Repair the checkout and retry."
+  if [[ -n "$changes" ]]; then
+    say "modified managed source; preserving it and downloading a fresh checkout"
+    recover_source "$ref"
+    return
+  fi
   git -C "$managed_src" remote add origin "$vis_repo_url" 2>/dev/null \
     || git -C "$managed_src" remote set-url origin "$vis_repo_url" || exit 1
   # This source is a detached pin, never a branch — so even a hand-run `git fetch`
@@ -859,11 +857,9 @@ update_native() {
   if [[ -e "$managed_src" ]]; then
     [[ "$native_commit" =~ ^[0-9a-f]{40}$ ]] || \
       die "update: build stamp has no exact source commit; native installation unchanged."
-    # Refresh before replacing native so a dirty tree or failed fetch leaves it intact.
+    # Refresh source before replacing native; preserve local changes through recovery.
     # A subshell contains update_source's exit paths and keeps native launcher ownership.
     if ! (
-      require_cmd git "refreshing existing source"
-      require_clean_source
       update_source "$native_commit"
     ); then
       die "update: source refresh failed for native $native_version revision $native_commit." \
@@ -914,7 +910,7 @@ Usage: vis-agent update [vX.Y.Z] [--track release|beta|dev] [--keep-gateway]
          A successful update records the selection for subsequent launches.
          Native updates include the matching Python worker and terminal client.
          Existing managed source is pinned to the native build commit; Git is required.
-         Local source changes must be committed or stashed before updating.
+         Modified managed source is preserved automatically before updating.
          Dev requires Git and JDK 25+; it never builds or selects a native image.
 EOF
 }

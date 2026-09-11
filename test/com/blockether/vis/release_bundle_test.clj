@@ -46,7 +46,7 @@
 
 (defn- with-source-update-fixture
   "Run one source update between two fixture commits with fetch failures or damaged packs."
-  [{:keys [fetch-failures keep-gateway? pack-index corrupt-pack? installer?]} f]
+  [{:keys [fetch-failures keep-gateway? pack-index corrupt-pack? installer? dirty?]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-source-update-test-" (make-array FileAttribute 0)))
 
@@ -140,6 +140,7 @@
                                (str/replace (.getPath ^java.io.File index) #"\.idx$" ".pack"))]
                     (io/delete-file pack)
                     (spit pack "invalid pack\n"))))))
+          (when dirty? (spit (io/file managed-src "update-marker") "local work\n"))
           (spit (io/file install-dir "track") "dev\n")
           (spit (io/file install-dir "ref") (str old-commit "\n"))
           ;; Dev must ignore a native binary retained from an earlier installation.
@@ -369,6 +370,7 @@
     (try (git! remote "init" "--quiet" "--initial-branch=main")
          (spit (io/file remote "deps.edn") "{}\n")
          (spit (io/file remote "VIS_VERSION") "9.9.8\n")
+         (spit (io/file remote ".gitignore") "ignored-cache\n")
          (let [old
                (commit! "old source")
 
@@ -398,6 +400,7 @@
                     (git! src "checkout" "--quiet" "--detach" old)
                     (spit (io/file src ".." "ref") (str old "\n"))
                     (when-let [dirty (:dirty options)]
+                      (spit (io/file src "ignored-cache") "cached data\n")
                       (spit (io/file src (if (= dirty :untracked) "local-work" "VIS_VERSION"))
                             "local work\n")
                       (when (= dirty :staged) (git! src "add" "VIS_VERSION")))
@@ -427,19 +430,53 @@
             (expect (str/includes?
                       (:output (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env))
                       "new-runtime"))))))
-  (it "refuses dirty source without replacing native or losing local changes"
-      (doseq [dirty [:tracked :staged :untracked]]
+  ;; #195 follow-up: managed local changes must survive without blocking native updates.
+  (it "preserves dirty source in a backup and updates release and beta to the exact native pin"
+      (doseq [track
+              ["release" "beta"]
+
+              dirty
+              [:tracked :staged :untracked]]
+
         (with-native-source-fixture
-          {:dirty dirty}
-          (fn [{:keys [exit output old src native]}]
-            (expect (not (zero? exit)) output)
-            (expect (= old (git! src "rev-parse" "HEAD")))
-            (expect (= (str old "\n") (slurp (io/file src ".." "ref"))))
-            (expect (= "beta\n" (slurp (io/file src ".." "track"))))
-            (expect (= "local work\n"
-                       (slurp (io/file src (if (= dirty :untracked) "local-work" "VIS_VERSION")))))
-            (expect (str/includes? (slurp native) "old-runtime"))
-            (expect (str/includes? output "Commit or stash") output)))))
+          {:track track :dirty dirty}
+          (fn [{:keys [exit output old selected src native]}]
+            (expect (zero? exit) output)
+            (expect (= selected (git! src "rev-parse" "HEAD")))
+            (expect (= (str selected "\n") (slurp (io/file src ".." "ref"))))
+            (expect (= (str track "\n") (slurp (io/file src ".." "track"))))
+            (expect (= "9.9.9\n" (slurp (io/file src "VIS_VERSION"))))
+            (expect (str/blank? (git! src "status" "--porcelain" "--untracked-files=all")))
+            (expect (str/includes? (slurp native) "new-runtime"))
+            (expect (not (str/includes? output "Commit or stash")) output)
+            (let [backups (filter #(str/starts-with? (.getName ^java.io.File %) "src-recovery.")
+                                  (.listFiles (.getParentFile ^java.io.File src)))]
+              (expect (= 1 (count backups)))
+              (when-let [backup (first backups)]
+                (let [previous (io/file backup "previous")]
+                  (expect (str/includes? output (.getAbsolutePath previous)) output)
+                  (expect (= old (git! previous "rev-parse" "HEAD")))
+                  (expect (= "local work\n"
+                             (slurp (io/file
+                                      previous
+                                      (if (= dirty :untracked) "local-work" "VIS_VERSION")))))
+                  (expect (= (if (= dirty :staged) "local work" "9.9.8")
+                             (git! previous "show" ":VIS_VERSION")))
+                  (expect (= "cached data\n" (slurp (io/file previous "ignored-cache")))))))))))
+  (it "keeps dirty source, native and track intact if its replacement cannot be fetched"
+      (with-native-source-fixture
+        {:dirty :staged :fetch-failure? true}
+        (fn [{:keys [exit output old src native]}]
+          (expect (not (zero? exit)) output)
+          (expect (= old (git! src "rev-parse" "HEAD")))
+          (expect (= (str old "\n") (slurp (io/file src ".." "ref"))))
+          (expect (= "beta\n" (slurp (io/file src ".." "track"))))
+          (expect (= "local work\n" (slurp (io/file src "VIS_VERSION"))))
+          (expect (= "local work" (git! src "show" ":VIS_VERSION")))
+          (expect (= "cached data\n" (slurp (io/file src "ignored-cache"))))
+          (expect (str/includes? (slurp native) "old-runtime"))
+          (expect (str/includes? output "source recovery failed") output)
+          (expect (not (str/includes? output "installed the release track")) output))))
   (it "reports source fetch failure without claiming synchronization or replacing native"
       (with-native-source-fixture
         {:fetch-failure? true}
@@ -498,40 +535,55 @@
 ;; Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: source update
 ;; replaced the runtime before asking its protocol-2 gateway to stop, then labelled a
 ;; transient fetch reset as an unadvertised main branch and downloaded all history.
-(defdescribe source-update-transaction-test
-             (it
-               "releases the old gateway with the old runtime and keeps Git's detached pin private"
-               (with-source-update-fixture
-                 {}
-                 (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
-                   (expect (zero? exit) output)
-                   (expect (= old-commit (str/trim (slurp clojure-calls))) output)
-                   (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
-                   (expect (not (str/includes? output "Update the gateway")) output)
-                   (expect (not (str/includes? output "leaving 1 commit behind")) output))))
-             (it "retries the pinned fetch without pretending main is unadvertised"
-                 (with-source-update-fixture
-                   {:fetch-failures 1 :keep-gateway? true}
-                   (fn [{:keys [exit output new-commit managed-src fetch-calls]}]
-                     (let [calls (str/split-lines (slurp fetch-calls))]
-                       (expect (zero? exit) output)
-                       (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
-                       (expect (= 2 (count calls)) (pr-str calls))
-                       (expect (every? #(str/includes? % "--depth 1") calls) (pr-str calls))
-                       (expect (str/includes? output "retrying") output)
-                       (expect (not (str/includes? output "connection reset by peer")) output)
-                       (expect (not (str/includes? output "not an advertised branch")) output)))))
-             (it "keeps a repeated transport failure bounded and reports the real error"
-                 (with-source-update-fixture
-                   {:fetch-failures 3 :keep-gateway? true}
-                   (fn [{:keys [exit output old-commit managed-src fetch-calls]}]
-                     (let [calls (str/split-lines (slurp fetch-calls))]
-                       (expect (not (zero? exit)) output)
-                       (expect (= old-commit (git! managed-src "rev-parse" "HEAD")) output)
-                       (expect (= 3 (count calls)) (pr-str calls))
-                       (expect (every? #(str/includes? % "--depth 1") calls) (pr-str calls))
-                       (expect (str/includes? output "connection reset by peer") output)
-                       (expect (not (str/includes? output "not an advertised branch")) output))))))
+(defdescribe
+  source-update-transaction-test
+  (it "releases the old gateway with the old runtime and keeps Git's detached pin private"
+      (with-source-update-fixture
+        {}
+        (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
+          (expect (zero? exit) output)
+          (expect (= old-commit (str/trim (slurp clojure-calls))) output)
+          (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
+          (expect (not (str/includes? output "Update the gateway")) output)
+          (expect (not (str/includes? output "leaving 1 commit behind")) output))))
+  ;; #195 follow-up: dev uses the same managed-source preservation as native updates.
+  (it "preserves modified managed source before updating dev"
+      (with-source-update-fixture
+        {:dirty? true :keep-gateway? true}
+        (fn [{:keys [exit output old-commit new-commit managed-src]}]
+          (expect (zero? exit) output)
+          (expect (= new-commit (git! managed-src "rev-parse" "HEAD")))
+          (expect (= new-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
+          (expect (= "new\n" (slurp (io/file managed-src "update-marker"))))
+          (let [backups (filter #(str/starts-with? (.getName ^java.io.File %) "src-recovery.")
+                                (.listFiles (.getParentFile ^java.io.File managed-src)))]
+            (expect (= 1 (count backups)))
+            (when-let [backup (first backups)]
+              (expect (= old-commit (git! (io/file backup "previous") "rev-parse" "HEAD")))
+              (expect (= "local work\n" (slurp (io/file backup "previous" "update-marker")))))))))
+  (it "retries the pinned fetch without pretending main is unadvertised"
+      (with-source-update-fixture
+        {:fetch-failures 1 :keep-gateway? true}
+        (fn [{:keys [exit output new-commit managed-src fetch-calls]}]
+          (let [calls (str/split-lines (slurp fetch-calls))]
+            (expect (zero? exit) output)
+            (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
+            (expect (= 2 (count calls)) (pr-str calls))
+            (expect (every? #(str/includes? % "--depth 1") calls) (pr-str calls))
+            (expect (str/includes? output "retrying") output)
+            (expect (not (str/includes? output "connection reset by peer")) output)
+            (expect (not (str/includes? output "not an advertised branch")) output)))))
+  (it "keeps a repeated transport failure bounded and reports the real error"
+      (with-source-update-fixture
+        {:fetch-failures 3 :keep-gateway? true}
+        (fn [{:keys [exit output old-commit managed-src fetch-calls]}]
+          (let [calls (str/split-lines (slurp fetch-calls))]
+            (expect (not (zero? exit)) output)
+            (expect (= old-commit (git! managed-src "rev-parse" "HEAD")) output)
+            (expect (= 3 (count calls)) (pr-str calls))
+            (expect (every? #(str/includes? % "--depth 1") calls) (pr-str calls))
+            (expect (str/includes? output "connection reset by peer") output)
+            (expect (not (str/includes? output "not an advertised branch")) output))))))
 
 ;; Regression #177: an unreadable pack index made source updates require a second run.
 (defdescribe
