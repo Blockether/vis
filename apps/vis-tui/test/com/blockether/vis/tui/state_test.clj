@@ -310,8 +310,8 @@
       ;; starts as `Untitled session` because it has no title yet.
       (reset! state/app-db {:title "Current" :render-version 0})
       (state/dispatch [:create-tab])
-      (expect (= [{:id :main :label "Current"}
-                  {:id :tab-1 :label state/untitled-session-label :active? true}]
+      (expect (= [{:id :main :label "Current" :project-id nil}
+                  {:id :tab-1 :label state/untitled-session-label :active? true :project-id nil}]
                  (:tabs @state/app-db)))
       (expect (= :tab-1 (:active-tab-id @state/app-db)))
       (expect (= 1 (:render-version @state/app-db))))
@@ -322,8 +322,9 @@
                             :tab-locals {:main {:session nil}}
                             :render-version 0})
       (state/dispatch [:init-building-tab "startup-build"])
-      (expect (= [{:id :tab-1 :label "Starting…" :active? true :build-id "startup-build"}]
-                 (:tabs @state/app-db)))
+      (expect
+        (= [{:id :tab-1 :label "Starting…" :active? true :build-id "startup-build" :project-id nil}]
+           (:tabs @state/app-db)))
       (expect (= :tab-1 (:active-tab-id @state/app-db)))
       (expect (true? (:loading? @state/app-db)))
       (expect (not (contains? (:tab-locals @state/app-db) :main)))
@@ -337,7 +338,7 @@
                             :render-version 0})
       (state/dispatch [:create-tab])
       (expect (= [{:id :main :label "Main"} {:id :tab-1 :label "Tab 1"}
-                  {:id :tab-2 :label state/untitled-session-label :active? true}]
+                  {:id :tab-2 :label state/untitled-session-label :active? true :project-id nil}]
                  (:tabs @state/app-db)))
       (expect (= :tab-2 (:active-tab-id @state/app-db))))
   (it "attaches workspace root to the new workspace and active snapshot"

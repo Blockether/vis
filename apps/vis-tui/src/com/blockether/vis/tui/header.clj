@@ -156,7 +156,7 @@
    placeholder) so the centre slot is never empty."
   [db]
   (let [entries
-        (filterv tab-strip-visible? (:tabs db))
+        (filterv tab-strip-visible? (vh/project-tabs db))
 
         active-id
         (or (:active-tab-id db) (:id (some #(when (:active? %) %) entries)) (:id (first entries)))

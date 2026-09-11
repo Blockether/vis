@@ -250,3 +250,9 @@
   [entry]
   (let [ws (:workspace entry)]
     (or (:repo-root ws) (:root ws) (:workspace/root entry))))
+
+(defn project-tabs
+  "Visible tab set. All other entries and their live locals remain in app-db."
+  [db]
+  (let [pid (:active-project-id db)]
+    (filterv #(or (nil? pid) (= pid (:project-id %))) (:tabs db))))

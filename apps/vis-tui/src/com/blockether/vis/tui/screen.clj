@@ -21,6 +21,7 @@
             [com.blockether.vis.tui.mcp :as mcp]
             [com.blockether.vis.tui.provider :as provider]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.selection :as selection]
@@ -2593,8 +2594,11 @@
   (let [now-ms
         (long now-ms)
 
-        cols
+        screen-cols
         (long cols)
+
+        cols
+        (long (projects/chat-cols db cols))
 
         rows
         (long rows)
@@ -2953,6 +2957,12 @@
                                    composer-h
                                    (System/currentTimeMillis))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])))
+      (when-not (overlay-locked? db)
+        (when-let [{:keys [left]} (projects/geometry db screen-cols rows)]
+          (projects/paint! (frame/surface-graphics screen screen-cols rows) db screen-cols rows)
+          (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
+            (when (or (get-in db [:project-sidebar :focused?]) (>= (.getColumn cursor) (long left)))
+              (.setCursorPosition screen nil)))))
       (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
       ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
@@ -3000,6 +3010,7 @@
           (paint-terminal-images!
             (fitting-image-placements @image-sink messages-top messages-bottom))))
       {:cols cols
+       :screen-cols screen-cols
        ;; The prompt box's LIVE height: an in-session band (a transient, the C-x
        ;; hydra, a human-input form) is anchored directly above it, so it has to
        ;; know how tall the editor grew.
@@ -4015,7 +4026,25 @@
   "Run and measure EVERY repaint path, including input-only and header-only.
    Returns [layout publish-layout?]; only geometry changes publish a layout."
   [^TerminalScreen screen path cols rows db now-ms last-layout]
-  (let [started-ns
+  (let [sidebar?
+        (get-in db [:project-sidebar :open?])
+
+        chat-cols
+        (projects/chat-cols db cols)
+
+        ;; On narrow terminals the rail covers the composer; a partial input paint
+        ;; would erase its lower rows. Wide terminals retain the cheap typing path.
+        path
+        (if (and
+              sidebar?
+              (or (not= path :input) (= cols chat-cols) (get-in db [:project-sidebar :focused?])))
+          :full
+          path)
+
+        cols
+        (if (and sidebar? (= path :input)) chat-cols cols)
+
+        started-ns
         (System/nanoTime)
 
         phases
@@ -4847,12 +4876,6 @@
                         (when (and root (= place (canonical root))) sid))))))
        (catch Throwable _ nil)))
 
-(defonce ^:private active-project-id*
-  ;; The project bound to THIS launch directory — a project IS a tab set. Resolved
-  ;; once on startup (and re-pointed by switch-project). The DB (project membership +
-  ;; `project_position` order) OWNS the open-tab set.
-  (atom nil))
-
 (defonce ^:private persist-tabs-running*
   ;; True while a `persist-tabs!` worker is in flight. Guarantees at most ONE
   ;; persist runs at a time — concurrent persists last-writer-race the reorder
@@ -4884,12 +4907,12 @@
   (try (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
        (catch Throwable _ (System/getProperty "user.dir"))))
 
-(defn- ensure-active-project-id!
+(defn- ensure-launch-project-id!
   "Resolve (and cache) the project bound to the launch root, get-or-creating it on
    first launch here. Returns the project id string, or nil when the gateway is
    unreachable (persistence then degrades to a no-op, never a crash)."
   []
-  (or @active-project-id*
+  (or (:launch-project-id @state/app-db)
       (let [root
             (launch-root)
 
@@ -4902,7 +4925,7 @@
                          str)
                  (catch Throwable _ nil))]
 
-        (when pid (reset! active-project-id* pid))
+        (when pid (state/dispatch [:init-project pid]))
         pid)))
 
 (defonce ^:private launch-member-ids*
@@ -4946,13 +4969,118 @@
   (when (and pid (seq ids))
     (try (vis/gateway-reorder-project-sessions! pid ids) (catch Throwable _ nil))))
 
-(defn- persist-tabs-once!
-  "One synchronous persist pass for the ACTIVE project: snapshot the current
-   open-tab order and reconcile it via `persist-tabs-order!`. BLOCKS on gateway
-   round-trips — call off the input thread (see `persist-tabs!`)."
+(defn- refresh-projects!
+  "Refresh the sidebar off the input thread, retaining the last usable list on failure."
   []
-  (when-let [pid (ensure-active-project-id!)]
-    (persist-tabs-order! pid (mapv :id (:sessions (state/tab-session-snapshot @state/app-db))))))
+  (state/dispatch [:project-sidebar {:loading? true :error nil}])
+  (vis/worker-future
+    "tui-projects"
+    (fn []
+      (try (state/dispatch [:project-sidebar
+                            {:items (vec (vis/gateway-list-projects)) :loading? false}])
+           (catch Throwable _
+             (state/dispatch [:project-sidebar
+                              {:loading? false :error "Load failed · r retry"}]))))))
+
+(defn- request-project!
+  "Load a project's ordered tab specifications without blocking input or reviving a stale choice."
+  [project open!]
+  (when-let [pid (some-> (get project "id")
+                         str)]
+    (let [request-id (str (java.util.UUID/randomUUID))
+          current? #(= request-id (get-in @state/app-db [:project-sidebar :request-id]))]
+
+      (state/dispatch [:project-sidebar
+                       {:opening pid :request-id request-id :error nil :focused? false}])
+      (if (some #(= pid (:project-id %)) (:tabs @state/app-db))
+        (open! [])
+        (vis/worker-future
+          "tui-open-project"
+          (fn []
+            (try
+              (let [members (vis/gateway-list-sessions {:project-id pid})
+                    specs (mapv (fn [s]
+                                  {:session-id (str (get s "id"))
+                                   :label (get s "title")
+                                   :project-id pid
+                                   :root (or (get s "work_dir") (get project "workspace_root"))})
+                                (sort-by #(or (get % "project_position") Long/MAX_VALUE) members))]
+
+                (when (current?) (open! specs)))
+              (catch Throwable _
+                (when (current?)
+                  (state/dispatch [:project-sidebar
+                                   {:opening nil :error "Open failed · select to retry"}]))))))))))
+
+(defn- add-project!
+  "Get or create a root-bound project using the shared input dialog and gateway API."
+  [screen select!]
+  (when-let [path (with-dialog-lock #(dlg/text-input-dialog!
+                                       screen
+                                       "Add project" "Project directory"
+                                       :body "Absolute directory on the gateway host"))]
+    (when-not (str/blank? path)
+      (state/dispatch [:project-sidebar {:loading? true :error nil}])
+      (vis/worker-future
+        "tui-add-project"
+        (fn []
+          (try (let [project (vis/gateway-ensure-project-for-root! (str/trim path))]
+                 (refresh-projects!)
+                 (select! project))
+               (catch Throwable _
+                 (state/dispatch [:project-sidebar
+                                  {:loading? false :error "Add failed · check directory"}]))))))))
+
+(defn- toggle-project-sidebar!
+  []
+  (let [open? (not (get-in @state/app-db [:project-sidebar :open?]))]
+    (state/dispatch [:project-sidebar {:open? open? :focused? open? :index 0}])
+    (when open? (refresh-projects!))))
+
+(defn- project-sidebar-key!
+  "Apply a rail action, returning whether it consumed the key."
+  [key select! add!]
+  (when-let [[action value] (projects/key-action @state/app-db key)]
+    (case action
+      :select
+      (select! value)
+
+      :add
+      (add!)
+
+      :refresh
+      (refresh-projects!)
+
+      :hide
+      (state/dispatch [:project-sidebar {:open? false :focused? false}])
+
+      (:blur :blur-pass)
+      (state/dispatch [:project-sidebar {:focused? false}])
+
+      :focus
+      (state/dispatch [:project-sidebar {:focused? true}])
+
+      :move
+      (let [sidebar (:project-sidebar @state/app-db)]
+        (state/dispatch [:project-sidebar
+                         {:focused? true
+                          :index (max 0
+                                      (min (count (:items sidebar))
+                                           (+ (long (or (:index sidebar) 0)) (long value))))}]))
+
+      nil)
+    (not= :blur-pass action)))
+
+(defn- persist-tabs-once!
+  "Snapshot every open project's order atomically, then persist off the input thread.
+   A background build stays assigned to its own project even after focus changes."
+  []
+  (ensure-launch-project-id!)
+  (let [db @state/app-db]
+    (doseq [pid (distinct (keep :project-id (:tabs db)))]
+      (persist-tabs-order!
+        pid
+        (mapv :id (:sessions (state/tab-session-snapshot (assoc db :active-project-id pid))))))))
 
 (defn- persist-tabs!
   "Persist the current open-tab set into the launch PROJECT — no EDN sidecar.
@@ -5136,7 +5264,7 @@
         ;; A project IS a tab set. Eagerly resume only its most-recent member;
         ;; the rest become name-only tabs after the UI is live.
         :else (let [members
-                    (project-member-sessions (ensure-active-project-id!))
+                    (project-member-sessions (ensure-launch-project-id!))
 
                     _
                     (reset! launch-member-ids* (into #{} (map #(str (get % "id"))) members))
@@ -5458,19 +5586,19 @@
                                                  (when session-id
                                                    (ensure-session-live! session-id)))))
                  open-session-tab!
-                 (fn [{:keys [id history] :as session-result} notify?]
+                 (fn [{:keys [id history] :as session-result} notify? & [background?]]
                    (when (and id session-result)
                      (state/dispatch [:open-session-tab
                                       (select-keys session-result
                                                    [:id :status :current-turn-id :history-cursor])
-                                      history (session-workspace id)])
+                                      history (session-workspace id) background?])
                      ;; `:open-session-tab` already reset `:title nil`. Only
                      ;; push a title when the DB actually has one — mirror
                      ;; refresh-active-tab! and NEVER overwrite with "" (a
                      ;; race where the background auto-title future hasn't
                      ;; persisted yet would otherwise blank the tab).
                      (when-let [title (session-db-title id)]
-                       (state/dispatch [:set-title title]))
+                       (state/dispatch [:set-title title id]))
                      (ensure-session-live! id)
                      ;; Attach + stream a turn already IN FLIGHT for this session so its
                      ;; tab shows live progress instead of frozen history.
@@ -5502,7 +5630,7 @@
                          "tui-hydrate-pending-tab"
                          (fn []
                            (try (if-let [sr (try (chat/resume-session sid) (catch Throwable _ nil))]
-                                  (open-session-tab! sr false)
+                                  (open-session-tab! sr false true)
                                   (do (state/dispatch [:tab-hydration-failed tab-id])
                                       (vis/notify! "Session no longer exists"
                                                    :level :warn
@@ -5515,20 +5643,28 @@
                  ;; tab now and bind the real session once the background build lands
                  ;; (chat/make-session-async). Text typed meanwhile queues into the
                  ;; tab's `:pending-sends` and drains the moment it is bound.
-                 (fn [config seed-text]
+                 (fn [config seed-text & [opts]]
                    (let [seed (some-> seed-text
                                       str/trim
                                       not-empty)
-                         result (chat/make-session-async config)
-                         build-id (str (java.util.UUID/randomUUID))
+                         db @state/app-db
+                         pid (:active-project-id db)
+                         project (some #(when (= pid (str (get % "id"))) %)
+                                       (get-in db [:project-sidebar :items]))
+                         result (chat/make-session-async config
+                                                         {:root (or (:root opts)
+                                                                    (get project "workspace_root")
+                                                                    (:workspace/root db))})
+                         build-id (or (:build-id opts) (str (java.util.UUID/randomUUID)))
                          fut (:building result)]
 
-                     (state/dispatch [:open-building-tab build-id])
+                     (when-not (:build-id opts) (state/dispatch [:open-building-tab build-id]))
                      (when seed (state/dispatch [:send-message seed]))
                      (vis/worker-future
                        "tui-new-session-bind"
                        (fn []
                          (try (let [{:keys [id history]} @fut]
+                                (when pid (vis/gateway-assign-project! id pid))
                                 (ensure-session-live! id)
                                 (state/dispatch [:bind-built-session build-id {:id id} history
                                                  (session-workspace id)])
@@ -5847,7 +5983,7 @@
                  ;; hydrate-pending-tab!). One list-sessions scan, zero resumes.
                  restore-project-tabs!
                  (fn restore-project-tabs! []
-                   (when-let [pid (ensure-active-project-id!)]
+                   (when-let [pid (ensure-launch-project-id!)]
                      (vis/worker-future
                        "tui-restore-project-tabs"
                        (fn []
@@ -5856,6 +5992,7 @@
                                                   (let [title (str (get s "title"))]
                                                     {:session-id (str (get s "id"))
                                                      :label (when-not (str/blank? title) title)
+                                                     :project-id pid
                                                      :root root}))
                                                 (project-member-sessions pid))]
 
@@ -5887,7 +6024,7 @@
                                               (select-keys startup-session
                                                            [:id :status :current-turn-id
                                                             :history-cursor]) history workspace])
-                             (when title (state/dispatch [:set-title title]))
+                             (when title (state/dispatch [:set-title title id]))
                              (ensure-session-live! id)
                              (state/dispatch [:attach-running-turn
                                               (state/tab-id-for-session @state/app-db id)
@@ -5918,105 +6055,26 @@
                                      (throw (or error
                                                 (ex-info "TUI startup worker returned no session"
                                                          {})))))))))
-                 ;; C-x w — switch the ACTIVE project (its tab set). Pick a
-                 ;; project, re-point `active-project-id*`, and open that
-                 ;; project's member sessions as tabs. A project IS a tab set.
-                 switch-project!
-                 (fn switch-project! []
-                   (when-not (:dialog-open? @state/app-db)
-                     (let [projects (try (vis/gateway-list-projects) (catch Throwable _ []))
-                           cur (str @active-project-id*)
-                           items (mapv (fn [p]
-                                         (let [current? (= cur (str (get p "id")))
-                                               session-count (get p "session_count")
-                                               sessions-label (when session-count
-                                                                (str session-count
-                                                                     " "
-                                                                     (if (= 1 session-count)
-                                                                       "session"
-                                                                       "sessions")))]
+                 select-project!
+                 (fn [project]
+                   (request-project!
+                     project
+                     (fn [specs]
+                       (let [pid (str (get project "id"))
+                             build-id (str (java.util.UUID/randomUUID))]
 
-                                           {:id (get p "id")
-                                            :label (get p "name")
-                                            :hint (str (when current? "current")
-                                                       (when (and current? sessions-label) " · ")
-                                                       sessions-label)}))
-                                       projects)]
-
-                       (when-let [pick (with-dialog-lock #(dlg/searchable-select!
-                                                            screen
-                                                            "Switch project…"
-                                                            items
-                                                            {:placeholder "Type to filter projects…"
-                                                             :enter-label "switch"}))]
-                         (when-let [pid (some-> (:id pick)
-                                                str)]
-                           (when-not (= pid cur)
-                             ;; CAPTURE the OUTGOING project's id + tab order NOW with
-                             ;; cheap in-memory reads, then reconcile+reorder OFF the
-                             ;; input thread — a slow gateway must NEVER stall a switch.
-                             ;; Binding pid+ids here also fixes the race: the async
-                             ;; `persist-tabs!` worker reads `@active-project-id*` LIVE,
-                             ;; so after the reset below it would write the old order
-                             ;; under the NEW project. The captured values pin the
-                             ;; write to the OLD project.
-                             (let [out-pid (ensure-active-project-id!)
-                                   out-ids (mapv :id
-                                                 (:sessions (state/tab-session-snapshot
-                                                              @state/app-db)))]
-
-                               (when (and out-pid (seq out-ids))
-                                 (vis/worker-future "tui-persist-tabs-switch"
-                                                    (fn []
-                                                      (persist-tabs-order! out-pid out-ids)))))
-                             (reset! active-project-id* pid)
-                             (let [root (launch-root)
-                                   ;; One list-sessions scan — the target project's
-                                   ;; members in manual tab order, like startup's
-                                   ;; restore-project-tabs!.
-                                   members (project-member-sessions pid)
-                                   specs (mapv (fn [s]
-                                                 (let [title (str (get s "title"))]
-                                                   {:session-id (str (get s "id"))
-                                                    :label (when-not (str/blank? title) title)
-                                                    :root root}))
-                                               members)
-                                   db @state/app-db
-                                   ;; Member sessions ALREADY open KEEP their tabs —
-                                   ;; a switch must never eat a live member view.
-                                   keep-ids
-                                   (into #{}
-                                         (keep #(state/tab-id-for-session db (str (get % "id"))))
-                                         members)
-                                   close-ids (->> (:tabs db)
-                                                  (mapv :id)
-                                                  (remove keep-ids)
-                                                  vec)]
-
-                               ;; NAME-ONLY tabs for members not yet open — no
-                               ;; transcript fetch, no focus move; each hydrates
-                               ;; lazily on first focus (hydrate-pending-tab!).
-                               ;; Open member tabs are deduped, never duplicated.
-                               (preallocate-project-tabs! specs)
-                               ;; A project with NO members gets one fresh session
-                               ;; so the strip never empties (and only then — a
-                               ;; project WITH members must not gain a stray
-                               ;; empty session on switch).
-                               (when (empty? members)
-                                 (when-let [config (:config @state/app-db)]
-                                   (open-session-tab! (chat/make-session config) false)))
-                               (doseq [tid close-ids]
-                                 (state/dispatch [:close-tab tid true]))
-                               ;; Safety second pass now that the outgoing tabs are
-                               ;; closed — any member the first pass could not seat
-                               ;; lands here (idempotent — open sessions are deduped).
-                               (preallocate-project-tabs! specs)
-                               ;; Same fixed-point rule as startup: re-seat the
-                               ;; member tabs into stored `project_position` order
-                               ;; BEFORE persisting, so the persist is a no-op
-                               ;; instead of a rotation.
-                               (state/dispatch [:order-project-tabs (mapv :session-id specs)])
-                               (persist-tabs!))))))))]
+                         (state/dispatch [:select-project pid specs build-id])
+                         (doseq [{:keys [session-id]} specs]
+                           (ensure-session-live! session-id))
+                         (when (some #(= build-id (:build-id %)) (:tabs @state/app-db))
+                           (start-new-session! (:config @state/app-db)
+                                               nil
+                                               {:build-id build-id
+                                                :root (get project "workspace_root")}))
+                         (persist-tabs!)))))
+                 add-project! #(add-project! screen select-project!)
+                 switch-project! toggle-project-sidebar!
+                 sidebar-key! #(project-sidebar-key! % select-project! add-project!)]
 
              ;; Startup settlement opens the optional picker or restores the project
              ;; only after the gateway-backed session has been bound.
@@ -6050,7 +6108,8 @@
                  (when-not @paste-buffer (begin-input-timing! input-timing key db))
                  (cond
                    (:shutdown? db) nil
-                   ;; An open human-input dialog swallows the keyboard: every
+                   (and (not @paste-buffer) (not (overlay-locked? db)) (sidebar-key! key)) (recur)
+                   ;; An open human-input dialog owns the remaining keyboard.
                    ;; stroke belongs to the form until it is answered.
                    (and (some? key) (:human-input db)) (do (human-input-key! db key) (recur))
                    ;; An ARMED stop swallows it next: the human is typing the
@@ -7277,7 +7336,7 @@
                              (recur))
 
                          :select-tab-index
-                         (do (let [tabs (:tabs @state/app-db)
+                         (do (let [tabs (vis-header/project-tabs @state/app-db)
                                    n (count tabs)
                                    before (:active-tab-id @state/app-db)]
 

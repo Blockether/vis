@@ -35,7 +35,8 @@
    Every surface — the input dispatcher, the pickers, footer hints, the help
    overlay, the clickable header chips — reads this namespace, so a shortcut is
    defined once and stays in sync."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.header-model :as vh]))
 
 (def
   ^{:const true
@@ -117,7 +118,7 @@
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.
    {:action :fork-session :key \y :label "fork session" :group "Session" :show-when :never}
    {:action :fork-at-turn :key \t :label "fork at turn" :group "Session" :show-when :has-turns}
-   {:action :switch-project :key \w :label "switch project" :group "Session"}
+   {:action :switch-project :key \w :label "project sidebar" :group "Session"}
    {:action :close-tab :key \k :label "close tab" :group "Session" :show-when :multi-tab}
    {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
@@ -243,7 +244,7 @@
   [db {:keys [show-when]}]
   (case show-when
     :multi-tab
-    (> (count (:tabs db)) 1)
+    (> (count (vh/project-tabs db)) 1)
 
     :has-turns
     (boolean (seq (:messages db)))

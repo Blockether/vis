@@ -821,7 +821,7 @@
                                                     nil)
            #'screen/start-workspace-refresh-thread! (fn []
                                                       nil)
-           #'screen/ensure-active-project-id! (fn []
+           #'screen/ensure-launch-project-id! (fn []
                                                 nil)
            #'screen/latest-project-session-id (fn []
                                                 nil)

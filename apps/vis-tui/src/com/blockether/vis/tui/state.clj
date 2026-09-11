@@ -235,7 +235,7 @@
    lives at the db root; every other tab's lives in `:tab-locals`."
   [db]
   (let [entries
-        (vec (:tabs db))
+        (vh/project-tabs db)
 
         active-id
         (current-tab-id db)
@@ -950,6 +950,7 @@
 (defn- base-tab-entry
   [db]
   {:id (or (:active-tab-id db) :main)
+   :project-id (:active-project-id db)
    :label (let [title (:title db)]
             (if (and (string? title) (not (str/blank? title))) title untitled-session-label))})
 
@@ -1036,9 +1037,14 @@
 
 (defn- activate-tab
   [db workspace-id]
-  (-> db
+  (-> (cond-> db
+        (:active-project-id db)
+        (assoc-in [:project-active-tabs (:active-project-id db)] (current-tab-id db)))
       sync-active-tab
-      (assoc :active-tab-id workspace-id)
+      (assoc :active-tab-id workspace-id
+             :active-project-id (or (:project-id (some #(when (= workspace-id (:id %)) %)
+                                                       (:tabs db)))
+                                    (:active-project-id db)))
       (update :tabs
               (fn [entries]
                 (mapv (fn [entry]
@@ -1542,14 +1548,14 @@
               untitled-session-label)
 
           entry
-          (cond-> {:id id :label label :active? true}
+          (cond-> {:id id :label label :active? true :project-id (:active-project-id db)}
             workspace
             (assoc :workspace workspace)
 
             root
             (assoc :workspace/root root))]
 
-      (if (>= (count entries) (long max-tabs))
+      (if (>= (count (vh/project-tabs db)) (long max-tabs))
         db
         (cond-> (-> db
                     (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries) entry)
@@ -1569,7 +1575,7 @@
                           sync-active-tab)
 
                       entries
-                      (vec (:tabs db))
+                      (vh/project-tabs db)
 
                       idx
                       (if (#{:next :prev} idx)
@@ -1617,7 +1623,7 @@
   :close-tab
   ;; Close the tab and activate its neighbor, but retain the last tab. Release an idle
   ;; session only when no other tab, running turn or queued send still owns it.
-  (fn [db [_ tab-id keep-project?]]
+  (fn [db [_ tab-id]]
     (let [db
           (-> db
               ensure-tabs
@@ -1635,7 +1641,8 @@
           idx
           (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
 
-      (if (or (nil? idx) (<= (count entries) 1))
+      (if (or (nil? idx)
+              (<= (count (filter #(= (:project-id %) (:project-id (nth entries idx))) entries)) 1))
         {:db db}
         (let [;; `sync-active-tab` above snapshotted the active tab into
               ;; `:tab-locals`, so EVERY tab's session + idle state now
@@ -1687,11 +1694,16 @@
 
               db
               (if (= target-id active-id)
-                (let [next-idx
-                      (min (long idx) (dec (count remaining)))
+                (let [neighbors
+                      (vh/project-tabs db)
+
+                      next-idx
+                      (min (count (filter #(= (:active-project-id db) (:project-id %))
+                                          (take idx entries)))
+                           (dec (count neighbors)))
 
                       next-id
-                      (:id (nth remaining next-idx))]
+                      (:id (nth neighbors next-idx))]
 
                   (-> db
                       (assoc :active-tab-id next-id)
@@ -1709,10 +1721,8 @@
            :fx (cond-> []
                  ;; Tabs ARE the project's member sessions: an explicit close
                  ;; removes the session from the active project (it survives as a
-                 ;; loose session, reachable via the navigator). Skipped on a
-                 ;; project SWITCH (keep-project? swaps the VIEW without disowning
-                 ;; the old set) or when the sid is still open in another tab.
-                 (and closing-sid (not keep-project?) (not open-elsewhere?))
+                 ;; loose session, reachable via the navigator), unless still open in another tab.
+                 (and closing-sid (not open-elsewhere?))
                  (conj [:unassign-session-project closing-sid])
 
                  (and closing-sid (seq orphan-entries))
@@ -1894,7 +1904,7 @@
   :open-session-tab
   ;; Open or focus the session without resetting another tab. A pending project tab is
   ;; bound in place on first hydration.
-  (fn [db [_ session history workspace]]
+  (fn [db [_ session history workspace background?]]
     (let [sid
           (some-> session
                   :id
@@ -1954,7 +1964,9 @@
                                                                :messages (or history [])
                                                                :input-history (history-user-texts
                                                                                 history)))))
-                      (activate-tab tab-id)
+                      (cond->
+                        (not background?)
+                        (activate-tab tab-id))
                       seed-ctx)
 
                   tab-view
@@ -1967,43 +1979,43 @@
             existing
             ;; Already open — just focus that tab; its view state
             ;; (messages, scroll, in-flight turn) lives in :tab-locals.
-            {:db (seed-ctx (activate-tab db (:id existing)))}
-            :else (let [n
-                        (next-tab-number entries)
+            {:db (seed-ctx (if background? db (activate-tab db (:id existing))))}
+            :else
+            (let [n
+                  (next-tab-number entries)
 
-                        id
-                        (keyword (str "tab-" n))
+                  id
+                  (keyword (str "tab-" n))
 
-                        label
-                        (or (some-> workspace
-                                    :label
-                                    not-empty)
-                            untitled-session-label)
+                  label
+                  (or (some-> workspace
+                              :label
+                              not-empty)
+                      untitled-session-label)
 
-                        entry
-                        (cond-> {:id id :label label :active? true}
-                          workspace
-                          (assoc :workspace workspace)
+                  entry
+                  (cond-> {:id id :label label :active? true :project-id (:active-project-id db)}
+                    workspace
+                    (assoc :workspace workspace)
 
-                          (:root workspace)
-                          (assoc :workspace/root (:root workspace)))
+                    (:root workspace)
+                    (assoc :workspace/root (:root workspace)))
 
-                        db'
-                        (-> db
-                            (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries)
-                                                             entry)
-                                   :active-tab-id id)
-                            ;; Make the new tab the live root state (a fresh session view);
-                            ;; finalize-db snapshots this back into the tab's locals.
-                            (merge (empty-tab-state))
-                            (assoc :session session
-                                   :workspace workspace
-                                   :workspace/root (:root workspace)
-                                   :title nil
-                                   :messages (or history [])
-                                   :input-history (history-user-texts history)))]
+                  db'
+                  (-> db
+                      (assoc :tabs (insert-tab-grouped (mapv #(dissoc % :active?) entries) entry)
+                             :active-tab-id id)
+                      ;; Make the new tab the live root state (a fresh session view);
+                      ;; finalize-db snapshots this back into the tab's locals.
+                      (merge (empty-tab-state))
+                      (assoc :session session
+                             :workspace workspace
+                             :workspace/root (:root workspace)
+                             :title nil
+                             :messages (or history [])
+                             :input-history (history-user-texts history)))]
 
-                    {:db (seed-ctx db')})))))
+              {:db (seed-ctx db')})))))
 
 (defn- building-tab-db
   "Create the optimistic loading tab used while a session runtime is built.
@@ -2030,7 +2042,11 @@
         (keyword (str "tab-" n))
 
         entry
-        {:id id :label starting-session-label :active? true :build-id build-id}]
+        {:id id
+         :label starting-session-label
+         :active? true
+         :build-id build-id
+         :project-id (:active-project-id db)}]
 
     (-> db
         (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
@@ -2134,35 +2150,93 @@
                  pending?
                  (conj [:dispatch [:drain-pending tab-id]]))})))))
 
-(reg-event-db :preallocate-project-tabs
-              ;; Preallocate name-only project tabs and hydrate each on first focus. Existing
-              ;; tabs are skipped; the restored project set is not subject to manual-tab limits.
-              (fn [db [_ specs]]
-                (let [db (-> db
-                             ensure-tabs
-                             sync-active-tab)]
-                  (reduce
-                    (fn [db {:keys [session-id label root]}]
-                      (let [sid (some-> session-id
-                                        str)
-                            entries (vec (:tabs db))
-                            open? (when sid (some #(= sid (tab-session-id db (:id %))) entries))]
+(defn- preallocate-project-tabs
+  [db specs]
+  (reduce (fn [db {:keys [session-id label root project-id]}]
+            (let [sid
+                  (some-> session-id
+                          str)
 
-                        (if (or (nil? sid) open?)
-                          db
-                          (let [id (keyword (str "tab-" (next-tab-number entries)))
-                                entry (cond-> {:id id
-                                               :label (or (not-empty label) untitled-session-label)
-                                               :session-id sid
-                                               :pending? true}
-                                        root
-                                        (assoc :workspace/root root))]
+                  entries
+                  (vec (:tabs db))
+
+                  existing
+                  (when sid (some #(when (= sid (tab-session-id db (:id %))) %) entries))]
+
+              (cond (nil? sid) db
+                    existing
+                    (update db
+                            :tabs
+                            (fn [tabs]
+                              (mapv #(if (= (:id existing) (:id %))
+                                       (assoc % :project-id (or project-id (:active-project-id db)))
+                                       %)
+                                    tabs)))
+                    :else (let [id
+                                (keyword (str "tab-" (next-tab-number entries)))
+
+                                entry
+                                (cond-> {:id id
+                                         :label (or (not-empty label) untitled-session-label)
+                                         :session-id sid
+                                         :pending? true
+                                         :project-id (or project-id (:active-project-id db))}
+                                  root
+                                  (assoc :workspace/root root))]
 
                             (-> db
                                 (assoc :tabs (insert-tab-grouped entries entry))
                                 (assoc-in [:tab-locals id] (empty-tab-state)))))))
-                    db
-                    specs))))
+          (-> db
+              ensure-tabs
+              sync-active-tab)
+          specs))
+
+(reg-event-db :preallocate-project-tabs
+              (fn [db [_ specs]]
+                (preallocate-project-tabs db specs)))
+
+(reg-event-db :init-project
+              (fn [db [_ pid]]
+                (-> db
+                    (assoc :launch-project-id pid)
+                    (update :active-project-id #(or % pid))
+                    (update :tabs
+                            #(mapv (fn [entry]
+                                     (assoc entry :project-id (or (:project-id entry) pid)))
+                                   %)))))
+
+(reg-event-db :project-sidebar
+              (fn [db [_ changes]]
+                (update db :project-sidebar merge changes)))
+
+(reg-event-db :select-project
+              ;; Switching is ONLY a view change: no close, cancel, release or queue effects.
+              (fn [db [_ pid specs build-id]]
+                (let [db
+                      (preallocate-project-tabs db specs)
+
+                      tabs
+                      (filterv #(= pid (:project-id %)) (:tabs db))
+
+                      remembered
+                      (get-in db [:project-active-tabs pid])
+
+                      target
+                      (or (when (= pid (:active-project-id db))
+                            (some #(when (= (current-tab-id db) (:id %)) %) tabs))
+                          (some #(when (= remembered (:id %)) %) tabs)
+                          (first tabs))
+
+                      db
+                      (-> db
+                          (assoc-in [:project-active-tabs (:active-project-id db)]
+                                    (current-tab-id db))
+                          (assoc-in [:project-sidebar :opening] nil))]
+
+                  (if target
+                    (activate-tab db (:id target))
+                    (building-tab-db (assoc db :active-project-id pid) build-id false)))))
 
 (reg-event-db :order-project-tabs
               ;; Re-seat the tabs bound to a PROJECT so the strip reads in the
@@ -5961,6 +6035,6 @@
         ;; Tabs ARE the launch project's member sessions, so an explicit tab
         ;; close drops that session from the project (SET NULL — the session is
         ;; NOT deleted; it lingers loose and is reachable via the navigator).
-        ;; A project SWITCH keeps membership (see :close-tab keep-project?).
+        ;; A project switch changes focus only and never reaches this effect.
         (fn [sid]
           (when sid (try (vis/gateway-assign-project! sid nil) (catch Throwable _ nil)))))
