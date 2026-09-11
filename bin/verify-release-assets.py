@@ -133,8 +133,13 @@ def verify_recovery(
     for name, job in source_jobs.items():
         if job.get("status") != "completed":
             raise ValueError(f"unfinished original release check: {name}")
-        if name not in replaced | {publisher} and job.get("conclusion") != "success":
-            raise ValueError(f"original release check is not green: {name}")
+        expected = (
+            "skipped"
+            if name == "Verify original product gates and repaired Linux checks"
+            else "success"
+        )
+        if name not in replaced | {publisher} and job.get("conclusion") != expected:
+            raise ValueError(f"unexpected original release check outcome: {name}")
     if native.get("conclusion") != "success":
         raise ValueError("repaired native workflow did not pass")
     native_jobs = {job["name"]: job for job in native["jobs"]}
