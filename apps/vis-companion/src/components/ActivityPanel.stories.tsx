@@ -18,6 +18,8 @@ import {
   ACTIVITY_TREE_CHANGES,
 } from "../dev/story-data";
 import { ActivityPanel } from "./ActivityPanel";
+import { activityProjectionFromWire } from "../lib/activity";
+import groupingCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json";
 
 /**
  * WHAT THE MODEL IS DOING, WHILE IT IS DOING IT.
@@ -582,5 +584,47 @@ export const CompactMiddle: Story = {
     await checkSiblings();
     await userEvent.click(middle);
     await checkSiblings();
+  },
+};
+
+/** Regression #201: extensions group by operation, not by their shared display headline. */
+export const ExtensionGroups: Story = {
+  args: {
+    activity: activityProjectionFromWire(
+      groupingCases.find(
+        (sample) =>
+          sample.name === "extension presentations label exact-operation groups",
+      )!.projection,
+    )!,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    await expect(
+      canvasElement.querySelectorAll("[data-activity-group]"),
+    ).toHaveLength(3);
+    await expect(
+      canvas.getByRole("button", { name: /Search reviews ×2/ }),
+    ).toBeVisible();
+    await expect(
+      canvas.getByRole("button", { name: /Check review deployment ×2/ }),
+    ).toBeVisible();
+    await expect(
+      canvas.getByText(/Waiting for deployment · running/),
+    ).toBeVisible();
+    await expect(
+      canvas.getByText(/Closed reviews · Review service unavailable/),
+    ).toBeVisible();
+    await userEvent.click(
+      canvas.getByRole("button", { name: /Search reviews ×3/ }),
+    );
+    await userEvent.click(canvas.getByRole("button", { name: /Changes: 0 ×2/ }));
+    await expect(
+      canvasElement.querySelectorAll("[data-activity-row]"),
+    ).toHaveLength(3);
+    await expect(canvasElement).not.toHaveTextContent("reviews.search");
+    await expect(canvasElement).not.toHaveTextContent("reviews.deployment_status");
   },
 };

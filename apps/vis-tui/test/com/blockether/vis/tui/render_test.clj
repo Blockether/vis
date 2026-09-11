@@ -183,6 +183,62 @@
                                     (entries rows {"#band" false})))))))
     (it "does not paint an empty Activity band" (expect (empty? (entries [] {}))))))
 
+;; Regression #201: shared extension headlines reach TUI groups without merging operations.
+(defdescribe
+  extension-activity-groups-test
+  (let [sample
+        (->> (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-groups.json")))
+             (filter #(= "extension presentations label exact-operation groups" (get % "name")))
+             first)
+
+        rows
+        (:rows (activity-contract/from-wire (get sample "projection")))
+
+        grouped
+        (#'render/activity-operation-rows rows)]
+
+    (it "keeps operation and argument identities behind readable group headings"
+        (expect (= ["search-1#group" "status-1#group" "lookup-1#group"] (mapv :id grouped)))
+        (expect (= ["Search reviews ×3" "Check review deployment ×2" "Search reviews ×2"]
+                   (mapv #(get-in % [:presentation :headline]) grouped)))
+        (expect (= ["failed" "running" "succeeded"] (mapv :state grouped)))
+        (expect (= ["search-1#arguments" "search-2"] (mapv :id (:children (first grouped)))))
+        (expect (= ["search-1" "search-3"] (mapv :id (get-in grouped [0 :children 0 :children])))))
+    (it
+      "paints readable collapsed groups and retains their state at narrow and wide widths"
+      (doseq [cols [40 80]]
+        (let [entries (#'render/activity-detail-entries
+                       {:node-id "extensions"
+                        :activity-rows rows
+                        :activity-expanded? (fn [key _]
+                                              (= "#band" key))}
+                       (- cols 4)
+                       "fixture")
+              capture (cap/capture!
+                        {:cols cols
+                         :rows 24
+                         :paint! (fn [{:keys [screen]}]
+                                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                     (render/draw-chat-bubble! (.newTextGraphics s)
+                                                               {:role :assistant
+                                                                :prewrapped-lines (mapv :line
+                                                                                        entries)
+                                                                :line-meta (mapv :meta entries)}
+                                                               0
+                                                               0
+                                                               cols
+                                                               {:viewport-h 24})
+                                     (.refresh s)))})
+              text (cap/frame-text capture)]
+
+          (expect (nil? (:error capture)))
+          (expect (str/includes? text "Search reviews ×3"))
+          (expect (str/includes? text "Search reviews ×2"))
+          (expect (str/includes? text "failed"))
+          (expect (str/includes? text "running"))
+          (expect (not (str/includes? text "reviews.search")))
+          (when (= 80 cols) (expect (str/includes? text "Check review deployment ×2"))))))))
+
 (defdescribe
   repeated-activity-arguments-test
   (let [fixture

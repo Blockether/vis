@@ -1129,5 +1129,334 @@
         ]
       }
     ]
+  },
+  {
+    "name": "extension presentations label exact-operation groups",
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 5,
+        "failed": 1,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "search-1",
+          "sequence": 1,
+          "operation": "reviews.search",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "Changes: 0",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Search reviews",
+            "summary": "Changes: 0",
+            "content": []
+          },
+          "argument_key": "2348f998744212575d85959674f9607ab26f67708a917157472832386337c904"
+        },
+        {
+          "id": "status-1",
+          "sequence": 2,
+          "operation": "reviews.deployment_status",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "running",
+          "summary": "Waiting for deployment",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Check review deployment",
+            "summary": "Waiting for deployment",
+            "content": []
+          },
+          "argument_key": "97b0560280ed60a5a1eaa1bc45492543c8a986ad5a25b468c427eb83c3e88191"
+        },
+        {
+          "id": "lookup-1",
+          "sequence": 3,
+          "operation": "reviews.lookup",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "Review: 101",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Search reviews",
+            "summary": "Review: 101",
+            "content": []
+          },
+          "argument_key": "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed"
+        },
+        {
+          "id": "search-2",
+          "sequence": 4,
+          "operation": "reviews.search",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "failed",
+          "summary": "Closed reviews",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Search reviews",
+            "summary": "Closed reviews",
+            "content": []
+          },
+          "argument_key": "c3eefb58d7c42440a9d4abec51d629544d635a6d936ff3c4d3fca96d611b3cf3",
+          "error_summary": "Review service unavailable"
+        },
+        {
+          "id": "status-2",
+          "sequence": 5,
+          "operation": "reviews.deployment_status",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "Deployment ready",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Check review deployment",
+            "summary": "Deployment ready",
+            "content": []
+          },
+          "argument_key": "6da0633528deaa0144e7b058315f0b753ec0b945163a72bf96a0d18180f9de0d"
+        },
+        {
+          "id": "lookup-2",
+          "sequence": 6,
+          "operation": "reviews.lookup",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "Review: 102",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Search reviews",
+            "summary": "Review: 102",
+            "content": []
+          },
+          "argument_key": "3fc4ccfe745870e2c0d99f71f30ff0656c8dedd41cc1d7d3d376b0dbe685e2f3"
+        },
+        {
+          "id": "search-3",
+          "sequence": 7,
+          "operation": "reviews.search",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "Changes: 0",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Search reviews",
+            "summary": "Changes: 0",
+            "content": []
+          },
+          "argument_key": "2348f998744212575d85959674f9607ab26f67708a917157472832386337c904"
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "search-1",
+        "label": "Search reviews",
+        "rows": [
+          "search-1",
+          "search-2",
+          "search-3"
+        ]
+      },
+      {
+        "id": "status-1",
+        "label": "Check review deployment",
+        "rows": [
+          "status-1",
+          "status-2"
+        ]
+      },
+      {
+        "id": "lookup-1",
+        "label": "Search reviews",
+        "rows": [
+          "lookup-1",
+          "lookup-2"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "first nonblank extension headline wins in entry order with operation fallback",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 8,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "varying-4",
+          "sequence": 4,
+          "operation": "reviews.search",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Search closed reviews",
+            "summary": "",
+            "content": []
+          }
+        },
+        {
+          "id": "varying-1",
+          "sequence": 1,
+          "operation": "reviews.search",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "varying-3",
+          "sequence": 3,
+          "operation": "reviews.search",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Search open reviews",
+            "summary": "",
+            "content": []
+          }
+        },
+        {
+          "id": "varying-2",
+          "sequence": 2,
+          "operation": "reviews.search",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "   ",
+            "summary": "",
+            "content": []
+          }
+        },
+        {
+          "id": "raw-1",
+          "sequence": 5,
+          "operation": "reviews.custom",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "raw-2",
+          "sequence": 6,
+          "operation": "reviews.custom",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": " ",
+            "summary": "",
+            "content": []
+          }
+        },
+        {
+          "id": "read-1",
+          "sequence": 7,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Read configuration",
+            "summary": "",
+            "content": []
+          }
+        },
+        {
+          "id": "read-2",
+          "sequence": 8,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "",
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "Read source",
+            "summary": "",
+            "content": []
+          }
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "varying-1",
+        "label": "Search open reviews",
+        "rows": [
+          "varying-1",
+          "varying-2",
+          "varying-3",
+          "varying-4"
+        ]
+      },
+      {
+        "id": "raw-1",
+        "label": "reviews.custom",
+        "rows": [
+          "raw-1",
+          "raw-2"
+        ]
+      },
+      {
+        "id": "read-1",
+        "label": "Read",
+        "rows": [
+          "read-1",
+          "read-2"
+        ]
+      }
+    ]
   }
 ]
