@@ -37,6 +37,7 @@
             [com.blockether.vis.internal.session.model :as session-model]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
@@ -2039,6 +2040,116 @@
                   (finally (lp/dispose-environment! resumed))))
            (finally (doseq [file (reverse (file-seq dir))]
                       (.delete ^java.io.File file)))))))
+
+(defdescribe
+  workspace-policy-isolation-test
+  ;; Regression: two projects on one gateway shared its startup policy and health roots.
+  (it
+    "uses the pinned workspace for new/resumed environments, prompts, and health roots"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-project-policy"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          db
+          (persistance/db-create-connection! :memory)
+
+          store
+          (clojure.java.io/file dir "global")
+
+          startup
+          (clojure.java.io/file dir "startup")
+
+          other
+          (clojure.java.io/file dir "other")
+
+          bare
+          (clojure.java.io/file dir "bare")
+
+          old-dir
+          (System/getProperty "user.dir")]
+
+      (try (doseq [project [store startup other bare]]
+             (.mkdirs project))
+           (doseq [[project name] [[startup "startup"] [other "other"]]]
+             (.mkdirs (clojure.java.io/file project "linked"))
+             (spit (clojure.java.io/file project "linked/AGENTS.md") (str name " guidance"))
+             (spit (clojure.java.io/file project "AGENTS.md") (str name "-instructions-marker"))
+             (spit (clojure.java.io/file project "vis.yml")
+                   (str "system_prompt: "
+                        name
+                        "-project-marker\n"
+                        "workspace:\n  filesystem:\n    - id: linked\n      path: "
+                        (.getCanonicalPath (clojure.java.io/file project "linked"))
+                        "\n" "jail:\n  filesystem:\n    allow: [linked]\n")))
+           (System/setProperty "user.dir" (.getCanonicalPath startup))
+           (with-redefs [config/config-dir
+                         (constantly (.getPath store))
+
+                         lp/last-good-security-snapshot
+                         (atom {})]
+
+             (doseq [[project name] [[startup "startup"] [other "other"] [bare nil]]]
+               (let [ws (workspace/create-trunk-at! db (.getCanonicalPath project))
+                     environment (lp/create-environment ::router {:db db :workspace-id (:id ws)})
+                     sid (:session-id environment)
+                     check!
+                     (fn [environment]
+                       (let [policy (:security-policy environment)
+                             linked (.getCanonicalPath (clojure.java.io/file project "linked"))
+                             health (prompt/request-health environment [] [])
+                             project-roots (filterv #(str/starts-with? (:path %)
+                                                                       (.getCanonicalPath dir))
+                                             (:roots health))]
+
+                         (expect (= (if name {"linked_path" linked} {}) (:project-paths policy)))
+                         (expect (= (if name [linked] []) (mapv :path project-roots)))
+                         (when name
+                           (expect (= "available" (get-in project-roots [0 :guidance :status]))))
+                         (doseq [text [(:system-prompt (persistance/db-get-session db sid))
+                                       (prompt/stable-prompt-text
+                                         (prompt/assemble-stable-prompt-messages environment
+                                                                                 {:active-extensions
+                                                                                  []}))]]
+                           (expect (= (boolean (= name "startup"))
+                                      (str/includes? text "startup-project-marker")))
+                           (expect (= (boolean (= name "other"))
+                                      (str/includes? text "other-project-marker"))))
+                         (let [text (prompt/stable-prompt-text
+                                      (prompt/assemble-stable-prompt-messages environment
+                                                                              {:active-extensions
+                                                                               []}))]
+                           (expect (= (= name "startup")
+                                      (str/includes? text "startup-instructions-marker")))
+                           (expect (= (= name "other")
+                                      (str/includes? text "other-instructions-marker"))))))]
+
+                 (try (check! environment) (finally (lp/dispose-environment! environment)))
+                 ;; Resume carries no explicit workspace id and runs outside any workspace binding.
+                 (let [resumed (lp/create-environment ::router {:db db :session sid})]
+                   (try (check! resumed) (finally (lp/dispose-environment! resumed)))))))
+           (finally (System/setProperty "user.dir" old-dir)
+                    (config/invalidate-config-cache!)
+                    (persistance/db-dispose-connection! db)
+                    (doseq [file (reverse (file-seq dir))]
+                      (.delete ^java.io.File file))))))
+  (it "never borrows a last-good policy from another workspace on invalid config"
+      (with-redefs [lp/last-good-security-snapshot (atom {})]
+        (let [snapshot #(binding [workspace/*workspace-root* %1] (with-redefs
+                                                                   [config/load-config-raw
+                                                                    (constantly %2)]
+                                                                   (#'lp/security-config-snapshot)))
+              valid {"workspace" {"filesystem" [{"id" "linked" "path" "/project-a/linked"}]}
+                     "jail" {"filesystem" {"allow" ["linked"]}}}
+              first-policy (snapshot "/project-a" valid)
+              invalid {"unknown_config_key" true}
+              other-policy (snapshot "/project-b" invalid)]
+
+          (expect (= {"linked_path" "/project-a/linked"} (:project-paths first-policy)))
+          (expect (some? (:config-error other-policy)))
+          (expect (empty? (:project-paths other-policy)))
+          (expect (= (:project-paths first-policy)
+                     (:project-paths (snapshot "/project-a" invalid))))))))
 
 (defdescribe
   permission-config-snapshot-test

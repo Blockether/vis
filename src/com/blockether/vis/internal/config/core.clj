@@ -28,6 +28,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove]
             [taoensso.trove.telemere :as trove-telemere]
@@ -1107,14 +1108,12 @@
 (defn- project-config-yaml-paths
   "YAML candidates for the hidden `.vis/` project overlay tier."
   []
-  [(str (System/getProperty "user.dir") "/.vis/config.yml")
-   (str (System/getProperty "user.dir") "/.vis/config.yaml")])
+  [(str (workspace/cwd) "/.vis/config.yml") (str (workspace/cwd) "/.vis/config.yaml")])
 
 (defn- project-root-yaml-paths
   "YAML candidates for the visible project-root tier: `vis.yml` / `vis.yaml`."
   []
-  [(str (System/getProperty "user.dir") "/vis.yml")
-   (str (System/getProperty "user.dir") "/vis.yaml")])
+  [(str (workspace/cwd) "/vis.yml") (str (workspace/cwd) "/vis.yaml")])
 
 (defn- global-config-yaml-paths
   "YAML candidates for the hand-written global tier under `~/.vis`:
@@ -1182,11 +1181,11 @@
 
 (defn load-project-config-raw
   "Load the hidden project overlay tier: the first existing of
-   `<invocation-cwd>/.vis/config.yml` / `.vis/config.yaml`, or nil. Skipped when
+   `<workspace>/.vis/config.yml` / `.vis/config.yaml`, or nil. Skipped when
    the overlay dir resolves to the global `~/.vis` store, so running Vis from
    $HOME never aliases a global file as a project overlay."
   []
-  (let [overlay-dir (io/file (System/getProperty "user.dir") ".vis")]
+  (let [overlay-dir (io/file (workspace/cwd) ".vis")]
     (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file (config-dir))))
       (some read-yaml-config-map-lenient (project-config-yaml-paths)))))
 
@@ -1229,7 +1228,7 @@
 
 (defn load-project-root-config-raw
   "Load the visible project-root tier: the first existing of
-   `<invocation-cwd>/vis.yml` / `vis.yaml`, or nil. This file is COMMITTED, so
+   `<workspace>/vis.yml` / `vis.yaml`, or nil. This file is COMMITTED, so
    `user-only-config-keys` are dropped from it with one warning — see that Var."
   []
   (some (fn [path]
@@ -1286,12 +1285,14 @@
       global base
    2. `~/.vis/state.yml` — machine-written global store (OAuth tokens, TUI-added
       providers); wins over the hand-written base
-   3. `<cwd>/vis.yml` (or `vis.yaml`) — visible project root, the committed team
-      config
-   4. `<cwd>/.vis/config.yml` (or `.yaml`) — hidden project overlay; the NESTED
-      overlay wins over the root file (personal beats committed)
+   3. `<workspace>/vis.yml` (or `vis.yaml`) — visible project root, the committed
+      team config
+   4. `<workspace>/.vis/config.yml` (or `.yaml`) — hidden project overlay; the
+      nested overlay wins over the root file (personal beats committed)
 
-   Memoized against the sources' mtime+size (see `config-raw-cache`)."
+   Project tiers follow `workspace/cwd`, bound to the session's workspace, not
+   the gateway launch directory. Unbound CLI/bootstrap callers use invocation cwd.
+   Memoized against source paths and their mtime+size (see `config-raw-cache`)."
   []
   (let [stamp
         (config-source-stamp)
@@ -1881,7 +1882,7 @@
 (def ^:dynamic *extension-dotenv-path*
   "Project `.env` consulted for extension-declared variables after the process environment.
    It takes precedence over `.env.local`. `:cwd` (the default) resolves to
-   `<process working directory>/.env` when the lookup RUNS — resolving it in this
+   `<session workspace>/.env` when the lookup RUNS — resolving it in this
    `def` would bake the native-image build directory into the binary. Bind a string
    to point elsewhere, or nil to consult no file."
   :cwd)
@@ -1892,9 +1893,9 @@
   :cwd)
 
 (defn- dotenv-path
-  "Resolve a dotenv var: `:cwd` becomes `<user.dir><suffix>` NOW, anything else is used as is."
+  "Resolve `:cwd` against the session workspace at lookup time; explicit paths pass through."
   [v ^String suffix]
-  (if (= :cwd v) (str (System/getProperty "user.dir") suffix) v))
+  (if (= :cwd v) (str (workspace/cwd) suffix) v))
 
 (def ^:dynamic *extension-getenv*
   "Function used to read process environment variables. Bind in tests."

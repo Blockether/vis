@@ -470,39 +470,26 @@
    Full rewrite precedence for the base: `<workspace>/.vis/SYSTEM.md` >
    `~/.vis/SYSTEM.md` > config `:system-prompt` map with `:replace? true` >
    `CORE_SYSTEM_PROMPT`. When a file/config replaces the base, addenda and
-   append files are still appended after it."
+   append files are still appended after it. `workspace-root` scopes all project
+   config and file lookups; an omitted root keeps the caller's workspace binding."
   [{:keys [system-prompt workspace-root]}]
-  (let [addendum
-        (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
+  (binding [workspace/*workspace-root* (or workspace-root workspace/*workspace-root*)]
+    (let [addendum (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
+          cfg (config-system-prompt)
+          files (system-prompt-file-overrides)
+          file-replace (:replace files)
+          cfg-replace? (and (nil? file-replace) (boolean (:is-replace cfg)))
+          cfg-prompt (when (and cfg (not (:is-replace cfg))) (:text cfg))
+          base (or file-replace
+                   (when cfg-replace? (:text cfg))
+                   (str "You are "
+                        (if workspace-root (config/agent-name workspace-root) (config/agent-name))
+                        ". " CORE_SYSTEM_PROMPT))
+          extras (into []
+                       (comp (filter string?) (remove str/blank?))
+                       (into [addendum cfg-prompt] (:appends files)))]
 
-        cfg
-        (config-system-prompt)
-
-        files
-        (system-prompt-file-overrides)
-
-        file-replace
-        (:replace files)
-
-        cfg-replace?
-        (and (nil? file-replace) (boolean (:is-replace cfg)))
-
-        cfg-prompt
-        (when (and cfg (not (:is-replace cfg))) (:text cfg))
-
-        base
-        (or file-replace
-            (when cfg-replace? (:text cfg))
-            (str "You are "
-                 (if workspace-root (config/agent-name workspace-root) (config/agent-name))
-                 ". " CORE_SYSTEM_PROMPT))
-
-        extras
-        (into []
-              (comp (filter string?) (remove str/blank?))
-              (into [addendum cfg-prompt] (:appends files)))]
-
-    (str/join "\n\n" (into [base] extras))))
+      (str/join "\n\n" (into [base] extras)))))
 
 (defn- project-instructions-block
   "Inline primary-workspace guidance and a metadata-only index of added-root
@@ -510,25 +497,39 @@
    reads the indexed file before working in that root."
   [environment]
   (try
-    (binding [workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
-      (let [{:keys [found? source path content files]} (agents/primary-instructions)
-            files (or (seq files)
-                      (when (and found? (string? content) (not (str/blank? content)))
-                        [{:scope :project
-                          :source (case source
-                                    :repo
-                                    :agents-md
+    (binding [workspace/*workspace-root*
+              (or (workspace/workspace-root environment)
+                  (get-in environment [:workspace :root])
+                  workspace/*workspace-root*)
 
-                                    :repo:claude-md-fallback
-                                    :claude-md
+              workspace/*filesystem-roots*
+              (workspace/env-filesystem-roots environment)]
 
-                                    source)
-                          :path path
-                          :content content}]))
-            files (filter (fn [f]
-                            (and (string? (:content f)) (not (str/blank? (:content f)))))
-                          files)
-            added (agents/added-root-guidance-index)]
+      (let [{:keys [found? source path content files]}
+            (agents/primary-instructions)
+
+            files
+            (or (seq files)
+                (when (and found? (string? content) (not (str/blank? content)))
+                  [{:scope :project
+                    :source (case source
+                              :repo
+                              :agents-md
+
+                              :repo:claude-md-fallback
+                              :claude-md
+
+                              source)
+                    :path path
+                    :content content}]))
+
+            files
+            (filter (fn [f]
+                      (and (string? (:content f)) (not (str/blank? (:content f)))))
+                    files)
+
+            added
+            (agents/added-root-guidance-index)]
 
         (when (or (seq files) (seq added))
           (let
@@ -537,13 +538,16 @@
                "Project rules from the primary workspace guidance chain. "
                "Within one filesystem scope, broader files appear first and nearer files override them. "
                "CORE wins on conflict.")
-             primary-body (when (seq files)
-                            (str/join "\n\n"
-                                      (map (fn [f]
-                                             (str "### " (agents/origin-label f)
-                                                  " — " (paths/abbreviate-home (:path f))
-                                                  "\n" (:content f)))
-                                           files)))
+
+             primary-body
+             (when (seq files)
+               (str/join "\n\n"
+                         (map (fn [f]
+                                (str "### " (agents/origin-label f)
+                                     " — " (paths/abbreviate-home (:path f))
+                                     "\n" (:content f)))
+                              files)))
+
              added-body
              (when (seq added)
                (str

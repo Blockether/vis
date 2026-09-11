@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect]]
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove])
@@ -919,6 +920,73 @@
            (expect (= ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]
                       (mapv #(.getName (io/file ^String %)) (@#'config/global-config-yaml-paths))))
            (finally (rm-rf! dir))))))
+
+(defdescribe
+  workspace-config-isolation-test
+  ;; Regression: a gateway started in one project supplied its config to every session.
+  (it
+    "keeps all config tiers and search/dotenv values scoped to the session workspace"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-workspace-config"
+                                              (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          store
+          (io/file dir "global")
+
+          startup
+          (io/file dir "startup")
+
+          other
+          (io/file dir "other")
+
+          bare
+          (io/file dir "bare")
+
+          old-dir
+          (System/getProperty "user.dir")]
+
+      (try (doseq [project [store startup other bare]]
+             (.mkdirs project))
+           (spit (io/file store "config.yml") "system_prompt: global\n")
+           (spit (io/file store "state.yml") "agent_name: Shared\n")
+           (doseq [[project name suffix] [[startup "startup" "yml"] [other "other" "yaml"]]]
+             (.mkdirs (io/file project ".vis"))
+             (spit (io/file project (str "vis." suffix))
+                   (str "system_prompt: " name "\ngrep:\n  always_exclude: [" name ".txt]\n"))
+             (spit (io/file project ".vis" (str "config." suffix))
+                   (str "system_prompt: " name "-overlay\n"))
+             (spit (io/file project ".env") (str "VIS_PROJECT_FIXTURE=" name "\n")))
+           (System/setProperty "user.dir" (.getCanonicalPath startup))
+           (with-redefs [config/config-dir (constantly (.getPath store))]
+             (config/invalidate-config-cache!)
+             (doseq [[project name] [[startup "startup"] [other "other"] [startup "startup"]]]
+               (binding [workspace/*workspace-root* (.getCanonicalPath project)]
+                 (let [raw (config/load-config-raw)]
+                   (expect (= (str name "-overlay") (get raw "system_prompt")))
+                   (expect (= "Shared" (get raw "agent_name")))
+                   (expect (= [(str name ".txt")] (:always-exclude (config/search-overlay)))))
+                 (expect (= name
+                            (get (config/workspace-environment-values) "VIS_PROJECT_FIXTURE")))))
+             (binding [workspace/*workspace-root* (.getCanonicalPath bare)]
+               (expect (= "global" (get (config/load-config-raw) "system_prompt")))
+               (expect (nil? (config/search-overlay)))
+               (expect (nil? (get (config/workspace-environment-values) "VIS_PROJECT_FIXTURE"))))
+             ;; Futures inherit thread bindings; one project's read must not alter another's.
+             (let [reads (mapv (fn [project]
+                                 (binding [workspace/*workspace-root* (.getCanonicalPath project)]
+                                   (future (get (config/load-config-raw) "system_prompt"))))
+                               [startup other bare other startup])]
+               (expect (= ["startup-overlay" "other-overlay" "global" "other-overlay"
+                           "startup-overlay"]
+                          (mapv deref reads))))
+             (binding [workspace/*workspace-root* (.getCanonicalPath other)]
+               (spit (io/file other ".vis/config.yaml") "system_prompt: edited-other\n")
+               (expect (= "edited-other" (get (config/load-config-raw) "system_prompt"))))
+             (binding [workspace/*workspace-root* (.getCanonicalPath startup)]
+               (expect (= "startup-overlay" (get (config/load-config-raw) "system_prompt")))))
+           (finally (System/setProperty "user.dir" old-dir)
+                    (config/invalidate-config-cache!)
+                    (rm-rf! dir))))))
 
 (defdescribe
   load-config-raw-cache-test

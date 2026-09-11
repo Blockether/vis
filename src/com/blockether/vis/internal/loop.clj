@@ -11038,52 +11038,51 @@
                (tel/log! :warn ["gateway: env db close failed" (ex-message t)])))))))
 
 (defonce ^:private last-good-security-snapshot
-  ;; Retains the most recent VALID security snapshot so an invalid live config
-  ;; edit never tears down running sessions — see `security-config-snapshot`.
-  (atom nil))
+  ;; A failed project reload may retain only that project's last valid policy.
+  (atom {}))
 
 (defn- security-config-snapshot
-  "Read, validate, resolve, and hash security configuration once for a ROOT
-   environment. Child environments inherit this exact immutable value.
+  "Read, validate, resolve, and hash security configuration once for the bound
+   workspace. Child environments inherit this exact immutable value.
 
-   RESILIENT: a wrong config must never kill a running session. `load-config-raw`
-   already loads leniently; if BUILDING the snapshot still fails for ANY reason
-   — a `:vis/invalid-config` contract violation, an internal derived-policy
-   assertion, or an unexpected error while resolving paths — we log ONE warning
-   and reuse the last-good snapshot (or a minimal deny-safe `{}` snapshot on first
-   load) instead of throwing. Nothing here ever re-throws. The next `save!`/`/reload`
-   with a valid config replaces it."
+   Invalid live configuration retains only this workspace's last-good snapshot,
+   or a deny-safe default on its first load. Another project's grants must never
+   become the fallback. An explicit rebuild replaces the snapshot."
   []
-  (try (let [snap (security-policy/snapshot (or (config/load-config-raw) {}))]
-         (reset! last-good-security-snapshot snap)
-         snap)
-       (catch Throwable e
-         (let [invalid? (and (instance? clojure.lang.ExceptionInfo e)
-                             (= :vis/invalid-config (:type (ex-data e))))]
-           (tel/log! {:level :warn
-                      :id ::security-config-invalid
-                      :data
-                      (if invalid? {:problems (:problems (ex-data e))} {:error (ex-message e)})
-                      :msg (str "security config could not be applied; "
-                                (if @last-good-security-snapshot
-                                  "keeping the last-good policy"
-                                  "falling back to a deny-safe policy")
-                                " so the session survives")})
-           (let [problems (try (config/config-problems) (catch Throwable _ nil))
-                 base (or @last-good-security-snapshot
-                          (try (security-policy/snapshot {}) (catch Throwable _ {})))]
+  (let [root (.getCanonicalPath (workspace/cwd))]
+    (try (let [snap (security-policy/snapshot (or (config/load-config-raw) {}) {:base-dir root})]
+           (swap! last-good-security-snapshot assoc root snap)
+           snap)
+         (catch Throwable e
+           (let [last-good (get @last-good-security-snapshot root)
+                 invalid? (and (instance? clojure.lang.ExceptionInfo e)
+                               (= :vis/invalid-config (:type (ex-data e))))]
 
-             (assoc base
-               :config-error {"source" (or (:source (ex-data e)) "vis.yml / ~/.vis/state.yml")
-                              "message" (str "The live config on disk could not be applied; "
-                                             (if @last-good-security-snapshot
-                                               "the last-good policy is in effect."
-                                               "a deny-safe policy is in effect."))
-                              "problems" (if (seq problems) (vec problems) [(ex-message e)])
-                              "hint"
-                              (str "Fix the keys above in vis.yml or ~/.vis/state.yml, then run "
-                                   "/reload. Keys are snake_case strings; the config is closed, "
-                                   "so unknown or renamed keys are rejected.")}))))))
+             (tel/log! {:level :warn
+                        :id ::security-config-invalid
+                        :data
+                        (if invalid? {:problems (:problems (ex-data e))} {:error (ex-message e)})
+                        :msg (str "security config could not be applied; "
+                                  (if last-good
+                                    "keeping this workspace's last-good policy"
+                                    "falling back to a deny-safe policy")
+                                  " so the session survives")})
+             (let [problems (try (config/config-problems) (catch Throwable _ nil))
+                   base (or last-good
+                            (try (security-policy/snapshot {} {:base-dir root})
+                                 (catch Throwable _ {})))]
+
+               (assoc base
+                 :config-error {"source" (or (:source (ex-data e)) "vis.yml / ~/.vis/state.yml")
+                                "message" (str "The live config on disk could not be applied; "
+                                               (if last-good
+                                                 "the last-good policy is in effect."
+                                                 "a deny-safe policy is in effect."))
+                                "problems" (if (seq problems) (vec problems) [(ex-message e)])
+                                "hint"
+                                (str "Fix the keys above in vis.yml or ~/.vis/state.yml, then run "
+                                     "/reload. Keys are snake_case strings; the config is closed, "
+                                     "so unknown or renamed keys are rejected.")})))))))
 
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
@@ -11172,11 +11171,6 @@
             routing-digest (cond-> {"model" root-model}
                              root-provider
                              (assoc "provider" (name root-provider)))
-            ;; Snapshot a base system prompt for the session row so the
-            ;; sidebar / DB inspectors have something stable to display.
-            ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
-            ;; with `:active-extensions`, so this snapshot is just metadata.
-            system-prompt (prompt/build-system-prompt {})
             ;; Workspace pin (1:1 with session_state):
             ;;   - resuming a session       → derive workspace from its latest state
             ;;   - brand-new session        → mint a trunk workspace, pass its id
@@ -11196,6 +11190,8 @@
                 workspace-id (persistance/db-workspace-get db-info workspace-id)
                 ;; New session, no pre-spawn: clone cwd.
                 :else (workspace/ensure-workspace! db-info {})))
+            ;; Persist the prompt from the pinned project, including on resume.
+            system-prompt (prompt/build-system-prompt {:workspace-root (:root active-workspace)})
             session-id (or resolved-session-id
                            (persistance/db-store-session! db-info
                                                           (cond-> {:channel resolved-channel
@@ -11274,7 +11270,9 @@
             ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
             ;; `policy-reload-epoch`, so each live env recycles at its next turn and
             ;; rebuilds this snapshot.
-            security-config (security-config-snapshot)
+            security-config (binding [workspace/*workspace-root* (or (:root active-workspace)
+                                                                     workspace/*workspace-root*)]
+                              (security-config-snapshot))
             configured-rw-roots (security-policy/read-write-roots security-config)
             ;; Engine substrate: embedded CPython (env/create-python-context builds a
             ;; deny-by-default Python session, wires the Clojure tools as Python
