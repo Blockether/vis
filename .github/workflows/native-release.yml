@@ -282,19 +282,23 @@ jobs:
           path: ${{ runner.temp }}/vis-native-${{ github.run_id }}-${{ github.run_attempt }}/*.log
           if-no-files-found: ignore
           retention-days: 14
+      - name: Verify draft before attaching
+        if: steps.target.outputs.publish == 'true'
+        uses: ./.github/actions/require-draft-release
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            ${{ matrix.asset }}
-            ${{ matrix.tui_asset }}
-          # A dispatched rebuild must land on the tag it was asked for, not on
-          # the branch ref the dispatch ran from.
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          fail_on_unmatched_files: true
-          draft: true
-          prerelease: ${{ steps.target.outputs.track == 'beta' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          VIS_ASSET: ${{ matrix.asset }}
+          VIS_TUI_ASSET: ${{ matrix.tui_asset }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "$VIS_ASSET" "$VIS_TUI_ASSET" \
+            --repo "$GITHUB_REPOSITORY" --clobber
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
   # Self-hosted ARM64 macOS participates in the same complete-release gate.
@@ -450,17 +454,21 @@ jobs:
           path: ${{ runner.temp }}/vis-native-${{ github.run_id }}-${{ github.run_attempt }}/*.log
           if-no-files-found: ignore
           retention-days: 14
+      - name: Verify draft before attaching
+        if: steps.target.outputs.publish == 'true'
+        uses: ./.github/actions/require-draft-release
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            ${{ env.VIS_ASSET }}
-            ${{ env.VIS_TUI_ASSET }}
-          tag_name: ${{ inputs.tag || github.ref_name }}
-          fail_on_unmatched_files: true
-          draft: true
-          prerelease: ${{ steps.target.outputs.track == 'beta' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "$VIS_ASSET" "$VIS_TUI_ASSET" \
+            --repo "$GITHUB_REPOSITORY" --clobber
 
   # ── macOS runner pickup guard ──────────────────────────────────────────────
   # An offline or busy runner, or a label no machine

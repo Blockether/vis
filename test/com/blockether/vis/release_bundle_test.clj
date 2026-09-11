@@ -1324,9 +1324,62 @@
         (expect (not (str/includes? beta "softprops/action-gh-release")))
         (doseq [contract ["track=release" "track=beta" "track=dry-run"
                           "VIS_RELEASE_TRACK: ${{ steps.target.outputs.track }}"
-                          "clojure -M:test-native" "test-native-python-sdk" "draft: true"]]
+                          "clojure -M:test-native" "test-native-python-sdk"
+                          "Verify draft before attaching" "gh release upload"]]
           (expect (str/includes? native contract) contract))
         (expect (not (str/includes? native "tags: ['v[0-9]*']"))))))
+
+(defdescribe
+  native-asset-upload-test
+  (it
+    "uploads native assets to a verified draft without rewriting release metadata"
+    ;; Native beta jobs passed their checks but GitHub rejected the release metadata PATCH.
+    (let [workflow
+          (slurp ".github/workflows/native-release.yml")
+
+          uploads
+          (re-seq #"(?ms)^      - name: Verify draft before attaching\n(.*?)(?=^  \S|\z)" workflow)]
+
+      (expect (= 2 (count uploads)))
+      (expect (not (str/includes? workflow "softprops/action-gh-release")))
+      (doseq [[_ steps] uploads]
+        (expect (= 2 (count (re-seq #"if: steps.target.outputs.publish == 'true'" steps))))
+        (doseq [contract ["uses: ./.github/actions/require-draft-release"
+                          "tag: ${{ inputs.tag || github.ref_name }}"
+                          "GH_TOKEN: ${{ github.token }}"
+                          "RELEASE_TAG: ${{ inputs.tag || github.ref_name }}" "set -euo pipefail"
+                          "gh release upload \"$RELEASE_TAG\" \"$VIS_ASSET\" \"$VIS_TUI_ASSET\""
+                          "--repo \"$GITHUB_REPOSITORY\" --clobber"]]
+          (expect (str/includes? steps contract) contract))
+        (expect (< (.indexOf ^String steps "require-draft-release")
+                   (.indexOf ^String steps "gh release upload")))
+        (let [script (-> steps
+                         (str/split #"        run: \|\n" 2)
+                         second
+                         (str/replace #"(?m)^          " ""))
+              dir (.toFile (Files/createTempDirectory "vis-native-upload-"
+                                                      (make-array FileAttribute 0)))
+              calls (io/file dir "calls")]
+
+          (try
+            (write-executable!
+              (io/file dir "gh")
+              "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$TEST_CALLS\"\nexit \"$TEST_UPLOAD_EXIT\"\n")
+            (doseq [status [0 23]]
+              (let [{:keys [exit output]}
+                    (run-bash ["bash" "-c" script]
+                              {"PATH" (str (.getAbsolutePath dir) ":" (System/getenv "PATH"))
+                               "RELEASE_TAG" "beta-fixture"
+                               "VIS_ASSET" "engine archive.tar.gz"
+                               "VIS_TUI_ASSET" "tui archive.tar.gz"
+                               "GITHUB_REPOSITORY" "example/vis"
+                               "TEST_CALLS" (.getAbsolutePath calls)
+                               "TEST_UPLOAD_EXIT" (str status)})]
+                (expect (= status exit) output)
+                (expect (= ["release" "upload" "beta-fixture" "engine archive.tar.gz"
+                            "tui archive.tar.gz" "--repo" "example/vis" "--clobber"]
+                           (str/split-lines (slurp calls))))))
+            (finally (delete-tree! dir))))))))
 
 (defdescribe
   native-build-logs-test
