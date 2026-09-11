@@ -68,7 +68,20 @@ export const Fleet: Story = {
     ).toBeVisible();
     const doc = canvasElement.ownerDocument;
     const win = doc.defaultView!;
-
+    // The machine switch and project navigation share a centered, balanced strip.
+    const projects = page.getByRole('button', { name: 'Projects on tower' });
+    const machines = page.getByRole('group', { name: 'Machines' });
+    const strip = machines.parentElement!;
+    const stripStyle = win.getComputedStyle(strip);
+    if (win.innerWidth < 640) {
+      await expect(stripStyle.paddingTop).toBe('12px');
+      await expect(stripStyle.paddingBottom).toBe(stripStyle.paddingTop);
+    }
+    const folderBox = projects.getBoundingClientRect();
+    const machinesBox = machines.getBoundingClientRect();
+    await expect(folderBox.y + folderBox.height / 2).toBe(
+      machinesBox.y + machinesBox.height / 2,
+    );
     // Regression: the project has one hover action, a session has three. Neither
     // strip may move the permanent + / disclosure off the list's shared right edge.
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;

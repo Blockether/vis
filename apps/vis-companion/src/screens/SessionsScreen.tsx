@@ -1607,16 +1607,10 @@ export function SessionsScreen({
           needed it, so the switch's left edge and the verb's right edge are the same
           distance from the paper: 12 and 12 of a 390 phone (strip at 12, the projects
           mark ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
-      {/* ONE TOP INSET, NOT TWO. The section already spells the page's top edge
-          (`sm:pt-4`); this row spelled a second one (`sm:pt-8`) on top of it, so on
-          a desk the machine strip started 56px under the app bar and the card 97px
-          under it — a hand's width of paper above a list that then ran out of
-          screen before it ran out of rows. The phone keeps its own `pt-6`: there
-          the section is full bleed and this row IS the first thing under the bar.
-          In the desk's sidebar the section is full bleed again, and this row wears
-          the column's own 12px on every side. */}
+      {/* The phone and desk sidebar use equal 12px vertical insets. On wider
+          standalone layouts, the section already supplies the top inset. */}
       {showStrip && (
-        <div className={`relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 pb-3 ${isDesk ? 'pt-3' : 'pt-6 sm:flex-nowrap sm:pb-3 sm:pl-0 sm:pr-4 sm:pt-0'}`}>
+        <div className={`relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:flex-nowrap sm:pl-0 sm:pr-4 sm:pt-0'}`}>
           {/* The switch owns the leading space of this row: it GROWS, so the machine's
               verb stands at the trailing inset without an auto margin that would fight
               the search report for the same free space. The track inside it keeps its

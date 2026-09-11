@@ -1870,6 +1870,22 @@ describe("MachineProjectsButton", () => {
     <MachineProjectsButton machine="tower" onPress={() => {}} />,
   );
 
+  it("keeps project navigation outlined rather than primary", () => {
+    expect(html).toContain("border-edge-strong");
+    expect(html).toContain("bg-transparent");
+    expect(html).not.toContain("bg-accent");
+    const quiet = renderToStaticMarkup(
+      <MachineProjectsButton machine="tower" isQuiet onPress={() => {}} />,
+    );
+    expect(quiet).toContain("border-transparent");
+    expect(quiet).not.toContain("border-edge-strong");
+  });
+
+  it("uses equal vertical insets for the phone machine strip", () => {
+    expect(sessionsListSource).toContain("gap-y-2 px-3 py-3");
+    expect(sessionsListSource).not.toContain("pt-6 sm:flex-nowrap");
+  });
+
   it("wears the folder it opens, never the plus that means a session", () => {
     expect(html).toContain(
       renderToStaticMarkup(<ProjectsIcon className="size-4" />),

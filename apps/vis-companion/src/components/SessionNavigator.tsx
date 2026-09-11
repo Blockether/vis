@@ -816,12 +816,9 @@ export function NewSessionButton({
  * the NOUN it opens: the app's one mark for a place on disk, the same folder a
  * project row carries, with the fork inside it left to mean a copy of that place.
  *
- * IT HAS THREE PLACES TO STAND AND ONE OF THEM IS QUIET. Over the card while the
- * list is scoped to one machine, in the desk rail's PROJECTS caption while there is
- * a rail, and in the desk footer while there is not — and a footer is 24px of
- * `text-chip` ink, where an amber block would outrank every word beside it and
- * become the screen's second filled accent. It names its machine for assistive
- * technology wherever it stands.
+ * Project navigation uses a neutral outline beside the machine switcher.
+ * The footer keeps its unframed quiet variant. Both name the machine for
+ * assistive technology.
  *
  * `pressEffect="none"`: the sheet it opens is anchored on this button's measured box,
  * and a transform moves the box that was measured.
@@ -832,7 +829,7 @@ export function MachineProjectsButton({
   onPress,
 }: {
   machine: string;
-  /** It is standing in a footer, so it is ink rather than the amber fill. */
+  /** Use the unframed variant in a footer. */
   isQuiet?: boolean;
   onPress: (anchor: HTMLElement) => void;
 }) {
@@ -840,7 +837,7 @@ export function MachineProjectsButton({
   const title = `Projects on ${machine} — choose one, add one, remove one`;
   return (
     <IconButton
-      variant={isQuiet ? 'quiet' : 'primary'}
+      variant={isQuiet ? 'quiet' : 'secondary'}
       label={label}
       title={title}
       onClick={(event) => onPress(event.currentTarget)}
