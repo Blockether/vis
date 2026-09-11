@@ -29,7 +29,15 @@ type Story = StoryObj<typeof meta>;
 /** In flight: the stop is ARMED before it is sent, and the note travels with it. */
 export const Running: Story = {
   play: async ({ args, canvas }) => {
-    await userEvent.click(canvas.getByRole('button', { name: 'Interrupt' }));
+    const interrupt = canvas.getByRole('button', { name: 'Interrupt' });
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    await expect(interrupt.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
+    if (!pointer) {
+      const box = interrupt.getBoundingClientRect();
+      await expect(parseFloat(getComputedStyle(interrupt, '::after').height)).toBeGreaterThanOrEqual(44);
+      await expect(interrupt.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5))).toBe(true);
+    }
+    await userEvent.click(interrupt);
     const reason = await canvas.findByRole('textbox', {
       name: 'Why are you stopping Fleet scan?',
     });
@@ -142,10 +150,15 @@ export const AllPrimitives: Story = {
       await expect(canvas.getByRole('heading', { level, name: `Heading level ${level}` })).toBeVisible();
     }
     await expect(canvas.getByRole('button', { name: 'Unavailable action' })).toBeDisabled();
-    const minimum = matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44;
-    for (const name of ['Refresh results', 'Details']) {
-      await expect(canvas.getByRole('button', { name }).getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const refresh = canvas.getByRole('button', { name: 'Refresh results' });
+    await expect(refresh.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
+    if (!pointer) {
+      await expect(parseFloat(getComputedStyle(refresh, '::after').height)).toBeGreaterThanOrEqual(44);
+      const box = refresh.getBoundingClientRect();
+      await expect(refresh.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5))).toBe(true);
     }
+    await expect(canvas.getByRole('button', { name: 'Details' }).getBoundingClientRect().height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     await userEvent.click(canvas.getByRole('button', { name: 'Refresh results' }));
     await expect(args.onActivate).toHaveBeenCalledWith('refresh');
     await userEvent.click(canvas.getByRole('button', { name: 'Details' }));

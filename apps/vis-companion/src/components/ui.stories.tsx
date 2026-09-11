@@ -146,6 +146,20 @@ export const Buttons: Story = {
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    const pointer = matchMedia("(min-width: 640px) and (pointer: fine)").matches;
+    for (const name of ["Connect", "Rename", "Cancel", "Delete", "Disabled", "Default", "Compact", "Panel"]) {
+      const button = canvas.getByRole("button", { name });
+      await expect(button.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
+      if (!pointer) {
+        const reach = getComputedStyle(button, "::after");
+        await expect(parseFloat(reach.height)).toBeGreaterThanOrEqual(44);
+      }
+    }
+    await expect(canvas.getByRole("button", { name: "Disabled" })).toBeDisabled();
+    await userEvent.tab();
+    await expect(canvas.getByRole("button", { name: "Connect" })).toHaveFocus();
+  },
 };
 
 export const Marks: Story = {

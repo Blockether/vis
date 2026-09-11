@@ -400,13 +400,13 @@ function LogRows({
         </p>
         {result && result.window !== node.lines && <p className="font-mono text-ui text-dialog-hint">Log changed. Refresh results.</p>}
         {searchError && <p role="alert" className="font-mono text-ui text-err">Could not read log. Try again.</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button density="comfortable" variant="secondary" onClick={() => void find(search.query)}>Refresh results</Button>
-          <Button density="comfortable" variant="secondary" onClick={clearSearch}>Clear search</Button>
+        <div className="flex flex-wrap gap-x-2 gap-y-5">
+          <Button variant="secondary" onClick={() => void find(search.query)}>Refresh results</Button>
+          <Button variant="secondary" onClick={clearSearch}>Clear search</Button>
           {(search.from > 0 || (result && result.page.matched > LOG_PAGE)) && <>
-            <Button density="comfortable" variant="secondary" disabled={isSearching || search.from === 0}
+            <Button variant="secondary" disabled={isSearching || search.from === 0}
               onClick={() => void find(search.query, Math.max(0, search.from - LOG_PAGE))}>Previous matches</Button>
-            <Button density="comfortable" variant="secondary" disabled={isSearching || !result || search.from + LOG_PAGE >= result.page.matched}
+            <Button variant="secondary" disabled={isSearching || !result || search.from + LOG_PAGE >= result.page.matched}
               onClick={() => void find(search.query, search.from + LOG_PAGE)}>Next matches</Button>
           </>}
         </div>
@@ -713,7 +713,7 @@ function ActionButton({ node, onActivate, isSettled }: {
   isSettled: boolean;
 }) {
   const [pending, setPending] = useState(false);
-  return <Button variant="secondary" density="comfortable" disabled={isSettled || node.is_disabled || pending || !onActivate}
+  return <Button variant="secondary" disabled={isSettled || node.is_disabled || pending || !onActivate}
     aria-busy={pending} onClick={async () => {
       if (!onActivate || pending) return;
       setPending(true);
@@ -838,14 +838,14 @@ export function LiveViewPanel({
         </span>
         <ViewState view={view} isSettled={isSettled} />
         {!isSettled && onInterrupt && !isArmed && (
-          <Button variant="secondary" density="comfortable" onClick={() => setNote('')} disabled={isInterrupting}>
+          <Button variant="secondary" className="shrink-0 self-center" onClick={() => setNote('')} disabled={isInterrupting}>
             {isInterrupting ? 'Stopping...' : 'Interrupt'}
           </Button>
         )}
       </header>
       {!isSettled && isArmed && onInterrupt && (
         <form
-          className="flex flex-wrap items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2"
+          className="flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge bg-panel-2 px-3 py-2"
           onSubmit={(event) => {
             event.preventDefault();
             sendStop(onInterrupt);

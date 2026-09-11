@@ -304,6 +304,13 @@ describe('a log the operator walks back through', () => {
 });
 
 describe('stopping the run from the phone', () => {
+  // Regression: the live header must use the shared compact face, not a 44px slab.
+  it('keeps the interrupt face compact while preserving touch reach', () => {
+    paint({ onInterrupt: vi.fn() });
+    const button = screen.getByRole('button', { name: 'Interrupt' });
+    expect(button.classList.contains('min-h-11')).toBe(false);
+    expect(button.classList.contains('after:absolute')).toBe(true);
+  });
   it('arms the stop, takes the comment, and sends it with the interrupt', () => {
     const onInterrupt = vi.fn();
     paint({ onInterrupt });

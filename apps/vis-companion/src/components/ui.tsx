@@ -87,19 +87,12 @@ export const Button = forwardRef<
      */
     pressEffect?: 'scale' | 'none';
     /**
-     * `compact` is the DESKTOP rhythm of a header row: a 24px box, centred in a
-     * taller row, at the meta type scale. It lives here and only here, because a
-     * row where the primary is 32px and the `⋯` beside it is 24px is precisely
-     * the incoherence this app was reported for. Touch is untouched — a finger
-     * still gets the full box.
-     *
-     * `panel` is a settings action: a content-width 32px touch / 28px pointer face.
-     * Its invisible extension preserves a 44px touch target without filling the
-     * panel. Owners provide padding and at least 8px between adjacent targets.
-     *
-     * `comfortable` uses a visible 44px touch target and a 28px mouse target.
+     * Text buttons share a 32px touch face and a 28px pointer face.
+     * Invisible reach preserves a 44px touch target; owners leave at least 8px
+     * between adjacent targets. `compact` centres the button in a header and
+     * uses metadata type under a pointer. `panel` keeps fixed horizontal padding.
      */
-    density?: 'default' | 'compact' | 'panel' | 'comfortable';
+    density?: 'default' | 'compact' | 'panel';
     /**
      * This button stands INSIDE a segmented run — the image viewer's `− 100% +`.
      * The middle of the run drops its side frames so the three boxes draw ONE
@@ -205,24 +198,12 @@ export const Button = forwardRef<
   // and `active:scale-[0.98]` have equal specificity, so a call-site override would
   // be decided by Tailwind's emission order, not by the call site.
   const press = pressEffect === 'scale' ? 'active:scale-[0.98] disabled:active:scale-100' : '';
-  // A 32px FACE with a 44px TARGET.
-  //
-  // The box used to BE 44px on touch, so the amber "New session" slab filled the
-  // whole header band edge to edge and read as a toolbar rather than as a button —
-  // on a 390px iPhone it was the loudest thing on the screen. A hit box is not a
-  // paint job: the visible control is now the header's own 32px rhythm (`min-h-8`,
-  // the same box the desktop `sm:` step already uses) and the missing 6px above and
-  // below are restored as an invisible `::after` that the finger still lands on.
-  // So Apple's 44pt target survives untouched while the ink stops shouting; the
-  // `⋯` beside it shrinks by exactly the same amount, because a header that holds
-  // one 32px button and one 44px button holds two different affordances.
+  // The pseudo-element extends the padding box (inside the 1px border) to 44px.
+  const touchReach = 'relative after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] mouse:after:content-none';
   const scale = {
-    default: 'min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7',
-    comfortable: 'min-h-11 px-2.5 text-ui sm:px-3 mouse:min-h-7',
-    compact:
-      'relative min-h-7 h-8 px-2.5 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] sm:min-h-8 sm:px-3 sm:text-ui mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none',
-    panel:
-      'relative min-h-8 px-3 font-mono text-ui after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] mouse:min-h-7 mouse:after:content-none',
+    default: `${touchReach} min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7`,
+    compact: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui sm:px-3 mouse:h-7 mouse:min-h-7 mouse:text-meta`,
+    panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
   }[density];
   const joined = isJoined ? 'border-x-0' : '';
   // THE DISC IS THE BOX THAT NEVER LEARNED A WORD. It keeps the header's own 32px
