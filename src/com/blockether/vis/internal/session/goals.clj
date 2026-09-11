@@ -290,6 +290,7 @@ New user instructions and a user stop always take priority over continuation.")
 (defn slash!
   "Parse /goal with --budget N before or after the objective, or --pause/--resume/--cancel.
    N is in loop iterations. A leading -- on the objective preserves all following text.
+   Accept iOS smart dashes in recognized flags, without rewriting the objective.
    Parse raw text so quotes and newlines in the user's objective stay intact."
   [ctx]
   (let [db
@@ -304,19 +305,20 @@ New user instructions and a user stop always take priority over continuation.")
     (try
       (let
         [action
-         ({"--pause" :pause "--resume" :resume "--cancel" :cancel} raw)
+         ({"pause" :pause "resume" :resume "cancel" :cancel}
+          (second (re-matches #"(?:--|[—–])(pause|resume|cancel)" raw)))
 
          [prefix leading-budget remaining]
-         (re-matches #"(?s)^--budget(?:\s+(\S+))?(?:\s+(.*))?$" raw)
+         (re-matches #"(?s)^(?:--|[—–])budget(?:\s+(\S+))?(?:\s+(.*))?$" raw)
 
          text
-         (or remaining raw)
+         (if prefix (or remaining "") raw)
 
          [_ literal]
          (re-matches #"(?s)^--(?:\s+|$)(.*)$" text)
 
          [suffix objective trailing-budget]
-         (when-not literal (re-matches #"(?s)^(.*?)\s+--budget(?:\s+(\S+))?$" text))
+         (when-not literal (re-matches #"(?s)^(.*?)\s+(?:--|[—–])budget(?:\s+(\S+))?$" text))
 
          text
          (or literal objective text)

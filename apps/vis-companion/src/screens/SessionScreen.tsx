@@ -4847,6 +4847,10 @@ export function SessionScreen({
                 <textarea
                   ref={composerRef}
                   rows={1}
+                  // WebKit also disables smart quotes/dashes when spellcheck is off.
+                  spellCheck={false}
+                  autoCorrect="off"
+                  autoCapitalize="none"
                   disabled={voicePhase === "recording"}
                   placeholder={
                     voicePhase === "recording"

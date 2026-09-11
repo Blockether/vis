@@ -75,48 +75,41 @@
       (finally (lp/dispose-environment! env)))))
 
 (deftest iteration-budget-allows-last-tools-but-no-next-request-test
-  (let [env
-        (environment)
+  ;; The shared slash boundary must enforce budgets after iOS substitutes a dash.
+  (doseq [dash ["--" "—" "–"]]
+    (let [env (environment)
+          requests (atom 0)
+          executions (atom [])
+          execute @#'lp/execute-code]
 
-        requests
-        (atom 0)
+      (try (with-redefs [lp/execute-code (fn [& args]
+                                           (swap! executions conj (second args))
+                                           (apply execute args))
+                         svar/ask-code!
+                         (fn [_ _]
+                           (when (> (swap! requests inc) 1)
+                             (throw (AssertionError. "Exceeded trailing iteration budget")))
+                           {:stop-reason :tool-calls
+                            :api-usage {:input-tokens 100000 :output-tokens 5}
+                            :tool-calls [{:id "last-tools"
+                                          :name "python_execution"
+                                          :input {:code "print('last iteration ran')"}}
+                                         {:id "more-tools"
+                                          :name "python_execution"
+                                          :input {:code
+                                                  "print('second tool in same iteration')"}}]})]
 
-        executions
-        (atom [])
-
-        execute
-        @#'lp/execute-code]
-
-    (try
-      (with-redefs [lp/execute-code
-                    (fn [& args]
-                      (swap! executions conj (second args))
-                      (apply execute args))
-
-                    svar/ask-code!
-                    (fn [_ _]
-                      (when (> (swap! requests inc) 1)
-                        (throw (AssertionError. "Exceeded trailing iteration budget")))
-                      {:stop-reason :tool-calls
-                       :api-usage {:input-tokens 100000 :output-tokens 5}
-                       :tool-calls [{:id "last-tools"
-                                     :name "python_execution"
-                                     :input {:code "print('last iteration ran')"}}
-                                    {:id "more-tools"
-                                     :name "python_execution"
-                                     :input {:code "print('second tool in same iteration')"}}]})]
-
-        (let [result (lp/run-turn! env "/goal Bounded task --budget 1" {})]
-          (is (= :success (:status result)))
-          (is (= 1 @requests))
-          (is (= 2 (count @executions)))
-          (is (= 1 (get (goals/check-goal env) "iterations_used")))
-          (is (= "budget_limited" (get (goals/check-goal env) "status")))
-          (is (str/includes? (str result) "last iteration ran"))
-          (is (str/includes? (str result) "second tool in same iteration"))
-          (is (not (str/includes? (str result) "Goal token budget")))
-          (is (str/includes? (str (:answer result)) "iteration budget reached"))))
-      (finally (lp/dispose-environment! env)))))
+             (let [result (lp/run-turn! env (str "/goal Bounded task " dash "budget 1") {})]
+               (is (= :success (:status result)))
+               (is (= 1 @requests))
+               (is (= 2 (count @executions)))
+               (is (= 1 (get (goals/check-goal env) "iterations_used")))
+               (is (= "budget_limited" (get (goals/check-goal env) "status")))
+               (is (str/includes? (str result) "last iteration ran"))
+               (is (str/includes? (str result) "second tool in same iteration"))
+               (is (not (str/includes? (str result) "Goal token budget")))
+               (is (str/includes? (str (:answer result)) "iteration budget reached"))))
+           (finally (lp/dispose-environment! env))))))
 
 (deftest last-iteration-can-resolve-goal-test
   (doseq [status ["complete" "blocked"]]

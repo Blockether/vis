@@ -74,6 +74,33 @@ describe("native composer input", () => {
     },
   );
 
+  // Regression: iOS smart punctuation changed --budget into —budget.
+  it("disables automatic keyboard substitutions in the message composer", () => {
+    renderSessionScreen();
+    const composer = screen.getByLabelText("Message Vis");
+    expect(composer).toHaveAttribute("spellcheck", "false");
+    expect(composer).toHaveAttribute("autocorrect", "off");
+    expect(composer).toHaveAttribute("autocapitalize", "none");
+  });
+
+  it.each([
+    "/goal Verify the change --budget 3",
+    "/goal Verify the change —budget 3",
+    'Keep — prose, – ranges and ‘quotes’.\nconst flag = "--budget";',
+  ])("sends %s without rewriting punctuation", (text) => {
+    const submitTurn = vi.fn((_sid: string, _request: string) =>
+      Promise.resolve({ turn_id: "literal-send", status: "running" }),
+    );
+    renderSessionScreen({ client: { submitTurn } });
+    const composer = screen.getByLabelText(
+      "Message Vis",
+    ) as HTMLTextAreaElement;
+    fireEvent.input(composer, { target: { value: text } });
+    expect(composer.value).toBe(text);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(submitTurn.mock.calls[0]?.[1]).toBe(text);
+  });
+
   it("clears the native editor immediately when a message is sent", () => {
     const submitTurn = vi.fn((_sid: string, _request: string) =>
       Promise.resolve({ turn_id: "native-send", status: "running" }),

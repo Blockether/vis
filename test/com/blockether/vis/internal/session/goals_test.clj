@@ -142,6 +142,82 @@ and newlines" 40]
         (is (= :error (:slash/status (invoke raw))) raw)
         (is (= before (goals/check-goal env)) raw)))))
 
+;; Regression: iOS smart punctuation turns the two hyphens in goal flags into a dash.
+(deftest smart-punctuation-flags-test
+  (let [{:keys [db-info session-id] :as env}
+        (environment)
+
+        invoke
+        #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})
+
+        objective
+        "Keep — prose, – ranges, \"quotes\"
+and --code intact"]
+
+    (doseq [dash
+            ["--" "—" "–"]
+
+            raw
+            [(str "/goal " dash "budget 3 " objective)
+             (str "/goal " objective " " dash "budget 3")]]
+
+      (is (= :ok (:slash/status (invoke raw))) raw)
+      (let [goal (goals/check-goal env)]
+        (is (= objective (get goal "objective")) raw)
+        (is (= 3 (get goal "iteration_budget")) raw)
+        (doseq [[flag status run?] [["pause" "paused" false] ["resume" "active" true]
+                                    ["cancel" "cancelled" false]]]
+          (let [result (invoke (str "/goal " dash flag))
+                updated (goals/check-goal env)]
+
+            (is (= :ok (:slash/status result)))
+            (is (= run? (get-in result [:slash/data :goal-run?])))
+            (is (= status (get updated "status")))
+            (is (= (get goal "id") (get updated "id")))
+            (is (= objective (get updated "objective")))
+            (is (= 3 (get updated "iteration_budget")))))))))
+
+(deftest smart-punctuation-keeps-objective-literal-test
+  (let [{:keys [db-info session-id] :as env}
+        (environment)
+
+        invoke
+        #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})]
+
+    (doseq [dash
+            ["—" "–"]
+
+            [args objective budget]
+            [[(str "-- Keep " dash "budget 100") (str "Keep " dash "budget 100") nil]
+             [(str dash "budget 3 -- " dash "pause") (str dash "pause") 3]
+             [(str "Explain \"" dash "budget 100\"") (str "Explain \"" dash "budget 100\"") nil]
+             [(str "Keep word" dash "budget 100") (str "Keep word" dash "budget 100") nil]
+             [(str "Keep " dash "pause in prose") (str "Keep " dash "pause in prose") nil]
+             [(str dash " Leading punctuation") (str dash " Leading punctuation") nil]]]
+
+      (let [raw (str "/goal " args)]
+        (is (= :ok (:slash/status (invoke raw))) raw)
+        (is (= objective (get (goals/check-goal env) "objective")) raw)
+        (is (= budget (get (goals/check-goal env) "iteration_budget")) raw)))
+    (doseq [dash
+            ["—" "–"]
+
+            args
+            [(str dash "budget") (str dash "budget 3") (str "Work " dash "budget")
+             (str "Work " dash "budget 0") (str dash "budget -1 Work")
+             (str "Work " dash "budget many") (str "Work " dash "budget 1.5")
+             (str "Work " dash "budget 9007199254740992") (str "--budget 2 Work " dash "budget 3")
+             (str dash "budget 2 Work --budget 3")]]
+
+      (let [before
+            (goals/check-goal env)
+
+            raw
+            (str "/goal " args)]
+
+        (is (= :error (:slash/status (invoke raw))) raw)
+        (is (= before (goals/check-goal env)) raw)))))
+
 (deftest goal-time-measures-active-wall-clock-test
   (let [{:keys [db-info session-id] :as env}
         (environment)

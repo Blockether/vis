@@ -45,8 +45,11 @@ export const ComposerInput: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
     const composer = await page.findByRole("textbox", { name: "Message Vis" });
+    await expect(composer).toHaveAttribute("spellcheck", "false");
+    await expect(composer).toHaveAttribute("autocorrect", "off");
+    await expect(composer).toHaveAttribute("autocapitalize", "none");
     const text =
-      "Piszę po polsku: żółć, gęślą jaźń. Typing in English stays native too.";
+      'Keep --budget, — prose, – ranges and "quotes" unchanged. Żółć, gęślą jaźń.';
     await userEvent.type(composer, text);
     await expect(composer).toHaveValue(text);
     await expect((composer as HTMLTextAreaElement).defaultValue).toBe("");
