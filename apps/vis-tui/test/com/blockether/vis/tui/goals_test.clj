@@ -163,15 +163,23 @@
           frame
           (capture/capture! {:cols 60
                              :rows 20
-                             :keys [:esc]
+                             :keys [:down :down :down :down :esc]
                              :paint! (fn [{:keys [screen]}]
                                        (dialogs/text-view-dialog! screen "Session goal" lines))})]
 
       (expect (some #{(get goal "objective")} lines))
       (expect (some #{(get blocked "reason")} lines))
       (expect (some #{"Iterations: 12 / 30"} lines))
-      (expect (some #{"12,400 tokens used (statistic)"} lines))
+      (expect (some #{"Time in goal: 32.0s"} lines))
+      (expect (not-any? #(str/includes? % "tokens") lines))
       (expect (some #{"Iterations: 12 / unlimited"}
                     (footer/goal-detail-lines (assoc goal "iteration_budget" nil))))
       (expect (nil? (:error frame)))
-      (expect (str/includes? (capture/frame-text frame) "Status: Blocked")))))
+      (expect (str/includes? (capture/frame-text frame :first) "Status: Blocked"))
+      (expect (str/includes? (capture/frame-text frame) "Time in goal: 32.0s"))))
+  (it "adds uncheckpointed active wall time but freezes all inactive states"
+      (expect (some #{"Time in goal: 35.0s"} (footer/goal-detail-lines goal 3002)))
+      (expect (some #{"Time in goal: 32.0s"} (footer/goal-detail-lines goal 0)))
+      (doseq [status ["paused" "blocked" "budget_limited" "complete" "cancelled"]]
+        (expect (some #{"Time in goal: 32.0s"}
+                      (footer/goal-detail-lines (assoc goal "status" status) 100000))))))

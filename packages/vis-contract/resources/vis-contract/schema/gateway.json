@@ -642,7 +642,8 @@
         },
         "time_used_ms": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Accumulated active wall-clock milliseconds through updated_at, including tools. While status is active, add max(0, now - updated_at) for the live duration. Inactive time is excluded; resume preserves this count and replacement resets it."
         },
         "revision": {
           "type": "integer",

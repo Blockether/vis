@@ -34,9 +34,16 @@
 
       (if (= before candidate)
         before
-        (let [after (assoc candidate
-                      "revision" (inc (long (get before "revision" 0)))
-                      "updated_at" (util/now-ms))]
+        (let [now (util/now-ms)
+              after (cond-> (assoc candidate
+                              "revision" (inc (long (get before "revision" 0)))
+                              "updated_at" now)
+                      (and (= (get before "id") (get candidate "id"))
+                           (= "active" (get before "status")))
+                      (assoc "time_used_ms"
+                        (+ (long (get before "time_used_ms"))
+                           (max 0 (- now (long (get before "updated_at")))))))]
+
           (when-not (document/valid-json? "gateway" "session_goal" after)
             (fail! "Invalid goal state."))
           (if (persistence/db-compare-session-goal! db sid (get before "revision" 0) after)
@@ -133,9 +140,9 @@
 (defn account!
   "Attribute one loop response to the goal/version current when its request started.
    Includes empty/prose responses and the same turn's completion summary. Provider
-   retries inside that request are not separate loop iterations. Tokens and provider
-   time are statistics only. The last iteration's tools run before the next-request gate."
-  [env started-goal usage elapsed-ms]
+   retries inside that request are not separate loop iterations. Tokens are statistics
+   only. Active wall time is checkpointed by every mutation, including tool boundaries."
+  [env started-goal usage]
   (when (contains? #{"active" "complete" "blocked"} (get started-goal "status"))
     (change! (:db-info env)
              (:session-id env)
@@ -147,8 +154,7 @@
                      (update "tokens_used"
                              +
                              (long (or (:input-tokens usage) 0))
-                             (long (or (:output-tokens usage) 0)))
-                     (update "time_used_ms" + (max 0 (long elapsed-ms))))
+                             (long (or (:output-tokens usage) 0))))
                  goal)))))
 
 (defn finish-turn!
@@ -230,7 +236,8 @@ iteration_budget is a count of loop iterations, not tokens; null means no goal-s
 iterations_used counts each model response and its tools, including prose, empty responses
 and the completion summary. Provider retries within one request are not separate iterations.
 The final allowed iteration may execute its tools and update_goal; no next request starts
-at the limit. Tokens and provider time are statistics only. Resume preserves usage.
+at the limit. Tokens are statistics only. time_used_ms records active wall time through
+updated_at, including tool execution. Inactive goals stop the clock. Resume preserves usage.
 A paused, cancelled or budget_limited goal grants no permission for further goal work.
 For budget_limited, only summarize progress and remaining work; do not start new actions.
 Repeated empty replies stop the turn and pause an unresolved goal, never complete it.
@@ -253,7 +260,8 @@ New user instructions and a user stop always take priority over continuation.")
        `reason`, `created_at`, `updated_at`. Budget and usage are loop iterations, not tokens."})])
 
 (defn slash!
-  "Parse /goal [--budget N] [--] <objective>, with N in loop iterations, or --pause/--resume/--cancel.
+  "Parse /goal with --budget N before or after the objective, or --pause/--resume/--cancel.
+   N is in loop iterations. A leading -- on the objective preserves all following text.
    Parse raw text so quotes and newlines in the user's objective stay intact."
   [ctx]
   (let [db
@@ -266,34 +274,42 @@ New user instructions and a user stop always take priority over continuation.")
         (str/trim (str/replace-first (or (:command/raw ctx) "") #"^\s*/goal(?:\s+|$)" ""))]
 
     (try
-      (let [action
-            ({"--pause" :pause "--resume" :resume "--cancel" :cancel} raw)
+      (let
+        [action
+         ({"--pause" :pause "--resume" :resume "--cancel" :cancel} raw)
 
-            [_ budget objective]
-            (re-matches #"(?s)^--budget\s+(\d+)\s+(.*)$" raw)
+         [prefix leading-budget remaining]
+         (re-matches #"(?s)^--budget(?:\s+(\S+))?(?:\s+(.*))?$" raw)
 
-            text
-            (or objective raw)
+         text
+         (or remaining raw)
 
-            text
-            (if (str/starts-with? text "-- ") (subs text 3) text)
+         [_ literal]
+         (re-matches #"(?s)^--(?:\s+|$)(.*)$" text)
 
-            _
-            (when (and (not action)
-                       (nil? objective)
-                       (str/starts-with? raw "--")
-                       (not (str/starts-with? raw "-- ")))
-              (fail! "Use /goal [--budget N] [--] <objective>, or --pause/--resume/--cancel."))
+         [suffix objective trailing-budget]
+         (when-not literal (re-matches #"(?s)^(.*?)\s+--budget(?:\s+(\S+))?$" text))
 
-            goal
-            (if action
-              (control! db sid action)
-              (set-goal! db
-                         sid
-                         text
-                         (when budget
-                           (or (parse-long budget)
-                               (fail! "Goal iteration budget is too large.")))))]
+         text
+         (or literal objective text)
+
+         _
+         (when (and prefix suffix)
+           (fail! "Specify --budget only once, before or after the objective."))
+
+         _
+         (when (and (not action) (nil? literal) (str/starts-with? text "--"))
+           (fail!
+             "Use /goal [--budget N] [--] <objective> or /goal <objective> --budget N, or --pause/--resume/--cancel."))
+
+         budget
+         (when (or prefix suffix)
+           (let [value (or leading-budget trailing-budget)]
+             (or (when (and value (re-matches #"\d+" value)) (parse-long value))
+                 (fail! "Goal iteration budget must be a positive integer."))))
+
+         goal
+         (if action (control! db sid action) (set-goal! db sid text budget))]
 
         {:slash/status :ok
          :slash/title (str "Goal: " (get goal "status"))

@@ -619,23 +619,28 @@
 (defn- goal-count [n] (String/format Locale/ROOT "%,d" (object-array [(long n)])))
 
 (defn goal-detail-lines
-  "Full persisted objective, state and measured usage for the existing read-only viewer."
-  [goal]
-  (if-not goal
-    ["No session goal. Use /goal <objective> to create one."]
-    (cond-> [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
-             (get goal "objective") ""
-             (str "Iterations: " (goal-count (get goal "iterations_used"))
-                  " / " (if-let [budget (get goal "iteration_budget")]
-                          (goal-count budget)
-                          "unlimited"))
-             (str (goal-count (get goal "tokens_used")) " tokens used (statistic)")
-             (str "Provider time: " (or (fmt/format-duration (get goal "time_used_ms")) "0s"))]
-      (seq (get goal "reason"))
-      (into ["" (get goal "reason")])
+  "Full objective, state, iterations and active wall time at the time the viewer opens."
+  ([goal] (goal-detail-lines goal (System/currentTimeMillis)))
+  ([goal now-ms]
+   (if-not goal
+     ["No session goal. Use /goal <objective> to create one."]
+     (cond-> [(str "Status: " (get gateway-contract/session-goal-labels (get goal "status"))) ""
+              (get goal "objective") ""
+              (str "Iterations: " (goal-count (get goal "iterations_used"))
+                   " / " (if-let [budget (get goal "iteration_budget")]
+                           (goal-count budget)
+                           "unlimited"))
+              (str "Time in goal: "
+                   (fmt/format-duration (+ (long (get goal "time_used_ms"))
+                                           (if (= "active" (get goal "status"))
+                                             (max 0
+                                                  (- (long now-ms) (long (get goal "updated_at"))))
+                                             0))))]
+       (seq (get goal "reason"))
+       (into ["" (get goal "reason")])
 
-      true
-      (into ["" "Use /goal --pause, --resume or --cancel in the composer."]))))
+       true
+       (into ["" "Use /goal --pause, --resume or --cancel in the composer."])))))
 
 (defn limits-detail-lines
   "Provider quota summary and reset windows from the current session's cached report."

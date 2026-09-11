@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { STORY_GOAL } from "../dev/story-data";
@@ -61,7 +61,8 @@ describe("SessionHeader", () => {
     expect(screen.getByRole("dialog", { name: "Session goal" })).toBeInTheDocument();
     expect(screen.getByText(goal.reason)).toBeInTheDocument();
     expect(screen.getByText("Iterations: 12 / 30")).toBeInTheDocument();
-    expect(screen.getByText(/12,400 tokens used/)).toHaveTextContent("statistic");
+    expect(screen.getByText("Time in goal: 32s")).toBeInTheDocument();
+    expect(screen.queryByText(/tokens used/)).not.toBeInTheDocument();
     expect(screen.queryByText(/100,000 budget/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close session goal" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -74,5 +75,34 @@ describe("SessionHeader", () => {
     expect(screen.getByText("Iterations: 30 / 30")).toBeInTheDocument();
     expect(screen.getByText("Iteration limit reached")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close session goal" }));
+  });
+  it("ticks active wall time, freezes inactive goals and cleans up the clock", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(STORY_GOAL.updated_at + 3_693_000);
+    try {
+      const { rerender, unmount } = render(<SessionHeader model={{ ...model, goal: STORY_GOAL }} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+      fireEvent.click(screen.getByRole("button", { name: /^Goal:/ }));
+      expect(screen.getByText("Time in goal: 1h 2m 5s")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(2_000));
+      expect(screen.getByText("Time in goal: 1h 2m 7s")).toBeInTheDocument();
+      for (const status of ["paused", "blocked", "budget_limited", "complete", "cancelled"] as const) {
+        rerender(<SessionHeader model={{ ...model, goal: { ...STORY_GOAL, status, time_used_ms: 3_727_000 } }} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+        act(() => vi.advanceTimersByTime(5_000));
+        expect(screen.getByText("Time in goal: 1h 2m 7s")).toBeInTheDocument();
+      }
+      rerender(<SessionHeader model={{ ...model, goal: { ...STORY_GOAL, time_used_ms: 3_727_000, updated_at: Date.now() } }} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(screen.getByText("Time in goal: 1h 2m 8s")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Close session goal" }));
+      act(() => vi.advanceTimersByTime(10_000));
+      fireEvent.click(screen.getByRole("button", { name: /^Goal:/ }));
+      expect(screen.getByText("Time in goal: 1h 2m 18s")).toBeInTheDocument();
+      rerender(<SessionHeader model={{ ...model, goal: { ...STORY_GOAL, id: "replacement", time_used_ms: 0, updated_at: Date.now() + 1_000 } }} commands={{ back: vi.fn(), toggleArtifacts: vi.fn() }} />);
+      expect(screen.getByText("Time in goal: 0s")).toBeInTheDocument();
+      unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

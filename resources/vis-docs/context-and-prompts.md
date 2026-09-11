@@ -70,14 +70,17 @@ messages never create one. A session has one goal; setting another replaces it.
 ```text
 /goal Implement the change and verify all acceptance criteria
 /goal --budget 30 -- Implement the change and verify it
+/goal Implement the change and verify it --budget 30
 /goal --pause
 /goal --resume
 /goal --cancel
 ```
 
-`--` separates options from the objective. Quotes and newlines remain part of the
-objective. Pause/resume/cancel use the normal command queue; use **Stop** to interrupt
-current work immediately. An interrupted or failed goal turn pauses the goal.
+`--budget N` may precede or follow the objective. A leading `--` on the objective
+preserves everything after it literally, including any `--budget` text. Quotes and
+newlines remain part of the objective. Pause/resume/cancel use the normal command queue;
+use **Stop** to interrupt current work immediately. An interrupted or failed goal turn
+pauses the goal.
 
 In the SDK, `session.goal("Implement and verify the change", iteration_budget=30)`
 returns the same `Turn` as `session.send()`. Use `turn.wait()` or its event stream.
@@ -124,7 +127,14 @@ The canonical fields are `iteration_budget` (positive integer or `null`) and
 `iterations_used` (nonnegative integer). Pause/resume preserves usage. Exhausted goals
 cannot resume without a newly specified goal and iteration budget. `tokens_used` is a
 statistic only, including measured input, output and cached input; it never limits goal
-execution. `time_used_ms` records provider time, excluding tool execution time.
+execution.
+
+`time_used_ms` records accumulated active wall-clock time through `updated_at`, including
+model requests, tool execution and time between iterations. While the goal is active,
+its current duration is `time_used_ms + max(0, now - updated_at)` in milliseconds.
+The clock stops for paused, blocked, iteration-limited, complete and cancelled goals;
+resuming continues from the saved duration, and replacing a goal resets it. Companion
+updates the visible clock every second while the goal details are open.
 
 ### Session data and interfaces
 
@@ -137,8 +147,8 @@ the current goal in `subscription.ready`, including when the session is idle.
 The Companion header shows the goal beside the connection status. The TUI has separate
 `Limits` and `Goal: <status>` buttons in the second footer row, without an extra header
 row. Limits opens the provider quota and reset details. Goal opens the full objective,
-status, iterations used and their limit, token statistics and completion evidence or
-blocker. Counts stay in those details, not the button label. No toggle is required:
+status, iterations used and their limit, time in goal and completion evidence or
+blocker. Token counts are not shown in goal details. No toggle is required:
 the Goal button appears when a session has a goal. Statuses are active, paused, blocked,
 iteration-limit reached (`budget_limited`), complete and cancelled.
 

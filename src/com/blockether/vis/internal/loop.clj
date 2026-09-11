@@ -5397,7 +5397,7 @@
                                 :thinking thinking}
                                code-observation))
           api-usage (:api-usage ask-result)
-          _ (goals/account! environment goal-at-request-start api-usage provider-duration-ms)
+          _ (goals/account! environment goal-at-request-start api-usage)
           actual-provider (actual-llm-provider resolved-model ask-result)
           actual-model (actual-llm-model resolved-model ask-result)
           ;; Blockether/vis#174: publish measured input before Python can fold this request.

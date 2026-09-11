@@ -95,7 +95,8 @@
 
                     svar/ask-code!
                     (fn [_ _]
-                      (swap! requests inc)
+                      (when (> (swap! requests inc) 1)
+                        (throw (AssertionError. "Exceeded trailing iteration budget")))
                       {:stop-reason :tool-calls
                        :api-usage {:input-tokens 100000 :output-tokens 5}
                        :tool-calls [{:id "last-tools"
@@ -105,7 +106,7 @@
                                      :name "python_execution"
                                      :input {:code "print('second tool in same iteration')"}}]})]
 
-        (let [result (lp/run-turn! env "/goal --budget 1 Bounded task" {})]
+        (let [result (lp/run-turn! env "/goal Bounded task --budget 1" {})]
           (is (= :success (:status result)))
           (is (= 1 @requests))
           (is (= 2 (count @executions)))

@@ -46,7 +46,8 @@ export const ActiveGoal: Story = {
     const page = within(document.body);
     expect(page.getByRole("dialog", { name: "Session goal" })).toBeVisible();
     expect(page.getByText("Iterations: 12 / 30")).toBeVisible();
-    expect(page.getByText(/tokens used \(statistic\)/)).toBeVisible();
+    expect(page.getByText(/^Time in goal:/)).toBeVisible();
+    expect(page.queryByText(/tokens used/)).toBeNull();
     await userEvent.click(page.getByRole("button", { name: "Close session goal" }));
   },
 };

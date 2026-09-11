@@ -112,7 +112,8 @@
   [{:slash/name "goal"
     :slash/doc
     "Set an explicit goal with an optional iteration budget, or pause, resume or cancel it."
-    :slash/usage "/goal [--budget ITERATIONS] [--] <objective> | --pause | --resume | --cancel"
+    :slash/usage
+    "/goal [--budget ITERATIONS] [--] <objective> | <objective> --budget ITERATIONS | --pause | --resume | --cancel"
     :slash/prompt-arg "Objective"
     :slash/requires #{:session}
     :slash/run-fn goals/slash!}

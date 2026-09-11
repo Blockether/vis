@@ -3,6 +3,7 @@
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.goals :as goals]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (h/use-mem-store!)
@@ -41,7 +42,7 @@
     (is (= "paused" (get (goals/control! db-info session-id :pause) "status")))
     (is (rejected? #(goals/update-goal env (get first-goal "id") 1 "complete" "Stale evidence")))
     (is (= "active" (get (goals/control! db-info session-id :resume) "status")))
-    (goals/account! env first-goal {:input-tokens 10 :output-tokens 5} 20)
+    (goals/account! env first-goal {:input-tokens 10 :output-tokens 5})
     (is (= 0 (get (goals/check-goal env) "tokens_used")))
     (let [replacement (goals/set-goal! db-info session-id "Second" nil)]
       (is (not= (get first-goal "id") (get replacement "id")))
@@ -57,14 +58,14 @@
         goal
         (goals/set-goal! db-info session-id "Bounded work" 1)]
 
-    (goals/account! env goal {:input-tokens 10 :output-tokens 7 :cache-read-tokens 8} 23)
+    (goals/account! env goal {:input-tokens 10 :output-tokens 7 :cache-read-tokens 8})
     (is (= "active" (get (goals/check-goal env) "status")))
     (is (nil? (goals/halt-result env goal)))
     (is (some? (goals/request-halt-result env goal)))
     (let [limited (goals/check-goal env)]
       (is (= 1 (get limited "iterations_used")))
       (is (= 17 (get limited "tokens_used")))
-      (is (= 23 (get limited "time_used_ms")))
+      (is (= (- (get limited "updated_at") (get goal "updated_at")) (get limited "time_used_ms")))
       (is (= "budget_limited" (get limited "status")))
       (is (nil? (goals/completion-error env)))
       (is (rejected? #(goals/control! db-info session-id :resume)))
@@ -78,15 +79,15 @@
         goal
         (goals/set-goal! db-info session-id "Bounded" 3)]
 
-    (goals/account! env goal nil 0)
+    (goals/account! env goal nil)
     (goals/control! db-info session-id :pause)
     (let [resumed (goals/control! db-info session-id :resume)]
       (is (= 1 (get resumed "iterations_used")))
       (is (= 3 (get resumed "iteration_budget")))
-      (goals/account! env resumed nil 0)
+      (goals/account! env resumed nil)
       (is (= 2 (get (goals/check-goal env) "iterations_used")))
       (is (nil? (goals/request-halt-result env resumed)))
-      (goals/account! env resumed nil 0)
+      (goals/account! env resumed nil)
       (is (some? (goals/request-halt-result env resumed))))
     (let [replacement (goals/set-goal! db-info session-id "New scope" nil)]
       (is (= 0 (get replacement "iterations_used")))
@@ -112,6 +113,102 @@ and newlines" (get (goals/check-goal db-info session-id) "objective")))
     (doseq [raw ["/goal" "/goal --budget 0 work" "/goal --budget 999999999999999999999 work"
                  "/goal --budget -1 work" "/goal --unknown"]]
       (is (= :error (:slash/status (invoke raw))) raw))))
+
+(deftest trailing-budget-parsing-test
+  (let [{:keys [db-info session-id] :as env}
+        (environment)
+
+        invoke
+        #(goals/slash! {:db-info db-info :session/id session-id :command/raw %})]
+
+    ;; A trailing budget must not silently become an unlimited objective.
+    (doseq [[raw objective budget] [["/goal Verify the change --budget 100" "Verify the change" 100]
+                                    ["/goal Keep \"quotes\"
+and newlines    --budget        40"
+                                     "Keep \"quotes\"
+and newlines" 40]
+                                    ["/goal -- Keep --budget 100" "Keep --budget 100" nil]
+                                    ["/goal --budget 3 -- Keep --budget 100" "Keep --budget 100" 3]
+                                    ["/goal Explain \"--budget 100\"" "Explain \"--budget 100\""
+                                     nil]]]
+      (is (= :ok (:slash/status (invoke raw))) raw)
+      (is (= objective (get (goals/check-goal env) "objective")) raw)
+      (is (= budget (get (goals/check-goal env) "iteration_budget")) raw))
+    (doseq [raw ["/goal Work --budget" "/goal Work --budget 0" "/goal Work --budget -1"
+                 "/goal Work --budget many" "/goal Work --budget 1.5"
+                 "/goal Work --budget 9007199254740992" "/goal Work --budget 999999999999999999999"
+                 "/goal --budget 2 Work --budget 3"]]
+      (let [before (goals/check-goal env)]
+        (is (= :error (:slash/status (invoke raw))) raw)
+        (is (= before (goals/check-goal env)) raw)))))
+
+(deftest goal-time-measures-active-wall-clock-test
+  (let [{:keys [db-info session-id] :as env}
+        (environment)
+
+        now
+        (atom 1000)]
+
+    (with-redefs [util/now-ms (fn ^long []
+                                (long @now))]
+      (let [goal (goals/set-goal! db-info session-id "Measure the whole goal" nil)]
+        (reset! now 6000)
+        (goals/account! env goal nil)
+        (is (= 5000 (get (goals/check-goal env) "time_used_ms")))
+        ;; Time in tools between model responses belongs to the goal as well.
+        (reset! now 9000)
+        (is (= 8000 (get (goals/control! db-info session-id :pause) "time_used_ms")))
+        (reset! now 90000)
+        (let [resumed (goals/control! db-info session-id :resume)]
+          (is (= 8000 (get resumed "time_used_ms")))
+          (reset! now 95000)
+          (is (= 13000
+                 (get (goals/update-goal env
+                                         (get resumed "id")
+                                         (get resumed "version")
+                                         "blocked"
+                                         "Awaiting input.")
+                      "time_used_ms")))))
+      (reset! now 100000)
+      (let [resumed (goals/control! db-info session-id :resume)]
+        (reset! now 105000)
+        (let [done (goals/update-goal env
+                                      (get resumed "id")
+                                      (get resumed "version")
+                                      "complete"
+                                      "All checks passed.")]
+          (is (= 18000 (get done "time_used_ms")))
+          (reset! now 200000)
+          (goals/account! env done nil)
+          (is (= 18000 (get (goals/check-goal env) "time_used_ms")))
+          (is (= 18000 (get (goals/control! db-info session-id :cancel) "time_used_ms")))))
+      (is (= 0 (get (goals/set-goal! db-info session-id "New goal" nil) "time_used_ms"))))))
+
+(deftest goal-time-stops-at-budget-cancellation-and-failure-test
+  (doseq [stop [:budget :cancel :error]]
+    (let [{:keys [db-info session-id] :as env} (environment)
+          now (atom 1000)]
+
+      (with-redefs [util/now-ms (fn ^long []
+                                  (long @now))]
+        (let [goal (goals/set-goal! db-info session-id "Stop the clock" 1)]
+          (reset! now 6000)
+          (goals/account! env goal nil)
+          (reset! now 9000)
+          (case stop
+            :budget
+            (goals/request-halt-result env goal)
+
+            :cancel
+            (goals/control! db-info session-id :cancel)
+
+            :error
+            (goals/finish-turn! env goal :error))
+          (let [stopped (goals/check-goal env)]
+            (is (= 8000 (get stopped "time_used_ms")))
+            (reset! now 200000)
+            (goals/request-halt-result env goal)
+            (is (= stopped (goals/check-goal env)))))))))
 
 (deftest model-cannot-create-or-expand-test
   (let [{:keys [db-info session-id] :as env} (environment)]

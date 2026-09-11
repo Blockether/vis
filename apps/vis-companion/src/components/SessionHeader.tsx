@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import gatewayContract from "../../../../packages/vis-contract/resources/vis-contract/gateway.json";
 import type { SessionGoal } from "../lib/types";
 import { useDeskRail } from "../lib/fit-rows";
@@ -7,6 +7,22 @@ import { ArtifactsChip } from "./ArtifactsSheet";
 import { BackButton, Button, CopyChip, DialogFrame, Modal, SidebarToggle } from "./ui";
 
 const GOAL_STATUS = gatewayContract.session_goal.status_labels;
+
+/** Active wall time includes tools; inactive goals keep their persisted duration. */
+function GoalTime({ goal }: { goal: SessionGoal }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (goal.status !== "active") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [goal.status]);
+  const elapsed = goal.time_used_ms + (goal.status === "active" ? Math.max(0, now - goal.updated_at) : 0);
+  const seconds = Math.floor(elapsed / 1_000);
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor(seconds / 60) % 60;
+  const duration = `${hours ? `${hours}h ` : ""}${hours || minutes ? `${minutes}m ` : ""}${seconds % 60}s`;
+  return <p className="text-ui text-dialog-hint">Time in goal: {duration}</p>;
+}
 
 export type SessionHeaderModel = Readonly<{
   title: string;
@@ -114,9 +130,7 @@ export function SessionHeader({
               <p className="text-ui text-dialog-hint">
                 Iterations: {goal.iterations_used.toLocaleString("en-US")} / {goal.iteration_budget?.toLocaleString("en-US") ?? "unlimited"}
               </p>
-              <p className="text-ui text-dialog-hint">
-                {goal.tokens_used.toLocaleString("en-US")} tokens used (statistic)
-              </p>
+              <GoalTime key={goal.id} goal={goal} />
               {goal.reason && <p className="whitespace-pre-wrap break-words">{goal.reason}</p>}
               <p className="text-ui text-dialog-hint">Use /goal --pause, --resume or --cancel in the composer.</p>
             </div>
