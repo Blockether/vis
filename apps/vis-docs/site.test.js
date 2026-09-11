@@ -76,23 +76,25 @@ test('the canonical stylesheet can load its embedded store icons without allowin
     expect(sources).not.toContain('data:');expect(sources).not.toContain('unsafe-inline');
   }
 });
-test('Wrangler serves the home page, HTML paths and assets with production routing and headers',async()=>{
+test('Wrangler serves the home page, HTML paths and assets with production routing and headers',async({onTestFailed})=>{
   const site=createTestHarness({workers:[{configPath:'./wrangler.jsonc'}]});
+  onTestFailed(()=>site.debug());
   try {
     await site.listen();
     for(const path of ['/','/index.html','/extending.html','/assets/theme.css','/assets/docs.js','/assets/prism.min.js','/assets/fonts/jetbrains-mono.woff2','/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png','/site.webmanifest','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/llms.txt','/llms-full.txt','/extending.md']) {
       const response=await site.fetch(path,{redirect:'manual'});
       expect(response.status,path).toBe(200);
       expect(response.headers.get('Content-Security-Policy'),path).toBe(security['Content-Security-Policy']);
-      if(path==='/') expect(await response.text()).toBe(readFileSync('dist/index.html','utf8'));
+      // Drain every response: leaving asset streams open can block the harness teardown.
+      expect(Buffer.from(await response.arrayBuffer()).equals(readFileSync('dist'+(path==='/'?'/index.html':path))),path).toBe(true);
       if(path.endsWith('.xml')) expect(response.headers.get('content-type')).toMatch(/(?:application|text)\/xml/);
       if(path.endsWith('.txt')) expect(response.headers.get('content-type')).toContain('text/plain');
     }
     const head=await site.fetch('/',{method:'HEAD'});expect(head.status).toBe(200);expect(await head.text()).toBe('');
-    expect((await site.fetch('/missing.html')).status).toBe(404);
+    const missing=await site.fetch('/missing.html');expect(missing.status).toBe(404);await missing.arrayBuffer();
     // The isolated harness has no schema: catalog failure must not break static docs.
     const catalog=await site.fetch('/extensions/');expect(catalog.status).toBe(503);
     expect(await catalog.text()).toContain('id="catalog-data"');
-    expect((await site.fetch('/')).status).toBe(200);
+    const home=await site.fetch('/');expect(home.status).toBe(200);expect(await home.text()).toBe(readFileSync('dist/index.html','utf8'));
   } finally {await site.close();}
 });
