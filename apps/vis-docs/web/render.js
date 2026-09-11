@@ -15,11 +15,11 @@ export function installCommand(item) {
 const dateLabel = value => Number.isNaN(Date.parse(value))?'Date unavailable':new Intl.DateTimeFormat('en',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(value));
 export function filters(search='') {
   const query=new URLSearchParams(search);
-  return {q:query.get('q') || '', category:Object.hasOwn(categories,query.get('category'))?query.get('category'):'all', sort:Object.hasOwn(sorts,query.get('sort'))?query.get('sort'):'stars', view:query.get('view')==='list'?'list':'grid'};
+  return {q:query.get('q') || '', category:Object.hasOwn(categories,query.get('category'))?query.get('category'):'all', sort:Object.hasOwn(sorts,query.get('sort'))?query.get('sort'):'stars'};
 }
 export function filterURL(state) {
   const query=new URLSearchParams();
-  for(const [key,value] of Object.entries(state)) if(value && !({category:'all',sort:'stars',view:'grid'}[key]===value)) query.set(key,value);
+  for(const [key,value] of Object.entries(state)) if(value && !({category:'all',sort:'stars'}[key]===value)) query.set(key,value);
   return '/extensions/'+(query.size?'?'+query:'');
 }
 export function visibleItems(items,state) {
@@ -61,8 +61,8 @@ export function shellHTML({items=[], item=null, search='', error='', detailError
           <h1>Extension Center</h1><p>Find tools, providers and workflows for Vis. Browse public GitHub repositories and install a reviewed commit.</p>
           <div class="intro-actions"><button id="submit-open" class="primary" type="button">Add a repository</button></div>
           <h2 id="explore">Explore extensions</h2>
-          <form class="toolbar" id="filters" method="get" action="/extensions/"><input type="hidden" name="category" value="${state.category}"><div class="search-field"><label for="search" class="sr-only">Search extensions</label><input id="search" name="q" value="${escapeHTML(state.q)}" type="search" autocomplete="off" placeholder="Search extensions, authors, topics…"><kbd aria-hidden="true">/</kbd></div><label class="sort-field"><span class="sr-only">Sort extensions</span><select id="sort" name="sort" aria-label="Sort extensions">${Object.entries(sorts).map(([value,label])=>`<option value="${value}"${state.sort===value?" selected":""}>${label}</option>`).join("")}</select></label><div class="view-switch" role="group" aria-label="Catalog view"><button id="view-grid" type="submit" name="view" value="grid" aria-pressed="${state.view==="grid"}" aria-label="Grid view">Grid</button><button id="view-list" type="submit" name="view" value="list" aria-pressed="${state.view==="list"}" aria-label="List view">List</button></div><noscript><button type="submit">Apply filters</button></noscript></form>
-          <p id="catalog-status" role="status">${error?escapeHTML(error)+' <a id="retry" href="/extensions/">Retry</a>':visibleItems(items,state).length+" extensions"}</p><section id="results" aria-label="Extensions" data-view="${state.view}">${error?"":cardsHTML(items,state)}</section>
+          <form class="toolbar" id="filters" method="get" action="/extensions/"><input type="hidden" name="category" value="${state.category}"><div class="search-field"><label for="search" class="sr-only">Search extensions</label><input id="search" name="q" value="${escapeHTML(state.q)}" type="search" autocomplete="off" placeholder="Search extensions, authors, topics…"><kbd aria-hidden="true">/</kbd></div><label class="sort-field"><span class="sr-only">Sort extensions</span><select id="sort" name="sort" aria-label="Sort extensions">${Object.entries(sorts).map(([value,label])=>`<option value="${value}"${state.sort===value?" selected":""}>${label}</option>`).join("")}</select></label><noscript><button type="submit">Apply filters</button></noscript></form>
+          <p id="catalog-status" role="status">${error?escapeHTML(error)+' <a id="retry" href="/extensions/">Retry</a>':visibleItems(items,state).length+" extensions"}</p><section id="results" aria-label="Extensions">${error?"":cardsHTML(items,state)}</section>
           <section id="share"><h2>Share a repository</h2><p>Keep your code on GitHub. Add a <code>pyproject.toml</code>, choose its folder and submit the link for moderation. Approved repositories appear in the catalog.</p><p><a href="/extending.html">Read the extension authoring guide</a>.</p></section>
         </section>
         <section id="detail-page"${detail?"":" hidden"}><a id="back-to-catalog" href="${escapeHTML(filterURL(state))}" class="back-button">Back to extensions</a><div id="detail" aria-live="polite">${item?detailHTML(item):detailError?"<h1>Extension unavailable</h1><p>Only approved repositories appear here. Return to the catalog or try again later.</p>":""}</div></section>

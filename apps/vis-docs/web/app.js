@@ -21,11 +21,10 @@ export function mount(container,request=fetch,initial) {
   function closeNavigation() {navigation.checked=false;syncNavigation();}
   navigation.onchange=syncNavigation;mobile.addEventListener('change',syncNavigation);syncNavigation();
   function renderList() {
-    $('#results').innerHTML=cardsHTML(items,state);$('#results').dataset.view=state.view;
+    $('#results').innerHTML=cardsHTML(items,state);
     $('#categories').innerHTML=categoriesHTML(items,state);
     $('#catalog-status').textContent=`${visibleItems(items,state).length} extensions`;
     $('#search').value=state.q;$('#sort').value=state.sort;$('#filters [name=category]').value=state.category;
-    for(const mode of ['grid','list']) $('#view-'+mode).setAttribute('aria-pressed',String(state.view===mode));
   }
   function saveFilters() {window.history.replaceState(null,'',filterURL(state));}
   async function load() {
@@ -52,7 +51,7 @@ export function mount(container,request=fetch,initial) {
   function clearFilters() {state={...state,q:'',category:'all'};renderList();saveFilters();$('#search').focus();}
   $('#search').oninput=()=>{state.q=$('#search').value;renderList();saveFilters();};
   $('#sort').onchange=()=>{state.sort=$('#sort').value;renderList();saveFilters();};
-  $('#filters').onsubmit=event=>{event.preventDefault();state.view=event.submitter?.value||state.view;renderList();saveFilters();};
+  $('#filters').onsubmit=event=>{event.preventDefault();renderList();saveFilters();};
   function removeChallenge() {++challengeRevision;token='';if(widget!==null) {window.turnstile?.remove(widget);widget=null;}}
   async function challenge(action) {
     removeChallenge();const revision=challengeRevision;

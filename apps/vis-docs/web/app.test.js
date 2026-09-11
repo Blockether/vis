@@ -2,6 +2,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { mount, installCommand } from './app.js';
 import fixtures from './catalog.fixture.json';
+import { filters, filterURL, shellHTML } from './render.js';
 import { readFileSync } from 'node:fs';
 const item = fixtures.at(-1);
 const tick = async () => { for (let i=0; i<20; i++) await Promise.resolve(); };
@@ -26,10 +27,10 @@ function change(selector, value, type='input') {
 }
 function names() { return [...document.querySelectorAll('[data-name]')].map(e=>e.dataset.name); }
 
-test('catalog opens as cards, not a selected split pane, and filters by category and author', async () => {
+test('catalog opens as responsive results, not a selected split pane, and filters by category and author', async () => {
   setup(); await tick();
   expect($('#detail-page').hidden).toBe(true);
-  expect($('#results').dataset.view).toBe('grid');
+  expect($('#results').hasAttribute('data-view')).toBe(false);
   expect(names()).toHaveLength(6);
   $('[data-category="providers"]').click();
   expect(names()).toEqual(['vis-local-models']);
@@ -41,16 +42,55 @@ test('catalog opens as cards, not a selected split pane, and filters by category
   $('#clear-filters').click(); expect(names()).toHaveLength(6);
 });
 
-test('sort and view controls affect real results and persist in the URL', async () => {
+test('sort controls affect real results and persist when the search form is submitted', async () => {
   setup(); await tick();
   expect(names()[0]).toBe('vis-github');
   for (const [sort, expected] of [['updated','vis-greeter'],['newest','vis-greeter'],['name','vis-browser']]) {
     change('#sort',sort,'change'); expect(names()[0]).toBe(expected);
   }
-  $('#view-list').click();
-  expect($('#results').dataset.view).toBe('list');
-  expect($('#view-list').getAttribute('aria-pressed')).toBe('true');
-  expect(window.location.search).toContain('view=list');
+  const submit=new window.Event('submit',{bubbles:true,cancelable:true});
+  $('#filters').dispatchEvent(submit);
+  expect(submit.defaultPrevented).toBe(true);
+  expect(window.location.search).toBe('?sort=name');
+  expect(names()[0]).toBe('vis-browser');
+});
+
+test.each(['grid','list'])('the catalog has no manual layout controls or state, including with view=%s in the URL', async view => {
+  const search='?sort=name&view='+view;
+  const state=filters(search);
+  expect(state).toEqual({q:'',category:'all',sort:'name'});
+  expect(filterURL(state)).toBe('/extensions/?sort=name');
+  const server=document.createElement('div');
+  server.innerHTML=shellHTML({items:fixtures,search});
+  expect(server.querySelector('.view-switch,[name=view],[data-view]')).toBeNull();
+  expect(server.querySelectorAll('.extension-card')).toHaveLength(6);
+  expect([...server.querySelectorAll('[data-category]')].every(link=>!new URL(link.href).searchParams.has('view'))).toBe(true);
+  window.history.replaceState(null,'','/extensions/'+search);
+  setup(); await tick();
+  expect($('.view-switch,[name=view],[data-view]')).toBeNull();
+  expect(names()[0]).toBe('vis-browser');
+  change('#sort','updated','change');
+  expect(window.location.search).toBe('?sort=updated');
+  expect($('.view-switch,[name=view],[data-view]')).toBeNull();
+});
+
+test('catalog CSS uses a two-column grid on wide screens and border-separated rows below it', () => {
+  const style=document.createElement('style');
+  style.textContent=readFileSync('web/style.css','utf8');
+  document.body.append(style);
+  const rules=[...style.sheet.cssRules];
+  expect(rules.find(rule=>rule.selectorText==='#results').style.getPropertyValue('grid-template-columns')).toBe('repeat(2,minmax(0,1fr))');
+  const compact=rules.find(rule=>rule.conditionText==='(max-width: 1200px)');
+  expect(compact).toBeDefined();
+  const compactStyle=selector=>[...compact.cssRules].find(rule=>rule.selectorText===selector).style;
+  expect(compactStyle('#results').getPropertyValue('grid-template-columns')).toBe('1fr');
+  expect(compactStyle('#results').getPropertyValue('gap')).toBe('0px');
+  expect(['top','right','bottom','left'].map(side=>compactStyle('.extension-card').getPropertyValue('border-'+side+'-width'))).toEqual(['0px','0px','1px','0px']);
+  expect(compactStyle('.extension-card:first-child').getPropertyValue('border-top-width')).toBe('1px');
+  const touch=rules.find(rule=>rule.conditionText==='(pointer: coarse)');
+  // WebKit's native select ignores min-height, so the touch target needs an explicit height.
+  expect([...touch.cssRules].find(rule=>rule.selectorText==='.sort-field select')?.style.getPropertyValue('height')).toBe('2.75rem');
+  expect(style.textContent).not.toMatch(/data-view|view-switch/);
 });
 
 test('detail page has GitHub source, a pinned subdirectory command and working back navigation', async () => {

@@ -72,7 +72,7 @@ test('SSR supports search, categories, sort, views and executable-free metadata'
   const items=JSON.parse(readFileSync('web/catalog.fixture.json','utf8'));
   for(const item of items) await fixture.db.prepare('INSERT INTO extensions VALUES (?, ?, ?)').bind(item.id,JSON.stringify(item),item.added_at).run();
   const html=await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/?category=providers&view=list&q=local')).text();
-  expect(html).toContain('data-view="list"');expect(html.match(/class="extension-card"/g)).toHaveLength(1);expect(html).toContain('data-name="vis-local-models"');
+  expect(html).not.toMatch(/data-view=|class="view-switch"|name="view"/);expect(html.match(/class="extension-card"/g)).toHaveLength(1);expect(html).toContain('data-name="vis-local-models"');
   const malicious={...items[0],description:'</script><b>untrusted metadata</b>'};
   await fixture.db.prepare('UPDATE extensions SET metadata=? WHERE id=?').bind(JSON.stringify(malicious),malicious.id).run();await fixture.runtime.purgeCache();
   const detail=await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/'+malicious.id)).text();
