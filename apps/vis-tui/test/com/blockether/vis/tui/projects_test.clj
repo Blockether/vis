@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.header-model :as model]
+            [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -13,6 +14,8 @@
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as theme]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
+            [com.blockether.vis.tui.theme-test :as theme-test]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke MouseAction MouseActionType]
@@ -42,6 +45,20 @@
                         :input (input/paste-text (input/empty-input) "Mobile draft")
                         :pending-sends [{:text "Continue tests" :client-id "queued"}]}}
    :project-sidebar {:open? true :focused? true :index 1 :items [project-a project-b]}})
+
+(defn attention-fixture-db
+  "One waiting tab and a separate running tab in a background project."
+  []
+  (-> (fixture-db)
+      (update :tabs conj {:id :tab-4 :label "Snapshot tests" :project-id "b"})
+      (assoc-in [:tab-locals :tab-4]
+                {:session {:id "b2"} :loading? true :gateway-turn-id "second-background-turn"})
+      (assoc-in [:tab-locals :tab-3 :human-input]
+                (hi/init-form {:id "request-b"
+                               :session-id "b1"
+                               :title "Choose platform"
+                               :fields [{:id "platform" :type :plaintext :label "Platform"}]
+                               :is-cancellable true}))))
 
 (deftest project-view-isolation-test
   (with-redefs [state/app-db (atom (fixture-db))]
@@ -261,13 +278,16 @@
         (is (re-find #"Companion +1 tab · 1 running" text)))
       (when (>= cols 26) (is (str/includes? text "1 running")))
       (when (>= cols 26) (is (str/includes? text "↑↓ select · Enter open")))
-      (is (str/includes? text "C-x w hide · Esc chat"))
-      (is (= :project-add (:kind (.lookup projects/hit-map (- width 7) 0))))
-      (is (= :project-hide (:kind (.lookup projects/hit-map (- width 3) 0))))
+      (is (str/includes? text (if (>= cols 26) "C-x w hide · Esc chat" "C-x w hide")))
+      (is (= :project-add (:kind (.lookup projects/hit-map (- width 8) 1))))
+      (is (= :project-hide (:kind (.lookup projects/hit-map (- width 4) 1))))
+      (is (= "┌" (get-in capture [:frames 0 0 0 :ch])))
+      (is (= "┤" (get-in capture [:frames 0 2 (dec width) :ch])))
+      (is (= "┘" (get-in capture [:frames 0 17 (dec width) :ch])))
       (is (= [:select project-b]
              (projects/key-action
                db
-               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 3))))))))
+               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 5))))))))
 
 (deftest project-sidebar-label-width-test
   (doseq [[cols index label fits?] [[40 0 "vis-python-runtime" true]
@@ -278,7 +298,7 @@
                                  :rows 18
                                  :paint! (fn [{:keys [screen]}]
                                            (projects/paint! (.newTextGraphics screen) db cols 18))})
-          row (nth (str/split-lines (cap/frame-text capture)) (+ 2 index))]
+          row (nth (str/split-lines (cap/frame-text capture)) (+ 4 index))]
 
       (is (nil? (:error capture)))
       (is (= fits? (str/includes? row label)))
@@ -289,10 +309,10 @@
         {:items (vec (repeat 50 project-a)) :index 50}
 
         visible
-        (projects/visible-projects sidebar 16)]
+        (projects/visible-entries {:project-sidebar sidebar} 16)]
 
-    (is (= 11 (count visible)))
-    (is (= 50 (first (last visible))))))
+    (is (= 8 (count visible)))
+    (is (= 50 (:index (last visible))))))
 
 (defn review-terminal
   "Production terminal defaults shared by backend parity and live project review."
@@ -348,24 +368,31 @@
                 vis/get-router
                 (constantly nil)]
 
-    (doseq [cols [24 26 40 80 85 86 96 120 144]]
-      (with-open [html (review-terminal cols 24)
-                  html-screen (doto (TerminalScreen. html) (.startScreen))]
+    (doseq [db
+            [(fixture-db) (attention-fixture-db)]
 
-        (let [capture (cap/capture!
-                        {:cols cols
-                         :rows 24
-                         :paint! (fn [{:keys [^TerminalScreen screen]}]
-                                   (#'screen/render-frame! screen cols 24 (fixture-db) 1000)
-                                   (#'screen/render-frame! html-screen cols 24 (fixture-db) 1000)
-                                   (is (= (for [y (range 24)
-                                                x (range cols)]
+            cols
+            [24 26 40 80 85 86 96 120 144]]
 
-                                            (.getFrontCharacter screen x y))
-                                          (for [y (range 24)
-                                                x (range cols)]
+      (with-open [html
+                  (review-terminal cols 24)
 
-                                            (.getFrontCharacter html-screen x y)))))})]
+                  html-screen
+                  (doto (TerminalScreen. html) (.startScreen))]
+
+        (let [capture (cap/capture! {:cols cols
+                                     :rows 24
+                                     :paint! (fn [{:keys [^TerminalScreen screen]}]
+                                               (#'screen/render-frame! screen cols 24 db 1000)
+                                               (#'screen/render-frame! html-screen cols 24 db 1000)
+                                               (is (= (for [y (range 24)
+                                                            x (range cols)]
+
+                                                        (.getFrontCharacter screen x y))
+                                                      (for [y (range 24)
+                                                            x (range cols)]
+
+                                                        (.getFrontCharacter html-screen x y)))))})]
           (is (nil? (:error capture)))
           (is (str/includes? (.renderHtml html) "Projects")))))))
 
@@ -378,17 +405,18 @@
                   timg/images-protocol (constantly nil)]
 
       (let [select! #(state/dispatch [:select-project (get % "id") [] "unused"])
-            add! #(swap! added inc)]
+            add! #(swap! added inc)
+            refresh! (fn [_])]
 
-        (is (true? (#'screen/project-sidebar-key! (cap/key-stroke :down) select! add!)))
-        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add!)
+        (is (true? (#'screen/project-sidebar-key! (cap/key-stroke :down) select! add! refresh!)))
+        (#'screen/project-sidebar-key! (cap/key-stroke :enter) select! add! refresh!)
         (is (= "b" (:active-project-id @state/app-db)))
         (is (= "background-turn" (:gateway-turn-id @state/app-db)))
-        (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add!)
+        (#'screen/project-sidebar-key! (cap/key-stroke \+) select! add! refresh!)
         (is (= 1 @added))
-        (#'screen/project-sidebar-key! (cap/key-stroke :esc) select! add!)
+        (#'screen/project-sidebar-key! (cap/key-stroke :esc) select! add! refresh!)
         (is (false? (get-in @state/app-db [:project-sidebar :focused?])))
-        (is (nil? (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add!)))
+        (is (nil? (#'screen/project-sidebar-key! (cap/key-stroke \a) select! add! refresh!)))
         (let [capture (cap/capture! {:keys [\w]
                                      :paint! (fn [{:keys [screen]}]
                                                (#'screen/resolve-prefix!
@@ -523,3 +551,188 @@
       (is (= 144 (get-in capture [:ret :cols])))
       (is (zero? (get-in capture [:ret :chat-left])))
       (is (empty? (.current projects/hit-map))))))
+
+(deftest project-input-counts-and-lifecycle-test
+  ;; A parked turn still has :loading? true, but needs input rather than running.
+  (with-redefs [state/app-db (atom (attention-fixture-db))]
+    (let [summary #(mapv (fn [entry]
+                           (select-keys entry [:tab-count :running :needs-input]))
+                         (filter (fn [entry]
+                                   (= :project-select (:kind entry)))
+                                 (projects/sidebar-entries @state/app-db)))]
+      (is (= [{:tab-count 2 :running 0 :needs-input 0} {:tab-count 2 :running 1 :needs-input 1}]
+             (summary)))
+      (is (= [:select :select :input]
+             (mapv (comp first :action) (projects/sidebar-entries @state/app-db))))
+      (let [form (get-in @state/app-db [:tab-locals :tab-3 :human-input])]
+        (state/dispatch [:human-input-open (assoc-in form [:request :id] "request-b-next")]))
+      (state/dispatch [:select-tab-by-session "b1"])
+      (is (= 1 (:needs-input (second (summary)))))
+      (state/dispatch [:human-input-close "request-b"])
+      (is (= "request-b-next" (get-in @state/app-db [:human-input :request :id])))
+      (is (= 1 (:needs-input (second (summary)))) "Count tabs, not queued requests")
+      (state/dispatch [:human-input-close "request-b-next"])
+      (is (= {:tab-count 2 :running 2 :needs-input 0} (second (summary))))
+      (is (= 2 (count (projects/sidebar-entries @state/app-db)))))))
+
+(deftest project-input-grid-and-navigation-test
+  (doseq [pointer? [true false]]
+    (let [refreshes (atom [])
+          workers (atom [])
+          opened (atom false)]
+
+      (with-redefs [state/app-db (atom (assoc (attention-fixture-db)
+                                         :project-active-tabs {"b" :tab-4}))
+                    vis/worker-future (fn [_ f]
+                                        (swap! workers conj f))
+                    vis/gateway-list-sessions (constantly [])]
+
+        (#'screen/request-project!
+         {"id" "uncached"}
+         (fn [_]
+           (reset! opened true)))
+        (state/dispatch [:project-sidebar {:focused? true :index 2}])
+        (let [background (get-in @state/app-db [:tab-locals :tab-4])
+              capture (cap/capture!
+                        {:cols 144
+                         :rows 24
+                         :paint!
+                         (fn [{:keys [screen]}]
+                           (projects/paint! (.newTextGraphics screen) @state/app-db 144 24))})
+              text (cap/frame-text capture)
+              hit (first (filter #(= :project-input (:kind %)) (.current projects/hit-map)))
+              {:keys [col row]} (:bounds hit)
+              handle! #(#'screen/project-sidebar-key!
+                         %
+                         (fn [_]
+                           (throw (ex-info "Wrong project action" {})))
+                         (fn []
+                           (throw (ex-info "Wrong add action" {})))
+                         (fn [notify?]
+                           (swap! refreshes conj notify?)))]
+
+          (is (nil? (:error capture)))
+          (is (re-find #"Companion +2 tabs · 1 running · 1 needs input" text))
+          (is (re-find #"! Mobile navigation +needs input" text))
+          (is (= 6 row) "The alert appears immediately below its project")
+          (is (= [(.getRed ^com.googlecode.lanterna.TextColor theme/warning-fg)
+                  (.getGreen ^com.googlecode.lanterna.TextColor theme/warning-fg)
+                  (.getBlue ^com.googlecode.lanterna.TextColor theme/warning-fg)]
+                 (get-in capture [:frames 0 row 43 :fg])))
+          (if pointer?
+            (handle!
+              (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row))))
+            (do (handle! (cap/key-stroke :down)) (handle! (cap/key-stroke :enter))))
+          (is (= :tab-3 (:active-tab-id @state/app-db))
+              "Open the waiting tab, not the remembered project tab")
+          (is (= "b" (:active-project-id @state/app-db)))
+          (is (= "request-b" (get-in @state/app-db [:human-input :request :id])))
+          (is (= "Keep this draft"
+                 (input/input->text (get-in @state/app-db [:tab-locals :tab-1 :input]))))
+          (is (= background (get-in @state/app-db [:tab-locals :tab-4])))
+          (is (= [false] @refreshes))
+          (is (false? (get-in @state/app-db [:project-sidebar :focused?])))
+          ((first @workers))
+          (is (false? @opened) "A late project lookup cannot replace the selected request"))))))
+
+(deftest project-input-scroll-test
+  (let [tabs
+        (mapv (fn [n]
+                {:id (str n) :project-id "b" :label (str "Session " n)})
+              (range 30))
+
+        db
+        (assoc (fixture-db)
+          :tabs tabs
+          :tab-locals (into {}
+                            (map (fn [{:keys [id]}]
+                                   [id {:session {:id id} :human-input {:request {:id id}}}])
+                                 tabs))
+          :project-sidebar {:open? true :focused? true :index 31 :items [project-b]})
+
+        visible
+        (projects/visible-entries db 16)]
+
+    (is (= 8 (count visible)))
+    (is (= :project-select (:kind (first visible)))
+        "Keep the parent visible above a long waiting group")
+    (is (= 31 (:index (last visible))))
+    (is (= [:input "29"] (projects/key-action db (cap/key-stroke :enter))))
+    (is (empty? (projects/visible-entries db 8)))))
+
+(deftest project-input-band-keeps-docked-sidebar-test
+  (with-redefs [timg/images-protocol
+                (constantly nil)
+
+                vis/get-router
+                (constantly nil)
+
+                state/app-db
+                (atom (attention-fixture-db))]
+
+    (state/dispatch [:select-tab-by-session "b1"])
+    (state/dispatch [:project-sidebar {:focused? false}])
+    (doseq [cols [40 80 144]]
+      (let [capture (cap/capture! {:cols cols
+                                   :rows 30
+                                   :paint!
+                                   (fn [{:keys [screen]}]
+                                     (#'screen/render-frame! screen cols 30 @state/app-db 1000))})
+            text (cap/frame-text capture)]
+
+        (is (nil? (:error capture)))
+        (is (str/includes? text "Choose platform"))
+        (is (= (= cols 144) (str/includes? text "Projects")))
+        (is (= (if (= cols 144) 56 0) (get-in capture [:ret :chat-left])))))))
+
+(deftest project-input-prefix-navigation-test
+  (with-redefs [state/app-db
+                (atom (attention-fixture-db))
+
+                vis/gateway-list-projects
+                (constantly [project-a project-b])
+
+                vis/worker-future
+                (fn [_ f]
+                  (f))
+
+                timg/images-protocol
+                (constantly nil)]
+
+    (state/dispatch [:select-tab-by-session "b1"])
+    (let [form
+          (:human-input @state/app-db)
+
+          prefix
+          (KeyStroke. \x true false)
+
+          capture
+          (cap/capture! {:keys [\w]
+                         :paint! (fn [{:keys [screen]}]
+                                   (#'screen/resolve-prefix!
+                                    screen
+                                    @state/app-db
+                                    (input/handle-key prefix (:input @state/app-db))))})]
+
+      (is (nil? (:error capture)))
+      (is (not (#'screen/human-input-owns-key? @state/app-db prefix)))
+      (is (#'screen/human-input-owns-key? @state/app-db (cap/key-stroke \w)))
+      (is (#'screen/human-input-owns-key? @state/app-db (cap/key-stroke :esc)))
+      (is (= :switch-project (get-in capture [:ret :action])))
+      (#'screen/toggle-project-sidebar!)
+      (is (false? (get-in @state/app-db [:project-sidebar :open?])))
+      (#'screen/toggle-project-sidebar!)
+      (is (true? (get-in @state/app-db [:project-sidebar :open?])))
+      (is (= form (:human-input @state/app-db))))))
+
+(deftest project-sidebar-theme-contrast-test
+  (let [before @theme/active-theme-id]
+    (try (doseq [id (shared-theme/available-theme-ids)]
+           (theme/apply-theme! (keyword id))
+           (doseq [fg [theme/dialog-fg theme/dialog-hint-key theme/warning-fg]
+                   bg [theme/terminal-bg theme/input-field-bg]]
+
+             (is (>= (#'theme-test/contrast-ratio fg bg) 4.5) (str id " sidebar text")))
+           (is (>= (#'theme-test/contrast-ratio theme/dialog-hint theme/terminal-bg) 4.5)
+               (str id " sidebar hints and borders")))
+         (finally (theme/apply-theme! before)))))

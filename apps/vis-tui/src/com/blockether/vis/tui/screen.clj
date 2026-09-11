@@ -847,11 +847,18 @@
            (state/dispatch [:live-view-open view])))
        (catch Throwable _ nil)))
 
+(defn- human-input-owns-key?
+  "Forms own editing keys, but the existing C-x navigation remains available."
+  [db ^KeyStroke key]
+  (and key
+       (:human-input db)
+       (not (and (.isCtrlDown key) (:prefix (:state (input/handle-key key (input/empty-input))))))))
+
 (defn- human-input-key!
   "Feed one keystroke to the open human-input dialog and act on its verdict.
 
-   While a request is open this is the ONLY consumer of keys, so nothing
-   leaks into the chat editor. Submitting round-trips through
+   While a request is open this consumes its editing keys, so nothing leaks
+   into the chat editor. C-x navigation is routed first. Submitting round-trips through
    [[human-input-answer!]], which re-validates: a rejected answer keeps
    the dialog open with per-field errors, an accepted one closes it and
    releases the waiting extension."
@@ -2507,6 +2514,14 @@
   [db]
   (boolean (or (:help-open? db) (:tasks-open? db) (:human-input db))))
 
+(defn- project-sidebar-locked?
+  "Modal cards own the screen; a human-input band only hides an overlapping rail."
+  [db cols]
+  (boolean (or (:help-open? db)
+               (:tasks-open? db)
+               (and (:human-input db)
+                    (zero? (long (or (:chat-left (projects/geometry db cols 0)) 0)))))))
+
 (defn- paint-attachment-rail!
   [g db rail-top cols]
   (attachment-rail/draw! g
@@ -2598,7 +2613,7 @@
         (long cols)
 
         cols
-        (long (if (overlay-locked? db) cols (projects/chat-cols db cols)))
+        (long (if (project-sidebar-locked? db cols) cols (projects/chat-cols db cols)))
 
         rows
         (long rows)
@@ -2959,10 +2974,12 @@
           (state/dispatch [:live-view-painted (:view-id geom) geom])))
       (binding [frame/*column-offset* 0]
         (projects/paint! (frame/surface-graphics screen screen-cols rows)
-                         (if (overlay-locked? db) (assoc-in db [:project-sidebar :open?] false) db)
+                         (if (project-sidebar-locked? db screen-cols)
+                           (assoc-in db [:project-sidebar :open?] false)
+                           db)
                          screen-cols
                          rows))
-      (when-not (overlay-locked? db)
+      (when-not (project-sidebar-locked? db screen-cols)
         (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
           (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
             (when (or (get-in db [:project-sidebar :focused?]) (< (.getColumn cursor) (long width)))
@@ -3048,8 +3065,9 @@
 (defn- render-frame!
   "Paint the chat in its local surface and the project rail in screen coordinates."
   [screen cols rows db now-ms]
-  (binding [frame/*column-offset*
-            (if (overlay-locked? db) 0 (long (or (:chat-left (projects/geometry db cols rows)) 0)))]
+  (binding [frame/*column-offset* (if (project-sidebar-locked? db cols)
+                                    0
+                                    (long (or (:chat-left (projects/geometry db cols rows)) 0)))]
     (render-frame-content! screen cols rows db now-ms)))
 
 (defn- repaint-chat-frame!
@@ -5058,11 +5076,18 @@
 
 (defn- project-sidebar-key!
   "Apply a rail action, returning whether it consumed the key."
-  [key select! add!]
+  [key select! add! refresh!]
   (when-let [[action value] (projects/key-action @state/app-db key)]
     (case action
       :select
       (select! value)
+
+      :input
+      (let [before (:active-tab-id @state/app-db)]
+        ;; Invalidate a slower project lookup before focusing this exact session.
+        (state/dispatch [:project-sidebar {:opening nil :request-id nil :focused? false}])
+        (state/dispatch [:select-tab-by-session value])
+        (when-not (= before (:active-tab-id @state/app-db)) (refresh! false)))
 
       :add
       (add!)
@@ -5084,7 +5109,7 @@
         (state/dispatch [:project-sidebar
                          {:focused? true
                           :index (max 0
-                                      (min (count (:items sidebar))
+                                      (min (count (projects/sidebar-entries @state/app-db))
                                            (+ (long (or (:index sidebar) 0)) (long value))))}]))
 
       nil)
@@ -6093,7 +6118,8 @@
                          (persist-tabs!)))))
                  add-project! #(add-project! screen select-project!)
                  switch-project! toggle-project-sidebar!
-                 sidebar-key! #(project-sidebar-key! % select-project! add-project!)]
+                 sidebar-key!
+                 #(project-sidebar-key! % select-project! add-project! refresh-active-tab!)]
 
              ;; Startup settlement opens the optional picker or restores the project
              ;; only after the gateway-backed session has been bound.
@@ -6130,11 +6156,12 @@
                  (when-not @paste-buffer (begin-input-timing! input-timing key db))
                  (cond
                    (:shutdown? db) nil
-                   (and (not @paste-buffer) (not (overlay-locked? db)) (sidebar-key! physical-key))
+                   (and (not @paste-buffer)
+                        (not (project-sidebar-locked? db (or (:screen-cols (:layout db)) cols)))
+                        (sidebar-key! physical-key))
                    (recur)
-                   ;; An open human-input dialog owns the remaining keyboard.
-                   ;; stroke belongs to the form until it is answered.
-                   (and (some? key) (:human-input db)) (do (human-input-key! db key) (recur))
+                   ;; Forms retain ordinary typing; C-x still reaches global navigation.
+                   (human-input-owns-key? db key) (do (human-input-key! db key) (recur))
                    ;; An ARMED stop swallows it next: the human is typing the
                    ;; comment that travels with the interrupt, so no stroke of it
                    ;; may reach the chat editor. A form outranks it — the form owns
