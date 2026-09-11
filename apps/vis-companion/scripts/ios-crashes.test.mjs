@@ -69,7 +69,14 @@ describe('iOS crash collection', () => {
       '/tmp/root.json',
     ]);
     expect(deviceFileListArgs('device-id', 'Retired', '/tmp/retired.json')).toContain('Retired');
-    expect(deviceCopyArgs('device-id', 'Retired/App-2026-08-05.ips', '/tmp/report.ips', '/tmp/copy.json')).toEqual([
+    expect(
+      deviceCopyArgs(
+        'device-id',
+        'Retired/App-2026-08-05.ips',
+        '/tmp/report.ips',
+        '/tmp/copy.json',
+      ),
+    ).toEqual([
       'devicectl',
       'device',
       'copy',
@@ -133,7 +140,10 @@ describe('iOS crash collection', () => {
   it('identifies Vis app crashes but keeps jetsam and stacks as contextual diagnostics', () => {
     expect(isVisAppDiagnostic('header\n"bundleID":"com.blockether.viscompanion"')).toBe(true);
     expect(isVisAppDiagnostic('header\nBundle Identifier: com.example.other')).toBe(false);
-    expect(crashFileArgs('JetsamEvent-2026-08-05.ips')).toEqual({ keep: true, reason: 'system-memory' });
+    expect(crashFileArgs('JetsamEvent-2026-08-05.ips')).toEqual({
+      keep: true,
+      reason: 'system-memory',
+    });
     expect(crashFileArgs('stacks-2026-08-05.ips')).toEqual({ keep: true, reason: 'system-stacks' });
   });
 });

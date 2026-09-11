@@ -18,10 +18,16 @@ describe('gateway request diagnostics', () => {
   });
 
   it('records an explicit session id without credentials or payloads', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"deleted":true}', {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{"deleted":true}', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
 
     await new GatewayClient(conn).deleteSession('session /42');
 
@@ -50,10 +56,7 @@ describe('gateway request diagnostics', () => {
       vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })),
     );
 
-    const result = await new GatewayClient(conn).speakText(
-      'session-audio',
-      'private spoken text',
-    );
+    const result = await new GatewayClient(conn).speakText('session-audio', 'private spoken text');
 
     expect(result.size).toBe(3);
     expect(startGatewayRequestDiagnostic).toHaveBeenCalledWith({
@@ -73,7 +76,10 @@ describe('gateway request diagnostics', () => {
   });
 
   it('preserves exact transcript text while recording its session request', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('123', { status: 200 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('123', { status: 200 })),
+    );
 
     const markdown = await new GatewayClient(conn).transcriptMd('session-md');
 
@@ -135,10 +141,16 @@ describe('gateway request diagnostics', () => {
   });
 
   it('records failed HTTP exchanges before surfacing the gateway error', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"unavailable"}', {
-      status: 503,
-      headers: { 'Content-Type': 'application/json' },
-    })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{"error":"unavailable"}', {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
 
     await expect(new GatewayClient(conn).status()).rejects.toBeInstanceOf(GatewayError);
     expect(finishRequestDiagnostic).toHaveBeenCalledWith('error', {
@@ -150,9 +162,12 @@ describe('gateway request diagnostics', () => {
   });
 
   it('does not repeat credentials from a malformed gateway address', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      throw new Error('offline');
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    );
 
     await expect(
       new GatewayClient({ url: 'not-a-url?token=address-private' }).status(),
@@ -161,6 +176,8 @@ describe('gateway request diagnostics', () => {
     expect(startGatewayRequestDiagnostic).toHaveBeenCalledWith(
       expect.objectContaining({ gateway: 'invalid gateway' }),
     );
-    expect(JSON.stringify(startGatewayRequestDiagnostic.mock.calls)).not.toContain('address-private');
+    expect(JSON.stringify(startGatewayRequestDiagnostic.mock.calls)).not.toContain(
+      'address-private',
+    );
   });
 });

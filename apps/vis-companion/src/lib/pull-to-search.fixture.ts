@@ -39,8 +39,15 @@ export function drag(
 }
 
 /** Pull straight down by `distance` from the top of the list, and lift. */
-export function pullDown(element: Element, distance: number, ending: 'lift' | 'cancel' = 'lift'): void {
+export function pullDown(
+  element: Element,
+  distance: number,
+  ending: 'lift' | 'cancel' = 'lift',
+): void {
   const from = { x: 180, y: 120 };
-  const steps = [Math.round(distance / 2), distance].map((down) => ({ x: from.x, y: from.y + down }));
+  const steps = [Math.round(distance / 2), distance].map((down) => ({
+    x: from.x,
+    y: from.y + down,
+  }));
   drag(element, from, steps, ending);
 }

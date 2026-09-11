@@ -14,7 +14,7 @@
 // a refactor that changed nothing a user can see. Use `render` + a role/label
 // query + `userEvent`; keep a source scan only for a rule about the source
 // itself (an import that must not exist, a call site that must be used).
-import { afterEach } from "vitest";
+import { afterEach } from 'vitest';
 
 /** A Storage that is nothing but a Map: no file, no process, no other test file. */
 function inMemoryStorage(): Storage {
@@ -41,7 +41,7 @@ function inMemoryStorage(): Storage {
 // time. Installed by DESCRIPTOR, never by reading the global first, because
 // reading is what makes Node create it; `writable` so a test can still hand
 // over its own (`globalThis.localStorage = …`, `vi.stubGlobal`).
-for (const name of ["localStorage", "sessionStorage"] as const) {
+for (const name of ['localStorage', 'sessionStorage'] as const) {
   Object.defineProperty(globalThis, name, {
     configurable: true,
     writable: true,
@@ -49,7 +49,7 @@ for (const name of ["localStorage", "sessionStorage"] as const) {
   });
 }
 
-if (typeof document !== "undefined") {
+if (typeof document !== 'undefined') {
   // jsdom lays nothing out and implements neither observer, so a screen that
   // measures itself would throw before it rendered. These are the smallest
   // stand-ins that let the real component mount; a test that needs a FIGURE
@@ -77,7 +77,7 @@ if (typeof document !== "undefined") {
     dispatchEvent: () => false,
   })) as never;
 
-  await import("@testing-library/jest-dom/vitest");
-  const { cleanup } = await import("@testing-library/react");
+  await import('@testing-library/jest-dom/vitest');
+  const { cleanup } = await import('@testing-library/react');
   afterEach(cleanup);
 }

@@ -58,7 +58,7 @@ export function flushParked(): void {
 // place IN a `pagehide` handler adds its listener after this one, so waiting for
 // a first write to start watching would miss exactly that mark.
 function watchForTheWayOut(): void {
-  if (typeof globalThis.addEventListener !== "function") return;
+  if (typeof globalThis.addEventListener !== 'function') return;
   const goingAway = () => {
     leaving = true;
     flushParked();
@@ -66,10 +66,10 @@ function watchForTheWayOut(): void {
   const staying = () => {
     leaving = false;
   };
-  globalThis.addEventListener("pagehide", goingAway);
-  globalThis.addEventListener("pageshow", staying);
-  globalThis.addEventListener("visibilitychange", () => {
-    if (globalThis.document?.visibilityState === "hidden") goingAway();
+  globalThis.addEventListener('pagehide', goingAway);
+  globalThis.addEventListener('pageshow', staying);
+  globalThis.addEventListener('visibilitychange', () => {
+    if (globalThis.document?.visibilityState === 'hidden') goingAway();
     else staying();
   });
 }

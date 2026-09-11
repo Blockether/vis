@@ -51,7 +51,9 @@ export const listBuilds = async (mint, appId, { limit = 200 } = {}) => {
 };
 
 export const expireBuild = (mint, id) =>
-  asc(mint, 'PATCH', `/v1/builds/${id}`, { data: { type: 'builds', id, attributes: { expired: true } } });
+  asc(mint, 'PATCH', `/v1/builds/${id}`, {
+    data: { type: 'builds', id, attributes: { expired: true } },
+  });
 
 // ── standalone CLI ────────────────────────────────────────────────────────────────────
 
@@ -62,23 +64,33 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const flag = (name) => flags(name)[0];
   const has = (name) => args.includes(`--${name}`);
 
-  const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+  const unhex = (s) =>
+    /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
   const keychain = (account) => {
     if (process.platform !== 'darwin') return undefined;
-    const res = spawnSync('security', ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'], { encoding: 'utf8' });
+    const res = spawnSync(
+      'security',
+      ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'],
+      { encoding: 'utf8' },
+    );
     return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
   };
   const secret = (envName, account) => process.env[envName]?.trim() || keychain(account);
 
   const keyId = secret('VIS_ASC_KEY_ID', 'asc_key_id');
   const issuerId = secret('VIS_ASC_ISSUER_ID', 'asc_issuer_id');
-  const keyPem = process.env.VIS_ASC_KEY_PATH ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8') : keychain('asc_key');
+  const keyPem = process.env.VIS_ASC_KEY_PATH
+    ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8')
+    : keychain('asc_key');
   if (!keyId || !issuerId || !keyPem) {
-    console.error('\n✗ no App Store Connect API key (npm run secrets asc <AuthKey_XXXX.p8> --issuer <uuid> --team <id>)\n');
+    console.error(
+      '\n✗ no App Store Connect API key (npm run secrets asc <AuthKey_XXXX.p8> --issuer <uuid> --team <id>)\n',
+    );
     process.exit(1);
   }
 
-  const bundleId = flag('bundle') ?? JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
+  const bundleId =
+    flag('bundle') ?? JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
   const mint = () => ascToken({ keyId, issuerId, keyPem });
   const appId = await appIdFor(mint, bundleId);
   if (!appId) {
@@ -88,7 +100,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
 
   const builds = await listBuilds(mint, appId);
   const live = builds.filter((b) => !b.expired);
-  const show = (b) => `  ${b.expired ? '·' : '●'} ${b.version} (${b.build})  ${b.state}  ${b.uploaded ?? ''}`;
+  const show = (b) =>
+    `  ${b.expired ? '·' : '●'} ${b.version} (${b.build})  ${b.state}  ${b.uploaded ?? ''}`;
   console.log(`\n${bundleId} — ${builds.length} builds (● active, · expired):`);
   builds.forEach((b) => console.log(show(b)));
 
@@ -110,7 +123,9 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   targets.forEach((b) => console.log(show(b)));
 
   if (!has('yes')) {
-    console.log('\nDry run. Re-run with --yes to expire them (one-way — a build cannot be un-expired).\n');
+    console.log(
+      '\nDry run. Re-run with --yes to expire them (one-way — a build cannot be un-expired).\n',
+    );
     process.exit(0);
   }
 
@@ -124,6 +139,10 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
       console.error(`✗ ${b.version} (${b.build}): ${err.message}`);
     }
   }
-  console.log(failed ? `\n✗ ${failed} of ${targets.length} failed.\n` : `\n✓ expired ${targets.length} build(s).\n`);
+  console.log(
+    failed
+      ? `\n✗ ${failed} of ${targets.length} failed.\n`
+      : `\n✓ expired ${targets.length} build(s).\n`,
+  );
   process.exit(failed ? 1 : 0);
 }

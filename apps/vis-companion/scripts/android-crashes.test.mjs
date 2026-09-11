@@ -20,7 +20,10 @@ describe('Android crash collection', () => {
       details: [
         {
           reason: 'SERVICE_DISABLED',
-          metadata: { consumer: 'projects/514023947371', service: 'playdeveloperreporting.googleapis.com' },
+          metadata: {
+            consumer: 'projects/514023947371',
+            service: 'playdeveloperreporting.googleapis.com',
+          },
         },
       ],
     });
@@ -33,26 +36,39 @@ describe('Android crash collection', () => {
     );
 
     const prose = Object.assign(
-      new Error('Google Play Developer Reporting API has not been used in project 514023947371 before or it is disabled.'),
+      new Error(
+        'Google Play Developer Reporting API has not been used in project 514023947371 before or it is disabled.',
+      ),
       { status: 403, details: [] },
     );
     expect(disabledApi(prose)?.project).toBe('514023947371');
   });
 
   it('separates the missing Play Console grant from the disabled API', () => {
-    const grant = Object.assign(new Error('The caller does not have permission'), { status: 403, details: [] });
+    const grant = Object.assign(new Error('The caller does not have permission'), {
+      status: 403,
+      details: [],
+    });
     expect(missingPlayGrant(grant)).toBe(true);
     expect(disabledApi(grant)).toBeUndefined();
     expect(missingPlayGrant(Object.assign(new Error('nope'), { status: 404 }))).toBe(false);
     expect(
       missingPlayGrant(
-        Object.assign(new Error('off'), { status: 403, details: [{ reason: 'SERVICE_DISABLED', metadata: { consumer: 'projects/1' } }] }),
+        Object.assign(new Error('off'), {
+          status: 403,
+          details: [{ reason: 'SERVICE_DISABLED', metadata: { consumer: 'projects/1' } }],
+        }),
       ),
     ).toBe(false);
   });
 
   it('asks for whole hours in UTC, because the API rejects finer granularity', () => {
-    const query = searchQuery({ days: 2, limit: 5, now: new Date('2026-08-17T13:47:12Z'), orderBy: 'errorReportCount desc' });
+    const query = searchQuery({
+      days: 2,
+      limit: 5,
+      now: new Date('2026-08-17T13:47:12Z'),
+      orderBy: 'errorReportCount desc',
+    });
     expect(query).toMatchObject({
       'interval.startTime.year': '2026',
       'interval.startTime.month': '8',
@@ -70,7 +86,11 @@ describe('Android crash collection', () => {
   });
 
   it('queries daily crash rate in the timezone the metric set is fixed to', () => {
-    const body = timelineBody({ metrics: ['crashRate'], days: 3, now: new Date('2026-08-17T13:47:12Z') });
+    const body = timelineBody({
+      metrics: ['crashRate'],
+      days: 3,
+      now: new Date('2026-08-17T13:47:12Z'),
+    });
     expect(body.timelineSpec).toEqual({
       aggregationPeriod: 'DAILY',
       startTime: { year: 2026, month: 8, day: 14, timeZone: { id: 'America/Los_Angeles' } },
@@ -82,20 +102,43 @@ describe('Android crash collection', () => {
   // Regression: the API refuses `end_date` past the metric set's freshness, so a
   // window that ended "today" made every crash/ANR timeline a 400.
   it('ends the timeline at the metric set freshness, never past it', () => {
-    const body = timelineBody({ metrics: ['crashRate'], days: 3, now: new Date('2026-08-17T13:47:12Z'), until: '2026-08-16' });
-    expect(body.timelineSpec.endTime).toEqual({ year: 2026, month: 8, day: 16, timeZone: { id: 'America/Los_Angeles' } });
-    expect(body.timelineSpec.startTime).toEqual({ year: 2026, month: 8, day: 13, timeZone: { id: 'America/Los_Angeles' } });
+    const body = timelineBody({
+      metrics: ['crashRate'],
+      days: 3,
+      now: new Date('2026-08-17T13:47:12Z'),
+      until: '2026-08-16',
+    });
+    expect(body.timelineSpec.endTime).toEqual({
+      year: 2026,
+      month: 8,
+      day: 16,
+      timeZone: { id: 'America/Los_Angeles' },
+    });
+    expect(body.timelineSpec.startTime).toEqual({
+      year: 2026,
+      month: 8,
+      day: 13,
+      timeZone: { id: 'America/Los_Angeles' },
+    });
   });
 
   it('keeps today when freshness is not behind it', () => {
-    const body = timelineBody({ metrics: ['anrRate'], days: 1, now: new Date('2026-08-17T13:47:12Z'), until: '2026-08-18' });
+    const body = timelineBody({
+      metrics: ['anrRate'],
+      days: 1,
+      now: new Date('2026-08-17T13:47:12Z'),
+      until: '2026-08-18',
+    });
     expect(body.timelineSpec.endTime.day).toBe(17);
   });
   it('reads the freshest day the metric set admits to, per aggregation period', () => {
     const set = {
       freshnessInfo: {
         freshnesses: [
-          { aggregationPeriod: 'HOURLY', latestEndTime: { year: 2026, month: 8, day: 17, hours: 9 } },
+          {
+            aggregationPeriod: 'HOURLY',
+            latestEndTime: { year: 2026, month: 8, day: 17, hours: 9 },
+          },
           { aggregationPeriod: 'DAILY', latestEndTime: { year: 2026, month: 8, day: 16 } },
         ],
       },
@@ -132,8 +175,19 @@ describe('Android crash collection', () => {
     };
 
     expect(issueEntries(response)).toEqual([
-      expect.objectContaining({ id: 'loud', type: 'CRASH', reports: 17, users: 11, console: expect.stringContaining('vitals/errors/loud') }),
-      expect.objectContaining({ id: 'quiet', type: 'APPLICATION_NOT_RESPONDING', reports: 2, versionCodes: ['4200', '4311'] }),
+      expect.objectContaining({
+        id: 'loud',
+        type: 'CRASH',
+        reports: 17,
+        users: 11,
+        console: expect.stringContaining('vitals/errors/loud'),
+      }),
+      expect.objectContaining({
+        id: 'quiet',
+        type: 'APPLICATION_NOT_RESPONDING',
+        reports: 2,
+        versionCodes: ['4200', '4311'],
+      }),
     ]);
     expect(issueEntries({})).toEqual([]);
   });
@@ -183,7 +237,11 @@ describe('Android crash collection', () => {
     };
 
     expect(metricRows(response)).toEqual([
-      { day: '2026-08-16', dimensions: { versionCode: '4311' }, metrics: { crashRate: '0.0123', distinctUsers: '81' } },
+      {
+        day: '2026-08-16',
+        dimensions: { versionCode: '4311' },
+        metrics: { crashRate: '0.0123', distinctUsers: '81' },
+      },
     ]);
     expect(metricRows({})).toEqual([]);
   });

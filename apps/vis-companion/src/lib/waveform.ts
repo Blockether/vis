@@ -21,7 +21,7 @@ const PER_BAR = 256;
 export function wavePeaks(buffer: ArrayBuffer, buckets: number): number[] {
   if (buckets <= 0 || buffer.byteLength < 44) return [];
   const view = new DataView(buffer);
-  if (chunkId(view, 0) !== "RIFF" || chunkId(view, 8) !== "WAVE") return [];
+  if (chunkId(view, 0) !== 'RIFF' || chunkId(view, 8) !== 'WAVE') return [];
 
   let format = 0;
   let channels = 0;
@@ -33,11 +33,11 @@ export function wavePeaks(buffer: ArrayBuffer, buckets: number): number[] {
     const id = chunkId(view, at);
     const size = view.getUint32(at + 4, true);
     const body = at + 8;
-    if (id === "fmt " && body + 16 <= view.byteLength) {
+    if (id === 'fmt ' && body + 16 <= view.byteLength) {
       format = view.getUint16(body, true);
       channels = view.getUint16(body + 2, true);
       bits = view.getUint16(body + 14, true);
-    } else if (id === "data") {
+    } else if (id === 'data') {
       dataAt = body;
       dataBytes = Math.max(0, Math.min(size, view.byteLength - body));
     }
@@ -62,9 +62,7 @@ export function wavePeaks(buffer: ArrayBuffer, buckets: number): number[] {
     if (bits === 16) return view.getInt16(offset, true) / 32768;
     if (bits === 24) {
       const raw =
-        view.getUint8(offset) |
-        (view.getUint8(offset + 1) << 8) |
-        (view.getInt8(offset + 2) << 16);
+        view.getUint8(offset) | (view.getUint8(offset + 1) << 8) | (view.getInt8(offset + 2) << 16);
       return raw / 8388608;
     }
     if (bits === 32) return view.getInt32(offset, true) / 2147483648;

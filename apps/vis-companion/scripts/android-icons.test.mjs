@@ -45,7 +45,9 @@ const decodePng = (file) => {
   // 0 grey, 2 RGB, 4 grey+alpha, 6 RGBA — every shape an icon exporter emits.
   const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[colour];
   if (depth !== 8 || interlace !== 0 || !channels) {
-    throw new Error(`${file}: expected an 8-bit non-interlaced PNG, got depth ${depth} colour ${colour}`);
+    throw new Error(
+      `${file}: expected an 8-bit non-interlaced PNG, got depth ${depth} colour ${colour}`,
+    );
   }
   const raw = inflateSync(Buffer.concat(parts));
   const stride = width * channels;
@@ -119,8 +121,7 @@ const coverage = (img) => {
   return { solidShare: solid / painted, centre, radius };
 };
 
-const near = (got, want, slack) =>
-  got.every((channel, i) => Math.abs(channel - want[i]) <= slack);
+const near = (got, want, slack) => got.every((channel, i) => Math.abs(channel - want[i]) <= slack);
 
 const densities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'];
 /** Adaptive foreground canvas, legacy launcher bitmap, status-bar icon — per density. */
@@ -204,7 +205,11 @@ describe('Android notification icon', () => {
   it('is a monochrome silhouette, because the system keeps only its alpha', () => {
     for (const density of densities) {
       const img = decodePng(join(res, `drawable-${density}`, 'ic_stat_vis.png'));
-      expect([density, img.width, img.height]).toEqual([density, sizes[density][2], sizes[density][2]]);
+      expect([density, img.width, img.height]).toEqual([
+        density,
+        sizes[density][2],
+        sizes[density][2],
+      ]);
       let solid = 0;
       let clear = 0;
       for (const [, , [r, g, b, a]] of every(img)) {
@@ -219,9 +224,15 @@ describe('Android notification icon', () => {
 
   it('is handed to Firebase, which would otherwise fall back to a stock bell', () => {
     const prepare = readFileSync(join(here, 'android-prepare.mjs'), 'utf8');
-    expect(prepare).toContain("'com.google.firebase.messaging.default_notification_icon', '@drawable/ic_stat_vis'");
-    expect(prepare).toContain("'com.google.firebase.messaging.default_notification_color', '@color/vis_notification'");
-    expect(prepare).toContain('<meta-data android:name="${name}" android:resource="${resource}" />');
+    expect(prepare).toContain(
+      "'com.google.firebase.messaging.default_notification_icon', '@drawable/ic_stat_vis'",
+    );
+    expect(prepare).toContain(
+      "'com.google.firebase.messaging.default_notification_color', '@color/vis_notification'",
+    );
+    expect(prepare).toContain(
+      '<meta-data android:name="${name}" android:resource="${resource}" />',
+    );
     const colour = readFileSync(join(res, 'values', 'vis_notification_color.xml'), 'utf8');
     expect(colour).toContain('<color name="vis_notification">#05B4B6</color>');
   });

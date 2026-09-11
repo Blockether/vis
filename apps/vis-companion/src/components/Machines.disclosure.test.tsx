@@ -109,43 +109,52 @@ describe('a machine hides its own settings under its own row', () => {
     expect(screen.queryByText(/^settings of/)).toBeNull();
   });
 
-  it.each(['offline', 'auth', 'checking'] as const)('does not disclose settings while %s, even when already open', async (state) => {
-    const onPick = vi.fn();
-    const panel = vi.fn(settingsOf);
-    const onRetry = vi.fn();
-    render(
-      <MachineRows
-        conns={[tower]}
-        openUrls={new Set([tower.url])}
-        health={{ [tower.url]: { state, at: Date.now(), why: 'network error' } }}
-        onPick={onPick}
-        renderPanel={panel}
-        onRetry={onRetry}
-      />,
-    );
+  it.each(['offline', 'auth', 'checking'] as const)(
+    'does not disclose settings while %s, even when already open',
+    async (state) => {
+      const onPick = vi.fn();
+      const panel = vi.fn(settingsOf);
+      const onRetry = vi.fn();
+      render(
+        <MachineRows
+          conns={[tower]}
+          openUrls={new Set([tower.url])}
+          health={{ [tower.url]: { state, at: Date.now(), why: 'network error' } }}
+          onPick={onPick}
+          renderPanel={panel}
+          onRetry={onRetry}
+        />,
+      );
 
-    expect(panel).not.toHaveBeenCalled();
-    expect(rowOf('tower')).not.toHaveAttribute('aria-expanded');
-    await userEvent.click(rowOf('tower'));
-    expect(onPick).not.toHaveBeenCalled();
-    expect(onRetry).toHaveBeenCalledTimes(state === 'checking' ? 0 : 1);
-    expect(rowOf('tower').querySelector('.lucide-refresh-cw')).not.toBeNull();
-    expect(rowOf('tower').querySelector('.lucide-chevron-right')).toBeNull();
-  });
+      expect(panel).not.toHaveBeenCalled();
+      expect(rowOf('tower')).not.toHaveAttribute('aria-expanded');
+      await userEvent.click(rowOf('tower'));
+      expect(onPick).not.toHaveBeenCalled();
+      expect(onRetry).toHaveBeenCalledTimes(state === 'checking' ? 0 : 1);
+      expect(rowOf('tower').querySelector('.lucide-refresh-cw')).not.toBeNull();
+      expect(rowOf('tower').querySelector('.lucide-chevron-right')).toBeNull();
+    },
+  );
 
   it('hides an open panel when its machine stops answering and restores it after recovery', () => {
     const props = {
-      conns: [tower], openUrls: new Set([tower.url]),
-      onPick: vi.fn(), renderPanel: settingsOf,
+      conns: [tower],
+      openUrls: new Set([tower.url]),
+      onPick: vi.fn(),
+      renderPanel: settingsOf,
     };
-    const view = render(<MachineRows {...props} health={{ [tower.url]: { state: 'online', at: Date.now() } }} />);
+    const view = render(
+      <MachineRows {...props} health={{ [tower.url]: { state: 'online', at: Date.now() } }} />,
+    );
     expect(screen.getByText('settings of tower')).toBeTruthy();
     for (const state of ['offline', 'checking'] as const) {
       view.rerender(<MachineRows {...props} health={{ [tower.url]: { state, at: Date.now() } }} />);
       expect(screen.queryByText('settings of tower')).toBeNull();
       expect(rowOf('tower')).not.toHaveAttribute('aria-controls');
     }
-    view.rerender(<MachineRows {...props} health={{ [tower.url]: { state: 'online', at: Date.now() } }} />);
+    view.rerender(
+      <MachineRows {...props} health={{ [tower.url]: { state: 'online', at: Date.now() } }} />,
+    );
     expect(screen.getByText('settings of tower')).toBeTruthy();
     expect(rowOf('tower')).toHaveAttribute('aria-expanded', 'true');
   });

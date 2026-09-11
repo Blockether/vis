@@ -1,15 +1,12 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
+import type { Meta, StoryObj } from '@storybook/react-vite';
 
-import {
-  STORY_FILE_SUGGESTIONS,
-  STORY_SLASH_COMMANDS,
-} from "../dev/story-data";
-import { ComposerSuggestions } from "./ComposerSuggestions";
+import { STORY_FILE_SUGGESTIONS, STORY_SLASH_COMMANDS } from '../dev/story-data';
+import { ComposerSuggestions } from './ComposerSuggestions';
 
 const meta = {
-  title: "Session/Composer suggestions",
+  title: 'Session/Composer suggestions',
   component: ComposerSuggestions,
-  parameters: { layout: "fullscreen" },
+  parameters: { layout: 'fullscreen' },
   decorators: [
     (Story) => (
       <div className="relative mx-auto h-dvh max-w-[46rem]">
@@ -25,7 +22,7 @@ export default meta;
 type Story = StoryObj;
 
 export const FileMentions: Story = {
-  name: "File mentions",
+  name: 'File mentions',
   render: () => (
     <ComposerSuggestions
       kind="files"
@@ -37,7 +34,7 @@ export const FileMentions: Story = {
 };
 
 export const SlashCommands: Story = {
-  name: "Slash commands",
+  name: 'Slash commands',
   render: () => (
     <ComposerSuggestions
       kind="slashes"

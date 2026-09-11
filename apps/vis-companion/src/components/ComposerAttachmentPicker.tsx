@@ -1,12 +1,12 @@
-import { Capacitor } from "@capacitor/core";
-import { useRef, useState, type ChangeEvent } from "react";
+import { Capacitor } from '@capacitor/core';
+import { useRef, useState, type ChangeEvent } from 'react';
 
-import { keepKeyboard } from "../lib/keyboard";
-import { CameraIcon, ClipIcon, ImageIcon, PlusIcon } from "./icons";
-import { MenuItem } from "./Menu";
-import { ComposerButton } from "./ui";
+import { keepKeyboard } from '../lib/keyboard';
+import { CameraIcon, ClipIcon, ImageIcon, PlusIcon } from './icons';
+import { MenuItem } from './Menu';
+import { ComposerButton } from './ui';
 
-export type ComposerAttachmentSource = "camera" | "media" | "files";
+export type ComposerAttachmentSource = 'camera' | 'media' | 'files';
 
 export type ComposerAttachmentCommands = {
   addBrowserFiles: (files: File[]) => void | Promise<void>;
@@ -34,8 +34,8 @@ export function ComposerAttachmentPicker({
   const inputRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const label = isNative
-    ? "Attach a photo, clip, recording or file"
-    : "Choose photos, clips, recordings or files";
+    ? 'Attach a photo, clip, recording or file'
+    : 'Choose photos, clips, recordings or files';
 
   function pickNative(source: ComposerAttachmentSource) {
     setMenuOpen(false);
@@ -45,7 +45,7 @@ export function ComposerAttachmentPicker({
   function receiveBrowserFiles(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
     const files = Array.from(input.files ?? []);
-    input.value = "";
+    input.value = '';
     if (files.length) void commands.addBrowserFiles(files);
   }
 
@@ -64,7 +64,7 @@ export function ComposerAttachmentPicker({
       <div
         className="relative shrink-0"
         onKeyDown={(event) => {
-          if (event.key === "Escape" && menuOpen) {
+          if (event.key === 'Escape' && menuOpen) {
             event.stopPropagation();
             setMenuOpen(false);
           }
@@ -87,18 +87,14 @@ export function ComposerAttachmentPicker({
               <MenuItem
                 title="Take a photo"
                 icon={<CameraIcon />}
-                onSelect={() => pickNative("camera")}
+                onSelect={() => pickNative('camera')}
               />
               <MenuItem
                 title="Photos or videos"
                 icon={<ImageIcon />}
-                onSelect={() => pickNative("media")}
+                onSelect={() => pickNative('media')}
               />
-              <MenuItem
-                title="Files"
-                icon={<ClipIcon />}
-                onSelect={() => pickNative("files")}
-              />
+              <MenuItem title="Files" icon={<ClipIcon />} onSelect={() => pickNative('files')} />
             </div>
           </>
         )}
@@ -113,13 +109,13 @@ export function ComposerAttachmentPicker({
             }
           }}
           disabled={disabled}
-          aria-haspopup={isNative ? "menu" : undefined}
+          aria-haspopup={isNative ? 'menu' : undefined}
           aria-expanded={isNative ? menuOpen : undefined}
           label={label}
           title={label}
         >
           <PlusIcon
-            className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${menuOpen ? "rotate-45" : ""}`}
+            className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${menuOpen ? 'rotate-45' : ''}`}
           />
         </ComposerButton>
       </div>

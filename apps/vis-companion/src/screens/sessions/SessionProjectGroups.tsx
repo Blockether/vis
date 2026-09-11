@@ -1,27 +1,17 @@
 /** One project's band, its session rows, and how that project is paged. */
 
-import {
-  memo,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { ConfirmRow } from "../../components/ui";
-import { SwipeActions } from "../../components/SwipeActions";
-import { TrashIcon } from "../../components/icons";
-import type {
-  ManagedProject,
-  ProjectRemovalProgress,
-} from "../../components/ManageProjectsSheet";
+import { ConfirmRow } from '../../components/ui';
+import { SwipeActions } from '../../components/SwipeActions';
+import { TrashIcon } from '../../components/icons';
+import type { ManagedProject, ProjectRemovalProgress } from '../../components/ManageProjectsSheet';
 
 import {
   SessionRow,
   type SessionListActions,
   type SessionRowDeletion,
-} from "../../components/SessionList";
+} from '../../components/SessionList';
 import {
   HeaderActions,
   HeaderTally,
@@ -30,33 +20,25 @@ import {
   ProjectCrumb,
   ProjectStatusCounts,
   SectionHeader,
-} from "../../components/SessionNavigator";
+} from '../../components/SessionNavigator';
 import {
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
   type DraftMessageStore,
-} from "../../lib/draft-messages";
-import { isFavorite } from "../../lib/favorites";
+} from '../../lib/draft-messages';
+import { isFavorite } from '../../lib/favorites';
 import {
   machineKey,
   machineLabel,
   sessionMillis,
   type FleetMachine,
   type ProjectGroupView,
-} from "../../lib/fleet";
-import type {
-  GatewayClient,
-  ProjectWindows,
-  SessionMatch,
-} from "../../lib/gateway";
-import { holdOrder, type OrderEpoch } from "../../lib/order-epoch";
-import { compactProjectPath } from "../../lib/path";
-import {
-  projectFoldKey,
-  readProjectFold,
-  writeProjectFold,
-} from "../../lib/project-fold";
-import type { GatewayConn, Session } from "../../lib/types";
+} from '../../lib/fleet';
+import type { GatewayClient, ProjectWindows, SessionMatch } from '../../lib/gateway';
+import { holdOrder, type OrderEpoch } from '../../lib/order-epoch';
+import { compactProjectPath } from '../../lib/path';
+import { projectFoldKey, readProjectFold, writeProjectFold } from '../../lib/project-fold';
+import type { GatewayConn, Session } from '../../lib/types';
 
 type SessionClient = (conn: GatewayConn) => GatewayClient;
 
@@ -111,7 +93,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   /** Canonical gateway-owned project identity, counts, and held preview rows. */
   group: ProjectGroupView;
   /** The machine is the project namespace and owns the list validator. */
-  machine: Pick<FleetMachine, "conn" | "sessions">;
+  machine: Pick<FleetMachine, 'conn' | 'sessions'>;
   context: SessionRowsContext;
   reading: ProjectGroupReading;
   creation: ProjectCreation;
@@ -126,8 +108,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
-    rowActions.deletion.target &&
-    machineKey(rowActions.deletion.target.conn) === machineKey(conn)
+    rowActions.deletion.target && machineKey(rowActions.deletion.target.conn) === machineKey(conn)
       ? rowActions.deletion.target.session.id
       : null;
 
@@ -154,12 +135,9 @@ export const ProjectGroup = memo(function ProjectGroup({
       // Success settles the question even if a same-root group remains mounted.
       setRemoval(null);
     } catch (cause) {
-      const message =
-        cause instanceof Error ? cause.message : "Project could not be deleted.";
+      const message = cause instanceof Error ? cause.message : 'Project could not be deleted.';
       setRemoval((current) =>
-        current
-          ? { ...current, busy: false, error: message, progress: null }
-          : current,
+        current ? { ...current, busy: false, error: message, progress: null } : current,
       );
     }
   }
@@ -192,7 +170,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // is the top of the project and needs no cursor at all. A cursor NAMES a row, so
   // the place survives everything the fleet does under the reader, which an offset
   // into an ordering recomputed per request could not (`state/list-sessions-page`).
-  const cursors = useRef(new Map<number, string>([[0, ""]]));
+  const cursors = useRef(new Map<number, string>([[0, '']]));
   // THE WINDOWS THIS GROUP HOLDS, and the validator each was issued under
   // (`GatewayClient.listProjectPage`). They used to live in a static map on the client,
   // capped at 24 for the whole fleet and evicted oldest-first: a budget shared by every
@@ -202,7 +180,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const pins = useRef<ProjectWindows>(new Map());
   // The question the last read asked, so a page TURN paints what is already held and a
   // poll that only moved the list under an unchanged page repaints nothing.
-  const asked = useRef("");
+  const asked = useRef('');
   // The page LAST ANSWERED, whichever it is: its place, rows, and the project's own
   // count travel together. A slow answer must never put one page's number over another's rows.
   const [paged, setPaged] = useState<{
@@ -215,9 +193,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   // the work that moved last, not four checkouts' history at once. What the reader
   // folds afterwards is theirs and outlives this component — see `lib/project-fold`.
   const foldKey = projectFoldKey(machineKey(conn), root);
-  const [isOpen, setIsOpen] = useState(
-    () => readProjectFold(foldKey) ?? initiallyOpen,
-  );
+  const [isOpen, setIsOpen] = useState(() => readProjectFold(foldKey) ?? initiallyOpen);
   // A fold is a DECISION, not a frame: it is written where it was made, so the next
   // screen built from nothing starts where this reader left it.
   const fold = (open: boolean) => {
@@ -236,16 +212,12 @@ export const ProjectGroup = memo(function ProjectGroup({
   // fight and truncated to `~/v…`. `HeaderTitle` already refuses exactly this for a
   // machine whose address IS its name; a project is the same rule one level down.
   const where = compactProjectPath(root, project);
-  const qualifierPath = where
-    ? where === `~/${project}`
-      ? ""
-      : where
-    : "No workspace path";
+  const qualifierPath = where ? (where === `~/${project}` ? '' : where) : 'No workspace path';
   // A FILTER is a fleet-wide question and its answer may not sit behind a fold: while
   // a query is on, every project that still has rows shows them. The fold the reader
   // set is untouched and is back the moment the query is.
-  const isShowing = hasSessions && (isOpen || needle !== "");
-  const searching = needle !== "";
+  const isShowing = hasSessions && (isOpen || needle !== '');
+  const searching = needle !== '';
   // THE PAGE IS ASKED FOR, NOT SLICED.
   //
   // A folded group asks for nothing — the read IS the paint, and a project nobody
@@ -270,7 +242,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     // is the page — a cursor can only ever be the row a page ended on.
     let from = start;
     while (from > 0 && !cursors.current.has(from)) from -= 1;
-    const after = cursors.current.get(from) ?? "";
+    const after = cursors.current.get(from) ?? '';
     const limit = start - from + pageSize;
     const api = getClient(conn);
     // A page this group already HOLDS paints in the frame of the tap that asked for
@@ -290,16 +262,9 @@ export const ProjectGroup = memo(function ProjectGroup({
     }
     void (async () => {
       try {
-        const answer = await api.listProjectPage(
-          root,
-          limit,
-          after,
-          pins.current,
-          control.signal,
-        );
+        const answer = await api.listProjectPage(root, limit, after, pins.current, control.signal);
         if (!live) return;
-        if (answer.nextCursor)
-          cursors.current.set(from + answer.rows.length, answer.nextCursor);
+        if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
         setPaged({
           start,
           rows: answer.rows.slice(start - from),
@@ -321,8 +286,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           );
           if (!live) return;
           if (next.rows.length === 0) break;
-          if (next.nextCursor)
-            cursors.current.set(at + next.rows.length, next.nextCursor);
+          if (next.nextCursor) cursors.current.set(at + next.rows.length, next.nextCursor);
           at += next.rows.length;
           cursor = next.nextCursor;
         }
@@ -335,17 +299,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       live = false;
       control.abort();
     };
-  }, [
-    conn,
-    root,
-    start,
-    pageSize,
-    isVisible,
-    isShowing,
-    searching,
-    list,
-    getClient,
-  ]);
+  }, [conn, root, start, pageSize, isVisible, isShowing, searching, list, getClient]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
   // answer is on this device, and then what is on screen is the honest count.
@@ -370,9 +324,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const painting = searching
     ? sessions.slice((shownPage - 1) * pageSize, shownPage * pageSize)
     : (pageRows ??
-      (start === 0 && held.length >= Math.min(pageSize, tally.count)
-        ? held
-        : NO_ROWS));
+      (start === 0 && held.length >= Math.min(pageSize, tally.count) ? held : NO_ROWS));
   // A ROW THIS DEVICE JUST CHANGED IS THE ROW IT PAINTS. A star or a rename is
   // echoed into the list this screen holds the moment the gateway answers the
   // PATCH; the window carrying it is a read of its own and lands a beat later, so
@@ -473,13 +425,11 @@ export const ProjectGroup = memo(function ProjectGroup({
     const id = following.current;
     if (!id || !rows.some((session) => session.id === id)) return;
     following.current = null;
-    rowsRef.current
-      ?.querySelector(`[data-session-id="${CSS.escape(id)}"]`)
-      ?.scrollIntoView({
-        block: "nearest",
-        inline: "nearest",
-        behavior: "auto",
-      });
+    rowsRef.current?.querySelector(`[data-session-id="${CSS.escape(id)}"]`)?.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: 'auto',
+    });
   }, [rows]);
   return (
     <>
@@ -504,15 +454,13 @@ export const ProjectGroup = memo(function ProjectGroup({
           {removal ? (
             <ConfirmRow
               question={`Delete ${project}?`}
-              cost={
-                removal.error ? `Could not delete: ${removal.error}` : undefined
-              }
+              cost={removal.error ? `Could not delete: ${removal.error}` : undefined}
               confirmLabel={
                 removal.busy
                   ? removal.progress
                     ? `Deleting ${removal.progress.done} of ${removal.progress.total}...`
-                    : "Deleting..."
-                  : "Yes, delete"
+                    : 'Deleting...'
+                  : 'Yes, delete'
               }
               isBusy={removal.busy}
               onKeep={() => setRemoval(null)}
@@ -525,10 +473,10 @@ export const ProjectGroup = memo(function ProjectGroup({
                   label={project}
                   actions={[
                     {
-                      key: "delete",
-                      label: "Delete",
+                      key: 'delete',
+                      label: 'Delete',
                       icon: <TrashIcon className="size-4" />,
-                      tone: "danger",
+                      tone: 'danger',
                       onSelect: () =>
                         setRemoval({
                           busy: false,
@@ -614,7 +562,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                           ? {
                               isOpen: isShowing,
                               onToggle: () => fold(!isShowing),
-                              label: `${isShowing ? "Collapse" : "Expand"} ${project}`,
+                              label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
                             }
                           : null
                       }
@@ -643,10 +591,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 <SessionRow
                   key={session.id}
                   session={session}
-                  draft={
-                    drafts[draftMessageKey(base, session.id)] ??
-                    EMPTY_DRAFT_MESSAGE
-                  }
+                  draft={drafts[draftMessageKey(base, session.id)] ?? EMPTY_DRAFT_MESSAGE}
                   conn={conn}
                   match={matches?.get(session.id) ?? null}
                   needle={needle}

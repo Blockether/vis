@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Session } from "./types";
+import type { Session } from './types';
 
 const native = vi.hoisted(() => ({ store: new Map<string, string>() }));
 
-vi.mock("@capacitor/preferences", () => ({
+vi.mock('@capacitor/preferences', () => ({
   Preferences: {
     get: async ({ key }: { key: string }) => ({ value: native.store.get(key) ?? null }),
     set: async ({ key, value }: { key: string; value: string }) => {
@@ -16,12 +16,12 @@ vi.mock("@capacitor/preferences", () => ({
 
 const fresh = async () => {
   vi.resetModules();
-  return import("./unread");
+  return import('./unread');
 };
 
 const session = {
-  id: "unread-after-restart",
-  status: "idle",
+  id: 'unread-after-restart',
+  status: 'idle',
   live: false,
   current_turn_id: null,
   turn_count: 3,
@@ -37,8 +37,8 @@ beforeEach(() => {
 
 // Regression, issue #3e2b5725-dbf9-4254-8a10-ec4bb74c936a: restarting the
 // native app lost its read marks, so answers not yet opened stopped showing as NEW.
-describe("durable session read marks", () => {
-  it("keeps unread answers unread after the webview store is reset", async () => {
+describe('durable session read marks', () => {
+  it('keeps unread answers unread after the webview store is reset', async () => {
     const firstLaunch = await fresh();
     firstLaunch.markSessionRead(session.id, 1);
     await settle();

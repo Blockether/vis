@@ -40,7 +40,7 @@ describe('what this device found dark', () => {
     expect(relaunched.machineOutage(TOWER)).toBeNull();
   });
 
-  it('keeps the transport\'s own reason, per machine', () => {
+  it("keeps the transport's own reason, per machine", () => {
     rememberMachineOutage(TOWER, 'no answer in 6s');
     rememberMachineOutage(VPS, 'HTTP 502');
     expect(machineOutage(TOWER)).toBe('no answer in 6s');

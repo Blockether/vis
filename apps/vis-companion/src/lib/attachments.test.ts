@@ -137,15 +137,15 @@ describe('the FILES door', () => {
 
   // Regression, user report: the Files door advertised only camera and recording media,
   // so the native document browser would not admit an ordinary document.
-  it("admits a document the platform names only by its extension", async () => {
+  it('admits a document the platform names only by its extension', async () => {
     filePicker.pickFiles.mockResolvedValue({
-      files: [picked("report.pdf", "")],
+      files: [picked('report.pdf', '')],
     });
 
-    const result = await pickDocumentAttachments({ mediaTypes: ["application/pdf"] });
+    const result = await pickDocumentAttachments({ mediaTypes: ['application/pdf'] });
 
     expect(result.rejected).toEqual([]);
-    expect(result.attachments[0].media_type).toBe("application/pdf");
+    expect(result.attachments[0].media_type).toBe('application/pdf');
   });
 });
 
@@ -197,9 +197,7 @@ describe('naming a candidate', () => {
 describe('what Android hands over', () => {
   it('names an octet-stream memo by its extension and types its bytes to match', async () => {
     filePicker.pickFiles.mockResolvedValue({
-      files: [
-        { name: 'Recording.m4a', mimeType: 'application/octet-stream', data: 'AAAAAAAA' },
-      ],
+      files: [{ name: 'Recording.m4a', mimeType: 'application/octet-stream', data: 'AAAAAAAA' }],
     });
 
     const result = await pickDocumentAttachments({ mediaTypes: ['audio/mp4'] });
@@ -223,9 +221,7 @@ describe('what Android hands over', () => {
 
   it('keeps an unnameable file unnameable rather than guessing', () => {
     expect(candidateMediaType('memo.m4a', 'application/octet-stream')).toBe('audio/mp4');
-    expect(candidateMediaType('blob', 'application/octet-stream')).toBe(
-      'application/octet-stream',
-    );
+    expect(candidateMediaType('blob', 'application/octet-stream')).toBe('application/octet-stream');
   });
 
   it('takes every recorder format the gateway now advertises', () => {
@@ -251,7 +247,12 @@ describe('diagnostics attachments', () => {
 
   it('still obeys the gateway media and size limits', async () => {
     const file = new File(['log bytes'], 'vis-diagnostics.jsonl.gz');
-    expect((await attachmentsFromFiles([file], { mediaTypes: ['image/png'] })).attachments).toEqual([]);
-    expect((await attachmentsFromFiles([file], { mediaTypes: ['application/gzip'], maxFileBytes: 1 })).attachments).toEqual([]);
+    expect((await attachmentsFromFiles([file], { mediaTypes: ['image/png'] })).attachments).toEqual(
+      [],
+    );
+    expect(
+      (await attachmentsFromFiles([file], { mediaTypes: ['application/gzip'], maxFileBytes: 1 }))
+        .attachments,
+    ).toEqual([]);
   });
 });

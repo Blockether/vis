@@ -7,6 +7,7 @@
 (def ^:private contract (delay (document/load! "config")))
 
 (def api-style-values "Documented provider API styles." (vec (get @contract "api_style_values")))
+
 (def api-style-aliases
   "Accepted provider API-style spelling to normalized runtime spelling."
   (get @contract "api_style_aliases"))
@@ -18,16 +19,21 @@
           (get-in ["$defs" definition "properties"])
           keys
           set))
+
 (def workspace-access-values
   "Accepted workspace access spellings."
   (set (get @contract "workspace_access_values")))
+
 (def workspace-draft-values
   "Workspace draft policies."
   (set (get @contract "workspace_draft_values")))
+
 (def workspace-os-values "Workspace host selectors." (set (get @contract "workspace_os_values")))
+
 (def jail-environment-values
   "Sandbox environment modes."
   (set (get @contract "jail_environment_values")))
+
 (def titling-modes "Session title modes." (set (get @contract "titling_modes")))
 
 (defn config-valid?

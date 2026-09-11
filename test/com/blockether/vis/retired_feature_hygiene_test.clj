@@ -17,7 +17,11 @@
   ["src/" "extensions/" "packages/" "resources/" "apps/" "test/" "test-native/" "e2e/" "dev/" "bin/"
    "scripts/" "build.clj" "deps.edn"])
 
-(defn- engine-path? [path] (boolean (some #(str/starts-with? path %) engine-roots)))
+(defn- engine-path?
+  [path]
+  ;; Plans can record external SDK consumers; they are not shipped engine inputs.
+  (and (not= "PLAN.md" (.getName (io/file path)))
+       (boolean (some #(str/starts-with? path %) engine-roots))))
 
 (defn- tracked-paths
   []
@@ -45,6 +49,11 @@
          path)))
 
 (defdescribe retired-feature-hygiene-test
+             (it "excludes planning records without excluding shipped documents or source"
+                 (expect (not (engine-path? "packages/vis-agent/PLAN.md")))
+                 (expect (engine-path? "packages/vis-agent/README.md"))
+                 (expect (engine-path? "src/com/blockether/vis/internal/browser.clj"))
+                 (expect (engine-path? "resources/vis-docs/extending.md")))
              (it "keeps the retired browser bridge out of tracked paths and content"
                  (when (.exists (io/file "deps.edn"))
                    (let [found (retired-references)]

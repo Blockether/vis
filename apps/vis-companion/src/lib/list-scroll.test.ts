@@ -43,7 +43,11 @@ describe('applyListScroll', () => {
     // below it shifts: the remembered PIXEL is one row off, the row is not.
     const viewport = box(0, 5000, 800);
 
-    const applied = applyListScroll(viewport, { top: 1200, anchor: { id: 's7', offset: -20 } }, () => 1400);
+    const applied = applyListScroll(
+      viewport,
+      { top: 1200, anchor: { id: 's7', offset: -20 } },
+      () => 1400,
+    );
 
     expect(applied).toBe(true);
     expect(viewport.scrollTop).toBe(1420);
@@ -52,7 +56,11 @@ describe('applyListScroll', () => {
   it('falls back to the pixel offset when the anchored row is gone', () => {
     const viewport = box(0, 5000, 800);
 
-    const applied = applyListScroll(viewport, { top: 1200, anchor: { id: 'deleted', offset: -20 } }, () => null);
+    const applied = applyListScroll(
+      viewport,
+      { top: 1200, anchor: { id: 'deleted', offset: -20 } },
+      () => null,
+    );
 
     expect(applied).toBe(true);
     expect(viewport.scrollTop).toBe(1200);
@@ -61,7 +69,11 @@ describe('applyListScroll', () => {
   it('keeps waiting while the list is still a skeleton', () => {
     const viewport = box(0, 800, 800);
 
-    const applied = applyListScroll(viewport, { top: 1200, anchor: { id: 's7', offset: -20 } }, () => null);
+    const applied = applyListScroll(
+      viewport,
+      { top: 1200, anchor: { id: 's7', offset: -20 } },
+      () => null,
+    );
 
     expect(applied).toBe(false);
     expect(viewport.scrollTop).toBe(0);

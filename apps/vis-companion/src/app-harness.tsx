@@ -8,16 +8,16 @@
 // paint the next test's first frame — so a test that is ABOUT addresses (the
 // durability order lives in `lib/endpoints`, which reads the HOST) names its
 // own `url`/`alts` and owns the reuse it takes on.
-import { render } from "@testing-library/react";
+import { render } from '@testing-library/react';
 
 // Resolve the lazy graph before measuring shell interactions, not Vite transforms.
 // The prefetch regression deliberately rejects this chunk; keep that rejection
 // cached so App still exercises its own failed-prefetch handling.
-await import("./screens/SessionScreen").catch(() => {});
-import { App } from "./App";
-import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from "./lib/compat";
-import { sessionsWindow } from "./screens/sessions-screen-harness";
-import type { GatewayConn, Session } from "./lib/types";
+await import('./screens/SessionScreen').catch(() => {});
+import { App } from './App';
+import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from './lib/compat';
+import { sessionsWindow } from './screens/sessions-screen-harness';
+import type { GatewayConn, Session } from './lib/types';
 
 export interface AppMachine {
   label?: string;
@@ -49,7 +49,7 @@ export function renderApp({
     const id = `app-gateway-${++origins}`;
     return {
       url: machine.url ?? `http://${id}.example.com`,
-      token: "t",
+      token: 't',
       id,
       label: machine.label ?? `machine-${index + 1}`,
       ...(machine.alts ? { alts: machine.alts } : {}),
@@ -66,20 +66,17 @@ export function renderApp({
   const dead = new Set(unreachable.map((address) => new URL(address).origin));
   // Both mirrors: the sync read is plain web storage, the async one comes back
   // through Capacitor Preferences, whose web implementation prefixes its keys.
-  const primaryConn = initiallyPaired ? conns[primary] ?? conns[0] : undefined;
-  for (const prefix of ["", "CapacitorStorage."]) {
-    localStorage.setItem(
-      `${prefix}vis.connections`,
-      JSON.stringify(initiallyPaired ? conns : []),
-    );
-    localStorage.setItem(`${prefix}vis.activeConnection`, primaryConn?.url ?? "");
-    localStorage.setItem(`${prefix}vis.primaryConnection`, primaryConn?.url ?? "");
+  const primaryConn = initiallyPaired ? (conns[primary] ?? conns[0]) : undefined;
+  for (const prefix of ['', 'CapacitorStorage.']) {
+    localStorage.setItem(`${prefix}vis.connections`, JSON.stringify(initiallyPaired ? conns : []));
+    localStorage.setItem(`${prefix}vis.activeConnection`, primaryConn?.url ?? '');
+    localStorage.setItem(`${prefix}vis.primaryConnection`, primaryConn?.url ?? '');
   }
 
   const answer = (body: unknown) =>
     new Response(JSON.stringify(body), {
       status: 200,
-      headers: { "Content-Type": "application/json", ETag: `"${origins}"` },
+      headers: { 'Content-Type': 'application/json', ETag: `"${origins}"` },
     });
 
   /** Every request the fakes answered, newest last, as hrefs. */
@@ -87,44 +84,45 @@ export function renderApp({
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = new URL(
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url,
+      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
     );
     requests.push(url.href);
     // An address that answers NOTHING fails the way a dead LAN address does:
     // a network error, never a status, so failover has to see it as one.
-    if (dead.has(url.origin)) throw new TypeError("Failed to fetch");
+    if (dead.has(url.origin)) throw new TypeError('Failed to fetch');
     const entry = byOrigin.get(url.origin);
     if (!entry) return answer({});
     const machine = entry.machine;
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
-    if (url.pathname === "/v1/machines/order")
-      return answer({ machine_ids: (machineOrder ?? [primary, ...conns.map((_, index) => index).filter(index => index !== primary)]).map(index => conns[index]!.id) });
-    if (url.pathname === "/v1/sessions")
-      return answer(sessionsWindow(machine.sessions ?? [], url));
-    if (url.pathname === "/v1/sessions/actions/search")
-      return answer({ matches: [] });
+    if (url.pathname === '/v1/machines/order')
+      return answer({
+        machine_ids: (
+          machineOrder ?? [
+            primary,
+            ...conns.map((_, index) => index).filter((index) => index !== primary),
+          ]
+        ).map((index) => conns[index]!.id),
+      });
+    if (url.pathname === '/v1/sessions') return answer(sessionsWindow(machine.sessions ?? [], url));
+    if (url.pathname === '/v1/sessions/actions/search') return answer({ matches: [] });
     // The handshake every screen waits on: a gateway speaking this build's wire.
     const protocol = {
       protocol: APP_PROTOCOL,
       min_client: APP_PROTOCOL,
       min_gateway: APP_MIN_GATEWAY_PROTOCOL,
-      version: "0.0.0-test",
+      version: '0.0.0-test',
     };
-    if (url.pathname === "/healthz")
+    if (url.pathname === '/healthz')
       return answer({
-        status: "ok",
+        status: 'ok',
         id: entry.conn.id,
         protocol,
       });
     // A capabilities answer a session screen can actually mount against: it
     // reads `features` on its first frame, so a gateway without one is not a
     // gateway this app runs on.
-    if (url.pathname === "/v1/capabilities")
+    if (url.pathname === '/v1/capabilities')
       return answer({
         version: 1,
         addresses: [entry.conn.url, ...(entry.conn.alts ?? [])],
@@ -134,16 +132,16 @@ export function renderApp({
           chat: { enabled: true },
           attachments: {
             enabled: true,
-            transport: "inline-base64",
-            media_types: ["image/png"],
+            transport: 'inline-base64',
+            media_types: ['image/png'],
             max_files: 4,
             max_file_bytes: 1_000_000,
           },
           voice: {
             enabled: false,
-            transport: "audio/wav",
-            transcription: "gateway-local",
-            model: { state: "absent" },
+            transport: 'audio/wav',
+            transcription: 'gateway-local',
+            model: { state: 'absent' },
           },
         },
       });

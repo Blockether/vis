@@ -1,6 +1,6 @@
-import { memo, useEffect, useState } from "react";
-import { isMarkdownMedia } from "../lib/artifacts";
-import { Markdown } from "./ChatContent";
+import { memo, useEffect, useState } from 'react';
+import { isMarkdownMedia } from '../lib/artifacts';
+import { Markdown } from './ChatContent';
 
 /**
  * A WRITTEN artifact — a note, a comment, a log — read by the app itself.
@@ -111,15 +111,11 @@ export const TextFrame = memo(function TextFrame({
   if (failed || text === null) {
     return (
       <p className="p-4 font-mono text-meta text-dialog-hint">
-        {failed ? "This artifact could not be read." : "Loading…"}
+        {failed ? 'This artifact could not be read.' : 'Loading…'}
       </p>
     );
   }
   const body = <TextBody text={text} mime={mime} name={name} raw={raw} />;
   if (!fill) return body;
-  return (
-    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 sm:p-4">
-      {body}
-    </div>
-  );
+  return <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3 sm:p-4">{body}</div>;
 });

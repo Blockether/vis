@@ -81,10 +81,7 @@ function decodeSource(
 }
 
 /** One live camera frame → pairing string, or null when nothing decodes. */
-export function decodeFrame(
-  video: HTMLVideoElement,
-  canvas: HTMLCanvasElement,
-): string | null {
+export function decodeFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement): string | null {
   return decodeSource(video, video.videoWidth, video.videoHeight, LIVE_EDGE, canvas);
 }
 

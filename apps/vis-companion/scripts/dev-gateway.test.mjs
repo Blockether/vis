@@ -2,10 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  devConnectionStorageScript,
-  discoverDevGatewayConnections,
-} from './dev-gateway.ts';
+import { devConnectionStorageScript, discoverDevGatewayConnections } from './dev-gateway.ts';
 
 const tempDirs = [];
 
@@ -133,9 +130,7 @@ describe('companion dev gateway discovery', () => {
 
     new Function(
       'localStorage',
-      devConnectionStorageScript([
-        { url: 'http://127.0.0.1:7890', token: 'fresh-token' },
-      ]),
+      devConnectionStorageScript([{ url: 'http://127.0.0.1:7890', token: 'fresh-token' }]),
     )(localStorage);
 
     expect(JSON.parse(values.get('vis.connections'))).toEqual([

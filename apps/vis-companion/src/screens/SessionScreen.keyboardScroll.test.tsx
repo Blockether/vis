@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { act, fireEvent, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
-import { noteReaderGesture } from "../lib/reader-gesture";
-import { flushParked } from "../lib/parked";
+import { renderSessionScreen, sessionFixture } from './session-screen-harness';
+import { noteReaderGesture } from '../lib/reader-gesture';
+import { flushParked } from '../lib/parked';
 
 // Regression, user report ("sometimes I tap somewhere in the middle of the
 // screen and the whole thing shoots off"): a tap outside the composer is what
@@ -23,7 +23,7 @@ function transcript() {
   return [1, 2, 3].map((position) => ({
     turn_id: `t${position}`,
     request: `question ${position}`,
-    status: "completed",
+    status: 'completed',
     iterations: [
       {
         position,
@@ -39,7 +39,7 @@ function transcript() {
 function installObserver(): (element: Element) => void {
   const watchers: { target: Element; run: () => void }[] = [];
   vi.stubGlobal(
-    "ResizeObserver",
+    'ResizeObserver',
     class {
       private readonly callback: () => void;
       constructor(callback: () => void) {
@@ -68,21 +68,17 @@ function installObserver(): (element: Element) => void {
  * that moved on their own, so the test watches the writes, not just the end
  * state.
  */
-function measure(
-  viewport: HTMLElement,
-  shell: { height: number },
-  moves: number[],
-): void {
+function measure(viewport: HTMLElement, shell: { height: number }, moves: number[]): void {
   let top = 0;
-  Object.defineProperty(viewport, "scrollHeight", {
+  Object.defineProperty(viewport, 'scrollHeight', {
     configurable: true,
     get: () => TRANSCRIPT,
   });
-  Object.defineProperty(viewport, "clientHeight", {
+  Object.defineProperty(viewport, 'clientHeight', {
     configurable: true,
     get: () => shell.height,
   });
-  Object.defineProperty(viewport, "scrollTop", {
+  Object.defineProperty(viewport, 'scrollTop', {
     configurable: true,
     get: () => top,
     set: (value: number) => {
@@ -94,7 +90,7 @@ function measure(
 
 /** The window the keyboard leaves behind, which is what `shellViewportHeight` reads. */
 function shellIs(height: number): void {
-  Object.defineProperty(window, "innerHeight", {
+  Object.defineProperty(window, 'innerHeight', {
     configurable: true,
     value: height,
   });
@@ -103,11 +99,11 @@ function shellIs(height: number): void {
 /** Frames run by hand, so a "keyboard" is exactly as long as it says. */
 function installFrames() {
   const frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
     frames.push(callback);
     return frames.length;
   });
-  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal('cancelAnimationFrame', () => {});
   return async () => {
     const due = frames.splice(0);
     await act(async () => {
@@ -118,7 +114,7 @@ function installFrames() {
 
 /** Is the "↓ Latest" offer on screen? */
 function latestOffered(): boolean {
-  return !!screen.queryByRole("button", { name: /Latest/ });
+  return !!screen.queryByRole('button', { name: /Latest/ });
 }
 
 describe("the keyboard against the reader's place", () => {
@@ -126,20 +122,20 @@ describe("the keyboard against the reader's place", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     flushParked();
-    Reflect.deleteProperty(window, "innerHeight");
+    Reflect.deleteProperty(window, 'innerHeight');
   });
 
-  it("re-pins a reader who is following the end", async () => {
+  it('re-pins a reader who is following the end', async () => {
     const paint = installFrames();
     const shell = { height: SHELL };
     shellIs(SHELL);
     const resize = installObserver();
     renderSessionScreen({
-      session: sessionFixture({ id: "following" }),
+      session: sessionFixture({ id: 'following' }),
       client: { transcript: () => Promise.resolve(transcript()) },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const moves: number[] = [];
     measure(viewport, shell, moves);
     await paint();
@@ -158,17 +154,17 @@ describe("the keyboard against the reader's place", () => {
     expect(viewport.scrollTop).toBe(TRANSCRIPT - (SHELL - KEYBOARD));
   });
 
-  it("leaves a reader in history exactly where they are", async () => {
+  it('leaves a reader in history exactly where they are', async () => {
     const paint = installFrames();
     const shell = { height: SHELL };
     shellIs(SHELL);
     const resize = installObserver();
     renderSessionScreen({
-      session: sessionFixture({ id: "parked" }),
+      session: sessionFixture({ id: 'parked' }),
       client: { transcript: () => Promise.resolve(transcript()) },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const moves: number[] = [];
     measure(viewport, shell, moves);
     await paint();
@@ -206,17 +202,17 @@ describe("the keyboard against the reader's place", () => {
   // keyboard took 274 px off the scroller's bottom, the newest turn stayed exactly
   // where it was, and the offer measured that lost edge as distance the reader had
   // chosen to keep — over the composer they had just tapped to write in.
-  it("makes no offer to a reader who taps the composer at the end", async () => {
+  it('makes no offer to a reader who taps the composer at the end', async () => {
     const paint = installFrames();
     const shell = { height: SHELL };
     shellIs(SHELL);
     const resize = installObserver();
     renderSessionScreen({
-      session: sessionFixture({ id: "writing" }),
+      session: sessionFixture({ id: 'writing' }),
       client: { transcript: () => Promise.resolve(transcript()) },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const moves: number[] = [];
     measure(viewport, shell, moves);
     await paint();
@@ -235,7 +231,7 @@ describe("the keyboard against the reader's place", () => {
     expect(latestOffered()).toBe(false);
 
     // Now they tap the composer and the keyboard slides up over the bottom 274 px.
-    act(() => (screen.getByLabelText("Message Vis") as HTMLTextAreaElement).focus());
+    act(() => (screen.getByLabelText('Message Vis') as HTMLTextAreaElement).focus());
     shell.height = SHELL - KEYBOARD;
     shellIs(SHELL - KEYBOARD);
     act(() => resize(viewport));

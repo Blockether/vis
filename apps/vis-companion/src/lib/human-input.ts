@@ -124,7 +124,6 @@ export type HumanInputValue = string | string[] | boolean | number;
 
 export type HumanInputValues = Record<string, HumanInputValue>;
 
-
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -193,12 +192,16 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
     };
   }
   const options = Array.isArray(row.options)
-    ? row.options.map(optionFromWire).filter((option): option is HumanInputOption => option !== null)
+    ? row.options
+        .map(optionFromWire)
+        .filter((option): option is HumanInputOption => option !== null)
     : undefined;
   const description = optionalText(row.description);
   const placeholder = optionalText(row.placeholder);
-  const minLength = typeof row.min_length === 'number' && row.min_length > 0 ? row.min_length : undefined;
-  const maxLength = typeof row.max_length === 'number' && row.max_length > 0 ? row.max_length : undefined;
+  const minLength =
+    typeof row.min_length === 'number' && row.min_length > 0 ? row.min_length : undefined;
+  const maxLength =
+    typeof row.max_length === 'number' && row.max_length > 0 ? row.max_length : undefined;
   return {
     id,
     name: id,
@@ -238,7 +241,8 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
   // `0` is the engine's INDEFINITE wait, not a deadline that already passed:
   // drop it so nothing downstream counts down to zero on a form that is
   // simply parked until the operator answers it.
-  const timeoutMs = typeof row.timeout_ms === 'number' && row.timeout_ms > 0 ? row.timeout_ms : undefined;
+  const timeoutMs =
+    typeof row.timeout_ms === 'number' && row.timeout_ms > 0 ? row.timeout_ms : undefined;
   return {
     id,
     title,
@@ -262,7 +266,11 @@ export function inputViewsFromWire(raw: unknown): HumanInputRequest[] {
 }
 
 /** A `range` field's bounds, with the engine's own defaults filled in. */
-export function humanInputRange(field: HumanInputField): { min: number; max: number; step: number } {
+export function humanInputRange(field: HumanInputField): {
+  min: number;
+  max: number;
+  step: number;
+} {
   const min = Number.isFinite(field.min) ? (field.min as number) : HUMAN_INPUT_RANGE_DEFAULTS.min;
   const max =
     Number.isFinite(field.max) && (field.max as number) > min
@@ -373,9 +381,14 @@ function defaultValue(field: HumanInputField): HumanInputValue {
     case 'checkbox':
       return fallback === true;
     case 'multiselect':
-      return Array.isArray(fallback) ? fallback.filter((item): item is string => typeof item === 'string') : [];
+      return Array.isArray(fallback)
+        ? fallback.filter((item): item is string => typeof item === 'string')
+        : [];
     case 'range':
-      return clampHumanInputRange(field, typeof fallback === 'number' ? fallback : Number(fallback));
+      return clampHumanInputRange(
+        field,
+        typeof fallback === 'number' ? fallback : Number(fallback),
+      );
     default:
       return typeof fallback === 'string' ? fallback : '';
   }
@@ -411,11 +424,17 @@ export function toggleHumanInputOption(
 
 /** True for lifecycle events owned by the input capability. */
 export function isInputViewEvent(event: SseEvent): boolean {
-  return viewKind(event) === 'input' && (event.type === VIEW_OPEN_EVENT || event.type === VIEW_CLOSE_EVENT);
+  return (
+    viewKind(event) === 'input' &&
+    (event.type === VIEW_OPEN_EVENT || event.type === VIEW_CLOSE_EVENT)
+  );
 }
 
 /** Fold one input View lifecycle event into the open-form list. */
-export function applyInputViewEvent(pending: HumanInputRequest[], event: SseEvent): HumanInputRequest[] {
+export function applyInputViewEvent(
+  pending: HumanInputRequest[],
+  event: SseEvent,
+): HumanInputRequest[] {
   if (!isInputViewEvent(event)) return pending;
   if (event.type === VIEW_CLOSE_EVENT) {
     const viewId = text(event.view_id);

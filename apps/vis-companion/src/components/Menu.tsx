@@ -184,8 +184,7 @@ export function MenuHeading({
   | { onClose?: undefined; closeLabel?: undefined }
 )) {
   const skin = tone === 'loud' ? LOUD : QUIET;
-  if (!onClose || !closeLabel)
-    return <p className={`${BAND} ${skin} truncate`}>{children}</p>;
+  if (!onClose || !closeLabel) return <p className={`${BAND} ${skin} truncate`}>{children}</p>;
   return (
     // The band stands where the dialog band stands (48, 36 for a mouse), because the
     // way out welded to it is the same cell on both and a cell can only be square in

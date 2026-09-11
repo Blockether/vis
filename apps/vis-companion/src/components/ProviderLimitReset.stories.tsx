@@ -6,9 +6,17 @@ const meta = {
   title: 'Components/Provider limit reset',
   component: ProviderLimitReset,
   parameters: { layout: 'fullscreen' },
-  render: args => <div className="p-4"><ProviderLimitReset {...args} /></div>,
+  render: (args) => (
+    <div className="p-4">
+      <ProviderLimitReset {...args} />
+    </div>
+  ),
   args: {
-    credits: { status: 'ok', account_id: '00000000-0000-4000-8000-000000000001', available_count: 2 },
+    credits: {
+      status: 'ok',
+      account_id: '00000000-0000-4000-8000-000000000001',
+      available_count: 2,
+    },
     onConsume: fn(async () => 'reset' as const),
   },
 } satisfies Meta<typeof ProviderLimitReset>;
@@ -20,11 +28,20 @@ export const Available: Story = {
     const group = canvas.getByRole('group', { name: 'Codex limit resets' });
     const button = canvas.getByRole('button', { name: 'Reset limits…' });
     const status = canvas.getByRole('status');
-    await expect(button.getBoundingClientRect().right).toBeCloseTo(group.getBoundingClientRect().right, 0);
-    await expect(status.getBoundingClientRect().left).toBeCloseTo(group.getBoundingClientRect().left, 0);
+    await expect(button.getBoundingClientRect().right).toBeCloseTo(
+      group.getBoundingClientRect().right,
+      0,
+    );
+    await expect(status.getBoundingClientRect().left).toBeCloseTo(
+      group.getBoundingClientRect().left,
+      0,
+    );
     const statusBox = status.getBoundingClientRect();
     const buttonBox = button.getBoundingClientRect();
-    await expect(statusBox.top + statusBox.height / 2).toBeCloseTo(buttonBox.top + buttonBox.height / 2, 0);
+    await expect(statusBox.top + statusBox.height / 2).toBeCloseTo(
+      buttonBox.top + buttonBox.height / 2,
+      0,
+    );
   },
 };
 export const Confirmation: Story = {
@@ -35,17 +52,26 @@ export const Confirmation: Story = {
     await expect(args.onConsume).not.toHaveBeenCalled();
   },
 };
-export const NoResets: Story = { args: { credits: { status: 'ok', account_id: 'account-1', available_count: 0 } } };
+export const NoResets: Story = {
+  args: { credits: { status: 'ok', account_id: 'account-1', available_count: 0 } },
+};
 export const Loading: Story = { args: { isChecking: true } };
 export const GatewayMissing: Story = { args: { credits: undefined } };
 export const Unknown: Story = { args: { credits: { status: 'error' } } };
 export const Unsupported: Story = { args: { credits: { status: 'unsupported' } } };
 export const Uncertain: Story = {
-  args: { hasPending: true, onConsume: fn(async () => { throw new Error('Result unknown'); }) },
+  args: {
+    hasPending: true,
+    onConsume: fn(async () => {
+      throw new Error('Result unknown');
+    }),
+  },
   play: async ({ canvas }) => {
     await userEvent.click(canvas.getByRole('button', { name: 'Check reset result…' }));
     await userEvent.click(canvas.getByRole('button', { name: 'Retry same request' }));
-    await expect(await canvas.findByRole('alert')).toHaveTextContent('Reset could not be confirmed');
+    await expect(await canvas.findByRole('alert')).toHaveTextContent(
+      'Reset could not be confirmed',
+    );
   },
 };
 export const Success: Story = {
@@ -54,6 +80,8 @@ export const Success: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Use 1 reset' }));
     await expect(args.onConsume).toHaveBeenCalledOnce();
     await expect(args.onConsume).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000001');
-    await expect(await canvas.findByText('Limits reset. Your task has not been resent.')).toBeVisible();
+    await expect(
+      await canvas.findByText('Limits reset. Your task has not been resent.'),
+    ).toBeVisible();
   },
 };

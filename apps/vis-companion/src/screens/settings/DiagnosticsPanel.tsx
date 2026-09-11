@@ -1,14 +1,10 @@
-import { useState } from "react";
+import { useState } from 'react';
 
-import { APP_BUILD_COMMIT, APP_BUILD_NUMBER } from "../../lib/build-info";
-import {
-  APP_MIN_GATEWAY_PROTOCOL,
-  APP_PROTOCOL,
-  APP_VERSION,
-} from "../../lib/compat";
-import { RETAINED_LOG_POLICY, exportDiagnostics } from "../../lib/diagnostics";
-import { Banner, Button } from "../../components/ui";
-import { SettingsPanel } from "./SettingsLayout";
+import { APP_BUILD_COMMIT, APP_BUILD_NUMBER } from '../../lib/build-info';
+import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL, APP_VERSION } from '../../lib/compat';
+import { RETAINED_LOG_POLICY, exportDiagnostics } from '../../lib/diagnostics';
+import { Banner, Button } from '../../components/ui';
+import { SettingsPanel } from './SettingsLayout';
 
 /** ONE COMPACT FACT CELL, and the answer is the fact. Diagnostics is reference
  *  material, not a second settings form, so six facts pair into the same three-row
@@ -20,9 +16,7 @@ import { SettingsPanel } from "./SettingsLayout";
 function DiagnosticFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2 bg-panel px-3 py-1.5 sm:px-4">
-      <dt className="min-w-0 flex-1 break-words font-mono text-meta text-dialog-hint">
-        {label}
-      </dt>
+      <dt className="min-w-0 flex-1 break-words font-mono text-meta text-dialog-hint">{label}</dt>
       <dd className="max-w-[70%] break-words text-right font-mono text-meta font-bold text-white">
         {value}
       </dd>
@@ -38,41 +32,32 @@ function DiagnosticFact({ label, value }: { label: string; value: string }) {
  *  app: pressing Diagnostics itself did nothing even though the neighbouring
  *  Application band opened as expected. Hidden remains HIDDEN — the facts, the
  *  trust sentence and the verb are not on the page until the band is pressed. */
-export function DiagnosticsPanel({
-  isOpen,
-  onToggle,
-}: {
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
+export function DiagnosticsPanel({ isOpen, onToggle }: { isOpen: boolean; onToggle: () => void }) {
   const [isExporting, setIsExporting] = useState(false);
-  const [exported, setExported] = useState("");
-  const [exportError, setExportError] = useState("");
+  const [exported, setExported] = useState('');
+  const [exportError, setExportError] = useState('');
 
   async function exportLogs() {
     setIsExporting(true);
-    setExported("");
-    setExportError("");
+    setExported('');
+    setExportError('');
     try {
       setExported(await exportDiagnostics());
     } catch (cause) {
       setExportError(
         cause instanceof Error && cause.message
           ? cause.message
-          : "The app logs could not be exported.",
+          : 'The app logs could not be exported.',
       );
     } finally {
       setIsExporting(false);
     }
   }
 
-  const foldLabel = isOpen ? "Hide diagnostics" : "Show diagnostics";
+  const foldLabel = isOpen ? 'Hide diagnostics' : 'Show diagnostics';
 
   return (
-    <SettingsPanel
-      title="Diagnostics"
-      disclosure={{ isOpen, onToggle, label: foldLabel }}
-    >
+    <SettingsPanel title="Diagnostics" disclosure={{ isOpen, onToggle, label: foldLabel }}>
       {/* THE PANEL'S FACTS ARE A COMPACT MATRIX, NOT SIX SETTINGS ROWS. Related
           identity, protocol and retention facts pair across three shared rows; no
           fact disappears merely to make the panel quiet. The one sentence that
@@ -86,10 +71,7 @@ export function DiagnosticsPanel({
             <DiagnosticFact label="Version" value={APP_VERSION} />
             <DiagnosticFact label="Build" value={APP_BUILD_NUMBER} />
             <DiagnosticFact label="Commit" value={APP_BUILD_COMMIT} />
-            <DiagnosticFact
-              label="Gateway protocol"
-              value={`${APP_MIN_GATEWAY_PROTOCOL}+`}
-            />
+            <DiagnosticFact label="Gateway protocol" value={`${APP_MIN_GATEWAY_PROTOCOL}+`} />
             <DiagnosticFact label="Client protocol" value={`${APP_PROTOCOL}`} />
             <DiagnosticFact
               label="Retention"
@@ -110,7 +92,7 @@ export function DiagnosticsPanel({
               aria-busy={isExporting}
               onClick={() => void exportLogs()}
             >
-              {isExporting ? "Preparing logs…" : "Export app logs"}
+              {isExporting ? 'Preparing logs…' : 'Export app logs'}
             </Button>
           </div>
         </>

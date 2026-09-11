@@ -57,11 +57,22 @@ describe('publishNotes', () => {
     reset();
     localizations = [{ id: 'loc-1', attributes: { locale: 'en-US' } }];
 
-    await expect(publish('• Fixed the flicker')).resolves.toEqual({ ok: true, buildId: 'build-1', version: '0.1.35', build: '4075' });
+    await expect(publish('• Fixed the flicker')).resolves.toEqual({
+      ok: true,
+      buildId: 'build-1',
+      version: '0.1.35',
+      build: '4075',
+    });
 
     expect(calls.at(-1)).toMatchObject({
       op: 'PATCH /v1/betaBuildLocalizations/loc-1',
-      body: { data: { type: 'betaBuildLocalizations', id: 'loc-1', attributes: { whatsNew: '• Fixed the flicker' } } },
+      body: {
+        data: {
+          type: 'betaBuildLocalizations',
+          id: 'loc-1',
+          attributes: { whatsNew: '• Fixed the flicker' },
+        },
+      },
     });
   });
 

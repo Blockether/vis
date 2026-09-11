@@ -6,7 +6,10 @@ import { describe, expect, it } from 'vitest';
 
 // `android-prepare.mjs` stamps the generated Gradle project the moment it is
 // imported, so the Java and the manifest filters it embeds are read as text.
-const prepare = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'android-prepare.mjs'), 'utf8');
+const prepare = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'android-prepare.mjs'),
+  'utf8',
+);
 const mainActivity = prepare.match(/const mainActivity = `([\s\S]*?)\n`;/)?.[1] ?? '';
 
 describe('Android share target', () => {

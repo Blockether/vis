@@ -9,18 +9,10 @@ import {
   useMemo,
   useRef,
   useState,
-} from "react";
-import type { GatewayConn } from "./lib/types";
-import {
-  type Compat,
-  compatFromHealth,
-  shouldRereadCompat,
-} from "./lib/compat";
-import {
-  GatewayClient,
-  ROUTER_TTL_MS,
-  onGatewayIncompatible,
-} from "./lib/gateway";
+} from 'react';
+import type { GatewayConn } from './lib/types';
+import { type Compat, compatFromHealth, shouldRereadCompat } from './lib/compat';
+import { GatewayClient, ROUTER_TTL_MS, onGatewayIncompatible } from './lib/gateway';
 import {
   forgetOpenSession,
   getPrimaryConnection,
@@ -36,22 +28,16 @@ import {
   switchConnectionUrl,
   upsertConnection,
   removeConnection,
-} from "./lib/storage";
-import type { OpenSession } from "./lib/storage";
-import {
-  bestAddress,
-  hostOf,
-  isUpgrade,
-  mergeAddresses,
-  normalizeAddress,
-} from "./lib/endpoints";
-import { machineOutage } from "./lib/fleet-outage";
-import { onAway, onWake } from "./lib/wake";
-import { hydrateReadMarks } from "./lib/unread";
-import { warm } from "./lib/warm";
-import { SessionSubscriptionHub } from "./lib/subscriptions";
-import { parsePairing } from "./lib/pairing";
-import { onPairingLink } from "./lib/deeplink";
+} from './lib/storage';
+import type { OpenSession } from './lib/storage';
+import { bestAddress, hostOf, isUpgrade, mergeAddresses, normalizeAddress } from './lib/endpoints';
+import { machineOutage } from './lib/fleet-outage';
+import { onAway, onWake } from './lib/wake';
+import { hydrateReadMarks } from './lib/unread';
+import { warm } from './lib/warm';
+import { SessionSubscriptionHub } from './lib/subscriptions';
+import { parsePairing } from './lib/pairing';
+import { onPairingLink } from './lib/deeplink';
 import {
   hydratePendingShare,
   parseShareLink,
@@ -61,15 +47,15 @@ import {
   claimPendingShare,
   dropPendingShare,
   type SharedPayload,
-} from "./lib/share-intake";
-import { discardSharedFiles } from "./lib/share-files";
-import { applyTheme, resolveTheme } from "./lib/theme";
-import { getThemePref } from "./lib/storage";
-import { BackButton, CloseButton, IconButton, Input } from "./components/ui";
-import { SearchIcon, SettingsIcon } from "./components/icons";
-import { ConnectScreen } from "./screens/ConnectScreen";
-import { SessionsScreen } from "./screens/SessionsScreen";
-import { IncompatibleScreen } from "./screens/IncompatibleScreen";
+} from './lib/share-intake';
+import { discardSharedFiles } from './lib/share-files';
+import { applyTheme, resolveTheme } from './lib/theme';
+import { getThemePref } from './lib/storage';
+import { BackButton, CloseButton, IconButton, Input } from './components/ui';
+import { SearchIcon, SettingsIcon } from './components/icons';
+import { ConnectScreen } from './screens/ConnectScreen';
+import { SessionsScreen } from './screens/SessionsScreen';
+import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import {
   isSessionEntered,
   parseRoute,
@@ -77,12 +63,9 @@ import {
   screenKey,
   sessionHash,
   tabHash,
-} from "./lib/router";
-import {
-  reclaimViewportForExternalNavigation,
-  useVisualViewportShell,
-} from "./lib/viewport";
-import { App as CapacitorApp } from "@capacitor/app";
+} from './lib/router';
+import { reclaimViewportForExternalNavigation, useVisualViewportShell } from './lib/viewport';
+import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
   cachedPushToken,
@@ -93,32 +76,28 @@ import {
   onPushTap,
   pushPermission,
   pushPlatform,
-} from "./lib/push";
-import { drainPushRevocations, syncFleetPush } from "./lib/notify";
+} from './lib/push';
+import { drainPushRevocations, syncFleetPush } from './lib/notify';
 import {
   drainWebPushRevocations,
   isWebNotificationsPlatform,
   registerWebServiceWorker,
   syncWebPushRegistrations,
-} from "./lib/web-push";
+} from './lib/web-push';
 import {
   isGrantFresh,
   registerForPush,
   registeredIds,
   relayUrlFor,
   unregisterFromPush,
-} from "./lib/relay";
-import { isShellChromeVisible, isShellSplit, shellScreen } from "./lib/shell";
-import { useDeskRail } from "./lib/fit-rows";
-import { useSidebar } from "./lib/sidebar";
-import { EmptyPane } from "./screens/EmptyPane";
-import {
-  pushIntentFrom,
-  resolvePushIntent,
-  type PushIntent,
-} from "./lib/push-intent";
+} from './lib/relay';
+import { isShellChromeVisible, isShellSplit, shellScreen } from './lib/shell';
+import { useDeskRail } from './lib/fit-rows';
+import { useSidebar } from './lib/sidebar';
+import { EmptyPane } from './screens/EmptyPane';
+import { pushIntentFrom, resolvePushIntent, type PushIntent } from './lib/push-intent';
 
-type Tab = "sessions" | "connect";
+type Tab = 'sessions' | 'connect';
 
 /** How long a parked share still steers navigation on the next launch. */
 const RESUMABLE_SHARE_MS = 5 * 60 * 1000;
@@ -167,10 +146,10 @@ const RECOVERY_SWEEP_MIN_GAP_MS = 5_000;
 // moment the list is up: by the time anything is tapped the module is resolved,
 // `lazy` mounts it in the same commit, and no boundary ever falls back.
 const SessionScreenLazy = lazy(async () => ({
-  default: (await import("./screens/SessionScreen")).SessionScreen,
+  default: (await import('./screens/SessionScreen')).SessionScreen,
 }));
 const SettingsDialogLazy = lazy(async () => ({
-  default: (await import("./screens/SettingsScreen")).SettingsDialog,
+  default: (await import('./screens/SettingsScreen')).SettingsDialog,
 }));
 
 // Each split screen keeps its own boundary so a miss costs that screen, never the
@@ -194,15 +173,15 @@ function SettingsDialog(props: ComponentProps<typeof SettingsDialogLazy>) {
 }
 
 function prefetchScreens() {
-  warm(import("./screens/SessionScreen"));
-  warm(import("./screens/SettingsScreen"));
+  warm(import('./screens/SessionScreen'));
+  warm(import('./screens/SettingsScreen'));
 }
 
 export function App() {
   // Warm the split screens once the shell is up — off the critical path, so the
   // launch frame stays the list and the first tap still opens instantly.
   useEffect(() => {
-    if (typeof window.requestIdleCallback === "function") {
+    if (typeof window.requestIdleCallback === 'function') {
       const handle = window.requestIdleCallback(prefetchScreens, {
         timeout: 2_000,
       });
@@ -217,17 +196,15 @@ export function App() {
   const [conns, setConns] = useState<GatewayConn[]>(loadConnectionsSync);
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);
-  const [tab, setTab] = useState<Tab>("sessions");
+  const [tab, setTab] = useState<Tab>('sessions');
   // The share still owed a session. The SHELL holds it because the list is the
   // chooser: until a composer takes it, every screen that could receive it has
   // to be able to say what is waiting.
-  const [pendingShare, setPendingShare] = useState<SharedPayload | null>(
-    peekPendingShare,
-  );
+  const [pendingShare, setPendingShare] = useState<SharedPayload | null>(peekPendingShare);
   // The search question is fleet-wide, so the SHELL owns it: the bar asks it and the
   // list answers it. Kept here rather than in `SessionsScreen` so the field can sit
   // above every machine chip instead of under the one that names a machine.
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   // The search PAGE: the bar becomes a way back plus the field, and the list under it
   // is the answer. It is shell state rather than the header's own because leaving it
   // clears the query the list is reading.
@@ -244,10 +221,7 @@ export function App() {
   // its providers, so its cog opens that machine instead of asking the question again.
   const openSettings = useCallback(() => setSettingsDestination({}), []);
   const openProviderSettings = useCallback(
-    () =>
-      setSettingsDestination(
-        openTarget ? { providerMachineUrl: openTarget.conn.url } : {},
-      ),
+    () => setSettingsDestination(openTarget ? { providerMachineUrl: openTarget.conn.url } : {}),
     [openTarget],
   );
   const [ready, setReady] = useState(false);
@@ -273,11 +247,10 @@ export function App() {
   const sessionConn = openTarget?.conn ?? active;
   // Transport identity is the URL/token pair — the only fields `GatewayClient`
   // reads — so renaming a connection's label never tears down the live stream.
-  const connUrl = sessionConn?.url ?? "";
+  const connUrl = sessionConn?.url ?? '';
   const connToken = sessionConn?.token;
   const client = useMemo(
-    () =>
-      connUrl ? new GatewayClient({ url: connUrl, token: connToken }) : null,
+    () => (connUrl ? new GatewayClient({ url: connUrl, token: connToken }) : null),
     [connUrl, connToken],
   );
   const subscriptions = useMemo(
@@ -309,20 +282,17 @@ export function App() {
     setRecoveryNonce((nonce) => nonce + 1);
   }, []);
 
-  const addConnection = useCallback(
-    async (conn: GatewayConn, makeActive = true) => {
-      const next = await upsertConnection(conn);
-      if (next.length === 1) {
-        await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
-        setPrimary(conn);
-      }
-      setConns(next);
-      setOffline(null);
-      setActive(makeActive ? conn : await getPrimaryConnection());
-      if (makeActive) setTab("sessions");
-    },
-    [],
-  );
+  const addConnection = useCallback(async (conn: GatewayConn, makeActive = true) => {
+    const next = await upsertConnection(conn);
+    if (next.length === 1) {
+      await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
+      setPrimary(conn);
+    }
+    setConns(next);
+    setOffline(null);
+    setActive(makeActive ? conn : await getPrimaryConnection());
+    if (makeActive) setTab('sessions');
+  }, []);
 
   // The tap must paint the session on the frame it happens on. Remembering the
   // active gateway and the watch list are Capacitor Preferences writes — bridge
@@ -330,15 +300,12 @@ export function App() {
   // between tapping a row and seeing the transcript. Nothing on this path reads
   // them back, so they are persisted underneath the navigation, not in front of
   // it.
-  const openGatewaySession = useCallback(
-    (conn: GatewayConn, sid: string, fresh = false) => {
-      setActive(conn);
-      setOpenTarget({ conn, sid, fresh });
-      void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
-      void rememberOpenSession(conn.url, sid).catch(() => undefined);
-    },
-    [],
-  );
+  const openGatewaySession = useCallback((conn: GatewayConn, sid: string, fresh = false) => {
+    setActive(conn);
+    setOpenTarget({ conn, sid, fresh });
+    void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
+    void rememberOpenSession(conn.url, sid).catch(() => undefined);
+  }, []);
 
   // Opening a session from the LIST is the moment a parked share gets its
   // destination: every door out of that screen — a row, a fresh session, a fork —
@@ -374,9 +341,7 @@ export function App() {
   useEffect(() => {
     if (!openTarget) return;
     const { conn, sid } = openTarget;
-    return onAway(
-      () => void rememberOpenSession(conn.url, sid).catch(() => undefined),
-    );
+    return onAway(() => void rememberOpenSession(conn.url, sid).catch(() => undefined));
   }, [openTarget]);
 
   // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
@@ -388,12 +353,12 @@ export function App() {
   const openSharedSession = useCallback(async () => {
     const conn = active ?? (await getPrimaryConnection());
     if (!conn) {
-      setTab("connect");
+      setTab('connect');
       return;
     }
     setActive(conn);
     setOpenTarget(null);
-    setTab("sessions");
+    setTab('sessions');
   }, [active]);
 
   // The parked share, mirrored into shell state so the list can report it. The
@@ -437,19 +402,18 @@ export function App() {
   const applyRoute = useCallback(
     (hash: string) => {
       const route = parseRoute(hash);
-      if (route.name === "session") {
-        const conn =
-          (route.gw && conns.find((c) => c.id === route.gw)) || active;
+      if (route.name === 'session') {
+        const conn = (route.gw && conns.find((c) => c.id === route.gw)) || active;
         if (conn) {
           void openGatewaySession(conn, route.sid);
           return;
         }
         setOpenTarget(null);
-        setTab("connect");
+        setTab('connect');
         return;
       }
       setOpenTarget(null);
-      setTab(route.name === "connect" ? "connect" : "sessions");
+      setTab(route.name === 'connect' ? 'connect' : 'sessions');
     },
     [conns, active, openGatewaySession],
   );
@@ -491,12 +455,11 @@ export function App() {
     const onHash = () => {
       // Any arrival at a non-session URL (our own pop, browser back, a pasted
       // link) means our pushed entry is gone from the top.
-      if (parseRoute(window.location.hash).name !== "session")
-        pushedSessionRef.current = false;
+      if (parseRoute(window.location.hash).name !== 'session') pushedSessionRef.current = false;
       applyRoute(window.location.hash);
     };
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, [ready, routeApplied, applyRoute, active, conns, openGatewaySession]);
 
   // Reflect view state back into the URL so the address bar is always shareable.
@@ -504,13 +467,11 @@ export function App() {
     if (!ready || !routeApplied) return;
     // Prefer the freshest captured gateway id (backfilled after open) over the
     // one snapshotted into openTarget, so the shareable URL cleans up in place.
-    const gwId =
-      conns.find((c) => c.url === openTarget?.conn.url)?.id ??
-      openTarget?.conn.id;
+    const gwId = conns.find((c) => c.url === openTarget?.conn.url)?.id ?? openTarget?.conn.id;
     const desired = openTarget
       ? sessionHash(openTarget.sid, gwId)
-      : tabHash(tab === "connect" ? "connect" : "sessions");
-    const current = window.location.hash || "#/";
+      : tabHash(tab === 'connect' ? 'connect' : 'sessions');
+    const current = window.location.hash || '#/';
     if (current === desired) return;
     // Opening a session is this app's ONE forward navigation, so it is the one
     // that earns a history entry. Rewriting every route in place left the stack
@@ -518,12 +479,12 @@ export function App() {
     // session instead of returning to the list. Everything else — tab switches,
     // the gateway id backfilled into an already-open session — still rewrites
     // the current entry, so back never walks through cosmetic URL repairs.
-    if (openTarget && parseRoute(current).name !== "session") {
-      history.pushState(null, "", desired);
+    if (openTarget && parseRoute(current).name !== 'session') {
+      history.pushState(null, '', desired);
       pushedSessionRef.current = true;
       return;
     }
-    history.replaceState(null, "", desired);
+    history.replaceState(null, '', desired);
   }, [openTarget, tab, ready, routeApplied, conns]);
 
   // Leaving a session is a history STEP, not a state reset: entering pushed an
@@ -555,8 +516,8 @@ export function App() {
         leaveSession();
         return;
       }
-      if (tab !== "sessions" && conns.length > 0 && active) {
-        setTab("sessions");
+      if (tab !== 'sessions' && conns.length > 0 && active) {
+        setTab('sessions');
         return;
       }
       try {
@@ -570,7 +531,7 @@ export function App() {
     let removed = false;
     let sub: { remove: () => void } | null = null;
     try {
-      void CapacitorApp.addListener("backButton", () => backRef.current())
+      void CapacitorApp.addListener('backButton', () => backRef.current())
         .then((handle) => {
           if (removed) handle.remove();
           else sub = handle;
@@ -624,11 +585,8 @@ export function App() {
         const address = normalizeAddress(parsed.url);
         // Reopening a pairing link must not reconfigure an imported machine,
         // including one whose selected address has changed since the import.
-        if (
-          connections.some((conn) =>
-            mergeAddresses([conn.url], conn.alts).includes(address),
-          )
-        ) return;
+        if (connections.some((conn) => mergeAddresses([conn.url], conn.alts).includes(address)))
+          return;
         // Keep alternatives so a new pairing can recover on another network.
         await addConnection(parsed);
         return;
@@ -651,12 +609,7 @@ export function App() {
   // Steer to a composer once a share is parked AND the initial route has been
   // applied: routing earlier would be overwritten by the hash we booted with.
   useEffect(() => {
-    if (
-      !shareNonce ||
-      !routeApplied ||
-      shareNonce === handledShareNonce.current
-    )
-      return;
+    if (!shareNonce || !routeApplied || shareNonce === handledShareNonce.current) return;
     handledShareNonce.current = shareNonce;
     void openSharedSession();
   }, [shareNonce, routeApplied, openSharedSession]);
@@ -723,10 +676,7 @@ export function App() {
   // poller, prefetch and retry in flight reports the same 426 within the same
   // second — re-asking for each would answer one storm with another. The first
   // refusal is the whole story for a settled incompatible verdict.
-  useEffect(
-    () => onGatewayIncompatible(handleGatewayIncompatible),
-    [],
-  );
+  useEffect(() => onGatewayIncompatible(handleGatewayIncompatible), []);
 
   // ── Address preference ──────────────────────────────────────────
   // One gateway answers on several addresses at once (Tailscale, LAN, tunnel,
@@ -739,11 +689,11 @@ export function App() {
   //   2. moves itself onto a more durable address as soon as that one answers.
   // A hand-picked address is never changed while it works, and loopback is never
   // left behind — see `lib/endpoints.ts`.
-  const activeUrl = active?.url ?? "";
+  const activeUrl = active?.url ?? '';
   const activeToken = active?.token;
   const activePinned = active?.pinned ?? false;
   const activeLabel = active?.label;
-  const knownAltsKey = (active?.alts ?? []).join(" ");
+  const knownAltsKey = (active?.alts ?? []).join(' ');
   useEffect(() => {
     if (!activeUrl) return;
     let cancelled = false;
@@ -775,8 +725,8 @@ export function App() {
       // forever as an unreachable row nobody can delete.
       const known = advertised.length
         ? mergeAddresses([activeUrl], advertised)
-        : mergeAddresses([activeUrl], knownAltsKey.split(" "));
-      if (known.join(" ") !== knownAltsKey) {
+        : mergeAddresses([activeUrl], knownAltsKey.split(' '));
+      if (known.join(' ') !== knownAltsKey) {
         await upsertConnection({ url: activeUrl, alts: known });
         if (cancelled) return;
         setConns(await loadConnections());
@@ -784,17 +734,13 @@ export function App() {
       // A pinned address stays preferred while it works, but it must not turn a
       // temporary network change into a permanent dead connection.
       if (activePinned && activeResponded) return;
-      const candidates = activeResponded
-        ? known.filter((url) => isUpgrade(url, activeUrl))
-        : known;
+      const candidates = activeResponded ? known.filter((url) => isUpgrade(url, activeUrl)) : known;
       if (!candidates.length) return;
       const reachable = (
         await Promise.all(
           candidates.map(async (url) => {
             try {
-              return (await new GatewayClient({ ...creds, url }).ping(signal))
-                ? url
-                : null;
+              return (await new GatewayClient({ ...creds, url }).ping(signal)) ? url : null;
             } catch {
               return null;
             }
@@ -836,15 +782,7 @@ export function App() {
       ctrl.abort();
       off();
     };
-  }, [
-    activeUrl,
-    activeToken,
-    activePinned,
-    activeLabel,
-    knownAltsKey,
-    recoveryNonce,
-    refresh,
-  ]);
+  }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, recoveryNonce, refresh]);
 
   // Native push is a PER-GATEWAY choice, so the sweep is per gateway: every
   // paired machine is brought in line with ITS OWN switch (that gateway's
@@ -854,16 +792,14 @@ export function App() {
   // unreachable has to land eventually. Registration only refreshes a permission
   // the user ALREADY granted — the app never prompts on launch, and the web
   // build no-ops.
-  const pairedKey = conns
-    .map((c) => `${c.url}\u0000${c.token ?? ""}`)
-    .join("\n");
+  const pairedKey = conns.map((c) => `${c.url}\u0000${c.token ?? ''}`).join('\n');
   const notifyTargets = useMemo<GatewayConn[]>(
     () =>
       pairedKey
-        .split("\n")
+        .split('\n')
         .filter(Boolean)
         .map((row) => {
-          const [url, token] = row.split("\u0000");
+          const [url, token] = row.split('\u0000');
           return { url, token: token || undefined };
         }),
     [pairedKey],
@@ -884,9 +820,9 @@ export function App() {
       const permission = await pushPermission();
       // An OS that silenced this app answers for the whole fleet at once, and
       // answers it without asking a single machine anything.
-      const isBlocked = permission === "denied";
-      let token = cachedPushToken() ?? "";
-      if (permission === "granted") {
+      const isBlocked = permission === 'denied';
+      let token = cachedPushToken() ?? '';
+      if (permission === 'granted') {
         try {
           token = await acquirePushToken();
         } catch {
@@ -912,14 +848,10 @@ export function App() {
           register: async (conn) => {
             // The OS withheld the token this run: there is nothing to hand over,
             // and an empty id must never be posted. The next wake tries again.
-            if (!token) throw new Error("This device has no push token yet.");
-            await registerForPush(
-              deviceRegistration(token),
-              new GatewayClient(conn).pushTarget(),
-            );
+            if (!token) throw new Error('This device has no push token yet.');
+            await registerForPush(deviceRegistration(token), new GatewayClient(conn).pushTarget());
           },
-          unregister: (conn) =>
-            unregisterFromPush(token, new GatewayClient(conn).pushTarget()),
+          unregister: (conn) => unregisterFromPush(token, new GatewayClient(conn).pushTarget()),
           // A relay grant nearing its expiry is the one reason to write to a
           // machine that already agrees — and this device can tell on its own.
           isRenewalDue: async (_conn, push) => {
@@ -1001,16 +933,15 @@ export function App() {
       active,
       now: Date.now(),
     });
-    if (outcome.action === "wait") return;
+    if (outcome.action === 'wait') return;
     setPushIntent(null);
-    if (outcome.action === "open")
-      openGatewaySession(outcome.conn, outcome.sid);
+    if (outcome.action === 'open') openGatewaySession(outcome.conn, outcome.sid);
   }, [pushIntent, routeApplied, conns, active, openGatewaySession]);
 
   // Primary owns the fleet order. Failures keep the last durable answer, and retries
   // never derive positions from health or response timing.
   useEffect(() => {
-    const owner = conns.find(conn => conn.url === primary?.url);
+    const owner = conns.find((conn) => conn.url === primary?.url);
     if (!owner?.id) return;
     const primaryId = owner.id;
     const ctrl = new AbortController();
@@ -1020,7 +951,8 @@ export function App() {
       busy = true;
       try {
         const ids = await new GatewayClient(owner).machineOrder(
-          conns.flatMap(conn => conn.id ? [conn.id] : []), ctrl.signal,
+          conns.flatMap((conn) => (conn.id ? [conn.id] : [])),
+          ctrl.signal,
         );
         if (ctrl.signal.aborted) return;
         await saveMachineOrder(primaryId, ids);
@@ -1029,17 +961,19 @@ export function App() {
           setConns(next);
       } catch {
         // The cached server order remains usable offline; retry on wake or reconnect.
-      } finally { busy = false; }
+      } finally {
+        busy = false;
+      }
     };
     void sync();
     const timer = window.setInterval(() => void sync(), 30_000);
     const retry = () => void sync();
-    window.addEventListener("online", retry);
+    window.addEventListener('online', retry);
     const unwatch = onWake(retry);
     return () => {
       ctrl.abort();
       window.clearInterval(timer);
-      window.removeEventListener("online", retry);
+      window.removeEventListener('online', retry);
       unwatch();
     };
   }, [conns, primary?.url]);
@@ -1055,9 +989,7 @@ export function App() {
     void (async () => {
       let changed = false;
       for (const conn of missing) {
-        const id = await new GatewayClient(conn)
-          .identify(ctrl.signal)
-          .catch(() => null);
+        const id = await new GatewayClient(conn).identify(ctrl.signal).catch(() => null);
         if (id) {
           await upsertConnection({ ...conn, id });
           changed = true;
@@ -1085,9 +1017,7 @@ export function App() {
     void loadSubscribedSessions(sessionConn.url).then((ids) => {
       if (cancelled) return;
       const next =
-        openTarget?.sid && !ids.includes(openTarget.sid)
-          ? [openTarget.sid, ...ids]
-          : ids;
+        openTarget?.sid && !ids.includes(openTarget.sid) ? [openTarget.sid, ...ids] : ids;
       subscriptions.watchSessions(next);
     });
     return () => {
@@ -1138,8 +1068,7 @@ export function App() {
   // Changing tabs should change visibility, never the list's component identity: its cached
   // rows, scope, scroll position, and expanded projects are already the user's frame.
   const sessionsMounted = conns.length > 0 && !!active;
-  const sessionsVisible =
-    isSplit || (shellView === "sessions" && (!isDesk || isSidebarShown));
+  const sessionsVisible = isSplit || (shellView === 'sessions' && (!isDesk || isSidebarShown));
 
   return (
     <Shell>
@@ -1151,14 +1080,14 @@ export function App() {
           onSearch={() => setSearching(true)}
           onCloseSearch={() => {
             setSearching(false);
-            setQuery("");
+            setQuery('');
           }}
           onAppSettings={openSettings}
         />
       )}
 
       <main
-        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? "flex" : ""} ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
+        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? 'flex' : ''} ${shellView === 'session' ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
         {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
             on a desk it is a 20rem column the transcript stands beside, so the list
@@ -1168,10 +1097,10 @@ export function App() {
           <div
             className={
               !sessionsVisible
-                ? "hidden"
+                ? 'hidden'
                 : isSplit
-                  ? "h-full w-80 shrink-0 border-r border-dialog-edge"
-                  : "h-full"
+                  ? 'h-full w-80 shrink-0 border-r border-dialog-edge'
+                  : 'h-full'
             }
           >
             <SessionsScreen
@@ -1195,7 +1124,7 @@ export function App() {
             />
           </div>
         )}
-        {shellView === "connect" && (
+        {shellView === 'connect' && (
           <ConnectScreen
             conns={conns}
             active={active}
@@ -1204,21 +1133,18 @@ export function App() {
             onSettings={openSettings}
             offlineError={blocked ? offline : null}
             onRetry={() => setOffline(null)}
-            onClose={hasConn ? () => setTab("sessions") : undefined}
+            onClose={hasConn ? () => setTab('sessions') : undefined}
           />
         )}
-        {shellView === "incompatible" && sessionConn && compat && (
-          <IncompatibleScreen
-            compat={compat}
-            conn={sessionConn}
-          />
+        {shellView === 'incompatible' && sessionConn && compat && (
+          <IncompatibleScreen compat={compat} conn={sessionConn} />
         )}
         {/* The list's toggle stands on the pane's leading edge — in the empty pane's
             band, then in the session header's — never in the app bar beside the mark. */}
-        {canSplit && shellView === "sessions" && (
+        {canSplit && shellView === 'sessions' && (
           <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
         )}
-        {shellView === "session" && openTarget && client && subscriptions && (
+        {shellView === 'session' && openTarget && client && subscriptions && (
           <div className="h-full min-h-0 min-w-0 flex-1">
             <SessionScreen
               key={`${openTarget.conn.url}:${openTarget.sid}`}
@@ -1228,9 +1154,7 @@ export function App() {
               fresh={openTarget.fresh}
               onBack={leaveSession}
               sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
-              onOpenSession={(sid, fresh) =>
-                void openGatewaySession(openTarget.conn, sid, fresh)
-              }
+              onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
               onManageProviders={openProviderSettings}
             />
           </div>
@@ -1249,7 +1173,7 @@ export function App() {
             setActive(conn);
             setOpenTarget(null);
             setOffline(null);
-            setTab("sessions");
+            setTab('sessions');
           }}
           onRename={async (conn, label) => {
             const updated = { ...conn, label };
@@ -1266,11 +1190,7 @@ export function App() {
             const wasActive = conn.url === active?.url;
             if (url !== conn.url) {
               const named = Boolean(conn.label) && conn.label !== hostOf(conn.url);
-              await switchConnectionUrl(
-                conn.url,
-                url,
-                named ? {} : { label: hostOf(url) },
-              );
+              await switchConnectionUrl(conn.url, url, named ? {} : { label: hostOf(url) });
             }
             const saved = await upsertConnection({ url, pinned });
             const next = saved.find((c) => c.url === url) ?? { ...conn, url, pinned };
@@ -1314,15 +1234,17 @@ function HeaderSearchField({
       placeholder={placeholder}
       aria-label={label}
       icon={<SearchIcon className="size-3" />}
-      action={value ? (
-        <CloseButton
-          label="Clear search"
-          onClick={() => {
-            onValue('');
-            inputRef.current?.focus();
-          }}
-        />
-      ) : null}
+      action={
+        value ? (
+          <CloseButton
+            label="Clear search"
+            onClick={() => {
+              onValue('');
+              inputRef.current?.focus();
+            }}
+          />
+        ) : null
+      }
     />
   );
 }
@@ -1411,11 +1333,7 @@ export function Header({
               scale's own rung, half the bar and twice the wordmark's cap height,
               never a pixel fitted by hand to the file's proportion. */}
           <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
-            <img
-              src="/vis-logo.png"
-              alt=""
-              className="h-6 w-7 object-contain"
-            />
+            <img src="/vis-logo.png" alt="" className="h-6 w-7 object-contain" />
             <span className="font-mono text-title font-black tracking-[0.18em] text-white">
               VIS
             </span>
@@ -1454,15 +1372,8 @@ export function Header({
 
 function Splash() {
   return (
-    <div
-      className="flex h-full items-center justify-center bg-ink"
-      aria-label="Loading Vis"
-    >
-      <img
-        src="/vis-logo.png"
-        alt="Vis"
-        className="h-16 w-auto animate-pulse object-contain"
-      />
+    <div className="flex h-full items-center justify-center bg-ink" aria-label="Loading Vis">
+      <img src="/vis-logo.png" alt="Vis" className="h-16 w-auto animate-pulse object-contain" />
     </div>
   );
 }

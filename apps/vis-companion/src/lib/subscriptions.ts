@@ -235,13 +235,7 @@ export class SessionSubscriptionHub {
    * so a dead stream is always detectable instead of looking connected.
    */
   private ensureStream(): void {
-    if (
-      this.disposed ||
-      this.suspended ||
-      this.stopStream ||
-      this.cursors.size === 0
-    )
-      return;
+    if (this.disposed || this.suspended || this.stopStream || this.cursors.size === 0) return;
     this.restart();
   }
 
@@ -259,22 +253,18 @@ export class SessionSubscriptionHub {
       this.setConnected(false);
     }
     if (this.cursors.size === 0) return;
-    const stop = this.client.streamSessionEvents(
-      this.cursors,
-      (event) => this.ingest(event),
-      {
-        onOpen: () => this.setConnected(true),
-        onError: () => this.setConnected(false),
-        // Only clear the handle when it is still OURS: a later restart() has
-        // already installed its own stream and must not be torn down by the
-        // old one's exit.
-        onClosed: () => {
-          if (this.stopStream !== stop) return;
-          this.stopStream = null;
-          this.setConnected(false);
-        },
+    const stop = this.client.streamSessionEvents(this.cursors, (event) => this.ingest(event), {
+      onOpen: () => this.setConnected(true),
+      onError: () => this.setConnected(false),
+      // Only clear the handle when it is still OURS: a later restart() has
+      // already installed its own stream and must not be torn down by the
+      // old one's exit.
+      onClosed: () => {
+        if (this.stopStream !== stop) return;
+        this.stopStream = null;
+        this.setConnected(false);
       },
-    );
+    });
     this.stopStream = stop;
   }
 
@@ -285,12 +275,7 @@ export class SessionSubscriptionHub {
    * of looking connected.
    */
   private ensureFleetStream(): void {
-    if (
-      this.disposed ||
-      this.suspended ||
-      this.stopFleetStream ||
-      this.fleetListeners.size === 0
-    )
+    if (this.disposed || this.suspended || this.stopFleetStream || this.fleetListeners.size === 0)
       return;
     const stop = this.client.streamFleetStatus(
       (event) => {
@@ -365,10 +350,7 @@ export class SessionSubscriptionHub {
         // rendered, i.e. the same answer twice.
         const head = buffered[0];
         const isHeadStart = head?.type === 'turn.started';
-        buffered.splice(
-          isHeadStart ? 1 : 0,
-          buffered.length - MAX_BUFFERED_EVENTS,
-        );
+        buffered.splice(isHeadStart ? 1 : 0, buffered.length - MAX_BUFFERED_EVENTS);
       }
       this.buffers.set(sid, buffered);
     }

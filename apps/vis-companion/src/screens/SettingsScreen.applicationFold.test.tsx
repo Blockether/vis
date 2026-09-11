@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
-import { useState } from "react";
-import { describe, expect, it } from "vitest";
-import { SettingsColumn } from "./settings/SettingsLayout";
-import settingsScreenSource from "./SettingsScreen.tsx?raw";
+import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
+import { describe, expect, it } from 'vitest';
+import { SettingsColumn } from './settings/SettingsLayout';
+import settingsScreenSource from './SettingsScreen.tsx?raw';
 
 /** The dialog's two columns stack below `sm:`; there the application's own settings
  *  fold behind their band, and the machines lead. Beside each other — the same
@@ -17,7 +17,7 @@ function Harness({ initialOpen }: { initialOpen: boolean }) {
       disclosure={{
         isOpen: open,
         onToggle: () => setOpen((current) => !current),
-        label: `${open ? "Hide" : "Show"} application settings`,
+        label: `${open ? 'Hide' : 'Show'} application settings`,
       }}
     >
       <p>Theme</p>
@@ -29,7 +29,7 @@ function Harness({ initialOpen }: { initialOpen: boolean }) {
  *  honest default, and a wide one is spelled out here explicitly. */
 const setViewport = (wide: boolean) => {
   window.matchMedia = ((query: string) => ({
-    matches: query === "(min-width: 640px)" ? wide : false,
+    matches: query === '(min-width: 640px)' ? wide : false,
     media: query,
     onchange: null,
     addListener: () => {},
@@ -44,28 +44,28 @@ describe("the settings dialog's stacked application fold", () => {
   it("hides the application column's body until its band is pressed", () => {
     setViewport(false);
     render(<Harness initialOpen={false} />);
-    expect(screen.queryByText("Theme")).not.toBeInTheDocument();
-    const band = screen.getByRole("button", { name: "Show application settings" });
-    expect(band).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(screen.getByText("Application"));
-    expect(screen.getByText("Theme")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Hide application settings" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
+    expect(screen.queryByText('Theme')).not.toBeInTheDocument();
+    const band = screen.getByRole('button', { name: 'Show application settings' });
+    expect(band).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByText('Application'));
+    expect(screen.getByText('Theme')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide application settings' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
     );
-    fireEvent.click(screen.getByText("Application"));
-    expect(screen.queryByText("Theme")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Application'));
+    expect(screen.queryByText('Theme')).not.toBeInTheDocument();
   });
 
-  it("keeps a standing column open with no fold where both columns fit", () => {
+  it('keeps a standing column open with no fold where both columns fit', () => {
     setViewport(true);
     render(<Harness initialOpen={false} />);
-    expect(screen.getByText("Theme")).toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText('Theme')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
   it("dropped the dialog's 'this device' copy along with the fold", () => {
-    expect(settingsScreenSource).not.toContain("This device");
+    expect(settingsScreenSource).not.toContain('This device');
     expect(settingsScreenSource).not.toContain('meta="this device"');
   });
 });

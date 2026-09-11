@@ -60,7 +60,8 @@ const flag = (name) => {
   return i === -1 ? undefined : args[i + 1];
 };
 // Repeatable flags: `--track internal --track beta` reads as both, not as the last one.
-const flags = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
+const flags = (name) =>
+  args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
 const has = (name) => args.includes(`--${name}`);
 
 const die = (msg) => {
@@ -73,7 +74,8 @@ const die = (msg) => {
 // keeps being built and signed while it may not be shipped.
 if (!has('tracks') && !has('no-upload')) {
   const refusal = androidPublishRefusal('publishing the Vis Companion Android app');
-  if (refusal) die(`${refusal}\n  Build without publishing: npm run release:android:store -- --no-upload`);
+  if (refusal)
+    die(`${refusal}\n  Build without publishing: npm run release:android:store -- --no-upload`);
 }
 const run = (cmd, cmdArgs, opts = {}) => {
   console.log(`\n$ ${cmd} ${cmdArgs.join(' ')}`);
@@ -87,24 +89,32 @@ const capture = (cmd, cmdArgs, opts = {}) => {
 };
 
 // `security -w` prints hex whenever the stored secret is not plain printable ASCII.
-const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+const unhex = (s) =>
+  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
 const keychain = (service, account) => {
   if (process.platform !== 'darwin') return undefined;
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], { encoding: 'utf8' });
+  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
+    encoding: 'utf8',
+  });
   return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
 };
 
-const serviceAccount = process.env.VIS_PLAY_SERVICE_ACCOUNT?.trim() || keychain('vis-play', 'service_account');
+const serviceAccount =
+  process.env.VIS_PLAY_SERVICE_ACCOUNT?.trim() || keychain('vis-play', 'service_account');
 const packageName = JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
 
 // ── read-only probe ───────────────────────────────────────────────────────────────────
 
 if (has('tracks')) {
-  if (!serviceAccount) die('no Play service account — `npm run secrets play <service-account.json>`');
+  if (!serviceAccount)
+    die('no Play service account — `npm run secrets play <service-account.json>`');
   const found = await readTracks({ serviceAccount, packageName });
   console.log(`\n${packageName}`);
   for (const t of found) {
-    const rel = t.releases.map((r) => `${r.name} [${r.status}${r.userFraction ? ` ${Math.round(r.userFraction * 100)}%` : ''}] codes ${r.versionCodes?.join(',')}`);
+    const rel = t.releases.map(
+      (r) =>
+        `${r.name} [${r.status}${r.userFraction ? ` ${Math.round(r.userFraction * 100)}%` : ''}] codes ${r.versionCodes?.join(',')}`,
+    );
     console.log(`  ${t.track.padEnd(12)} ${rel.length ? rel.join(' · ') : '—'}`);
   }
   console.log();
@@ -116,10 +126,12 @@ if (has('tracks')) {
 // Repo-root VIS_VERSION is the source of truth; npm metadata mirrors it.
 const versionName = syncPackageVersion();
 const versionCode = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
-if (!/^\d+$/.test(versionCode)) die(`version code must be a positive integer, got "${versionCode}"`);
+if (!/^\d+$/.test(versionCode))
+  die(`version code must be a positive integer, got "${versionCode}"`);
 
 const reuseExisting = has('reuse-existing');
-if (reuseExisting && !flag('build')) die('--reuse-existing requires an explicit --build <versionCode>');
+if (reuseExisting && !flag('build'))
+  die('--reuse-existing requires an explicit --build <versionCode>');
 
 // Ask Play which tracks this listing HAS before planning anything: `all` (the default) then
 // means every tester track that exists — a closed track added in the Play Console is served by
@@ -138,7 +150,12 @@ if (serviceAccount && !has('no-upload')) {
 // tracks must fail in a second, not after Gradle has spent ten minutes signing an .aab.
 let tracks;
 try {
-  ({ tracks } = planRelease({ tracks: flags('track'), available, userFraction: flag('rollout'), draft: has('draft') }));
+  ({ tracks } = planRelease({
+    tracks: flags('track'),
+    available,
+    userFraction: flag('rollout'),
+    draft: has('draft'),
+  }));
 } catch (err) {
   die(err.message);
 }
@@ -151,11 +168,13 @@ const report = (res) =>
   console.log(
     `\n✓ ${versionName} (${res.versionCode}) is on ${res.tracks.join(', ')} [${res.status}].\n` +
       [
-        res.tracks.includes('internal') && '  Internal testing is live within minutes for the testers on that list.',
+        res.tracks.includes('internal') &&
+          '  Internal testing is live within minutes for the testers on that list.',
         res.tracks.includes('beta') &&
           '  Open testing: share the link from Play Console ▸ Testing ▸ Open testing ▸ Testers ▸ Copy link.\n' +
             '  First rollout on a new open track waits for Google review (hours to a day); later ones do not.',
-        res.tracks.includes('production') && '  Production is live for everyone once Google finishes reviewing the rollout.',
+        res.tracks.includes('production') &&
+          '  Production is live for everyone once Google finishes reviewing the rollout.',
       ]
         .filter(Boolean)
         .join('\n') +
@@ -164,11 +183,14 @@ const report = (res) =>
 
 // Release notes come first so an empty/broken changelog fails before a long build or Play edit.
 // Play caps release notes at 500 characters per language (App Store Connect allows 4000).
-const notes = has('no-notes') ? { text: '' } : buildNotes({ version: versionName, build: versionCode, write: !has('no-changelog') });
+const notes = has('no-notes')
+  ? { text: '' }
+  : buildNotes({ version: versionName, build: versionCode, write: !has('no-changelog') });
 if (notes.text) console.log(`\n· release notes:\n${notes.text}\n`);
 
 if (reuseExisting) {
-  if (!serviceAccount) die('no Play service account — `npm run secrets play <service-account.json>`');
+  if (!serviceAccount)
+    die('no Play service account — `npm run secrets play <service-account.json>`');
   const res = await promoteBundle({
     serviceAccount,
     packageName,
@@ -210,10 +232,15 @@ if (!javaHome) die(jdkHelp());
 if (javaHome !== process.env.JAVA_HOME) console.log(`\n· JDK ${JDK} for Gradle: ${javaHome}`);
 
 const gradlew = join(androidDir, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-run(gradlew, ['--no-daemon', 'bundleRelease'], { cwd: androidDir, env: { ...process.env, JAVA_HOME: javaHome } });
+run(gradlew, ['--no-daemon', 'bundleRelease'], {
+  cwd: androidDir,
+  env: { ...process.env, JAVA_HOME: javaHome },
+});
 
 const outDir = join(androidDir, 'app', 'build', 'outputs', 'bundle', 'release');
-const aabName = existsSync(outDir) ? readdirSync(outDir).find((f) => f.endsWith('.aab')) : undefined;
+const aabName = existsSync(outDir)
+  ? readdirSync(outDir).find((f) => f.endsWith('.aab'))
+  : undefined;
 if (!aabName) die(`Gradle produced no .aab in ${outDir}`);
 const aabPath = join(outDir, aabName);
 const aab = readFileSync(aabPath);
@@ -223,7 +250,9 @@ console.log(`\n· aab ${aabPath} (${(aab.length / 1e6).toFixed(1)} MB)`);
 // it here. jarsigner is authoritative (a .aab is JAR-signed) and ships with the same JDK we
 // just picked — scanning the bytes for a META-INF/*.RSA block gives false negatives, because
 // the signature block sits near the end of a 23 MB zip.
-const verify = spawnSync(join(javaHome, 'bin', 'jarsigner'), ['-verify', aabPath], { encoding: 'utf8' });
+const verify = spawnSync(join(javaHome, 'bin', 'jarsigner'), ['-verify', aabPath], {
+  encoding: 'utf8',
+});
 if (verify.status !== 0 || !/jar verified/i.test(verify.stdout ?? ''))
   die(
     `the .aab is NOT signed — Play would reject it.\n  ${(verify.stdout ?? verify.stderr ?? '').trim().split('\n')[0]}\n` +

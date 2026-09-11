@@ -40,7 +40,8 @@ export function desktopTargets(platform, arch) {
   if (!['darwin', 'linux'].includes(platform) || !['x64', 'arm64'].includes(arch)) {
     throw new Error(`no desktop target for platform ${platform}/${arch}`);
   }
-  if (platform === 'darwin') return [{ targets: 'universal', ext: 'dmg', asset: 'macos-universal' }];
+  if (platform === 'darwin')
+    return [{ targets: 'universal', ext: 'dmg', asset: 'macos-universal' }];
   return [
     { targets: 'deb', ext: 'deb', asset: `linux-${arch}` },
     { targets: 'appimage', ext: 'AppImage', asset: `linux-${arch}` },
@@ -48,26 +49,38 @@ export function desktopTargets(platform, arch) {
 }
 
 /** Release asset name for one installer: `vis-companion-<version>-<platform-arch>.<ext>`. */
-export const assetName = (version, target) => `vis-companion-${version}-${target.asset}.${target.ext}`;
+export const assetName = (version, target) =>
+  `vis-companion-${version}-${target.asset}.${target.ext}`;
 
 /** The Pake invocation for one target: every flag the desktop app is built with. */
 export function pakeArgs({ distDir, version, target, icon = ICON }) {
   return [
     distDir,
     '--use-local-file',
-    '--name', APP_NAME,
-    '--identifier', 'com.blockether.viscompanion.desktop',
-    '--app-version', version,
-    '--icon', icon,
-    '--width', '1280',
-    '--height', '800',
-    '--targets', target.targets,
+    '--name',
+    APP_NAME,
+    '--identifier',
+    'com.blockether.viscompanion.desktop',
+    '--app-version',
+    version,
+    '--icon',
+    icon,
+    '--width',
+    '1280',
+    '--height',
+    '800',
+    '--targets',
+    target.targets,
     ...(target.targets === 'universal' ? ['--multi-arch'] : []),
   ];
 }
 
 /** Package THIS host architecture (both on macOS); return the asset paths written. */
-export function packageDesktop({ platform = process.platform, arch = process.arch, log = console.log } = {}) {
+export function packageDesktop({
+  platform = process.platform,
+  arch = process.arch,
+  log = console.log,
+} = {}) {
   const targets = desktopTargets(platform, arch);
   const distDir = join(appDir, 'dist');
   if (!existsSync(join(distDir, 'index.html'))) {

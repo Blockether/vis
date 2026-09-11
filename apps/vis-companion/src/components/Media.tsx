@@ -1,14 +1,14 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode } from 'react';
 
-import { artifactMedia, attachmentBytes } from "../lib/artifacts";
+import { artifactMedia, attachmentBytes } from '../lib/artifacts';
 import {
   mediaCaptionClass,
   mediaFrameClass,
   mediaGridClass,
   mediaTileFrameClass,
-} from "../lib/media-frame";
-import { ImageGallery } from "../lib/gallery";
-import { Disclosure, PROSE } from "./ui";
+} from '../lib/media-frame';
+import { ImageGallery } from '../lib/gallery';
+import { Disclosure, PROSE } from './ui';
 
 /**
  * ONE picture on its own plate: the reserved frame from `lib/media-frame` with
@@ -42,11 +42,7 @@ export function MediaPlate({
       {name ? (
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>
-          {meta ? (
-            <span className="shrink-0 uppercase tracking-wider">
-              {meta}
-            </span>
-          ) : null}
+          {meta ? <span className="shrink-0 uppercase tracking-wider">{meta}</span> : null}
         </figcaption>
       ) : null}
     </figure>
@@ -62,9 +58,9 @@ export function MediaPlate({
  * are three different facts, and the reader is owed which one it is.
  */
 const TRANSCRIPTION_STATUS_LABEL: Record<string, string> = {
-  pending: "TRANSCRIBING…",
-  unavailable: "NO TRANSCRIPTION",
-  silent: "NO SPEECH",
+  pending: 'TRANSCRIBING…',
+  unavailable: 'NO TRANSCRIPTION',
+  silent: 'NO SPEECH',
 };
 
 /**
@@ -116,10 +112,10 @@ export function MediaRecording({
   children: ReactNode;
 }) {
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
-  const transcript = transcription?.trim() ?? "";
+  const transcript = transcription?.trim() ?? '';
   const statusLabel = transcript
-    ? ""
-    : (TRANSCRIPTION_STATUS_LABEL[transcriptionStatus ?? ""] ?? "");
+    ? ''
+    : (TRANSCRIPTION_STATUS_LABEL[transcriptionStatus ?? ''] ?? '');
   return (
     <figure className="mt-2.5 min-w-0 first:mt-0">
       <div className="min-w-0 border border-code-edge bg-code p-2">
@@ -136,7 +132,9 @@ export function MediaRecording({
             TRANSCRIPTION
           </Disclosure>
           {isTranscriptOpen ? (
-            <p className={`min-w-0 whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 text-meta italic text-dialog-hint ${PROSE}`}>
+            <p
+              className={`min-w-0 whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 text-meta italic text-dialog-hint ${PROSE}`}
+            >
               {`“${transcript}”`}
             </p>
           ) : null}
@@ -149,11 +147,7 @@ export function MediaRecording({
       {name ? (
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>
-          {meta ? (
-            <span className="shrink-0 uppercase tracking-wider">
-              {meta}
-            </span>
-          ) : null}
+          {meta ? <span className="shrink-0 uppercase tracking-wider">{meta}</span> : null}
         </figcaption>
       ) : null}
     </figure>
@@ -172,22 +166,14 @@ export function MediaRecording({
  * {@link ImageGallery}, so opening one tile can walk to the others with the
  * arrow keys instead of closing the viewer once per picture.
  */
-export function MediaGrid({
-  summary,
-  children,
-}: {
-  summary?: string;
-  children: ReactNode;
-}) {
+export function MediaGrid({ summary, children }: { summary?: string; children: ReactNode }) {
   return (
     <div className="mt-2.5 min-w-0 first:mt-0">
       <div className={mediaGridClass}>
         <ImageGallery>{children}</ImageGallery>
       </div>
       {summary ? (
-        <p className="mt-1 min-w-0 truncate font-mono text-chip text-footer-muted">
-          {summary}
-        </p>
+        <p className="mt-1 min-w-0 truncate font-mono text-chip text-footer-muted">{summary}</p>
       ) : null}
     </div>
   );
@@ -206,25 +192,15 @@ export function MediaTile({ children }: { children: ReactNode }) {
  * is a wrong number, not a smaller one.
  */
 export function mediaSummary(pictures: { size?: number }[]): string {
-  const things = `${pictures.length} ${
-    pictures.length === 1 ? "image" : "images"
-  }`;
-  const total = pictures.every((picture) => typeof picture.size === "number")
-    ? attachmentBytes(
-        pictures.reduce((sum, picture) => sum + (picture.size ?? 0), 0),
-      )
-    : "";
+  const things = `${pictures.length} ${pictures.length === 1 ? 'image' : 'images'}`;
+  const total = pictures.every((picture) => typeof picture.size === 'number')
+    ? attachmentBytes(pictures.reduce((sum, picture) => sum + (picture.size ?? 0), 0))
+    : '';
   return total ? `${things} · ${total}` : things;
 }
 
 /** `PNG · 287KB` — the right half of a plate's caption, spelled the same way
  *  for a picture the human sent and one the model produced. */
-export function mediaMeta(item: {
-  filename?: string;
-  media_type?: string;
-  size?: number;
-}): string {
-  return [artifactMedia(item), attachmentBytes(item.size)]
-    .filter(Boolean)
-    .join(" · ");
+export function mediaMeta(item: { filename?: string; media_type?: string; size?: number }): string {
+  return [artifactMedia(item), attachmentBytes(item.size)].filter(Boolean).join(' · ');
 }

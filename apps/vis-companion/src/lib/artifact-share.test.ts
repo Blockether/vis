@@ -35,11 +35,13 @@ describe('artifact sharing', () => {
     );
 
     expect(result).toBe('Artifact shared.');
-    expect(writeFile).toHaveBeenCalledWith(expect.objectContaining({
-      path: expect.stringMatching(/^shared\/\d+-Q3-report\.pdf$/),
-      directory: 'CACHE',
-      recursive: true,
-    }));
+    expect(writeFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.stringMatching(/^shared\/\d+-Q3-report\.pdf$/),
+        directory: 'CACHE',
+        recursive: true,
+      }),
+    );
     expect(share).toHaveBeenCalledWith({
       title: '../Q3 report.pdf',
       files: ['file:///cache/shared/report.pdf'],

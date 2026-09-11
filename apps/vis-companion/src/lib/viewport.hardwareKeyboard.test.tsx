@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, useRef } from "react";
-import { render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, useRef } from 'react';
+import { render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useVisualViewportShell } from "./viewport";
+import { useVisualViewportShell } from './viewport';
 
 const native = vi.hoisted(() => ({
   keyboard: new Map<string, (info: { keyboardHeight: number }) => void>(),
@@ -11,15 +11,15 @@ const native = vi.hoisted(() => ({
   isMac: false,
 }));
 
-vi.mock("./host", () => ({
+vi.mock('./host', () => ({
   isIosAppOnMac: () => native.isMac,
 }));
 
-vi.mock("@capacitor/core", () => ({
-  Capacitor: { getPlatform: () => "ios" },
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { getPlatform: () => 'ios' },
 }));
 
-vi.mock("@capacitor/keyboard", () => ({
+vi.mock('@capacitor/keyboard', () => ({
   Keyboard: {
     addListener: (event: string, listener: (info: { keyboardHeight: number }) => void) => {
       native.keyboard.set(event, listener);
@@ -33,7 +33,7 @@ vi.mock("@capacitor/keyboard", () => ({
   },
 }));
 
-vi.mock("@capacitor/app", () => ({
+vi.mock('@capacitor/app', () => ({
   App: {
     addListener: () => Promise.resolve({ remove: () => undefined }),
   },
@@ -53,9 +53,9 @@ function ViewportProbe() {
 }
 
 /** The only signal a web view has for "a keyboard is attached": what points at it. */
-function pointing(kind: "fine" | "coarse") {
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query.includes("pointer: fine") ? kind === "fine" : false,
+function pointing(kind: 'fine' | 'coarse') {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query.includes('pointer: fine') ? kind === 'fine' : false,
     media: query,
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
@@ -65,7 +65,7 @@ function pointing(kind: "fine" | "coarse") {
 function window_(width: number, height: number) {
   window.innerWidth = width;
   window.innerHeight = height;
-  Object.defineProperty(window, "visualViewport", {
+  Object.defineProperty(window, 'visualViewport', {
     configurable: true,
     value: {
       width,
@@ -81,8 +81,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   native.keyboard.clear();
   native.isMac = false;
-  vi.stubGlobal("requestAnimationFrame", () => 1);
-  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  vi.stubGlobal('requestAnimationFrame', () => 1);
+  vi.stubGlobal('cancelAnimationFrame', () => undefined);
 });
 
 afterEach(() => {
@@ -90,37 +90,37 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("focusing an editor with a keyboard already attached", () => {
+describe('focusing an editor with a keyboard already attached', () => {
   // Regression, user report (paraphrased: on a desktop the app should neither raise
   // nor simulate a keyboard): a focus reserved the predicted software-keyboard band —
   // 41% of the window — for keys that never come up, so the composer floated above a
   // dead strip of background until the native accessory-bar event corrected it.
-  it("predicts no software keyboard for a hardware pointer", () => {
-    pointing("fine");
+  it('predicts no software keyboard for a hardware pointer', () => {
+    pointing('fine');
     window_(1180, 820);
     render(<ViewportProbe />);
-    const shell = screen.getByTestId("shell");
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
 
     act(() => composer.focus());
 
-    expect(shell.style.height).toBe("");
+    expect(shell.style.height).toBe('');
   });
 
   // Regression, user report: the hardware keyboard's tiny shortcut-bar event still
   // shortened the app shell, exposing a translucent keyboard-like strip under the
   // composer on a desktop-class window even though no software keyboard was present.
-  it("reserves nothing for the hardware keyboard shortcut bar", () => {
-    pointing("fine");
+  it('reserves nothing for the hardware keyboard shortcut bar', () => {
+    pointing('fine');
     window_(1180, 820);
     render(<ViewportProbe />);
-    const shell = screen.getByTestId("shell");
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
 
     act(() => composer.focus());
-    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 69 }));
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 69 }));
 
-    expect(shell.style.height).toBe("");
+    expect(shell.style.height).toBe('');
   });
 
   // Regression, user report (paraphrased: writing on the desktop still opened a dead
@@ -128,17 +128,17 @@ describe("focusing an editor with a keyboard already attached", () => {
   // when a hardware keyboard parks all but its shortcut bar below the screen, so the
   // window reserved a third of itself for keys nobody could see and left the composer
   // floating above the background, with the system's bar alone at the bottom edge.
-  it("reserves nothing for a keyboard frame parked off the screen", () => {
-    pointing("fine");
+  it('reserves nothing for a keyboard frame parked off the screen', () => {
+    pointing('fine');
     window_(1194, 834);
     render(<ViewportProbe />);
-    const shell = screen.getByTestId("shell");
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
 
     act(() => composer.focus());
-    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 353 }));
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 353 }));
 
-    expect(shell.style.height).toBe("");
+    expect(shell.style.height).toBe('');
   });
 
   // Regression, user report (paraphrased: installed on a MacBook, tapping the input
@@ -146,19 +146,19 @@ describe("focusing an editor with a keyboard already attached", () => {
   // and under a trackpad it still answers `(pointer: coarse)` — so the two guards
   // above never fired there. The focus pinned the shell to two thirds of the window,
   // and UIKit's frame for the keyboard it never draws confirmed the pin for good.
-  it("reserves nothing in a Mac window, whatever the pointer query says", () => {
+  it('reserves nothing in a Mac window, whatever the pointer query says', () => {
     native.isMac = true;
-    pointing("coarse");
+    pointing('coarse');
     window_(1280, 800);
     render(<ViewportProbe />);
-    const shell = screen.getByTestId("shell");
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
 
     act(() => composer.focus());
-    expect(shell.style.height).toBe("");
+    expect(shell.style.height).toBe('');
 
-    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 336 }));
-    expect(shell.style.height).toBe("");
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 336 }));
+    expect(shell.style.height).toBe('');
   });
   // Regression, user report (paraphrased: on the Mac a gray element still appears
   // while I type): reserving nothing for the shortcut bar never removed the bar.
@@ -166,41 +166,41 @@ describe("focusing an editor with a keyboard already attached", () => {
   // panel, inset from the window edges, in none of the app's colours, laid over
   // the composer for as long as it held focus — because nothing ever asked for it
   // to go away.
-  it("asks UIKit to take the form accessory bar away", () => {
+  it('asks UIKit to take the form accessory bar away', () => {
     native.accessoryBar.length = 0;
-    pointing("fine");
+    pointing('fine');
     window_(1180, 820);
 
     render(<ViewportProbe />);
 
     expect(native.accessoryBar).toEqual([false]);
   });
-  it("still places the composer a frame early on a touch screen", () => {
-    pointing("coarse");
+  it('still places the composer a frame early on a touch screen', () => {
+    pointing('coarse');
     window_(390, 844);
     render(<ViewportProbe />);
-    const shell = screen.getByTestId("shell");
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
 
     act(() => composer.focus());
 
-    expect(shell).toHaveStyle({ height: "549px" });
+    expect(shell).toHaveStyle({ height: '549px' });
   });
   // Regression, Vis session 5b630f33-96ef-44de-bc05-9db6cbe71845: renaming the
   // last session pinned the native shell above the iPhone keyboard but left that row
   // at its old list position, entirely behind the keys.
-  it("scrolls the last inline rename into the shortened native shell", () => {
-    pointing("coarse");
+  it('scrolls the last inline rename into the shortened native shell', () => {
+    pointing('coarse');
     window_(390, 844);
     render(<ViewportProbe />);
-    const shell = screen.getByTestId("shell");
-    const rename = screen.getByRole("textbox", { name: "Rename last session" });
+    const shell = screen.getByTestId('shell');
+    const rename = screen.getByRole('textbox', { name: 'Rename last session' });
     const reveal = vi.fn();
-    Object.defineProperty(rename, "scrollIntoView", { configurable: true, value: reveal });
+    Object.defineProperty(rename, 'scrollIntoView', { configurable: true, value: reveal });
 
     act(() => rename.focus());
 
-    expect(shell).toHaveStyle({ height: "549px" });
-    expect(reveal).toHaveBeenCalledWith({ block: "nearest" });
+    expect(shell).toHaveStyle({ height: '549px' });
+    expect(reveal).toHaveBeenCalledWith({ block: 'nearest' });
   });
 });

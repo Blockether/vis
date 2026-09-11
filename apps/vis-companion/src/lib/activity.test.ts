@@ -1,5 +1,5 @@
 /** The Activity projection against `internal.activity.core`'s own bounded snapshot. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest';
 import {
   activityCopyText,
   argumentGroups,
@@ -9,12 +9,12 @@ import {
   ACTIVITY_SIGNALS,
   ACTIVITY_STATES,
   ACTIVITY_TEXT_FORMATS,
-} from "./activity";
-import contract from "../../../../packages/vis-contract/resources/vis-contract/activity.json";
-import cases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-cases.json";
-import groupingCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json";
-import argumentCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json";
-import copyCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-copy.json";
+} from './activity';
+import contract from '../../../../packages/vis-contract/resources/vis-contract/activity.json';
+import cases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-cases.json';
+import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
+import argumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
+import copyCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-copy.json';
 
 for (const sample of copyCases) {
   it(`portable Activity copy: ${sample.name}`, () => {
@@ -51,33 +51,33 @@ for (const sample of groupingCases) {
   });
 }
 const activityProjection = (
-  state: "running" | "succeeded" | "failed" | "cancelled" = "running",
+  state: 'running' | 'succeeded' | 'failed' | 'cancelled' = 'running',
 ) => ({
   state,
   counts: {
-    running: state === "running" ? 1 : 0,
-    succeeded: state === "succeeded" ? 1 : 0,
-    failed: state === "failed" ? 1 : 0,
-    cancelled: state === "cancelled" ? 1 : 0,
+    running: state === 'running' ? 1 : 0,
+    succeeded: state === 'succeeded' ? 1 : 0,
+    failed: state === 'failed' ? 1 : 0,
+    cancelled: state === 'cancelled' ? 1 : 0,
   },
   rows: [
     {
-      id: "call-1",
+      id: 'call-1',
       sequence: 1,
-      operation: "run_tests",
-      presenter: "tests",
-      signal: "verification",
+      operation: 'run_tests',
+      presenter: 'tests',
+      signal: 'verification',
       state,
-      summary: "suite",
+      summary: 'suite',
       resources: [],
-      evidence: [{ kind: "arguments", text: "suite" }],
+      evidence: [{ kind: 'arguments', text: 'suite' }],
     },
   ],
   omitted: { rows: 0, by_classification: {} },
 });
 
-describe("canonical Activity admission across SDK, engine and surfaces", () => {
-  it("uses the canonical vocabulary", () => {
+describe('canonical Activity admission across SDK, engine and surfaces', () => {
+  it('uses the canonical vocabulary', () => {
     expect(ACTIVITY_PRESENTERS).toEqual(contract.presenters);
     expect(ACTIVITY_SIGNALS).toEqual(contract.signals);
     expect(ACTIVITY_STATES).toEqual(contract.states);
@@ -96,21 +96,21 @@ describe("one form's Activity read off the wire", () => {
   // Protocol 7 took Activity off the Live View rail: it is no longer a classified
   // view with a projection hanging off it. Protocol 9 carries every revision on
   // `block.activity`; only the settled replacement is durable.
-  it("reads a bare projection off the wire", () => {
+  it('reads a bare projection off the wire', () => {
     expect(activityProjectionFromWire(activityProjection())).toMatchObject({
-      state: "running",
+      state: 'running',
     });
   });
 
-  it("reads structured diff evidence and rejects incomplete lines", () => {
+  it('reads structured diff evidence and rejects incomplete lines', () => {
     const projection = activityProjection();
     const diff = {
-      kind: "diff",
-      text: "fixture.clj",
+      kind: 'diff',
+      text: 'fixture.clj',
       lines: [
-        { kind: "hunk", text: "@@ -1 +1 @@" },
-        { kind: "deletion", text: "[REDACTED]", is_redacted: true },
-        { kind: "addition", text: "after" },
+        { kind: 'hunk', text: '@@ -1 +1 @@' },
+        { kind: 'deletion', text: '[REDACTED]', is_redacted: true },
+        { kind: 'addition', text: 'after' },
       ],
       additions: 0,
       deletions: 0,
@@ -122,28 +122,26 @@ describe("one form's Activity read off the wire", () => {
       ...projection,
       rows: [{ ...projection.rows[0], evidence: [diff] }],
     };
-    expect(activityProjectionFromWire(withDiff)?.rows[0].evidence[0]).toEqual(
-      diff,
-    );
+    expect(activityProjectionFromWire(withDiff)?.rows[0].evidence[0]).toEqual(diff);
     expect(
       activityProjectionFromWire({
         ...withDiff,
         rows: [
           {
             ...withDiff.rows[0],
-            evidence: [{ ...diff, lines: [{ kind: "addition" }] }],
+            evidence: [{ ...diff, lines: [{ kind: 'addition' }] }],
           },
         ],
       }),
     ).toBeNull();
   });
 
-  it("rejects a missing, malformed, or retired Activity projection", () => {
+  it('rejects a missing, malformed, or retired Activity projection', () => {
     expect(activityProjectionFromWire(undefined)).toBeNull();
     expect(
       activityProjectionFromWire({
         ...activityProjection(),
-        rows: [{ id: "broken" }],
+        rows: [{ id: 'broken' }],
       }),
     ).toBeNull();
     // Protocol 8 dropped both: a payload still wearing either came from a gateway
@@ -162,13 +160,11 @@ describe("one form's Activity read off the wire", () => {
     ).toBeNull();
   });
 
-  it("rejects projections outside the one canonical closed shape", () => {
+  it('rejects projections outside the one canonical closed shape', () => {
     const projection = activityProjection();
     const row = projection.rows[0];
 
-    expect(
-      activityProjectionFromWire({ ...projection, extra: true }),
-    ).toBeNull();
+    expect(activityProjectionFromWire({ ...projection, extra: true })).toBeNull();
     expect(
       activityProjectionFromWire({
         ...projection,
@@ -181,9 +177,7 @@ describe("one form's Activity read off the wire", () => {
         omitted: { ...projection.omitted, total: 0 },
       }),
     ).toBeNull();
-    expect(
-      activityProjectionFromWire({ ...projection, rows: [row, { ...row }] }),
-    ).toBeNull();
+    expect(activityProjectionFromWire({ ...projection, rows: [row, { ...row }] })).toBeNull();
     expect(
       activityProjectionFromWire({
         ...projection,
@@ -193,14 +187,12 @@ describe("one form's Activity read off the wire", () => {
     expect(
       activityProjectionFromWire({
         ...projection,
-        rows: [
-          { ...row, resources: [{ type: "file", id: "a.clj", extra: true }] },
-        ],
+        rows: [{ ...row, resources: [{ type: 'file', id: 'a.clj', extra: true }] }],
       }),
     ).toBeNull();
   });
 
-  it("carries a per-field text format and refuses one it does not know", () => {
+  it('carries a per-field text format and refuses one it does not know', () => {
     const projection = activityProjection();
     const row = projection.rows[0];
     const marked = {
@@ -208,27 +200,21 @@ describe("one form's Activity read off the wire", () => {
       rows: [
         {
           ...row,
-          summary_format: "inline",
-          result_summary: "wrote `a.clj`",
-          result_format: "markdown",
+          summary_format: 'inline',
+          result_summary: 'wrote `a.clj`',
+          result_format: 'markdown',
         },
       ],
     };
 
-    expect(activityProjectionFromWire(marked)?.rows[0].summary_format).toBe(
-      "inline",
-    );
-    expect(activityProjectionFromWire(marked)?.rows[0].result_format).toBe(
-      "markdown",
-    );
+    expect(activityProjectionFromWire(marked)?.rows[0].summary_format).toBe('inline');
+    expect(activityProjectionFromWire(marked)?.rows[0].result_format).toBe('markdown');
     // A row with no flag stays plain text; the app never guesses a format.
-    expect(
-      activityProjectionFromWire(projection)?.rows[0].summary_format,
-    ).toBeUndefined();
+    expect(activityProjectionFromWire(projection)?.rows[0].summary_format).toBeUndefined();
     expect(
       activityProjectionFromWire({
         ...projection,
-        rows: [{ ...row, summary_format: "html" }],
+        rows: [{ ...row, summary_format: 'html' }],
       }),
     ).toBeNull();
     expect(

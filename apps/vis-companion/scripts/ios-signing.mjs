@@ -20,13 +20,13 @@
 // key the release already holds. No extra secret, nothing to click, no new
 // certificate ever.
 
-import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import crypto from "node:crypto";
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import crypto from 'node:crypto';
 
-const API = "https://api.appstoreconnect.apple.com";
+const API = 'https://api.appstoreconnect.apple.com';
 
 /**
  * Mint the short-lived ES256 token App Store Connect authenticates with.
@@ -39,31 +39,23 @@ const API = "https://api.appstoreconnect.apple.com";
  * @param {number} [options.lifetimeSeconds] token lifetime; Apple rejects over 20 minutes
  * @returns {string} a signed JWT
  */
-export function ascJwt({
-  keyId,
-  issuerId,
-  privateKey,
-  now = Date.now(),
-  lifetimeSeconds = 600,
-}) {
+export function ascJwt({ keyId, issuerId, privateKey, now = Date.now(), lifetimeSeconds = 600 }) {
   const b64 = (value) =>
-    Buffer.from(
-      typeof value === "string" ? value : JSON.stringify(value),
-    ).toString("base64url");
+    Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url');
   const issuedAt = Math.floor(now / 1000);
-  const head = b64({ alg: "ES256", kid: keyId, typ: "JWT" });
+  const head = b64({ alg: 'ES256', kid: keyId, typ: 'JWT' });
   const body = b64({
     iss: issuerId,
     iat: issuedAt,
     exp: issuedAt + lifetimeSeconds,
-    aud: "appstoreconnect-v1",
+    aud: 'appstoreconnect-v1',
   });
   // ES256 is a RAW r‖s pair; the DER encoding OpenSSL defaults to is rejected.
-  const signature = crypto.sign("sha256", Buffer.from(`${head}.${body}`), {
+  const signature = crypto.sign('sha256', Buffer.from(`${head}.${body}`), {
     key: crypto.createPrivateKey(privateKey),
-    dsaEncoding: "ieee-p1363",
+    dsaEncoding: 'ieee-p1363',
   });
-  return `${head}.${body}.${signature.toString("base64url")}`;
+  return `${head}.${body}.${signature.toString('base64url')}`;
 }
 
 /**
@@ -79,13 +71,10 @@ export function ascJwt({
  * @param {string} [options.profileType] Apple's profile type
  * @returns {any | undefined} the winning profile resource
  */
-export function pickProfile(
-  payload,
-  { bundleId, profileType = "IOS_APP_STORE" },
-) {
+export function pickProfile(payload, { bundleId, profileType = 'IOS_APP_STORE' }) {
   const identifiers = Object.fromEntries(
     (payload.included ?? [])
-      .filter((resource) => resource.type === "bundleIds")
+      .filter((resource) => resource.type === 'bundleIds')
       .map((resource) => [resource.id, resource.attributes.identifier]),
   );
   return (payload.data ?? [])
@@ -94,12 +83,12 @@ export function pickProfile(
       return (
         identifiers[owner] === bundleId &&
         profile.attributes.profileType === profileType &&
-        profile.attributes.profileState === "ACTIVE"
+        profile.attributes.profileState === 'ACTIVE'
       );
     })
     .sort((a, b) =>
-      String(b.attributes.expirationDate ?? "").localeCompare(
-        String(a.attributes.expirationDate ?? ""),
+      String(b.attributes.expirationDate ?? '').localeCompare(
+        String(a.attributes.expirationDate ?? ''),
       ),
     )[0];
 }
@@ -125,12 +114,7 @@ export function pickProfile(
  */
 export function stampManualSigning(
   pbxproj,
-  {
-    teamId,
-    profileNames,
-    identity = "Apple Distribution",
-    configuration = "Release",
-  },
+  { teamId, profileNames, identity = 'Apple Distribution', configuration = 'Release' },
 ) {
   const stamped = [];
   const owned =
@@ -139,27 +123,22 @@ export function stampManualSigning(
     /(\n\t\t[0-9A-Fa-f]{24} \/\* (\w+) \*\/ = \{\n\t\t\tisa = XCBuildConfiguration;\n)([\s\S]*?)(\n\t\t\};)/g,
     (whole, header, configName, body, tail) => {
       if (configName !== configuration) return whole;
-      const bundleId = body.match(
-        /\n\t{4}PRODUCT_BUNDLE_IDENTIFIER = "?([^";]+)"?;/,
-      )?.[1];
+      const bundleId = body.match(/\n\t{4}PRODUCT_BUNDLE_IDENTIFIER = "?([^";]+)"?;/)?.[1];
       const profileName = bundleId ? profileNames[bundleId]?.trim() : undefined;
       if (!bundleId || !profileName) return whole;
       // A literal replacement would read `$&` and friends inside a profile name;
       // Apple allows neither today, but nothing guarantees it forever.
       const insert =
         `\t\t\t\tCODE_SIGN_IDENTITY = "${identity}";\n` +
-        "\t\t\t\tCODE_SIGN_STYLE = Manual;\n" +
+        '\t\t\t\tCODE_SIGN_STYLE = Manual;\n' +
         `\t\t\t\tDEVELOPMENT_TEAM = ${teamId};\n` +
         `\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "${profileName}";\n`;
       const settings = body
-        .replaceAll(owned, "")
-        .replace(
-          /(^|\n)\t\t\tbuildSettings = \{\n/,
-          (match) => `${match}${insert}`,
-        );
+        .replaceAll(owned, '')
+        .replace(/(^|\n)\t\t\tbuildSettings = \{\n/, (match) => `${match}${insert}`);
       // A configuration whose settings block we could not find is left exactly as
       // it was, and never reported as signed.
-      if (!settings.includes("CODE_SIGN_STYLE = Manual;")) return whole;
+      if (!settings.includes('CODE_SIGN_STYLE = Manual;')) return whole;
       stamped.push(bundleId);
       return `${header}${settings}${tail}`;
     },
@@ -172,7 +151,7 @@ const request = async (token, path, init = {}) => {
     ...init,
     headers: {
       Authorization: `Bearer ${token}`,
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...init.headers,
     },
   });
@@ -180,16 +159,14 @@ const request = async (token, path, init = {}) => {
   if (!res.ok) {
     const detail = (payload.errors ?? [])
       .map((error) => `${error.title}: ${error.detail}`)
-      .join("; ");
-    throw new Error(
-      `App Store Connect ${init.method ?? "GET"} ${path} → ${res.status} ${detail}`,
-    );
+      .join('; ');
+    throw new Error(`App Store Connect ${init.method ?? 'GET'} ${path} → ${res.status} ${detail}`);
   }
   return payload;
 };
 
 // Apple only accepts letters, digits and spaces in the names of things it stores.
-const plainName = (value) => value.replaceAll(/[^A-Za-z0-9 ]+/g, " ").trim();
+const plainName = (value) => value.replaceAll(/[^A-Za-z0-9 ]+/g, ' ').trim();
 
 /**
  * Find — or create — the App Store profile of every bundle id, ready to install.
@@ -206,13 +183,7 @@ const plainName = (value) => value.replaceAll(/[^A-Za-z0-9 ]+/g, " ").trim();
  * @param {(message: string) => void} [options.log] progress reporter
  * @returns {Promise<Record<string, {name: string, uuid: string, content: string}>>} profile per bundle id
  */
-export async function ensureProfiles({
-  keyId,
-  issuerId,
-  privateKey,
-  bundleIds,
-  log = () => {},
-}) {
+export async function ensureProfiles({ keyId, issuerId, privateKey, bundleIds, log = () => {} }) {
   const token = ascJwt({ keyId, issuerId, privateKey });
   // `bundleId` belongs in the fieldset as well as in `include`: App Store Connect
   // serialises a profile's relationships only when the sparse fieldset names them,
@@ -222,7 +193,7 @@ export async function ensureProfiles({
   // "Multiple profiles found with the name …" — after which signing falls back to
   // automatic and the export dies on a cloud signing permission error.
   const fields =
-    "fields[profiles]=name,uuid,profileType,profileState,expirationDate,profileContent,bundleId&include=bundleId&limit=200";
+    'fields[profiles]=name,uuid,profileType,profileState,expirationDate,profileContent,bundleId&include=bundleId&limit=200';
   let profiles = await request(token, `/v1/profiles?${fields}`);
   const resolved = {};
 
@@ -234,21 +205,19 @@ export async function ensureProfiles({
         token,
         `/v1/bundleIds?filter[identifier]=${encodeURIComponent(bundleId)}&limit=200`,
       );
-      let bundle = registered.data.find(
-        (item) => item.attributes.identifier === bundleId,
-      );
+      let bundle = registered.data.find((item) => item.attributes.identifier === bundleId);
       if (!bundle) {
         log(`· registering bundle id ${bundleId}`);
         bundle = (
-          await request(token, "/v1/bundleIds", {
-            method: "POST",
+          await request(token, '/v1/bundleIds', {
+            method: 'POST',
             body: JSON.stringify({
               data: {
-                type: "bundleIds",
+                type: 'bundleIds',
                 attributes: {
                   identifier: bundleId,
                   name: plainName(bundleId),
-                  platform: "IOS",
+                  platform: 'IOS',
                 },
               },
             }),
@@ -257,29 +226,29 @@ export async function ensureProfiles({
       }
       const certificates = await request(
         token,
-        "/v1/certificates?filter[certificateType]=IOS_DISTRIBUTION&limit=200",
+        '/v1/certificates?filter[certificateType]=IOS_DISTRIBUTION&limit=200',
       );
       if (certificates.data.length === 0) {
         throw new Error(
-          "no IOS_DISTRIBUTION certificate in the account — a distribution profile cannot be created",
+          'no IOS_DISTRIBUTION certificate in the account — a distribution profile cannot be created',
         );
       }
       profile = (
-        await request(token, "/v1/profiles", {
-          method: "POST",
+        await request(token, '/v1/profiles', {
+          method: 'POST',
           body: JSON.stringify({
             data: {
-              type: "profiles",
+              type: 'profiles',
               attributes: {
                 name: `${plainName(bundleId)} App Store`,
-                profileType: "IOS_APP_STORE",
+                profileType: 'IOS_APP_STORE',
               },
               relationships: {
-                bundleId: { data: { id: bundle.id, type: "bundleIds" } },
+                bundleId: { data: { id: bundle.id, type: 'bundleIds' } },
                 certificates: {
                   data: certificates.data.map((certificate) => ({
                     id: certificate.id,
-                    type: "certificates",
+                    type: 'certificates',
                   })),
                 },
               },
@@ -316,22 +285,15 @@ export async function ensureProfiles({
  * @returns {string[]} the path written
  */
 export function installProfile({ uuid, content }, home = homedir()) {
-  const bytes = Buffer.from(content, "base64");
-  return [
-    join(
-      home,
-      "Library",
-      "Developer",
-      "Xcode",
-      "UserData",
-      "Provisioning Profiles",
-    ),
-  ].map((dir) => {
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, `${uuid}.mobileprovision`);
-    writeFileSync(path, bytes, { mode: 0o600 });
-    return path;
-  });
+  const bytes = Buffer.from(content, 'base64');
+  return [join(home, 'Library', 'Developer', 'Xcode', 'UserData', 'Provisioning Profiles')].map(
+    (dir) => {
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, `${uuid}.mobileprovision`);
+      writeFileSync(path, bytes, { mode: 0o600 });
+      return path;
+    },
+  );
 }
 
 /**
@@ -348,20 +310,22 @@ export function installProfile({ uuid, content }, home = homedir()) {
 export function distributionIdentity(output, keychainPath = process.env.VIS_IOS_SIGNING_KEYCHAIN) {
   let text = output;
   if (text === undefined) {
-    if (process.platform !== "darwin") return undefined;
+    if (process.platform !== 'darwin') return undefined;
     try {
       text = execFileSync(
-        "security",
-        ["find-identity", "-v", "-p", "codesigning", ...(keychainPath ? [keychainPath] : [])],
-        { encoding: "utf8" },
+        'security',
+        ['find-identity', '-v', '-p', 'codesigning', ...(keychainPath ? [keychainPath] : [])],
+        { encoding: 'utf8' },
       );
     } catch {
-      text = "";
+      text = '';
     }
   }
-  const identity = text.match(/^\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"(?:Apple|iPhone) Distribution:/m)?.[1]?.toUpperCase();
+  const identity = text
+    .match(/^\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"(?:Apple|iPhone) Distribution:/m)?.[1]
+    ?.toUpperCase();
   if (keychainPath && !identity) {
-    throw new Error("No distribution signing identity in the release keychain");
+    throw new Error('No distribution signing identity in the release keychain');
   }
   return identity;
 }

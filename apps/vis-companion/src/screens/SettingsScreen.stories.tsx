@@ -56,7 +56,9 @@ export const Appearance: Story = {
     await expect(await page.findByRole('heading', { name: 'Settings' })).toBeVisible();
     const application = page.queryByRole('button', { name: 'Show application settings' });
     if (application) await userEvent.click(application);
-    const theme = await page.findByRole('button', { name: resolveTheme(String(globals.theme)).label });
+    const theme = await page.findByRole('button', {
+      name: resolveTheme(String(globals.theme)).label,
+    });
     await waitFor(() => expect(theme).toHaveAttribute('aria-pressed', 'true'));
   },
 };

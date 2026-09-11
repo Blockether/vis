@@ -21,9 +21,7 @@ import {
   type ProjectCreation,
   type SessionRowsContext,
 } from './sessions/SessionProjectGroups';
-import {
-  PANEL_SIZES,
-} from '../components/Menu';
+import { PANEL_SIZES } from '../components/Menu';
 import { GatewayClient, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session, SseEvent } from '../lib/types';
@@ -44,16 +42,9 @@ import {
 } from '../lib/list-scroll';
 import { EPOCH_STALE_AWAY_MS, holdOrder, useOrderEpoch } from '../lib/order-epoch';
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
-import {
-  ManageProjectsSheet,
-  type ManagedProject,
-} from '../components/ManageProjectsSheet';
+import { ManageProjectsSheet, type ManagedProject } from '../components/ManageProjectsSheet';
 import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
-import {
-  clearMachineOutage,
-  machineOutage,
-  rememberMachineOutage,
-} from '../lib/fleet-outage';
+import { clearMachineOutage, machineOutage, rememberMachineOutage } from '../lib/fleet-outage';
 import {
   clearDraftMessage,
   dirtySessionIds,
@@ -99,7 +90,8 @@ const SESSION_LIST_EVENTS = new Set([
 function isSessionListEvent(event: SseEvent): boolean {
   return (
     SESSION_LIST_EVENTS.has(event.type) ||
-    (viewKind(event) === 'input' && (event.type === VIEW_OPEN_EVENT || event.type === VIEW_CLOSE_EVENT))
+    (viewKind(event) === 'input' &&
+      (event.type === VIEW_OPEN_EVENT || event.type === VIEW_CLOSE_EVENT))
   );
 }
 
@@ -225,11 +217,15 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
     const overview = machine.overview ?? api.cachedProjectsOverview();
     const cached = api.cachedSessions();
     if (!cached && !outage) return overview ? { ...machine, overview } : machine;
-    return { ...machine, sessions: cached ?? null, error: outage, isRemembered: outage !== null, overview };
+    return {
+      ...machine,
+      sessions: cached ?? null,
+      error: outage,
+      isRemembered: outage !== null,
+      overview,
+    };
   });
 }
-
-
 
 /**
  * Derive project page size from measured screen geometry. Touch retains useful row
@@ -266,7 +262,6 @@ function useSessionsPerPage(): number {
  * together in `PANEL_SIZES` rather than being restated here.
  */
 const BROWSE_WIDTH = PANEL_SIZES.browse.width;
-
 
 interface Props {
   /** Every paired machine, in pairing order. This screen renders the FLEET. */
@@ -328,8 +323,8 @@ export function SessionsScreen({
   // Exactly one paired machine is always active. The saved primary owns the first
   // scope; if it changes while this mounted screen is behind Settings, it becomes
   // the scope on return. Pressing the selected tab cannot turn it off.
-  const [scopePick, setScopePick] = useState<string | null>(() =>
-    primaryKey ?? (conns[0] ? machineKey(conns[0]) : null),
+  const [scopePick, setScopePick] = useState<string | null>(
+    () => primaryKey ?? (conns[0] ? machineKey(conns[0]) : null),
   );
   useEffect(() => {
     if (primaryKey) setScopePick(primaryKey);
@@ -497,9 +492,7 @@ export function SessionsScreen({
         // built from it — the scope filter, the sort, the project grouping, the pager
         // — re-ran under a reader who was only reading.
         const settle = (rows: Session[]) => {
-          const held = machinesRef.current.find(
-            (machine) => machineKey(machine.conn) === key,
-          );
+          const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
           const merged = reconcileSessions(held?.sessions ?? null, rows);
           // The stable project totals arrive BESIDE the head window. Adopt both in one
           // patch so no intermediate frame tallies whichever session pages landed first.
@@ -597,9 +590,7 @@ export function SessionsScreen({
   );
 
   // A down machine tile retries in place and reports only active progress or failure.
-  const [retries, setRetries] = useState<ReadonlyMap<string, 'busy' | 'failed'>>(
-    () => new Map(),
-  );
+  const [retries, setRetries] = useState<ReadonlyMap<string, 'busy' | 'failed'>>(() => new Map());
   // Each tile's pending expiry, so a second press cancels the first press's word
   // instead of inheriting the moment it vanishes — and an unmount takes them all.
   const noteExpiry = useRef(new Map<string, number>());
@@ -775,8 +766,7 @@ export function SessionsScreen({
       // while it delivers, every transition arrives as a frame and this read is only
       // the net under a stream that stopped. So keep the tick, slow the READ.
       const now = Date.now();
-      if (fleetStreamingRef.current && now - lastWindowReadAt.current < STREAMED_POLL_MS)
-        return;
+      if (fleetStreamingRef.current && now - lastWindowReadAt.current < STREAMED_POLL_MS) return;
       lastWindowReadAt.current = now;
       void load(controller.signal, true);
     };
@@ -834,8 +824,7 @@ export function SessionsScreen({
         update = {
           live: event.is_live,
           is_awaiting_input: event.is_awaiting_input === true,
-          current_turn_id:
-            typeof event.current_turn_id === 'string' ? event.current_turn_id : null,
+          current_turn_id: typeof event.current_turn_id === 'string' ? event.current_turn_id : null,
         };
       } else if (typeof event.title === 'string' && event.title.length > 0) {
         update = { title: event.title };
@@ -927,7 +916,10 @@ export function SessionsScreen({
     // Once every machine in scope has answered, this IS the list: a mark that
     // still does not fit points at rows that are gone, and retrying it on every
     // later paint would fight the reader instead of serving them.
-    if (applyListScroll(viewport, mark, (id) => rowOffset(viewport, id)) || isFleetLoaded(machines, scope)) {
+    if (
+      applyListScroll(viewport, mark, (id) => rowOffset(viewport, id)) ||
+      isFleetLoaded(machines, scope)
+    ) {
       restoredRef.current = true;
       forgetListScroll();
     }
@@ -1008,17 +1000,16 @@ export function SessionsScreen({
         // further down the fleet's ordering vanished. Fetch those rows by id —
         // AFTER the matches above are already on screen.
         const loaded = new Set(
-          (machinesRef.current.find((machine) => machineKey(machine.conn) === key)
-            ?.sessions ?? []).map((session) => session.id),
+          (
+            machinesRef.current.find((machine) => machineKey(machine.conn) === key)?.sessions ?? []
+          ).map((session) => session.id),
         );
         const missing = found
           .filter((match) => !loaded.has(match.sessionId))
           .slice(0, SEARCH_HYDRATE_MAX);
         if (missing.length === 0) return;
         const rows = await Promise.all(
-          missing.map((match) =>
-            api.session(match.sessionId, controller.signal).catch(() => null),
-          ),
+          missing.map((match) => api.session(match.sessionId, controller.signal).catch(() => null)),
         );
         if (controller.signal.aborted) return;
         answer(key, {
@@ -1191,8 +1182,7 @@ export function SessionsScreen({
         // pill to see where their own unsent sentence went is the same complaint
         // that admitted a just-created session.
         const admitted = new Set(mintedSet);
-        for (const id of dirtySessionIds(clientFor(entry.machine.conn).base))
-          admitted.add(id);
+        for (const id of dirtySessionIds(clientFor(entry.machine.conn).base)) admitted.add(id);
         return {
           machine: entry.machine,
           admitted,
@@ -1267,26 +1257,28 @@ export function SessionsScreen({
     setManageProjects({ machine, at });
   }, []);
 
-
-  const createSession = useCallback(async (on: GatewayConn, root: string) => {
-    setCreating({
-      at: `${clientFor(on).base}\u0000${root}`,
-      label: 'Creating...',
-    });
-    setCreateError(null);
-    try {
-      const session = await clientFor(on).createSession({ root });
-      // Open before refreshing the fleet. The full list walk is background work,
-      // while the session the reader just requested is their immediate destination.
-      if (session.id) setMinted((was) => [session.id, ...was].slice(0, MINTED_KEEP));
-      if (session.id) await onOpen(on, session.id, true);
-      void load();
-    } catch (cause) {
-      setCreateError((cause as Error).message);
-    } finally {
-      setCreating(null);
-    }
-  }, [load, onOpen]);
+  const createSession = useCallback(
+    async (on: GatewayConn, root: string) => {
+      setCreating({
+        at: `${clientFor(on).base}\u0000${root}`,
+        label: 'Creating...',
+      });
+      setCreateError(null);
+      try {
+        const session = await clientFor(on).createSession({ root });
+        // Open before refreshing the fleet. The full list walk is background work,
+        // while the session the reader just requested is their immediate destination.
+        if (session.id) setMinted((was) => [session.id, ...was].slice(0, MINTED_KEEP));
+        if (session.id) await onOpen(on, session.id, true);
+        void load();
+      } catch (cause) {
+        setCreateError((cause as Error).message);
+      } finally {
+        setCreating(null);
+      }
+    },
+    [load, onOpen],
+  );
 
   // Apply a successful gateway deletion to exactly the machine that owned it. The
   // gateway already answered which ids disappeared, so neither a session nor a project
@@ -1300,9 +1292,7 @@ export function SessionsScreen({
       const gone = new Set(ids);
       patchMachine(machineKey(conn), (machine) => {
         const rows = machine.sessions;
-        const sessions = rows && gone.size > 0
-          ? rows.filter((row) => !gone.has(row.id))
-          : rows;
+        const sessions = rows && gone.size > 0 ? rows.filter((row) => !gone.has(row.id)) : rows;
         let overview = machine.overview;
         if (project && overview) {
           const projects = overview.projects.filter((entry) =>
@@ -1360,8 +1350,7 @@ export function SessionsScreen({
       // A partial fan-out is exactly known too: successful ids leave while refusals keep
       // their rows. Only a complete answer removes the project itself from the overview.
       forgetSessions(conn, gone, failed === 0 ? project : undefined);
-      if (failed > 0)
-        throw new Error(`${failed} of ${ids.length} sessions could not be deleted.`);
+      if (failed > 0) throw new Error(`${failed} of ${ids.length} sessions could not be deleted.`);
     },
     [forgetSessions],
   );
@@ -1447,14 +1436,7 @@ export function SessionsScreen({
         cancel: cancelDelete,
       },
     }),
-    [
-      rowCommands,
-      deleting,
-      actionBusy,
-      actionError,
-      confirmDelete,
-      cancelDelete,
-    ],
+    [rowCommands, deleting, actionBusy, actionError, confirmDelete, cancelDelete],
   );
   const rowContext = useMemo<SessionRowsContext>(
     () => ({
@@ -1554,7 +1536,10 @@ export function SessionsScreen({
   if (loadError) return null;
 
   return (
-    <section aria-label="Sessions" className={`flex h-full min-h-0 w-full flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none ${isDesk ? '' : 'mx-auto max-w-[1400px] sm:px-6 sm:py-4'}`}>
+    <section
+      aria-label="Sessions"
+      className={`flex h-full min-h-0 w-full flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none ${isDesk ? '' : 'mx-auto max-w-[1400px] sm:px-6 sm:py-4'}`}
+    >
       {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
           already draws the rule below the Vis mark. A `border-y` here stacked a
           second hairline on top of it, so the Sessions tab wore a 2px seam while
@@ -1608,14 +1593,16 @@ export function SessionsScreen({
       {/* The phone and desk sidebar use equal 12px vertical insets. On wider
           standalone layouts, the section already supplies the top inset. */}
       {showStrip && (
-        <div className={`relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:flex-nowrap sm:pl-0 sm:pr-4 sm:pt-0'}`}>
+        <div
+          className={`relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 py-3 ${isDesk ? '' : 'sm:flex-nowrap sm:pl-0 sm:pr-4 sm:pt-0'}`}
+        >
           {/* The switch owns the leading space of this row: it GROWS, so the machine's
               verb stands at the trailing inset without an auto margin that would fight
               the search report for the same free space. The track inside it keeps its
               own compact width and scrolls a fleet that outgrows the row. */}
           <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
             <MachineSwitcher>
-                {/* The machine tabs are the groups, and exactly one is always active. */}
+              {/* The machine tabs are the groups, and exactly one is always active. */}
               {switcherMachines.map((machine) => {
                 const key = machineKey(machine.conn);
                 const tally = tallies.get(key);
@@ -1746,8 +1733,8 @@ export function SessionsScreen({
                       the one part of the answer that did not arrive. */}
                   {searchUnreached.size > 0 && (
                     <span className="whitespace-nowrap font-mono text-chip text-err">
-                      {searchUnreached.size}{' '}
-                      {searchUnreached.size === 1 ? 'machine' : 'machines'} did not answer
+                      {searchUnreached.size} {searchUnreached.size === 1 ? 'machine' : 'machines'}{' '}
+                      did not answer
                     </span>
                   )}
                 </>
@@ -1780,7 +1767,7 @@ export function SessionsScreen({
           </div>
         </div>
       )}
-        {/* ON A PHONE THE CARD IS THE PAGE, AND IT DOES NOT BREATHE.
+      {/* ON A PHONE THE CARD IS THE PAGE, AND IT DOES NOT BREATHE.
             It used to be `mx-3` with a full box and a height that followed its content,
             so every page of the pager resized the frame under the finger (page 74 has 1
             row) and the whole screen jumped; its two side rules also stole 12px of a
@@ -1796,7 +1783,7 @@ export function SessionsScreen({
             At `sm` the card detaches from the viewport edges but still fills the
             available height. Its list owns overflow; the document never grows a second
             scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
-        {/* AND IT IS NEVER A CARD ITSELF: it is the PAGE the project sheets stand on,
+      {/* AND IT IS NEVER A CARD ITSELF: it is the PAGE the project sheets stand on,
             on the glass exactly as on the desk. It keeps no frame — a container that
             holds objects with their own edges is not itself an object — and takes the
             derived page paper, one step under the sheet in either palette. THAT STEP
@@ -1804,7 +1791,7 @@ export function SessionsScreen({
             sheet's own paper on a phone, a round there would have cut paper out of
             the same paper, so the projects were square on the glass and sheets on the
             desk for no reason a reader could see. */}
-        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-page sm:max-h-full sm:border-0">
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-page sm:max-h-full sm:border-0">
         {/* The pull reports itself where the search door lives: it takes over the app bar
             until the finger releases, instead of inserting a new band above the list. */}
         <PullToSearchHint phase={pullPhase} ref={hintRef} />
@@ -1816,71 +1803,78 @@ export function SessionsScreen({
           </div>
         )}
 
-        <div ref={listRef} className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] pb-[calc(0.75rem+env(safe-area-inset-bottom))] ${isDesk ? '' : 'sm:px-3'}`}>
-        {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
+        <div
+          ref={listRef}
+          className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] pb-[calc(0.75rem+env(safe-area-inset-bottom))] ${isDesk ? '' : 'sm:px-3'}`}
+        >
+          {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
             is where those rows go. Rows fresher than the oldest row on screen are
             counted here instead of being inserted under the thumb; the tap is the
             reader saying when. */}
-        {pendingCount > 0 && (
-          <LoadMore
-            label={`Show ${pendingCount} newer ${pendingCount === 1 ? 'session' : 'sessions'}`}
-            onClick={() => {
-              adopt();
-              listRef.current?.scrollTo({ top: 0 });
-            }}
-          >
-            {pendingCount === 1 ? '1 newer session' : `${pendingCount} newer sessions`}
-          </LoadMore>
-        )}
-        {sessions === null ? (
-          <NavigatorSkeleton />
-        ) : visible?.length === 0 && sections.every(({ groups }) => groups.length === 0) ? (
-          <div className="px-5 py-16 text-center">
-            {/* A query whose answer has not come back yet is not a dead end, and
+          {pendingCount > 0 && (
+            <LoadMore
+              label={`Show ${pendingCount} newer ${pendingCount === 1 ? 'session' : 'sessions'}`}
+              onClick={() => {
+                adopt();
+                listRef.current?.scrollTo({ top: 0 });
+              }}
+            >
+              {pendingCount === 1 ? '1 newer session' : `${pendingCount} newer sessions`}
+            </LoadMore>
+          )}
+          {sessions === null ? (
+            <NavigatorSkeleton />
+          ) : visible?.length === 0 && sections.every(({ groups }) => groups.length === 0) ? (
+            <div className="px-5 py-16 text-center">
+              {/* A query whose answer has not come back yet is not a dead end, and
                 saying "No matching sessions" while every gateway is still reading
                 its transcripts is the screen lying about a result it does not
                 have. Outside search, this state means there is NO PROJECT: an empty
                 project still renders its own header and the New session action it owns. */}
-            <p className="font-mono text-body font-bold text-white/70">
-              {searchPending ? 'Searching...' : query ? 'No matching sessions' : 'No projects yet'}
-            </p>
-            <p aria-live="polite" className="mt-2 font-mono text-ui text-dialog-hint">
-              {searchPending
-                ? searchAsked.length > 1
-                  ? `Read ${searchAnswered.size} of ${searchAsked.length} machines so far.`
-                  : 'Reading this machine’s transcripts.'
-                : query
-                  ? searchVerdict
-                  : 'Add a project to start a session.'}
-            </p>
-            {/* The field is in the app bar now, a screen away from this sentence, so the
+              <p className="font-mono text-body font-bold text-white/70">
+                {searchPending
+                  ? 'Searching...'
+                  : query
+                    ? 'No matching sessions'
+                    : 'No projects yet'}
+              </p>
+              <p aria-live="polite" className="mt-2 font-mono text-ui text-dialog-hint">
+                {searchPending
+                  ? searchAsked.length > 1
+                    ? `Read ${searchAnswered.size} of ${searchAsked.length} machines so far.`
+                    : 'Reading this machine’s transcripts.'
+                  : query
+                    ? searchVerdict
+                    : 'Add a project to start a session.'}
+              </p>
+              {/* The field is in the app bar now, a screen away from this sentence, so the
                 way back to a full list is offered where the dead end is. A search still
                 in flight has no dead end to offer it for. */}
-            {query && !searchPending && (
-              <div className="mt-4 flex justify-center">
-                <Button variant="secondary" onClick={() => onQuery('')}>
-                  Clear search
-                </Button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div>
-            {sections.map(({ machine, groups, reading }, sectionIndex) => {
-              const key = machineKey(machine.conn);
-              return (
-                <section
-                  key={key}
-                  aria-label={`${machineLabel(machine.conn)} projects`}
-                  className={
-                    sectionIndex === sections.length - 1
-                      ? 'border-b-2 border-dialog-edge'
-                      : undefined
-                  }
-                >
-                  {/* Every machine keeps its own named panel and landmark, even when it
+              {query && !searchPending && (
+                <div className="mt-4 flex justify-center">
+                  <Button variant="secondary" onClick={() => onQuery('')}>
+                    Clear search
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              {sections.map(({ machine, groups, reading }, sectionIndex) => {
+                const key = machineKey(machine.conn);
+                return (
+                  <section
+                    key={key}
+                    aria-label={`${machineLabel(machine.conn)} projects`}
+                    className={
+                      sectionIndex === sections.length - 1
+                        ? 'border-b-2 border-dialog-edge'
+                        : undefined
+                    }
+                  >
+                    {/* Every machine keeps its own named panel and landmark, even when it
                       is the only one in the fleet: the landmark is a NAME, not ink. */}
-                  {/* Reported (paraphrased: bin that rail on the left): a machine's
+                    {/* Reported (paraphrased: bin that rail on the left): a machine's
                       hue used to run 2px down everything it owned and close it with a
                       rule, and with three machines paired that stripe was the full
                       height of the glass. The reader picks a machine in the switch
@@ -1888,26 +1882,25 @@ export function SessionsScreen({
                       computer ends is the trough this gap opens and the name its
                       landmark carries — the first project of the second machine can
                       still never read as the fifth project of the first. */}
-                  {sectionIndex > 0 && <MachineGap />}
-                  {/* The active tab directly above the card already names this machine, so
+                    {sectionIndex > 0 && <MachineGap />}
+                    {/* The active tab directly above the card already names this machine, so
                       the list has no second selected/unselected presentation to maintain. */}
-                  {groups.length === 0
-                    ? (
-                        <div className="px-3 py-3 sm:px-4">
-                          <p className="font-mono text-meta text-dialog-hint">
-                            {machine.sessions === null
-                              ? 'Reading sessions...'
-                              : searching
-                                ? searchUnreached.has(key)
-                                  ? 'Could not reach this machine.'
-                                  : searchAnswered.has(key)
-                                    ? 'No matches on this machine.'
-                                    : 'Searching this machine...'
-                                : 'No projects on this machine yet.'}
-                          </p>
-                        </div>
-                      )
-                    : groups.map((group, groupIndex) => (
+                    {groups.length === 0 ? (
+                      <div className="px-3 py-3 sm:px-4">
+                        <p className="font-mono text-meta text-dialog-hint">
+                          {machine.sessions === null
+                            ? 'Reading sessions...'
+                            : searching
+                              ? searchUnreached.has(key)
+                                ? 'Could not reach this machine.'
+                                : searchAnswered.has(key)
+                                  ? 'No matches on this machine.'
+                                  : 'Searching this machine...'
+                              : 'No projects on this machine yet.'}
+                        </p>
+                      </div>
+                    ) : (
+                      groups.map((group, groupIndex) => (
                         // Nothing separates two projects: the band that opens the next
                         // one brings its own paper and its own rule in over the name.
                         <ProjectGroup
@@ -1922,12 +1915,13 @@ export function SessionsScreen({
                           // project it lands on is the one that opens by itself.
                           initiallyOpen={groupIndex === 0}
                         />
-                      ))}
-                </section>
-              );
-            })}
-          </div>
-        )}
+                      ))
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Only the WAIT is left here. The fraction moved into the filter band, which
@@ -1945,7 +1939,9 @@ export function SessionsScreen({
         {isDesk && (
           <footer className="flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-3 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
             <span className="flex items-center gap-1.5">
-              <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">/</kbd>
+              <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">
+                /
+              </kbd>
               Search
             </span>
             <span className="tabular-nums">
@@ -1963,14 +1959,13 @@ export function SessionsScreen({
           at={manageProjects.at}
           client={clientFor(manageProjects.machine.conn)}
           startAt={machineProject(manageProjects.machine)?.path ?? null}
-          knownRoots={new Set(
-            projectGroups(
-              manageProjects.machine.overview,
-              manageProjects.machine.sessions ?? [],
+          knownRoots={
+            new Set(
+              projectGroups(manageProjects.machine.overview, manageProjects.machine.sessions ?? [])
+                .map((group) => group.root)
+                .filter(Boolean),
             )
-              .map((group) => group.root)
-              .filter(Boolean),
-          )}
+          }
           projects={managedProjects(manageProjects.machine)}
           onCancel={() => setManageProjects(null)}
           onChoose={async (root: string) => {
@@ -1984,11 +1979,9 @@ export function SessionsScreen({
           }
         />
       )}
-
     </section>
   );
 }
-
 
 /** How many rows one purge walk asks for at a time — a read nobody is watching. */
 const PURGE_WALK = 200;
@@ -2006,8 +1999,6 @@ async function projectSessionIds(api: GatewayClient, root: string): Promise<stri
   }
   return ids;
 }
-
-
 
 // How long the row's disclosure takes to open or close. It is duplicated by the
 // `duration-200` utilities below on purpose: the class drives the paint, this
@@ -2040,7 +2031,8 @@ function reconcileSessions(current: Session[] | null, incoming: Session[]): Sess
       ? previous
       : session;
   });
-  return current.length === next.length && current.every((session, index) => session === next[index])
+  return current.length === next.length &&
+    current.every((session, index) => session === next[index])
     ? current
     : next;
 }

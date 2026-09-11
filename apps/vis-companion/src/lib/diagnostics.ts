@@ -1,19 +1,10 @@
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import {
-  Directory,
-  Encoding,
-  Filesystem,
-  type FileInfo,
-} from '@capacitor/filesystem';
+import { Directory, Encoding, Filesystem, type FileInfo } from '@capacitor/filesystem';
 
 import { shareArtifact } from './artifact-share';
 import { APP_BUILD_COMMIT, APP_BUILD_NUMBER } from './build-info';
-import {
-  APP_MIN_GATEWAY_PROTOCOL,
-  APP_PROTOCOL,
-  APP_VERSION,
-} from './compat';
+import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL, APP_VERSION } from './compat';
 import { onAway, onWake } from './wake';
 
 export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -206,11 +197,9 @@ async function pruneRetainedLogs(reserveBytes = 0): Promise<void> {
 }
 
 function enqueue(work: () => Promise<void>): void {
-  writeQueue = writeQueue
-    .then(work)
-    .catch((cause) => {
-      storageFailure = errorOf(cause);
-    });
+  writeQueue = writeQueue.then(work).catch((cause) => {
+    storageFailure = errorOf(cause);
+  });
 }
 
 async function appendRecord(line: string): Promise<void> {
@@ -339,17 +328,17 @@ export function watchComposerInputDiagnostics(
     summary.max_draft_chars = Math.max(summary.max_draft_chars, textarea.textLength);
     if (input.inputType === 'insertReplacementText') summary.replacement_count += 1;
     if (
-      input.isComposing || input.inputType === 'insertCompositionText' ||
+      input.isComposing ||
+      input.inputType === 'insertCompositionText' ||
       input.inputType === 'deleteCompositionText'
-    ) summary.composing_count += 1;
+    )
+      summary.composing_count += 1;
     if (input.inputType?.startsWith('delete')) summary.deletion_count += 1;
     if (input.inputType === 'insertFromPaste') summary.paste_count += 1;
 
     // Older WebKit reports epoch timestamps; modern engines use the performance clock.
     const stamp =
-      event.timeStamp > 1e12
-        ? event.timeStamp - view.performance.timeOrigin
-        : event.timeStamp;
+      event.timeStamp > 1e12 ? event.timeStamp - view.performance.timeOrigin : event.timeStamp;
     if (Number.isFinite(stamp) && stamp > 0 && stamp <= now) {
       const delay = Math.round(now - stamp);
       summary.input_delay_sample_count += 1;
@@ -561,7 +550,10 @@ export async function exportDiagnostics(): Promise<string> {
   }
   const plain = new Blob(chunks, { type: 'application/x-ndjson' });
   const exported = await maybeGzip(plain);
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/gu, '').slice(0, 14);
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:.TZ]/gu, '')
+    .slice(0, 14);
   return shareArtifact(
     exported.blob,
     `vis-diagnostics-${stamp}-${APP_BUILD_COMMIT}${exported.suffix}`,

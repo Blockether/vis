@@ -46,9 +46,7 @@ export const Note: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
     await userEvent.click(canvas.getByRole('button', { name: 'Save changes' }));
     await expect(args.onSave).toHaveBeenCalledTimes(1);
-    await expect(args.onSave).toHaveBeenCalledWith(
-      expect.stringContaining('Worth a second pass.'),
-    );
+    await expect(args.onSave).toHaveBeenCalledWith(expect.stringContaining('Worth a second pass.'));
     await expect(canvas.getByRole('status')).toHaveTextContent('Saved as v2');
   },
 };
@@ -73,10 +71,11 @@ export const StableHighlight: Story = {
       'This passage wraps on a phone and must keep exactly the same layout when selected or commented.',
     );
     const blocks = [...canvasElement.querySelectorAll('h1, p, li')];
-    const geometry = () => blocks.map((block) => {
-      const box = block.getBoundingClientRect();
-      return [box.width, box.height];
-    });
+    const geometry = () =>
+      blocks.map((block) => {
+        const box = block.getBoundingClientRect();
+        return [box.width, box.height];
+      });
     const before = geometry();
     const content = passage.innerHTML;
     const check = () => {

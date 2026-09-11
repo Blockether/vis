@@ -1,20 +1,20 @@
 // @vitest-environment jsdom
-import { act, useRef } from "react";
-import { render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, useRef } from 'react';
+import { render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isAppForeground, useVisualViewportShell } from "./viewport";
+import { isAppForeground, useVisualViewportShell } from './viewport';
 
 const native = vi.hoisted(() => ({
   keyboard: new Map<string, (info: { keyboardHeight: number }) => void>(),
   app: new Map<string, (state?: { isActive: boolean }) => void>(),
 }));
 
-vi.mock("@capacitor/core", () => ({
-  Capacitor: { getPlatform: () => "ios" },
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { getPlatform: () => 'ios' },
 }));
 
-vi.mock("@capacitor/keyboard", () => ({
+vi.mock('@capacitor/keyboard', () => ({
   Keyboard: {
     addListener: (event: string, listener: (info: { keyboardHeight: number }) => void) => {
       native.keyboard.set(event, listener);
@@ -24,7 +24,7 @@ vi.mock("@capacitor/keyboard", () => ({
   },
 }));
 
-vi.mock("@capacitor/app", () => ({
+vi.mock('@capacitor/app', () => ({
   App: {
     addListener: (event: string, listener: (state?: { isActive: boolean }) => void) => {
       native.app.set(event, listener);
@@ -49,7 +49,7 @@ beforeEach(() => {
   native.app.clear();
   window.innerWidth = 390;
   window.innerHeight = 844;
-  Object.defineProperty(window, "visualViewport", {
+  Object.defineProperty(window, 'visualViewport', {
     configurable: true,
     value: {
       width: 390,
@@ -59,8 +59,8 @@ beforeEach(() => {
       removeEventListener: () => undefined,
     },
   });
-  vi.stubGlobal("requestAnimationFrame", () => 1);
-  vi.stubGlobal("cancelAnimationFrame", () => undefined);
+  vi.stubGlobal('requestAnimationFrame', () => 1);
+  vi.stubGlobal('cancelAnimationFrame', () => undefined);
 });
 
 afterEach(() => {
@@ -68,26 +68,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("the native shell after backgrounding", () => {
+describe('the native shell after backgrounding', () => {
   // Regression: TestFlight builds 5358 and 5468 blocked in
   // didProgrammaticallyClearFocusedElement / UIKeyboardTaskQueue. Capacitor's
   // iOS resume is willEnterForeground, not didBecomeActive: it must not blur.
-  it("waits for didBecomeActive before restoring focus, once per transition", () => {
+  it('waits for didBecomeActive before restoring focus, once per transition', () => {
     render(<ViewportProbe />);
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const composer = screen.getByRole('textbox', { name: 'Message' });
     composer.focus();
-    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
-    act(() => native.app.get("appStateChange")?.({ isActive: false }));
-    const blur = vi.spyOn(composer, "blur");
-    const focus = vi.spyOn(composer, "focus");
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+    act(() => native.app.get('appStateChange')?.({ isActive: false }));
+    const blur = vi.spyOn(composer, 'blur');
+    const focus = vi.spyOn(composer, 'focus');
 
-    act(() => native.app.get("resume")?.());
+    act(() => native.app.get('resume')?.());
     act(() => vi.advanceTimersByTime(500));
     expect(isAppForeground()).toBe(false);
     expect(blur).not.toHaveBeenCalled();
     expect(focus).not.toHaveBeenCalled();
 
-    act(() => native.app.get("appStateChange")?.({ isActive: true }));
+    act(() => native.app.get('appStateChange')?.({ isActive: true }));
     act(() => vi.advanceTimersByTime(500));
     expect(isAppForeground()).toBe(true);
     expect(blur).toHaveBeenCalledTimes(1);
@@ -96,18 +96,18 @@ describe("the native shell after backgrounding", () => {
   // Regression, Vis session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: iOS ended
   // keyboard editing while the WebView was suspended, but stale DOM focus and the
   // old keyboard-height pin returned as an empty band where the keyboard had been.
-  it("reopens the keyboard instead of preserving its empty band", () => {
+  it('reopens the keyboard instead of preserving its empty band', () => {
     render(<ViewportProbe />);
-    const shell = screen.getByTestId("shell");
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
     composer.focus();
 
-    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
-    expect(shell).toHaveStyle({ height: "544px" });
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+    expect(shell).toHaveStyle({ height: '544px' });
 
-    act(() => native.app.get("appStateChange")?.({ isActive: true }));
+    act(() => native.app.get('appStateChange')?.({ isActive: true }));
 
-    expect(shell.style.height).toBe("");
+    expect(shell.style.height).toBe('');
     expect(document.activeElement).not.toBe(composer);
 
     act(() => vi.advanceTimersByTime(200));
@@ -118,22 +118,22 @@ describe("the native shell after backgrounding", () => {
   // from JS. WebKit reported that programmatic focus clear to the UI process during
   // the background scene update, UIKit turned it into a keyboard task no thread was
   // left to run, and the watchdog killed Vis with 0x8BADF00D after ten seconds.
-  it("never touches DOM focus while the app leaves the foreground", () => {
+  it('never touches DOM focus while the app leaves the foreground', () => {
     render(<ViewportProbe />);
-    const composer = screen.getByRole("textbox", { name: "Message" });
-    const blur = vi.spyOn(composer, "blur");
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    const blur = vi.spyOn(composer, 'blur');
     composer.focus();
 
-    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
     expect(document.activeElement).toBe(composer);
 
-    act(() => native.app.get("appStateChange")?.({ isActive: false }));
+    act(() => native.app.get('appStateChange')?.({ isActive: false }));
     expect(blur).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(composer);
 
     // Back on screen the keyboard machinery answers again, and only a real focus
     // change raises the keyboard the suspension took away.
-    act(() => native.app.get("appStateChange")?.({ isActive: true }));
+    act(() => native.app.get('appStateChange')?.({ isActive: true }));
     act(() => vi.advanceTimersByTime(200));
     expect(blur).toHaveBeenCalled();
     expect(document.activeElement).toBe(composer);
@@ -142,17 +142,17 @@ describe("the native shell after backgrounding", () => {
   // Regression, TestFlight build 5275: the restore is deferred past the resume, so
   // an app that goes away again inside that window would have raised the keyboard
   // from the background — the same watchdog kill by a later route.
-  it("leaves focus alone when the app goes away again before the restore", () => {
+  it('leaves focus alone when the app goes away again before the restore', () => {
     render(<ViewportProbe />);
-    const composer = screen.getByRole("textbox", { name: "Message" });
+    const composer = screen.getByRole('textbox', { name: 'Message' });
     composer.focus();
 
-    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
-    act(() => native.app.get("appStateChange")?.({ isActive: false }));
-    act(() => native.app.get("appStateChange")?.({ isActive: true }));
-    act(() => native.app.get("appStateChange")?.({ isActive: false }));
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+    act(() => native.app.get('appStateChange')?.({ isActive: false }));
+    act(() => native.app.get('appStateChange')?.({ isActive: true }));
+    act(() => native.app.get('appStateChange')?.({ isActive: false }));
 
-    const focus = vi.spyOn(composer, "focus");
+    const focus = vi.spyOn(composer, 'focus');
     act(() => vi.advanceTimersByTime(200));
     expect(focus).not.toHaveBeenCalled();
   });

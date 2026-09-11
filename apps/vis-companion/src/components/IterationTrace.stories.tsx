@@ -1,5 +1,5 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, waitFor, within } from "storybook/test";
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import {
   STORY_JOINED_ACTIVITY,
   STORY_COMPACT_EXECUTIONS,
@@ -11,8 +11,8 @@ import {
   STORY_TURN_ITERATIONS_LONG,
   STORY_TURN_ITERATIONS_SETTLED,
   STORY_THINKING_AND_CODE,
-} from "../dev/story-data";
-import { AssistantMessage, IterationTrace, UserMessage } from "./ChatContent";
+} from '../dev/story-data';
+import { AssistantMessage, IterationTrace, UserMessage } from './ChatContent';
 
 /**
  * A TURN, DRAWN AS JOINED EXECUTION BANDS.
@@ -26,9 +26,9 @@ import { AssistantMessage, IterationTrace, UserMessage } from "./ChatContent";
  * app's own reader, so a wire change fails this sheet before it reaches a phone.
  */
 const meta = {
-  title: "Components/Iteration trace",
+  title: 'Components/Iteration trace',
   component: IterationTrace,
-  parameters: { layout: "fullscreen" },
+  parameters: { layout: 'fullscreen' },
   // The transcript is a COLUMN, capped and centred (SessionScreen.tsx, the
   // `max-w-3xl` scroller). A sheet that renders the thread across a 900px
   // viewport is reviewing a width the app never paints — the time margin ends
@@ -70,15 +70,13 @@ export const CollapsedToolError: Story = {
     showCode: true,
     iterations: [
       {
-        id: "tool-error",
+        id: 'tool-error',
         position: 1,
         forms: [
           {
-            source: "reports = query_reports()\nprint(reports)",
+            source: 'reports = query_reports()\nprint(reports)',
             error: {
-              message:
-                "ToolError: " +
-                "Report service unavailable. Retry the query. ".repeat(40),
+              message: 'ToolError: ' + 'Report service unavailable. Retry the query. '.repeat(40),
             },
             duration_ms: 29,
           },
@@ -87,16 +85,16 @@ export const CollapsedToolError: Story = {
     ],
   },
   play: async ({ canvas }) => {
-    const toggle = canvas.getByRole("button", { name: "Expand error details" });
-    await expect(toggle).toHaveTextContent("Failed");
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const toggle = canvas.getByRole('button', { name: 'Expand error details' });
+    await expect(toggle).toHaveTextContent('Failed');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await expect(canvas.queryByText(/Report service unavailable/)).toBeNull();
     toggle.focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await userEvent.keyboard('{Enter}');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect(canvas.getByText(/Report service unavailable/)).toBeVisible();
-    await expect(canvas.queryByRole("button", { name: "Collapse code" })).toBeNull();
-    await userEvent.keyboard(" ");
+    await expect(canvas.queryByRole('button', { name: 'Collapse code' })).toBeNull();
+    await userEvent.keyboard(' ');
     await expect(canvas.queryByText(/Report service unavailable/)).toBeNull();
     await userEvent.click(toggle);
     await expect(canvas.getByText(/Report service unavailable/)).toBeVisible();
@@ -111,12 +109,12 @@ export const OpeningProse: Story = {
     live: true,
     iterations: STORY_THINKING_AND_CODE.flatMap((iteration) =>
       [
-        "I will check what caused this turn to stop.",
-        "The stop event is recorded. I will check its source next.",
+        'I will check what caused this turn to stop.',
+        'The stop event is recorded. I will check its source next.',
       ].map((assistant_prose, index) => ({
         ...iteration,
         id: `${iteration.id}-prose-${index}`,
-        thinking: "",
+        thinking: '',
         assistant_prose,
       })),
     ),
@@ -127,7 +125,7 @@ export const OpeningProse: Story = {
       streaming
       turn={{
         ...STORY_EXCHANGE_TURN,
-        status: "running",
+        status: 'running',
         iterations: args.iterations,
         content: [],
       }}
@@ -135,31 +133,23 @@ export const OpeningProse: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const role = canvas.getByText("Vis", { exact: true });
+    const role = canvas.getByText('Vis', { exact: true });
     const header = role.parentElement!;
-    const prose = await canvas.findByText(
-      "I will check what caused this turn to stop.",
-    );
-    const later = canvas.getByText(
-      "The stop event is recorded. I will check its source next.",
-    );
-    const code = canvasElement.querySelector("[data-execution-code]")!;
+    const prose = await canvas.findByText('I will check what caused this turn to stop.');
+    const later = canvas.getByText('The stop event is recorded. I will check its source next.');
+    const code = canvasElement.querySelector('[data-execution-code]')!;
     // Regression: opening prose added its own top padding to the role's margin.
     // Wait for the live segment's entrance animation before measuring its boxes.
     await waitFor(() => {
-      expect(
-        prose.getBoundingClientRect().top -
-          header.getBoundingClientRect().bottom,
-      ).toBeCloseTo(parseFloat(getComputedStyle(header).marginBottom), 0);
-      const bottomInset =
-        code.getBoundingClientRect().top - prose.getBoundingClientRect().bottom;
+      expect(prose.getBoundingClientRect().top - header.getBoundingClientRect().bottom).toBeCloseTo(
+        parseFloat(getComputedStyle(header).marginBottom),
+        0,
+      );
+      const bottomInset = code.getBoundingClientRect().top - prose.getBoundingClientRect().bottom;
       expect(bottomInset).toBeCloseTo(10, 0);
-      const previousActivity = canvasElement.querySelector(
-        "[data-execution-activity]",
-      )!;
+      const previousActivity = canvasElement.querySelector('[data-execution-activity]')!;
       expect(
-        later.getBoundingClientRect().top -
-          previousActivity.getBoundingClientRect().bottom,
+        later.getBoundingClientRect().top - previousActivity.getBoundingClientRect().bottom,
       ).toBeCloseTo(bottomInset, 0);
     });
   },
@@ -170,35 +160,35 @@ export const ProseSpacing: Story = {
   args: {
     live: false,
     client: STORY_INERT_CLIENT,
-    sid: "prose-spacing",
+    sid: 'prose-spacing',
     iterations: [
-      { ...STORY_LISTING[0], id: "before-prose" },
+      { ...STORY_LISTING[0], id: 'before-prose' },
       {
         ...STORY_LISTING[0],
-        id: "narrated-code",
-        assistant_prose: "I will inspect the existing build without starting another.",
+        id: 'narrated-code',
+        assistant_prose: 'I will inspect the existing build without starting another.',
       },
       {
-        id: "prose-only",
-        assistant_prose: "The build is running. I will observe its progress.",
+        id: 'prose-only',
+        assistant_prose: 'The build is running. I will observe its progress.',
       },
       {
         ...STORY_LISTING[0],
-        id: "prose-with-run",
-        assistant_prose: "The observation is complete. The run is available below.",
+        id: 'prose-with-run',
+        assistant_prose: 'The observation is complete. The run is available below.',
         attachments: [
           {
             index: 0,
-            iteration_id: "prose-with-run",
-            filename: "build-observation.live.ndjson",
-            media_type: "application/vnd.vis.live+ndjson",
+            iteration_id: 'prose-with-run',
+            filename: 'build-observation.live.ndjson',
+            media_type: 'application/vnd.vis.live+ndjson',
             size: 3700,
           },
         ],
       },
       {
-        id: "closing-prose",
-        assistant_prose: "The build continues after observation stops.",
+        id: 'closing-prose',
+        assistant_prose: 'The build continues after observation stops.',
       },
     ],
   },
@@ -210,9 +200,7 @@ export const ProseSpacing: Story = {
       turn={{
         ...STORY_EXCHANGE_TURN,
         iterations: args.iterations,
-        content: [
-          { id: "answer", type: "prose", markdown: "No new build was started." },
-        ],
+        content: [{ id: 'answer', type: 'prose', markdown: 'No new build was started.' }],
       }}
     />
   ),
@@ -220,14 +208,14 @@ export const ProseSpacing: Story = {
     const canvas = within(canvasElement);
     const prose = canvas.getAllByText(
       /^(I will inspect|The build is running|The observation is complete|The build continues)/,
-      { selector: "p" },
+      { selector: 'p' },
     );
-    const code = canvasElement.querySelectorAll("[data-execution-code]");
-    const activity = canvasElement.querySelectorAll("[data-execution-activity]");
+    const code = canvasElement.querySelectorAll('[data-execution-code]');
+    const activity = canvasElement.querySelectorAll('[data-execution-activity]');
     const run = canvas
-      .getByRole("button", { name: "Open run build-observation" })
-      .closest(".border-code-edge")!;
-    const answer = canvas.getByText("No new build was started.");
+      .getByRole('button', { name: 'Open run build-observation' })
+      .closest('.border-code-edge')!;
+    const answer = canvas.getByText('No new build was started.');
     const gaps = [
       [activity[0], prose[0]],
       [prose[0], code[1]],
@@ -252,7 +240,7 @@ export const ProseWithAttachment: Story = {
   args: {
     ...ProseSpacing.args,
     iterations: ProseSpacing.args!.iterations!.map((iteration) =>
-      iteration.id === "prose-with-run" ? { ...iteration, forms: [] } : iteration,
+      iteration.id === 'prose-with-run' ? { ...iteration, forms: [] } : iteration,
     ),
   },
 };
@@ -266,28 +254,21 @@ export const ThinkingAndCode: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const thinking = canvas.getByText("Checking files").closest("section")!;
-    const code = canvasElement.querySelector("[data-execution-code]")!;
+    const thinking = canvas.getByText('Checking files').closest('section')!;
+    const code = canvasElement.querySelector('[data-execution-code]')!;
     const thought = thinking.getBoundingClientRect();
     const program = code.getBoundingClientRect();
     // Regression: a margin split the step, and CODE padded an already padded control.
     await expect(program.top).toBeCloseTo(thought.bottom, 0);
     await expect(
-      code.querySelector("button")!.getBoundingClientRect().height,
+      code.querySelector('button')!.getBoundingClientRect().height,
     ).toBeGreaterThanOrEqual(28);
     await expect(program.left - thought.left).toBeCloseTo(0, 0);
     await expect(program.right).toBeCloseTo(thought.right, 0);
-    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
-    await expect(code.querySelector("pre")?.textContent).toContain(
-      "print(paths)",
-    );
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Collapse code" }),
-    );
-    await expect(code.getBoundingClientRect().top).toBeCloseTo(
-      thought.bottom,
-      0,
-    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    await expect(code.querySelector('pre')?.textContent).toContain('print(paths)');
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
+    await expect(code.getBoundingClientRect().top).toBeCloseTo(thought.bottom, 0);
   },
 };
 
@@ -296,19 +277,19 @@ export const TrailingMetadata: Story = {
   args: ThinkingAndCode.args,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const mouse = matchMedia("(min-width: 40rem) and (pointer: fine)").matches;
-    const codeCopy = canvas.getByRole("button", { name: "Copy code" });
-    const activityCopy = canvas.getByRole("button", { name: "Copy activity" });
-    const code = canvasElement.querySelector("[data-execution-code]")!;
-    const duration = code.querySelector(".text-code-duration")!;
-    const activityToggle = canvas.getByRole("button", { name: "Expand Activity" });
-    const chevron = activityToggle.querySelector("svg:last-child")!;
+    const mouse = matchMedia('(min-width: 40rem) and (pointer: fine)').matches;
+    const codeCopy = canvas.getByRole('button', { name: 'Copy code' });
+    const activityCopy = canvas.getByRole('button', { name: 'Copy activity' });
+    const code = canvasElement.querySelector('[data-execution-code]')!;
+    const duration = code.querySelector('.text-code-duration')!;
+    const activityToggle = canvas.getByRole('button', { name: 'Expand Activity' });
+    const chevron = activityToggle.querySelector('svg:last-child')!;
     const checkSpacing = async () => {
       for (const [metadata, copy] of [
         [duration, codeCopy],
         [chevron, activityCopy],
       ]) {
-        const glyph = copy.querySelector("svg")!.getBoundingClientRect();
+        const glyph = copy.querySelector('svg')!.getBoundingClientRect();
         await expect(glyph.left - metadata.getBoundingClientRect().right).toBeCloseTo(
           mouse ? 8 : 16,
           0,
@@ -328,7 +309,7 @@ export const TrailingMetadata: Story = {
       ).toBeCloseTo(8, 0);
     };
     await checkSpacing();
-    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
     await userEvent.click(activityToggle);
     await checkSpacing();
   },
@@ -372,31 +353,25 @@ const forkFromAnswer = fn();
 
 async function expectForkAlignment(answer: HTMLElement) {
   const canvas = within(answer);
-  const role = canvas.getByText("Vis", { exact: true }).getBoundingClientRect();
-  const action = canvas
-    .getByRole("button", { name: "Fork from here" })
-    .getBoundingClientRect();
+  const role = canvas.getByText('Vis', { exact: true }).getBoundingClientRect();
+  const action = canvas.getByRole('button', { name: 'Fork from here' }).getBoundingClientRect();
   // Regression: the icon-led action must share the role label's vertical center.
-  await expect(action.top + action.height / 2).toBeCloseTo(
-    role.top + role.height / 2,
-    0,
-  );
+  await expect(action.top + action.height / 2).toBeCloseTo(role.top + role.height / 2, 0);
 }
 
 async function expectRoleSpacing(canvasElement: HTMLElement) {
   const canvas = within(canvasElement);
-  const userRole = canvas.getByText("You", { exact: true });
+  const userRole = canvas.getByText('You', { exact: true });
   const userBody = userRole.nextElementSibling!;
-  const userGap =
-    userBody.getBoundingClientRect().top -
-    userRole.getBoundingClientRect().bottom;
+  const userGap = userBody.getBoundingClientRect().top - userRole.getBoundingClientRect().bottom;
   // Regression: every answer starts at the same distance below its role as a request.
-  for (const role of canvas.getAllByText("Vis", { exact: true })) {
-    const body = role.closest("article")!.children[1];
+  for (const role of canvas.getAllByText('Vis', { exact: true })) {
+    const body = role.closest('article')!.children[1];
     await waitFor(() => {
-      expect(
-        body.getBoundingClientRect().top - role.getBoundingClientRect().bottom,
-      ).toBeCloseTo(userGap, 0);
+      expect(body.getBoundingClientRect().top - role.getBoundingClientRect().bottom).toBeCloseTo(
+        userGap,
+        0,
+      );
     });
   }
 }
@@ -418,7 +393,7 @@ export const Exchange: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
   render: (args) => (
     <>
-      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ''}</UserMessage>
       <AssistantMessage
         turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
         whole={args.whole}
@@ -428,9 +403,9 @@ export const Exchange: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const heading = canvas.getByText("You");
-    const bubble = heading.closest("article")!.querySelector(".border-l-2")!;
-    const code = canvasElement.querySelector("[data-execution-code]")!;
+    const heading = canvas.getByText('You');
+    const bubble = heading.closest('article')!.querySelector('.border-l-2')!;
+    const code = canvasElement.querySelector('[data-execution-code]')!;
     await expect(bubble.getBoundingClientRect().left).toBeCloseTo(
       heading.getBoundingClientRect().left,
       0,
@@ -439,14 +414,12 @@ export const Exchange: Story = {
       bubble.getBoundingClientRect().left,
       0,
     );
-    await expect(getComputedStyle(bubble).paddingLeft).toBe(
-      getComputedStyle(code).paddingLeft,
-    );
-    const answer = canvas.getByText("Vis", { exact: true }).closest("article")!;
-    const fork = within(answer).getByRole("button", { name: "Fork from here" });
+    await expect(getComputedStyle(bubble).paddingLeft).toBe(getComputedStyle(code).paddingLeft);
+    const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
+    const fork = within(answer).getByRole('button', { name: 'Fork from here' });
     await expect(
-      within(heading.closest("article")!).queryByRole("button", {
-        name: "Fork from here",
+      within(heading.closest('article')!).queryByRole('button', {
+        name: 'Fork from here',
       }),
     ).toBeNull();
     await userEvent.hover(answer);
@@ -464,7 +437,7 @@ export const Forking: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
   render: (args) => (
     <>
-      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ''}</UserMessage>
       <AssistantMessage
         turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
         whole={args.whole}
@@ -475,11 +448,11 @@ export const Forking: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const answer = canvas.getByText("Vis", { exact: true }).closest("article")!;
-    const fork = within(answer).getByRole("button", { name: "Fork from here" });
+    const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
+    const fork = within(answer).getByRole('button', { name: 'Fork from here' });
     await userEvent.hover(answer);
     await expect(fork).toBeDisabled();
-    await expect(fork).toHaveTextContent("Forking...");
+    await expect(fork).toHaveTextContent('Forking...');
     await expectForkAlignment(answer);
     await expectRoleSpacing(canvasElement);
   },
@@ -489,7 +462,7 @@ export const Forking: Story = {
 export const MessageSpacing: Story = {
   render: () => (
     <>
-      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ''}</UserMessage>
       {[false, true].map((withFork) => (
         <AssistantMessage
           key={`answer-${withFork}`}
@@ -502,7 +475,7 @@ export const MessageSpacing: Story = {
         onFork={forkFromAnswer}
         whole
       />
-      {["running", "cancelled", "failed", "completed"].map((status) => (
+      {['running', 'cancelled', 'failed', 'completed'].map((status) => (
         <AssistantMessage
           key={status}
           turn={{ ...STORY_EXCHANGE_TURN, status, content: [], iterations: [] }}
@@ -512,7 +485,7 @@ export const MessageSpacing: Story = {
       <AssistantMessage
         turn={{
           ...STORY_EXCHANGE_TURN,
-          status: "running",
+          status: 'running',
           content: [],
           iterations: [],
         }}
@@ -534,45 +507,43 @@ export const MergedResults: Story = {
   args: {
     live: false,
     showCode: true,
-    iterations: [{
-      id: "verification",
-      position: 1,
-      forms: [
-        {
-          source: "print(await run_tests({'language': 'clojure'}))",
-          stdout: "run_tests: PASS\n98 tests\n0 failures",
-          duration_ms: 1200,
-        },
-        {
-          source: "print(await format_code({'language': 'clojure'}))",
-          stdout: "format_code: PASS\n2 files checked",
-          duration_ms: 40,
-        },
-        {
-          source: "print(await lint_code({'language': 'clojure'}))",
-          stdout: "lint_code: PASS\n0 warnings",
-          duration_ms: 80,
-        },
-      ],
-    }],
+    iterations: [
+      {
+        id: 'verification',
+        position: 1,
+        forms: [
+          {
+            source: "print(await run_tests({'language': 'clojure'}))",
+            stdout: 'run_tests: PASS\n98 tests\n0 failures',
+            duration_ms: 1200,
+          },
+          {
+            source: "print(await format_code({'language': 'clojure'}))",
+            stdout: 'format_code: PASS\n2 files checked',
+            duration_ms: 40,
+          },
+          {
+            source: "print(await lint_code({'language': 'clojure'}))",
+            stdout: 'lint_code: PASS\n0 warnings',
+            duration_ms: 80,
+          },
+        ],
+      },
+    ],
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
-    await expect(
-      canvas.getAllByRole("button", { name: "Expand result" }),
-    ).toHaveLength(1);
-    const result = canvas.getByRole("button", { name: "Expand result" });
-    await expect(result).toHaveTextContent("RESULT +7 more");
-    await expect(
-      canvas.queryByText("run_tests: PASS", { exact: false }),
-    ).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    await expect(canvas.getAllByRole('button', { name: 'Expand result' })).toHaveLength(1);
+    const result = canvas.getByRole('button', { name: 'Expand result' });
+    await expect(result).toHaveTextContent('RESULT +7 more');
+    await expect(canvas.queryByText('run_tests: PASS', { exact: false })).toBeNull();
     await userEvent.click(result);
-    const body = canvasElement.querySelector("[data-code-result]")!;
-    await expect(body).toHaveTextContent("run_tests: PASS");
-    await expect(body).toHaveTextContent("lint_code: PASS");
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse result" }));
-    await expect(body).not.toHaveTextContent("run_tests: PASS");
+    const body = canvasElement.querySelector('[data-code-result]')!;
+    await expect(body).toHaveTextContent('run_tests: PASS');
+    await expect(body).toHaveTextContent('lint_code: PASS');
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse result' }));
+    await expect(body).not.toHaveTextContent('run_tests: PASS');
   },
 };
 
@@ -589,26 +560,24 @@ export const GroupDurations: Story = {
       {
         position: 1,
         forms: [
-          { source: "read_files()", duration_ms: 120 },
-          { source: "check_files()", duration_ms: 180 },
+          { source: 'read_files()', duration_ms: 120 },
+          { source: 'check_files()', duration_ms: 180 },
         ],
       },
       {
         position: 2,
-        thinking: "Checking the result",
-        forms: [{ source: "pass", duration_ms: 0 }],
+        thinking: 'Checking the result',
+        forms: [{ source: 'pass', duration_ms: 0 }],
       },
     ],
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("300ms")).toBeVisible();
-    await expect(canvas.getByText("<1ms")).toBeVisible();
-    await userEvent.click(
-      canvas.getAllByRole("button", { name: "Expand code" })[0],
-    );
-    await expect(canvas.getByText("300ms")).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
+    await expect(canvas.getByText('300ms')).toBeVisible();
+    await expect(canvas.getByText('<1ms')).toBeVisible();
+    await userEvent.click(canvas.getAllByRole('button', { name: 'Expand code' })[0]);
+    await expect(canvas.getByText('300ms')).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
   },
 };
 
@@ -616,18 +585,10 @@ export const GroupStages: Story = {
   ...CompactGroup,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(
-      canvas.queryByRole("list", { name: "Operation groups" }),
-    ).toBeNull();
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    await expect(
-      canvas.getAllByRole("list", { name: "Operation groups" }),
-    ).toHaveLength(1);
-    await expect(
-      canvas.getAllByRole("button", { name: "Copy code" }),
-    ).toHaveLength(1);
+    await expect(canvas.queryByRole('list', { name: 'Operation groups' })).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await expect(canvas.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
+    await expect(canvas.getAllByRole('button', { name: 'Copy code' })).toHaveLength(1);
   },
 };
 
@@ -635,18 +596,10 @@ export const HiddenCode: Story = {
   args: { live: true, showCode: false, iterations: STORY_COMPACT_EXECUTIONS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(
-      canvas.queryByRole("list", { name: "Operation groups" }),
-    ).toBeNull();
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    await expect(
-      canvas.queryByRole("button", { name: "Copy code" }),
-    ).toBeNull();
-    await expect(
-      canvas.getAllByRole("list", { name: "Operation groups" }),
-    ).toHaveLength(1);
+    await expect(canvas.queryByRole('list', { name: 'Operation groups' })).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await expect(canvas.queryByRole('button', { name: 'Copy code' })).toBeNull();
+    await expect(canvas.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
   },
 };
 
@@ -662,103 +615,97 @@ export const CodeWithResult: Story = {
       ...iteration,
       forms: iteration.forms?.map((form) => ({
         ...form,
-        stdout: "Listed 5 entries.",
+        stdout: 'Listed 5 entries.',
         duration_ms: 57,
       })),
     })),
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.queryByRole("button", { name: "Expand result" })).toBeNull();
-    const code = canvasElement.querySelector("[data-execution-code]")!;
-    const activity = canvasElement.querySelector("[data-execution-activity]")!;
+    await expect(canvas.queryByRole('button', { name: 'Expand result' })).toBeNull();
+    const code = canvasElement.querySelector('[data-execution-code]')!;
+    const activity = canvasElement.querySelector('[data-execution-activity]')!;
     const assertHeader = async (button: HTMLElement, label: string) => {
       await expect(button).toHaveTextContent(label);
       const text = button.firstElementChild!.getBoundingClientRect();
-      const chevron = button.querySelector("svg")!.getBoundingClientRect();
+      const chevron = button.querySelector('svg')!.getBoundingClientRect();
       await expect(chevron.left - text.right).toBeGreaterThanOrEqual(4);
       await expect(chevron.left - text.right).toBeLessThanOrEqual(8);
-      await expect(button.getBoundingClientRect().left - code.getBoundingClientRect().left).toBeCloseTo(12, 0);
+      await expect(
+        button.getBoundingClientRect().left - code.getBoundingClientRect().left,
+      ).toBeCloseTo(12, 0);
     };
-    await assertHeader(canvas.getByRole("button", { name: "Expand code" }), "CODE +2 more");
-    const copy = canvas.getByRole("button", { name: "Copy code" });
-    const duration = within(code as HTMLElement).getByText("57ms");
+    await assertHeader(canvas.getByRole('button', { name: 'Expand code' }), 'CODE +2 more');
+    const copy = canvas.getByRole('button', { name: 'Copy code' });
+    const duration = within(code as HTMLElement).getByText('57ms');
     await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(
       copy.getBoundingClientRect().left,
     );
     await expect(copy.getBoundingClientRect().right).toBeLessThanOrEqual(
       code.getBoundingClientRect().right,
     );
-    await expect(copy.querySelector("svg")!.getBoundingClientRect().right).toBeLessThan(
+    await expect(copy.querySelector('svg')!.getBoundingClientRect().right).toBeLessThan(
       code.getBoundingClientRect().right,
     );
-    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
-    const band = canvasElement.querySelector("[data-execution-code]")!;
-    const result = canvasElement.querySelector("[data-code-result]")!;
-    const codeBody = code.querySelector("[data-code-body]")!;
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    const band = canvasElement.querySelector('[data-execution-code]')!;
+    const result = canvasElement.querySelector('[data-code-result]')!;
+    const codeBody = code.querySelector('[data-code-body]')!;
     const labelSize = getComputedStyle(document.documentElement)
-      .getPropertyValue("--text-ui")
+      .getPropertyValue('--text-ui')
       .trim();
-    for (const name of ["CODE", "RESULT", "ACTIVITY"]) {
-      const label = canvas.getByText(name, { exact: true, selector: "span" });
+    for (const name of ['CODE', 'RESULT', 'ACTIVITY']) {
+      const label = canvas.getByText(name, { exact: true, selector: 'span' });
       await expect(getComputedStyle(label).fontSize).toBe(labelSize);
-      await expect(getComputedStyle(label).fontWeight).toBe("600");
-      await expect(getComputedStyle(label).color).toBe(
-        getComputedStyle(document.body).color,
-      );
+      await expect(getComputedStyle(label).fontWeight).toBe('600');
+      await expect(getComputedStyle(label).color).toBe(getComputedStyle(document.body).color);
     }
     // Regression: CODE and RESULT stacked body padding beneath the disclosure.
     // Like ACTIVITY, the first content row begins at the end of its header.
     const headerBottom = (name: string) =>
-      canvas.getByRole("button", { name }).getBoundingClientRect().bottom;
-    const firstCodeLine = codeBody.querySelector("pre code > div")!;
-    await expect(
-      firstCodeLine.getBoundingClientRect().top - headerBottom("Collapse code"),
-    ).toBe(0);
+      canvas.getByRole('button', { name }).getBoundingClientRect().bottom;
+    const firstCodeLine = codeBody.querySelector('pre code > div')!;
+    await expect(firstCodeLine.getBoundingClientRect().top - headerBottom('Collapse code')).toBe(0);
     for (const surface of [code, result, activity]) {
-      await expect(getComputedStyle(surface).borderLeftWidth).toBe("0px");
+      await expect(getComputedStyle(surface).borderLeftWidth).toBe('0px');
     }
-    await expect(result.getBoundingClientRect().top).toBeGreaterThan(code.getBoundingClientRect().top);
-    await expect(activity.getBoundingClientRect().top).toBeGreaterThan(result.getBoundingClientRect().top);
-    await assertHeader(canvas.getByRole("button", { name: "Expand result" }), "RESULT +1 more");
-    await expect(band.textContent).not.toContain("Listed 5 entries.");
-    canvas.getByRole("button", { name: "Expand result" }).focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(band.textContent).toContain("Listed 5 entries.");
-    const firstResultLine = result.querySelector("pre code > div")!;
-    await expect(
-      firstResultLine.getBoundingClientRect().top -
-        headerBottom("Collapse result"),
-    ).toBe(0);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
+    await expect(result.getBoundingClientRect().top).toBeGreaterThan(
+      code.getBoundingClientRect().top,
     );
-    const activityBody = canvas.getByRole("list", { name: "Operation groups" });
+    await expect(activity.getBoundingClientRect().top).toBeGreaterThan(
+      result.getBoundingClientRect().top,
+    );
+    await assertHeader(canvas.getByRole('button', { name: 'Expand result' }), 'RESULT +1 more');
+    await expect(band.textContent).not.toContain('Listed 5 entries.');
+    canvas.getByRole('button', { name: 'Expand result' }).focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(band.textContent).toContain('Listed 5 entries.');
+    const firstResultLine = result.querySelector('pre code > div')!;
     await expect(
-      activityBody.getBoundingClientRect().top -
-        headerBottom("Collapse Activity"),
+      firstResultLine.getBoundingClientRect().top - headerBottom('Collapse result'),
     ).toBe(0);
-    await expect(band.querySelector("summary")).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const activityBody = canvas.getByRole('list', { name: 'Operation groups' });
+    await expect(activityBody.getBoundingClientRect().top - headerBottom('Collapse Activity')).toBe(
+      0,
+    );
+    await expect(band.querySelector('summary')).toBeNull();
     await expect(
-      canvas
-        .getByRole("button", { name: "Collapse code" })
-        .querySelector("svg"),
+      canvas.getByRole('button', { name: 'Collapse code' }).querySelector('svg'),
     ).not.toBeNull();
     await expect(
-      canvas
-        .getByRole("button", { name: "Collapse result" })
-        .querySelector("svg"),
+      canvas.getByRole('button', { name: 'Collapse result' }).querySelector('svg'),
     ).not.toBeNull();
-    await expect(band.textContent).toContain("57ms");
-    await expect(canvas.getByText("42ms")).toBeTruthy();
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
-    await expect(canvas.queryByText("Listed 5 entries.")).toBeNull();
-    await expect(canvas.queryByRole("button", { name: "Expand result" })).toBeNull();
-    await expect(code.querySelector("[data-code-body]")).toBeNull();
-    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
-    await expect(canvas.getByRole("button", { name: "Expand result" })).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
-    await expect(canvas.getByRole("button", { name: "Expand code" })).toBeVisible();
+    await expect(band.textContent).toContain('57ms');
+    await expect(canvas.getByText('42ms')).toBeTruthy();
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
+    await expect(canvas.queryByText('Listed 5 entries.')).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Expand result' })).toBeNull();
+    await expect(code.querySelector('[data-code-body]')).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    await expect(canvas.getByRole('button', { name: 'Expand result' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
+    await expect(canvas.getByRole('button', { name: 'Expand code' })).toBeVisible();
   },
 };
 
@@ -771,19 +718,17 @@ export const JoinedActivity: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const code = canvasElement.querySelector("[data-execution-code]")!;
-    const activity = canvasElement.querySelector("[data-execution-activity]")!;
+    const code = canvasElement.querySelector('[data-execution-code]')!;
+    const activity = canvasElement.querySelector('[data-execution-activity]')!;
     const copyIcon = code.querySelector('button[aria-label="Copy code"] svg')!;
-    const activityCopyIcon = activity.querySelector(
-      'button[aria-label="Copy activity"] svg',
-    )!;
+    const activityCopyIcon = activity.querySelector('button[aria-label="Copy activity"] svg')!;
     await expect(copyIcon.getBoundingClientRect().right).toBeCloseTo(
       activityCopyIcon.getBoundingClientRect().right,
       0,
     );
     const thought = canvas
-      .getByText("Checking the Activity layout and grouping.")
-      .closest("section")!;
+      .getByText('Checking the Activity layout and grouping.')
+      .closest('section')!;
     await expect(code.getBoundingClientRect().top).toBeCloseTo(
       thought.getBoundingClientRect().bottom,
       0,
@@ -814,71 +759,53 @@ export const JoinedActivity: Story = {
     await expect(textEdge(thought)).toBeCloseTo(edge + 12, 0);
     const executionEdge = textEdge(code);
     await expect(code.getBoundingClientRect().left - edge).toBeCloseTo(0, 0);
-    await expect(getComputedStyle(code).borderLeftWidth).toBe("0px");
-    await expect(getComputedStyle(activity).borderLeftWidth).toBe("0px");
+    await expect(getComputedStyle(code).borderLeftWidth).toBe('0px');
+    await expect(getComputedStyle(activity).borderLeftWidth).toBe('0px');
     await expect(executionEdge - edge).toBeCloseTo(12, 0);
-    const band = canvas.getByRole("button", { name: "Expand Activity" });
-    await expect(band).toHaveTextContent("ACTIVITY");
-    await expect(band).toHaveTextContent("13 operations");
-    await expect(canvas.queryByRole("button", { name: /Read ×8/ })).toBeNull();
+    const band = canvas.getByRole('button', { name: 'Expand Activity' });
+    await expect(band).toHaveTextContent('ACTIVITY');
+    await expect(band).toHaveTextContent('13 operations');
+    await expect(canvas.queryByRole('button', { name: /Read ×8/ })).toBeNull();
     await expect(textEdge(band)).toBeCloseTo(executionEdge, 0);
     await userEvent.click(band);
     for (const label of [/Read ×8/, /Patch ×3/]) {
-      await expect(
-        textEdge(canvas.getByRole("button", { name: label })),
-      ).toBeCloseTo(executionEdge, 0);
-    }
-    const reads = canvas.getByRole("button", { name: /Read ×8/ });
-    await expect(reads).toHaveTextContent("6 files");
-    await expect(
-      canvas.getByRole("button", { name: /Patch ×3/ }),
-    ).toHaveTextContent("+42 −11");
-    reads.focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(reads).toHaveAttribute("aria-expanded", "true");
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Collapse Activity" }),
-    );
-    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
-    await expect(code.querySelector("pre")).not.toBeNull();
-    await expect(textEdge(code.querySelector("pre")!)).toBeCloseTo(
-      executionEdge,
-      0,
-    );
-    const codeSize = getComputedStyle(code.querySelector("pre")!).fontSize;
-    await expect(getComputedStyle(canvas.getByText("6 files")).fontSize).toBe(codeSize);
-    const mouse = matchMedia("(min-width: 640px) and (pointer: fine)").matches;
-    await expect(getComputedStyle(reads).fontSize).toBe(mouse ? "10px" : "11px");
-    // Names use the transcript body token; counts remain secondary metadata.
-    const labelSize = getComputedStyle(document.documentElement)
-      .getPropertyValue("--text-ui")
-      .trim();
-    const countSize = getComputedStyle(
-      canvas.getByText(/13 operations/),
-    ).fontSize;
-    await expect(Number.parseFloat(countSize)).toBeLessThanOrEqual(
-      Number.parseFloat(labelSize),
-    );
-    for (const name of ["CODE", "ACTIVITY"]) {
-      const label = canvas.getByText(name);
-      await expect(getComputedStyle(label).fontSize).toBe(labelSize);
-      await expect(getComputedStyle(label).fontWeight).toBe("600");
-      await expect(getComputedStyle(label).color).toBe(
-        getComputedStyle(document.body).color,
+      await expect(textEdge(canvas.getByRole('button', { name: label }))).toBeCloseTo(
+        executionEdge,
+        0,
       );
     }
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    await expect(reads).toHaveAttribute("aria-expanded", "true");
+    const reads = canvas.getByRole('button', { name: /Read ×8/ });
+    await expect(reads).toHaveTextContent('6 files');
+    await expect(canvas.getByRole('button', { name: /Patch ×3/ })).toHaveTextContent('+42 −11');
+    reads.focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(reads).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    await expect(code.querySelector('pre')).not.toBeNull();
+    await expect(textEdge(code.querySelector('pre')!)).toBeCloseTo(executionEdge, 0);
+    const codeSize = getComputedStyle(code.querySelector('pre')!).fontSize;
+    await expect(getComputedStyle(canvas.getByText('6 files')).fontSize).toBe(codeSize);
+    const mouse = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    await expect(getComputedStyle(reads).fontSize).toBe(mouse ? '10px' : '11px');
+    // Names use the transcript body token; counts remain secondary metadata.
+    const labelSize = getComputedStyle(document.documentElement)
+      .getPropertyValue('--text-ui')
+      .trim();
+    const countSize = getComputedStyle(canvas.getByText(/13 operations/)).fontSize;
+    await expect(Number.parseFloat(countSize)).toBeLessThanOrEqual(Number.parseFloat(labelSize));
+    for (const name of ['CODE', 'ACTIVITY']) {
+      const label = canvas.getByText(name);
+      await expect(getComputedStyle(label).fontSize).toBe(labelSize);
+      await expect(getComputedStyle(label).fontWeight).toBe('600');
+      await expect(getComputedStyle(label).color).toBe(getComputedStyle(document.body).color);
+    }
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await expect(reads).toHaveAttribute('aria-expanded', 'true');
     // Leave the design story in its compact initial state for visual review.
     await userEvent.click(reads);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Collapse Activity" }),
-    );
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Collapse code" }),
-    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
   },
 };
 export const JoinedActivitySettled: Story = {
@@ -908,26 +835,24 @@ export const JoinedActivityReview: Story = {
   render: () => (
     <main className="grid min-w-0 gap-8 pb-8">
       <header>
-        <h1 className="text-head font-semibold text-vis-message">
-          Activity · joined execution
-        </h1>
+        <h1 className="text-head font-semibold text-vis-message">Activity · joined execution</h1>
         <p className="mt-2 text-ui text-dialog-hint">
           Interactive design · fixture data, no gateway connection.
         </p>
       </header>
-      {(["running", "succeeded", "failed"] as const).map((state) => (
+      {(['running', 'succeeded', 'failed'] as const).map((state) => (
         <section key={state} aria-label={state}>
           <h2 className="mb-2 text-title font-semibold text-vis-message">
-            {state === "running"
-              ? "Working"
-              : state === "succeeded"
-                ? "Finished"
-                : "Needs attention"}
+            {state === 'running'
+              ? 'Working'
+              : state === 'succeeded'
+                ? 'Finished'
+                : 'Needs attention'}
           </h2>
           <IterationTrace
             whole
             showCode
-            live={state === "running"}
+            live={state === 'running'}
             iterations={STORY_JOINED_ACTIVITY[state]}
           />
         </section>
@@ -945,14 +870,13 @@ export const ProseAlignment: Story = {
         ...STORY_EXCHANGE_TURN,
         iterations: STORY_JOINED_ACTIVITY.succeeded.map((iteration) => ({
           ...iteration,
-          assistant_prose: "I checked the files before making these changes.",
+          assistant_prose: 'I checked the files before making these changes.',
         })),
         content: [
           {
-            id: "alignment-answer",
-            type: "prose",
-            markdown:
-              "The changes are ready for review.\n\n- Read the files\n- Check the results",
+            id: 'alignment-answer',
+            type: 'prose',
+            markdown: 'The changes are ready for review.\n\n- Read the files\n- Check the results',
           },
         ],
       }}
@@ -960,41 +884,35 @@ export const ProseAlignment: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const thought = canvas.getByText(
-      "Checking the Activity layout and grouping.",
-    );
-    const prose = canvas.getByText(
-      "I checked the files before making these changes.",
-    );
-    const answer = canvas.getByText("The changes are ready for review.");
+    const thought = canvas.getByText('Checking the Activity layout and grouping.');
+    const prose = canvas.getByText('I checked the files before making these changes.');
+    const answer = canvas.getByText('The changes are ready for review.');
     // Match the real answer, not an assumed size from the typography scale.
-    for (const name of ["CODE", "ACTIVITY"]) {
+    for (const name of ['CODE', 'ACTIVITY']) {
       await expect(getComputedStyle(canvas.getByText(name)).fontSize).toBe(
         getComputedStyle(answer).fontSize,
       );
     }
     for (const paragraph of [prose, answer]) {
       await expect(paragraph.getBoundingClientRect().left).toBeCloseTo(
-        thought.closest("section")!.getBoundingClientRect().left,
+        thought.closest('section')!.getBoundingClientRect().left,
         0,
       );
       await expect(paragraph.getBoundingClientRect().right).toBeCloseTo(
         // Prose aligns to both outer edges, not the inset reasoning text.
-        thought.closest("section")!.getBoundingClientRect().right,
+        thought.closest('section')!.getBoundingClientRect().right,
         0,
       );
     }
     // Regression: narration touched Thinking but kept a gap before Code.
-    const thinkingBand = thought.closest("section")!.getBoundingClientRect();
-    const codeBand = canvasElement
-      .querySelector("[data-execution-code]")!
-      .getBoundingClientRect();
+    const thinkingBand = thought.closest('section')!.getBoundingClientRect();
+    const codeBand = canvasElement.querySelector('[data-execution-code]')!.getBoundingClientRect();
     const paragraph = prose.getBoundingClientRect();
     const above = paragraph.top - thinkingBand.bottom;
     const below = codeBand.top - paragraph.bottom;
     await expect(above).toBeGreaterThanOrEqual(8);
     await expect(above).toBeCloseTo(below, 0);
-    await expect(canvasElement.querySelector("[data-step-node]")).toBeNull();
+    await expect(canvasElement.querySelector('[data-step-node]')).toBeNull();
   },
 };
 
@@ -1004,9 +922,9 @@ export const CustomAgentName: Story = {
     <AssistantMessage
       agentName="Ada"
       turn={{
-        turn_id: "named-agent",
-        request: "Inspect the configuration",
-        status: "running",
+        turn_id: 'named-agent',
+        request: 'Inspect the configuration',
+        status: 'running',
         iterations: STORY_TURN_ITERATIONS_SETTLED,
       }}
       settled
@@ -1014,29 +932,32 @@ export const CustomAgentName: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("Ada", { exact: true })).toBeVisible();
-    await expect(canvas.queryByText("Vis", { exact: true })).toBeNull();
-    await expect(canvas.getByRole("status")).toHaveTextContent("Ada is");
+    await expect(canvas.getByText('Ada', { exact: true })).toBeVisible();
+    await expect(canvas.queryByText('Vis', { exact: true })).toBeNull();
+    await expect(canvas.getByRole('status')).toHaveTextContent('Ada is');
   },
 };
 
 /** A monochrome review must preserve symbols, disclosure and a still page. */
-const monochromePlay: Story["play"] = async ({ canvas, canvasElement }) => {
-  const trace = canvas.getAllByRole("button", { name: "Expand Activity" })[0];
+const monochromePlay: Story['play'] = async ({ canvas, canvasElement }) => {
+  const trace = canvas.getAllByRole('button', { name: 'Expand Activity' })[0];
   await userEvent.click(trace);
-  await expect(canvas.getByRole("button", { name: "Collapse Activity" })).toHaveAttribute("aria-expanded", "true");
-  await expect(canvas.getByRole("list", { name: "Operation groups" })).toBeVisible();
-  const icons = canvasElement.querySelectorAll("[data-execution-activity] svg");
+  await expect(canvas.getByRole('button', { name: 'Collapse Activity' })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+  await expect(canvas.getByRole('list', { name: 'Operation groups' })).toBeVisible();
+  const icons = canvasElement.querySelectorAll('[data-execution-activity] svg');
   await expect(icons.length).toBeGreaterThan(0);
   for (const icon of icons) {
-    await expect(getComputedStyle(icon).fill).toBe("none");
+    await expect(getComputedStyle(icon).fill).toBe('none');
   }
   await expect(canvasElement.getAnimations({ subtree: true })).toHaveLength(0);
 };
 
-export const Paper: Story = { ...Exchange, globals: { theme: "paper" }, play: monochromePlay };
+export const Paper: Story = { ...Exchange, globals: { theme: 'paper' }, play: monochromePlay };
 export const HighContrastDark: Story = {
   ...Exchange,
-  globals: { theme: "high-contrast-dark" },
+  globals: { theme: 'high-contrast-dark' },
   play: monochromePlay,
 };

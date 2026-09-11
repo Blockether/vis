@@ -1,11 +1,8 @@
 // @vitest-environment jsdom
-import { render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  IterationAttachment,
-  TranscriptIteration,
-} from "../lib/types";
+import type { IterationAttachment, TranscriptIteration } from '../lib/types';
 
 // Regression, user report ("scrolling a big live session hangs on iOS"): one
 // streaming delta rebuilds the turn's `iterations` array to grow its tail, so
@@ -18,9 +15,8 @@ import type {
 // The rail is the seam that proves it: each segment builds its own attachment
 // page, so a segment that re-rendered asks `pageBySize` for one again.
 const railPages = vi.fn();
-vi.mock("../lib/artifacts", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("../lib/artifacts")>();
+vi.mock('../lib/artifacts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../lib/artifacts')>();
   return {
     ...original,
     pageBySize: (...args: Parameters<typeof original.pageBySize>) => {
@@ -30,7 +26,7 @@ vi.mock("../lib/artifacts", async (importOriginal) => {
   };
 });
 
-const { IterationTrace } = await import("./ChatContent");
+const { IterationTrace } = await import('./ChatContent');
 
 function attachment(position: number): IterationAttachment {
   return {
@@ -38,7 +34,7 @@ function attachment(position: number): IterationAttachment {
     iteration_id: `i${position}`,
     name: `notes-${position}.txt`,
     size: 12,
-    mime: "text/plain",
+    mime: 'text/plain',
   } as unknown as IterationAttachment;
 }
 
@@ -54,60 +50,40 @@ function iteration(position: number, thinking: string): TranscriptIteration {
 }
 
 /** The settled iterations keep their identity across a flush, as the reducer leaves them. */
-const settled = [iteration(0, "first"), iteration(1, "second")];
+const settled = [iteration(0, 'first'), iteration(1, 'second')];
 
 /** What `updateRunningIteration` hands the screen for one `content.block.delta`. */
 function streamed(tick: number): TranscriptIteration[] {
-  return [...settled, iteration(2, `thinking${".".repeat(tick)}`)];
+  return [...settled, iteration(2, `thinking${'.'.repeat(tick)}`)];
 }
 
 const client = {
-  base: "http://gateway.example.com",
+  base: 'http://gateway.example.com',
   retainAttachment: () => () => {},
   attachmentUrl: () => Promise.resolve(null),
 } as never;
 
-describe("a trace while its turn streams", () => {
-  it("re-renders only the iteration being streamed", () => {
+describe('a trace while its turn streams', () => {
+  it('re-renders only the iteration being streamed', () => {
     const view = render(
-      <IterationTrace
-        iterations={streamed(1)}
-        live
-        whole
-        client={client}
-        sid="s1"
-      />,
+      <IterationTrace iterations={streamed(1)} live whole client={client} sid="s1" />,
     );
     railPages.mockClear();
 
-    view.rerender(
-      <IterationTrace
-        iterations={streamed(2)}
-        live
-        whole
-        client={client}
-        sid="s1"
-      />,
-    );
+    view.rerender(<IterationTrace iterations={streamed(2)} live whole client={client} sid="s1" />);
 
     expect(railPages).toHaveBeenCalledTimes(1);
   });
 
-  it("re-renders a settled segment when its own iteration changes", () => {
+  it('re-renders a settled segment when its own iteration changes', () => {
     const view = render(
-      <IterationTrace
-        iterations={streamed(1)}
-        live
-        whole
-        client={client}
-        sid="s1"
-      />,
+      <IterationTrace iterations={streamed(1)} live whole client={client} sid="s1" />,
     );
     railPages.mockClear();
 
     view.rerender(
       <IterationTrace
-        iterations={[iteration(0, "first"), settled[1], iteration(2, "x")]}
+        iterations={[iteration(0, 'first'), settled[1], iteration(2, 'x')]}
         live
         whole
         client={client}

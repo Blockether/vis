@@ -7,35 +7,81 @@ import type { McpServer } from '../../lib/types';
 // The native loopback receiver: it binds the gateway-issued port on this device and
 // opens the system browser itself, so nothing here depends on a browser gesture.
 const host = vi.hoisted(() => ({ authorize: vi.fn(), cancel: vi.fn(), reopen: vi.fn() }));
-vi.mock('@capacitor/core', async importOriginal => ({ ...await importOriginal<typeof import('@capacitor/core')>(),
-  Capacitor: { isNativePlatform: () => true, isPluginAvailable: () => true, getPlatform: () => 'ios' },
-  registerPlugin: () => host }));
+vi.mock('@capacitor/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@capacitor/core')>()),
+  Capacitor: {
+    isNativePlatform: () => true,
+    isPluginAvailable: () => true,
+    getPlatform: () => 'ios',
+  },
+  registerPlugin: () => host,
+}));
 const redirect = 'http://127.0.0.1:53692/mcp-callback';
-const flow = { server: 'work', flow_id: 'test-flow', kind: 'pkce', status: 'pending', callback_mode: 'loopback',
+const flow = {
+  server: 'work',
+  flow_id: 'test-flow',
+  kind: 'pkce',
+  status: 'pending',
+  callback_mode: 'loopback',
   redirect_uri: redirect,
-  url: `https://gateway.example.com/authorize?state=test-state&redirect_uri=${encodeURIComponent(redirect)}` };
+  url: `https://gateway.example.com/authorize?state=test-state&redirect_uri=${encodeURIComponent(redirect)}`,
+};
 const callback = `${redirect}?state=test-state&code=test-code`;
 function client() {
-  const servers = [{ name: 'work', transport: 'streamable_http', url: 'https://gateway.example.com/mcp', tools: 0, enabled: true }];
-  return { cachedMcpServers: () => servers, mcpServers: vi.fn().mockResolvedValue(servers),
-    mcpAuthStart: vi.fn().mockResolvedValue(flow), mcpAuthComplete: vi.fn().mockResolvedValue({ ...flow, status: 'ok' }),
-    mcpAuthPoll: vi.fn().mockResolvedValue(flow), mcpAuthCancel: vi.fn().mockResolvedValue(undefined) };
+  const servers = [
+    {
+      name: 'work',
+      transport: 'streamable_http',
+      url: 'https://gateway.example.com/mcp',
+      tools: 0,
+      enabled: true,
+    },
+  ];
+  return {
+    cachedMcpServers: () => servers,
+    mcpServers: vi.fn().mockResolvedValue(servers),
+    mcpAuthStart: vi.fn().mockResolvedValue(flow),
+    mcpAuthComplete: vi.fn().mockResolvedValue({ ...flow, status: 'ok' }),
+    mcpAuthPoll: vi.fn().mockResolvedValue(flow),
+    mcpAuthCancel: vi.fn().mockResolvedValue(undefined),
+  };
 }
 /** The browser holds the sign-in until the test hands back its callback. */
 function browser() {
   let done!: (value: { url: string }) => void;
-  host.authorize.mockReturnValue(new Promise<{ url: string }>(resolve => { done = resolve; }));
+  host.authorize.mockReturnValue(
+    new Promise<{ url: string }>((resolve) => {
+      done = resolve;
+    }),
+  );
   return { returns: () => act(async () => done({ url: callback })) };
 }
-beforeEach(() => { host.authorize.mockReset(); host.cancel.mockResolvedValue(undefined); host.reopen.mockResolvedValue(undefined); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+beforeEach(() => {
+  host.authorize.mockReset();
+  host.cancel.mockResolvedValue(undefined);
+  host.reopen.mockResolvedValue(undefined);
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 it('opens the browser at once, without a panel, and finishes when the callback returns', async () => {
   const opened = vi.spyOn(window, 'open').mockReturnValue(null);
   const { returns } = browser();
-  const gateway = client(); render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  const gateway = client();
+  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
-  await waitFor(() => expect(host.authorize).toHaveBeenCalledWith(expect.objectContaining({
-    flowId: 'test-flow', authorizationUrl: flow.url, redirectUri: redirect, state: 'test-state' })));
+  await waitFor(() =>
+    expect(host.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flowId: 'test-flow',
+        authorizationUrl: flow.url,
+        redirectUri: redirect,
+        state: 'test-state',
+      }),
+    ),
+  );
   expect(gateway.mcpAuthStart).toHaveBeenCalledExactlyOnceWith('work');
   expect(opened).not.toHaveBeenCalled();
   // The row says so; there is no explanatory block under it and nothing to paste.
@@ -58,8 +104,11 @@ it('keeps asking while the signed-in server is still connecting, until it lands'
   const [base] = gateway.cachedMcpServers();
   const connecting = { ...base, is_authorized: true, is_connected: false };
   const connected = { ...connecting, is_connected: true, tools: 3 };
-  gateway.mcpServers.mockResolvedValueOnce([base]).mockResolvedValueOnce([connecting])
-    .mockResolvedValueOnce([connecting]).mockResolvedValue([connected]);
+  gateway.mcpServers
+    .mockResolvedValueOnce([base])
+    .mockResolvedValueOnce([connecting])
+    .mockResolvedValueOnce([connecting])
+    .mockResolvedValue([connected]);
   render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await waitFor(() => expect(host.authorize).toHaveBeenCalled());
@@ -68,12 +117,13 @@ it('keeps asking while the signed-in server is still connecting, until it lands'
   await waitFor(() => expect(screen.getByText('3 tools')).toBeVisible(), { timeout: 6000 });
   expect(gateway.mcpServers).toHaveBeenCalledTimes(4);
   // Settled rows stop the asking.
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
   expect(gateway.mcpServers).toHaveBeenCalledTimes(4);
 }, 12_000);
 it('takes the sign-in back from the same slot it started in', async () => {
   browser();
-  const gateway = client(); render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  const gateway = client();
+  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await screen.findByRole('button', { name: 'Cancel signing in to work' });
   fireEvent.click(screen.getByRole('button', { name: 'Cancel signing in to work' }));
@@ -84,23 +134,32 @@ it('takes the sign-in back from the same slot it started in', async () => {
 });
 it('cancels a start that returns after unmount without opening the browser', async () => {
   const opened = vi.spyOn(window, 'open').mockReturnValue(null);
-  const gateway = client(); let release!: (value: typeof flow) => void;
-  gateway.mcpAuthStart.mockReturnValue(new Promise(resolve => { release = resolve; }));
+  const gateway = client();
+  let release!: (value: typeof flow) => void;
+  gateway.mcpAuthStart.mockReturnValue(
+    new Promise((resolve) => {
+      release = resolve;
+    }),
+  );
   const view = render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' })); view.unmount();
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
+  view.unmount();
   await act(async () => release(flow));
-  expect(opened).not.toHaveBeenCalled(); expect(host.authorize).not.toHaveBeenCalled();
+  expect(opened).not.toHaveBeenCalled();
+  expect(host.authorize).not.toHaveBeenCalled();
   expect(gateway.mcpAuthCancel).toHaveBeenCalledWith('work', 'test-flow');
 });
 it('does not send an old callback to a different paired gateway', async () => {
   const { returns } = browser();
-  const first = client(); const second = client();
+  const first = client();
+  const second = client();
   const view = render(<McpServersPanel client={first as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await waitFor(() => expect(host.authorize).toHaveBeenCalledOnce());
   view.rerender(<McpServersPanel client={second as unknown as GatewayClient} />);
   await returns();
-  expect(second.mcpAuthComplete).not.toHaveBeenCalled(); expect(first.mcpAuthComplete).not.toHaveBeenCalled();
+  expect(second.mcpAuthComplete).not.toHaveBeenCalled();
+  expect(first.mcpAuthComplete).not.toHaveBeenCalled();
   expect(first.mcpAuthCancel).toHaveBeenCalledWith('work', 'test-flow');
 });
 
@@ -115,9 +174,15 @@ function pairedHttpClient() {
 }
 it('starts native MCP sign-in on a paired HTTP gateway without another consent dialog', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const fetch = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
-    ...flow, status: url.endsWith('/complete') ? 'ok' : 'pending',
-  })));
+  const fetch = vi.fn().mockImplementation(
+    async (url: string) =>
+      new Response(
+        JSON.stringify({
+          ...flow,
+          status: url.endsWith('/complete') ? 'ok' : 'pending',
+        }),
+      ),
+  );
   vi.stubGlobal('fetch', fetch);
   const { returns } = browser();
   const gateway = pairedHttpClient();
@@ -142,11 +207,14 @@ it('starts native MCP sign-in on a paired HTTP gateway without another consent d
 });
 it.each([
   [new GatewayOAuthError('pairing-required'), 'Pair this gateway before starting sign-in.'],
-  [new GatewayError(400, 'test-sensitive-callback-value'),
-    'Cannot start sign-in. Check the gateway and MCP server settings, then try again.'],
+  [
+    new GatewayError(400, 'test-sensitive-callback-value'),
+    'Cannot start sign-in. Check the gateway and MCP server settings, then try again.',
+  ],
 ])('shows safe local start errors without exposing remote error text', async (error, message) => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-  const gateway = client(); gateway.mcpAuthStart.mockRejectedValue(error);
+  const gateway = client();
+  gateway.mcpAuthStart.mockRejectedValue(error);
   render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await screen.findByText(message as string);

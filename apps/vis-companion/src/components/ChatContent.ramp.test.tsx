@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TranscriptIteration } from "../lib/types";
+import type { TranscriptIteration } from '../lib/types';
 
-const { IterationTrace } = await import("./ChatContent");
+const { IterationTrace } = await import('./ChatContent');
 
 // Regression, user report ("scrolling up, the python blocks are still white"):
 // pressing "Load earlier" on a big session left the transcript filling in for
@@ -27,7 +27,7 @@ function iteration(position: number): TranscriptIteration {
 }
 
 const client = {
-  base: "http://gateway.example.com",
+  base: 'http://gateway.example.com',
   retainAttachment: () => () => {},
   attachmentUrl: () => Promise.resolve(null),
 } as never;
@@ -45,16 +45,14 @@ function rampFrames(
 ): { frames: number; segments: number } {
   const queue: FrameRequestCallback[] = [];
   let clock = 0;
-  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     queue.push(cb);
     return queue.length;
   });
-  vi.stubGlobal("cancelAnimationFrame", () => {});
-  vi.spyOn(performance, "now").mockImplementation(() => clock);
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  vi.spyOn(performance, 'now').mockImplementation(() => clock);
 
-  const iterations = Array.from({ length: count }, (_, index) =>
-    iteration(index),
-  );
+  const iterations = Array.from({ length: count }, (_, index) => iteration(index));
   const view = render(
     <IterationTrace iterations={iterations} live={false} client={client} sid="s1" />,
   );
@@ -81,8 +79,8 @@ function rampFrames(
   let frames = pump();
   if (unfold) {
     // The rule is the only button a folded trace paints.
-    const rule = view.container.querySelector("button");
-    if (!rule) throw new Error("a folded trace painted no rule to press");
+    const rule = view.container.querySelector('button');
+    if (!rule) throw new Error('a folded trace painted no rule to press');
     fireEvent.click(rule);
     frames += pump();
   }
@@ -96,13 +94,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("a trace backfilling the turns a reader is scrolling into", () => {
+describe('a trace backfilling the turns a reader is scrolling into', () => {
   // Regression, user report ("this session is so big it will not load"): one turn
   // of a real session held 1,116 iterations, and the trace painted every one of
   // them — measured in Chromium at 393x852, 107,090 px and 23,806 DOM nodes for
   // that turn alone, 180 screens a reader had to drag through. The ramp above
   // decides how FAST the trace mounts; only a fold decides how MUCH of it exists.
-  it("stops at the fold instead of mounting a whole turn nobody scrolled to", () => {
+  it('stops at the fold instead of mounting a whole turn nobody scrolled to', () => {
     const { frames, segments } = rampFrames(300);
 
     // The last 24 steps, plus the rule that says how many are behind them.
@@ -110,7 +108,7 @@ describe("a trace backfilling the turns a reader is scrolling into", () => {
     expect(frames).toBeLessThanOrEqual(20);
   });
 
-  it("hands the rest back in a handful of frames, not one frame per handful", () => {
+  it('hands the rest back in a handful of frames, not one frame per handful', () => {
     const { frames, segments } = rampFrames(300, { unfold: true });
 
     // A step that triples until it hurts reaches all 300 segments in well
@@ -120,24 +118,17 @@ describe("a trace backfilling the turns a reader is scrolling into", () => {
     expect(frames).toBeLessThanOrEqual(20);
   }, 20_000); // The frame-count assertion owns performance, not jsdom wall time.
 
-  it("keeps the first paint small, so opening a session is not the whole turn", () => {
+  it('keeps the first paint small, so opening a session is not the whole turn', () => {
     const queue: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
       queue.push(cb);
       return queue.length;
     });
-    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal('cancelAnimationFrame', () => {});
 
-    const iterations = Array.from({ length: 200 }, (_, index) =>
-      iteration(index),
-    );
+    const iterations = Array.from({ length: 200 }, (_, index) => iteration(index));
     const view = render(
-      <IterationTrace
-        iterations={iterations}
-        live={false}
-        client={client}
-        sid="s1"
-      />,
+      <IterationTrace iterations={iterations} live={false} client={client} sid="s1" />,
     );
 
     expect(view.container.firstElementChild?.children.length).toBe(8);
@@ -150,36 +141,25 @@ describe("a trace backfilling the turns a reader is scrolling into", () => {
   // came back, with the screen's anchor corrector chasing it both ways —
   // measured on an iPhone 17 Pro simulator as a -294 px write followed by
   // +294 px 39 ms later, on a transcript nobody was touching.
-  it("never takes back a segment it has already shown", () => {
+  it('never takes back a segment it has already shown', () => {
     const queue: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
       queue.push(cb);
       return queue.length;
     });
-    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal('cancelAnimationFrame', () => {});
 
-    const iterations = Array.from({ length: 40 }, (_, index) =>
-      iteration(index),
-    );
-    const view = render(
-      <IterationTrace iterations={iterations} live client={client} sid="s1" />,
-    );
+    const iterations = Array.from({ length: 40 }, (_, index) => iteration(index));
+    const view = render(<IterationTrace iterations={iterations} live client={client} sid="s1" />);
     const shown = () =>
-      [...(view.container.firstElementChild?.children ?? [])].map(
-        (node) => node.textContent ?? "",
-      );
+      [...(view.container.firstElementChild?.children ?? [])].map((node) => node.textContent ?? '');
 
     const before = shown();
     expect(before.length).toBe(8);
 
     // One flush of a turn still being written: a segment at the END.
     view.rerender(
-      <IterationTrace
-        iterations={[...iterations, iteration(40)]}
-        live
-        client={client}
-        sid="s1"
-      />,
+      <IterationTrace iterations={[...iterations, iteration(40)]} live client={client} sid="s1" />,
     );
 
     const after = shown();

@@ -1,7 +1,7 @@
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from 'react';
 
-import { ChevronIcon } from "../../components/icons";
-import { ListRow } from "../../components/ui";
+import { ChevronIcon } from '../../components/icons';
+import { ListRow } from '../../components/ui';
 export function FormLabel({
   label,
   hint,
@@ -13,27 +13,21 @@ export function FormLabel({
 }) {
   return (
     <label className="block space-y-1">
-      <span className="block font-mono text-chip font-bold text-white">
-        {label}
-      </span>
+      <span className="block font-mono text-chip font-bold text-white">{label}</span>
       {children}
-      {hint && (
-        <span className="block font-mono text-chip text-dialog-hint">
-          {hint}
-        </span>
-      )}
+      {hint && <span className="block font-mono text-chip text-dialog-hint">{hint}</span>}
     </label>
   );
 }
 
 /** WHERE THE DIALOG'S TWO COLUMNS STAND SIDE BY SIDE: the same `sm:` the settings
  *  grid stacks at, so the fold and the layout it serves can never disagree. */
-const WIDE_COLUMNS = "(min-width: 640px)";
+const WIDE_COLUMNS = '(min-width: 640px)';
 
 const subscribeWideColumns = (onStoreChange: () => void) => {
   const media = window.matchMedia?.(WIDE_COLUMNS);
-  media?.addEventListener("change", onStoreChange);
-  return () => media?.removeEventListener("change", onStoreChange);
+  media?.addEventListener('change', onStoreChange);
+  return () => media?.removeEventListener('change', onStoreChange);
 };
 
 /** True once there is room for both of the dialog's columns beside each other. */
@@ -95,8 +89,8 @@ export function SettingsColumn({
       {children}
     </div>
   );
-  const TitleContainer = fold ? "span" : "div";
-  const TitleHeading = fold ? "span" : "h3";
+  const TitleContainer = fold ? 'span' : 'div';
+  const TitleHeading = fold ? 'span' : 'h3';
   const titleBlock = (
     <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
       <TitleHeading
@@ -130,9 +124,7 @@ export function SettingsColumn({
         ) : (
           <div className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
             {titleBlock}
-            <span className="flex shrink-0 items-center empty:hidden">
-              {action}
-            </span>
+            <span className="flex shrink-0 items-center empty:hidden">{action}</span>
           </div>
         )}
       </header>
@@ -160,12 +152,12 @@ export function SettingsPanel({
   };
   children: ReactNode;
 }) {
-  const TitleContainer = disclosure ? "span" : "div";
-  const TitleHeading = disclosure ? "span" : "h3";
+  const TitleContainer = disclosure ? 'span' : 'div';
+  const TitleHeading = disclosure ? 'span' : 'h3';
   const titleBlock = (
     <TitleContainer
       className={`flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1 ${
-        disclosure ? "sm:ms-1" : ""
+        disclosure ? 'sm:ms-1' : ''
       }`}
     >
       <TitleHeading
@@ -214,20 +206,13 @@ export function SettingsPanel({
             onClick={disclosure.onToggle}
           >
             {titleBlock}
-            <ChevronIcon
-              open={disclosure.isOpen}
-              className="size-4 shrink-0 sm:me-1"
-            />
+            <ChevronIcon open={disclosure.isOpen} className="size-4 shrink-0 sm:me-1" />
           </ListRow>
         </header>
       ) : (
         <header className="flex min-h-9 min-w-0 items-center gap-3 border-b border-dialog-edge px-3 py-0.5 sm:px-4 mouse:min-h-8">
           {titleBlock}
-          {action && (
-            <span className="flex shrink-0 items-center empty:hidden">
-              {action}
-            </span>
-          )}
+          {action && <span className="flex shrink-0 items-center empty:hidden">{action}</span>}
         </header>
       )}
       {/* A PANEL BODY DIVIDES AND CLIPS ITS OWN PARTS. `divide-y` draws only BETWEEN

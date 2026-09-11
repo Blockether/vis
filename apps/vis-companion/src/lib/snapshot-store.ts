@@ -163,9 +163,13 @@ function serialize(stores: SnapshotStores): string {
     const windowJson = held
       ? `${name}:${JSON.stringify({ offset: held.offset + dropped, total: held.total })}`
       : '';
-    const added = snapshot.length + (smallJson || snapshots.length ? 1 : 0)
-      + stampJson.length + (stampJson && stamps.length ? 1 : 0)
-      + windowJson.length + (windowJson && windows.length ? 1 : 0);
+    const added =
+      snapshot.length +
+      (smallJson || snapshots.length ? 1 : 0) +
+      stampJson.length +
+      (stampJson && stamps.length ? 1 : 0) +
+      windowJson.length +
+      (windowJson && windows.length ? 1 : 0);
     if (length + added > MAX_BYTES) break;
     length += added;
     snapshots.push(snapshot);

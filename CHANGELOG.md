@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-09-11
+
 ### Added
 - SDK 0.1.69: typed, immutable extension catalogs and generated help derived from existing Symbol contracts; reusable contract assertions and a tested read/mutation recipe (#203).
 - Verify and publish an SDK-only main commit through the protected Python publishing workflow without triggering a product release.
+
+### Changed
+- Apply consistent formatting to first-party source and Clojure configuration while preserving generated assets, upstream bundles and regression fixtures.
+
+### Fixed
+- Remove stale Clojure lint metadata and align cross-surface regression checks with formatted source.
+- Use gateway-derived budget fields in session statistics test fixtures.
 
 ## [v0.1.61] - 2026-09-10
 

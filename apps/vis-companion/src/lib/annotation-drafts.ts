@@ -19,11 +19,11 @@
 // native call is bounded (`lib/bridge`) — a wedged bridge must never be the
 // reason a press does nothing.
 
-import { Preferences } from "@capacitor/preferences";
-import { bridged } from "./bridge";
-import type { MarkdownComment } from "./markdown-annotations";
+import { Preferences } from '@capacitor/preferences';
+import { bridged } from './bridge';
+import type { MarkdownComment } from './markdown-annotations';
 
-const DRAFTS_KEY = "vis.annotationDrafts";
+const DRAFTS_KEY = 'vis.annotationDrafts';
 
 /** Documents that may hold a draft at once; the oldest touched fall off. */
 export const MAX_DRAFT_DOCUMENTS = 20;
@@ -60,7 +60,7 @@ function parse(raw: string | null): DraftStore {
   if (!raw) return {};
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
+    if (!parsed || typeof parsed !== 'object') return {};
     const store: DraftStore = {};
     for (const [key, value] of Object.entries(parsed as DraftStore)) {
       if (Array.isArray(value?.comments)) {
@@ -123,7 +123,7 @@ export function annotationDraftKey(
   iterationId: string,
   name: string,
 ): string {
-  return [gatewayBase, sid, iterationId, name].join("\u0000");
+  return [gatewayBase, sid, iterationId, name].join('\u0000');
 }
 
 /** The unsaved comments for one document, without waiting for any store. */
@@ -136,9 +136,7 @@ export function peekAnnotationDraft(key: string): MarkdownComment[] | null {
  * a webview data reset empties, and the draft has to outlive that too. The answer
  * folds into the memory mirror, so the next open is synchronous again.
  */
-export async function readAnnotationDraft(
-  key: string,
-): Promise<MarkdownComment[] | null> {
+export async function readAnnotationDraft(key: string): Promise<MarkdownComment[] | null> {
   const durable = await bridged(
     async () => (await Preferences.get({ key: DRAFTS_KEY })).value ?? null,
     () => localGet(DRAFTS_KEY),
@@ -149,10 +147,7 @@ export async function readAnnotationDraft(
   return merged[key]?.comments ?? null;
 }
 
-export function writeAnnotationDraft(
-  key: string,
-  comments: MarkdownComment[],
-): void {
+export function writeAnnotationDraft(key: string, comments: MarkdownComment[]): void {
   persist(pruned({ ...load(), [key]: { comments, at: Date.now() } }));
 }
 
@@ -176,10 +171,7 @@ export function sameComments(
 ): boolean {
   return (
     one.length === two.length &&
-    one.every(
-      (entry, at) =>
-        entry.quote === two[at]?.quote && entry.body === two[at]?.body,
-    )
+    one.every((entry, at) => entry.quote === two[at]?.quote && entry.body === two[at]?.body)
   );
 }
 

@@ -1,19 +1,15 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { act, screen } from "@testing-library/react";
+import { describe, expect, it } from 'vitest';
+import { act, screen } from '@testing-library/react';
 
-import {
-  renderSessionScreen,
-  sessionFixture,
-  subscriptionHub,
-} from "./session-screen-harness";
-import type { SseEvent } from "../lib/types";
+import { renderSessionScreen, sessionFixture, subscriptionHub } from './session-screen-harness';
+import type { SseEvent } from '../lib/types';
 
 const linger = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 /** How many times the reader can see `text` on the screen right now. */
 function painted(text: string): number {
-  return (document.body.textContent ?? "").split(text).length - 1;
+  return (document.body.textContent ?? '').split(text).length - 1;
 }
 
 // Regression, issue #145: a turn whose LAST iteration is prose-only used to paint
@@ -22,24 +18,24 @@ function painted(text: string): number {
 // id. It was reported against the TUI; this pins the same guarantee here, where
 // the same three copies of one answer meet: the streamed live prose, the terminal
 // frame's own content, and the persisted row that replaces the bubble.
-describe("an answer that arrives more than once", () => {
-  const ANSWER = "The final answer, in prose, with no code form.";
+describe('an answer that arrives more than once', () => {
+  const ANSWER = 'The final answer, in prose, with no code form.';
   const bubble = {
-    id: "gw-1",
-    request: "explain the failure",
-    answer: "",
-    iterations: [{ position: 0, thinking: "weighing it up" }],
+    id: 'gw-1',
+    request: 'explain the failure',
+    answer: '',
+    iterations: [{ position: 0, thinking: 'weighing it up' }],
     startedAt: Date.now(),
-    status: "running" as const,
+    status: 'running' as const,
   };
   // The row the engine persists for that same turn, carrying the answer again.
   const settledRow = {
-    turn_id: "gw-1",
-    request: "explain the failure",
-    status: "completed",
+    turn_id: 'gw-1',
+    request: 'explain the failure',
+    status: 'completed',
     created_at: Date.now(),
-    content: [{ id: "b1", type: "prose", markdown: ANSWER }],
-    iterations: [{ position: 0, thinking: "weighing it up" }],
+    content: [{ id: 'b1', type: 'prose', markdown: ANSWER }],
+    iterations: [{ position: 0, thinking: 'weighing it up' }],
   };
 
   function mount() {
@@ -48,9 +44,9 @@ describe("an answer that arrives more than once", () => {
     renderSessionScreen({
       session: sessionFixture({
         live: true,
-        status: "running",
-        current_turn_id: "gw-1",
-        running_request: "explain the failure",
+        status: 'running',
+        current_turn_id: 'gw-1',
+        running_request: 'explain the failure',
       }),
       client: {
         cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
@@ -69,20 +65,20 @@ describe("an answer that arrives more than once", () => {
     };
   }
 
-  it("paints it once when the terminal frame repeats the streamed prose", async () => {
+  it('paints it once when the terminal frame repeats the streamed prose', async () => {
     const { emit } = mount();
-    expect(await screen.findByText("explain the failure")).toBeInTheDocument();
+    expect(await screen.findByText('explain the failure')).toBeInTheDocument();
 
     // The last iteration writes no code, so its prose streams on the TURN's own
     // content block — the gateway's `<turn-id>:content:<n>`, never a
     // `:assistant-prose:` one.
     emit({
-      type: "content.block.delta",
-      turn_id: "gw-1",
+      type: 'content.block.delta',
+      turn_id: 'gw-1',
       seq: 10,
       iteration: 2,
-      block_id: "gw-1:content:6",
-      field: "markdown",
+      block_id: 'gw-1:content:6',
+      field: 'markdown',
       text: ANSWER,
       cumulative: ANSWER,
     });
@@ -91,11 +87,11 @@ describe("an answer that arrives more than once", () => {
 
     // The terminal frame ships the SAME Markdown under a fresh block id.
     emit({
-      type: "turn.completed",
-      turn_id: "gw-1",
+      type: 'turn.completed',
+      turn_id: 'gw-1',
       seq: 11,
-      status: "completed",
-      content: [{ id: "block_b879da55", type: "prose", markdown: ANSWER }],
+      status: 'completed',
+      content: [{ id: 'block_b879da55', type: 'prose', markdown: ANSWER }],
     });
     await linger(50);
     expect(painted(ANSWER)).toBe(1);
@@ -103,24 +99,24 @@ describe("an answer that arrives more than once", () => {
 
   it("still paints it once after the persisted row takes the bubble's place", async () => {
     const { emit, land } = mount();
-    expect(await screen.findByText("explain the failure")).toBeInTheDocument();
+    expect(await screen.findByText('explain the failure')).toBeInTheDocument();
     emit({
-      type: "content.block.delta",
-      turn_id: "gw-1",
+      type: 'content.block.delta',
+      turn_id: 'gw-1',
       seq: 10,
       iteration: 2,
-      block_id: "gw-1:content:6",
-      field: "markdown",
+      block_id: 'gw-1:content:6',
+      field: 'markdown',
       text: ANSWER,
       cumulative: ANSWER,
     });
     land();
     emit({
-      type: "turn.completed",
-      turn_id: "gw-1",
+      type: 'turn.completed',
+      turn_id: 'gw-1',
       seq: 11,
-      status: "completed",
-      content: [{ id: "block_b879da55", type: "prose", markdown: ANSWER }],
+      status: 'completed',
+      content: [{ id: 'block_b879da55', type: 'prose', markdown: ANSWER }],
     });
 
     // Long enough for the settle poll to have read the transcript and swapped the
@@ -135,32 +131,32 @@ describe("an answer that arrives more than once", () => {
 // once as the iteration's `assistant_prose` (`prose-beyond-code` only strips prose
 // that restates the CODE) and once as the turn's answer block. The trace and the
 // answer band would then paint one answer twice, at two different widths.
-describe("an answer its own trace repeats", () => {
-  const ANSWER = "The change is in state.clj and the suite is green.";
+describe('an answer its own trace repeats', () => {
+  const ANSWER = 'The change is in state.clj and the suite is green.';
   const narratedRow = {
-    turn_id: "engine-row-2",
-    request: "summarize the fix",
-    status: "completed",
+    turn_id: 'engine-row-2',
+    request: 'summarize the fix',
+    status: 'completed',
     created_at: Date.now(),
-    content: [{ id: "b2", type: "prose", markdown: ANSWER }],
+    content: [{ id: 'b2', type: 'prose', markdown: ANSWER }],
     iterations: [
       {
         position: 0,
-        thinking: "weighing it up",
+        thinking: 'weighing it up',
         assistant_prose: ANSWER,
-        forms: [{ block_id: "f1", code: 'done("...")' }],
+        forms: [{ block_id: 'f1', code: 'done("...")' }],
       },
     ],
   };
 
-  it("paints it once", async () => {
+  it('paints it once', async () => {
     renderSessionScreen({
       client: {
         cachedTranscript: () => [narratedRow],
         transcript: () => Promise.resolve([narratedRow]),
       },
     });
-    expect(await screen.findByText("summarize the fix")).toBeInTheDocument();
+    expect(await screen.findByText('summarize the fix')).toBeInTheDocument();
     await linger(50);
     expect(painted(ANSWER)).toBe(1);
   });
@@ -172,8 +168,8 @@ describe("an answer its own trace repeats", () => {
 // `assistant_prose` — one answer at two widths again. The TUI promotes exactly this
 // prose into a content block on the way in (`terminal-content`) and then drops the
 // trace copy, so the app owes the same one-copy guarantee on the same shape.
-describe("an answer promoted out of a content-less row", () => {
-  const ANSWER = "The suite is green and the pin is unchanged.";
+describe('an answer promoted out of a content-less row', () => {
+  const ANSWER = 'The suite is green and the pin is unchanged.';
 
   function mountRow(row: Record<string, unknown>) {
     renderSessionScreen({
@@ -185,41 +181,35 @@ describe("an answer promoted out of a content-less row", () => {
   }
 
   const promotedRow = {
-    turn_id: "engine-row-3",
-    request: "did anything else move",
-    status: "completed",
+    turn_id: 'engine-row-3',
+    request: 'did anything else move',
+    status: 'completed',
     created_at: Date.now(),
     iterations: [
       {
         position: 0,
-        thinking: "weighing it up",
+        thinking: 'weighing it up',
         assistant_prose: ANSWER,
         answer: ANSWER,
       },
     ],
   };
 
-  it("paints it once", async () => {
+  it('paints it once', async () => {
     mountRow(promotedRow);
-    expect(
-      await screen.findByText("did anything else move"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('did anything else move')).toBeInTheDocument();
     await linger(50);
     expect(painted(ANSWER)).toBe(1);
   });
 
-  it("keeps commentary that only resembles the answer", async () => {
-    const commentary = "The suite is green, and the pin is unchanged.";
+  it('keeps commentary that only resembles the answer', async () => {
+    const commentary = 'The suite is green, and the pin is unchanged.';
     mountRow({
       ...promotedRow,
-      turn_id: "engine-row-4",
-      iterations: [
-        { position: 0, assistant_prose: commentary, answer: ANSWER },
-      ],
+      turn_id: 'engine-row-4',
+      iterations: [{ position: 0, assistant_prose: commentary, answer: ANSWER }],
     });
-    expect(
-      await screen.findByText("did anything else move"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('did anything else move')).toBeInTheDocument();
     await linger(50);
     expect(painted(commentary)).toBe(1);
     expect(painted(ANSWER)).toBe(1);

@@ -29,7 +29,6 @@ export function bottomOf(box: ScrollBox): number {
   return Math.max(0, box.scrollHeight - box.clientHeight);
 }
 
-
 /**
  * Whether a smaller `scrollTop` is the reader RETREATING, or the scroller being
  * CLAMPED because its own end moved up underneath them.
@@ -150,10 +149,7 @@ export function heightSettler(
  * can all put the end back under their eyes without a scroll event the screen
  * is listening to at that moment.
  */
-export function shouldOfferLatest(
-  box: ScrollBox | null,
-  following: boolean,
-): boolean {
+export function shouldOfferLatest(box: ScrollBox | null, following: boolean): boolean {
   if (!box || following) return false;
   return !isAtBottom(box);
 }

@@ -37,13 +37,26 @@
  * profile.
  */
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { buildNotes, publishNotes } from './release-notes.mjs';
 import { exportArchiveArgs, exportOptionsPlist, signingPlan } from './ios-export.mjs';
-import { distributionIdentity, ensureProfiles, installProfile, stampManualSigning } from './ios-signing.mjs';
+import {
+  distributionIdentity,
+  ensureProfiles,
+  installProfile,
+  stampManualSigning,
+} from './ios-signing.mjs';
 import { distribute, planDistribution } from './testflight.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -51,7 +64,8 @@ import { syncPackageVersion } from './version.mjs';
 // never in a dotfile or this repo. An env var still wins, so CI can inject one.
 // `security -w` prints hex whenever the stored password is not plain printable
 // ASCII, which a multi-line PEM never is.
-const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+const unhex = (s) =>
+  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
 const keychain = (service, account) => {
   if (process.platform !== 'darwin') return undefined;
   const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
@@ -78,7 +92,8 @@ const flag = (name) => {
   return i === -1 ? undefined : args[i + 1];
 };
 // Repeatable flags: `--audience internal --audience public` reads as both, not as the last one.
-const flags = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
+const flags = (name) =>
+  args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
 const has = (name) => args.includes(`--${name}`);
 
 const die = (msg) => {
@@ -107,7 +122,11 @@ if (!/^\d+$/.test(buildNumber)) die(`bad --build "${buildNumber}" (git rev-list 
 // audience must cost a second, not a ten-minute signed .ipa (scripts/testflight.mjs).
 let plan;
 try {
-  plan = planDistribution({ audiences: flags('audience'), group: flag('group'), review: !has('no-review') });
+  plan = planDistribution({
+    audiences: flags('audience'),
+    group: flag('group'),
+    review: !has('no-review'),
+  });
 } catch (err) {
   die(err.message);
 }
@@ -145,7 +164,8 @@ const notes = has('no-notes')
       scope: flag('notes-scope') ? [flag('notes-scope')] : undefined,
       write: !has('no-changelog'),
     });
-if (notes.text) console.log(`\nWhat to Test${notes.reused ? ' (from CHANGELOG.md)' : ''}:\n${notes.text}\n`);
+if (notes.text)
+  console.log(`\nWhat to Test${notes.reused ? ' (from CHANGELOG.md)' : ''}:\n${notes.text}\n`);
 
 if (!has('skip-web')) {
   if (!needsIosScaffold) run('npm', ['run', 'build']);
@@ -294,7 +314,7 @@ if (hasApiKey && !existsSync(keyPath)) die(`App Store Connect key does not exist
 console.log(
   hasApiKey
     ? `· signing in with App Store Connect key ${keyId}${keyPem ? ' (keychain)' : ''}`
-    : "· no App Store Connect key — falling back to the Apple account signed into Xcode",
+    : '· no App Store Connect key — falling back to the Apple account signed into Xcode',
 );
 
 // Sign the archive BY HAND wherever that is possible.
@@ -329,7 +349,11 @@ if (identity) {
       console.log(`· ${id} → ${profile.name}`);
     }
     profileNames = Object.fromEntries(Object.entries(profiles).map(([id, p]) => [id, p.name]));
-    const stamp = stampManualSigning(readFileSync(pbxproj, 'utf8'), { teamId, profileNames, identity });
+    const stamp = stampManualSigning(readFileSync(pbxproj, 'utf8'), {
+      teamId,
+      profileNames,
+      identity,
+    });
     writeFileSync(pbxproj, stamp.text);
     manualArchive = stamp.stamped.length > 0;
     console.log(`· ${identity} signing for ${stamp.stamped.join(', ')}`);
@@ -345,7 +369,10 @@ if (identity) {
 // a stale one signs a new archive with yesterday's decision. It is written HERE,
 // after the profiles above are resolved, so export reuses exactly what the archive
 // was signed with.
-const signing = signingPlan({ bundleIds: [appBundleId, shareBundleId, notifyBundleId], profileNames });
+const signing = signingPlan({
+  bundleIds: [appBundleId, shareBundleId, notifyBundleId],
+  profileNames,
+});
 if (signing.unnamed.length > 0) {
   console.log(`· no profile for ${signing.unnamed.join(', ')} — exporting with automatic signing`);
 }
@@ -382,7 +409,11 @@ const authenticationArgs = hasApiKey
     ]
   : [];
 if (hasApiKey && archiveArgs.includes('-allowProvisioningUpdates')) {
-  archiveArgs.splice(archiveArgs.indexOf('-allowProvisioningUpdates') + 1, 0, ...authenticationArgs);
+  archiveArgs.splice(
+    archiveArgs.indexOf('-allowProvisioningUpdates') + 1,
+    0,
+    ...authenticationArgs,
+  );
 }
 run('xcodebuild', archiveArgs, { cwd: projectDir });
 
@@ -412,23 +443,47 @@ if (hasApiKey) {
   // `--wait` makes altool report App Store processing failures (missing privacy
   // declarations, invalid entitlements, and similar) instead of returning a false
   // green as soon as the bytes arrive.
-  run('xcrun', ['altool', '--upload-package', ipa, '--wait', '--api-key', keyId, '--api-issuer', issuerId], {
-    env: { ...process.env, API_PRIVATE_KEYS_DIR: dirname(resolve(keyPath)) },
-  });
-} else if (secret('VIS_ASC_APPLE_ID', 'apple_id') && secret('VIS_ASC_APP_PASSWORD', 'app_password')) {
   run(
     'xcrun',
-    ['altool', '--upload-package', ipa, '--wait', '-u', secret('VIS_ASC_APPLE_ID', 'apple_id'), '-p', '@env:VIS_ASC_APP_PASSWORD'],
+    ['altool', '--upload-package', ipa, '--wait', '--api-key', keyId, '--api-issuer', issuerId],
+    {
+      env: { ...process.env, API_PRIVATE_KEYS_DIR: dirname(resolve(keyPath)) },
+    },
+  );
+} else if (
+  secret('VIS_ASC_APPLE_ID', 'apple_id') &&
+  secret('VIS_ASC_APP_PASSWORD', 'app_password')
+) {
+  run(
+    'xcrun',
+    [
+      'altool',
+      '--upload-package',
+      ipa,
+      '--wait',
+      '-u',
+      secret('VIS_ASC_APPLE_ID', 'apple_id'),
+      '-p',
+      '@env:VIS_ASC_APP_PASSWORD',
+    ],
     // Through the environment, never argv: an app-specific password on a command
     // line is readable by every process on the machine.
-    { env: { ...process.env, VIS_ASC_APP_PASSWORD: secret('VIS_ASC_APP_PASSWORD', 'app_password') } },
+    {
+      env: { ...process.env, VIS_ASC_APP_PASSWORD: secret('VIS_ASC_APP_PASSWORD', 'app_password') },
+    },
   );
 } else {
   // No credentials in the environment: re-export with destination=upload, which
   // authenticates as the Apple account signed into Xcode (Xcode > Settings >
   // Accounts) — the same one that owns the cloud-managed distribution cert.
   const uploadOptions = join(outDir, `UploadOptions-${buildNumber}.plist`);
-  writeFileSync(uploadOptions, readFileSync(exportOptions, 'utf8').replace('<string>export</string>', '<string>upload</string>'));
+  writeFileSync(
+    uploadOptions,
+    readFileSync(exportOptions, 'utf8').replace(
+      '<string>export</string>',
+      '<string>upload</string>',
+    ),
+  );
   run(
     'xcodebuild',
     [
@@ -488,7 +543,10 @@ const publishWhatToTest = async (timeoutMs) => {
     log: (m) => console.log(`· ${m}`),
   });
   if (res.ok) console.log(`\n✓ TestFlight "What to Test" set for build ${buildNumber}.\n`);
-  else console.log(`\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — re-push them with: ${notesRecovery}\n`);
+  else
+    console.log(
+      `\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — re-push them with: ${notesRecovery}\n`,
+    );
   return res.ok;
 };
 
@@ -498,7 +556,10 @@ const publishWhatToTest = async (timeoutMs) => {
 // and `asc` has already retried everything transient by the time we get here.
 if (!plan.isPublic) {
   const notesOk = await publishWhatToTest(Number(flag('notes-timeout') ?? 15 * 60 * 1000));
-  if (!notesOk) die(`TestFlight release notes were not published for build ${buildNumber}.\nThe build is uploaded; recover with: ${notesRecovery}`);
+  if (!notesOk)
+    die(
+      `TestFlight release notes were not published for build ${buildNumber}.\nThe build is uploaded; recover with: ${notesRecovery}`,
+    );
 }
 
 // PUBLIC TestFlight, by default. An upload only reaches the internal groups, so stopping here
@@ -510,7 +571,11 @@ if (plan.isPublic) {
   const res = await distribute({
     keyId,
     issuerId,
-    keyPem: keyPem ?? (process.env.VIS_ASC_KEY_PATH ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8') : undefined),
+    keyPem:
+      keyPem ??
+      (process.env.VIS_ASC_KEY_PATH
+        ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8')
+        : undefined),
     bundleId: appBundleId,
     build: buildNumber,
     group: plan.group,
@@ -518,12 +583,18 @@ if (plan.isPublic) {
     timeoutMs: Number(flag('public-timeout') ?? 60 * 60 * 1000),
   });
   if (!res.ok) {
-    die(`public distribution incomplete: ${res.reason}\nThe build is uploaded; recover with: npm run release:testflight -- --build ${buildNumber}`);
+    die(
+      `public distribution incomplete: ${res.reason}\nThe build is uploaded; recover with: npm run release:testflight -- --build ${buildNumber}`,
+    );
   }
-  console.log(`\n✓ build ${buildNumber} is with public TestFlight.${res.publicLink ? `\n  Join link: ${res.publicLink}` : ''}\n`);
+  console.log(
+    `\n✓ build ${buildNumber} is with public TestFlight.${res.publicLink ? `\n  Join link: ${res.publicLink}` : ''}\n`,
+  );
 
   const notesOk = await publishWhatToTest(Number(flag('notes-timeout') ?? 2 * 60 * 1000));
   if (!notesOk) {
-    die(`TestFlight release notes were not published for build ${buildNumber}.\nThe build is uploaded; recover with: ${notesRecovery}`);
+    die(
+      `TestFlight release notes were not published for build ${buildNumber}.\nThe build is uploaded; recover with: ${notesRecovery}`,
+    );
   }
 }

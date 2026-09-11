@@ -5,20 +5,11 @@
 // and reads the document that landed.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  LiveView as LiveViewList,
-  LiveViewPanel,
-  useLiveViews,
-} from './LiveView';
+import { LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveView';
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
-import {
-  LIVE_NOTE_CHARS,
-  liveViewFromWire,
-  type LiveNode,
-  type LiveView,
-} from '../lib/live-view';
+import { LIVE_NOTE_CHARS, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_PATCH_EVENT } from '../lib/view';
@@ -53,10 +44,27 @@ function paint(props: Partial<Parameters<typeof LiveViewPanel>[0]> = {}) {
 describe('live log disclosures', () => {
   // Regression #189: a scrollable log is not collapsed output.
   it('starts each build log collapsed without deleting its retained output', () => {
-    const view: LiveView = { ...opened(), nodes: [
-      { id: 'a', type: 'log', label: 'Build A logs', lines: ['A retained'], window_lines: 100, total_lines: 1 },
-      { id: 'b', type: 'log', label: 'Build B logs', lines: ['B retained'], window_lines: 100, total_lines: 1 },
-    ] };
+    const view: LiveView = {
+      ...opened(),
+      nodes: [
+        {
+          id: 'a',
+          type: 'log',
+          label: 'Build A logs',
+          lines: ['A retained'],
+          window_lines: 100,
+          total_lines: 1,
+        },
+        {
+          id: 'b',
+          type: 'log',
+          label: 'Build B logs',
+          lines: ['B retained'],
+          window_lines: 100,
+          total_lines: 1,
+        },
+      ],
+    };
     paint({ view });
     expect(screen.queryByText('A retained')).toBeNull();
     expect(screen.queryByText('B retained')).toBeNull();
@@ -115,7 +123,9 @@ describe('a live view on the phone', () => {
   // A bar that never moves reads as a stall. A run whose size is not known yet
   // says so in words instead.
   it('draws no bar for a run with no knowable end', () => {
-    const html = paint({ view: withNode(opened(), { id: 'swept', type: 'progress', label: 'Swept' }) });
+    const html = paint({
+      view: withNode(opened(), { id: 'swept', type: 'progress', label: 'Swept' }),
+    });
     expect(screen.queryByRole('progressbar')).toBeNull();
     expect(html).toContain('working');
   });
@@ -209,8 +219,18 @@ describe('selecting a table row', () => {
       .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     hosts.rows = [
-      { id: 'ios', cells: ['Release apps / iOS', 'queued'], tone: 'running', branch: 'Release apps' },
-      { id: 'android', cells: ['Release apps / Android', 'running'], tone: 'running', branch: 'Release apps' },
+      {
+        id: 'ios',
+        cells: ['Release apps / iOS', 'queued'],
+        tone: 'running',
+        branch: 'Release apps',
+      },
+      {
+        id: 'android',
+        cells: ['Release apps / Android', 'running'],
+        tone: 'running',
+        branch: 'Release apps',
+      },
       { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
     ];
     hosts.selected_ids = ['android'];
@@ -387,10 +407,14 @@ describe('what a run says about its own layout', () => {
     // Seven top-level nodes, seven rows: `hosts` and `why` share the one the
     // group holds them in instead of taking one each.
     expect(list.children.length).toBe(7);
-    const beside = [...list.children].find((row) => row.textContent?.includes('Hosts')) as HTMLElement;
+    const beside = [...list.children].find((row) =>
+      row.textContent?.includes('Hosts'),
+    ) as HTMLElement;
     expect(beside.textContent).toContain('Why');
     expect(beside.innerHTML).toContain('sm:grid-flow-col');
-    const alone = [...list.children].find((row) => row.textContent?.includes('Elsewhere')) as HTMLElement;
+    const alone = [...list.children].find((row) =>
+      row.textContent?.includes('Elsewhere'),
+    ) as HTMLElement;
     expect(alone.innerHTML).not.toContain('grid-flow-col');
   });
 
@@ -457,7 +481,10 @@ describe('what a run says about its own layout', () => {
       .find((node) => node.id === 'hosts');
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     paint({
-      view: withNode(view, { ...hosts, rows: [{ ...hosts.rows[0], cells: ['`db-1`', 'clean', '0'] }] }),
+      view: withNode(view, {
+        ...hosts,
+        rows: [{ ...hosts.rows[0], cells: ['`db-1`', 'clean', '0'] }],
+      }),
     });
     expect(screen.getAllByRole('cell')[0].querySelector('code')?.textContent).toBe('db-1');
   });
@@ -505,7 +532,8 @@ describe('what a run says about its own layout', () => {
       for (const seq of [1, 2, 3]) {
         act(() =>
           receive?.({
-            type: VIEW_PATCH_EVENT, kind: 'live',
+            type: VIEW_PATCH_EVENT,
+            kind: 'live',
             view_id: running.id,
             first_seq: seq,
             patch: { view_id: running.id, seq, ops: [] },
@@ -547,7 +575,8 @@ describe('what a run says about its own layout', () => {
     try {
       act(() =>
         receive?.({
-          type: VIEW_CLOSE_EVENT, kind: 'live',
+          type: VIEW_CLOSE_EVENT,
+          kind: 'live',
           view_id: opened().id,
           result: { artifact_id: 'record-1' },
         }),
@@ -591,7 +620,8 @@ describe('what a run says about its own layout', () => {
     await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
     act(() =>
       receive?.({
-        type: VIEW_PATCH_EVENT, kind: 'live',
+        type: VIEW_PATCH_EVENT,
+        kind: 'live',
         view_id: running.id,
         first_seq: 3,
         patch: { view_id: running.id, seq: 4, ops: [] },
@@ -629,11 +659,10 @@ describe('what a run says about its own layout', () => {
     await waitFor(() => expect(screen.getByText('2')).toBeTruthy());
     expect(liveViews).toHaveBeenCalledTimes(2);
   });
-
 });
 
 describe('the section is built from the closed vocabulary', () => {
-  it("uses shared actions around its feature-only meter and tables", () => {
+  it('uses shared actions around its feature-only meter and tables', () => {
     expect(liveViewSource).toContain('<Button');
     expect(liveViewSource).toContain('<ProgressMeter');
     expect(liveViewSource).toContain('<LoadMore');

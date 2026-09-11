@@ -5,15 +5,15 @@
  * remain configured only during rollover.
  */
 
-import { base64url } from "./jwt";
-import { PLATFORMS, type Platform } from "./types";
+import { base64url } from './jwt';
+import { PLATFORMS, type Platform } from './types';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /** Version prefix: a future format changes it and old grants stop verifying. */
-const PREFIX = "vg1.";
-const AAD = encoder.encode("vis-companion-relay/grant/v1");
+const PREFIX = 'vg1.';
+const AAD = encoder.encode('vis-companion-relay/grant/v1');
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
@@ -40,9 +40,9 @@ function keyFor(secret: string): Promise<CryptoKey> {
   const cached = derivedKeys.get(secret);
   if (cached) return cached;
   const derived = crypto.subtle
-    .digest("SHA-256", encoder.encode(secret))
+    .digest('SHA-256', encoder.encode(secret))
     .then((bits) =>
-      crypto.subtle.importKey("raw", bits, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]),
+      crypto.subtle.importKey('raw', bits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']),
     );
   derivedKeys.set(secret, derived);
   return derived;
@@ -50,8 +50,8 @@ function keyFor(secret: string): Promise<CryptoKey> {
 
 function fromBase64url(text: string): Uint8Array | null {
   try {
-    const padded = text.replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+    const padded = text.replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return bytes;
@@ -72,7 +72,7 @@ export async function seal(secret: string, grant: Grant): Promise<string> {
   );
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv, additionalData: AAD },
+      { name: 'AES-GCM', iv, additionalData: AAD },
       await keyFor(secret),
       plaintext,
     ),
@@ -103,7 +103,7 @@ export async function unseal(
     let opened: ArrayBuffer;
     try {
       opened = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv, additionalData: AAD },
+        { name: 'AES-GCM', iv, additionalData: AAD },
         await keyFor(secret),
         body,
       );
@@ -117,14 +117,14 @@ export async function unseal(
         e?: unknown;
         x?: unknown;
       };
-      const deviceToken = typeof claims.t === "string" ? claims.t : "";
+      const deviceToken = typeof claims.t === 'string' ? claims.t : '';
       const platform = claims.p as Platform;
-      const expiresAt = typeof claims.x === "number" ? claims.x : 0;
+      const expiresAt = typeof claims.x === 'number' ? claims.x : 0;
       if (!deviceToken || !PLATFORMS.includes(platform) || expiresAt <= now) return null;
       return {
         deviceToken,
         platform,
-        environment: claims.e === "sandbox" ? "sandbox" : "production",
+        environment: claims.e === 'sandbox' ? 'sandbox' : 'production',
         expiresAt,
       };
     } catch {

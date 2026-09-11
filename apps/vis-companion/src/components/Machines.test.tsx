@@ -15,7 +15,13 @@ import { MachineRows, useFleetHealth } from './Machines';
 // dot and the latency it had answered with when it was still awake.
 
 /** One gateway's health, rendered exactly as the settings column renders it. */
-function Fleet({ conns, watch }: { conns: GatewayConn[]; watch?: { url?: string | null; onRecovered?: () => void } }) {
+function Fleet({
+  conns,
+  watch,
+}: {
+  conns: GatewayConn[];
+  watch?: { url?: string | null; onRecovered?: () => void };
+}) {
   const { health, retry } = useFleetHealth(conns, watch);
   return <MachineRows conns={conns} health={health} onPick={() => {}} onRetry={retry} />;
 }
@@ -156,11 +162,14 @@ describe('a machine that stopped answering while nobody was looking', () => {
     const slow: GatewayConn = { url: 'http://10.0.0.5:7892', label: 'slow machine' };
     const onRecovered = vi.fn();
     let attempts = 0;
-    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
-      if (url.startsWith(slow.url)) return blackhole(init);
-      attempts += 1;
-      return attempts === 1 ? Promise.reject(new TypeError('Load failed')) : answers();
-    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url.startsWith(slow.url)) return blackhole(init);
+        attempts += 1;
+        return attempts === 1 ? Promise.reject(new TypeError('Load failed')) : answers();
+      }),
+    );
     render(<Fleet conns={[conn, slow]} watch={{ url: conn.url, onRecovered }} />);
     await settle();
 
@@ -177,17 +186,24 @@ describe('a machine that stopped answering while nobody was looking', () => {
 
     await settle();
     expect(screen.getByRole('button', { name: /retry target/ })).not.toHaveAttribute('aria-busy');
-    expect(screen.getByRole('button', { name: 'Checking connection to slow machine' })).toHaveAttribute('aria-busy', 'true');
+    expect(
+      screen.getByRole('button', { name: 'Checking connection to slow machine' }),
+    ).toHaveAttribute('aria-busy', 'true');
     expect(onRecovered).toHaveBeenCalledTimes(1);
   });
 
   it('returns to retry after a failed check', async () => {
     const conn: GatewayConn = { url: 'http://10.0.0.5:7893', label: 'unavailable' };
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Load failed'))));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('Load failed'))),
+    );
     render(<Fleet conns={[conn]} />);
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Retry connection to unavailable' }));
-    expect(screen.getByRole('button', { name: 'Checking connection to unavailable' })).toHaveAttribute('aria-busy', 'true');
+    expect(
+      screen.getByRole('button', { name: 'Checking connection to unavailable' }),
+    ).toHaveAttribute('aria-busy', 'true');
     await settle();
     const retry = screen.getByRole('button', { name: 'Retry connection to unavailable' });
     expect(retry).not.toHaveAttribute('aria-disabled');
@@ -206,10 +222,14 @@ describe('a machine that stopped answering while nobody was looking', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry connection to pending retry' }));
-    expect(screen.getByRole('button', { name: 'Checking connection to pending retry' })).toHaveAttribute('aria-busy', 'true');
+    expect(
+      screen.getByRole('button', { name: 'Checking connection to pending retry' }),
+    ).toHaveAttribute('aria-busy', 'true');
     expect(fetcher).toHaveBeenCalledTimes(2);
     await settle(9_000);
-    expect(screen.getByRole('button', { name: 'Retry connection to pending retry' })).not.toHaveAttribute('aria-busy');
+    expect(
+      screen.getByRole('button', { name: 'Retry connection to pending retry' }),
+    ).not.toHaveAttribute('aria-busy');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

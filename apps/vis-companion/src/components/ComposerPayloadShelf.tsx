@@ -1,11 +1,11 @@
-import type { PendingAttachment } from "../lib/attachments";
-import { isAudioMediaType, isVideoMediaType } from "../lib/attachments";
-import { artifactMedia } from "../lib/artifacts";
-import { keepKeyboard } from "../lib/keyboard";
-import type { ComposerPaste } from "../lib/paste";
-import { MicIcon } from "./icons";
-import { ExpandableImage } from "./ImageViewer";
-import { CloseButton, TextButton } from "./ui";
+import type { PendingAttachment } from '../lib/attachments';
+import { isAudioMediaType, isVideoMediaType } from '../lib/attachments';
+import { artifactMedia } from '../lib/artifacts';
+import { keepKeyboard } from '../lib/keyboard';
+import type { ComposerPaste } from '../lib/paste';
+import { MicIcon } from './icons';
+import { ExpandableImage } from './ImageViewer';
+import { CloseButton, TextButton } from './ui';
 
 export type ComposerPayloadCommands = {
   editPaste: (id: number) => void;
@@ -75,10 +75,15 @@ export function ComposerPayloadShelf({
                     {attachment.filename}
                   </span>
                 </span>
-              ) : !attachment.media_type.startsWith("image/") ? (
+              ) : !attachment.media_type.startsWith('image/') ? (
                 <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5">
-                  <span className="font-mono text-ui text-dialog-hint">{artifactMedia(attachment)}</span>
-                  <span className="truncate font-mono text-ui text-dialog-foreground" title={attachment.filename}>
+                  <span className="font-mono text-ui text-dialog-hint">
+                    {artifactMedia(attachment)}
+                  </span>
+                  <span
+                    className="truncate font-mono text-ui text-dialog-foreground"
+                    title={attachment.filename}
+                  >
                     {attachment.filename}
                   </span>
                 </span>
@@ -89,9 +94,7 @@ export function ComposerPayloadShelf({
                   loading="eager"
                   className="size-8 shrink-0 object-cover"
                   frameClassName="min-w-0 flex-1"
-                  onApply={(edited) =>
-                    commands.editAttachment(attachment.id, edited)
-                  }
+                  onApply={(edited) => commands.editAttachment(attachment.id, edited)}
                 >
                   <span className="truncate font-mono text-chip text-dialog-hint">
                     {attachment.filename}

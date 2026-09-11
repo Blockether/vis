@@ -8,17 +8,17 @@
  * what is saved is still a PDF under the same filename — which is what makes
  * the drawing the artifact's NEXT VERSION rather than a picture beside it.
  */
-import { PDFDocument } from "@cantoo/pdf-lib";
+import { PDFDocument } from '@cantoo/pdf-lib';
 
-type PdfLib = typeof import("pdfjs-dist");
+type PdfLib = typeof import('pdfjs-dist');
 
 let pdfjs: Promise<PdfLib> | null = null;
 
 /** pdf.js and its worker are ~1 MB: nothing loads until a page is drawn on. */
 async function library(): Promise<PdfLib> {
   pdfjs ??= (async () => {
-    const lib = await import("pdfjs-dist");
-    const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
+    const lib = await import('pdfjs-dist');
+    const worker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
     lib.GlobalWorkerOptions.workerSrc = worker.default;
     return lib;
   })();
@@ -43,13 +43,13 @@ export async function renderPdfPage(
   const pageCount = doc.numPages;
   const page = await doc.getPage(Math.min(Math.max(pageNumber, 1), pageCount));
   const viewport = page.getViewport({ scale });
-  const canvas = document.createElement("canvas");
+  const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("no 2d context");
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no 2d context');
   await page.render({ canvas, canvasContext: context, viewport }).promise;
-  return { src: canvas.toDataURL("image/png"), pageCount };
+  return { src: canvas.toDataURL('image/png'), pageCount };
 }
 
 /**
@@ -62,9 +62,7 @@ export async function stampPdfPage(
   pngBytes: ArrayBuffer,
 ): Promise<Uint8Array> {
   const doc = await PDFDocument.load(pdfBytes);
-  const page = doc.getPage(
-    Math.min(Math.max(pageNumber, 1), doc.getPageCount()) - 1,
-  );
+  const page = doc.getPage(Math.min(Math.max(pageNumber, 1), doc.getPageCount()) - 1);
   const png = await doc.embedPng(pngBytes);
   const { width, height } = page.getSize();
   page.drawImage(png, { x: 0, y: 0, width, height });

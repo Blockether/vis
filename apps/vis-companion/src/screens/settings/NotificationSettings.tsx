@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { GatewayClient, GatewayError } from "../../lib/gateway";
-import type { GatewayConn, PushDevice, PushStatus } from "../../lib/types";
+import { GatewayClient, GatewayError } from '../../lib/gateway';
+import type { GatewayConn, PushDevice, PushStatus } from '../../lib/types';
 import {
   acquirePushToken,
   cachedPushToken,
@@ -13,7 +13,7 @@ import {
   pushPermission,
   pushPlatform,
   type PushPermission,
-} from "../../lib/push";
+} from '../../lib/push';
 import {
   ensureWebPushSubscription,
   getExistingWebPushSubscription,
@@ -24,24 +24,24 @@ import {
   unregisterWebPushForGateway,
   webPushApplicationServerKey,
   webPushPermission,
-} from "../../lib/web-push";
-import { applyGatewayNotify, applyWebGatewayNotify } from "../../lib/notify";
+} from '../../lib/web-push';
+import { applyGatewayNotify, applyWebGatewayNotify } from '../../lib/notify';
 import {
   cachedNotifyVerdict,
   isHeldBy,
   notifyVerdict,
   rememberNotifyVerdict,
-} from "../../lib/notify-verdict";
+} from '../../lib/notify-verdict';
 import {
   registerForPush,
   registeredIds,
   refusedRelayUrl,
   relayUrlFor,
   unregisterFromPush,
-} from "../../lib/relay";
-import { getGatewayNotify } from "../../lib/storage";
-import { Banner, Button, NotifyConnectionSwitch } from "../../components/ui";
-import { SettingsPanel } from "./SettingsLayout";
+} from '../../lib/relay';
+import { getGatewayNotify } from '../../lib/storage';
+import { Banner, Button, NotifyConnectionSwitch } from '../../components/ui';
+import { SettingsPanel } from './SettingsLayout';
 
 /**
  * Native push ON THIS GATEWAY: whether it can push at all, and whether THIS
@@ -57,21 +57,18 @@ export function NotificationsPanel({
   client: GatewayClient;
   gateway: GatewayConn;
 }) {
-  if (isWebNotificationsPlatform())
-    return <WebNotificationsPanel gateway={gateway} />;
+  if (isWebNotificationsPlatform()) return <WebNotificationsPanel gateway={gateway} />;
   return <NativeNotificationsPanel client={client} gateway={gateway} />;
 }
 
 function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const [perm, setPerm] = useState<PushPermission>(webPushPermission());
-  const [subscription, setSubscription] = useState<PushSubscription | null>(
-    null,
-  );
+  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [notify, setNotify] = useState(false);
   // Nothing may be reported until the browser has answered: "Not connected"
   // rendered before the first read is a verdict about a question not yet asked.
   const [loaded, setLoaded] = useState(false);
-  const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
+  const [busy, setBusy] = useState<'enable' | 'disable' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const supported = isWebPushSupported();
 
@@ -93,16 +90,15 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   }, [gateway.url]);
 
   const enable = useCallback(async () => {
-    setBusy("enable");
+    setBusy('enable');
     setErr(null);
     try {
-      if (!supported)
-        throw new Error("This browser does not support background Web Push.");
+      if (!supported) throw new Error('This browser does not support background Web Push.');
       const permission = await requestWebPushPermission();
       setPerm(permission);
-      if (permission !== "granted")
+      if (permission !== 'granted')
         throw new Error(
-          "Notifications are blocked in this browser. Allow them in browser settings first.",
+          'Notifications are blocked in this browser. Allow them in browser settings first.',
         );
       const target = new GatewayClient(gateway).pushTarget();
       const status = await target.status();
@@ -122,11 +118,10 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   }, [gateway, supported]);
 
   const disable = useCallback(async () => {
-    setBusy("disable");
+    setBusy('disable');
     setErr(null);
     try {
-      const current =
-        subscription ?? (await getExistingWebPushSubscription(gateway.url));
+      const current = subscription ?? (await getExistingWebPushSubscription(gateway.url));
       if (current) await unregisterWebPushForGateway(gateway, current);
       await applyWebGatewayNotify(gateway.url, false);
       setNotify(false);
@@ -137,17 +132,13 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     }
   }, [gateway, subscription]);
 
-  const notifying =
-    supported && notify && perm === "granted" && subscription !== null;
+  const notifying = supported && notify && perm === 'granted' && subscription !== null;
   const machine = gateway.label ?? gatewayHost(gateway.url);
-  const blocked = supported && perm === "denied";
+  const blocked = supported && perm === 'denied';
   // Same rule as the native panel: the verdict this browser settled on last time
   // is the honest first frame, so reopening Settings does not flash `Checking…`.
   const live = loaded ? notifying : null;
-  const remembered = useMemo(
-    () => cachedNotifyVerdict(gateway.url),
-    [gateway.url],
-  );
+  const remembered = useMemo(() => cachedNotifyVerdict(gateway.url), [gateway.url]);
   useEffect(() => {
     if (live !== null) rememberNotifyVerdict(gateway.url, live);
   }, [live, gateway.url]);
@@ -180,15 +171,13 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
           {err && <Banner kind="err">{err}</Banner>}
 
           {!supported && (
-            <Banner kind="warn">
-              This browser does not support background Web Push.
-            </Banner>
+            <Banner kind="warn">This browser does not support background Web Push.</Banner>
           )}
 
           {blocked && (
             <Banner kind="warn">
-              Notifications are blocked in this browser — allow them in browser
-              settings and this device can connect again.
+              Notifications are blocked in this browser — allow them in browser settings and this
+              device can connect again.
             </Banner>
           )}
         </div>
@@ -209,20 +198,16 @@ export function NativeNotificationsPanel({
   // fetch below revalidates it underneath.
   const seed = useMemo(() => client.cachedDevices(), [client]);
   const [push, setPush] = useState<PushStatus | null>(seed?.push ?? null);
-  const [devices, setDevices] = useState<PushDevice[] | null>(
-    seed?.devices ?? null,
-  );
-  const [perm, setPerm] = useState<PushPermission>("unsupported");
+  const [devices, setDevices] = useState<PushDevice[] | null>(seed?.devices ?? null);
+  const [perm, setPerm] = useState<PushPermission>('unsupported');
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
+  const [busy, setBusy] = useState<'enable' | 'disable' | null>(null);
   // An OLDER gateway simply has no /v1/devices route. That is not an error the
   // user can act on — it is a missing capability upstream — so the whole panel
   // (and every button in it) disappears instead of offering calls that 404.
   // The refusal is remembered per machine, because a panel that paints itself
   // and then deletes itself takes everything below it up the screen with it.
-  const [unsupported, setUnsupported] = useState(() =>
-    client.isDevicesUnsupported(),
-  );
+  const [unsupported, setUnsupported] = useState(() => client.isDevicesUnsupported());
   // This device's own answer, remembered per gateway: a machine you disconnected
   // from stays silent across relaunches, and a machine you connected to stays
   // registered even while another gateway is the one you have open.
@@ -252,10 +237,7 @@ export function NativeNotificationsPanel({
         setUnsupported(false);
       } catch (e) {
         if (signal?.aborted) return;
-        if (
-          e instanceof GatewayError &&
-          (e.status === 404 || e.status === 501)
-        ) {
+        if (e instanceof GatewayError && (e.status === 404 || e.status === 501)) {
           setUnsupported(true);
           setDevices([]);
           setErr(null);
@@ -282,7 +264,7 @@ export function NativeNotificationsPanel({
   useEffect(() => {
     let stale = false;
     void (async () => {
-      const ids = await registeredIds(token ?? "");
+      const ids = await registeredIds(token ?? '');
       if (stale) return;
       setMasks(ids.map(maskToken));
       setAreMasksRead(true);
@@ -294,7 +276,7 @@ export function NativeNotificationsPanel({
   const supported = isPushSupported();
 
   const enable = useCallback(async () => {
-    setBusy("enable");
+    setBusy('enable');
     setErr(null);
     try {
       const fresh = await acquirePushToken();
@@ -319,8 +301,8 @@ export function NativeNotificationsPanel({
     // to drop the user's answer on the floor. `unregisterFromPush` names every
     // id the machine could have filed it under, and the answer is stored first
     // so an unreachable machine is still silenced by the next sweep.
-    const current = cachedPushToken() ?? "";
-    setBusy("disable");
+    const current = cachedPushToken() ?? '';
+    setBusy('disable');
     setErr(null);
     try {
       await applyGatewayNotify(gateway.url, false, () =>
@@ -339,7 +321,7 @@ export function NativeNotificationsPanel({
   // Push has two independent halves; this device only cares about its own. An
   // iOS-only gateway can sign for an iPhone and not for a Pixel, so the verdict
   // is per platform, never the summary flag.
-  const provider = pushPlatform() === "android" ? push?.fcm : push?.apns;
+  const provider = pushPlatform() === 'android' ? push?.fcm : push?.apns;
   // A machine holding no signing key is not silent: it reaches this device
   // through a relay, which needs nothing configured on either side — the app
   // was built naming one, and so was the gateway.
@@ -349,12 +331,11 @@ export function NativeNotificationsPanel({
   // address is the only part its operator can fix.
   const refusedRelay = refusedRelayUrl(push ?? undefined, pushPlatform());
   const available =
-    Boolean(relayUrl) ||
-    (provider ? provider.is_available : (push?.is_available ?? false));
+    Boolean(relayUrl) || (provider ? provider.is_available : (push?.is_available ?? false));
 
   // The OS outranks everything else: a machine can hold this device's token and
   // still reach nobody, so a blocked permission is never reported as connected.
-  const blocked = supported && perm === "denied";
+  const blocked = supported && perm === 'denied';
   // THE ROW NEVER FLASHES, AND OPENING IT COSTS NOTHING. Its verdict is
   // assembled from asynchronous answers, so its honest first frame used to be
   // `Checking…` on every open — an amber `Connect` that turned into a quiet
@@ -373,10 +354,7 @@ export function NativeNotificationsPanel({
         isBlocked: blocked,
       })
     : null;
-  const remembered = useMemo(
-    () => cachedNotifyVerdict(gateway.url),
-    [gateway.url],
-  );
+  const remembered = useMemo(() => cachedNotifyVerdict(gateway.url), [gateway.url]);
   useEffect(() => {
     if (live !== null) rememberNotifyVerdict(gateway.url, live);
   }, [live, gateway.url]);
@@ -387,8 +365,7 @@ export function NativeNotificationsPanel({
 
   const machine = gateway.label ?? gatewayHost(gateway.url);
   const checking = shown === null;
-  const hasBanner =
-    Boolean(err) || !supported || blocked || Boolean(push && !available);
+  const hasBanner = Boolean(err) || !supported || blocked || Boolean(push && !available);
 
   // Same band rule as the web panel: no address, one switch.
 
@@ -401,9 +378,7 @@ export function NativeNotificationsPanel({
           isOn={shown ?? false}
           isBusy={busy !== null}
           isChecking={checking}
-          disabled={
-            !supported || !available || blocked || checking || busy !== null
-          }
+          disabled={!supported || !available || blocked || checking || busy !== null}
           // The mark on the control is what the press must do, so a band painted
           // from the remembered verdict acts on THAT, not on a load still in flight.
           onClick={() => void (shown ? disable() : enable())}
@@ -416,32 +391,29 @@ export function NativeNotificationsPanel({
 
           {push && !available && refusedRelay && (
             <Banner kind="warn">
-              This machine relays notifications through {refusedRelay}, which is
-              not https — this device will not hand a push grant to an address
-              on the wire. Unset VIS_PUSH_RELAY_URL there and it goes back to
-              the relay this app was built with; point it at an https address to
-              keep your own.
+              This machine relays notifications through {refusedRelay}, which is not https — this
+              device will not hand a push grant to an address on the wire. Unset VIS_PUSH_RELAY_URL
+              there and it goes back to the relay this app was built with; point it at an https
+              address to keep your own.
             </Banner>
           )}
 
           {push && !available && !refusedRelay && (
             <Banner kind="warn">
-              This machine cannot send notifications — it holds no push
-              credentials and no relay.
+              This machine cannot send notifications — it holds no push credentials and no relay.
             </Banner>
           )}
 
           {!supported && (
             <Banner kind="warn">
-              Native alerts need the iOS or Android app. The web build can stay
-              open instead.
+              Native alerts need the iOS or Android app. The web build can stay open instead.
             </Banner>
           )}
 
           {blocked && (
             <Banner kind="warn">
-              Notifications are turned off for Vis in system Settings — turn
-              them on there and this device can connect again.
+              Notifications are turned off for Vis in system Settings — turn them on there and this
+              device can connect again.
             </Banner>
           )}
         </div>

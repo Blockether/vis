@@ -46,7 +46,16 @@ function group(
   fields: HumanInputField[],
   extra: Partial<HumanInputField> = {},
 ): HumanInputField {
-  return { id, name: id, type: 'group', label: '', is_required: false, direction, fields, ...extra };
+  return {
+    id,
+    name: id,
+    type: 'group',
+    label: '',
+    is_required: false,
+    direction,
+    fields,
+    ...extra,
+  };
 }
 
 /**
@@ -306,9 +315,7 @@ export const HUMAN_INPUT_STATES = Object.keys(HUMAN_INPUT_REQUESTS);
 export function HumanInputSheetVariant({ state }: { state: string }) {
   const request = HUMAN_INPUT_REQUESTS[state];
   const [values, setValues] = useState(() =>
-    request
-      ? { ...initialHumanInputValues(request), ...(HUMAN_INPUT_SEEDS[state] ?? {}) }
-      : {},
+    request ? { ...initialHumanInputValues(request), ...(HUMAN_INPUT_SEEDS[state] ?? {}) } : {},
   );
   if (!request) throw new Error(`no human-input request for state "${state}"`);
   const noop = () => {};

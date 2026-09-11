@@ -1,15 +1,11 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from 'react';
 
-import type { GatewayClient } from "../lib/gateway";
-import {
-  renderPdfPage,
-  stampPdfPage,
-  type RenderedPage,
-} from "../lib/pdf-annotate";
-import { ImageViewer } from "./ImageViewer";
-import type { DocumentChrome } from "./MarkdownArtifact";
-import { ChevronIcon } from "./icons";
-import { BandButton } from "./ui";
+import type { GatewayClient } from '../lib/gateway';
+import { renderPdfPage, stampPdfPage, type RenderedPage } from '../lib/pdf-annotate';
+import { ImageViewer } from './ImageViewer';
+import type { DocumentChrome } from './MarkdownArtifact';
+import { ChevronIcon } from './icons';
+import { BandButton } from './ui';
 
 /**
  * A PDF PAGE FITTED BY THE APP, WITH THE PAGER AND THE PEN IN ITS OWN BAND.
@@ -44,7 +40,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   const [source, setSource] = useState<ArrayBuffer | null>(null);
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [drawn, setDrawn] = useState<string | null>(null);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState('');
   const pageCount = rendered?.pageCount ?? 0;
 
   // THE FILE IS DOWNLOADED ONCE PER URL; A PAGE TURN IS ONLY A RASTER.
@@ -58,7 +54,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         const bytes = await (await fetch(url)).arrayBuffer();
         if (live) setSource(bytes);
       } catch {
-        if (live) setStatus("This PDF could not be opened.");
+        if (live) setStatus('This PDF could not be opened.');
       }
     })();
     return () => {
@@ -83,7 +79,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         }
         if (live) setRendered(next);
       } catch {
-        if (live) setStatus("This page could not be rendered.");
+        if (live) setStatus('This page could not be rendered.');
       }
     })();
     return () => {
@@ -95,12 +91,9 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   // v4` belongs to the page it was stamped on.
   const turn = useCallback(
     (by: number) => {
-      setStatus("");
+      setStatus('');
       setPage((current) =>
-        Math.max(
-          1,
-          pageCount ? Math.min(current + by, pageCount) : current + by,
-        ),
+        Math.max(1, pageCount ? Math.min(current + by, pageCount) : current + by),
       );
     },
     [pageCount],
@@ -109,27 +102,23 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   const apply = useCallback(
     async (edited: Blob) => {
       if (!source) return;
-      setStatus("");
+      setStatus('');
       try {
-        const stamped = await stampPdfPage(
-          source,
-          page,
-          await edited.arrayBuffer(),
-        );
+        const stamped = await stampPdfPage(source, page, await edited.arrayBuffer());
         const saved = await client.saveArtifactBytes(
           sid,
           iterationId,
           name,
-          mediaType || "application/pdf",
+          mediaType || 'application/pdf',
           stamped,
         );
         // The stamped bytes ARE the document now; re-rastering them is the render
         // effect's job, so the ink appears on the page it was left on.
         setSource(stamped.slice().buffer as ArrayBuffer);
         setDrawn(null);
-        setStatus(saved.version ? `Saved as v${saved.version}` : "Saved");
+        setStatus(saved.version ? `Saved as v${saved.version}` : 'Saved');
       } catch {
-        setStatus("Could not save this revision.");
+        setStatus('Could not save this revision.');
       }
     },
     [client, sid, iterationId, name, mediaType, source, page],
@@ -191,9 +180,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
               className="block max-h-full max-w-full object-contain shadow-lg"
             />
           ) : (
-            <p className="text-meta text-footer-muted">
-              {status || "Rendering PDF…"}
-            </p>
+            <p className="text-meta text-footer-muted">{status || 'Rendering PDF…'}</p>
           )}
         </div>
         {/* The band's report is silent to a screen reader, so the outcome has a

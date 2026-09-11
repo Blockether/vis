@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { useRef } from "react";
-import { render } from "@testing-library/react";
-import { fireEvent } from "@testing-library/dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useRef } from 'react';
+import { render } from '@testing-library/react';
+import { fireEvent } from '@testing-library/dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useListScrollPark } from "./list-scroll";
+import { useListScrollPark } from './list-scroll';
 
 // Regression, user report ("I'm at the bottom, I reload, and I'm not at the
 // bottom"): the sessions list parked its place ONLY in a module variable, and
@@ -18,7 +18,7 @@ function List({ onReaderScrolled = () => {} }: { onReaderScrolled?: () => void }
   useListScrollPark(ref, onReaderScrolled);
   return (
     <div ref={ref} data-testid="list">
-      {["s1", "s2", "s3"].map((id) => (
+      {['s1', 's2', 's3'].map((id) => (
         <article key={id} data-session-id={id}>
           {id}
         </article>
@@ -33,10 +33,10 @@ function List({ onReaderScrolled = () => {} }: { onReaderScrolled?: () => void }
  */
 function scrolledToRow(element: HTMLElement, top: number): void {
   element.scrollTop = top;
-  Object.defineProperty(element, "scrollHeight", { value: 5000, configurable: true });
-  Object.defineProperty(element, "clientHeight", { value: 800, configurable: true });
+  Object.defineProperty(element, 'scrollHeight', { value: 5000, configurable: true });
+  Object.defineProperty(element, 'clientHeight', { value: 800, configurable: true });
   element.getBoundingClientRect = () => new DOMRect(0, 0, 390, 800);
-  for (const row of Array.from(element.querySelectorAll<HTMLElement>("[data-session-id]"))) {
+  for (const row of Array.from(element.querySelectorAll<HTMLElement>('[data-session-id]'))) {
     row.getBoundingClientRect = () => new DOMRect(0, -20, 390, 64);
   }
 }
@@ -44,10 +44,10 @@ function scrolledToRow(element: HTMLElement, top: number): void {
 /** A fresh JavaScript context on the same tab: exactly what reload leaves behind. */
 async function afterReload() {
   vi.resetModules();
-  return import("./list-scroll");
+  return import('./list-scroll');
 }
 
-describe("the sessions list across a reload", () => {
+describe('the sessions list across a reload', () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.resetModules();
@@ -55,41 +55,41 @@ describe("the sessions list across a reload", () => {
 
   it("parks the reader's place when the page goes away without unmounting", async () => {
     const { getByTestId } = render(<List />);
-    scrolledToRow(getByTestId("list"), 1200);
+    scrolledToRow(getByTestId('list'), 1200);
 
-    fireEvent(window, new Event("pagehide"));
+    fireEvent(window, new Event('pagehide'));
 
     expect((await afterReload()).parkedListScroll()).toEqual({
       top: 1200,
-      anchor: { id: "s1", offset: -20 },
+      anchor: { id: 's1', offset: -20 },
     });
   });
 
-  it("parks it when the app is backgrounded and may never come back", async () => {
+  it('parks it when the app is backgrounded and may never come back', async () => {
     const { getByTestId } = render(<List />);
-    scrolledToRow(getByTestId("list"), 900);
+    scrolledToRow(getByTestId('list'), 900);
 
-    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-    fireEvent(document, new Event("visibilitychange"));
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    fireEvent(document, new Event('visibilitychange'));
 
     expect((await afterReload()).parkedListScroll()?.top).toBe(900);
   });
 
-  it("still parks it on the unmount that opening a session performs", async () => {
+  it('still parks it on the unmount that opening a session performs', async () => {
     const { getByTestId, unmount } = render(<List />);
-    scrolledToRow(getByTestId("list"), 640);
+    scrolledToRow(getByTestId('list'), 640);
 
     unmount();
 
     expect((await afterReload()).parkedListScroll()?.top).toBe(640);
   });
 
-  it("drops the mark the moment the reader takes over with a finger", async () => {
+  it('drops the mark the moment the reader takes over with a finger', async () => {
     const onReaderScrolled = vi.fn();
     const { getByTestId } = render(<List onReaderScrolled={onReaderScrolled} />);
-    const list = getByTestId("list");
+    const list = getByTestId('list');
     scrolledToRow(list, 1200);
-    fireEvent(window, new Event("pagehide"));
+    fireEvent(window, new Event('pagehide'));
 
     fireEvent.touchStart(list);
 
@@ -97,11 +97,11 @@ describe("the sessions list across a reload", () => {
     expect((await afterReload()).parkedListScroll()).toBeNull();
   });
 
-  it("keeps nothing for a list that was already at the top", async () => {
+  it('keeps nothing for a list that was already at the top', async () => {
     const { getByTestId } = render(<List />);
-    scrolledToRow(getByTestId("list"), 0);
+    scrolledToRow(getByTestId('list'), 0);
 
-    fireEvent(window, new Event("pagehide"));
+    fireEvent(window, new Event('pagehide'));
 
     expect((await afterReload()).parkedListScroll()).toBeNull();
   });

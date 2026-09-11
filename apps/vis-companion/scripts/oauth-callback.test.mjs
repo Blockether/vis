@@ -2,11 +2,14 @@
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { expect, it } from 'vitest';
-const source = name => readFileSync(new URL(name, import.meta.url), 'utf8');
+const source = (name) => readFileSync(new URL(name, import.meta.url), 'utf8');
 it('registers the same private-use OAuth scheme on both mobile hosts, with no HTTPS callback', () => {
-  const ios = source('./ios-prepare.mjs'); const android = source('./android-prepare.mjs');
+  const ios = source('./ios-prepare.mjs');
+  const android = source('./android-prepare.mjs');
   expect(ios).toContain('<string>com.blockether.viscompanion</string>');
-  expect(android).toContain('android:scheme="com.blockether.viscompanion" android:host="oauth" android:path="/callback"');
+  expect(android).toContain(
+    'android:scheme="com.blockether.viscompanion" android:host="oauth" android:path="/callback"',
+  );
 });
 it('does not log native bridge payloads containing authorization callbacks', () => {
   expect(source('../capacitor.config.mts')).toContain("loggingBehavior: 'none'");
@@ -21,9 +24,12 @@ function preparePlist(input) {
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return runInNewContext(`${script.slice(start, end)}\n({ preparedPlist, plistOk })`, {
-    bundleId: 'com.blockether.viscompanion', infoPlist: 'Info.plist',
+    bundleId: 'com.blockether.viscompanion',
+    infoPlist: 'Info.plist',
     readFileSync: () => input,
-    die: message => { throw new Error(message); },
+    die: (message) => {
+      throw new Error(message);
+    },
   });
 }
 function parsePlist(xml) {
@@ -33,13 +39,16 @@ function parsePlist(xml) {
 }
 function schemeArrays(document) {
   return [...document.querySelectorAll('key')]
-    .filter(key => key.textContent === 'CFBundleURLSchemes')
-    .map(key => key.nextElementSibling);
+    .filter((key) => key.textContent === 'CFBundleURLSchemes')
+    .map((key) => key.nextElementSibling);
 }
 function registeredSchemes(xml) {
-  return schemeArrays(parsePlist(xml)).flatMap(array => [...array.children].map(item => item.textContent));
+  return schemeArrays(parsePlist(xml)).flatMap((array) =>
+    [...array.children].map((item) => item.textContent),
+  );
 }
-const emptyPlist = '<plist version="1.0"><dict><key>Unrelated</key><string>keep</string></dict></plist>';
+const emptyPlist =
+  '<plist version="1.0"><dict><key>Unrelated</key><string>keep</string></dict></plist>';
 it('registers pairing and OAuth callbacks in the generated iOS plist, idempotently', () => {
   const result = preparePlist(emptyPlist);
   expect(result.plistOk).toBe(false);
@@ -76,7 +85,10 @@ it('preserves other schemes and URL types when adding the OAuth callback', () =>
   array.parentElement.parentElement.prepend(other);
   const result = preparePlist(new XMLSerializer().serializeToString(document));
   expect(registeredSchemes(result.preparedPlist)).toEqual([
-    'unrelated-test-scheme', 'vis', 'another-test-scheme', 'com.blockether.viscompanion',
+    'unrelated-test-scheme',
+    'vis',
+    'another-test-scheme',
+    'com.blockether.viscompanion',
   ]);
   expect(preparePlist(result.preparedPlist)).toEqual({ ...result, plistOk: true });
 });

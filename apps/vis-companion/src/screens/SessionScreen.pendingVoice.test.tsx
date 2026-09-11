@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { waitFor } from '@testing-library/react';
 
 const pendingVoice = vi.hoisted(() => ({
   clear: vi.fn<() => Promise<void>>(),
@@ -8,15 +8,15 @@ const pendingVoice = vi.hoisted(() => ({
   save: vi.fn<() => Promise<void>>(),
 }));
 
-vi.mock("../lib/pending-voice", () => ({
+vi.mock('../lib/pending-voice', () => ({
   clearPendingVoice: pendingVoice.clear,
   readPendingVoice: pendingVoice.read,
   savePendingVoice: pendingVoice.save,
 }));
 
-import { renderSessionScreen } from "./session-screen-harness";
+import { renderSessionScreen } from './session-screen-harness';
 
-describe("pending voice", () => {
+describe('pending voice', () => {
   beforeEach(() => {
     pendingVoice.clear.mockReset().mockResolvedValue(undefined);
     pendingVoice.read.mockReset();
@@ -25,12 +25,12 @@ describe("pending voice", () => {
 
   // Regression, user report: a terminal “recording too short” failure stayed in
   // the durable outbox, so opening or waking this one session retried it forever.
-  it("discards audio after the transcription engine rejects it", async () => {
-    const wav = new Blob([new Uint8Array(44)], { type: "audio/wav" });
+  it('discards audio after the transcription engine rejects it', async () => {
+    const wav = new Blob([new Uint8Array(44)], { type: 'audio/wav' });
     pendingVoice.read.mockResolvedValue(wav);
     const transcribeVoice = vi
       .fn()
-      .mockRejectedValue(new Error("Voice recording too short - try again"));
+      .mockRejectedValue(new Error('Voice recording too short - try again'));
 
     renderSessionScreen({ client: { transcribeVoice } });
 

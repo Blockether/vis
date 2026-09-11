@@ -10,69 +10,49 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
-} from "react";
-import {
-  AssistantMessage,
-  transcriptEnterClass,
-  UserMessage,
-} from "../components/ChatContent";
-import { ArtifactsSheet } from "../components/ArtifactsSheet";
+} from 'react';
+import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
+import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import {
   ComposerAttachmentPicker,
   type ComposerAttachmentCommands,
   type ComposerAttachmentSource,
-} from "../components/ComposerAttachmentPicker";
+} from '../components/ComposerAttachmentPicker';
 import {
   ComposerPayloadShelf,
   type ComposerPayloadCommands,
-} from "../components/ComposerPayloadShelf";
+} from '../components/ComposerPayloadShelf';
 import {
   ComposerResponseControls,
   type ComposerResponseControlsModel,
-} from "../components/ComposerResponseControls";
-import {
-  ComposerSuggestions,
-  composerSuggestionListId,
-} from "../components/ComposerSuggestions";
+} from '../components/ComposerResponseControls';
+import { ComposerSuggestions, composerSuggestionListId } from '../components/ComposerSuggestions';
 import {
   SessionHeader,
   type SessionHeaderCommands,
   type SessionHeaderModel,
-} from "../components/SessionHeader";
+} from '../components/SessionHeader';
 import {
   artifactsFromIndex,
   collapseArtifactVersions,
   collectArtifacts,
   findArtifactByAttachmentId,
   mergeArtifacts,
-} from "../lib/artifacts";
-import type { SessionArtifact } from "../lib/artifacts";
-import { dropOverlayHandovers } from "../lib/sticky-overlay";
-import {
-  Banner,
-  ComposerButton,
-  LoadMore,
-  Spinner,
-} from '../components/ui';
-import {
-  MicIcon,
-  SendIcon,
-  StopIcon,
-  VoiceLoopIcon,
-} from "../components/icons";
-import { HumanInputPrompt } from "../components/HumanInputPrompt";
-import { JumpToLatestButton } from "../components/JumpToLatestButton";
-import { PasteEditor } from "../components/PasteEditor";
-import { QueuedTurnsTray } from "../components/QueuedTurnsTray";
-import { LiveView, useLiveViews } from "../components/LiveView";
-import { reduceRunningTurnEvent, type RunningTurn } from "../lib/running-turn";
-import { eventString, sessionEventBatch } from "../lib/session-stream";
-import { speechOutput } from "../lib/speech";
-import {
-  VoiceTurnOwnership,
-  type VoiceModeLease,
-} from "../lib/voice-conversation";
-import { ProviderRouterDialog } from "./RouterScreen";
+} from '../lib/artifacts';
+import type { SessionArtifact } from '../lib/artifacts';
+import { dropOverlayHandovers } from '../lib/sticky-overlay';
+import { Banner, ComposerButton, LoadMore, Spinner } from '../components/ui';
+import { MicIcon, SendIcon, StopIcon, VoiceLoopIcon } from '../components/icons';
+import { HumanInputPrompt } from '../components/HumanInputPrompt';
+import { JumpToLatestButton } from '../components/JumpToLatestButton';
+import { PasteEditor } from '../components/PasteEditor';
+import { QueuedTurnsTray } from '../components/QueuedTurnsTray';
+import { LiveView, useLiveViews } from '../components/LiveView';
+import { reduceRunningTurnEvent, type RunningTurn } from '../lib/running-turn';
+import { eventString, sessionEventBatch } from '../lib/session-stream';
+import { speechOutput } from '../lib/speech';
+import { VoiceTurnOwnership, type VoiceModeLease } from '../lib/voice-conversation';
+import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
   capturePhotoAttachment,
@@ -83,25 +63,25 @@ import {
   type AttachmentLimits,
   type PendingAttachment,
   type PickAttachmentResult,
-} from "../lib/attachments";
-import { sheetDismissed } from "../lib/image-file";
-import { AttachImageContext } from "../lib/attach-image";
-import type { GatewayClient } from "../lib/gateway";
-import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from "../lib/keyboard";
+} from '../lib/attachments';
+import { sheetDismissed } from '../lib/image-file';
+import { AttachImageContext } from '../lib/attach-image';
+import type { GatewayClient } from '../lib/gateway';
+import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from '../lib/keyboard';
 import {
   GatewayError,
   mergeQueueBacklog,
   queuedTurnFromWire,
   type QueueDelta,
-} from "../lib/gateway";
-import type { SessionSubscriptionHub } from "../lib/subscriptions";
+} from '../lib/gateway';
+import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
   createComposerPaste,
   expandPastePlaceholders,
   shouldCollapsePaste,
   type ComposerPaste,
-} from "../lib/paste";
+} from '../lib/paste';
 import {
   draftMessageKey,
   flushDraftMessages,
@@ -109,24 +89,17 @@ import {
   readDraftMessage,
   watchDraftMessageExits,
   writeDraftMessage,
-} from "../lib/draft-messages";
-import { watchComposerInputDiagnostics } from "../lib/diagnostics";
+} from '../lib/draft-messages';
+import { watchComposerInputDiagnostics } from '../lib/diagnostics';
 import {
   appendSharedText,
   hydratePendingShare,
   onSharedText,
   takePendingShare,
-} from "../lib/share-intake";
-import { attachmentsFromSharedFiles } from "../lib/share-files";
-import {
-  clearPendingVoice,
-  readPendingVoice,
-  savePendingVoice,
-} from "../lib/pending-voice";
-import {
-  readerOwnsScroll,
-  releaseReaderScroll,
-} from "../lib/reader-gesture";
+} from '../lib/share-intake';
+import { attachmentsFromSharedFiles } from '../lib/share-files';
+import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
+import { readerOwnsScroll, releaseReaderScroll } from '../lib/reader-gesture';
 import {
   arrivedAtEnd,
   bottomOf,
@@ -136,7 +109,7 @@ import {
   isCorrectionEcho,
   readerRetreatedFrom,
   shouldOfferLatest,
-} from "../lib/reading-position";
+} from '../lib/reading-position';
 import type {
   ContentBlock,
   GatewayCapabilities,
@@ -155,15 +128,15 @@ import type {
   RouterProvider,
   Toggle,
   GatewayAttachment,
-} from "../lib/types";
+} from '../lib/types';
 import {
   beginVoiceAudioSession,
   endVoiceAudioSession,
   startWavRecording,
   voiceProgressLabel,
   type WavRecording,
-} from "../lib/voice";
-import { onWake } from "../lib/wake";
+} from '../lib/voice';
+import { onWake } from '../lib/wake';
 import {
   applyScrollAnchor,
   isViewportRotating,
@@ -172,29 +145,21 @@ import {
   type ScrollAnchor,
   shellViewportHeight,
   useSafeBottomStyle,
-} from "../lib/viewport";
-import {
-  markSessionRead,
-  visibleAnsweredTurnCount,
-} from "../lib/unread";
-import { App } from "@capacitor/app";
+} from '../lib/viewport';
+import { markSessionRead, visibleAnsweredTurnCount } from '../lib/unread';
+import { App } from '@capacitor/app';
 
-import { workspaceRelativePath } from "../lib/path";
-import { WorkspaceRootsContext } from "../lib/workspace-roots";
+import { workspaceRelativePath } from '../lib/path';
+import { WorkspaceRootsContext } from '../lib/workspace-roots';
 
-
-const TERMINAL_EVENTS = new Set([
-  "turn.completed",
-  "turn.failed",
-  "turn.cancelled",
-]);
+const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const RUNNING_TURN_BODY_THROTTLE_MS = 150;
 
 // A body frame may wait for stable rotation geometry, but lifecycle truth may
 // not: a terminal must stop the spinner/settle immediately and a new start must
 // replace any cached bubble without being painted as the previous turn.
 function forcesRunningTurnFlushDuringRotation(event: SseEvent): boolean {
-  return TERMINAL_EVENTS.has(event.type) || event.type === "turn.started";
+  return TERMINAL_EVENTS.has(event.type) || event.type === 'turn.started';
 }
 
 // A settle's transcript refetch only has to pick up the ONE row the finished
@@ -228,7 +193,7 @@ const TURN_STREAM_STALL_MS = 30_000;
 // itself before anything is torn down. Two agreeing probes 5s apart cost one
 // extra tick of latency and remove every single-sample false positive.
 const TURN_STALL_CONFIRMATIONS = 2;
-const TURN_TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TURN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const INITIAL_VISIBLE_TURNS = 8;
 // Assistant turns can contain thousands of syntax-highlighted nodes. Twenty-four
 // such turns is still enough DOM to make keyboard resize and momentum scrolling
@@ -264,33 +229,27 @@ const LOADING_VEIL_MAX_MS = 12_000;
 // gateway overlay calls the same state `streaming` (`persisted-status->wire` in
 // gateway/state.clj). Neither carries the answer, so neither may ever stand in
 // for the running-turn bubble the user is watching.
-const IN_FLIGHT_ROW_STATUSES = new Set([
-  "running",
-  "streaming",
-  "queued",
-  "pending",
-]);
+const IN_FLIGHT_ROW_STATUSES = new Set(['running', 'streaming', 'queued', 'pending']);
 
 /** Decide queue ownership from the returned turn status, never lagging local state. */
 function isQueuedSubmission(turn: SubmittedTurn): boolean {
-  const status = String(turn.status ?? "");
-  if (status) return status === "queued";
+  const status = String(turn.status ?? '');
+  if (status) return status === 'queued';
   return turn.queued_at != null && turn.started_at == null;
 }
 
 function isRunningRow(turn: TranscriptTurn): boolean {
-  const status = String(turn.status ?? "");
-  return status === "running" || status === "streaming";
+  const status = String(turn.status ?? '');
+  return status === 'running' || status === 'streaming';
 }
 
 function isSettledRow(turn: TranscriptTurn): boolean {
-  return !IN_FLIGHT_ROW_STATUSES.has(String(turn.status ?? ""));
+  return !IN_FLIGHT_ROW_STATUSES.has(String(turn.status ?? ''));
 }
 
 function rowId(turn: TranscriptTurn): string {
   return turn.turn_id;
 }
-
 
 /** The settled durable row for this exact canonical turn id. */
 function settledTurnRow(
@@ -302,23 +261,22 @@ function settledTurnRow(
   return row && isSettledRow(row) ? row : null;
 }
 
-
 function compactLabel(value: string, fallback: string): string {
-  const label = value.split("\n", 1)[0].trim();
+  const label = value.split('\n', 1)[0].trim();
   if (!label) return fallback;
   return label.length > 64 ? `${label.slice(0, 61)}…` : label;
 }
 
 function commandPhase(request: string, agentName: string): string | null {
   const text = request.trim();
-  if (text.startsWith("!&")) {
-    return `${agentName} is starting: ${compactLabel(text.slice(2), "…")}`;
+  if (text.startsWith('!&')) {
+    return `${agentName} is starting: ${compactLabel(text.slice(2), '…')}`;
   }
-  if (text.startsWith("!")) {
-    return `${agentName} is running: ${compactLabel(text.slice(1), "…")}`;
+  if (text.startsWith('!')) {
+    return `${agentName} is running: ${compactLabel(text.slice(1), '…')}`;
   }
-  if (text.startsWith("/")) {
-    return `${agentName} is running: ${compactLabel(text.split(/\s+/, 1)[0], "command")}`;
+  if (text.startsWith('/')) {
+    return `${agentName} is running: ${compactLabel(text.split(/\s+/, 1)[0], 'command')}`;
   }
   return null;
 }
@@ -335,7 +293,7 @@ function withRunningReplayHead(
 ): RunningTurn | null {
   if (
     !turn ||
-    turn.status !== "running" ||
+    turn.status !== 'running' ||
     !head ||
     turn.id !== head.turnId ||
     (turn.latestIteration ?? 0) >= head.iteration
@@ -351,7 +309,7 @@ function runningTurnPhase(
   watching: string | null,
   agentName: string,
 ): string {
-  if (!connected) return "Reconnecting — checking turn status";
+  if (!connected) return 'Reconnecting — checking turn status';
   if (turn.cancelling) return `${agentName} is cancelling`;
 
   const last = turn.iterations.at(-1);
@@ -377,25 +335,26 @@ function runningTurnPhase(
   // A run SHOWING its work is not thinking: the panel under this row is live and
   // yours to stop. `${agentName} is thinking (iter 30)... 10m 1s` over an open CI run read
   // as a hang for as long as the run took, with the answer already on screen.
-  if (watching) return `${agentName} is showing ${compactLabel(watching, "a live view")} — live ${suffix}`;
+  if (watching)
+    return `${agentName} is showing ${compactLabel(watching, 'a live view')} — live ${suffix}`;
   switch (progress?.kind) {
-    case "shell-run":
-      return `${agentName} is running: ${compactLabel(progress.command ?? "", "…")}`;
-    case "shell-bg":
-      return `${agentName} is starting: ${compactLabel(progress.command ?? "", "…")}`;
-    case "slash":
-      return `${agentName} is running: ${compactLabel(progress.command ?? "", "command")}`;
-    case "provider-call":
+    case 'shell-run':
+      return `${agentName} is running: ${compactLabel(progress.command ?? '', '…')}`;
+    case 'shell-bg':
+      return `${agentName} is starting: ${compactLabel(progress.command ?? '', '…')}`;
+    case 'slash':
+      return `${agentName} is running: ${compactLabel(progress.command ?? '', 'command')}`;
+    case 'provider-call':
       // Naming the model is what makes this line change during the longest
       // silence of the turn: "sent" -> "calling claude-opus-5" -> "thinking".
-      return `${agentName} is calling ${progress.model ?? "the provider"} ${suffix}`;
-    case "response-parse":
+      return `${agentName} is calling ${progress.model ?? 'the provider'} ${suffix}`;
+    case 'response-parse':
       return `${agentName} is parsing model response ${suffix}`;
-    case "tool":
-    case "tool-call": {
+    case 'tool':
+    case 'tool-call': {
       if (progress.phrase) return `${agentName} is ${progress.phrase} ${suffix}`;
       const label = workspaceRelativePath(progress.label, workspaceRoots);
-      return `${agentName} is running: ${progress.operation || "tool"}${label ? ` ${compactLabel(label, "")}` : ""} ${suffix}`;
+      return `${agentName} is running: ${progress.operation || 'tool'}${label ? ` ${compactLabel(label, '')}` : ''} ${suffix}`;
     }
     default:
       break;
@@ -406,41 +365,39 @@ function runningTurnPhase(
   return `${agentName} is working ${suffix}`;
 }
 
-
 const FALLBACK_SLASHES: SlashCommand[] = [
-  { name: "/help", doc: "Show the available slash commands." },
+  { name: '/help', doc: 'Show the available slash commands.' },
   {
-    name: "/new-session",
-    doc: "Create a new session. Optional text starts its first turn.",
+    name: '/new-session',
+    doc: 'Create a new session. Optional text starts its first turn.',
   },
-  { name: "/sessions", doc: "Return to the session list." },
-  { name: "/rename", doc: "Rename this session's title." },
+  { name: '/sessions', doc: 'Return to the session list.' },
+  { name: '/rename', doc: "Rename this session's title." },
   {
-    name: "/export",
-    doc: "Export this session transcript to Markdown or HTML.",
+    name: '/export',
+    doc: 'Export this session transcript to Markdown or HTML.',
   },
   {
-    name: "/cd",
+    name: '/cd',
     doc: "Show or change the session's filesystem root (the directory Vis works in).",
   },
   {
-    name: "/reload",
-    doc: "Reload extensions, skills, prompts, and context files.",
+    name: '/reload',
+    doc: 'Reload extensions, skills, prompts, and context files.',
   },
 ];
 
 function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
   const byName = new Map<string, SlashCommand>();
-  for (const command of [...FALLBACK_SLASHES, ...remote])
-    byName.set(command.name, command);
+  for (const command of [...FALLBACK_SLASHES, ...remote]) byName.set(command.name, command);
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function slashCommandMatches(command: SlashCommand, query: string): boolean {
   const name = command.name.toLowerCase();
   if (name.startsWith(query)) return true;
-  if (!name.startsWith("/skill:") || !query.startsWith("/")) return false;
-  return name.slice("/skill:".length).startsWith(query.slice(1));
+  if (!name.startsWith('/skill:') || !query.startsWith('/')) return false;
+  return name.slice('/skill:'.length).startsWith(query.slice(1));
 }
 
 // `@` file-mention trigger, mirroring the TUI (`file_suggest.clj` trigger-regex)
@@ -451,7 +408,7 @@ const FILE_MENTION_REGEX = /(?:^|\s)@(?!@)(\S*)$/;
 function fileMentionAt(head: string): { query: string; at: number } | null {
   const match = FILE_MENTION_REGEX.exec(head);
   if (!match) return null;
-  const query = match[1] ?? "";
+  const query = match[1] ?? '';
   return { query, at: head.length - query.length - 1 };
 }
 
@@ -479,7 +436,7 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
   const preparing = total > 0;
   const label = preparing
     ? `Preparing ${Math.min(ready, total)} of ${total} recent turns…`
-    : "Loading recent turns…";
+    : 'Loading recent turns…';
   return (
     <div
       className="flex min-h-[55vh] items-center justify-center font-mono text-body text-white"
@@ -491,7 +448,6 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
     </div>
   );
 }
-
 
 /**
  * Restore the cached running bubble on first paint and retain it until the matching
@@ -510,7 +466,7 @@ function runningTurnCarriesOutput(turn: RunningTurn | null): boolean {
               iteration.forms?.length ||
               iteration.error,
           ),
-        ))
+        )),
   );
 }
 
@@ -519,9 +475,7 @@ function cancelledTurnWithStreamedOutput(
   row: TranscriptTurn,
   streamed: RunningTurn,
 ): TranscriptTurn {
-  const durablePositions = new Set(
-    (row.iterations ?? []).map((iteration) => iteration.position),
-  );
+  const durablePositions = new Set((row.iterations ?? []).map((iteration) => iteration.position));
   const streamedTail = streamed.iterations.filter(
     (iteration) => !durablePositions.has(iteration.position),
   );
@@ -531,7 +485,7 @@ function cancelledTurnWithStreamedOutput(
       ? [
           {
             id: `cancelled-answer-${row.turn_id}`,
-            type: "prose" as const,
+            type: 'prose' as const,
             markdown: streamed.answer,
           },
         ]
@@ -544,14 +498,9 @@ function cancelledTurnWithStreamedOutput(
   };
 }
 
-function cancelledTurnSeed(
-  client: GatewayClient,
-  sid: string,
-): ReadonlyMap<string, RunningTurn> {
+function cancelledTurnSeed(client: GatewayClient, sid: string): ReadonlyMap<string, RunningTurn> {
   const cached = client.cachedRunningTurn<RunningTurn>(sid)?.turn;
-  return cached?.id &&
-    cached.status === "cancelled" &&
-    runningTurnCarriesOutput(cached)
+  return cached?.id && cached.status === 'cancelled' && runningTurnCarriesOutput(cached)
     ? new Map([[cached.id, cached]])
     : new Map();
 }
@@ -566,7 +515,7 @@ function seedRunningTurn(
   // A settled row with this exact id is the canonical replacement for cached pixels.
   if (cached.turn.id && settledTurnRow(client.cachedTranscript(sid), cached.turn.id)) return null;
 
-  if (cached.turn.status === "running") {
+  if (cached.turn.status === 'running') {
     if (!subscriptions.hasEndedTurn(sid)) return cached;
     // If a terminal frame arrived off-screen, retain and settle painted content until
     // persistence catches up; discard an optimistic bubble that never painted anything.
@@ -575,7 +524,7 @@ function seedRunningTurn(
       seq: cached.seq,
       turn: {
         ...cached.turn,
-        status: "completed",
+        status: 'completed',
         progress: undefined,
         cancelling: false,
       },
@@ -587,7 +536,6 @@ function seedRunningTurn(
   // — for as long as it still carries the pixels that made it worth retaining.
   return runningTurnCarriesOutput(cached.turn) ? cached : null;
 }
-
 
 export function SessionScreen({
   client,
@@ -618,16 +566,9 @@ export function SessionScreen({
   // Every screen-level snapshot is seeded from the client's cache: reopening a
   // session paints its last known transcript on the FIRST frame and revalidates
   // underneath, instead of holding the loading sheet over ready-to-paint rows.
-  const openingTranscript = useMemo(
-    () => client.cachedTranscript(sid),
-    [client, sid],
-  );
-  const [session, setSession] = useState<Session | null>(() =>
-    client.cachedSession(sid),
-  );
-  const [turns, setTurns] = useState<TranscriptTurn[]>(
-    () => openingTranscript ?? [],
-  );
+  const openingTranscript = useMemo(() => client.cachedTranscript(sid), [client, sid]);
+  const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
+  const [turns, setTurns] = useState<TranscriptTurn[]>(() => openingTranscript ?? []);
   // Whether the turns on screen were confirmed against the gateway during THIS
   // visit. Cached rows paint the first frame, but a cached 'running' row is a
   // placeholder with no outcome: rendered before confirmation it spins and
@@ -649,14 +590,12 @@ export function SessionScreen({
   const composerRef = useRef<HTMLTextAreaElement>(null);
   // This snapshot drives suggestions, not the native editor. Typing updates it
   // at transition priority so the screen cannot block the next keyboard event.
-  const [prompt, setPromptSnapshot] = useState(
-    () => peekDraftMessage(draftMessageId).text,
-  );
+  const [prompt, setPromptSnapshot] = useState(() => peekDraftMessage(draftMessageId).text);
   const setPrompt = useCallback(
     (change: SetStateAction<string>) => {
       const textarea = composerRef.current;
       const current = textarea?.value ?? peekDraftMessage(draftMessageId).text;
-      const next = typeof change === "function" ? change(current) : change;
+      const next = typeof change === 'function' ? change(current) : change;
       // Application edits are immediate, even if the rendering snapshot is behind
       // (including an empty snapshot while sending a newly typed message).
       if (textarea && textarea.value !== next) textarea.value = next;
@@ -696,24 +635,16 @@ export function SessionScreen({
   const [routerOpen, setRouterOpen] = useState(false);
   // A cached transcript is already the honest first frame. Reserve the veil for
   // a genuinely cold open while its first transcript page crosses the network.
-  const [loading, setLoading] = useState(
-    () => !fresh && openingTranscript === null,
-  );
+  const [loading, setLoading] = useState(() => !fresh && openingTranscript === null);
   const [connected, setConnected] = useState(false);
   // The bubble this screen re-enters with, resolved ONCE at mount.
   const [runningTurnSeed] = useState(() => seedRunningTurn(client, subscriptions, sid));
-  const [running, setRunning] = useState(
-    runningTurnSeed?.turn.status === "running",
-  );
-  const [runningTurn, setRunningTurn] = useState<RunningTurn | null>(
-    runningTurnSeed?.turn ?? null,
-  );
+  const [running, setRunning] = useState(runningTurnSeed?.turn.status === 'running');
+  const [runningTurn, setRunningTurn] = useState<RunningTurn | null>(runningTurnSeed?.turn ?? null);
   const [cancelledTurnSnapshots, setCancelledTurnSnapshots] = useState<
     ReadonlyMap<string, RunningTurn>
   >(() => cancelledTurnSeed(client, sid));
-  const [queued, setQueued] = useState<QueuedTurn[]>(
-    () => client.cachedQueuedTurns(sid) ?? [],
-  );
+  const [queued, setQueued] = useState<QueuedTurn[]>(() => client.cachedQueuedTurns(sid) ?? []);
   // Queue reads can race newer live removals. Accept a row only when its last live
   // delta predates the read that returned it.
   const queueDeltasRef = useRef(new Map<string, QueueDelta>());
@@ -727,11 +658,7 @@ export function SessionScreen({
   );
   const acceptQueueBacklog = useCallback(
     (rows: QueuedTurn[], readStartedAt: number) => {
-      const merged = mergeQueueBacklog(
-        rows,
-        queueDeltasRef.current,
-        readStartedAt,
-      );
+      const merged = mergeQueueBacklog(rows, queueDeltasRef.current, readStartedAt);
       // The read has just rewritten the snapshot with the stale rows in it.
       for (const tid of merged.forget) client.forgetQueuedTurn(sid, tid);
       setQueued(merged.rows);
@@ -745,10 +672,8 @@ export function SessionScreen({
   // The transcript row that TOOK OVER from the running-turn bubble this visit. It mounts
   // holding pixels the reader is already looking at, so it mounts WHOLE — see
   // `IterationTrace`'s `whole` in `ChatContent`.
-  const [handedOverRowId, setHandedOverRowId] = useState("");
-  const [visibleTurnCount, setVisibleTurnCount] = useState(
-    INITIAL_VISIBLE_TURNS,
-  );
+  const [handedOverRowId, setHandedOverRowId] = useState('');
+  const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
   // How much of that window is actually mounted right now. Ramps to
   // `visibleTurnCount` off the critical path; never shrinks the window itself,
   // so the "load earlier" affordance and its counts stay stable while it fills.
@@ -760,7 +685,7 @@ export function SessionScreen({
     [session, turns, runningTurn],
   );
   useEffect(() => {
-    if (document.visibilityState !== "hidden") markSessionRead(sid, readTurns);
+    if (document.visibilityState !== 'hidden') markSessionRead(sid, readTurns);
     // Coming back to a screen that stayed mounted through a suspend is also a read.
     return onWake(() => markSessionRead(sid, readTurns));
   }, [sid, readTurns]);
@@ -771,17 +696,13 @@ export function SessionScreen({
     () => client.transcriptWindow(sid).offset,
   );
   const [artifactsOpen, setArtifactsOpen] = useState(false);
-  const [linkedAttachmentId, setLinkedAttachmentId] = useState<string | null>(
-    null,
-  );
+  const [linkedAttachmentId, setLinkedAttachmentId] = useState<string | null>(null);
   // The session's WHOLE artifact index, asked of the gateway in one byte-free
   // request. Without it the sheet listed only what the reader had already
   // scrolled back to: the transcript is fetched newest-page-first, so a long
   // session's gallery opened nearly empty and filled in page by page as the
   // reader paged upward. Refetched as the session grows a turn.
-  const [indexedArtifacts, setIndexedArtifacts] = useState<SessionArtifact[]>(
-    [],
-  );
+  const [indexedArtifacts, setIndexedArtifacts] = useState<SessionArtifact[]>([]);
   useEffect(() => {
     const control = new AbortController();
     client
@@ -798,18 +719,12 @@ export function SessionScreen({
   const artifacts = useMemo(
     () =>
       collapseArtifactVersions(
-        mergeArtifacts(
-          collectArtifacts(turns, earlierRemaining),
-          indexedArtifacts,
-        ),
+        mergeArtifacts(collectArtifacts(turns, earlierRemaining), indexedArtifacts),
       ),
     [turns, earlierRemaining, indexedArtifacts],
   );
   const linkedArtifact = useMemo(
-    () =>
-      linkedAttachmentId
-        ? findArtifactByAttachmentId(artifacts, linkedAttachmentId)
-        : null,
+    () => (linkedAttachmentId ? findArtifactByAttachmentId(artifacts, linkedAttachmentId) : null),
     [artifacts, linkedAttachmentId],
   );
   const openLinkedArtifact = useCallback((attachmentId: string) => {
@@ -829,8 +744,7 @@ export function SessionScreen({
   // into the transcript it holds and hands it straight back.
   useEffect(() => client.onArtifactRevision(sid, setTurns), [client, sid]);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const [slashCommands, setSlashCommands] =
-    useState<SlashCommand[]>(FALLBACK_SLASHES);
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [caret, setCaret] = useState(0);
@@ -843,8 +757,8 @@ export function SessionScreen({
   // appeared once the round-trip landed — the icons visibly popping in on a
   // screen that otherwise restored instantly. Seed from the last payload this
   // gateway answered: same paint-then-revalidate rule as session/transcript.
-  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(
-    () => client.cachedCapabilities(),
+  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(() =>
+    client.cachedCapabilities(),
   );
   // Staged files are part of the unsent message, not a side effect of the screen:
   // they are seeded from the stored draft message on the FIRST frame, exactly like
@@ -862,13 +776,7 @@ export function SessionScreen({
   const voiceModeHoldRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceModeSwitchedRef = useRef(false);
   const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(
-    () =>
-      new Map(
-        peekDraftMessage(draftMessageId).pastes.map((paste) => [
-          paste.id,
-          paste,
-        ]),
-      ),
+    () => new Map(peekDraftMessage(draftMessageId).pastes.map((paste) => [paste.id, paste])),
   );
   // A paste chip is a HANDLE on its payload, not a tombstone: tapping it opens the
   // content for editing. The selected domain object stays here; the editor owns its
@@ -886,14 +794,10 @@ export function SessionScreen({
   const [voiceModel, setVoiceModel] = useState<VoiceModelState | null>(
     () => client.cachedCapabilities()?.features.voice.model ?? null,
   );
-  const [voicePhase, setVoicePhase] = useState<
-    "idle" | "recording" | "transcribing"
-  >("idle");
+  const [voicePhase, setVoicePhase] = useState<'idle' | 'recording' | 'transcribing'>('idle');
   // Where the transcription IS, straight from the gateway job. Null means the
   // engine has not reported yet (the bytes are still leaving this phone).
-  const [voiceProgress, setVoiceProgress] = useState<VoiceProgress | null>(
-    null,
-  );
+  const [voiceProgress, setVoiceProgress] = useState<VoiceProgress | null>(null);
   const [voiceRequested, setVoiceRequested] = useState(false);
   const [voiceConversation, setVoiceConversation] = useState(false);
   const voiceConversationRef = useRef(false);
@@ -920,9 +824,7 @@ export function SessionScreen({
   // The SSE effect installs its current queue drain here. Rotation invokes it one
   // paint before restoring the captured scroll anchor, so the restore targets the
   // final streamed transcript rather than the pre-rotation body.
-  const flushRunningTurnEventsBeforeRotationRestoreRef = useRef<(() => void) | null>(
-    null,
-  );
+  const flushRunningTurnEventsBeforeRotationRestoreRef = useRef<(() => void) | null>(null);
   // Last measured height of the scroller itself, so a box that shrinks under a
   // parked reader can hand the lost pixels back (see the ResizeObserver below).
   const viewportHeightRef = useRef<number | null>(null);
@@ -1002,54 +904,42 @@ export function SessionScreen({
   // never auto-sent. The draft is persisted per session, so leaving the screen (or
   // the app) does not lose it. Same contract the TUI honours in `:sync-queued-turn`
   // / `:restore-pending-to-input`.
-  const restoreCancelledQueued = useCallback(
-    (turnId: string | undefined, request: string) => {
-      if (!turnId) return;
-      const done = restoredQueueRef.current;
-      if (done.has(turnId)) return;
-      done.add(turnId);
-      while (done.size > 64) {
-        const oldest = done.values().next();
-        if (oldest.done) break;
-        done.delete(oldest.value);
-      }
-      // What THIS device authored wins over the wire text: only the local copy still
-      // has the pastes and the image bytes that never travel on the queue mirror.
-      const authored = authoredQueueRef.current.get(turnId);
-      authoredQueueRef.current.delete(turnId);
-      const text = (authored?.request || request || "").trim();
-      if (text) {
-        setPrompt((current) =>
-          [current.trimEnd(), text].filter(Boolean).join("\n\n"),
-        );
-      }
-      if (authored?.pastes.size) {
-        setPastes((current) => {
-          const next = new Map(current);
-          for (const [id, paste] of authored.pastes)
-            if (!next.has(id)) next.set(id, paste);
-          return next;
-        });
-      }
-      if (authored?.attachments.length) {
-        setAttachments((current) => {
-          const seen = new Set(current.map((item) => item.id));
-          return [
-            ...current,
-            ...authored.attachments.filter((item) => !seen.has(item.id)),
-          ];
-        });
-      }
-    },
-    [],
-  );
+  const restoreCancelledQueued = useCallback((turnId: string | undefined, request: string) => {
+    if (!turnId) return;
+    const done = restoredQueueRef.current;
+    if (done.has(turnId)) return;
+    done.add(turnId);
+    while (done.size > 64) {
+      const oldest = done.values().next();
+      if (oldest.done) break;
+      done.delete(oldest.value);
+    }
+    // What THIS device authored wins over the wire text: only the local copy still
+    // has the pastes and the image bytes that never travel on the queue mirror.
+    const authored = authoredQueueRef.current.get(turnId);
+    authoredQueueRef.current.delete(turnId);
+    const text = (authored?.request || request || '').trim();
+    if (text) {
+      setPrompt((current) => [current.trimEnd(), text].filter(Boolean).join('\n\n'));
+    }
+    if (authored?.pastes.size) {
+      setPastes((current) => {
+        const next = new Map(current);
+        for (const [id, paste] of authored.pastes) if (!next.has(id)) next.set(id, paste);
+        return next;
+      });
+    }
+    if (authored?.attachments.length) {
+      setAttachments((current) => {
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...authored.attachments.filter((item) => !seen.has(item.id))];
+      });
+    }
+  }, []);
   // The bytes are kept on the CLIENT, not in this screen: leaving the session
   // unmounts `SessionScreen`, and a running turn whose images lived only in screen
   // state came back text-only until the persisted row landed on top.
-  const rememberSent = (
-    turnId: string | undefined,
-    sent: GatewayAttachment[],
-  ) => {
+  const rememberSent = (turnId: string | undefined, sent: GatewayAttachment[]) => {
     client.rememberSentAttachments(sid, turnId, sent);
   };
   const runningRef = useRef(false);
@@ -1106,7 +996,7 @@ export function SessionScreen({
     // a replay before the in-flight answer came back.
     const seed = seedRunningTurn(client, subscriptions, sid);
     setRunningTurn(seed?.turn ?? null);
-    setRunning(seed?.turn.status === "running");
+    setRunning(seed?.turn.status === 'running');
     setCancelledTurnSnapshots(cancelledTurnSeed(client, sid));
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueuePaused(null);
@@ -1125,7 +1015,7 @@ export function SessionScreen({
     draftMessageReadyRef.current = false;
     setDraftMessageReady(false);
     setComposerNotice(null);
-    setVoicePhase("idle");
+    setVoicePhase('idle');
     setVoiceRequested(false);
     voiceConversationRef.current = false;
     voiceLeaseRef.current = null;
@@ -1147,7 +1037,7 @@ export function SessionScreen({
     initialScrollPendingRef.current = !fresh;
     showJumpRef.current = false;
     setShowJump(false);
-    setHandedOverRowId("");
+    setHandedOverRowId('');
     setRouterOpen(false);
     // Switching sessions swaps the pin, so paint the NEW session's last known
     // one rather than blanking the chip back to the placeholder word.
@@ -1160,15 +1050,15 @@ export function SessionScreen({
   // it out of `/v1/settings` (`:settings? false`) because each channel owns its
   // own control, hence the by-id read.
   const [reasoning, setReasoning] = useState<Toggle | null>(() =>
-    client.cachedSetting("reasoning_level"),
+    client.cachedSetting('reasoning_level'),
   );
   const [reasoningBusy, setReasoningBusy] = useState(false);
   const [verbosity, setVerbosity] = useState<Toggle | null>(() =>
-    client.cachedSetting("verbosity"),
+    client.cachedSetting('verbosity'),
   );
   const [verbosityBusy, setVerbosityBusy] = useState(false);
   const [codexFast, setCodexFast] = useState<Toggle | null>(() =>
-    client.cachedSetting("codex_fast_mode"),
+    client.cachedSetting('codex_fast_mode'),
   );
   const [codexFastBusy, setCodexFastBusy] = useState(false);
   // The level the user just asked for, shown until the gateway confirms it.
@@ -1183,16 +1073,18 @@ export function SessionScreen({
       controller = new AbortController();
       const { signal } = controller;
       for (const [id, receive] of [
-        ["reasoning_level", setReasoning],
-        ["verbosity", setVerbosity],
-        ["codex_fast_mode", setCodexFast],
+        ['reasoning_level', setReasoning],
+        ['verbosity', setVerbosity],
+        ['codex_fast_mode', setCodexFast],
       ] as const) {
         void client
           .setting(id, signal)
           .then((toggle) => {
             if (!signal.aborted) receive(toggle);
           })
-          .catch(() => { /* Keep cached controls during a failed read. */ });
+          .catch(() => {
+            /* Keep cached controls during a failed read. */
+          });
       }
       // Both reads share the same router request and cache.
       void Promise.all([client.defaultModel(signal), client.router(signal)])
@@ -1202,7 +1094,9 @@ export function SessionScreen({
             setModelFleet(fleet);
           }
         })
-        .catch(() => { /* The next recovery event retries the capability lookup. */ });
+        .catch(() => {
+          /* The next recovery event retries the capability lookup. */
+        });
     };
     refresh();
     const stopWake = onWake(refresh);
@@ -1216,9 +1110,7 @@ export function SessionScreen({
     if (!codexFast || codexFastBusy) return;
     setCodexFastBusy(true);
     try {
-      setCodexFast(
-        await client.setSetting(codexFast.id, "toggle"),
-      );
+      setCodexFast(await client.setSetting(codexFast.id, 'toggle'));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1245,7 +1137,7 @@ export function SessionScreen({
     setPendingLevel(nextReasoningLevel(reasoning));
     setReasoningBusy(true);
     try {
-      setReasoning(await client.setSetting(reasoning.id, "cycle"));
+      setReasoning(await client.setSetting(reasoning.id, 'cycle'));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1258,7 +1150,7 @@ export function SessionScreen({
     if (!verbosity || verbosityBusy) return;
     setVerbosityBusy(true);
     try {
-      setVerbosity(await client.setSetting(verbosity.id, "cycle"));
+      setVerbosity(await client.setSetting(verbosity.id, 'cycle'));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1269,21 +1161,23 @@ export function SessionScreen({
   // What the chip SAYS: the optimistic pick while the write is in flight, the
   // gateway's own value the rest of the time. Never empty — that is the whole
   // point of the swap.
-  const reasoningLevel = pendingLevel ?? reasoning?.value ?? "default";
+  const reasoningLevel = pendingLevel ?? reasoning?.value ?? 'default';
   const activeProvider = modelPref?.provider ?? defaultPref?.provider;
-  const codexFastAvailable = activeProvider === "openai-codex" && codexFast;
+  const codexFastAvailable = activeProvider === 'openai-codex' && codexFast;
   const selectedModel = modelPref?.model ?? defaultPref?.model;
   // Match the TUI resolver: session provider/model, then the provider's default.
   // Capabilities belong to the model's wire, never to a provider name.
-  const modelProvider = modelFleet?.find((row) => row.id === activeProvider)
-    ?? modelFleet?.find((row) => row.is_default)
-    ?? modelFleet?.[0];
-  const modelInfo = modelProvider?.model_details?.find((model) => model.name === selectedModel)
-    ?? modelProvider?.model_details?.find((model) => model.name === modelProvider.default_model)
-    ?? modelProvider?.model_details?.[0];
+  const modelProvider =
+    modelFleet?.find((row) => row.id === activeProvider) ??
+    modelFleet?.find((row) => row.is_default) ??
+    modelFleet?.[0];
+  const modelInfo =
+    modelProvider?.model_details?.find((model) => model.name === selectedModel) ??
+    modelProvider?.model_details?.find((model) => model.name === modelProvider.default_model) ??
+    modelProvider?.model_details?.[0];
   const verbosityAvailable = modelInfo?.verbosity_style != null && verbosity;
   const turnExtraBody = verbosityAvailable
-    ? { text: { verbosity: verbosityAvailable.value ?? "low" } }
+    ? { text: { verbosity: verbosityAvailable.value ?? 'low' } }
     : undefined;
   function turnFeaturesFor(voiceProjection: boolean): Record<string, boolean> | undefined {
     const codexFastMode = Boolean(codexFastAvailable && codexFast.enabled);
@@ -1341,14 +1235,17 @@ export function SessionScreen({
   // ever following its own newest turn again. Read by `arrivedAtEnd`.
   const aimedEndRef = useRef(0);
 
-  const scrollToEnd = useCallback((behavior: ScrollBehavior = "auto") => {
-    const viewport = scrollRef.current;
-    if (!viewport) return;
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior });
-    followingRef.current = true;
-    correctedTopRef.current = viewport.scrollTop;
-    syncJump();
-  }, [syncJump]);
+  const scrollToEnd = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const viewport = scrollRef.current;
+      if (!viewport) return;
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      followingRef.current = true;
+      correctedTopRef.current = viewport.scrollTop;
+      syncJump();
+    },
+    [syncJump],
+  );
 
   // Sending is a transition into the newly authored turn, not a correction. The old
   // eager pin ran before React mounted that turn, did no useful movement, and the
@@ -1359,11 +1256,11 @@ export function SessionScreen({
     const viewport = scrollRef.current;
     if (!viewport) return;
     const reduceMotion =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduceMotion) {
       submitScrollActiveRef.current = false;
-      scrollToEnd("auto");
+      scrollToEnd('auto');
       return;
     }
 
@@ -1376,7 +1273,7 @@ export function SessionScreen({
       if (finished) return;
       finished = true;
       submitScrollActiveRef.current = false;
-      viewport.removeEventListener("scrollend", finish);
+      viewport.removeEventListener('scrollend', finish);
       if (fallback !== null) window.clearTimeout(fallback);
       if (followingRef.current && !readerOwnsScroll()) {
         followEnd(viewport);
@@ -1384,8 +1281,8 @@ export function SessionScreen({
         syncJump();
       }
     };
-    viewport.addEventListener("scrollend", finish, { once: true });
-    scrollToEnd("smooth");
+    viewport.addEventListener('scrollend', finish, { once: true });
+    scrollToEnd('smooth');
     if (!submitScrollActiveRef.current) {
       finish();
       return;
@@ -1395,7 +1292,7 @@ export function SessionScreen({
     return () => {
       finished = true;
       submitScrollActiveRef.current = false;
-      viewport.removeEventListener("scrollend", finish);
+      viewport.removeEventListener('scrollend', finish);
       if (fallback !== null) window.clearTimeout(fallback);
     };
   }, [scrollToEnd, submitScrollRequest, syncJump]);
@@ -1403,7 +1300,7 @@ export function SessionScreen({
   // Opening a session must LAND on the latest turn. The opening layout effect
   // places its first useful paint, then follow carries that pin as rows hydrate.
   const pinToEnd = useCallback(() => {
-    scrollToEnd("auto");
+    scrollToEnd('auto');
   }, [scrollToEnd]);
 
   // A real gesture never fights the reader; the handlers remain attached to claim the
@@ -1436,16 +1333,14 @@ export function SessionScreen({
       return;
     }
     // Following the running turn needs no anchor: the bottom IS the anchor.
-    scrollAnchorRef.current = followingRef.current
-      ? null
-      : scrollAnchorFor(viewport, transcript);
+    scrollAnchorRef.current = followingRef.current ? null : scrollAnchorFor(viewport, transcript);
   }, []);
 
   const restoreScrollAnchor = useCallback(() => {
     const viewport = scrollRef.current;
     if (!viewport) return;
     if (applyScrollAnchor(viewport, scrollAnchorRef.current)) return;
-    if (followingRef.current) scrollToEnd("auto");
+    if (followingRef.current) scrollToEnd('auto');
   }, [scrollToEnd]);
 
   // THE one owner of "the reader keeps their line". Rows land above the fold from
@@ -1459,13 +1354,11 @@ export function SessionScreen({
   useEffect(() => {
     const viewport = scrollRef.current;
     const transcript = transcriptRef.current;
-    if (!viewport || !transcript || typeof ResizeObserver === "undefined")
-      return;
+    if (!viewport || !transcript || typeof ResizeObserver === 'undefined') return;
     let frame: number | null = null;
     // `captureScrollAnchor` already ignores the echo of our own corrections.
     // Rotation is its own transaction and owns the anchor for its duration.
-    const busy = () =>
-      isViewportRotating() || rotationRestorePendingRef.current;
+    const busy = () => isViewportRotating() || rotationRestorePendingRef.current;
     const recapture = () => {
       frame = null;
       if (!busy()) captureScrollAnchor();
@@ -1499,18 +1392,17 @@ export function SessionScreen({
       // anchor survives the whole growth window and every pixel that lands
       // above it is billed exactly once: measured, a 33 417 px "↑ Load earlier"
       // moved the scroller 33 416 px and the reader's turn 1 px.
-      if (!applyScrollAnchor(viewport, scrollAnchorRef.current))
-        captureScrollAnchor();
+      if (!applyScrollAnchor(viewport, scrollAnchorRef.current)) captureScrollAnchor();
       correctedTopRef.current = viewport.scrollTop;
     });
     observer.observe(transcript);
-    viewport.addEventListener("scroll", handleViewportScroll, {
+    viewport.addEventListener('scroll', handleViewportScroll, {
       passive: true,
     });
     recapture();
     return () => {
       observer.disconnect();
-      viewport.removeEventListener("scroll", handleViewportScroll);
+      viewport.removeEventListener('scroll', handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [captureScrollAnchor, syncJump]);
@@ -1523,12 +1415,12 @@ export function SessionScreen({
     let firstFrame: number | null = null;
     let finalFrame: number | null = null;
     const stop = onViewportRotation((phase) => {
-      if (phase === "start") {
+      if (phase === 'start') {
         rotationRestorePendingRef.current = true;
         captureScrollAnchor();
         return;
       }
-      if (phase !== "end") return;
+      if (phase !== 'end') return;
       if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
       if (finalFrame !== null) window.cancelAnimationFrame(finalFrame);
       firstFrame = window.requestAnimationFrame(() => {
@@ -1563,7 +1455,7 @@ export function SessionScreen({
   useEffect(() => {
     const viewport = scrollRef.current;
     const transcript = transcriptRef.current;
-    if (!viewport || typeof ResizeObserver === "undefined") return;
+    if (!viewport || typeof ResizeObserver === 'undefined') return;
     let frame: number | null = null;
     const measure = () => {
       frame = null;
@@ -1636,21 +1528,16 @@ export function SessionScreen({
   // running session, seed its bubble from persisted session and trace state before
   // applying new deltas.
   const adoptRunningTurn = useCallback(
-    async (
-      row: Session | null,
-      signal?: AbortSignal,
-      rows?: readonly TranscriptTurn[] | null,
-    ) => {
-      const tid = row?.live ? (row.current_turn_id ?? "") : "";
+    async (row: Session | null, signal?: AbortSignal, rows?: readonly TranscriptTurn[] | null) => {
+      const tid = row?.live ? (row.current_turn_id ?? '') : '';
       if (!tid) return;
-      const persisted =
-        (rows ?? turnsRef.current)?.find((turn) => rowId(turn) === tid) ?? null;
+      const persisted = (rows ?? turnsRef.current)?.find((turn) => rowId(turn) === tid) ?? null;
 
       setRunning(true);
       // A streaming bubble owns deltas newer than the durable row. Adopt only when
       // no running bubble for this canonical id is already painted.
       const held = runningTurnRef.current;
-      if (held && (held.status === "running" || held.id === tid)) return;
+      if (held && (held.status === 'running' || held.id === tid)) return;
 
       const inlineTrace = persisted?.iterations;
       let iterations: TranscriptIteration[];
@@ -1665,27 +1552,25 @@ export function SessionScreen({
       }
       if (signal?.aborted) return;
       const now = runningTurnRef.current;
-      if (now && (now.status === "running" || now.id === tid)) return;
+      if (now && (now.status === 'running' || now.id === tid)) return;
       // `running_started_at` is the GATEWAY's clock; the bubble's elapsed timer
       // reads the device's. Rebase through `server_time_ms` (shipped in the same
       // response for exactly this) so a phone minutes off UTC does not show a
       // turn that started in the future or an hour ago.
       const startedAt =
         row?.running_started_at != null && row.server_time_ms != null
-          ? Date.now() -
-            Math.max(0, row.server_time_ms - row.running_started_at)
-          : typeof persisted?.created_at === "number" &&
-              Number.isFinite(persisted.created_at)
+          ? Date.now() - Math.max(0, row.server_time_ms - row.running_started_at)
+          : typeof persisted?.created_at === 'number' && Number.isFinite(persisted.created_at)
             ? persisted.created_at -
               (row?.server_time_ms != null ? row.server_time_ms - Date.now() : 0)
             : Date.now();
       const adopted: RunningTurn = {
         id: tid,
-        request: row?.running_request ?? persisted?.request ?? "",
-        answer: "",
+        request: row?.running_request ?? persisted?.request ?? '',
+        answer: '',
         iterations,
         startedAt,
-        status: "running",
+        status: 'running',
       };
       const current = withRunningReplayHead(adopted, latestReplayHeadRef.current) ?? adopted;
       runningTurnRef.current = current;
@@ -1750,11 +1635,11 @@ export function SessionScreen({
     const STALE_RECONCILE_MS = 20_000;
     let inflightSince: number | null = null;
     const reconcileOnce = async () => {
-      if (document.visibilityState === "hidden") return;
+      if (document.visibilityState === 'hidden') return;
       // Reconciliation uses the running-turn snapshot taken before later transcript and
       // queue reads, so a newly started turn cannot be cleared by an older verdict.
       const runningTurnBefore = runningTurnRef.current;
-      const runningTurnIdBefore = runningTurnBefore?.id ?? "";
+      const runningTurnIdBefore = runningTurnBefore?.id ?? '';
       const runningBefore = runningRef.current;
       const submitBefore = submitsInFlightRef.current > 0;
       let next: Session;
@@ -1765,15 +1650,14 @@ export function SessionScreen({
       }
       if (cancelled) return;
       setSession(next);
-      const gatewayRunning =
-        next.live !== undefined ? next.live : next.status === "running";
+      const gatewayRunning = next.live !== undefined ? next.live : next.status === 'running';
       // Safety net: on wake we ALWAYS refetch the transcript and check whether
       // the streamed running turn has already been persisted while we were
       // backgrounded. iOS/Android suspend fetch-body streams silently, so the
       // terminal event that would have cleared the running-turn bubble may have
       // been dropped. If the persisted turn now exists, drop the running-turn bubble; if
       // the gateway is idle but we still show work, do the same.
-      const runningTurnId = runningTurnRef.current?.id ?? "";
+      const runningTurnId = runningTurnRef.current?.id ?? '';
       let nextTurns: TranscriptTurn[] | null = null;
       try {
         // Gated on the row this tick just read: an idle session costs one tiny
@@ -1797,14 +1681,8 @@ export function SessionScreen({
       // Retire only the bubble named by the durable row, and never while the
       // canonical gateway state still reports that exact turn as running.
       const stillRunningThis =
-        runningTurnId !== "" &&
-        gatewayRunning &&
-        (next.current_turn_id ?? "") === runningTurnId;
-      if (
-        landedRow &&
-        !stillRunningThis &&
-        (runningTurnRef.current?.id ?? "") === runningTurnId
-      ) {
+        runningTurnId !== '' && gatewayRunning && (next.current_turn_id ?? '') === runningTurnId;
+      if (landedRow && !stillRunningThis && (runningTurnRef.current?.id ?? '') === runningTurnId) {
         setRunning(false);
         // Same batch as the rows themselves: the row that takes the bubble's
         // place must MOUNT knowing it inherits a painted trace.
@@ -1832,17 +1710,12 @@ export function SessionScreen({
       const showsWork =
         (currentRunningTurn !== null &&
           runningTurnBefore !== null &&
-          (currentRunningTurn.id ?? "") === runningTurnIdBefore) ||
+          (currentRunningTurn.id ?? '') === runningTurnIdBefore) ||
         (runningRef.current && runningBefore);
       // A submit still on the wire may not have reached the gateway yet, so it is
       // the only client-side veto to an idle canonical session state.
       const submitPending = submitBefore || submitsInFlightRef.current > 0;
-      if (
-        !covered &&
-        !gatewayRunning &&
-        !submitPending &&
-        showsWork
-      ) {
+      if (!covered && !gatewayRunning && !submitPending && showsWork) {
         setRunning(false);
         // The gateway is idle but its answer is NOT in the transcript yet (the
         // engine row lags, or the read failed). Stop the ticker — never delete
@@ -1852,10 +1725,10 @@ export function SessionScreen({
         // (`:message-received`, channel_tui/state.clj). The next covered read
         // swaps in the persisted row.
         setRunningTurn((turn) => {
-          if (!turn || turn.status !== "running") return turn;
+          if (!turn || turn.status !== 'running') return turn;
           const settledTurn: RunningTurn = {
             ...turn,
-            status: "completed",
+            status: 'completed',
             progress: undefined,
             cancelling: false,
           };
@@ -1877,11 +1750,7 @@ export function SessionScreen({
     // transcript), so on a slow gateway a fixed 5s tick would overlap and pile
     // requests up. One in flight at a time — a skipped tick self-heals 5s later.
     const reconcile = async () => {
-      if (
-        inflightSince !== null &&
-        Date.now() - inflightSince < STALE_RECONCILE_MS
-      )
-        return;
+      if (inflightSince !== null && Date.now() - inflightSince < STALE_RECONCILE_MS) return;
       inflightSince = Date.now();
       try {
         await reconcileOnce();
@@ -1921,8 +1790,7 @@ export function SessionScreen({
       reconcileWakeGeometry();
       // Native resume can precede WebKit's final viewport restoration by one paint.
       // Measure once more after that paint rather than trusting the suspended box.
-      if (wakeGeometryFrame !== null)
-        window.cancelAnimationFrame(wakeGeometryFrame);
+      if (wakeGeometryFrame !== null) window.cancelAnimationFrame(wakeGeometryFrame);
       wakeGeometryFrame = window.requestAnimationFrame(reconcileWakeGeometry);
       if (awayMs >= RESUME_AT_END_AFTER_MS) {
         resumePinRef.current = true;
@@ -1938,23 +1806,19 @@ export function SessionScreen({
     const stopReady = subscriptions.subscribeSession(
       sid,
       (event) => {
-        if (event.type !== "subscription.ready" || typeof event.is_live !== "boolean") return;
+        if (event.type !== 'subscription.ready' || typeof event.is_live !== 'boolean') return;
         const nextSession = client.noteSessionGoal(sid, event.goal);
         if (nextSession) setSession(nextSession);
-        const agentName = eventString(event, "agent_name");
+        const agentName = eventString(event, 'agent_name');
         if (agentName) {
           client.noteSessionAgentName(sid, agentName);
-          setSession((current) => current ? { ...current, agent_name: agentName } : current);
+          setSession((current) => (current ? { ...current, agent_name: agentName } : current));
         }
         const currentRunningTurn = runningTurnRef.current;
-        const painted =
-          currentRunningTurn?.status === "running" ? currentRunningTurn.id : "";
-        const running =
-          typeof event.current_turn_id === "string"
-            ? event.current_turn_id
-            : "";
+        const painted = currentRunningTurn?.status === 'running' ? currentRunningTurn.id : '';
+        const running = typeof event.current_turn_id === 'string' ? event.current_turn_id : '';
         const latest =
-          typeof event.latest_iteration === "number" &&
+          typeof event.latest_iteration === 'number' &&
           Number.isFinite(event.latest_iteration) &&
           event.latest_iteration > 0
             ? Math.trunc(event.latest_iteration)
@@ -1984,8 +1848,7 @@ export function SessionScreen({
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      if (wakeGeometryFrame !== null)
-        window.cancelAnimationFrame(wakeGeometryFrame);
+      if (wakeGeometryFrame !== null) window.cancelAnimationFrame(wakeGeometryFrame);
       stopWake();
       stopReady();
     };
@@ -2028,7 +1891,7 @@ export function SessionScreen({
     };
   }, [refreshSlashCommands]);
 
-  const slashMode = prompt.trimStart().startsWith("/");
+  const slashMode = prompt.trimStart().startsWith('/');
 
   useEffect(() => {
     if (slashMode) void refreshSlashCommands();
@@ -2039,9 +1902,7 @@ export function SessionScreen({
       const requested = (await speechOutput.settings()).asrEngine;
       if (!requested) return null;
       const engines = snapshot?.features.voice.engines;
-      return engines && !engines.some((engine) => engine.id === requested)
-        ? null
-        : requested;
+      return engines && !engines.some((engine) => engine.id === requested) ? null : requested;
     },
     [],
   );
@@ -2072,7 +1933,7 @@ export function SessionScreen({
           if (!active) return;
           // An ANSWER of `unavailable` is the gateway saying it has no voice
           // extension — that one is authoritative and does hide the mic.
-          setVoiceSupported(model.status !== "unavailable");
+          setVoiceSupported(model.status !== 'unavailable');
           setVoiceModel(model);
         } catch {
           if (!active) return;
@@ -2081,7 +1942,7 @@ export function SessionScreen({
           // gateway actually gave instead of inventing "voice is gone".
           const cached = client.cachedCapabilities()?.features.voice;
           setVoiceSupported(cached?.enabled ?? false);
-          setVoiceModel(cached?.model ?? { status: "unavailable" });
+          setVoiceModel(cached?.model ?? { status: 'unavailable' });
         }
       }
     })();
@@ -2110,12 +1971,12 @@ export function SessionScreen({
   }, [client, sid]);
 
   useEffect(() => {
-    if (!voiceSupported || voiceModel?.status !== "downloading") return;
+    if (!voiceSupported || voiceModel?.status !== 'downloading') return;
     let inflight = false;
     const timer = window.setInterval(() => {
       // Same anti-stacking rule as the reconcile poll: one request in flight,
       // and nothing at all while the app is backgrounded.
-      if (inflight || document.visibilityState === "hidden") return;
+      if (inflight || document.visibilityState === 'hidden') return;
       inflight = true;
       void chosenAsrEngine(capabilities)
         .then((engine) => client.voiceModel({ engine }))
@@ -2126,14 +1987,7 @@ export function SessionScreen({
         });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [
-    capabilities,
-    chosenAsrEngine,
-    client,
-    sid,
-    voiceModel?.status,
-    voiceSupported,
-  ]);
+  }, [capabilities, chosenAsrEngine, client, sid, voiceModel?.status, voiceSupported]);
 
   // After programmatic dictation, place and reveal the caret only after autosizing.
   // Preserve focus so mobile keyboards appear only when the user requested one.
@@ -2174,30 +2028,24 @@ export function SessionScreen({
           if (voiceConversationRef.current) {
             setPendingVoiceSend(text);
           } else {
-            setPrompt(
-              (current) =>
-                `${current.trimEnd()}${current.trim() ? " " : ""}${text}`,
-            );
+            setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
             // Show the TAIL of the dictation, not its opening line.
             revealComposerEnd();
           }
         } else {
-          setComposerNotice("No speech recognised — nothing was captured.");
+          setComposerNotice('No speech recognised — nothing was captured.');
         }
       } catch (cause) {
         const message = (cause as Error).message;
         const unreachable =
-          message.startsWith("network error") ||
-          message.includes("did not answer") ||
-          message.includes("stopped sending") ||
-          message.includes("stopped reporting") ||
-          message.includes("ended before the transcript");
+          message.startsWith('network error') ||
+          message.includes('did not answer') ||
+          message.includes('stopped sending') ||
+          message.includes('stopped reporting') ||
+          message.includes('ended before the transcript');
         const status = cause instanceof GatewayError ? cause.status : 0;
         const retryableStatus =
-          status === 408 ||
-          status === 425 ||
-          status === 429 ||
-          (status >= 500 && status < 600);
+          status === 408 || status === 425 || status === 429 || (status >= 500 && status < 600);
         const retryable = unreachable || retryableStatus;
         if (!retryable) {
           // A non-retryable failure cannot be fixed by waking and submitting the
@@ -2208,22 +2056,15 @@ export function SessionScreen({
         }
         setComposerNotice(
           unreachable
-            ? "Saved what you said — it transcribes as soon as the gateway is reachable."
+            ? 'Saved what you said — it transcribes as soon as the gateway is reachable.'
             : message,
         );
       } finally {
-        setVoicePhase("idle");
+        setVoicePhase('idle');
         setVoiceProgress(null);
       }
     },
-    [
-      capabilities,
-      chosenAsrEngine,
-      client,
-      sid,
-      revealComposerEnd,
-      voiceMailboxId,
-    ],
+    [capabilities, chosenAsrEngine, client, sid, revealComposerEnd, voiceMailboxId],
   );
 
   // End dictation and transcribe what WAS captured. Every path that takes the
@@ -2238,14 +2079,14 @@ export function SessionScreen({
       const recording = recordingRef.current;
       if (!recording) return;
       recordingRef.current = null;
-      setVoicePhase("transcribing");
+      setVoicePhase('transcribing');
       if (options?.notice) setComposerNotice(options.notice);
       let wav: Blob;
       try {
         wav = await recording.stop();
       } catch (cause) {
         setComposerNotice((cause as Error).message);
-        setVoicePhase("idle");
+        setVoicePhase('idle');
         return;
       }
       await transcribeVoice(wav);
@@ -2262,25 +2103,21 @@ export function SessionScreen({
   // session. Settle on page teardown, and verify capture on foreground return in case the
   // OS interrupted it.
   useEffect(() => {
-    if (voicePhase !== "recording") return;
+    if (voicePhase !== 'recording') return;
     const finish = (notice: string) => {
       void finishVoiceRef.current({ notice });
     };
     const onPageHide = () => {
-      finish(
-        "Dictation ended when the app closed — transcribing what was said.",
-      );
+      finish('Dictation ended when the app closed — transcribing what was said.');
     };
-    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener('pagehide', onPageHide);
     let removed = false;
     let sub: { remove: () => void } | null = null;
     try {
-      void App.addListener("appStateChange", ({ isActive }) => {
+      void App.addListener('appStateChange', ({ isActive }) => {
         if (!isActive) return;
         if (recordingRef.current && !recordingRef.current.isCapturing()) {
-          finish(
-            "Dictation stopped while the app was away — transcribing what was said.",
-          );
+          finish('Dictation stopped while the app was away — transcribing what was said.');
         }
       })
         .then((handle) => {
@@ -2292,7 +2129,7 @@ export function SessionScreen({
       /* plugin unavailable */
     }
     return () => {
-      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener('pagehide', onPageHide);
       removed = true;
       sub?.remove();
     };
@@ -2306,13 +2143,12 @@ export function SessionScreen({
     voicePhaseRef.current = voicePhase;
   });
   const retryPendingVoice = useCallback(async () => {
-    if (voicePhaseRef.current !== "idle") return;
+    if (voicePhaseRef.current !== 'idle') return;
     // The ref is only a fast path: after a cold start it is empty and the
     // outbox is the sole record that anything was ever said.
-    const wav =
-      pendingVoiceRef.current ?? (await readPendingVoice(voiceMailboxId));
-    if (!wav || voicePhaseRef.current !== "idle") return;
-    setVoicePhase("transcribing");
+    const wav = pendingVoiceRef.current ?? (await readPendingVoice(voiceMailboxId));
+    if (!wav || voicePhaseRef.current !== 'idle') return;
+    setVoicePhase('transcribing');
     await transcribeVoice(wav, { isOutboxRetry: true });
   }, [transcribeVoice, voiceMailboxId]);
   useEffect(() => onWake(() => void retryPendingVoice()), [retryPendingVoice]);
@@ -2339,12 +2175,12 @@ export function SessionScreen({
       const type = event.type;
       // Capture the terminal turn ID before awaiting persistence; queue draining may start
       // another turn meanwhile, which must not be settled by this callback.
-      const finishedId = eventString(event, "turn_id");
+      const finishedId = eventString(event, 'turn_id');
       if (!finishedId) return;
       const ownsTerminal = (turn: RunningTurn | null) => turn?.id === finishedId;
       const streamedTurn = runningTurnRef.current;
       if (
-        type === "turn.cancelled" &&
+        type === 'turn.cancelled' &&
         streamedTurn !== null &&
         ownsTerminal(streamedTurn) &&
         runningTurnCarriesOutput(streamedTurn)
@@ -2360,10 +2196,8 @@ export function SessionScreen({
         ? (event.content as ContentBlock[])
         : undefined;
       const voiceOwned = voiceOwnershipRef.current.settle(finishedId);
-      if (type === "turn.completed" && voiceConversationRef.current && voiceOwned) {
-        const spoken = terminalBlocks
-          ?.find((block) => block.type === "speech")
-          ?.text?.trim();
+      if (type === 'turn.completed' && voiceConversationRef.current && voiceOwned) {
+        const spoken = terminalBlocks?.find((block) => block.type === 'speech')?.text?.trim();
         if (spoken) {
           setVoiceSpeaking(true);
           void speechOutput
@@ -2371,13 +2205,10 @@ export function SessionScreen({
             .catch((cause: unknown) => setComposerNotice((cause as Error).message))
             .finally(() => setVoiceSpeaking(false));
         } else {
-          setComposerNotice(
-            "The answer is ready on screen — no spoken version was returned.",
-          );
+          setComposerNotice('The answer is ready on screen — no spoken version was returned.');
         }
       }
-      if (!runningTurnRef.current || ownsTerminal(runningTurnRef.current))
-        setRunning(false);
+      if (!runningTurnRef.current || ownsTerminal(runningTurnRef.current)) setRunning(false);
       // Settle the running-turn bubble ITSELF, synchronously. The transcript refetch below
       // is a network round-trip and may fail outright, and until it lands the
       // bubble still reads `status: 'running'` — spinner up, "Vis is thinking",
@@ -2385,16 +2216,15 @@ export function SessionScreen({
       // The terminal frame IS the end of the turn; that claim needs no transcript.
       // Mirrors the TUI's independent terminal path.
       setRunningTurn((turn) => {
-        if (!turn || turn.status !== "running" || !ownsTerminal(turn))
-          return turn;
+        if (!turn || turn.status !== 'running' || !ownsTerminal(turn)) return turn;
         const next: RunningTurn = {
           ...turn,
           status:
-            type === "turn.failed"
-              ? "failed"
-              : type === "turn.cancelled"
-                ? "cancelled"
-                : "completed",
+            type === 'turn.failed'
+              ? 'failed'
+              : type === 'turn.cancelled'
+                ? 'cancelled'
+                : 'completed',
           progress: undefined,
           cancelling: false,
           // Completion can overtake the 150 ms body-delta queue in a browser.
@@ -2434,17 +2264,14 @@ export function SessionScreen({
         const cached = client.cachedTranscript(sid);
         if (!cached?.length) return undefined;
         const held = client.transcriptWindow(sid);
-        return held.offset + cached.length >= held.total
-          ? SETTLE_TAIL_TURNS
-          : undefined;
+        return held.offset + cached.length >= held.total ? SETTLE_TAIL_TURNS : undefined;
       };
       try {
         next = await client.transcript(sid, undefined, settleLimit());
       } catch {
         next = null;
       }
-      const coveringRow = (turns: TranscriptTurn[] | null) =>
-        settledTurnRow(turns, finishedId);
+      const coveringRow = (turns: TranscriptTurn[] | null) => settledTurnRow(turns, finishedId);
       // Poll with short backoff until the terminal turn is persisted. Fetch errors do not
       // end the attempts; only a response containing this turn does.
       for (const wait of SETTLE_RETRY_MS) {
@@ -2481,16 +2308,14 @@ export function SessionScreen({
           runningTurnRef.current = null;
         }
       }
-      if (type === "turn.failed") {
+      if (type === 'turn.failed') {
         // The settled turn carries the gateway's OWN error card (rate limit, auth,
         // transport) and the transcript refresh above already renders it. A second
         // banner reading "The turn failed." is duplicate noise on top of it.
         const blocks = event.content;
         if (!Array.isArray(blocks) || blocks.length === 0) {
           setError(
-            eventString(event, "message") ||
-              eventString(event, "error") ||
-              "The turn failed.",
+            eventString(event, 'message') || eventString(event, 'error') || 'The turn failed.',
           );
         }
       }
@@ -2513,21 +2338,14 @@ export function SessionScreen({
       // commit both burns the frame budget and moves the live bottom underneath
       // the frozen scroll transaction. Keep body frames queued until the final
       // viewport is known; lifecycle frames still punch through immediately.
-      if (
-        isViewportRotating() &&
-        !eventQueue.some(forcesRunningTurnFlushDuringRotation)
-      )
-        return;
+      if (isViewportRotating() && !eventQueue.some(forcesRunningTurnFlushDuringRotation)) return;
       const drained = eventQueue.splice(0);
       // Advance the cached cursor HERE, not on arrival: unmounting drops the
       // pending queue, and a cursor that had already counted those frames would
       // make the next visit filter them out of a bubble that never got them —
       // a hole in the answer that only the terminal frame could fill.
       for (const event of drained) {
-        if (
-          typeof event.seq === "number" &&
-          event.seq > lastRunningTurnSeqRef.current
-        ) {
+        if (typeof event.seq === 'number' && event.seq > lastRunningTurnSeqRef.current) {
           lastRunningTurnSeqRef.current = event.seq;
         }
       }
@@ -2537,61 +2355,51 @@ export function SessionScreen({
       // Queue-mirror + pause control frames (channel-agnostic, same events the
       // TUI consumes). Not running-turn events, so handle them outside the reducer.
       for (const event of batch) {
-        const tid = eventString(event, "turn_id");
+        const tid = eventString(event, 'turn_id');
         switch (event.type) {
-          case "turn.queued": {
-            const row = queuedTurnFromWire(
-              event as unknown as Record<string, unknown>,
-            );
+          case 'turn.queued': {
+            const row = queuedTurnFromWire(event as unknown as Record<string, unknown>);
             noteQueueDelta(tid, row);
             setQueued((current) =>
-              current.some((item) => item.turnId === tid)
-                ? current
-                : [...current, row],
+              current.some((item) => item.turnId === tid) ? current : [...current, row],
             );
             break;
           }
-          case "turn.queued.updated":
+          case 'turn.queued.updated':
             setQueued((current) =>
               current.map((item) =>
                 item.turnId === tid
                   ? {
                       ...item,
-                      ...queuedTurnFromWire(
-                        event as unknown as Record<string, unknown>,
-                      ),
+                      ...queuedTurnFromWire(event as unknown as Record<string, unknown>),
                     }
                   : item,
               ),
             );
             break;
-          case "turn.queued.deleted":
+          case 'turn.queued.deleted':
             noteQueueDelta(tid, null);
-            setQueued((current) =>
-              current.filter((item) => item.turnId !== tid),
-            );
+            setQueued((current) => current.filter((item) => item.turnId !== tid));
             // Reason `cancelled` = the gateway dropped this row WITH a user stop
             // (`drop-cancelled-backlog!`), so the text has nowhere else to live.
             // A plain delete (the user removed the row) carries no reason and
             // restores nothing.
-            if (eventString(event, "reason") === "cancelled") {
-              restoreCancelledQueued(tid, eventString(event, "request"));
+            if (eventString(event, 'reason') === 'cancelled') {
+              restoreCancelledQueued(tid, eventString(event, 'request'));
             }
             break;
-          case "turn.queued.drained":
+          case 'turn.queued.drained':
             noteQueueDelta(tid, null);
-            setQueued((current) =>
-              current.filter((item) => item.turnId !== tid),
-            );
+            setQueued((current) => current.filter((item) => item.turnId !== tid));
             break;
-          case "queue.paused":
+          case 'queue.paused':
             queuePausedRevisionRef.current += 1;
             setQueuePaused({
-              reason: eventString(event, "reason") || "turn_failed",
+              reason: eventString(event, 'reason') || 'turn_failed',
               held: Number(event.held ?? 0),
             });
             break;
-          case "queue.resumed":
+          case 'queue.resumed':
             queuePausedRevisionRef.current += 1;
             setQueuePaused(null);
             break;
@@ -2601,23 +2409,23 @@ export function SessionScreen({
           // trusting this screen's last local pick until a reopen (the TUI
           // projects the same event onto its footer chip). Blank provider AND
           // model means the override was cleared.
-          case "session.model_updated":
+          case 'session.model_updated':
             commitModelPref(
               client.noteSessionModel(sid, {
-                provider: eventString(event, "provider"),
-                model: eventString(event, "model"),
+                provider: eventString(event, 'provider'),
+                model: eventString(event, 'model'),
               }),
             );
             break;
-          case "session.agent_name_updated": {
-            const agentName = eventString(event, "agent_name");
+          case 'session.agent_name_updated': {
+            const agentName = eventString(event, 'agent_name');
             if (agentName) {
               client.noteSessionAgentName(sid, agentName);
-              setSession((current) => current ? { ...current, agent_name: agentName } : current);
+              setSession((current) => (current ? { ...current, agent_name: agentName } : current));
             }
             break;
           }
-          case "session.goal_updated": {
+          case 'session.goal_updated': {
             const row = client.noteSessionGoal(sid, event.goal);
             if (row) setSession(row);
             break;
@@ -2654,12 +2462,12 @@ export function SessionScreen({
       let lifecycle: SseEvent | undefined;
       for (let index = batch.length - 1; index >= 0; index -= 1) {
         const type = batch[index].type;
-        if (TERMINAL_EVENTS.has(type) || type === "turn.started") {
+        if (TERMINAL_EVENTS.has(type) || type === 'turn.started') {
           lifecycle = batch[index];
           break;
         }
       }
-      if (lifecycle?.type === "turn.started") setRunning(true);
+      if (lifecycle?.type === 'turn.started') setRunning(true);
     };
 
     flushRunningTurnEventsBeforeRotationRestoreRef.current = flushEvents;
@@ -2677,13 +2485,7 @@ export function SessionScreen({
     let probing = false;
     const livenessTimer = window.setInterval(() => {
       const probedTurn = runningTurnRef.current;
-      if (
-        probing ||
-        !probedTurn ||
-        probedTurn.status !== "running" ||
-        !probedTurn.id
-      )
-        return;
+      if (probing || !probedTurn || probedTurn.status !== 'running' || !probedTurn.id) return;
       const quietSince = Math.max(lastEventAt, probedTurn.startedAt ?? 0);
       const silentFor = Date.now() - quietSince;
       if (silentFor < TURN_LIVENESS_IDLE_MS) {
@@ -2697,13 +2499,8 @@ export function SessionScreen({
         .turnStatus(sid, probedTurn.id)
         .then((turn) => {
           const current = runningTurnRef.current;
-          if (
-            !current ||
-            current.status !== "running" ||
-            current.id !== probedTurn.id
-          )
-            return;
-          if (turn && !TURN_TERMINAL_STATUSES.has(String(turn.status ?? ""))) {
+          if (!current || current.status !== 'running' || current.id !== probedTurn.id) return;
+          if (turn && !TURN_TERMINAL_STATUSES.has(String(turn.status ?? ''))) {
             // The gateway CONFIRMS the turn is still working, so the transport is
             // not the suspect: a long tool call is simply quiet. Leave the stream
             // alone until the silence outlasts the stall bound — and even then,
@@ -2736,19 +2533,17 @@ export function SessionScreen({
           stallStrikes = 0;
           unknownStrikes = 0;
           const type =
-            turn.status === "failed"
-              ? "turn.failed"
-              : turn.status === "cancelled"
-                ? "turn.cancelled"
-                : "turn.completed";
+            turn.status === 'failed'
+              ? 'turn.failed'
+              : turn.status === 'cancelled'
+                ? 'turn.cancelled'
+                : 'turn.completed';
           // A lost terminal SSE frame must settle with the registry's canonical
           // error card, not the partial streamed body that preceded the failure.
           return settle({
             type,
             turn_id: probedTurn.id,
-            ...(type === "turn.failed" && turn.content?.length
-              ? { content: turn.content }
-              : {}),
+            ...(type === 'turn.failed' && turn.content?.length ? { content: turn.content } : {}),
           } as unknown as SseEvent);
         })
         .catch(() => undefined)
@@ -2757,15 +2552,14 @@ export function SessionScreen({
         });
     }, TURN_LIVENESS_PROBE_INTERVAL_MS);
 
-    const unsubscribeConnection =
-      subscriptions.subscribeConnection(setConnected);
+    const unsubscribeConnection = subscriptions.subscribeConnection(setConnected);
     const unsubscribeEvents = subscriptions.subscribeSession(sid, (event) => {
       // The subscribe handshake is a control frame, not transcript. It must not
       // reach the reducer, and above all must not pass for traffic: the liveness
       // watchdog below measures SILENCE, and a reconnect is exactly when a frozen
       // stream has to stay visibly silent. The `subscription.ready` listener above
       // is the one that acts on it.
-      if (event.type === "subscription.ready") return;
+      if (event.type === 'subscription.ready') return;
       lastEventAt = Date.now();
       // The hub replays a still-streaming turn from its `turn.started` on every
       // (re)subscribe. When the bubble was seeded from the in-memory cache those
@@ -2773,9 +2567,8 @@ export function SessionScreen({
       // bubble (`turn.started` resets it) and re-append the same prose. `seq` is
       // the gateway's per-session journal cursor and is monotonic across stored
       // AND live-only frames, so anything at or below what we hold is a repeat.
-      if (lastRunningTurnSeqRef.current > enqueuedSeq)
-        enqueuedSeq = lastRunningTurnSeqRef.current;
-      if (typeof event.seq === "number") {
+      if (lastRunningTurnSeqRef.current > enqueuedSeq) enqueuedSeq = lastRunningTurnSeqRef.current;
+      if (typeof event.seq === 'number') {
         if (event.seq <= enqueuedSeq) return;
         enqueuedSeq = event.seq;
       }
@@ -2852,8 +2645,7 @@ export function SessionScreen({
       // Reveal one frame after the opening window is placed — but only when it
       // is already WHOLE. A session whose ramp is still running is revealed by
       // the effect below, once it stops repainting itself (OPENING_RAMP_MAX_MS).
-      if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length))
-        revealWhenSettled();
+      if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length)) revealWhenSettled();
       return;
     }
     // Not while the reader is dragging. `followingRef` is a measurement from the
@@ -2861,12 +2653,8 @@ export function SessionScreen({
     // frame — so catching up here would undo the drag AND re-assert following on
     // the way out, teaching the next chunk to do it again. Stand down and let
     // `handleScroll` say where the gesture actually left them.
-    if (
-      followingRef.current &&
-      !submitScrollActiveRef.current &&
-      !readerOwnsScroll()
-    )
-      scrollToEnd("auto");
+    if (followingRef.current && !submitScrollActiveRef.current && !readerOwnsScroll())
+      scrollToEnd('auto');
   }, [
     turns,
     visibleTurnCount,
@@ -2888,9 +2676,7 @@ export function SessionScreen({
     if (hydratedTurnCount >= target) return;
     let frame: number | null = window.requestAnimationFrame(() => {
       frame = null;
-      setHydratedTurnCount((count) =>
-        Math.min(target, count + HYDRATE_TURNS_PER_FRAME),
-      );
+      setHydratedTurnCount((count) => Math.min(target, count + HYDRATE_TURNS_PER_FRAME));
     });
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -2904,32 +2690,18 @@ export function SessionScreen({
   // the wait at OPENING_RAMP_MAX_MS.
   useEffect(() => {
     if (!loading || initialScrollPendingRef.current) return;
-    if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length))
-      revealWhenSettled();
-    const timer = window.setTimeout(
-      () => setLoading(false),
-      OPENING_RAMP_MAX_MS,
-    );
+    if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length)) revealWhenSettled();
+    const timer = window.setTimeout(() => setLoading(false), OPENING_RAMP_MAX_MS);
     return () => {
       cancelReveal();
       window.clearTimeout(timer);
     };
-  }, [
-    loading,
-    hydratedTurnCount,
-    visibleTurnCount,
-    turns.length,
-    revealWhenSettled,
-    cancelReveal,
-  ]);
+  }, [loading, hydratedTurnCount, visibleTurnCount, turns.length, revealWhenSettled, cancelReveal]);
 
   // The loading sheet can never outlive the watchdog (see LOADING_VEIL_MAX_MS).
   useEffect(() => {
     if (!loading) return;
-    const timer = window.setTimeout(
-      () => setLoading(false),
-      LOADING_VEIL_MAX_MS,
-    );
+    const timer = window.setTimeout(() => setLoading(false), LOADING_VEIL_MAX_MS);
     return () => window.clearTimeout(timer);
   }, [loading]);
 
@@ -2942,7 +2714,7 @@ export function SessionScreen({
   // window shrank around a reader who was pinned to the end.
   useEffect(() => {
     const viewport = scrollRef.current;
-    if (!viewport || typeof ResizeObserver === "undefined") return;
+    if (!viewport || typeof ResizeObserver === 'undefined') return;
     viewportHeightRef.current = viewport.clientHeight;
     shellHeightRef.current = shellViewportHeight();
 
@@ -2963,8 +2735,7 @@ export function SessionScreen({
         viewportHeightRef.current = height;
         const shell = shellViewportHeight();
         const shellMoved =
-          shellHeightRef.current === null ||
-          Math.abs(shell - shellHeightRef.current) > 1;
+          shellHeightRef.current === null || Math.abs(shell - shellHeightRef.current) > 1;
         shellHeightRef.current = shell;
         if (previous !== null && previous !== height) {
           // ...unless the reader is parked at the END. Those pixels come off the
@@ -2973,11 +2744,7 @@ export function SessionScreen({
           // until the next chunk snaps the view back by the whole accumulated
           // gap. Re-pin in the frame it grew — one line, not a leap.
           if (!shellMoved) composerOnly = !followingRef.current;
-          else if (
-            followingRef.current &&
-            !submitScrollActiveRef.current &&
-            !readerOwnsScroll()
-          ) {
+          else if (followingRef.current && !submitScrollActiveRef.current && !readerOwnsScroll()) {
             // Pin in THIS callback, not in the frame after it. A
             // `ResizeObserver` still runs before the browser paints, so writing
             // the end here lands in the very frame the keyboard shrank the
@@ -3062,7 +2829,7 @@ export function SessionScreen({
     // wraps to two lines on a phone, so a measurement here would size the
     // composer around text nobody typed.
     if (!textarea.value) {
-      if (textarea.style.height) textarea.style.height = "";
+      if (textarea.style.height) textarea.style.height = '';
       return;
     }
     // 80px is `max-h-20`, the class's own ceiling: measuring past it only wrote
@@ -3080,12 +2847,12 @@ export function SessionScreen({
     // Use the same typography and width without changing the live editor's height.
     // A readonly, hidden sibling does not participate in focus, spellcheck or layout
     // of the transcript. Remove it before returning, including on a failed measure.
-    const measure = textarea.ownerDocument.createElement("textarea");
+    const measure = textarea.ownerDocument.createElement('textarea');
     measure.className = `${textarea.className} invisible pointer-events-none absolute top-0 left-0`;
     measure.rows = 1;
     measure.readOnly = true;
     measure.tabIndex = -1;
-    measure.setAttribute("aria-hidden", "true");
+    measure.setAttribute('aria-hidden', 'true');
     measure.style.width = `${textarea.clientWidth}px`;
     measure.value = textarea.value;
     textarea.parentElement?.appendChild(measure);
@@ -3108,7 +2875,7 @@ export function SessionScreen({
   // height writes to avoid feedback.
   useEffect(() => {
     const textarea = composerRef.current;
-    if (!textarea || typeof ResizeObserver === "undefined") return;
+    if (!textarea || typeof ResizeObserver === 'undefined') return;
 
     const observer = new ResizeObserver(() => {
       const width = textarea.clientWidth;
@@ -3135,17 +2902,10 @@ export function SessionScreen({
       if (message.text || message.attachments.length > 0) {
         setPrompt((current) => current || message.text);
         setPastes((current) =>
-          current.size
-            ? current
-            : new Map(message.pastes.map((paste) => [paste.id, paste])),
+          current.size ? current : new Map(message.pastes.map((paste) => [paste.id, paste])),
         );
-        setAttachments((current) =>
-          current.length ? current : [...message.attachments],
-        );
-        pasteCounterRef.current = Math.max(
-          pasteCounterRef.current,
-          message.counter,
-        );
+        setAttachments((current) => (current.length ? current : [...message.attachments]));
+        pasteCounterRef.current = Math.max(pasteCounterRef.current, message.counter);
       }
       draftMessageReadyRef.current = true;
       setDraftMessageReady(true);
@@ -3176,7 +2936,7 @@ export function SessionScreen({
   // the editor, not a typing snapshot whose transition may have been interrupted.
   useEffect(() => {
     if (!draftMessageReady) return;
-    recordComposerDraft(composerRef.current?.value ?? "");
+    recordComposerDraft(composerRef.current?.value ?? '');
   }, [draftMessageReady, prompt, recordComposerDraft]);
 
   // Consume shared input after draft hydration, append it to existing text, and persist
@@ -3196,7 +2956,7 @@ export function SessionScreen({
       if (files.length) {
         void chooseAttachments(
           (limits) => attachmentsFromSharedFiles(files, limits),
-          "Nothing was shared.",
+          'Nothing was shared.',
         );
       }
     };
@@ -3239,17 +2999,11 @@ export function SessionScreen({
         maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       // A dismissed sheet is a decision, not a failure.
-      setComposerNotice(
-        sheetDismissed(cause) ? dismissedNotice : (cause as Error).message,
-      );
+      setComposerNotice(sheetDismissed(cause) ? dismissedNotice : (cause as Error).message);
     } finally {
       restoreKeyboard();
     }
@@ -3260,11 +3014,11 @@ export function SessionScreen({
       (limits: AttachmentLimits) => Promise<PickAttachmentResult>,
       string,
     ] =
-      source === "camera"
-        ? [capturePhotoAttachment, "No photo taken."]
-        : source === "files"
-          ? [pickDocumentAttachments, "No files selected."]
-          : [pickMediaAttachments, "No files selected."];
+      source === 'camera'
+        ? [capturePhotoAttachment, 'No photo taken.']
+        : source === 'files'
+          ? [pickDocumentAttachments, 'No files selected.']
+          : [pickMediaAttachments, 'No files selected.'];
     await chooseAttachments(pick, dismissedNotice);
   }
 
@@ -3285,12 +3039,8 @@ export function SessionScreen({
         maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice((cause as Error).message);
     }
@@ -3301,18 +3051,14 @@ export function SessionScreen({
     pickNative: pickNativeAttachments,
   };
   function removeAttachment(id: string) {
-    setAttachments((current) =>
-      current.filter((attachment) => attachment.id !== id),
-    );
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
     setComposerNotice(null);
   }
 
   function removePaste(id: number) {
     const paste = pastes.get(id);
     if (!paste) return;
-    setPrompt((current) =>
-      current.replace(paste.token, "").replace(/ {2,}/g, " "),
-    );
+    setPrompt((current) => current.replace(paste.token, '').replace(/ {2,}/g, ' '));
     setPastes((current) => {
       const next = new Map(current);
       next.delete(id);
@@ -3388,12 +3134,8 @@ export function SessionScreen({
         maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        [...current, ...result.attachments].slice(0, maximum),
-      );
-      setComposerNotice(
-        result.rejected.length ? result.rejected.join(" · ") : null,
-      );
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice((cause as Error).message);
     }
@@ -3410,10 +3152,9 @@ export function SessionScreen({
     async (image: Blob, filename: string) => {
       const limits = capabilities?.features.attachments;
       const maximum = limits?.max_files ?? 8;
-      if (attachments.length >= maximum)
-        throw new Error(`You can attach up to ${maximum} files`);
+      if (attachments.length >= maximum) throw new Error(`You can attach up to ${maximum} files`);
       const result = await attachmentsFromFiles(
-        [new File([image], filename, { type: image.type || "image/png" })],
+        [new File([image], filename, { type: image.type || 'image/png' })],
         {
           maxFiles: 1,
           maxFileBytes: limits?.max_file_bytes ?? 25 * 1024 * 1024,
@@ -3423,10 +3164,7 @@ export function SessionScreen({
         },
       );
       const attached = result.attachments[0];
-      if (!attached)
-        throw new Error(
-          result.rejected[0] ?? "This page could not be attached",
-        );
+      if (!attached) throw new Error(result.rejected[0] ?? 'This page could not be attached');
       setAttachments((current) => [...current, attached].slice(0, maximum));
       setComposerNotice(`${attached.filename} is attached to your message`);
     },
@@ -3448,9 +3186,7 @@ export function SessionScreen({
         maxAudioBytes: limits?.max_audio_bytes,
         mediaTypes: limits?.media_types,
       });
-      setAttachments((current) =>
-        current.map((entry) => (entry.id === id ? next : entry)),
-      );
+      setAttachments((current) => current.map((entry) => (entry.id === id ? next : entry)));
       setComposerNotice(null);
     } catch (cause) {
       setComposerNotice(`${target.filename}: ${(cause as Error).message}`);
@@ -3469,7 +3205,7 @@ export function SessionScreen({
     // the iOS/Android WKWebView, which surface pasted media as clipboard files.
     // The gateway's own list is the authority; this only keeps text out.
     const mediaFiles = Array.from(event.clipboardData.files).filter(
-      (file) => file.type.startsWith("image/") || isVideoMediaType(file.type),
+      (file) => file.type.startsWith('image/') || isVideoMediaType(file.type),
     );
     if (mediaFiles.length) {
       event.preventDefault();
@@ -3477,9 +3213,7 @@ export function SessionScreen({
       return;
     }
 
-    const content = event.clipboardData
-      .getData("text/plain")
-      .replace(/\r\n?/g, "\n");
+    const content = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
     if (!content || !shouldCollapsePaste(content)) return;
     event.preventDefault();
 
@@ -3507,10 +3241,8 @@ export function SessionScreen({
       return;
     }
 
-    if (voiceModel?.status === "downloading") {
-      setComposerNotice(
-        "Voice model is still downloading — dictation starts when it lands.",
-      );
+    if (voiceModel?.status === 'downloading') {
+      setComposerNotice('Voice model is still downloading — dictation starts when it lands.');
       return;
     }
 
@@ -3527,15 +3259,14 @@ export function SessionScreen({
         // The mic can die without ending the turn: suspension, a call, another
         // app. Close the sentence on the spot instead of leaving a recorder
         // nobody will ever stop.
-        onInterrupted: (reason) =>
-          void finishVoiceRef.current({ notice: reason }),
+        onInterrupted: (reason) => void finishVoiceRef.current({ notice: reason }),
       });
       // A gateway we cannot REACH is not a reason to refuse dictation: capture,
       // resampling and WAV encoding are entirely local, and the result queues in
       // the voice outbox until the link is back. Only a gateway that ANSWERS
       // "not ready" can stop a recording.
       let model = voiceModel;
-      if (model?.status !== "ready") {
+      if (model?.status !== 'ready') {
         let reachable = true;
         try {
           const engine = await chosenAsrEngine(capabilities);
@@ -3546,25 +3277,25 @@ export function SessionScreen({
         }
         if (!reachable) {
           setComposerNotice(
-            "Gateway unreachable — recording anyway; it transcribes once it answers.",
+            'Gateway unreachable — recording anyway; it transcribes once it answers.',
           );
-        } else if (model && model.status !== "ready") {
+        } else if (model && model.status !== 'ready') {
           await recording.cancel();
           setComposerNotice(
-            model.status === "downloading"
-              ? "Downloading the voice model — dictation starts when it lands."
-              : model.status === "failed"
-                ? `Voice model failed${model.error ? ` · ${model.error}` : ""}`
-                : "Voice model is not ready yet.",
+            model.status === 'downloading'
+              ? 'Downloading the voice model — dictation starts when it lands.'
+              : model.status === 'failed'
+                ? `Voice model failed${model.error ? ` · ${model.error}` : ''}`
+                : 'Voice model is not ready yet.',
           );
           return;
         }
       }
       recordingRef.current = recording;
-      setVoicePhase("recording");
+      setVoicePhase('recording');
     } catch (cause) {
       await recording?.cancel().catch(() => {});
-      setVoicePhase("idle");
+      setVoicePhase('idle');
       setComposerNotice((cause as Error).message);
     }
   }
@@ -3573,47 +3304,42 @@ export function SessionScreen({
     // iOS may commit an autocorrection into the native textarea before React has
     // delivered the matching change event. Read the control at the press boundary
     // so the turn carries the text the operator can actually see.
-    const authoredRequest = (
-      voiceRequest ??
-      composerRef.current?.value ??
-      prompt
-    ).trim();
+    const authoredRequest = (voiceRequest ?? composerRef.current?.value ?? prompt).trim();
     const request =
       expandPastePlaceholders(authoredRequest, pastes) ||
-      (attachments.length ? "Please inspect the attached file(s)." : "");
+      (attachments.length ? 'Please inspect the attached file(s).' : '');
     // The fallback exists only to give the model a non-blank turn. The transcript
     // shows what the human actually authored: for attachment-only turns, the media.
     const displayRequest = collapsePastePlaceholders(authoredRequest, pastes);
-    if (!request || voicePhase !== "idle") return;
+    if (!request || voicePhase !== 'idle') return;
     // Capture the activation that authored this turn before any network await.
     // Leave/session navigation invalidates it, so a late POST response cannot
     // register an abandoned turn for playback in a newly opened voice mode.
     const voiceLease = voiceProjection ? voiceLeaseRef.current : null;
 
-    const [command = "", ...argParts] = authoredRequest.split(/\s+/);
-    const args = argParts.join(" ");
+    const [command = '', ...argParts] = authoredRequest.split(/\s+/);
+    const args = argParts.join(' ');
 
-    if (command === "/help") {
-      setPrompt("/");
+    if (command === '/help') {
+      setPrompt('/');
       setSlashDismissed(false);
       setSlashIndex(0);
       return;
     }
 
-    if (command === "/sessions") {
-      setPrompt("");
+    if (command === '/sessions') {
+      setPrompt('');
       onBack();
       return;
     }
 
-    if (command === "/new-session") {
-      setPrompt("");
+    if (command === '/new-session') {
+      setPrompt('');
       setError(null);
       setRunning(true);
       try {
-        const created = await client.createSession({ channel: "web" });
-        if (command === "/new-session" && args)
-          await client.submitTurn(created.id, args);
+        const created = await client.createSession({ channel: 'web' });
+        if (command === '/new-session' && args) await client.submitTurn(created.id, args);
         onOpenSession(created.id, true);
       } catch (cause) {
         setPrompt(request);
@@ -3629,7 +3355,7 @@ export function SessionScreen({
     if (running || runningTurn || queued.length) {
       const pendingAttachments = attachments;
       const pendingPastes = pastes;
-      setPrompt("");
+      setPrompt('');
       setAttachments([]);
       setPastes(new Map());
       setComposerNotice(null);
@@ -3650,8 +3376,7 @@ export function SessionScreen({
           turnFeatures: turnFeaturesFor(voiceProjection),
         });
         const queuedId = submitted.turn_id;
-        if (voiceProjection)
-          voiceOwnershipRef.current.claim(queuedId, voiceLease);
+        if (voiceProjection) voiceOwnershipRef.current.claim(queuedId, voiceLease);
         rememberSent(queuedId, sent);
         // Keep the AUTHORED shape (raw text, pastes, image bytes) so a cancel can
         // hand it straight back to the composer instead of losing it with the
@@ -3670,10 +3395,10 @@ export function SessionScreen({
           const started: RunningTurn = {
             id: queuedId,
             request: displayRequest,
-            answer: "",
+            answer: '',
             iterations: [],
             startedAt: Date.now(),
-            status: "running",
+            status: 'running',
             attachments: sent.length ? sent : undefined,
           };
           runningTurnRef.current = started;
@@ -3683,9 +3408,7 @@ export function SessionScreen({
       } catch (cause) {
         setPrompt(authoredRequest);
         setPastes(pendingPastes);
-        setAttachments((current) =>
-          current.length ? current : pendingAttachments,
-        );
+        setAttachments((current) => (current.length ? current : pendingAttachments));
         setError((cause as Error).message);
         requestAnimationFrame(() => composerRef.current?.focus());
       }
@@ -3698,7 +3421,7 @@ export function SessionScreen({
     // "queued", this submission never owned the rail and whatever was streaming
     // must come back rather than stay overwritten.
     const previousLive = runningTurn;
-    setPrompt("");
+    setPrompt('');
     setAttachments([]);
     setPastes(new Map());
     setComposerNotice(null);
@@ -3719,10 +3442,10 @@ export function SessionScreen({
     // live at all.
     const optimistic: RunningTurn = {
       request: displayRequest,
-      answer: "",
+      answer: '',
       iterations: [],
       startedAt: Date.now(),
-      status: "running",
+      status: 'running',
       attachments: sent.length ? sent : undefined,
     };
     runningTurnRef.current = optimistic;
@@ -3738,8 +3461,7 @@ export function SessionScreen({
         turnFeatures: turnFeaturesFor(voiceProjection),
       });
       const submittedId = submitted.turn_id;
-      if (voiceProjection)
-        voiceOwnershipRef.current.claim(submittedId, voiceLease);
+      if (voiceProjection) voiceOwnershipRef.current.claim(submittedId, voiceLease);
       rememberSent(submittedId, sent);
       if (isQueuedSubmission(submitted)) {
         // The gateway QUEUED us: a turn started between our liveness read and this
@@ -3770,7 +3492,7 @@ export function SessionScreen({
           if (!turn) return turn;
           const next: RunningTurn = turn.id
             ? { ...turn, id: submittedId }
-            : { ...turn, id: submittedId, status: "running" };
+            : { ...turn, id: submittedId, status: 'running' };
           runningTurnRef.current = next;
           return next;
         });
@@ -3782,9 +3504,7 @@ export function SessionScreen({
       setRunningTurn(null);
       setPrompt(authoredRequest);
       setPastes(pendingPastes);
-      setAttachments((current) =>
-        current.length ? current : pendingAttachments,
-      );
+      setAttachments((current) => (current.length ? current : pendingAttachments));
       setError((cause as Error).message);
       requestAnimationFrame(() => composerRef.current?.focus());
     } finally {
@@ -3808,9 +3528,7 @@ export function SessionScreen({
     // its own — stealing it into the composer would send it twice.
     const backlog = queued;
     setRunningTurn((turn) => {
-      const next = turn
-        ? { ...turn, cancelling: true, progress: undefined }
-        : turn;
+      const next = turn ? { ...turn, cancelling: true, progress: undefined } : turn;
       runningTurnRef.current = next;
       return next;
     });
@@ -3821,8 +3539,7 @@ export function SessionScreen({
       const liveTid = runningTurnRef.current?.id;
       if (liveTid) await client.cancelTurn(sid, liveTid);
       else await client.cancelCurrentTurn(sid);
-      for (const row of backlog)
-        restoreCancelledQueued(row.turnId, row.request);
+      for (const row of backlog) restoreCancelledQueued(row.turnId, row.request);
       requestAnimationFrame(() => composerRef.current?.focus());
     } catch (cause) {
       // The stop never landed, so the affordance has to come back.
@@ -3840,7 +3557,7 @@ export function SessionScreen({
     const viewport = scrollRef.current;
     if (!(target instanceof Element) || !viewport) return;
 
-    const disclosure = target.closest("summary, [data-disclosure-toggle]");
+    const disclosure = target.closest('summary, [data-disclosure-toggle]');
     if (!disclosure || !viewport.contains(disclosure)) return;
 
     const anchorTop = disclosure.getBoundingClientRect().top;
@@ -3912,11 +3629,7 @@ export function SessionScreen({
       const readerOwns = readerOwnsScroll();
       // Native WebKit momentum can outlive touchcancel and the gesture grace. A real
       // upward move still proves retreat; the end-aware reading excludes a clamp.
-      const readerRetreated = readerRetreatedFrom(
-        viewport,
-        previousTop,
-        previousBottom,
-      );
+      const readerRetreated = readerRetreatedFrom(viewport, previousTop, previousBottom);
       // Being at the end IS following; leaving it is only ever the reader's own
       // doing. `reader-gesture.ts` is the one place that knows the difference,
       // and a scroll event raised by growth, by a clamp or by one of this
@@ -3930,8 +3643,7 @@ export function SessionScreen({
       )
         aimedEndRef.current = viewport.scrollHeight;
       if (readerRetreated) followingRef.current = false;
-      else if (arrivedAtEnd(viewport, aimedEndRef.current))
-        followingRef.current = true;
+      else if (arrivedAtEnd(viewport, aimedEndRef.current)) followingRef.current = true;
       else if (readerOwns) followingRef.current = false;
       syncJump();
       // Keep the rotation anchor fresh: iOS can deliver the orientation signal
@@ -3944,30 +3656,29 @@ export function SessionScreen({
   useEffect(() => {
     if (!running) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== 'Escape') return;
       event.preventDefault();
       cancelRef.current();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, [running]);
 
   const slashText = prompt.trimStart();
   const slashOpen =
     !slashDismissed &&
-    slashText.startsWith("/") &&
-    !slashText.startsWith("//") &&
-    !slashText.includes("\n");
+    slashText.startsWith('/') &&
+    !slashText.startsWith('//') &&
+    !slashText.includes('\n');
   const slashQuery = slashText.toLowerCase();
   const slashMatches = slashOpen
     ? slashCommands.filter((command) => slashCommandMatches(command, slashQuery))
     : [];
-  const selectedSlash =
-    slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];
+  const selectedSlash = slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];
 
   function completeSlash(command: SlashCommand) {
-    const noArgs = new Set(["/help", "/sessions"]);
-    const completed = command.name + (noArgs.has(command.name) ? "" : " ");
+    const noArgs = new Set(['/help', '/sessions']);
+    const completed = command.name + (noArgs.has(command.name) ? '' : ' ');
     setPrompt(completed);
     setSlashIndex(0);
     setSlashDismissed(noArgs.has(command.name));
@@ -3987,14 +3698,11 @@ export function SessionScreen({
   // served by GET /v1/sessions/:sid/suggest. The trigger smarts live here (never
   // the gateway), so a literal `@@` is never endangered.
   const caretPos = Math.min(caret, prompt.length);
-  const fileMention = !slashOpen
-    ? fileMentionAt(prompt.slice(0, caretPos))
-    : null;
+  const fileMention = !slashOpen ? fileMentionAt(prompt.slice(0, caretPos)) : null;
   const fileOpen = fileMention !== null && !fileDismissed;
-  const fileQuery = fileMention?.query ?? "";
+  const fileQuery = fileMention?.query ?? '';
   const fileMatches = fileOpen ? fileSuggestions : [];
-  const selectedFile =
-    fileMatches[Math.min(fileIndex, Math.max(0, fileMatches.length - 1))];
+  const selectedFile = fileMatches[Math.min(fileIndex, Math.max(0, fileMatches.length - 1))];
 
   useEffect(() => {
     // `fileMatches` above already renders nothing while the menu is closed, so
@@ -4033,15 +3741,13 @@ export function SessionScreen({
     });
   }
 
-  const activePastes = Array.from(pastes.values()).filter((paste) =>
-    prompt.includes(paste.token),
-  );
+  const activePastes = Array.from(pastes.values()).filter((paste) => prompt.includes(paste.token));
   const responseControls: ComposerResponseControlsModel = {
     model: {
-      value: selectedModel ?? "model",
+      value: selectedModel ?? 'model',
       title: selectedModel
-        ? `${modelPref?.provider ?? defaultPref?.provider ?? ""}/${selectedModel}`
-        : "Change provider and model",
+        ? `${modelPref?.provider ?? defaultPref?.provider ?? ''}/${selectedModel}`
+        : 'Change provider and model',
       choose: () => setRouterOpen(true),
     },
     reasoning:
@@ -4057,7 +3763,7 @@ export function SessionScreen({
       verbosityAvailable && (verbosityAvailable.choices?.length ?? 0) > 0
         ? {
             label: verbosityAvailable.label,
-            value: verbosityAvailable.value ?? "default",
+            value: verbosityAvailable.value ?? 'default',
             busy: verbosityBusy,
             cycle: cycleVerbosity,
           }
@@ -4070,7 +3776,7 @@ export function SessionScreen({
         }
       : undefined,
   };
-  const title = session?.title?.trim() || "Chat";
+  const title = session?.title?.trim() || 'Chat';
   const runningTurnId = runningTurn?.id;
   // Which turns can be PAINTED at all, measured BEFORE the render window.
   //
@@ -4107,10 +3813,7 @@ export function SessionScreen({
   );
   const visibleStart = Math.max(0, paintableTurns.length - visibleTurnCount);
   // What is mounted this frame: the window, clamped by the hydration ramp.
-  const renderStart = Math.max(
-    visibleStart,
-    paintableTurns.length - hydratedTurnCount,
-  );
+  const renderStart = Math.max(visibleStart, paintableTurns.length - hydratedTurnCount);
   // Everything older than the first bubble on screen, wherever it lives.
   const earlierTotal = visibleStart + earlierRemaining;
   const visibleTurns = useMemo(
@@ -4124,13 +3827,12 @@ export function SessionScreen({
   // A persisted row can be stale relative to the gateway terminal frame. The
   // gateway's current-turn state is the sole liveness authority; transcript rows
   // are durable content and never keep work alive on their own.
-  const turnsSettled =
-    !running && (!runningTurn || runningTurn.status !== "running");
+  const turnsSettled = !running && (!runningTurn || runningTurn.status !== 'running');
   // What the composer may advertise as in-flight. `running` on its own is a latch:
   // set optimistically at submit, cleared by the terminal frame or the 5s
   // reconcile. Pairing it with the bubble's own status means a settled turn can
   // never leave a spinner and a growing elapsed counter in the footer.
-  const activeWork = running && (!runningTurn || runningTurn.status === "running");
+  const activeWork = running && (!runningTurn || runningTurn.status === 'running');
   // Only ONE turn can be in flight per session, and when a running-turn bubble exists it
   // owns it. With a queue draining, the gateway starts the next turn while the
   // persisted row of the PREVIOUS one still reads `running` — rendered naively
@@ -4158,7 +3860,7 @@ export function SessionScreen({
   const runningTurnNeedsAttachmentRefresh =
     !runningTurnAttachments?.length ||
     runningTurnAttachments.some(
-      (row) => row.media_type?.startsWith("audio/") && !row.transcription,
+      (row) => row.media_type?.startsWith('audio/') && !row.transcription,
     );
   useEffect(() => {
     if (!runningTurnId || !runningTurnNeedsAttachmentRefresh) return;
@@ -4167,19 +3869,14 @@ export function SessionScreen({
     let timer: number | undefined;
     const refresh = async () => {
       try {
-        const rows = await client.fetchTurnAttachments(
-          sid,
-          runningTurnId,
-          controller.signal,
-          true,
-        );
+        const rows = await client.fetchTurnAttachments(sid, runningTurnId, controller.signal, true);
         if (cancelled || !rows.length) return;
         setFetchedRunningTurnAttachments({ id: runningTurnId, rows });
         const pending = rows.some(
           (row) =>
-            row.media_type?.startsWith("audio/") &&
+            row.media_type?.startsWith('audio/') &&
             !row.transcription &&
-            (!row.transcription_status || row.transcription_status === "pending"),
+            (!row.transcription_status || row.transcription_status === 'pending'),
         );
         if (pending) timer = window.setTimeout(refresh, 1000);
       } catch {
@@ -4217,7 +3914,7 @@ export function SessionScreen({
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
-        const request = turn.request ?? "";
+        const request = turn.request ?? '';
         // A turn skips its own paint, in `AssistantMessage`
         // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
         // stands in for has to be the one that turn MEASURED, and a wrapper
@@ -4225,29 +3922,20 @@ export function SessionScreen({
         // live here is what rendered white placeholder bands and shifted the
         // scroll position when you flew up into a turn on iOS.
         return (
-          <div
-            className={index === 0 ? "" : "mt-10"}
-            key={turn.turn_id}
-          >
+          <div className={index === 0 ? '' : 'mt-10'} key={turn.turn_id}>
             {(request || (turn.attachments?.length ?? 0) > 0) && (
-              <UserMessage attachments={turn.attachments}>
-                {request}
-              </UserMessage>
+              <UserMessage attachments={turn.attachments}>{request}</UserMessage>
             )}
             <AssistantMessage
               agentName={session?.agent_name}
               turn={turn}
-              onFork={
-                turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined
-              }
+              onFork={turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined}
               isForking={forkingTurnId === turn.turn_id}
-              settled={
-                turnsSettled || hasRunningTurn || index < visibleTurns.length - 1
-              }
+              settled={turnsSettled || hasRunningTurn || index < visibleTurns.length - 1}
               // The row that just replaced the running-turn bubble inherits a trace the
               // reader is looking at: it mounts whole instead of ramping the
               // transcript back down to a screenful and up again.
-              whole={handedOverRowId !== "" && rowId(turn) === handedOverRowId}
+              whole={handedOverRowId !== '' && rowId(turn) === handedOverRowId}
               client={client}
               sid={sid}
               onOpenAttachment={openLinkedArtifact}
@@ -4288,26 +3976,20 @@ export function SessionScreen({
     // A screenshot just sent lives only in this device's memory until the turn
     // is persisted: the live rail and the queue tray ship no attachment bytes.
     const liveAttachments =
-      (fetchedRunningTurnAttachments &&
-      fetchedRunningTurnAttachments.id === runningTurnId
+      (fetchedRunningTurnAttachments && fetchedRunningTurnAttachments.id === runningTurnId
         ? fetchedRunningTurnAttachments.rows
         : undefined) ??
       runningTurn.attachments ??
       client.cachedSentAttachments(sid, runningTurn.id);
     return (
-      <div
-        className={`${turns.length ? "mt-10 " : ""}${transcriptEnterClass}`}
-        data-live="true"
-      >
+      <div className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`} data-live="true">
         {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
-          <UserMessage attachments={liveAttachments}>
-            {runningTurn.request}
-          </UserMessage>
+          <UserMessage attachments={liveAttachments}>{runningTurn.request}</UserMessage>
         )}
         <AssistantMessage
           agentName={session?.agent_name}
           turn={{
-            turn_id: runningTurn.id ?? "live",
+            turn_id: runningTurn.id ?? 'live',
             request: runningTurn.request,
             status: runningTurn.status,
             iterations: runningTurn.iterations,
@@ -4316,20 +3998,20 @@ export function SessionScreen({
               (runningTurn.answer
                 ? [
                     {
-                      id: "live-answer",
-                      type: "prose",
+                      id: 'live-answer',
+                      type: 'prose',
                       markdown: runningTurn.answer,
                     },
                   ]
                 : []),
           }}
-          streaming={runningTurn.status === "running"}
+          streaming={runningTurn.status === 'running'}
           progressLabel={runningTurnPhase(
             runningTurn,
             connected,
             workspaceRoots,
             watching,
-            session?.agent_name ?? "Vis",
+            session?.agent_name ?? 'Vis',
           )}
           startedAt={runningTurn.startedAt}
           client={client}
@@ -4370,9 +4052,7 @@ export function SessionScreen({
   const loadEarlierTurns = () => {
     if (visibleStart > 0) {
       anchorPrepend();
-      setVisibleTurnCount((count) =>
-        Math.min(turns.length, count + INITIAL_VISIBLE_TURNS),
-      );
+      setVisibleTurnCount((count) => Math.min(turns.length, count + INITIAL_VISIBLE_TURNS));
       return;
     }
     if (loadingEarlier || earlierRemaining <= 0) return;
@@ -4384,9 +4064,7 @@ export function SessionScreen({
         if (!older) return;
         anchorPrepend();
         // Keep every bubble that was on screen, plus the page that just landed.
-        setVisibleTurnCount(
-          (count) => count + Math.max(0, older.length - held),
-        );
+        setVisibleTurnCount((count) => count + Math.max(0, older.length - held));
         setTurns(older);
         setEarlierRemaining(client.transcriptWindow(sid).offset);
       })
@@ -4395,7 +4073,7 @@ export function SessionScreen({
   };
 
   useEffect(() => {
-    if (!pendingVoiceSend || voicePhase !== "idle") return;
+    if (!pendingVoiceSend || voicePhase !== 'idle') return;
     const text = pendingVoiceSend;
     setPendingVoiceSend(null);
     void send(text, true);
@@ -4413,7 +4091,7 @@ export function SessionScreen({
       const recording = recordingRef.current;
       recordingRef.current = null;
       await recording.cancel().catch(() => undefined);
-      setVoicePhase("idle");
+      setVoicePhase('idle');
     }
     await endVoiceAudioSession();
   };
@@ -4427,14 +4105,8 @@ export function SessionScreen({
   // replaced started recording in the same gesture, which is right for a menu
   // and wrong for a hold — holding is how you change modes, not how you talk.
   const enterVoiceConversation = async () => {
-    if (
-      Boolean(composerRef.current?.value.trim()) ||
-      attachments.length > 0 ||
-      pastes.size > 0
-    ) {
-      setComposerNotice(
-        "Send or clear the current message before starting voice conversation.",
-      );
+    if (Boolean(composerRef.current?.value.trim()) || attachments.length > 0 || pastes.size > 0) {
+      setComposerNotice('Send or clear the current message before starting voice conversation.');
       return;
     }
     voiceConversationRef.current = true;
@@ -4451,7 +4123,7 @@ export function SessionScreen({
   const switchVoiceMode = async () => {
     if (voiceConversationRef.current) {
       await leaveVoiceConversation();
-      setComposerNotice("Dictation · tap the microphone to write into the box");
+      setComposerNotice('Dictation · tap the microphone to write into the box');
       return;
     }
     await enterVoiceConversation();
@@ -4494,68 +4166,68 @@ export function SessionScreen({
     await toggleVoice();
   };
 
-  const renderVoiceControl = (surface: "strip" | "overlay" = "strip") =>
+  const renderVoiceControl = (surface: 'strip' | 'overlay' = 'strip') =>
     voiceSupported ? (
-    <ComposerButton
-      tone={
-        voicePhase === "recording" || voiceSpeaking
-          ? "recording"
-          : voiceConversation
-            ? "voice"
-            : "quiet"
-      }
-      surface={surface}
-      isHolding={voiceModeHolding}
-      onMouseDown={keepKeyboard}
-      onPointerDown={beginVoiceModeHold}
-      onPointerUp={cancelVoiceModeHold}
-      onPointerLeave={cancelVoiceModeHold}
-      onPointerCancel={cancelVoiceModeHold}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        cancelVoiceModeHold();
-        void switchVoiceMode();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" && event.shiftKey) {
-          event.preventDefault();
-          void switchVoiceMode();
-        }
-      }}
-      onClick={() => {
-        // iOS still delivers the click that ended a long press, and acting on it
-        // would speak the moment the mode changed.
-        if (voiceModeSwitchedRef.current) {
-          voiceModeSwitchedRef.current = false;
-          return;
-        }
-        void (voiceConversation ? speakVoiceTurn() : toggleVoice());
-      }}
-      disabled={
-        voicePhase === "transcribing" ||
-        voiceModel?.status === "downloading" ||
-        (voiceConversation && running && !voiceSpeaking)
-      }
-      label={
-        voiceSpeaking
-          ? "Stop speaking — hold to switch to dictation"
-          : voicePhase === "recording"
-            ? voiceConversation
-              ? "Finish voice utterance — hold to switch to dictation"
-              : "Finish dictation — hold to switch to voice conversation"
+      <ComposerButton
+        tone={
+          voicePhase === 'recording' || voiceSpeaking
+            ? 'recording'
             : voiceConversation
-              ? "Start voice utterance — hold to switch to dictation"
-              : "Dictate message — hold to switch to voice conversation"
-      }
-      title={
-        voiceConversation
-          ? "Voice conversation — hold to switch to dictation"
-          : "Dictate message — hold to switch to voice conversation"
-      }
-    >
-      {voiceConversation ? <VoiceLoopIcon /> : <MicIcon />}
-    </ComposerButton>
-  ) : null;
+              ? 'voice'
+              : 'quiet'
+        }
+        surface={surface}
+        isHolding={voiceModeHolding}
+        onMouseDown={keepKeyboard}
+        onPointerDown={beginVoiceModeHold}
+        onPointerUp={cancelVoiceModeHold}
+        onPointerLeave={cancelVoiceModeHold}
+        onPointerCancel={cancelVoiceModeHold}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          cancelVoiceModeHold();
+          void switchVoiceMode();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && event.shiftKey) {
+            event.preventDefault();
+            void switchVoiceMode();
+          }
+        }}
+        onClick={() => {
+          // iOS still delivers the click that ended a long press, and acting on it
+          // would speak the moment the mode changed.
+          if (voiceModeSwitchedRef.current) {
+            voiceModeSwitchedRef.current = false;
+            return;
+          }
+          void (voiceConversation ? speakVoiceTurn() : toggleVoice());
+        }}
+        disabled={
+          voicePhase === 'transcribing' ||
+          voiceModel?.status === 'downloading' ||
+          (voiceConversation && running && !voiceSpeaking)
+        }
+        label={
+          voiceSpeaking
+            ? 'Stop speaking — hold to switch to dictation'
+            : voicePhase === 'recording'
+              ? voiceConversation
+                ? 'Finish voice utterance — hold to switch to dictation'
+                : 'Finish dictation — hold to switch to voice conversation'
+              : voiceConversation
+                ? 'Start voice utterance — hold to switch to dictation'
+                : 'Dictate message — hold to switch to voice conversation'
+        }
+        title={
+          voiceConversation
+            ? 'Voice conversation — hold to switch to dictation'
+            : 'Dictate message — hold to switch to voice conversation'
+        }
+      >
+        {voiceConversation ? <VoiceLoopIcon /> : <MicIcon />}
+      </ComposerButton>
+    ) : null;
 
   const headerModel: SessionHeaderModel = {
     title,
@@ -4579,11 +4251,7 @@ export function SessionScreen({
           {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
            is answered. The prompt portals its own overlay, so it sits here purely
            to be mounted for this session — the TUI shows the same form. */}
-          <HumanInputPrompt
-            client={client}
-            subscriptions={subscriptions}
-            sid={sid}
-          />
+          <HumanInputPrompt client={client} subscriptions={subscriptions} sid={sid} />
           <SessionHeader model={headerModel} commands={headerCommands} sidebar={sidebar} />
 
           {routerOpen && (
@@ -4615,9 +4283,7 @@ export function SessionScreen({
                 sid={sid}
                 artifacts={artifacts}
                 initialArtifact={linkedArtifact}
-                voiceControl={
-                  voiceConversation ? renderVoiceControl("overlay") : undefined
-                }
+                voiceControl={voiceConversation ? renderVoiceControl('overlay') : undefined}
                 onClose={closeArtifacts}
               />
             )}
@@ -4645,8 +4311,8 @@ export function SessionScreen({
                 ref={transcriptRef}
                 className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
                   !turns.length && !runningTurn
-                    ? "flex flex-col pb-4 sm:pb-6"
-                    : "flex flex-col justify-end pb-10"
+                    ? 'flex flex-col pb-4 sm:pb-6'
+                    : 'flex flex-col justify-end pb-10'
                 }`}
               >
                 {error && <Banner kind="err">{error}</Banner>}
@@ -4669,8 +4335,7 @@ export function SessionScreen({
                           What would you like to work on?
                         </h2>
                         <p className="mt-1 text-body text-dialog-hint">
-                          Describe a task, ask a question, or add a screenshot to
-                          get started.
+                          Describe a task, ask a question, or add a screenshot to get started.
                         </p>
                       </div>
                     </div>
@@ -4687,7 +4352,7 @@ export function SessionScreen({
                         disabled={loadingEarlier}
                       >
                         {loadingEarlier
-                          ? "Loading earlier…"
+                          ? 'Loading earlier…'
                           : visibleStart > 0
                             ? `Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
                             : `Load earlier · ${earlierTotal} remaining`}
@@ -4732,7 +4397,7 @@ export function SessionScreen({
             the caret and the queued turns survive a look at what the session made. */}
           <footer
             style={safeBottomStyle}
-            className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 ${artifactsOpen ? "hidden" : ""}`}
+            className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 ${artifactsOpen ? 'hidden' : ''}`}
           >
             {/* Anchored to the footer's top edge, so it always clears the queue
               tray and composer no matter how tall they grow. Hidden while a
@@ -4740,7 +4405,7 @@ export function SessionScreen({
             {showJump && !fileMatches.length && !slashMatches.length && (
               <JumpToLatestButton
                 className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2"
-                onClick={() => scrollToEnd("smooth")}
+                onClick={() => scrollToEnd('smooth')}
               />
             )}
 
@@ -4775,21 +4440,21 @@ export function SessionScreen({
 
               {(composerNotice ||
                 voiceConversation ||
-                voicePhase !== "idle" ||
-                voiceModel?.status === "downloading" ||
-                (voiceRequested && voiceModel?.status !== "ready")) && (
+                voicePhase !== 'idle' ||
+                voiceModel?.status === 'downloading' ||
+                (voiceRequested && voiceModel?.status !== 'ready')) && (
                 <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
-                  {voicePhase === "recording" ? (
+                  {voicePhase === 'recording' ? (
                     <>
-                      <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{" "}
+                      <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{' '}
                       {voiceConversation
-                        ? "Voice conversation · Listening · tap the microphone again to finish"
-                        : "Listening · tap the microphone again to finish"}
+                        ? 'Voice conversation · Listening · tap the microphone again to finish'
+                        : 'Listening · tap the microphone again to finish'}
                     </>
-                  ) : voicePhase === "transcribing" ? (
+                  ) : voicePhase === 'transcribing' ? (
                     <>
-                      <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{" "}
-                      {voiceConversation && "Voice conversation · "}
+                      <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{' '}
+                      {voiceConversation && 'Voice conversation · '}
                       {voiceProgressLabel(voiceProgress)}
                     </>
                   ) : composerNotice ? (
@@ -4797,24 +4462,22 @@ export function SessionScreen({
                   ) : voiceSpeaking ? (
                     <>Voice conversation · Speaking · tap the microphone to stop</>
                   ) : voiceConversation && running ? (
-                    <>Voice conversation · {session?.agent_name ?? "Vis"} is working</>
+                    <>Voice conversation · {session?.agent_name ?? 'Vis'} is working</>
                   ) : voiceConversation ? (
                     <>Voice conversation · Ready · tap the microphone to speak</>
-                  ) : voiceModel?.status === "downloading" ? (
+                  ) : voiceModel?.status === 'downloading' ? (
                     <>
-                      {voiceModel.phase === "extracting"
-                        ? "Unpacking voice model"
-                        : "Downloading voice model"}
-                      {voiceModel.progress == null
-                        ? "…"
-                        : ` · ${Math.round(voiceModel.progress)}%`}
+                      {voiceModel.phase === 'extracting'
+                        ? 'Unpacking voice model'
+                        : 'Downloading voice model'}
+                      {voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}
                     </>
-                  ) : voiceModel?.status === "failed" ? (
+                  ) : voiceModel?.status === 'failed' ? (
                     <>
                       Voice model failed
-                      {voiceModel.error ? ` · ${voiceModel.error}` : ""}
+                      {voiceModel.error ? ` · ${voiceModel.error}` : ''}
                     </>
-                  ) : voiceModel?.status === "absent" ? (
+                  ) : voiceModel?.status === 'absent' ? (
                     <>Tap the microphone to install the local voice model</>
                   ) : null}
                 </div>
@@ -4823,14 +4486,10 @@ export function SessionScreen({
               <div className="flex items-end gap-1 p-1">
                 <ComposerAttachmentPicker
                   accept={(
-                    capabilities?.features.attachments.media_types ?? [
-                      "image/*",
-                      "video/*",
-                    ]
-                  ).join(",")}
+                    capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']
+                  ).join(',')}
                   disabled={
-                    attachments.length >=
-                    (capabilities?.features.attachments.max_files ?? 8)
+                    attachments.length >= (capabilities?.features.attachments.max_files ?? 8)
                   }
                   commands={attachmentCommands}
                 />
@@ -4851,23 +4510,23 @@ export function SessionScreen({
                   spellCheck={false}
                   autoCorrect="off"
                   autoCapitalize="none"
-                  disabled={voicePhase === "recording"}
+                  disabled={voicePhase === 'recording'}
                   placeholder={
-                    voicePhase === "recording"
-                      ? "Listening…"
+                    voicePhase === 'recording'
+                      ? 'Listening…'
                       : running
-                        ? `Message ${session?.agent_name ?? "Vis"} — queues next`
-                        : `Message ${session?.agent_name ?? "Vis"} or type / or @`
+                        ? `Message ${session?.agent_name ?? 'Vis'} — queues next`
+                        : `Message ${session?.agent_name ?? 'Vis'} or type / or @`
                   }
-                  aria-label={`Message ${session?.agent_name ?? "Vis"}`}
+                  aria-label={`Message ${session?.agent_name ?? 'Vis'}`}
                   // Both completion menus are anchored to this textarea and are mutually
                   // exclusive (`fileMention` is only computed while the slash menu is shut),
                   // so the announced popup must name whichever one is actually open.
                   aria-controls={
                     fileMatches.length
-                      ? composerSuggestionListId("files")
+                      ? composerSuggestionListId('files')
                       : slashMatches.length
-                        ? composerSuggestionListId("slashes")
+                        ? composerSuggestionListId('slashes')
                         : undefined
                   }
                   aria-autocomplete="list"
@@ -4881,8 +4540,7 @@ export function SessionScreen({
                   }}
                   onChange={(event) => {
                     const text = event.currentTarget.value;
-                    const position =
-                      event.currentTarget.selectionStart ?? text.length;
+                    const position = event.currentTarget.selectionStart ?? text.length;
                     recordComposerDraft(text);
                     startTransition(() => {
                       setPromptSnapshot(text);
@@ -4898,26 +4556,23 @@ export function SessionScreen({
                     // mid-session changes the answer without a remount.
                     const enterSends = isEnterSendKeyboard();
                     if (fileMatches.length) {
-                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                         event.preventDefault();
-                        const delta = event.key === "ArrowDown" ? 1 : -1;
+                        const delta = event.key === 'ArrowDown' ? 1 : -1;
                         setFileIndex(
-                          (current) =>
-                            (current + delta + fileMatches.length) %
-                            fileMatches.length,
+                          (current) => (current + delta + fileMatches.length) % fileMatches.length,
                         );
                         return;
                       }
                       if (
-                        (event.key === "Tab" ||
-                          (event.key === "Enter" && enterSends)) &&
+                        (event.key === 'Tab' || (event.key === 'Enter' && enterSends)) &&
                         selectedFile
                       ) {
                         event.preventDefault();
                         completeFile(selectedFile.name);
                         return;
                       }
-                      if (event.key === "Escape") {
+                      if (event.key === 'Escape') {
                         event.preventDefault();
                         setFileDismissed(true);
                         return;
@@ -4925,27 +4580,21 @@ export function SessionScreen({
                     }
                     if (
                       slashMatches.length &&
-                      (event.key === "ArrowDown" || event.key === "ArrowUp")
+                      (event.key === 'ArrowDown' || event.key === 'ArrowUp')
                     ) {
                       event.preventDefault();
-                      const delta = event.key === "ArrowDown" ? 1 : -1;
+                      const delta = event.key === 'ArrowDown' ? 1 : -1;
                       setSlashIndex(
-                        (current) =>
-                          (current + delta + slashMatches.length) %
-                          slashMatches.length,
+                        (current) => (current + delta + slashMatches.length) % slashMatches.length,
                       );
                       return;
                     }
-                    if (
-                      slashMatches.length &&
-                      event.key === "Tab" &&
-                      selectedSlash
-                    ) {
+                    if (slashMatches.length && event.key === 'Tab' && selectedSlash) {
                       event.preventDefault();
                       completeSlash(selectedSlash);
                       return;
                     }
-                    if (slashMatches.length && event.key === "Escape") {
+                    if (slashMatches.length && event.key === 'Escape') {
                       event.preventDefault();
                       setSlashDismissed(true);
                       return;
@@ -4955,15 +4604,14 @@ export function SessionScreen({
                     // paragraph impossible to type. Send is the send button.
                     if (
                       enterSends &&
-                      event.key === "Enter" &&
+                      event.key === 'Enter' &&
                       !event.shiftKey &&
                       !event.nativeEvent.isComposing
                     ) {
                       event.preventDefault();
                       if (
                         selectedSlash &&
-                        slashText.toLowerCase() !==
-                          selectedSlash.name.toLowerCase()
+                        slashText.toLowerCase() !== selectedSlash.name.toLowerCase()
                       ) {
                         completeSlash(selectedSlash);
                       } else {
@@ -5007,9 +4655,9 @@ export function SessionScreen({
                   // Native keyboard edits can precede React's change event. An
                   // empty React snapshot must not block the press that reads the
                   // live textarea; send() already rejects genuinely empty input.
-                  disabled={voicePhase !== "idle"}
-                  label={running ? "Queue message" : "Send message"}
-                  title={running ? "Queue behind the running turn" : "Send"}
+                  disabled={voicePhase !== 'idle'}
+                  label={running ? 'Queue message' : 'Send message'}
+                  title={running ? 'Queue behind the running turn' : 'Send'}
                 >
                   <SendIcon className="size-3.5" />
                 </ComposerButton>

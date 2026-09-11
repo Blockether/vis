@@ -1,18 +1,18 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
-import type { VoiceProgress } from "./types";
+import { Capacitor, registerPlugin } from '@capacitor/core';
+import type { VoiceProgress } from './types';
 
 interface AndroidAudioRoutePlugin {
   startBluetoothMicrophone(): Promise<{ connected: boolean }>;
   stopBluetoothMicrophone(): Promise<void>;
 }
 
-const androidAudioRoute = registerPlugin<AndroidAudioRoutePlugin>("AudioRoute");
+const androidAudioRoute = registerPlugin<AndroidAudioRoutePlugin>('AudioRoute');
 
 let androidBluetoothRoute: Promise<boolean> | null = null;
 let retainAndroidBluetoothRoute = false;
 
 async function claimAndroidBluetoothMicrophone(): Promise<boolean> {
-  if (Capacitor.getPlatform() !== "android") return false;
+  if (Capacitor.getPlatform() !== 'android') return false;
   if (!androidBluetoothRoute) {
     androidBluetoothRoute = androidAudioRoute
       .startBluetoothMicrophone()
@@ -26,7 +26,7 @@ async function claimAndroidBluetoothMicrophone(): Promise<boolean> {
 }
 
 async function releaseAndroidBluetoothMicrophone(): Promise<void> {
-  if (Capacitor.getPlatform() !== "android") return;
+  if (Capacitor.getPlatform() !== 'android') return;
   androidBluetoothRoute = null;
   await androidAudioRoute.stopBluetoothMicrophone().catch(() => undefined);
 }
@@ -149,10 +149,17 @@ function encodePcmWav(chunks: Int16Array[], sampleRate: number): Blob {
 // session back as `auto` when it ends, so ordinary playback is not left on a
 // recording route. Where the API is absent (every non-WebKit browser) this is a
 // no-op and capture behaves exactly as before.
-type AudioSessionType = 'auto' | 'playback' | 'transient' | 'transient-solo' | 'ambient' | 'play-and-record';
+type AudioSessionType =
+  | 'auto'
+  | 'playback'
+  | 'transient'
+  | 'transient-solo'
+  | 'ambient'
+  | 'play-and-record';
 
 function claimAudioSession(type: AudioSessionType): boolean {
-  const session = (navigator as Navigator & { audioSession?: { type: AudioSessionType } }).audioSession;
+  const session = (navigator as Navigator & { audioSession?: { type: AudioSessionType } })
+    .audioSession;
   if (!session) return false;
   try {
     session.type = type;
@@ -164,9 +171,7 @@ function claimAudioSession(type: AudioSessionType): boolean {
   }
 }
 
-export async function startWavRecording(
-  options: WavRecordingOptions = {},
-): Promise<WavRecording> {
+export async function startWavRecording(options: WavRecordingOptions = {}): Promise<WavRecording> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Microphone recording is unavailable on this device');
   }
@@ -252,7 +257,9 @@ export async function startWavRecording(
     chunks.push(written === frame.length ? frame : frame.subarray(0, written));
     sampleCount += written;
     if (sampleCount >= limitSamples) {
-      onLimit?.(`Dictation stopped at the ${Math.round(MAX_RECORDING_SECONDS / 60)}-minute limit — transcribing what was said.`);
+      onLimit?.(
+        `Dictation stopped at the ${Math.round(MAX_RECORDING_SECONDS / 60)}-minute limit — transcribing what was said.`,
+      );
     }
   };
   source.connect(processor);
@@ -286,8 +293,12 @@ export async function startWavRecording(
     if (context.state !== 'running') interrupt('Dictation stopped — the microphone was suspended.');
   };
   for (const track of stream.getTracks()) {
-    track.addEventListener('ended', () => interrupt('Dictation stopped — the microphone was released.'));
-    track.addEventListener('mute', () => interrupt('Dictation stopped — another app took the microphone.'));
+    track.addEventListener('ended', () =>
+      interrupt('Dictation stopped — the microphone was released.'),
+    );
+    track.addEventListener('mute', () =>
+      interrupt('Dictation stopped — another app took the microphone.'),
+    );
   }
   onLimit = interrupt;
 
@@ -312,7 +323,8 @@ export async function startWavRecording(
       // Digital silence means the track was live but muted (another app holds the
       // mic, or the OS denied it after the fact). Transcribing it returns an empty
       // string the composer cannot explain, so name the cause here.
-      if (peak < 1e-4) throw new Error('Microphone captured only silence — check that nothing else is using it');
+      if (peak < 1e-4)
+        throw new Error('Microphone captured only silence — check that nothing else is using it');
       return encodePcmWav(chunks, outputRate);
     },
     cancel: close,
@@ -330,27 +342,22 @@ export async function startWavRecording(
  * their percentage.
  */
 export function voiceProgressLabel(progress: VoiceProgress | null): string {
-  if (!progress) return "Sending recording…";
-  const percent = Math.max(
-    0,
-    Math.min(100, Math.round(progress.progress || 0)),
-  );
+  if (!progress) return 'Sending recording…';
+  const percent = Math.max(0, Math.min(100, Math.round(progress.progress || 0)));
   switch (progress.phase) {
-    case "uploading":
+    case 'uploading':
       return `Sending recording · ${percent}%`;
-    case "queued":
-      return "Recording received · waiting for the engine";
-    case "preparing":
-      return percent > 0
-        ? `Preparing voice engine · ${percent}%`
-        : "Preparing voice engine…";
-    case "transcribing":
+    case 'queued':
+      return 'Recording received · waiting for the engine';
+    case 'preparing':
+      return percent > 0 ? `Preparing voice engine · ${percent}%` : 'Preparing voice engine…';
+    case 'transcribing':
       return `Transcribing · ${percent}%`;
-    case "done":
-      return "Transcribing · 100%";
-    case "failed":
-      return "Transcription failed";
+    case 'done':
+      return 'Transcribing · 100%';
+    case 'failed':
+      return 'Transcription failed';
     default:
-      return "Transcribing…";
+      return 'Transcribing…';
   }
 }

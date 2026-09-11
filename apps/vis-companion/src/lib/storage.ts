@@ -4,22 +4,18 @@
 // connection (url + token) plus the active connection id are stored here so the
 // app reconnects to the SAME gateway the TUI/other channels use.
 
-import { Preferences } from "@capacitor/preferences";
-import { bridged } from "./bridge";
-import { forgetNotifyVerdict } from "./notify-verdict";
-import type {
-  GatewayConn,
-  SpeechPrefs,
-  ThemePref,
-} from "./types";
+import { Preferences } from '@capacitor/preferences';
+import { bridged } from './bridge';
+import { forgetNotifyVerdict } from './notify-verdict';
+import type { GatewayConn, SpeechPrefs, ThemePref } from './types';
 
-const CONNS_KEY = "vis.connections";
-const ACTIVE_KEY = "vis.activeConnection";
-const PRIMARY_KEY = "vis.primaryConnection";
-const THEME_PREF_KEY = "vis.themePref";
+const CONNS_KEY = 'vis.connections';
+const ACTIVE_KEY = 'vis.activeConnection';
+const PRIMARY_KEY = 'vis.primaryConnection';
+const THEME_PREF_KEY = 'vis.themePref';
 
 // Appearance belongs to this application installation, never a gateway.
-const DEFAULT_THEME_PREF: ThemePref = "blockether-light";
+const DEFAULT_THEME_PREF: ThemePref = 'blockether-light';
 
 function localGet(key: string): string | null {
   try {
@@ -31,16 +27,23 @@ function localGet(key: string): string | null {
 
 /** Apply only the selected primary's cached server order; unknown machines stay last. */
 function orderedConnections(conns: GatewayConn[]): GatewayConn[] {
-  const primary = conns.find(conn => conn.url === localGet(PRIMARY_KEY));
+  const primary = conns.find((conn) => conn.url === localGet(PRIMARY_KEY));
   if (!primary?.id) return conns;
   try {
-    const ids: unknown = JSON.parse(localGet(`vis.machineOrder.${primary.id}`) ?? "null");
+    const ids: unknown = JSON.parse(localGet(`vis.machineOrder.${primary.id}`) ?? 'null');
     if (!Array.isArray(ids)) return conns;
     const rank = new Map(ids.map((id, index) => [id, index]));
-    return conns.map((conn, index) => ({ conn, index }))
-      .sort((a, b) => (rank.get(a.conn.id) ?? ids.length) - (rank.get(b.conn.id) ?? ids.length) || a.index - b.index)
-      .map(row => row.conn);
-  } catch { return conns; }
+    return conns
+      .map((conn, index) => ({ conn, index }))
+      .sort(
+        (a, b) =>
+          (rank.get(a.conn.id) ?? ids.length) - (rank.get(b.conn.id) ?? ids.length) ||
+          a.index - b.index,
+      )
+      .map((row) => row.conn);
+  } catch {
+    return conns;
+  }
 }
 
 export async function saveMachineOrder(primaryId: string, ids: string[]): Promise<void> {
@@ -98,7 +101,7 @@ export async function loadConnections(): Promise<GatewayConn[]> {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     const primaryUrl = await getRaw(PRIMARY_KEY);
-    const primary = (parsed as GatewayConn[]).find(conn => conn.url === primaryUrl);
+    const primary = (parsed as GatewayConn[]).find((conn) => conn.url === primaryUrl);
     if (primary?.id) await getRaw(`vis.machineOrder.${primary.id}`);
     return orderedConnections(parsed as GatewayConn[]);
   } catch {
@@ -111,9 +114,7 @@ export async function saveConnections(conns: GatewayConn[]): Promise<void> {
 }
 
 /** Insert-or-replace a connection keyed by its URL; returns the new list. */
-export async function upsertConnection(
-  conn: GatewayConn,
-): Promise<GatewayConn[]> {
+export async function upsertConnection(conn: GatewayConn): Promise<GatewayConn[]> {
   const conns = await loadConnections();
   const idx = conns.findIndex((c) => c.url === conn.url);
   if (idx >= 0) conns[idx] = { ...conns[idx], ...conn };
@@ -138,8 +139,7 @@ export async function removeConnection(url: string): Promise<GatewayConn[]> {
   const conns = paired.filter((c) => c.url !== url);
   await saveConnections(conns);
   if ((await getActiveUrl()) === url) await setActiveUrl(conns[0]?.url ?? null);
-  if ((await getPrimaryUrl()) === url)
-    await setPrimaryUrl(conns[0]?.url ?? null);
+  if ((await getPrimaryUrl()) === url) await setPrimaryUrl(conns[0]?.url ?? null);
   await forgetGatewayNotify(url);
   forgetNotifyVerdict(url);
   if ((await loadOpenSession())?.url === url) await forgetOpenSession();
@@ -172,9 +172,10 @@ export async function switchConnectionUrl(
   if ((await getPrimaryUrl()) === from) await setPrimaryUrl(to);
   const store = await loadSubscriptionStore();
   if (store[from]) {
-    store[to] = Array.from(
-      new Set([...(store[to] ?? []), ...store[from]]),
-    ).slice(0, MAX_SUBSCRIBED_SESSIONS);
+    store[to] = Array.from(new Set([...(store[to] ?? []), ...store[from]])).slice(
+      0,
+      MAX_SUBSCRIBED_SESSIONS,
+    );
     delete store[from];
     await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
   }
@@ -189,7 +190,7 @@ export async function getActiveUrl(): Promise<string | null> {
 }
 
 export async function setActiveUrl(url: string | null): Promise<void> {
-  await setRaw(ACTIVE_KEY, url ?? "");
+  await setRaw(ACTIVE_KEY, url ?? '');
 }
 
 export async function getActiveConnection(): Promise<GatewayConn | null> {
@@ -204,7 +205,7 @@ export async function getPrimaryUrl(): Promise<string | null> {
 }
 
 export async function setPrimaryUrl(url: string | null): Promise<void> {
-  await setRaw(PRIMARY_KEY, url ?? "");
+  await setRaw(PRIMARY_KEY, url ?? '');
 }
 
 /**
@@ -216,16 +217,15 @@ export async function getPrimaryConnection(): Promise<GatewayConn | null> {
   if (conns.length === 0) return null;
   const stored = await getPrimaryUrl();
   const legacy = await getActiveUrl();
-  const primary =
-    conns.find((c) => c.url === stored || c.url === legacy) ?? conns[0];
+  const primary = conns.find((c) => c.url === stored || c.url === legacy) ?? conns[0];
   if (primary.url !== stored) await setPrimaryUrl(primary.url);
   return primary;
 }
 
 /** The stored id, migrated from the old light/dark preference. */
 function normalizeThemePref(raw: string | null): ThemePref {
-  if (raw === "light") return "blockether-light";
-  if (raw === "dark") return "blockether-dark";
+  if (raw === 'light') return 'blockether-light';
+  if (raw === 'dark') return 'blockether-dark';
   return raw?.trim() || DEFAULT_THEME_PREF;
 }
 
@@ -259,11 +259,11 @@ export async function setThemePref(pref: ThemePref): Promise<void> {
 // records and one TTS engine for replies it plays. A bare engine id is resolved against
 // the machine serving the open session; an unavailable id falls back at the use site.
 
-const SPEECH_ASR_ENGINE_KEY = "vis.speech.asrEngine";
-const SPEECH_TTS_ENGINE_KEY = "vis.speech.ttsEngine";
-const SPEECH_DEVICE_VOICE_KEY = "vis.speech.deviceVoice";
-const SPEECH_GATEWAY_VOICE_KEY = "vis.speech.gatewayVoice";
-const SPEECH_RATE_KEY = "vis.speech.rate";
+const SPEECH_ASR_ENGINE_KEY = 'vis.speech.asrEngine';
+const SPEECH_TTS_ENGINE_KEY = 'vis.speech.ttsEngine';
+const SPEECH_DEVICE_VOICE_KEY = 'vis.speech.deviceVoice';
+const SPEECH_GATEWAY_VOICE_KEY = 'vis.speech.gatewayVoice';
+const SPEECH_RATE_KEY = 'vis.speech.rate';
 
 export const SPEECH_RATES: readonly number[] = [0.85, 1, 1.2];
 export const DEFAULT_SPEECH_RATE = 1;
@@ -302,27 +302,27 @@ export async function getSpeechPrefs(): Promise<SpeechPrefs> {
 }
 
 export async function setSpeechAsrEngine(id: string | null): Promise<void> {
-  await setRaw(SPEECH_ASR_ENGINE_KEY, id ?? "");
+  await setRaw(SPEECH_ASR_ENGINE_KEY, id ?? '');
 }
 
 export async function setSpeechTtsEngine(id: string | null): Promise<void> {
-  await setRaw(SPEECH_TTS_ENGINE_KEY, id ?? "");
+  await setRaw(SPEECH_TTS_ENGINE_KEY, id ?? '');
 }
 
 /** `null` is "whatever the engine calls its default", and it is a real choice. */
 export async function setSpeechDeviceVoice(id: string | null): Promise<void> {
-  await setRaw(SPEECH_DEVICE_VOICE_KEY, id ?? "");
+  await setRaw(SPEECH_DEVICE_VOICE_KEY, id ?? '');
 }
 
 export async function setSpeechGatewayVoice(id: string | null): Promise<void> {
-  await setRaw(SPEECH_GATEWAY_VOICE_KEY, id ?? "");
+  await setRaw(SPEECH_GATEWAY_VOICE_KEY, id ?? '');
 }
 
 export async function setSpeechRate(rate: number): Promise<void> {
   await setRaw(SPEECH_RATE_KEY, String(normalizeRate(String(rate))));
 }
 
-const SUBSCRIPTIONS_KEY = "vis.sessionSubscriptions";
+const SUBSCRIPTIONS_KEY = 'vis.sessionSubscriptions';
 const MAX_SUBSCRIBED_SESSIONS = 24;
 
 type SubscriptionStore = Record<string, string[]>;
@@ -332,7 +332,7 @@ async function loadSubscriptionStore(): Promise<SubscriptionStore> {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as SubscriptionStore)
       : {};
   } catch {
@@ -341,14 +341,9 @@ async function loadSubscriptionStore(): Promise<SubscriptionStore> {
 }
 
 /** Sessions the user has visited and keeps live-subscribed, scoped per gateway. */
-export async function loadSubscribedSessions(
-  gatewayUrl: string,
-): Promise<string[]> {
+export async function loadSubscribedSessions(gatewayUrl: string): Promise<string[]> {
   const store = await loadSubscriptionStore();
-  return Array.from(new Set(store[gatewayUrl] ?? [])).slice(
-    0,
-    MAX_SUBSCRIBED_SESSIONS,
-  );
+  return Array.from(new Set(store[gatewayUrl] ?? [])).slice(0, MAX_SUBSCRIBED_SESSIONS);
 }
 
 /** Mark one visited session as most-recently subscribed and persist across reloads. */
@@ -357,10 +352,10 @@ export async function rememberSubscribedSession(
   sid: string,
 ): Promise<string[]> {
   const store = await loadSubscriptionStore();
-  const sessions = [
-    sid,
-    ...(store[gatewayUrl] ?? []).filter((id) => id !== sid),
-  ].slice(0, MAX_SUBSCRIBED_SESSIONS);
+  const sessions = [sid, ...(store[gatewayUrl] ?? []).filter((id) => id !== sid)].slice(
+    0,
+    MAX_SUBSCRIBED_SESSIONS,
+  );
   store[gatewayUrl] = sessions;
   await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
   return sessions;
@@ -373,7 +368,7 @@ export async function rememberSubscribedSession(
 // open when the app died. This pointer is written when a transcript is
 // entered, cleared when the user leaves it, and read once on a cold start. It
 // carries the time it was written so a launch hours later lands on the list.
-const OPEN_SESSION_KEY = "vis.openSession";
+const OPEN_SESSION_KEY = 'vis.openSession';
 
 export interface OpenSession {
   url: string;
@@ -388,9 +383,9 @@ export async function loadOpenSession(): Promise<OpenSession | null> {
   try {
     const parsed = JSON.parse(raw) as Partial<OpenSession> | null;
     return parsed &&
-      typeof parsed.url === "string" &&
-      typeof parsed.sid === "string" &&
-      typeof parsed.at === "number"
+      typeof parsed.url === 'string' &&
+      typeof parsed.sid === 'string' &&
+      typeof parsed.at === 'number'
       ? { url: parsed.url, sid: parsed.sid, at: parsed.at }
       : null;
   } catch {
@@ -403,16 +398,13 @@ async function saveOpenSession(open: OpenSession): Promise<void> {
 }
 
 /** The transcript just entered; a cold start within its grace window reopens it. */
-export async function rememberOpenSession(
-  url: string,
-  sid: string,
-): Promise<void> {
+export async function rememberOpenSession(url: string, sid: string): Promise<void> {
   await saveOpenSession({ url, sid, at: Date.now() });
 }
 
 /** The user left the transcript: the next launch starts on the list. */
 export async function forgetOpenSession(): Promise<void> {
-  await setRaw(OPEN_SESSION_KEY, "");
+  await setRaw(OPEN_SESSION_KEY, '');
 }
 // ── Notifications, per gateway ──────────────────────────────────────
 // Native push is a decision about ONE machine, not about the app: the phone can
@@ -420,7 +412,7 @@ export async function forgetOpenSession(): Promise<void> {
 // build box it is only watching. So the switch lives in that gateway's settings
 // and is stored per gateway URL, exactly like the subscribed-session list — and
 // a machine with no entry here has not been answered for, which is silence.
-const NOTIFY_KEY = "vis.gatewayNotifications";
+const NOTIFY_KEY = 'vis.gatewayNotifications';
 
 /** Only an EXPLICIT entry is stored; absence means "not decided yet". */
 type NotifyStore = Record<string, boolean>;
@@ -430,11 +422,10 @@ async function loadNotifyStore(): Promise<NotifyStore> {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const store: NotifyStore = {};
     for (const [url, on] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof on === "boolean") store[url] = on;
+      if (typeof on === 'boolean') store[url] = on;
     }
     return store;
   } catch {
@@ -465,10 +456,7 @@ export async function getGatewayNotify(url: string): Promise<boolean> {
   return (await loadNotifyStore())[url] ?? false;
 }
 
-export async function setGatewayNotify(
-  url: string,
-  on: boolean,
-): Promise<void> {
+export async function setGatewayNotify(url: string, on: boolean): Promise<void> {
   const store = await loadNotifyStore();
   store[url] = on;
   await saveNotifyStore(store);
@@ -502,7 +490,7 @@ async function forgetGatewayNotify(url: string): Promise<void> {
 // a stored "stop" (see lib/notify.ts): the durable half is the intent, not the
 // call. The moment a machine is dropped is often the moment it is unreachable,
 // and `drainPushRevocations` retries on every launch and wake until it accepts.
-const REVOKE_KEY = "vis.notifyRevocations";
+const REVOKE_KEY = 'vis.notifyRevocations';
 
 /** Machines this device was taken off but has not managed to tell yet. */
 export async function pendingRevocations(): Promise<GatewayConn[]> {
@@ -514,8 +502,8 @@ export async function pendingRevocations(): Promise<GatewayConn[]> {
     return parsed.filter(
       (entry): entry is GatewayConn =>
         Boolean(entry) &&
-        typeof entry === "object" &&
-        typeof (entry as GatewayConn).url === "string",
+        typeof entry === 'object' &&
+        typeof (entry as GatewayConn).url === 'string',
     );
   } catch {
     return [];
@@ -558,7 +546,7 @@ export async function clearRevocation(url: string): Promise<void> {
 // every start would eventually be throttled into silence, and the app would have
 // no way to name — and therefore to REVOKE — the grant a gateway is still
 // holding.
-const GRANT_KEY = "vis.relayGrants";
+const GRANT_KEY = 'vis.relayGrants';
 
 /** One relay's grant for this device, with the token it was minted for. */
 export interface RelayGrant {
@@ -572,14 +560,14 @@ export interface RelayGrant {
 type GrantStore = Record<string, RelayGrant>;
 
 function asGrant(value: unknown): RelayGrant | null {
-  if (!value || typeof value !== "object") return null;
+  if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
-  if (typeof row.grant !== "string" || !row.grant) return null;
-  if (typeof row.token !== "string") return null;
+  if (typeof row.grant !== 'string' || !row.grant) return null;
+  if (typeof row.token !== 'string') return null;
   return {
     token: row.token,
     grant: row.grant,
-    expires_at: typeof row.expires_at === "number" ? row.expires_at : undefined,
+    expires_at: typeof row.expires_at === 'number' ? row.expires_at : undefined,
   };
 }
 
@@ -588,12 +576,9 @@ async function loadGrantStore(): Promise<GrantStore> {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const store: GrantStore = {};
-    for (const [url, value] of Object.entries(
-      parsed as Record<string, unknown>,
-    )) {
+    for (const [url, value] of Object.entries(parsed as Record<string, unknown>)) {
       const grant = asGrant(value);
       if (grant) store[url] = grant;
     }
@@ -604,16 +589,11 @@ async function loadGrantStore(): Promise<GrantStore> {
 }
 
 /** The grant this device already holds for one relay, if any. */
-export async function getRelayGrant(
-  relayUrl: string,
-): Promise<RelayGrant | null> {
+export async function getRelayGrant(relayUrl: string): Promise<RelayGrant | null> {
   return (await loadGrantStore())[relayUrl] ?? null;
 }
 
-export async function setRelayGrant(
-  relayUrl: string,
-  grant: RelayGrant,
-): Promise<void> {
+export async function setRelayGrant(relayUrl: string, grant: RelayGrant): Promise<void> {
   const store = await loadGrantStore();
   store[relayUrl] = grant;
   await setRaw(GRANT_KEY, JSON.stringify(store));

@@ -40,8 +40,7 @@ function rows(props: Partial<Parameters<typeof MachineRows>[0]> = {}) {
 }
 
 /** Everything one machine's row says, in the order it says it. */
-const lineOf = (machine: string) =>
-  screen.getByText(machine).closest('button')?.textContent ?? '';
+const lineOf = (machine: string) => screen.getByText(machine).closest('button')?.textContent ?? '';
 
 describe('what a machine row says about its rank', () => {
   it('says nothing about rank when there is one machine to rank', () => {

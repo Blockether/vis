@@ -34,8 +34,12 @@ export const Running: Story = {
     await expect(interrupt.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
     if (!pointer) {
       const box = interrupt.getBoundingClientRect();
-      await expect(parseFloat(getComputedStyle(interrupt, '::after').height)).toBeGreaterThanOrEqual(44);
-      await expect(interrupt.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5))).toBe(true);
+      await expect(
+        parseFloat(getComputedStyle(interrupt, '::after').height),
+      ).toBeGreaterThanOrEqual(44);
+      await expect(
+        interrupt.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5)),
+      ).toBe(true);
     }
     await userEvent.click(interrupt);
     const reason = await canvas.findByRole('textbox', {
@@ -140,25 +144,33 @@ export const LabelledJobs: Story = {
     ).toBeLessThanOrEqual(1);
     await expect(canvas.queryByRole('button', { name: /Select/ })).not.toBeInTheDocument();
   },
- };
+};
 
 /** All supported nodes, heading levels and spinner variants from the shared contract fixture. */
 export const AllPrimitives: Story = {
   args: { view: STORY_LIVE_PRIMITIVES, onActivate: fn() },
   play: async ({ canvas, args }) => {
     for (let level = 1; level <= 6; level++) {
-      await expect(canvas.getByRole('heading', { level, name: `Heading level ${level}` })).toBeVisible();
+      await expect(
+        canvas.getByRole('heading', { level, name: `Heading level ${level}` }),
+      ).toBeVisible();
     }
     await expect(canvas.getByRole('button', { name: 'Unavailable action' })).toBeDisabled();
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     const refresh = canvas.getByRole('button', { name: 'Refresh results' });
     await expect(refresh.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
     if (!pointer) {
-      await expect(parseFloat(getComputedStyle(refresh, '::after').height)).toBeGreaterThanOrEqual(44);
+      await expect(parseFloat(getComputedStyle(refresh, '::after').height)).toBeGreaterThanOrEqual(
+        44,
+      );
       const box = refresh.getBoundingClientRect();
-      await expect(refresh.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5))).toBe(true);
+      await expect(
+        refresh.contains(document.elementFromPoint(box.left + box.width / 2, box.top - 5)),
+      ).toBe(true);
     }
-    await expect(canvas.getByRole('button', { name: 'Details' }).getBoundingClientRect().height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
+    await expect(
+      canvas.getByRole('button', { name: 'Details' }).getBoundingClientRect().height,
+    ).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     await userEvent.click(canvas.getByRole('button', { name: 'Refresh results' }));
     await expect(args.onActivate).toHaveBeenCalledWith('refresh');
     await userEvent.click(canvas.getByRole('button', { name: 'Details' }));
@@ -173,39 +185,76 @@ export const AllPrimitivesReceipt: Story = {
   args: { view: STORY_LIVE_PRIMITIVES, isSettled: true, onActivate: fn(), onSelect: undefined },
   play: async ({ canvas }) => {
     await expect(canvas.queryByRole('button', { name: 'Interrupt' })).not.toBeInTheDocument();
-    await expect(canvas.queryByRole('button', { name: 'Select Tests passed' })).not.toBeInTheDocument();
+    await expect(
+      canvas.queryByRole('button', { name: 'Select Tests passed' }),
+    ).not.toBeInTheDocument();
     await expect(canvas.getByRole('button', { name: 'Refresh results' })).toBeDisabled();
-    await expect(canvas.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'false');
+    await expect(canvas.getByRole('button', { name: 'Details' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
   },
 };
 
 export const SearchableLog: Story = {
   args: {
-    view: { id: 'search-fixture', title: 'Build output', seq: 1,
-      nodes: [{ id: 'log', type: 'log', label: 'Build log', default_expanded: true,
-        window_lines: 3, total_lines: 503, lines: ['501 · Linking', '502 · Build finished', '503 · Saved report'] }] },
+    view: {
+      id: 'search-fixture',
+      title: 'Build output',
+      seq: 1,
+      nodes: [
+        {
+          id: 'log',
+          type: 'log',
+          label: 'Build log',
+          default_expanded: true,
+          window_lines: 3,
+          total_lines: 503,
+          lines: ['501 · Linking', '502 · Build finished', '503 · Saved report'],
+        },
+      ],
+    },
     load: async (nodeId, from, limit, query = '') => {
-      const lines = ['ERROR [disk] · Could not write cache', 'Cache directory created', 'error · Retry succeeded'];
-      const matches = lines.flatMap((line, index) => line.toLowerCase().includes(query.toLowerCase()) ? [{ line, number: index + 7 }] : []);
+      const lines = [
+        'ERROR [disk] · Could not write cache',
+        'Cache directory created',
+        'error · Retry succeeded',
+      ];
+      const matches = lines.flatMap((line, index) =>
+        line.toLowerCase().includes(query.toLowerCase()) ? [{ line, number: index + 7 }] : [],
+      );
       const page = matches.slice(from, from + limit);
-      return { node_id: nodeId, from, total: 503, matched: matches.length,
-        lines: page.map(item => item.line), line_numbers: page.map(item => item.number) };
+      return {
+        node_id: nodeId,
+        from,
+        total: 503,
+        matched: matches.length,
+        lines: page.map((item) => item.line),
+        line_numbers: page.map((item) => item.number),
+      };
     },
   },
   play: async ({ canvas }) => {
     const search = canvas.getByRole('searchbox', { name: 'Search Build log' });
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     const box = search.getBoundingClientRect();
-    await expect(box.height).toBe(canvas.getByRole('button', { name: 'Search' }).getBoundingClientRect().height);
+    await expect(box.height).toBe(
+      canvas.getByRole('button', { name: 'Search' }).getBoundingClientRect().height,
+    );
     // The shared compact face keeps its larger touch target outside the native field.
-    const reach = box.height + (pointer ? 0
-      : parseFloat(getComputedStyle(search.parentElement!, '::before').height)
-        + parseFloat(getComputedStyle(search.parentElement!, '::after').height));
+    const reach =
+      box.height +
+      (pointer
+        ? 0
+        : parseFloat(getComputedStyle(search.parentElement!, '::before').height) +
+          parseFloat(getComputedStyle(search.parentElement!, '::after').height));
     await expect(reach).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     await userEvent.type(search, 'error');
     await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
     await expect(await canvas.findByText(/2 matches.*503 recorded lines/)).toBeVisible();
-    await expect(canvas.getByRole('region', { name: 'Build log output' })).toHaveTextContent('7: ERROR [disk]');
+    await expect(canvas.getByRole('region', { name: 'Build log output' })).toHaveTextContent(
+      '7: ERROR [disk]',
+    );
     await userEvent.click(canvas.getByRole('button', { name: 'Clear search' }));
     await expect(canvas.getByText(/501 · Linking/)).toBeVisible();
     await userEvent.type(search, 'missing');

@@ -42,8 +42,7 @@ export function canvasPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 export function blobAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () =>
-      reject(reader.error ?? new Error('Could not read this file'));
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read this file'));
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(blob);
   });

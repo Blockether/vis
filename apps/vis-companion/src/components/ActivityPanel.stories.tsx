@@ -1,5 +1,5 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent, within } from 'storybook/test';
 import {
   ACTIVITY_ALL_GROUPS,
   ACTIVITY_CHRONOLOGY,
@@ -16,10 +16,10 @@ import {
   ACTIVITY_RUNNING,
   ACTIVITY_SETTLED,
   ACTIVITY_TREE_CHANGES,
-} from "../dev/story-data";
-import { ActivityPanel } from "./ActivityPanel";
-import { activityProjectionFromWire } from "../lib/activity";
-import groupingCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json";
+} from '../dev/story-data';
+import { ActivityPanel } from './ActivityPanel';
+import { activityProjectionFromWire } from '../lib/activity';
+import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 
 /**
  * WHAT THE MODEL IS DOING, WHILE IT IS DOING IT.
@@ -37,9 +37,9 @@ import groupingCases from "../../../../packages/vis-contract/resources/vis-contr
  * change breaks this sheet before it reaches a screen.
  */
 const meta = {
-  title: "Components/Activity panel",
+  title: 'Components/Activity panel',
   component: ActivityPanel,
-  parameters: { layout: "fullscreen" },
+  parameters: { layout: 'fullscreen' },
   // Match the transcript gutter and the execution band's inset around this panel.
   decorators: [
     (Story) => (
@@ -61,55 +61,47 @@ export const LongLabels: Story = {
   args: { activity: ACTIVITY_LONG_LABELS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    const rows = canvasElement.querySelectorAll<HTMLElement>(
-      "[data-activity-row]",
-    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const rows = canvasElement.querySelectorAll<HTMLElement>('[data-activity-row]');
     await expect(rows).toHaveLength(ACTIVITY_LONG_LABELS.rows.length);
     for (const row of rows) {
-      const toggle = within(row).getByRole("button");
+      const toggle = within(row).getByRole('button');
       const label = toggle.firstElementChild!;
-      const summary = label.querySelector<HTMLElement>(".flex-1[title]")!;
+      const summary = label.querySelector<HTMLElement>('.flex-1[title]')!;
       const duration = within(row).getByLabelText(/^Duration /);
       const chevron = toggle.lastElementChild!;
       // A row can fit its container while visible text still spills across siblings.
-      await expect(getComputedStyle(summary).overflowX).toBe("hidden");
-      await expect(getComputedStyle(summary).textOverflow).toBe("ellipsis");
-      await expect(getComputedStyle(summary).whiteSpace).toBe("nowrap");
-      await expect(
-        summary.getBoundingClientRect().right + 8,
-      ).toBeLessThanOrEqual(duration.getBoundingClientRect().left + 1);
-      await expect(
-        duration.getBoundingClientRect().right + 6,
-      ).toBeLessThanOrEqual(chevron.getBoundingClientRect().left + 1);
+      await expect(getComputedStyle(summary).overflowX).toBe('hidden');
+      await expect(getComputedStyle(summary).textOverflow).toBe('ellipsis');
+      await expect(getComputedStyle(summary).whiteSpace).toBe('nowrap');
+      await expect(summary.getBoundingClientRect().right + 8).toBeLessThanOrEqual(
+        duration.getBoundingClientRect().left + 1,
+      );
+      await expect(duration.getBoundingClientRect().right + 6).toBeLessThanOrEqual(
+        chevron.getBoundingClientRect().left + 1,
+      );
       await expect(toggle.scrollWidth).toBeLessThanOrEqual(toggle.clientWidth);
       await expect(toggle.getBoundingClientRect().height).toBe(24);
-      const path = summary.querySelector("[data-path]");
+      const path = summary.querySelector('[data-path]');
       for (const part of path ? Array.from(path.children) : [summary]) {
-        await expect(toggle).toHaveAccessibleName(
-          expect.stringContaining(part.textContent!),
-        );
+        await expect(toggle).toHaveAccessibleName(expect.stringContaining(part.textContent!));
       }
       await userEvent.click(toggle);
-      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       // Both the row label and the revealed file list constrain long basenames.
-      for (const path of row.querySelectorAll<HTMLElement>("[data-path]")) {
+      for (const path of row.querySelectorAll<HTMLElement>('[data-path]')) {
         await expect(path.scrollWidth).toBeLessThanOrEqual(path.clientWidth);
-        if (path.dataset.path?.endsWith("/render.clj")) {
+        if (path.dataset.path?.endsWith('/render.clj')) {
           const basename = path.lastElementChild!;
           await expect(basename.scrollWidth).toBe(basename.clientWidth);
         }
       }
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
       toggle.focus();
-      await userEvent.keyboard("{Enter}");
-      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await userEvent.keyboard('{Enter}');
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     }
-    await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(
-      canvasElement.clientWidth,
-    );
+    await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
   },
 };
 
@@ -128,49 +120,36 @@ export const ReplResults: Story = {
   args: { activity: ACTIVITY_REPL },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    await userEvent.click(canvas.getByRole("button", { name: /Eval ×5/ }));
-    const rows = Array.from(
-      canvasElement.querySelectorAll<HTMLElement>("[data-activity-row]"),
-    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: /Eval ×5/ }));
+    const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('[data-activity-row]'));
     await expect(rows).toHaveLength(5);
     for (const [index, row] of rows.entries()) {
-      const toggle = within(row).getByRole("button");
+      const toggle = within(row).getByRole('button');
       await userEvent.click(toggle);
-      const program = within(row).getByRole("heading", { name: "Program" });
+      const program = within(row).getByRole('heading', { name: 'Program' });
       await expect(program).toBeVisible();
       // The first section needs one line of separation from the activity header.
       await expect(
-        program.getBoundingClientRect().top -
-          toggle.getBoundingClientRect().bottom,
+        program.getBoundingClientRect().top - toggle.getBoundingClientRect().bottom,
       ).toBe(parseFloat(getComputedStyle(program).lineHeight));
       for (const title of index < 2
-        ? ["Stdout", "Stderr", "Result"]
-        : [index === 4 ? "Timeout" : "Error"]) {
-        await expect(
-          within(row).getByRole("heading", { name: title }),
-        ).toBeVisible();
+        ? ['Stdout', 'Stderr', 'Result']
+        : [index === 4 ? 'Timeout' : 'Error']) {
+        await expect(within(row).getByRole('heading', { name: title })).toBeVisible();
       }
-      for (const heading of Array.from(
-        row.querySelectorAll("[data-activity-content] > h5"),
-      ).slice(1)) {
-        await expect(
-          parseFloat(getComputedStyle(heading).marginTop),
-        ).toBeGreaterThanOrEqual(12);
+      for (const heading of Array.from(row.querySelectorAll('[data-activity-content] > h5')).slice(
+        1,
+      )) {
+        await expect(parseFloat(getComputedStyle(heading).marginTop)).toBeGreaterThanOrEqual(12);
       }
-      for (const code of row.querySelectorAll("pre")) {
+      for (const code of row.querySelectorAll('pre')) {
+        await expect(parseFloat(getComputedStyle(code).paddingTop)).toBeGreaterThan(0);
         await expect(
-          parseFloat(getComputedStyle(code).paddingTop),
-        ).toBeGreaterThan(0);
-        await expect(
-          parseFloat(
-            getComputedStyle(code.querySelector("code > div")!).paddingLeft,
-          ),
+          parseFloat(getComputedStyle(code.querySelector('code > div')!).paddingLeft),
         ).toBeGreaterThan(0);
       }
-      await expect(within(row).queryByRole("table")).not.toBeInTheDocument();
+      await expect(within(row).queryByRole('table')).not.toBeInTheDocument();
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
     }
   },
@@ -181,49 +160,35 @@ export const ResultFirst: Story = {
   args: { activity: ACTIVITY_RESULTS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    const rows = Array.from(
-      canvasElement.querySelectorAll<HTMLElement>("[data-activity-row]"),
-    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('[data-activity-row]'));
     await expect(rows).toHaveLength(6);
     const expected = [
-      "greeting",
+      'greeting',
       '"Hi "',
-      "greeting_test.clj",
-      "captured lines",
-      "one disclosure",
-      "12 tests passed.",
+      'greeting_test.clj',
+      'captured lines',
+      'one disclosure',
+      '12 tests passed.',
     ];
     for (const [index, row] of rows.entries()) {
-      const step = within(row).getByRole("button");
+      const step = within(row).getByRole('button');
       await expect(step.getBoundingClientRect().height).toBe(24);
       await userEvent.click(step);
       await expect(row.textContent).toContain(expected[index]);
-      await expect(
-        within(row).queryByRole("button", { name: /^Diff/ }),
-      ).not.toBeInTheDocument();
+      await expect(within(row).queryByRole('button', { name: /^Diff/ })).not.toBeInTheDocument();
       await expect(row.textContent).not.toMatch(/12:abc|13:def|\["src\/com/);
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
     }
-    for (const [index, heading] of [[5, "Metric"]] as const) {
+    for (const [index, heading] of [[5, 'Metric']] as const) {
       const table = within(rows[index]);
-      await expect(
-        table.getByRole("columnheader", { name: heading }),
-      ).toBeVisible();
-      await expect(
-        table.getByRole("columnheader", { name: "Result" }),
-      ).toBeVisible();
+      await expect(table.getByRole('columnheader', { name: heading })).toBeVisible();
+      await expect(table.getByRole('columnheader', { name: 'Result' })).toBeVisible();
     }
     await expect(rows[4].textContent).not.toMatch(/Thread id|Title|42/);
-    await expect(rows[5].textContent).not.toContain("Is pass");
-    await expect(
-      canvas.queryByRole("columnheader", { name: "Field" }),
-    ).not.toBeInTheDocument();
-    await expect(
-      canvas.queryByRole("columnheader", { name: "Value" }),
-    ).not.toBeInTheDocument();
+    await expect(rows[5].textContent).not.toContain('Is pass');
+    await expect(canvas.queryByRole('columnheader', { name: 'Field' })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole('columnheader', { name: 'Value' })).not.toBeInTheDocument();
   },
 };
 
@@ -233,48 +198,36 @@ export const CopyActivity: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const user = userEvent.setup();
-    const copy = canvas.getByRole("button", { name: "Copy activity" });
-    const mouse = matchMedia("(min-width: 40rem) and (pointer: fine)").matches;
+    const copy = canvas.getByRole('button', { name: 'Copy activity' });
+    const mouse = matchMedia('(min-width: 40rem) and (pointer: fine)').matches;
     const minimum = mouse ? 28 : 44;
     const box = copy.getBoundingClientRect();
-    const reach = getComputedStyle(copy, "::after");
-    const rightReach = reach.content === "none" ? 0 : -parseFloat(reach.right);
+    const reach = getComputedStyle(copy, '::after');
+    const rightReach = reach.content === 'none' ? 0 : -parseFloat(reach.right);
     await expect(box.width + rightReach).toBeGreaterThanOrEqual(minimum);
     await expect(box.height).toBeGreaterThanOrEqual(minimum);
     // The invisible reach remains clickable and never extends toward the disclosure.
     const targetRight = box.left + minimum;
-    await expect(targetRight).toBeLessThanOrEqual(
-      copy.ownerDocument.documentElement.clientWidth,
-    );
+    await expect(targetRight).toBeLessThanOrEqual(copy.ownerDocument.documentElement.clientWidth);
     await expect(
-      copy.contains(
-        copy.ownerDocument.elementFromPoint(
-          targetRight - 1,
-          box.top + box.height / 2,
-        ),
-      ),
+      copy.contains(copy.ownerDocument.elementFromPoint(targetRight - 1, box.top + box.height / 2)),
     ).toBe(true);
-    const toggle = canvas.getByRole("button", { name: "Expand Activity" });
-    await expect(box.left - toggle.getBoundingClientRect().right).toBeCloseTo(
-      8,
-      0,
-    );
+    const toggle = canvas.getByRole('button', { name: 'Expand Activity' });
+    await expect(box.left - toggle.getBoundingClientRect().right).toBeCloseTo(8, 0);
     await user.click(copy);
-    await expect(navigator.clipboard.readText()).resolves.toContain(
-      "First search: 2 matches",
+    await expect(navigator.clipboard.readText()).resolves.toContain('First search: 2 matches');
+    await expect(canvas.getByRole('button', { name: 'Expand Activity' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
     );
-    await expect(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    ).toHaveAttribute("aria-expanded", "false");
-    await user.click(canvas.getByRole("button", { name: "Expand Activity" }));
+    await user.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     copy.focus();
-    await user.keyboard("{Enter}");
-    await expect(navigator.clipboard.readText()).resolves.toContain(
-      "Search directory unavailable",
+    await user.keyboard('{Enter}');
+    await expect(navigator.clipboard.readText()).resolves.toContain('Search directory unavailable');
+    await expect(canvas.getByRole('button', { name: 'Collapse Activity' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
     );
-    await expect(
-      canvas.getByRole("button", { name: "Collapse Activity" }),
-    ).toHaveAttribute("aria-expanded", "true");
   },
 };
 
@@ -282,34 +235,24 @@ export const RepeatedArguments: Story = {
   args: { activity: ACTIVITY_REPEATED_ARGUMENTS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    const group = canvas.getByRole("button", { name: /Search ×6/ });
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const group = canvas.getByRole('button', { name: /Search ×6/ });
     await expect(group.getBoundingClientRect().height).toBe(24);
     await userEvent.click(group);
-    const repeated = canvas.getByRole("button", { name: /same query ×3/ });
+    const repeated = canvas.getByRole('button', { name: /same query ×3/ });
     await expect(repeated.getBoundingClientRect().height).toBe(24);
-    await expect(repeated).toHaveAttribute("aria-expanded", "false");
-    await expect(
-      canvas.getByText(/Search directory unavailable/),
-    ).toBeVisible();
+    await expect(repeated).toHaveAttribute('aria-expanded', 'false');
+    await expect(canvas.getByText(/Search directory unavailable/)).toBeVisible();
     repeated.focus();
-    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard('{Enter}');
     const first = within(
-      canvasElement.querySelector<HTMLElement>(
-        '[data-activity-row="search-1"]',
-      )!,
+      canvasElement.querySelector<HTMLElement>('[data-activity-row="search-1"]')!,
     );
-    await userEvent.click(first.getByRole("button"));
-    await expect(canvas.getByText("First search: 2 matches")).toBeVisible();
+    await userEvent.click(first.getByRole('button'));
+    await expect(canvas.getByText('First search: 2 matches')).toBeVisible();
     await userEvent.click(repeated);
-    await expect(
-      canvas.queryByText("First search: 2 matches"),
-    ).not.toBeInTheDocument();
-    await expect(
-      canvasElement.querySelector('[data-activity-row="search-2"]'),
-    ).toBeVisible();
+    await expect(canvas.queryByText('First search: 2 matches')).not.toBeInTheDocument();
+    await expect(canvasElement.querySelector('[data-activity-row="search-2"]')).toBeVisible();
   },
 };
 
@@ -323,16 +266,14 @@ export const LiveDisclosure: Story = {
   args: { activity: ACTIVITY_LONG_RUNNING },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    await userEvent.click(canvas.getByRole("button", { name: /Search ×7/ }));
-    const step = canvas.getByRole("button", { name: /Searched search-4/ });
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: /Search ×7/ }));
+    const step = canvas.getByRole('button', { name: /Searched search-4/ });
     step.focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(step).toHaveAttribute("aria-expanded", "true");
-    await userEvent.click(canvas.getByRole("button", { name: /Search ×7/ }));
-    await expect(canvas.queryByText("result-4")).not.toBeInTheDocument();
+    await userEvent.keyboard('{Enter}');
+    await expect(step).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(canvas.getByRole('button', { name: /Search ×7/ }));
+    await expect(canvas.queryByText('result-4')).not.toBeInTheDocument();
   },
 };
 
@@ -361,28 +302,24 @@ export const InterleavedOperations: Story = {
   args: { activity: ACTIVITY_INTERLEAVED },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    const groups = canvas.getByRole("list", { name: "Operation groups" });
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const groups = canvas.getByRole('list', { name: 'Operation groups' });
     await expect(groups.children).toHaveLength(4);
-    await expect(
-      canvas.getByRole("button", { name: /Search ×10/ }),
-    ).toBeVisible();
-    await expect(
-      canvas.getByRole("button", { name: /Test ×2/ }),
-    ).toHaveTextContent("1 running · 1 failed");
+    await expect(canvas.getByRole('button', { name: /Search ×10/ })).toBeVisible();
+    await expect(canvas.getByRole('button', { name: /Test ×2/ })).toHaveTextContent(
+      '1 running · 1 failed',
+    );
     await expect(canvas.getByText(/Assertion failed/)).toBeVisible();
-    const reads = canvas.getByRole("button", { name: /Read ×10/ });
+    const reads = canvas.getByRole('button', { name: /Read ×10/ });
     reads.focus();
-    await userEvent.keyboard("{Enter}");
-    const members = canvas.getByRole("list", { name: "Read ×10 operations" });
+    await userEvent.keyboard('{Enter}');
+    const members = canvas.getByRole('list', { name: 'Read ×10 operations' });
     await expect(members.children).toHaveLength(10);
-    await expect(
-      [...members.children].map((row) => row.getAttribute("data-activity-row")),
-    ).toEqual(Array.from({ length: 10 }, (_, index) => `cat-${index + 1}`));
+    await expect([...members.children].map((row) => row.getAttribute('data-activity-row'))).toEqual(
+      Array.from({ length: 10 }, (_, index) => `cat-${index + 1}`),
+    );
     await userEvent.click(reads);
-    await expect(reads).toHaveAttribute("aria-expanded", "false");
+    await expect(reads).toHaveAttribute('aria-expanded', 'false');
   },
 };
 
@@ -391,29 +328,24 @@ export const AllOperationGroups: Story = {
   args: { activity: ACTIVITY_ALL_GROUPS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    const groups = canvas.getByRole("list", { name: "Operation groups" });
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const groups = canvas.getByRole('list', { name: 'Operation groups' });
     await expect(groups.children).toHaveLength(7);
     await expect(
-      canvas.queryByRole("button", {
+      canvas.queryByRole('button', {
         name: /(?:show|hide).*(?:more|fewer).*groups?/i,
       }),
     ).not.toBeInTheDocument();
-    const lastStep = within(groups.children[6] as HTMLElement).getByRole(
-      "button",
-      {
-        expanded: false,
-      },
-    );
+    const lastStep = within(groups.children[6] as HTMLElement).getByRole('button', {
+      expanded: false,
+    });
     await expect(lastStep).toBeVisible();
     lastStep.focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(lastStep).toHaveAttribute("aria-expanded", "true");
-    await expect(canvas.getByText("Build completed")).toBeVisible();
+    await userEvent.keyboard('{Enter}');
+    await expect(lastStep).toHaveAttribute('aria-expanded', 'true');
+    await expect(canvas.getByText('Build completed')).toBeVisible();
     await userEvent.click(lastStep);
-    await expect(lastStep).toHaveAttribute("aria-expanded", "false");
+    await expect(lastStep).toHaveAttribute('aria-expanded', 'false');
   },
 };
 
@@ -422,20 +354,16 @@ export const TreeChanges: Story = {
   args: { activity: ACTIVITY_TREE_CHANGES },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    const step = canvas.getByRole("button", {
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const step = canvas.getByRole('button', {
       name: /Changed 13 files and 2 directories/,
     });
     await userEvent.click(step);
-    const children = canvasElement.querySelector("[data-activity-children]")!;
+    const children = canvasElement.querySelector('[data-activity-children]')!;
     await expect(children).toBeVisible();
-    await expect(getComputedStyle(children).marginTop).toBe("0px");
+    await expect(getComputedStyle(children).marginTop).toBe('0px');
     await userEvent.click(step);
-    await expect(
-      canvasElement.querySelector("[data-activity-children]"),
-    ).toBeNull();
+    await expect(canvasElement.querySelector('[data-activity-children]')).toBeNull();
   },
 };
 
@@ -445,18 +373,16 @@ export const Listing: Story = {
   args: { activity: ACTIVITY_LISTING },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    const step = canvas.getByRole("button", { name: /Listed apps/ });
-    await expect(canvas.getByText("3 directories · 2 files")).toBeVisible();
-    await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const step = canvas.getByRole('button', { name: /Listed apps/ });
+    await expect(canvas.getByText('3 directories · 2 files')).toBeVisible();
+    await expect(canvas.queryByRole('table')).not.toBeInTheDocument();
     step.focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(canvas.getByRole("table")).toBeVisible();
+    await userEvent.keyboard('{Enter}');
+    await expect(canvas.getByRole('table')).toBeVisible();
     await userEvent.click(step);
-    await expect(canvas.getByText("3 directories · 2 files")).toBeVisible();
-    await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
+    await expect(canvas.getByText('3 directories · 2 files')).toBeVisible();
+    await expect(canvas.queryByRole('table')).not.toBeInTheDocument();
   },
 };
 
@@ -464,49 +390,37 @@ export const ListingBatch: Story = {
   args: { activity: ACTIVITY_LISTING_BATCH },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    await expect(canvas.getByText("0 directories · 2 files")).toBeVisible();
-    const step = canvas.getByRole("button", { name: /Listed 2 directories/ });
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await expect(canvas.getByText('0 directories · 2 files')).toBeVisible();
+    const step = canvas.getByRole('button', { name: /Listed 2 directories/ });
     await userEvent.click(step);
-    await expect(canvas.getAllByRole("table")).toHaveLength(2);
+    await expect(canvas.getAllByRole('table')).toHaveLength(2);
     // The first result follows its header closely; separate results keep one line.
-    const sections = [
-      ...canvasElement.querySelectorAll("[data-activity-section]"),
-    ];
-    const bodies = [
-      ...canvasElement.querySelectorAll("[data-activity-content]"),
-    ];
+    const sections = [...canvasElement.querySelectorAll('[data-activity-section]')];
+    const bodies = [...canvasElement.querySelectorAll('[data-activity-content]')];
     await expect(
-      sections[0].getBoundingClientRect().top -
-        step.getBoundingClientRect().bottom,
+      sections[0].getBoundingClientRect().top - step.getBoundingClientRect().bottom,
     ).toBe(4);
     await expect(
-      sections[1].getBoundingClientRect().top -
-        sections[0].getBoundingClientRect().bottom,
+      sections[1].getBoundingClientRect().top - sections[0].getBoundingClientRect().bottom,
     ).toBe(16);
     for (const body of bodies) {
-      await expect(getComputedStyle(body).marginTop).toBe("0px");
-      await expect(getComputedStyle(body).rowGap).toBe("4px");
+      await expect(getComputedStyle(body).marginTop).toBe('0px');
+      await expect(getComputedStyle(body).rowGap).toBe('4px');
     }
-    const chronology = canvas.getByRole("list", {
-      name: "Operation groups",
+    const chronology = canvas.getByRole('list', {
+      name: 'Operation groups',
     });
-    await expect(getComputedStyle(chronology).paddingBottom).toBe("4px");
-    const reach = getComputedStyle(step, "::after");
+    await expect(getComputedStyle(chronology).paddingBottom).toBe('4px');
+    const reach = getComputedStyle(step, '::after');
     const targetHeight =
-      step.getBoundingClientRect().height -
-      parseFloat(reach.top) -
-      parseFloat(reach.bottom);
-    const minimum = matchMedia("(width >= 40rem) and (pointer: fine)").matches
-      ? 28
-      : 44;
+      step.getBoundingClientRect().height - parseFloat(reach.top) - parseFloat(reach.bottom);
+    const minimum = matchMedia('(width >= 40rem) and (pointer: fine)').matches ? 28 : 44;
     await expect(targetHeight).toBeGreaterThanOrEqual(minimum);
     step.focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(step).toHaveAttribute("aria-expanded", "false");
-    await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
+    await userEvent.keyboard('{Enter}');
+    await expect(step).toHaveAttribute('aria-expanded', 'false');
+    await expect(canvas.queryByRole('table')).not.toBeInTheDocument();
   },
 };
 
@@ -514,48 +428,40 @@ export const CompactMiddle: Story = {
   args: {
     activity: {
       ...ACTIVITY_SETTLED,
-      rows: ["Before", "Middle", "After"].map((headline, index) => ({
+      rows: ['Before', 'Middle', 'After'].map((headline, index) => ({
         ...ACTIVITY_SETTLED.rows[0],
         id: headline.toLowerCase(),
         sequence: index + 1,
         operation: headline.toLowerCase(),
-        state: "succeeded",
+        state: 'succeeded',
         resources: [],
         evidence: [],
         result_summary: undefined,
         presentation: {
           headline,
-          summary: "",
-          content: [{ type: "code", language: "text", text: "alpha\n\nbeta" }],
+          summary: '',
+          content: [{ type: 'code', language: 'text', text: 'alpha\n\nbeta' }],
         },
       })),
     },
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const rows = ['before', 'middle', 'after'].map(
+      (id) => canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
     );
-    const rows = ["before", "middle", "after"].map((id) =>
-      canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
-    );
-    const middle = within(rows[1]).getByRole("button");
+    const middle = within(rows[1]).getByRole('button');
     // Adjacent boxes alone miss the blank space inside an oversized toggle.
     const checkSiblings = async () => {
       for (const row of rows) {
-        const toggle = within(row).getByRole("button");
+        const toggle = within(row).getByRole('button');
         const box = toggle.getBoundingClientRect();
         await expect(box.height).toBe(24);
         // Invisible reach must not cover any part of a neighboring toggle.
         for (const x of [box.left + 2, box.right - 2]) {
-          for (const y of [
-            box.top + 1,
-            box.top + box.height / 2,
-            box.bottom - 1,
-          ]) {
-            await expect(
-              document.elementFromPoint(x, y)?.closest("button"),
-            ).toBe(toggle);
+          for (const y of [box.top + 1, box.top + box.height / 2, box.bottom - 1]) {
+            await expect(document.elementFromPoint(x, y)?.closest('button')).toBe(toggle);
           }
         }
       }
@@ -568,19 +474,15 @@ export const CompactMiddle: Story = {
     };
     await checkSiblings();
     await userEvent.click(middle);
-    const body = rows[1].querySelector<HTMLElement>("[data-activity-content]")!;
-    const code = within(rows[1]).getByRole("group", { name: "text code" });
-    await expect(getComputedStyle(body).marginTop).toBe("0px");
-    await expect(getComputedStyle(code).paddingTop).toBe("8px");
-    await expect(getComputedStyle(code).paddingBottom).toBe("8px");
-    await expect(code.textContent).toContain("alpha");
-    await expect(code.querySelector("code")!.children).toHaveLength(3);
-    await expect(body.getBoundingClientRect().top).toBe(
-      middle.getBoundingClientRect().bottom,
-    );
-    await expect(rows[1].getBoundingClientRect().bottom).toBe(
-      body.getBoundingClientRect().bottom,
-    );
+    const body = rows[1].querySelector<HTMLElement>('[data-activity-content]')!;
+    const code = within(rows[1]).getByRole('group', { name: 'text code' });
+    await expect(getComputedStyle(body).marginTop).toBe('0px');
+    await expect(getComputedStyle(code).paddingTop).toBe('8px');
+    await expect(getComputedStyle(code).paddingBottom).toBe('8px');
+    await expect(code.textContent).toContain('alpha');
+    await expect(code.querySelector('code')!.children).toHaveLength(3);
+    await expect(body.getBoundingClientRect().top).toBe(middle.getBoundingClientRect().bottom);
+    await expect(rows[1].getBoundingClientRect().bottom).toBe(body.getBoundingClientRect().bottom);
     await checkSiblings();
     await userEvent.click(middle);
     await checkSiblings();
@@ -592,39 +494,22 @@ export const ExtensionGroups: Story = {
   args: {
     activity: activityProjectionFromWire(
       groupingCases.find(
-        (sample) =>
-          sample.name === "extension presentations label exact-operation groups",
+        (sample) => sample.name === 'extension presentations label exact-operation groups',
       )!.projection,
     )!,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Expand Activity" }),
-    );
-    await expect(
-      canvasElement.querySelectorAll("[data-activity-group]"),
-    ).toHaveLength(3);
-    await expect(
-      canvas.getByRole("button", { name: /Search reviews ×2/ }),
-    ).toBeVisible();
-    await expect(
-      canvas.getByRole("button", { name: /Check review deployment ×2/ }),
-    ).toBeVisible();
-    await expect(
-      canvas.getByText(/Waiting for deployment · running/),
-    ).toBeVisible();
-    await expect(
-      canvas.getByText(/Closed reviews · Review service unavailable/),
-    ).toBeVisible();
-    await userEvent.click(
-      canvas.getByRole("button", { name: /Search reviews ×3/ }),
-    );
-    await userEvent.click(canvas.getByRole("button", { name: /Changes: 0 ×2/ }));
-    await expect(
-      canvasElement.querySelectorAll("[data-activity-row]"),
-    ).toHaveLength(3);
-    await expect(canvasElement).not.toHaveTextContent("reviews.search");
-    await expect(canvasElement).not.toHaveTextContent("reviews.deployment_status");
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await expect(canvasElement.querySelectorAll('[data-activity-group]')).toHaveLength(3);
+    await expect(canvas.getByRole('button', { name: /Search reviews ×2/ })).toBeVisible();
+    await expect(canvas.getByRole('button', { name: /Check review deployment ×2/ })).toBeVisible();
+    await expect(canvas.getByText(/Waiting for deployment · running/)).toBeVisible();
+    await expect(canvas.getByText(/Closed reviews · Review service unavailable/)).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: /Search reviews ×3/ }));
+    await userEvent.click(canvas.getByRole('button', { name: /Changes: 0 ×2/ }));
+    await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(3);
+    await expect(canvasElement).not.toHaveTextContent('reviews.search');
+    await expect(canvasElement).not.toHaveTextContent('reviews.deployment_status');
   },
 };

@@ -20,7 +20,7 @@ export interface MarkdownComment {
   body: string;
 }
 
-export const COMMENTS_HEADING = "## Comments";
+export const COMMENTS_HEADING = '## Comments';
 
 const COMMENT_LINE = /^- \*\*“(.*)”\*\* — (.*)$/;
 
@@ -31,13 +31,13 @@ const COMMENT_LINE = /^- \*\*“(.*)”\*\* — (.*)$/;
  * date" is about the document. Such a comment carries no quote, and is written
  * out under its own marker so the section still round-trips.
  */
-export const GENERAL_LABEL = "Whole document";
+export const GENERAL_LABEL = 'Whole document';
 
 const GENERAL_LINE = /^- \*\*Whole document\*\* — (.*)$/;
 
 /** One line, no markers that could close the ones this format opens. */
 function oneLine(text: string): string {
-  return text.replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
+  return text.replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim();
 }
 
 /** The document split into what it says and what has been said ABOUT it. */
@@ -48,10 +48,10 @@ export function parseAnnotated(text: string): {
   const at = text.lastIndexOf(`\n${COMMENTS_HEADING}\n`);
   if (at < 0) return { body: text, comments: [] };
   const comments: MarkdownComment[] = [];
-  for (const line of text.slice(at + COMMENTS_HEADING.length + 2).split("\n")) {
+  for (const line of text.slice(at + COMMENTS_HEADING.length + 2).split('\n')) {
     const general = GENERAL_LINE.exec(line.trim());
     if (general) {
-      comments.push({ quote: "", body: general[1] });
+      comments.push({ quote: '', body: general[1] });
       continue;
     }
     const hit = COMMENT_LINE.exec(line.trim());
@@ -59,15 +59,12 @@ export function parseAnnotated(text: string): {
   }
   // A `## Comments` section this app did not write is left where it is.
   if (comments.length === 0) return { body: text, comments: [] };
-  return { body: text.slice(0, at).replace(/\s+$/, ""), comments };
+  return { body: text.slice(0, at).replace(/\s+$/, ''), comments };
 }
 
 /** The document to SAVE: the prose, then the comments section, or no section. */
-export function renderAnnotated(
-  body: string,
-  comments: MarkdownComment[],
-): string {
-  const prose = body.replace(/\s+$/, "");
+export function renderAnnotated(body: string, comments: MarkdownComment[]): string {
+  const prose = body.replace(/\s+$/, '');
   const kept = comments.filter((entry) => oneLine(entry.body).length > 0);
   if (kept.length === 0) return `${prose}\n`;
   const lines = kept.map((entry) =>
@@ -75,7 +72,7 @@ export function renderAnnotated(
       ? `- **${GENERAL_LABEL}** — ${oneLine(entry.body)}`
       : `- **“${oneLine(entry.quote)}”** — ${oneLine(entry.body)}`,
   );
-  return `${prose}\n\n${COMMENTS_HEADING}\n\n${lines.join("\n")}\n`;
+  return `${prose}\n\n${COMMENTS_HEADING}\n\n${lines.join('\n')}\n`;
 }
 
 /**

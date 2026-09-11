@@ -39,7 +39,10 @@ beforeEach(() => {
 
 describe('readSharedFiles', () => {
   it('reads every staged copy in share order', async () => {
-    const files = await readSharedFiles([staged('memo.m4a', 'audio/mp4'), staged('shot.png', 'image/png')]);
+    const files = await readSharedFiles([
+      staged('memo.m4a', 'audio/mp4'),
+      staged('shot.png', 'image/png'),
+    ]);
 
     expect(files.map((file) => file.name)).toEqual(['memo.m4a', 'shot.png']);
     expect(readFile).toHaveBeenCalledTimes(2);
@@ -58,7 +61,10 @@ describe('readSharedFiles', () => {
   it('skips a file it cannot read', async () => {
     readFile.mockRejectedValueOnce(new Error('gone'));
 
-    const files = await readSharedFiles([staged('memo.m4a', 'audio/mp4'), staged('shot.png', 'image/png')]);
+    const files = await readSharedFiles([
+      staged('memo.m4a', 'audio/mp4'),
+      staged('shot.png', 'image/png'),
+    ]);
 
     expect(files.map((file) => file.name)).toEqual(['shot.png']);
   });

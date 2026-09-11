@@ -40,7 +40,7 @@ export interface GatewayConn {
 export interface SessionGoal {
   id: string;
   objective: string;
-  status: "active" | "paused" | "blocked" | "budget_limited" | "complete" | "cancelled";
+  status: 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete' | 'cancelled';
   iteration_budget: number | null;
   iterations_used: number;
   tokens_used: number;
@@ -77,7 +77,7 @@ export interface Session {
    * ONE place the mark lives, so no two clients of a machine can disagree about it.
    */
   favorite_rank?: number | null;
-  status?: "idle" | "running" | "suspended" | string;
+  status?: 'idle' | 'running' | 'suspended' | string;
   /** The gateway's canonical liveness verdict; never infer it from paint status. */
   live: boolean;
   current_turn_id: string | null;
@@ -109,7 +109,6 @@ export interface Session {
   } | null;
   [k: string]: unknown;
 }
-
 
 /**
  * One FOLDER on a machine's own disk, straight off `GET /v1/fs`. Directories only:
@@ -152,13 +151,13 @@ export interface SessionHealthData {
   iteration?: number;
   measured_at?: number;
   stale?: boolean;
-  counted_projection?: "prepared-request" | "logical-request";
+  counted_projection?: 'prepared-request' | 'logical-request';
   budget_state:
-    | "budget-unreported"
-    | "within-budget"
-    | "fold-reminder"
-    | "over-budget"
-    | "input-limit";
+    | 'budget-unreported'
+    | 'within-budget'
+    | 'fold-reminder'
+    | 'over-budget'
+    | 'input-limit';
   budget_used_percent?: number;
   budget_used_ratio?: number;
   budget_remaining_tokens?: number;
@@ -172,8 +171,8 @@ export interface SessionHealthData {
   roots?: {
     path: string;
     guidance?:
-      | { status: "available"; path: string; tokens: number }
-      | { status: "missing" | "error" };
+      | { status: 'available'; path: string; tokens: number }
+      | { status: 'missing' | 'error' };
   }[];
 }
 
@@ -241,7 +240,7 @@ export interface Project {
   [k: string]: unknown;
 }
 
-export type ToggleType = "boolean" | "enum" | "string";
+export type ToggleType = 'boolean' | 'enum' | 'string';
 
 export interface Toggle {
   id: string;
@@ -267,7 +266,7 @@ export interface SettingsResponse {
 /** Sanitized MCP inventory served by one gateway. Secret values never travel here. */
 export interface McpServer {
   name: string;
-  transport: "stdio" | "streamable_http";
+  transport: 'stdio' | 'streamable_http';
   enabled: boolean;
   is_connected: boolean;
   /** False when the server comes from a hand-written config tier: listed, but this API never rewrites it. */
@@ -293,14 +292,14 @@ export interface McpServersResponse {
  * One headless MCP OAuth flow. PKCE and tokens stay on the gateway; the app
  * receives only the browser state/code and posts the return directly to that gateway.
  */
-export interface McpAuthFlow extends Omit<SignInFlow, "expires_at"> {
+export interface McpAuthFlow extends Omit<SignInFlow, 'expires_at'> {
   flow_id: string;
   server: string;
-  kind: "pkce";
+  kind: 'pkce';
   url: string;
   redirect_uri?: string;
   expires_at_ms?: number;
-  status: "pending" | "ok" | "error";
+  status: 'pending' | 'ok' | 'error';
   error?: string;
 }
 
@@ -315,7 +314,7 @@ export interface McpAuthStatus {
 }
 
 export interface McpServerInput {
-  transport: "stdio" | "streamable_http";
+  transport: 'stdio' | 'streamable_http';
   enabled?: boolean;
   command?: string;
   args?: string[];
@@ -378,10 +377,10 @@ export interface ProviderLimitRow {
 
 /** Reset allowance belongs to the authenticated ChatGPT account, not a device. */
 export type ProviderResetCredits =
-  | { status: "ok"; account_id: string; available_count: number }
-  | { status: "error" | "unsupported"; account_id?: string; message?: string };
+  | { status: 'ok'; account_id: string; available_count: number }
+  | { status: 'error' | 'unsupported'; account_id?: string; message?: string };
 
-export type ProviderResetOutcome = "reset" | "nothing_to_reset" | "no_credit" | "already_redeemed";
+export type ProviderResetOutcome = 'reset' | 'nothing_to_reset' | 'no_credit' | 'already_redeemed';
 
 /**
  * The gateway's limits report for one provider, exactly as `/v1/router` and
@@ -389,7 +388,7 @@ export type ProviderResetOutcome = "reset" | "nothing_to_reset" | "no_credit" | 
  */
 export interface ProviderLimits {
   provider_id?: string;
-  status?: "ok" | "loading" | "error" | string;
+  status?: 'ok' | 'loading' | 'error' | string;
   fetched_at_ms?: number;
   static?: Record<string, unknown>;
   dynamic?: { limits?: ProviderLimitRow[]; note?: string; reset_credits?: ProviderResetCredits };
@@ -434,7 +433,7 @@ export interface RouterProvider {
 export interface ProviderPreset {
   id: string;
   label: string;
-  auth_kind: "oauth" | "api-key" | "none" | "command";
+  auth_kind: 'oauth' | 'api-key' | 'none' | 'command';
   is_local: boolean;
   base_url?: string;
   api_style?: string;
@@ -456,10 +455,10 @@ export interface ModelPref {
  */
 export interface SignInFlow {
   flow_id: string;
-  kind: "pkce" | "device" | "api-key";
+  kind: 'pkce' | 'device' | 'api-key';
   url?: string;
   redirect_uri?: string;
-  callback_mode?: "loopback" | "manual" | "app";
+  callback_mode?: 'loopback' | 'manual' | 'app';
   user_code?: string;
   verification_uri?: string;
   interval_ms?: number;
@@ -472,7 +471,7 @@ export interface AuthFlow extends SignInFlow {
 }
 
 export interface AuthVerdict {
-  status: "ok" | "pending" | "error" | "cancelled" | "logged-out";
+  status: 'ok' | 'pending' | 'error' | 'cancelled' | 'logged-out';
   message?: string;
 }
 
@@ -480,10 +479,10 @@ export interface AuthVerdict {
 export type ThemePref = string;
 
 export interface VoiceModelState {
-  status: "ready" | "downloading" | "failed" | "absent" | "unavailable";
+  status: 'ready' | 'downloading' | 'failed' | 'absent' | 'unavailable';
   progress?: number;
   /** What the 'downloading' status is actually doing right now. */
-  phase?: "downloading" | "extracting";
+  phase?: 'downloading' | 'extracting';
   error?: string;
   /** Which engine answered — a machine can have more than one registered. */
   engine?: string;
@@ -637,14 +636,14 @@ export interface GatewayCapabilities {
     chat: { enabled: boolean };
     pastes?: {
       enabled: boolean;
-      transport: "display_request";
-      format: "vis-paste-v1";
+      transport: 'display_request';
+      format: 'vis-paste-v1';
       inline_max_chars: number;
       collapsed_by_default: boolean;
     };
     attachments: {
       enabled: boolean;
-      transport: "inline-base64";
+      transport: 'inline-base64';
       media_types: string[];
       /** The subset of `media_types` that is a clip, not a still. */
       video_media_types?: string[];
@@ -659,14 +658,14 @@ export interface GatewayCapabilities {
     };
     voice: {
       enabled: boolean;
-      transport: "audio/wav";
-      transcription: "gateway-local";
+      transport: 'audio/wav';
+      transcription: 'gateway-local';
       /** Since the job API: POST answers 202 and progress arrives from the job. */
       is_async?: boolean;
       /** Every phase a job can report, in order. */
       phases?: VoicePhase[];
       /** How a job reports: the gateway PUSHES every step on the job's stream. */
-      progress?: "sse";
+      progress?: 'sse';
       /**
        * The `event:` name every frame on that stream carries (`voice.job`). Told,
        * never guessed: it is what separates a job's progress from a session
@@ -688,10 +687,10 @@ export interface GatewayCapabilities {
      */
     speech?: {
       is_enabled: boolean;
-      transport?: "audio/wav";
-      synthesis?: "gateway-local";
+      transport?: 'audio/wav';
+      synthesis?: 'gateway-local';
       is_async?: boolean;
-      progress?: "sse";
+      progress?: 'sse';
       progress_event?: string;
       phases?: string[];
       /** Above this many characters a synthesis answers a JOB instead of the audio. */
@@ -803,13 +802,7 @@ export interface SpeechJob {
  * `uploading` is the CLIENT's own phase (bytes still in flight); everything from
  * `queued` on is the gateway's job reporting on itself.
  */
-export type VoicePhase =
-  | "uploading"
-  | "queued"
-  | "preparing"
-  | "transcribing"
-  | "done"
-  | "failed";
+export type VoicePhase = 'uploading' | 'queued' | 'preparing' | 'transcribing' | 'done' | 'failed';
 
 /** A transcription job, as its own `/voice/jobs/:id/events` stream reports it. */
 export interface VoiceJob {
@@ -848,14 +841,14 @@ export interface GatewayStatus {
  */
 export interface PushStatus {
   is_available: boolean;
-  provider: "apns" | "fcm" | "apns+fcm" | "relay" | "web";
+  provider: 'apns' | 'fcm' | 'apns+fcm' | 'relay' | 'web';
   /** APNs view, mirrored at the top level for older gateways. */
-  environment?: "sandbox" | "production";
+  environment?: 'sandbox' | 'production';
   topic?: string | null;
   missing?: string[];
   apns?: {
     is_available: boolean;
-    environment?: "sandbox" | "production";
+    environment?: 'sandbox' | 'production';
     topic?: string | null;
     key_source?: string | null;
     missing?: string[];
@@ -890,7 +883,7 @@ export interface PushStatus {
 export interface PushDevice {
   token_preview: string;
   platform?: string;
-  environment?: "sandbox" | "production";
+  environment?: 'sandbox' | 'production';
   client?: string;
   client_version?: string;
   label?: string;
@@ -912,7 +905,7 @@ export interface PushDeviceInput {
   /** The relay that sealed `grant`; it is the only one that can open it. */
   relay_url?: string;
   platform?: string;
-  environment?: "sandbox" | "production";
+  environment?: 'sandbox' | 'production';
   client?: string;
   client_version?: string;
   label?: string;
@@ -930,30 +923,21 @@ export interface PushSendResult {
 /** One SSE event as delivered by GET /v1/events?sids=… */
 
 export type JsonValue =
-  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 export interface ContentBlock {
   id: string;
-  type:
-    | "prose"
-    | "speech"
-    | "code"
-    | "tool"
-    | "reasoning"
-    | "error"
-    | "attachment"
-    | "notice";
+  type: 'prose' | 'speech' | 'code' | 'tool' | 'reasoning' | 'error' | 'attachment' | 'notice';
   markdown?: string;
   text?: string;
   language?: string;
   tool?: string;
-  status?:
-    | "pending"
-    | "running"
-    | "completed"
-    | "failed"
-    | "cancelled"
-    | number;
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | number;
   input?: JsonValue;
   output?: JsonValue;
   error?: JsonValue;
@@ -968,7 +952,7 @@ export interface ContentBlock {
   provider?: string;
   attempts?: JsonValue[];
   body?: string;
-  visibility?: "private" | "visible";
+  visibility?: 'private' | 'visible';
   attachment_id?: string;
   name?: string;
   media_type?: string;

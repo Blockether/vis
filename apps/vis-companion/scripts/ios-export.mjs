@@ -52,12 +52,19 @@ export function signingPlan({ bundleIds, profileNames = {} }) {
  * @param {string} [options.signingIdentity] exact certificate SHA-1 fingerprint; required for manual signing
  * @returns {string} plist contents
  */
-export function exportOptionsPlist({ teamId, signingStyle, provisioningProfiles = {}, signingIdentity }) {
+export function exportOptionsPlist({
+  teamId,
+  signingStyle,
+  provisioningProfiles = {},
+  signingIdentity,
+}) {
   if (signingStyle === 'manual' && !/^[A-Fa-f0-9]{40}$/.test(signingIdentity ?? '')) {
     throw new Error('Manual signing requires an exact distribution certificate fingerprint');
   }
   const profiles = Object.entries(provisioningProfiles)
-    .map(([bundleId, name]) => `\t\t<key>${xml(bundleId)}</key>\n\t\t<string>${xml(name)}</string>\n`)
+    .map(
+      ([bundleId, name]) => `\t\t<key>${xml(bundleId)}</key>\n\t\t<string>${xml(name)}</string>\n`,
+    )
     .join('');
   const manualSigningXml =
     signingStyle === 'manual'

@@ -78,11 +78,11 @@ describe('a machine keeps its verbs under its own row', () => {
 
     // The captions stay one word wide — the cell is 72px — while the accessible
     // name says which machine the verb acts on.
-    expect(stripOf('laptop').getAllByRole('button').map((b) => b.textContent)).toEqual([
-      'Primary',
-      'Rename',
-      'Forget',
-    ]);
+    expect(
+      stripOf('laptop')
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual(['Primary', 'Rename', 'Forget']);
   });
 
   it('opens one machine at a time', () => {
@@ -139,10 +139,11 @@ describe('a machine keeps its verbs under its own row', () => {
 
     await user.click(stripOf('laptop').getByRole('button', { name: 'Forget laptop' }));
     const ask = screen.getByRole('group', { name: 'Forget laptop?' });
-    expect(within(ask).getAllByRole('button').map((b) => b.textContent)).toEqual([
-      'No, keep',
-      'Yes, forget',
-    ]);
+    expect(
+      within(ask)
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual(['No, keep', 'Yes, forget']);
     // What it costs is said where it is asked: the panel this verb came from
     // spent a paragraph on it, and the answer is worthless without the sentence.
     expect(screen.getByText(/access token from this device/)).toBeTruthy();

@@ -10,7 +10,8 @@ const respond = (entry) => {
     status: entry.status,
     statusText: entry.statusText ?? '',
     headers: new Headers(entry.headers ?? {}),
-    text: async () => (typeof entry.body === 'string' ? entry.body : JSON.stringify(entry.body ?? {})),
+    text: async () =>
+      typeof entry.body === 'string' ? entry.body : JSON.stringify(entry.body ?? {}),
   };
 };
 
@@ -18,7 +19,12 @@ const respond = (entry) => {
 const transport = (...queue) => {
   const seen = [];
   globalThis.fetch = vi.fn(async (url, init) => {
-    seen.push({ url, authorization: init.headers.Authorization, method: init.method, body: init.body });
+    seen.push({
+      url,
+      authorization: init.headers.Authorization,
+      method: init.method,
+      body: init.body,
+    });
     if (!queue.length) throw new Error(`unexpected extra request to ${url}`);
     return respond(queue.shift());
   });
@@ -66,7 +72,10 @@ describe('asc', () => {
   });
 
   it('replays a 401 with a FRESHLY minted token', async () => {
-    const seen = transport({ status: 401, body: { errors: [{ title: 'Unauthorized', detail: 'expired' }] } }, ok());
+    const seen = transport(
+      { status: 401, body: { errors: [{ title: 'Unauthorized', detail: 'expired' }] } },
+      ok(),
+    );
     const minted = ['stale', 'fresh'];
 
     await expect(call(() => minted.shift())).resolves.toEqual({ data: { id: 'ok' } });
@@ -95,7 +104,10 @@ describe('asc', () => {
   });
 
   it('never retries a refusal that a replay cannot change', async () => {
-    const seen = transport({ status: 409, body: { errors: [{ code: 'ENTITY_ERROR', title: 'Conflict', detail: 'already exists' }] } });
+    const seen = transport({
+      status: 409,
+      body: { errors: [{ code: 'ENTITY_ERROR', title: 'Conflict', detail: 'already exists' }] },
+    });
 
     const err = await call(() => 'tok', 'POST', '/v1/betaGroups', { data: 1 }).catch((e) => e);
 

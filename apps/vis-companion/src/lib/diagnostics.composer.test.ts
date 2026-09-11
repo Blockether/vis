@@ -12,7 +12,9 @@ vi.mock('@capacitor/filesystem', () => ({
 vi.mock('./wake', () => ({
   onAway: (listener: () => void) => {
     awayListeners.add(listener);
-    return () => { awayListeners.delete(listener); };
+    return () => {
+      awayListeners.delete(listener);
+    };
   },
   onWake: () => () => {},
 }));
@@ -38,7 +40,9 @@ beforeEach(() => {
     frames.set(++frameId, callback);
     return frameId;
   });
-  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => { frames.delete(id); });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    frames.delete(id);
+  });
   textarea = document.createElement('textarea');
   document.body.append(textarea);
 });
@@ -58,7 +62,10 @@ function watch() {
 
 function input(text: string, inputType = 'insertText', stamp = now, isComposing = false) {
   const event = createEvent.input(textarea, {
-    target: { value: text }, inputType, data: text, isComposing,
+    target: { value: text },
+    inputType,
+    data: text,
+    isComposing,
   });
   Object.defineProperty(event, 'timeStamp', { value: stamp });
   fireEvent(textarea, event);
@@ -68,17 +75,22 @@ function paintAfter(ms: number) {
   now += ms;
   const pending = [...frames.values()];
   frames.clear();
-  act(() => { for (const callback of pending) callback(now); });
+  act(() => {
+    for (const callback of pending) callback(now);
+  });
 }
 
 async function advance(ms: number) {
   now += ms;
-  act(() => { vi.advanceTimersByTime(ms); });
+  act(() => {
+    vi.advanceTimersByTime(ms);
+  });
   await flushDiagnostics();
 }
 
 function records() {
-  return appendFile.mock.calls.map(([call]) => JSON.parse(call.data))
+  return appendFile.mock.calls
+    .map(([call]) => JSON.parse(call.data))
     .filter((record) => record.scope === 'composer');
 }
 
@@ -99,13 +111,24 @@ describe('composer typing diagnostics', () => {
 
     expect(records()).toHaveLength(1);
     expect(records()[0]).toMatchObject({
-      level: 'warn', event: 'typing_summary',
+      level: 'warn',
+      event: 'typing_summary',
       details: {
-        session_id: 'session-42', reason: 'interval', input_count: 6,
-        replacement_count: 1, composing_count: 1, deletion_count: 1, paste_count: 1,
-        input_delay_sample_count: 6, max_input_delay_ms: 140, slow_input_count: 1,
-        frame_count: 1, max_next_frame_ms: 180, slow_frame_count: 1,
-        unmeasured_input_count: 0, max_draft_chars: privateText.length,
+        session_id: 'session-42',
+        reason: 'interval',
+        input_count: 6,
+        replacement_count: 1,
+        composing_count: 1,
+        deletion_count: 1,
+        paste_count: 1,
+        input_delay_sample_count: 6,
+        max_input_delay_ms: 140,
+        slow_input_count: 1,
+        frame_count: 1,
+        max_next_frame_ms: 180,
+        slow_frame_count: 1,
+        unmeasured_input_count: 0,
+        max_draft_chars: privateText.length,
       },
     });
     expect(JSON.stringify(records())).not.toContain(privateText);
@@ -115,7 +138,9 @@ describe('composer typing diagnostics', () => {
     watch();
     const text = 'Zażółć gęślą jaźń';
     const event = createEvent.input(textarea, { target: { value: text } });
-    const forbidden = () => { throw new Error('Diagnostics must not read text or layout'); };
+    const forbidden = () => {
+      throw new Error('Diagnostics must not read text or layout');
+    };
     for (const property of ['value', 'clientHeight', 'scrollHeight'] as const) {
       vi.spyOn(textarea, property, 'get').mockImplementation(forbidden);
     }
@@ -135,7 +160,8 @@ describe('composer typing diagnostics', () => {
     await advance(5_000);
     expect(records()).toHaveLength(1);
     expect(records()[0]).toMatchObject({
-      level: 'info', details: { input_count: 100, frame_count: 1, max_next_frame_ms: 16 },
+      level: 'info',
+      details: { input_count: 100, frame_count: 1, max_next_frame_ms: 16 },
     });
     await advance(60_000);
     expect(records()).toHaveLength(1);
@@ -156,8 +182,12 @@ describe('composer typing diagnostics', () => {
       paintAfter(16);
       expect(records()).toHaveLength(1);
       expect(records()[0]).toMatchObject({
-        level: 'info', details: {
-          reason, input_count: 1, frame_count: 0, max_next_frame_ms: 0,
+        level: 'info',
+        details: {
+          reason,
+          input_count: 1,
+          frame_count: 0,
+          max_next_frame_ms: 0,
           unmeasured_input_count: 1,
         },
       });
@@ -173,7 +203,9 @@ describe('composer typing diagnostics', () => {
     paintAfter(16);
     await advance(5_000);
     expect(records()[0].details).toMatchObject({
-      input_count: 4, input_delay_sample_count: 1, max_input_delay_ms: 45,
+      input_count: 4,
+      input_delay_sample_count: 1,
+      max_input_delay_ms: 45,
     });
   });
 
@@ -198,7 +230,8 @@ describe('composer typing diagnostics', () => {
     paintAfter(150);
     await advance(5_000);
     expect(records()[0]).toMatchObject({
-      event: 'typing_summary', details: { session_id: 's1', replacement_count: 1 },
+      event: 'typing_summary',
+      details: { session_id: 's1', replacement_count: 1 },
     });
     view.rerenderSession('s2');
     input('Następna wiadomość');

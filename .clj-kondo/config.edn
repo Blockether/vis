@@ -1,51 +1,42 @@
 ;; Project-level clj-kondo config.
-{:lint-as
- {lazytest.core/defdescribe clojure.test/deftest
-  lazytest.core/around-each clojure.core/fn
-  ;; `vis/validator-fn` is an authoring sugar over `(fn arglist body)`.
-  ;; Same arglist semantics; tell kondo to lint it as a plain fn so
-  ;; destructured bindings in the body resolve.
-  com.blockether.vis.core/validator-fn clojure.core/fn
-  ;; `fff-index/with-index` leases a pooled fff index: `[binding (lease …)]`,
-  ;; exactly a `let` binding pair, so kondo resolves the bound index symbol.
-  com.blockether.vis.internal.workspace.fff-index/with-index clojure.core/let}
-
- :linters
- {;; Telemere generates these vars through macros, so dependency analysis cannot
-  ;; discover them even though they resolve at compile time.
-  :unresolved-var
-  {:exclude [taoensso.telemere/handler:file
-             taoensso.telemere/handler:console
-             taoensso.telemere/call-on-shutdown!]}
-  ;; kondo infers primitive types THROUGH map literals, `:keyword` lookups and fn
-  ;; return values; the Clojure COMPILER does not. Every coercion it calls
-  ;; redundant here was measured: dropping it turns the info into a real
-  ;; `*warn-on-boxed-math*` / reflection warning from the compiler (the `general`
-  ;; lint provider), which is strictly worse. The coercions stay; the check goes.
-  :redundant-primitive-coercion {:level :off}}
-
- :hooks
- {:analyze-call
-  {;; Macro that wraps a runtime backend lookup behind a defn.
-   ;; Without this hook every `defdelegate` call shows up as an
-   ;; unresolved-symbol error because clj-kondo can't expand the
-   ;; runtime resolution. See the hook for details.
-   com.blockether.vis.internal.persistance.core/defdelegate
-   hooks.com.blockether.vis.defdelegate/defdelegate
-
-   ;; In-house `import-vars`/`import-var` re-export the public facade
-   ;; (com.blockether.vis.core). Expand each re-export into a synthetic
-   ;; `def` so `vis/<alias>` resolves at every call site across the repo.
-   com.blockether.vis.internal.import/import-vars
-   hooks.com.blockether.vis.import-vars/import-vars
-   com.blockether.vis.internal.import/import-var
-   hooks.com.blockether.vis.import-vars/import-var
-
-   ;; The sandbox leases: `[sym & create-python-context args]`, which is NOT a
-   ;; `let` binding vector — linting it as one reads the roots argument as a
-   ;; binding form, so every lease that states its own roots (every jailed one)
-   ;; was an error.
-   com.blockether.vis.test-python-context/with-own
-   hooks.com.blockether.vis.with-own-sandbox/with-own
-   com.blockether.vis.test-python-context/with-own-env
-   hooks.com.blockether.vis.with-own-sandbox/with-own-env}}}
+{:hooks {:analyze-call {;; Macro that wraps a runtime backend lookup behind a defn.
+                        ;; Without this hook every `defdelegate` call shows up as an
+                        ;; unresolved-symbol error because clj-kondo can't expand the
+                        ;; runtime resolution. See the hook for details.
+                        com.blockether.vis.internal.persistance.core/defdelegate
+                        hooks.com.blockether.vis.defdelegate/defdelegate
+                        ;; In-house `import-vars`/`import-var` re-export the public facade
+                        ;; (com.blockether.vis.core). Expand each re-export into a synthetic
+                        ;; `def` so `vis/<alias>` resolves at every call site across the repo.
+                        com.blockether.vis.internal.import/import-vars
+                        hooks.com.blockether.vis.import-vars/import-vars
+                        com.blockether.vis.internal.import/import-var
+                        hooks.com.blockether.vis.import-vars/import-var
+                        ;; The sandbox leases: `[sym & create-python-context args]`, which is NOT a
+                        ;; `let` binding vector — linting it as one reads the roots argument as a
+                        ;; binding form, so every lease that states its own roots (every jailed one)
+                        ;; was an error.
+                        com.blockether.vis.test-python-context/with-own
+                        hooks.com.blockether.vis.with-own-sandbox/with-own
+                        com.blockether.vis.test-python-context/with-own-env
+                        hooks.com.blockether.vis.with-own-sandbox/with-own-env}}
+ :lint-as {lazytest.core/defdescribe clojure.test/deftest
+           lazytest.core/around-each clojure.core/fn
+           ;; `vis/validator-fn` is an authoring sugar over `(fn arglist body)`.
+           ;; Same arglist semantics; tell kondo to lint it as a plain fn so
+           ;; destructured bindings in the body resolve.
+           com.blockether.vis.core/validator-fn clojure.core/fn
+           ;; `fff-index/with-index` leases a pooled fff index: `[binding (lease …)]`,
+           ;; exactly a `let` binding pair, so kondo resolves the bound index symbol.
+           com.blockether.vis.internal.workspace.fff-index/with-index clojure.core/let}
+ :linters {;; Telemere generates these vars through macros, so dependency analysis cannot
+           ;; discover them even though they resolve at compile time.
+           :unresolved-var {:exclude [taoensso.telemere/handler:file
+                                      taoensso.telemere/handler:console
+                                      taoensso.telemere/call-on-shutdown!]}
+           ;; kondo infers primitive types THROUGH map literals, `:keyword` lookups and fn
+           ;; return values; the Clojure COMPILER does not. Every coercion it calls
+           ;; redundant here was measured: dropping it turns the info into a real
+           ;; `*warn-on-boxed-math*` / reflection warning from the compiler (the `general`
+           ;; lint provider), which is strictly worse. The coercions stay; the check goes.
+           :redundant-primitive-coercion {:level :off}}}

@@ -1,6 +1,6 @@
-import iconsSource from "./icons.tsx?raw";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import iconsSource from './icons.tsx?raw';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
 import {
   AlertIcon,
   ArrowDownIcon,
@@ -36,7 +36,7 @@ import {
   UndoIcon,
   TrimIcon,
   VoiceLoopIcon,
-} from "./icons";
+} from './icons';
 
 /**
  * THE STATUS COLUMN, and it is a SET: these six are chosen for each other rather
@@ -54,7 +54,7 @@ const STATUS_COLUMN = {
 };
 
 // Monochrome review: passing undefined erased Lucide's fill="none", hiding every status glyph.
-it("keeps status rings unfilled so their symbols survive without colour", () => {
+it('keeps status rings unfilled so their symbols survive without colour', () => {
   for (const icon of Object.values(STATUS_COLUMN)) {
     expect(renderToStaticMarkup(icon)).toContain('fill="none"');
   }
@@ -83,8 +83,8 @@ const ICONS = {
   SettingsIcon: <SettingsIcon />,
   ShareIcon: <ShareIcon />,
   SortIcon: <SortIcon />,
-  "SortIcon asc": <SortIcon dir="asc" />,
-  "SortIcon desc": <SortIcon dir="desc" />,
+  'SortIcon asc': <SortIcon dir="asc" />,
+  'SortIcon desc': <SortIcon dir="desc" />,
   StarIcon: <StarIcon />,
   StopIcon: <StopIcon />,
   TrashIcon: <TrashIcon />,
@@ -126,7 +126,7 @@ function markBox(html: string) {
 
   for (const m of html.matchAll(/\sd="([^"]+)"/g)) {
     const tokens = m[1].match(/[A-Za-z]|-?\d*\.?\d+/g) ?? [];
-    let cmd = "M";
+    let cmd = 'M';
     let x = 0;
     let y = 0;
     let i = 0;
@@ -146,8 +146,8 @@ function markBox(html: string) {
       const values = tokens.slice(i, i + count).map(Number);
       i += count;
       const rel = cmd === cmd.toLowerCase();
-      if (up === "H") x = rel ? x + values[0] : values[0];
-      else if (up === "V") y = rel ? y + values[0] : values[0];
+      if (up === 'H') x = rel ? x + values[0] : values[0];
+      else if (up === 'V') y = rel ? y + values[0] : values[0];
       else {
         const [ex, ey] = values.slice(-2);
         x = rel ? x + ex : ex;
@@ -155,24 +155,24 @@ function markBox(html: string) {
       }
       add(x, y);
       // An implicit repeat of `M` is a line, and it keeps the same case.
-      if (up === "M") cmd = rel ? "l" : "L";
+      if (up === 'M') cmd = rel ? 'l' : 'L';
     }
   }
 
   for (const tag of html.match(/<(circle|rect|line)[^>]*>/g) ?? []) {
     const at = (key: string) =>
       Number(new RegExp(`${key}="(-?[\\d.]+)"`).exec(tag)?.[1] ?? Number.NaN);
-    if (tag.startsWith("<circle")) {
-      const [cx, cy, r] = [at("cx"), at("cy"), at("r")];
+    if (tag.startsWith('<circle')) {
+      const [cx, cy, r] = [at('cx'), at('cy'), at('r')];
       add(cx - r, cy - r);
       add(cx + r, cy + r);
-    } else if (tag.startsWith("<line")) {
+    } else if (tag.startsWith('<line')) {
       // The bang inside a ring and the stroke through it are `<line>`s, and a
       // mark drawn only in lines measures nothing at all without this.
-      add(at("x1"), at("y1"));
-      add(at("x2"), at("y2"));
+      add(at('x1'), at('y1'));
+      add(at('x2'), at('y2'));
     } else {
-      const [x, y, w, h] = [at("x"), at("y"), at("width"), at("height")];
+      const [x, y, w, h] = [at('x'), at('y'), at('width'), at('height')];
       add(x, y);
       add(x + w, y + h);
     }
@@ -202,8 +202,8 @@ function markBox(html: string) {
 
 const round = (n: number) => Math.round(n * 100) / 100;
 
-describe("the icon set", () => {
-  it("draws every icon in ONE grammar", () => {
+describe('the icon set', () => {
+  it('draws every icon in ONE grammar', () => {
     for (const [name, icon] of Object.entries(ICONS)) {
       const html = renderToStaticMarkup(icon);
       // The composer's own grid, size and stroke: a strip of these has to look
@@ -219,23 +219,21 @@ describe("the icon set", () => {
     }
   });
 
-  it("leaves the size to a caller that names one", () => {
-    const chip = renderToStaticMarkup(
-      <CloseIcon className="size-3 opacity-70" />,
-    );
-    expect(chip).not.toContain("size-3.5");
+  it('leaves the size to a caller that names one', () => {
+    const chip = renderToStaticMarkup(<CloseIcon className="size-3 opacity-70" />);
+    expect(chip).not.toContain('size-3.5');
     const boxed = renderToStaticMarkup(<CloseIcon className="h-4 w-4" />);
-    expect(boxed).not.toContain("size-3.5");
+    expect(boxed).not.toContain('size-3.5');
   });
 
-  it("turns the disclosure instead of swapping one character for another", () => {
+  it('turns the disclosure instead of swapping one character for another', () => {
     const shut = renderToStaticMarkup(<ChevronIcon />);
     const open = renderToStaticMarkup(<ChevronIcon open />);
     const shape = (html: string) => /d="([^"]*)"/.exec(html)?.[1];
 
     expect(shape(shut)).toBe(shape(open));
-    expect(shut).not.toContain("rotate-90");
-    expect(open).toContain("motion-reduce:transition-none");
+    expect(shut).not.toContain('rotate-90');
+    expect(open).toContain('motion-reduce:transition-none');
   });
 
   // Regression: the star was drawn in the legible amber INK a text glyph needs,
@@ -250,15 +248,13 @@ describe("the icon set", () => {
   // light theme's #faf3eb paper is 1.45:1, so the starred row carried a glyph
   // that could not be seen. The FILL stays the brand yellow; the OUTLINE is the
   // amber ink, which is what makes the shape visible on paper.
-  it("fills a starred star with the brand accent and outlines it in the ink", () => {
+  it('fills a starred star with the brand accent and outlines it in the ink', () => {
     const filled = renderToStaticMarkup(<StarIcon filled />);
     expect(filled).toContain('fill="currentColor"');
-    expect(filled).toContain("text-accent stroke-accent-ink");
+    expect(filled).toContain('text-accent stroke-accent-ink');
     // Not the ink as a FILL: that was the brown star an earlier report rejected.
-    expect(filled).not.toContain("fill-accent-ink");
-    expect(renderToStaticMarkup(<StarIcon />)).toContain(
-      'fill="none"',
-    );
+    expect(filled).not.toContain('fill-accent-ink');
+    expect(renderToStaticMarkup(<StarIcon />)).toContain('fill="none"');
   });
 
   // Regression, user report (phone screenshot after build 5395: "the microphone
@@ -268,7 +264,7 @@ describe("the icon set", () => {
   // that attribute, React dropped it, and the SVG painted its own default fill —
   // every outline mark shipped as a filled silhouette. A plain mark must carry
   // `fill="none"` on the element itself, exactly like the un-starred star does.
-  it("keeps every plain mark an outline: fill=\"none\" on the svg element", () => {
+  it('keeps every plain mark an outline: fill="none" on the svg element', () => {
     const plain = [
       <MicIcon key="mic" />,
       <SettingsIcon key="settings" />,
@@ -296,7 +292,7 @@ describe("the icon set", () => {
   // wrong one: the same mark repeats down fifty rows there, and a difference in
   // weight between two of them reads as a difference in meaning. So the column is
   // ONE RING with four interiors, and this is the test that keeps it one.
-  it("keeps a column of marks to one ring", () => {
+  it('keeps a column of marks to one ring', () => {
     const measured = Object.entries(STATUS_COLUMN).map(([name, icon]) => ({
       name,
       size: round(markBox(renderToStaticMarkup(icon)).size),
@@ -311,7 +307,7 @@ describe("the icon set", () => {
   // The spread of the WHOLE set, pinned so a library bump that reshapes a mark has
   // to be looked at: `arrow-up-right` is the smallest at 10 units and the rings are
   // the largest at 20. Anything outside that was drawn to a different grid.
-  it("draws every mark to one grid", () => {
+  it('draws every mark to one grid', () => {
     const off = Object.entries(ICONS)
       .map(([name, icon]) => ({
         name,
@@ -322,7 +318,7 @@ describe("the icon set", () => {
     expect(off).toEqual([]);
   });
 
-  it("keeps every mark inside one live area", () => {
+  it('keeps every mark inside one live area', () => {
     // 2–22 of the 24 grid: the library's own padding, and what lets a control put
     // an icon against a label without the icon deciding the row's height.
     const off = Object.entries(ICONS)
@@ -330,9 +326,7 @@ describe("the icon set", () => {
         name,
         box: markBox(renderToStaticMarkup(icon)),
       }))
-      .filter(
-        ({ box }) => box.x0 < 2 || box.y0 < 2 || box.x1 > 22 || box.y1 > 22,
-      )
+      .filter(({ box }) => box.x0 < 2 || box.y0 < 2 || box.x1 > 22 || box.y1 > 22)
       .map(({ name, box }) => ({
         name,
         box: [round(box.x0), round(box.y0), round(box.x1), round(box.y1)],
@@ -341,7 +335,7 @@ describe("the icon set", () => {
     expect(off).toEqual([]);
   });
 
-  it("centres every mark on the grid", () => {
+  it('centres every mark on the grid', () => {
     const centres = Object.entries(ICONS)
       .map(([name, icon]) => ({
         name,
@@ -357,19 +351,14 @@ describe("the icon set", () => {
     // stand is lighter than its capsule — all three are drawn off-centre ON
     // PURPOSE so they look centred, and none is more than a unit and a quarter out.
     const off = centres.filter(
-      ({ centre }) =>
-        Math.abs(centre[0] - 12) > 1.25 || Math.abs(centre[1] - 12) > 1.25,
+      ({ centre }) => Math.abs(centre[0] - 12) > 1.25 || Math.abs(centre[1] - 12) > 1.25,
     );
     expect(off).toEqual([]);
 
     // The column has no such licence: a ring is a ring, and fifty of them stack.
     const column = centres.filter(({ name }) => name in STATUS_COLUMN);
     expect(column).toHaveLength(6);
-    expect(
-      column.filter(
-        ({ centre }) => centre[0] !== 12 || centre[1] !== 12,
-      ),
-    ).toEqual([]);
+    expect(column.filter(({ centre }) => centre[0] !== 12 || centre[1] !== 12)).toEqual([]);
   });
 });
 
@@ -384,35 +373,35 @@ describe("the icon set", () => {
  * checkbox. Only marks that stand in for an icon are refused.
  */
 const GLYPHS_AS_ICONS = [
-  "✕",
-  "✖",
-  "✗",
-  "▾",
-  "▶",
-  "◀",
-  "▲",
-  "↓",
+  '✕',
+  '✖',
+  '✗',
+  '▾',
+  '▶',
+  '◀',
+  '▲',
+  '↓',
   // Regression, reported as "we want Lucide — ensure it is in the icons": the
   // composer's send button went on painting `↑` after every other mark moved to
   // the one set, so the control this app presses most was the one place it still
   // said "icon" with the body font.
-  "↑",
-  "↗",
-  "▣",
-  "≡",
-  "⋯",
-  "›",
-  "‹",
+  '↑',
+  '↗',
+  '▣',
+  '≡',
+  '⋯',
+  '›',
+  '‹',
   // Regression, reported as "ensure we are using the Lucide icons everywhere":
   // the composer's three level chips kept painting `◇`, `≡` and `»` in the body
   // face beside a real `PlusIcon`, a settings row led with `●`/`○`/`◆`, and the
   // gallery said `⏸`. The list missed three of them and the scan below missed the
   // fourth, so the rule read as kept while the most-pressed strip in the app broke
   // it in three places at once.
-  "◇",
-  "◆",
-  "»",
-  "⏸",
+  '◇',
+  '◆',
+  '»',
+  '⏸',
 ];
 
 /**
@@ -422,11 +411,11 @@ const GLYPHS_AS_ICONS = [
  * stands ALONE — a lone `×` in a button is a close icon nobody drew, and a lone
  * `✓` in a cell is a `CheckIcon` nobody drew.
  */
-const GLYPHS_ALONE = ["×", "▸", "✓"];
+const GLYPHS_ALONE = ['×', '▸', '✓'];
 
 /** Comments may NAME the glyph they replaced — that is how a regression is documented. */
 const withoutComments = (source: string) =>
-  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 /**
  * `{'›'}` paints the very same chevron as `›` — it is only spelled so that a
@@ -438,10 +427,8 @@ const withoutComments = (source: string) =>
  */
 const UNICODE_ESCAPE = /\\u\{([0-9a-fA-F]{1,6})\}|\\u([0-9a-fA-F]{4})/g;
 const unescaped = (source: string) =>
-  source.replace(
-    UNICODE_ESCAPE,
-    (_match, braced: string | undefined, plain: string) =>
-      String.fromCodePoint(Number.parseInt(braced ?? plain, 16)),
+  source.replace(UNICODE_ESCAPE, (_match, braced: string | undefined, plain: string) =>
+    String.fromCodePoint(Number.parseInt(braced ?? plain, 16)),
   );
 
 const STRING = /(['"`])(?:\\.|(?!\1)[^\\])*\1/g;
@@ -463,7 +450,7 @@ const ATTRIBUTE = /\s[a-zA-Z-]+=(?:"[^"\n]*"|'[^'\n]*')/g;
  * message, is standing in for a control mark and is refused.
  */
 const isProse = (literal: string) =>
-  /[\p{L}\p{N}]/u.test(literal.replace(/\$\{[^}]*\}/g, "").slice(1, -1));
+  /[\p{L}\p{N}]/u.test(literal.replace(/\$\{[^}]*\}/g, '').slice(1, -1));
 
 const glyphsAsIcons = (source: string) => {
   const marks = new Set<string>();
@@ -476,11 +463,11 @@ const glyphsAsIcons = (source: string) => {
     }
   };
   const markup = withoutComments(source)
-    .replace(ATTRIBUTE, " ")
+    .replace(ATTRIBUTE, ' ')
     .replace(STRING, (raw) => {
       const literal = unescaped(raw);
       if (!isProse(literal)) collect(literal.slice(1, -1));
-      return " ";
+      return ' ';
     });
   // What is left is markup: every run between the tags and the braces is either
   // the text a reader sees or code, and neither may carry a control mark.
@@ -499,18 +486,18 @@ const glyphsAsIcons = (source: string) => {
 const TYPE_SCALE = /\btext-(chip|meta|ui|body|title|subhead|head|display)\b/g;
 
 const oversizedOnChipLines = (source: string) => {
-  const lines = source.split("\n");
+  const lines = source.split('\n');
   const offenders: string[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const icon = /<([A-Z]\w*Icon)\b/.exec(lines[i]);
     if (!icon) continue;
-    const above = lines.slice(Math.max(0, i - 12), i + 1).join("\n");
+    const above = lines.slice(Math.max(0, i - 12), i + 1).join('\n');
     const type = [...above.matchAll(TYPE_SCALE)].pop();
-    if (type?.[1] !== "chip") continue;
+    if (type?.[1] !== 'chip') continue;
     const props = lines
       .slice(i, i + 6)
-      .join("\n")
-      .split("/>")[0];
+      .join('\n')
+      .split('/>')[0];
     if (!/size-3(?![\d.])/.test(props)) offenders.push(icon[1]);
   }
   return offenders;
@@ -537,22 +524,22 @@ const boxesAsMarks = (source: string) =>
 // artifacts sheet shipped a `▶` for video, `✕` for close and `↓` for load-more,
 // and the same characters stood in for icons across the dialogs, the session
 // list and the transcript's disclosures.
-describe("the shipped screens", () => {
-  const sources = import.meta.glob(["../**/*.ts", "../**/*.tsx"], {
-    query: "?raw",
-    import: "default",
+describe('the shipped screens', () => {
+  const sources = import.meta.glob(['../**/*.ts', '../**/*.tsx'], {
+    query: '?raw',
+    import: 'default',
     eager: true,
   }) as Record<string, string>;
 
-  it("tells a control mark from a sentence", () => {
-    expect(glyphsAsIcons("<span>✕</span>")).toEqual(["✕"]);
-    expect(glyphsAsIcons("<button>↓ Latest</button>")).toEqual(["↓"]);
-    expect(glyphsAsIcons("const label = '✕';")).toEqual(["✕"]);
-    expect(glyphsAsIcons("const label = `▶ ${name}`;")).toEqual(["▶"]);
+  it('tells a control mark from a sentence', () => {
+    expect(glyphsAsIcons('<span>✕</span>')).toEqual(['✕']);
+    expect(glyphsAsIcons('<button>↓ Latest</button>')).toEqual(['↓']);
+    expect(glyphsAsIcons("const label = '✕';")).toEqual(['✕']);
+    expect(glyphsAsIcons('const label = `▶ ${name}`;')).toEqual(['▶']);
     expect(glyphsAsIcons("const help = 'open Settings ▸ Vis';")).toEqual([]);
-    expect(glyphsAsIcons("<button>×</button>")).toEqual(["×"]);
-    expect(glyphsAsIcons("const tail = ` ×${count}`;")).toEqual([]);
-    expect(glyphsAsIcons("// this used to paint a ✕\n")).toEqual([]);
+    expect(glyphsAsIcons('<button>×</button>')).toEqual(['×']);
+    expect(glyphsAsIcons('const tail = ` ×${count}`;')).toEqual([]);
+    expect(glyphsAsIcons('// this used to paint a ✕\n')).toEqual([]);
     // Regression, reported as "these chevrons look bad — different heights,
     // fonts etc" in the session list: the disclosure in front of a session row was
     // the CHARACTER › set in the row's mono face, one line above a real
@@ -560,36 +547,34 @@ describe("the shipped screens", () => {
     // survived this scan twice over — › was not on the list, and the session row
     // spelled it `{'\\u203a'}`, which reads as prose to a scanner that never
     // decodes an escape.
-    expect(glyphsAsIcons("<span>›</span>")).toEqual(["›"]);
-    expect(glyphsAsIcons("<span>{'\\u203a'}</span>")).toEqual(["›"]);
-    expect(glyphsAsIcons("<span aria-hidden>‹</span>")).toEqual(["‹"]);
-    expect(glyphsAsIcons("<span>Settings ›</span>")).toEqual(["›"]);
+    expect(glyphsAsIcons('<span>›</span>')).toEqual(['›']);
+    expect(glyphsAsIcons("<span>{'\\u203a'}</span>")).toEqual(['›']);
+    expect(glyphsAsIcons('<span aria-hidden>‹</span>')).toEqual(['‹']);
+    expect(glyphsAsIcons('<span>Settings ›</span>')).toEqual(['›']);
     // Regression, reported as "ensure we are using the Lucide icons everywhere":
     // the composer painted `◇`, `≡` and `»` for three turns after the migration and
     // this scan stayed green. `aria-hidden="true">≡ </span>` ends a quoted value,
     // the next attribute in the file starts one, and the string the regex built out
     // of that pair ate the glyph between them.
     expect(
-      glyphsAsIcons(
-        '<span aria-hidden="true">≡ </span><span aria-hidden="true">↑</span>',
-      ),
-    ).toEqual(["≡", "↑"]);
-    expect(glyphsAsIcons("<td>{picked ? '✓' : index}</td>")).toEqual(["✓"]);
+      glyphsAsIcons('<span aria-hidden="true">≡ </span><span aria-hidden="true">↑</span>'),
+    ).toEqual(['≡', '↑']);
+    expect(glyphsAsIcons("<td>{picked ? '✓' : index}</td>")).toEqual(['✓']);
     expect(glyphsAsIcons("const box = '[✓]';")).toEqual([]);
   });
 
-  it("never paint a glyph where an icon belongs", () => {
+  it('never paint a glyph where an icon belongs', () => {
     const offenders: string[] = [];
     for (const [path, source] of Object.entries(sources)) {
       // `src/dev/**` holds the gallery's FIXTURES — the requests a story feeds a
       // shipped component — and nothing in it renders in the app itself.
-      if (path.includes("/dev/") || path.includes(".test.")) continue;
+      if (path.includes('/dev/') || path.includes('.test.')) continue;
       for (const glyph of glyphsAsIcons(source)) {
         // A MARKDOWN DOCUMENT'S OWN BULLETS ARE CONTENT. The artifacts sheet paints
         // a task list the way the file wrote it — `[x]` arrives as `✓`, `[ ]` as `○`
         // — at the document's own size, beside its words. Nothing there is pressable,
         // so no icon is missing; the glyph IS the text.
-        if (glyph === "✓" && path.endsWith("/ArtifactsSheet.tsx")) continue;
+        if (glyph === '✓' && path.endsWith('/ArtifactsSheet.tsx')) continue;
         offenders.push(`${path}: ${glyph}`);
       }
     }
@@ -601,16 +586,14 @@ describe("the shipped screens", () => {
   // — a square painted by a class, one line from a `StopIcon` the set already
   // exported — and this file stayed green through it.
   it("never paint a control's mark with a class", () => {
-    expect(
-      boxesAsMarks('<button><span className="size-1.5 bg-err" /></button>'),
-    ).toEqual(["size-1.5 bg-err"]);
+    expect(boxesAsMarks('<button><span className="size-1.5 bg-err" /></button>')).toEqual([
+      'size-1.5 bg-err',
+    ]);
     // A dot that reports a state beside words is not a control's mark.
-    expect(boxesAsMarks('<span className="size-1.5 bg-ok" /> connected')).toEqual(
-      [],
-    );
+    expect(boxesAsMarks('<span className="size-1.5 bg-ok" /> connected')).toEqual([]);
 
     const offenders = Object.entries(sources).flatMap(([path, source]) =>
-      path.includes("/dev/") || path.includes(".test.")
+      path.includes('/dev/') || path.includes('.test.')
         ? []
         : boxesAsMarks(source).map((box) => `${path}: ${box}`),
     );
@@ -622,19 +605,19 @@ describe("the shipped screens", () => {
   // on the 24-unit grid, and keeping those in one module is the whole point of this
   // rule. So the plot is named here rather than exempted by folder, and it still may
   // never draw a glyph's `<path>`.
-  it("import those icons from the one module that draws them", () => {
+  it('import those icons from the one module that draws them', () => {
     const drawn = Object.entries(sources).filter(
       ([path, source]) =>
-        !path.includes("/icons.tsx") &&
-        !path.includes("/dev/") &&
-        !path.includes(".test.") &&
+        !path.includes('/icons.tsx') &&
+        !path.includes('/dev/') &&
+        !path.includes('.test.') &&
         /<svg/.test(source),
     );
 
-    expect(drawn.map(([path]) => path)).toEqual(["./ChatContent.tsx"]);
+    expect(drawn.map(([path]) => path)).toEqual(['./ChatContent.tsx']);
     const [[, wave]] = drawn;
     expect(wave.match(/<svg/g)).toHaveLength(1);
-    expect(wave).not.toContain("<path");
+    expect(wave).not.toContain('<path');
   });
 
   // The library is a dependency of ONE module, not of the app. `icons.tsx` is the
@@ -642,31 +625,26 @@ describe("the shipped screens", () => {
   // and `import { Check } from "lucide-react"` in a screen is that vocabulary
   // going away one call site at a time: two screens then draw the same thing under
   // two names, at two sizes, and nothing measures them together.
-  it("keep the library behind that module", () => {
+  it('keep the library behind that module', () => {
     const importers = Object.entries(sources)
-      .filter(
-        ([path, source]) =>
-          !path.includes(".test.") && source.includes("lucide-react"),
-      )
+      .filter(([path, source]) => !path.includes('.test.') && source.includes('lucide-react'))
       .map(([path]) => path);
 
-    expect(importers).toEqual(["./icons.tsx"]);
+    expect(importers).toEqual(['./icons.tsx']);
   });
 
   // Regression: the app's two-item tab bar was deleted, and its marks — a
   // document and a stack of machines — stayed behind in `icons.tsx` with no call
   // site, kept alive only by this file. A geometry test over a mark nobody draws
   // proves nothing, so the set is checked against the screens that use it.
-  it("draw every mark the icon module exports", () => {
-    const exported = [...iconsSource.matchAll(/export function (\w+)/g)].map(
-      ([, name]) => name,
-    );
+  it('draw every mark the icon module exports', () => {
+    const exported = [...iconsSource.matchAll(/export function (\w+)/g)].map(([, name]) => name);
     const dead = exported.filter((name) =>
       Object.entries(sources).every(
         ([path, source]) =>
-          path.includes("/icons.tsx") ||
-          path.includes("/dev/") ||
-          path.includes(".test.") ||
+          path.includes('/icons.tsx') ||
+          path.includes('/dev/') ||
+          path.includes('.test.') ||
           !new RegExp(`\\b${name}\\b`).test(source),
       ),
     );
@@ -677,9 +655,9 @@ describe("the shipped screens", () => {
   // Regression, reported as "the paperclip is too big now": the artifacts chip
   // is a 9px `text-chip` line and the icon beside those words was the 14px
   // default, so the clip read as a sticker pasted onto the label.
-  it("size an icon to the line of type it rides", () => {
+  it('size an icon to the line of type it rides', () => {
     const offenders = Object.entries(sources).flatMap(([path, source]) =>
-      path.includes("/dev/") || path.includes(".test.")
+      path.includes('/dev/') || path.includes('.test.')
         ? []
         : oversizedOnChipLines(source).map((mark) => `${path}: ${mark}`),
     );
@@ -687,24 +665,17 @@ describe("the shipped screens", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("reads the type off the element the icon sits in", () => {
-    const chip =
-      '<span className="font-mono text-chip">\n  <CloseIcon />\n</span>';
-    expect(oversizedOnChipLines(chip)).toEqual(["CloseIcon"]);
+  it('reads the type off the element the icon sits in', () => {
+    const chip = '<span className="font-mono text-chip">\n  <CloseIcon />\n</span>';
+    expect(oversizedOnChipLines(chip)).toEqual(['CloseIcon']);
     expect(
-      oversizedOnChipLines(
-        chip.replace("<CloseIcon />", '<CloseIcon className="size-3" />'),
-      ),
+      oversizedOnChipLines(chip.replace('<CloseIcon />', '<CloseIcon className="size-3" />')),
     ).toEqual([]);
     // `size-3.5` is the default, not a chip size.
     expect(
-      oversizedOnChipLines(
-        chip.replace("<CloseIcon />", '<CloseIcon className="size-3.5" />'),
-      ),
-    ).toEqual(["CloseIcon"]);
+      oversizedOnChipLines(chip.replace('<CloseIcon />', '<CloseIcon className="size-3.5" />')),
+    ).toEqual(['CloseIcon']);
     // A `text-meta` row keeps the default.
-    expect(
-      oversizedOnChipLines(chip.replace("text-chip", "text-meta")),
-    ).toEqual([]);
+    expect(oversizedOnChipLines(chip.replace('text-chip', 'text-meta'))).toEqual([]);
   });
 });

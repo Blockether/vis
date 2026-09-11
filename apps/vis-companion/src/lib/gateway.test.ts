@@ -68,7 +68,9 @@ describe('GatewayClient event-stream hard deadline', () => {
   it('retires a suspended body reader that ignores abort', async () => {
     vi.useFakeTimers();
     const parkedBody = {
-      getReader: () => ({ read: () => new Promise<ReadableStreamReadResult<Uint8Array>>(() => {}) }),
+      getReader: () => ({
+        read: () => new Promise<ReadableStreamReadResult<Uint8Array>>(() => {}),
+      }),
     } as unknown as ReadableStream<Uint8Array>;
     const fetches = vi
       .fn<() => Promise<Response>>()
@@ -87,16 +89,15 @@ describe('GatewayClient event-stream hard deadline', () => {
 
     stop();
   });
- });
+});
 
 // Regression: a cold-start client used to re-download the complete session list.
 describe('GatewayClient session-list validators', () => {
   it('revalidates a persisted session snapshot with its head ETag after a cold start', async () => {
     const firstFetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ sessions, total: 1, has_more: false }),
-        { headers: { ETag: '"sessions-v1"' } },
-      ),
+      new Response(JSON.stringify({ sessions, total: 1, has_more: false }), {
+        headers: { ETag: '"sessions-v1"' },
+      }),
     );
     vi.stubGlobal('fetch', firstFetch);
     const first = await import('./gateway');
@@ -120,9 +121,9 @@ describe('GatewayClient session-list validators', () => {
 });
 describe('GatewayClient canonical queued turn state', () => {
   it('rejects an incomplete session response without caching it or making a fallback request', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'session-1', title: 'Session' })),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'session-1', title: 'Session' })));
     vi.stubGlobal('fetch', fetchMock);
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
@@ -229,7 +230,9 @@ describe('GatewayClient session list', () => {
             sessions: page,
             total: rows().length,
             has_more: page.length < rows().length,
-            next_cursor: page.length ? `${page[page.length - 1]!.modified_at}:${page[page.length - 1]!.id}` : null,
+            next_cursor: page.length
+              ? `${page[page.length - 1]!.modified_at}:${page[page.length - 1]!.id}`
+              : null,
           }),
           { headers: { ETag: etag } },
         ),
@@ -251,7 +254,9 @@ describe('GatewayClient session list', () => {
     // ONE window is whatever limit the client asked for, and never the fleet: the
     // size is the client's to choose, the "one page, not 1192 rows" is the contract.
     const asked = Number(
-      new URL(String(fetched.mock.calls[0]![0]), 'http://gateway.example.com').searchParams.get('limit'),
+      new URL(String(fetched.mock.calls[0]![0]), 'http://gateway.example.com').searchParams.get(
+        'limit',
+      ),
     );
     expect(asked).toBeLessThan(rows.length);
     expect(list).toHaveLength(asked);
@@ -290,7 +295,9 @@ describe('GatewayClient session list', () => {
     expect(second).not.toBe(first);
     expect(second[0]?.id).toBe('session-1191');
     const asked = Number(
-      new URL(String(fetched.mock.calls[1]![0]), 'http://gateway.example.com').searchParams.get('limit'),
+      new URL(String(fetched.mock.calls[1]![0]), 'http://gateway.example.com').searchParams.get(
+        'limit',
+      ),
     );
     expect(second).toHaveLength(asked);
     // Still one request per poll, and every row served once.
@@ -316,9 +323,7 @@ describe('GatewayClient rolling transcript cache', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: string) => {
-        const match = new URL(String(input)).pathname.match(
-          /\/v1\/sessions\/([^/]+)\/transcript/,
-        );
+        const match = new URL(String(input)).pathname.match(/\/v1\/sessions\/([^/]+)\/transcript/);
         return Promise.resolve(transcriptResponse(decodeURIComponent(match?.[1] ?? 'missing')));
       }),
     );
@@ -500,9 +505,13 @@ describe('GatewayClient rolling transcript cache', () => {
 // against the daemon's launch directory instead of the open session's nested project.
 describe('GatewayClient session slash palette', () => {
   it('requests slash commands in the session scope', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ commands: [{ name: '/impeccable init', doc: 'Initialize' }] })),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ commands: [{ name: '/impeccable init', doc: 'Initialize' }] }),
+        ),
+      );
     vi.stubGlobal('fetch', fetchMock);
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
@@ -510,9 +519,7 @@ describe('GatewayClient session slash palette', () => {
     await client.slashes('session-1');
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      '/v1/sessions/session-1/slashes',
-    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/sessions/session-1/slashes');
   });
 });
 
@@ -535,17 +542,15 @@ describe('GatewayClient turn cancellation', () => {
 
     const submitBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     const cancelBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
-      '/v1/sessions/session-1/cancel-current',
-    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/v1/sessions/session-1/cancel-current');
     expect(submitBody.idempotency_key).toBeTruthy();
     expect(cancelBody.idempotency_key).toBe(submitBody.idempotency_key);
   });
 
   it('captures per-turn submission options', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ turn_id: 'turn-fast' })),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ turn_id: 'turn-fast' })));
     vi.stubGlobal('fetch', fetchMock);
     const { GatewayClient } = await import('./gateway');
 
@@ -559,29 +564,28 @@ describe('GatewayClient turn cancellation', () => {
     expect(body.turn_features).toEqual({ voice_projection: true });
   });
 
-  it.each(['low', 'medium', 'high'])('serializes %s verbosity on the gateway wire', async (verbosity) => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ turn_id: 'turn-verbosity' })),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-    const { GatewayClient } = await import('./gateway');
+  it.each(['low', 'medium', 'high'])(
+    'serializes %s verbosity on the gateway wire',
+    async (verbosity) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ turn_id: 'turn-verbosity' })));
+      vi.stubGlobal('fetch', fetchMock);
+      const { GatewayClient } = await import('./gateway');
 
-    await new GatewayClient(conn).submitTurn('session-1', 'hello', {
-      extraBody: { text: { verbosity } },
-    });
+      await new GatewayClient(conn).submitTurn('session-1', 'hello', {
+        extraBody: { text: { verbosity } },
+      });
 
-    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(body.extra_body).toEqual({ text: { verbosity } });
-  });
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.extra_body).toEqual({ text: { verbosity } });
+    },
+  );
   it('uploads attachment bytes before submitting only opaque references', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ upload_id: 'upload-1', size: 3 })),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ turn_id: 'turn-media' })),
-      );
+      .mockResolvedValueOnce(new Response(JSON.stringify({ upload_id: 'upload-1', size: 3 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ turn_id: 'turn-media' })));
     vi.stubGlobal('fetch', fetchMock);
     const { GatewayClient } = await import('./gateway');
 
@@ -595,9 +599,7 @@ describe('GatewayClient turn cancellation', () => {
       ],
     });
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      '/v1/sessions/session-1/attachments',
-    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/sessions/session-1/attachments');
     expect(fetchMock.mock.calls[0]?.[1]?.body).toBeInstanceOf(Blob);
     expect(await (fetchMock.mock.calls[0]?.[1]?.body as Blob).text()).toBe('abc');
     const submitBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
@@ -637,16 +639,9 @@ describe('GatewayClient turn cancellation', () => {
       },
     ]);
 
-    const rows = await client.fetchTurnAttachments(
-      'session-1',
-      'turn-audio',
-      undefined,
-      true,
-    );
+    const rows = await client.fetchTurnAttachments('session-1', 'turn-audio', undefined, true);
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      'transcription_only=true',
-    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('transcription_only=true');
     expect(rows[0]?.base64).toBe('AAAAIGZ0eXBNNEEg');
     expect(rows[0]?.transcription).toBe('ready words');
   });
@@ -771,24 +766,23 @@ describe('GatewayClient transcript revalidation', () => {
       modified_at: '2026-08-14T03:00:02Z',
     };
     const stale = [{ turn_id: 'turn-1', request: 'first', status: 'completed' }];
-    const fresh = [
-      ...stale,
-      { turn_id: 'turn-2', request: 'second', status: 'completed' },
-    ];
+    const fresh = [...stale, { turn_id: 'turn-2', request: 'second', status: 'completed' }];
     let turns = stale;
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockImplementation((url: string) =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify(
-              String(url).includes('/transcript')
-                ? { turns, total: turns.length, offset: 0, has_more: false }
-                : answered,
+      vi
+        .fn()
+        .mockImplementation((url: string) =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify(
+                String(url).includes('/transcript')
+                  ? { turns, total: turns.length, offset: 0, has_more: false }
+                  : answered,
+              ),
             ),
           ),
         ),
-      ),
     );
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
@@ -809,12 +803,14 @@ describe('GatewayClient transcript revalidation', () => {
 // reach the gateway as ITSELF, and everything said about it rides in the query.
 describe('GatewayClient imported voices', () => {
   it('posts the recording verbatim to the machine, not to a session', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ voice: { id: 'my-own', label: 'My Own', is_imported: true } }),
-        { status: 201 },
-      ),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ voice: { id: 'my-own', label: 'My Own', is_imported: true } }),
+          { status: 201 },
+        ),
+      );
     vi.stubGlobal('fetch', fetchMock);
     const { GatewayClient } = await import('./gateway');
     const clip = new Blob([new Uint8Array([82, 73, 70, 70])], { type: 'audio/wav' });
@@ -847,8 +843,7 @@ describe('GatewayClient imported voices', () => {
     const fetchMock = vi
       .fn()
       .mockImplementation(
-        () =>
-          new Response(JSON.stringify({ engine: { id: 'pocket-tts' }, voices: [] })),
+        () => new Response(JSON.stringify({ engine: { id: 'pocket-tts' }, voices: [] })),
       );
     vi.stubGlobal('fetch', fetchMock);
     const { GatewayClient } = await import('./gateway');
@@ -871,88 +866,76 @@ describe('GatewayClient imported voices', () => {
 // A reply spoken by the machine that answered it: the caller wants the AUDIO, and a
 // long line's job is plumbing the client hides.
 describe('GatewayClient speakText', () => {
-  it.each(['session-1', null])(
-    'answers with short audio for scope %s',
-    async (sid) => {
-      const fetchMock = vi.fn().mockResolvedValue(
-        new Response(new Uint8Array([82, 73, 70, 70]), {
-          headers: { 'Content-Type': 'audio/wav' },
-        }),
-      );
-      vi.stubGlobal('fetch', fetchMock);
-      const mod = await import('./gateway');
+  it.each(['session-1', null])('answers with short audio for scope %s', async (sid) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([82, 73, 70, 70]), {
+        headers: { 'Content-Type': 'audio/wav' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = await import('./gateway');
 
-      const audio = await new mod.GatewayClient(conn).speakText(
-        sid,
-        'Say this out loud',
-        { voice: 'kristin', engine: 'pocket-tts-local' },
-      );
+    const audio = await new mod.GatewayClient(conn).speakText(sid, 'Say this out loud', {
+      voice: 'kristin',
+      engine: 'pocket-tts-local',
+    });
 
-      expect(audio.size).toBe(4);
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe(
-        `http://gateway.example.com:7890/v1${sid ? '/sessions/session-1' : ''}/speech?engine=pocket-tts-local`,
-      );
-      expect(init.method).toBe('POST');
-      expect(JSON.parse(init.body as string)).toEqual({
-        text: 'Say this out loud',
-        voice: 'kristin',
-      });
-    },
-  );
+    expect(audio.size).toBe(4);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      `http://gateway.example.com:7890/v1${sid ? '/sessions/session-1' : ''}/speech?engine=pocket-tts-local`,
+    );
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      text: 'Say this out loud',
+      voice: 'kristin',
+    });
+  });
 
   it.each(['session-1', null])(
     'follows a 202 job to its audio and forgets it for scope %s',
     async (sid) => {
       const seen: string[] = [];
-      const fetchMock = vi
-        .fn()
-        .mockImplementation((url: string, init: RequestInit) => {
-          seen.push(
-            `${init.method} ${url.replace('http://gateway.example.com:7890', '')}`,
-          );
-          if (url.endsWith('/speech') && init.method === 'POST') {
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({
-                  id: 'job-1',
-                  phase: 'queued',
-                  progress: 0,
-                  is_done: false,
-                }),
-                {
-                  status: 202,
-                  headers: { 'Content-Type': 'application/json' },
-                },
-              ),
-            );
-          }
-          if (url.endsWith('/audio')) {
-            return Promise.resolve(new Response(new Uint8Array([1, 2, 3])));
-          }
-          if (init.method === 'DELETE')
-            return Promise.resolve(new Response(null, { status: 204 }));
+      const fetchMock = vi.fn().mockImplementation((url: string, init: RequestInit) => {
+        seen.push(`${init.method} ${url.replace('http://gateway.example.com:7890', '')}`);
+        if (url.endsWith('/speech') && init.method === 'POST') {
           return Promise.resolve(
             new Response(
               JSON.stringify({
                 id: 'job-1',
-                phase: 'spoken',
-                progress: 1,
-                is_done: true,
+                phase: 'queued',
+                progress: 0,
+                is_done: false,
               }),
               {
+                status: 202,
                 headers: { 'Content-Type': 'application/json' },
               },
             ),
           );
-        });
+        }
+        if (url.endsWith('/audio')) {
+          return Promise.resolve(new Response(new Uint8Array([1, 2, 3])));
+        }
+        if (init.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }));
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'job-1',
+              phase: 'spoken',
+              progress: 1,
+              is_done: true,
+            }),
+            {
+              headers: { 'Content-Type': 'application/json' },
+            },
+          ),
+        );
+      });
       vi.stubGlobal('fetch', fetchMock);
       const mod = await import('./gateway');
 
-      const audio = await new mod.GatewayClient(conn).speakText(
-        sid,
-        'A long answer',
-      );
+      const audio = await new mod.GatewayClient(conn).speakText(sid, 'A long answer');
 
       expect(audio.size).toBe(3);
       const base = `/v1${sid ? '/sessions/session-1' : ''}/speech`;
@@ -969,20 +952,17 @@ describe('GatewayClient speakText', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({ error: 'no speech engine is registered' }),
-          {
-            status: 501,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        ),
+        new Response(JSON.stringify({ error: 'no speech engine is registered' }), {
+          status: 501,
+          headers: { 'Content-Type': 'application/json' },
+        }),
       ),
     );
     const mod = await import('./gateway');
 
-    await expect(
-      new mod.GatewayClient(conn).speakText('session-1', 'Anything'),
-    ).rejects.toThrow('no speech engine is registered');
+    await expect(new mod.GatewayClient(conn).speakText('session-1', 'Anything')).rejects.toThrow(
+      'no speech engine is registered',
+    );
   });
 });
 
@@ -990,11 +970,13 @@ describe('GatewayClient speakText', () => {
 // only ever showed "HTTP 501" — the sentence the gateway wrote never reached the screen.
 describe('GatewayClient speech engines', () => {
   it('asks the MACHINE about each direction, with no session in the path', async () => {
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ status: 'ready', engine: 'parakeet-local' })),
-      ),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ status: 'ready', engine: 'parakeet-local' })),
+        ),
+      );
     vi.stubGlobal('fetch', fetchMock);
     const mod = await import('./gateway');
     const client = new mod.GatewayClient(conn);
@@ -1050,9 +1032,7 @@ describe('GatewayClient device list', () => {
   it('answers every caller of one machine from a single request', async () => {
     const asked = vi
       .fn()
-      .mockImplementation(() =>
-        Promise.resolve(new Response(JSON.stringify(listing()))),
-      );
+      .mockImplementation(() => Promise.resolve(new Response(JSON.stringify(listing()))));
     vi.stubGlobal('fetch', asked);
     const mod = await import('./gateway');
     const client = new mod.GatewayClient(conn);
@@ -1060,10 +1040,7 @@ describe('GatewayClient device list', () => {
     // Two callers overlapping (the sweep and a panel opening on top of it),
     // then a third arriving after they settled, then push registration asking
     // the same machine whether it can sign at all.
-    const [first, second] = await Promise.all([
-      client.devices(),
-      client.devices(),
-    ]);
+    const [first, second] = await Promise.all([client.devices(), client.devices()]);
     const third = await client.devices();
     await new mod.GatewayClient(conn).pushTarget().status();
 
@@ -1073,15 +1050,15 @@ describe('GatewayClient device list', () => {
   });
 
   it('asks again once this device is taken off that machine', async () => {
-    const asked = vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify(
-            init?.method === 'DELETE' ? { is_removed: true } : listing(),
+    const asked = vi
+      .fn()
+      .mockImplementation((_url: string, init?: RequestInit) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(init?.method === 'DELETE' ? { is_removed: true } : listing()),
           ),
         ),
-      ),
-    );
+      );
     vi.stubGlobal('fetch', asked);
     const mod = await import('./gateway');
     const client = new mod.GatewayClient(conn);
@@ -1136,9 +1113,11 @@ describe('a gateway that stops serving this build', () => {
   it('says nothing for ordinary failures, which are that call’s problem alone', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ error: 'no such session' }), { status: 404 }),
-      ),
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: 'no such session' }), { status: 404 }),
+        ),
     );
     const mod = await import('./gateway');
     const seen: number[] = [];
@@ -1189,7 +1168,7 @@ describe('GatewayClient abandoned requests', () => {
     expect(calls).toBe(1);
     expect(unhandled).toEqual([]);
   });
- });
+});
 
 describe('session goal revisions', () => {
   it('keeps live state across replay, stale reads and a cold initial fetch', async () => {
@@ -1198,16 +1177,26 @@ describe('session goal revisions', () => {
     const client = new GatewayClient(conn);
     const live = { ...STORY_GOAL, revision: 10, status: 'complete' as const };
     expect(client.noteSessionGoal('s1', live)).toBeNull();
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ id: "s1", goal: STORY_GOAL })))));
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(new Response(JSON.stringify({ id: 's1', goal: STORY_GOAL }))),
+        ),
+    );
     expect((await client.session('s1')).goal).toEqual(live);
     expect(client.noteSessionGoal('s1', STORY_GOAL)?.goal).toEqual(live);
-    expect(client.noteSessionGoal('s1', { ...live, revision: 11, status: 'invalid' })?.goal).toEqual(live);
+    expect(
+      client.noteSessionGoal('s1', { ...live, revision: 11, status: 'invalid' })?.goal,
+    ).toEqual(live);
     for (const invalid of [
       { ...live, revision: 11, iteration_budget: 0 },
       { ...live, revision: 11, iterations_used: -1 },
       { ...live, revision: 11, iterations_used: 1.5 },
       { ...live, revision: 11, iterations_used: undefined },
-    ]) expect(client.noteSessionGoal("s1", invalid)?.goal).toEqual(live);
+    ])
+      expect(client.noteSessionGoal('s1', invalid)?.goal).toEqual(live);
     const pending = client.session('s1');
     const replacement = { ...STORY_GOAL, id: 'replacement', revision: 12 };
     client.noteSessionGoal('s1', replacement);
@@ -1217,7 +1206,14 @@ describe('session goal revisions', () => {
 });
 
 it('encodes literal log search and retains bounded match offsets', async () => {
-  const page = { node_id: 'log', from: 200, lines: ['error'], total: 1000, matched: 201, line_numbers: [998] };
+  const page = {
+    node_id: 'log',
+    from: 200,
+    lines: ['error'],
+    total: 1000,
+    matched: 201,
+    line_numbers: [998],
+  };
   const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(page)));
   vi.stubGlobal('fetch', fetchMock);
   const { GatewayClient } = await import('./gateway');

@@ -21,10 +21,7 @@ import {
 } from '../lib/human-input';
 
 /** The range field's painted track and finger-sized target. */
-function RangeSlider({
-  className = '',
-  ...props
-}: InputHTMLAttributes<HTMLInputElement>) {
+function RangeSlider({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <span className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}>
       <input
@@ -282,11 +279,7 @@ export function HumanInputSheet({
                   {request.cancel_label}
                 </Button>
               )}
-              <Button
-                className="flex-1 sm:flex-none"
-                disabled={busy}
-                onClick={onSubmit}
-              >
+              <Button className="flex-1 sm:flex-none" disabled={busy} onClick={onSubmit}>
                 {busy ? 'Sending...' : request.submit_label}
               </Button>
             </div>
@@ -300,9 +293,7 @@ export function HumanInputSheet({
           {(request.description || request.source) && (
             <div className="space-y-1">
               {request.description && (
-                <p className="font-mono text-meta italic text-dialog-hint">
-                  {request.description}
-                </p>
+                <p className="font-mono text-meta italic text-dialog-hint">{request.description}</p>
               )}
               {/* WHO stopped the run is half the question: an answer means
                   something different to a deploy hook than to a linter. */}
@@ -360,8 +351,7 @@ function FieldShell({
       )}
     </>
   );
-  const labelClass =
-    'block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint';
+  const labelClass = 'block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint';
   return (
     <div className="space-y-1">
       {controlId ? (
@@ -381,7 +371,10 @@ function FieldShell({
       )}
       {children}
       {error && (
-        <p id={controlId ? `${controlId}-error` : undefined} className="font-mono text-chip text-err">
+        <p
+          id={controlId ? `${controlId}-error` : undefined}
+          className="font-mono text-chip text-err"
+        >
           {error}
         </p>
       )}
@@ -448,11 +441,7 @@ function HumanInputFieldRow({
         <div
           data-group-id={field.id}
           data-direction={isRow ? 'row' : 'column'}
-          className={
-            isRow
-              ? 'flex flex-row flex-wrap items-start gap-3'
-              : 'flex flex-col gap-3'
-          }
+          className={isRow ? 'flex flex-row flex-wrap items-start gap-3' : 'flex flex-col gap-3'}
         >
           {(field.fields ?? []).map((child, at) => (
             <div key={`${at}:${child.id}`} className={isRow ? 'min-w-[7.5rem] flex-1' : ''}>
@@ -479,9 +468,7 @@ function HumanInputFieldRow({
           isOn={on}
           disabled={disabled}
           aria-pressed={on}
-          mark={
-            on ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
-          }
+          mark={on ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff}
           onClick={() => onChange(field.id, !on)}
         >
           {field.label}
@@ -544,9 +531,13 @@ function HumanInputFieldRow({
             value={current}
             aria-label={field.label}
             className="flex-1"
-            onChange={(event) => onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))}
+            onChange={(event) =>
+              onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))
+            }
           />
-          <span className="shrink-0 font-mono text-meta tabular-nums text-white sm:text-ui">{current}</span>
+          <span className="shrink-0 font-mono text-meta tabular-nums text-white sm:text-ui">
+            {current}
+          </span>
         </div>
         <p className="font-mono text-chip text-dialog-hint">
           {min} – {max}

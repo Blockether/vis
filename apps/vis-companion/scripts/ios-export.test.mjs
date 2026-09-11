@@ -91,9 +91,9 @@ describe('exportOptionsPlist', () => {
 
   it('refuses manual signing without an exact certificate fingerprint', () => {
     for (const signingIdentity of [undefined, 'iOS Distribution', 'invalid']) {
-      expect(() => exportOptionsPlist({ teamId: 'TEAM123', signingStyle: 'manual', signingIdentity })).toThrow(
-        /exact distribution certificate/,
-      );
+      expect(() =>
+        exportOptionsPlist({ teamId: 'TEAM123', signingStyle: 'manual', signingIdentity }),
+      ).toThrow(/exact distribution certificate/);
     }
   });
 

@@ -1,7 +1,7 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
-import { getSpeechPrefs } from "./storage";
-import { wavePeaks } from "./waveform";
-import type { SpeechPrefs } from "./types";
+import { Capacitor, registerPlugin } from '@capacitor/core';
+import { getSpeechPrefs } from './storage';
+import { wavePeaks } from './waveform';
+import type { SpeechPrefs } from './types';
 
 interface NativeSpeechPlugin {
   speak(options: { text: string; voice?: string; rate?: number }): Promise<void>;
@@ -20,12 +20,12 @@ interface NativeSpeechPlugin {
 }
 
 /** ONE registration of the native plugin; `speech-voices.ts` asks it for the list. */
-export const nativeSpeech = registerPlugin<NativeSpeechPlugin>("NativeSpeech");
+export const nativeSpeech = registerPlugin<NativeSpeechPlugin>('NativeSpeech');
 
 /** Both mobile platforms expose a fuller, deterministic catalogue through the app bridge. */
 export function usesNativeSpeech(): boolean {
   const platform = Capacitor.getPlatform();
-  return platform === "android" || platform === "ios";
+  return platform === 'android' || platform === 'ios';
 }
 
 /** Device-local speech output: native TTS on iOS and Android, Web Speech elsewhere. */
@@ -37,18 +37,13 @@ class DeviceSpeechOutput {
     if (usesNativeSpeech()) {
       const active = {};
       this.active = active;
-      return nativeSpeech
-        .speak({ text, voice: voiceId ?? undefined, rate })
-        .finally(() => {
-          if (this.active === active) this.active = null;
-        });
+      return nativeSpeech.speak({ text, voice: voiceId ?? undefined, rate }).finally(() => {
+        if (this.active === active) this.active = null;
+      });
     }
-    const synthesis =
-      typeof window === "undefined" ? undefined : window.speechSynthesis;
-    if (!synthesis || typeof SpeechSynthesisUtterance === "undefined") {
-      return Promise.reject(
-        new Error("Text-to-speech is unavailable on this device."),
-      );
+    const synthesis = typeof window === 'undefined' ? undefined : window.speechSynthesis;
+    if (!synthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+      return Promise.reject(new Error('Text-to-speech is unavailable on this device.'));
     }
     return new Promise((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(text);
@@ -69,7 +64,7 @@ class DeviceSpeechOutput {
       };
       utterance.onerror = (event) => {
         if (this.active === utterance) this.active = null;
-        if (event.error === "canceled" || event.error === "interrupted") resolve();
+        if (event.error === 'canceled' || event.error === 'interrupted') resolve();
         else reject(new Error(`Text-to-speech failed: ${event.error}`));
       };
       synthesis.speak(utterance);
@@ -79,7 +74,7 @@ class DeviceSpeechOutput {
   stop(): void {
     if (usesNativeSpeech()) {
       void nativeSpeech.stop().catch(() => undefined);
-    } else if (typeof window !== "undefined" && window.speechSynthesis) {
+    } else if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     this.active = null;
@@ -137,10 +132,7 @@ class SpeechOutput {
   private activeRun: { owner: object | null } | null = null;
 
   /** The screen with a live session hands the machine's voice in, and takes it back. */
-  setGateway(
-    speaker: GatewaySpeaker | null,
-    onNotice?: ((message: string) => void) | null,
-  ): void {
+  setGateway(speaker: GatewaySpeaker | null, onNotice?: ((message: string) => void) | null): void {
     this.gateway = speaker;
     this.notice = onNotice ?? null;
   }
@@ -156,11 +148,7 @@ class SpeechOutput {
     return this.prefs;
   }
 
-  async speak(
-    text: string,
-    listener?: SpeechListener,
-    owner?: object,
-  ): Promise<void> {
+  async speak(text: string, listener?: SpeechListener, owner?: object): Promise<void> {
     // Starting a line is an explicit global handoff. Its owner only scopes later
     // cleanup: a transcript block disappearing may stop its own replay, never a
     // voice-mode line that happened to start on the same singleton afterward.
@@ -172,11 +160,7 @@ class SpeechOutput {
       if (this.activeRun !== run) return;
       if (prefs.ttsEngine && this.gateway) {
         try {
-          const audio = await this.gateway.speak(
-            text,
-            prefs.gatewayVoice,
-            prefs.ttsEngine,
-          );
+          const audio = await this.gateway.speak(text, prefs.gatewayVoice, prefs.ttsEngine);
           if (this.activeRun !== run) return;
           await this.play(audio, listener);
           return;
@@ -220,17 +204,15 @@ class SpeechOutput {
       // deliberate source change through `onerror`; to this API it is a successful handoff.
       playing.interrupt();
       playing.element.pause();
-      playing.element.src = "";
+      playing.element.src = '';
     }
     this.device.stop();
   }
 
   /** Play the machine's audio, and let go of the object URL whatever happens. */
   private play(audio: Blob, listener?: SpeechListener): Promise<void> {
-    if (typeof Audio === "undefined" || typeof URL.createObjectURL !== "function") {
-      return Promise.reject(
-        new Error("This device cannot play the audio the machine sent."),
-      );
+    if (typeof Audio === 'undefined' || typeof URL.createObjectURL !== 'function') {
+      return Promise.reject(new Error('This device cannot play the audio the machine sent.'));
     }
     const url = URL.createObjectURL(audio);
     const element = new Audio(url);
@@ -265,8 +247,7 @@ class SpeechOutput {
         settle(cause instanceof Error ? cause : new Error(String(cause)));
       this.playing = { element, interrupt: () => settle() };
       element.onended = () => settle();
-      element.onerror = () =>
-        fail(new Error("The audio the machine sent could not be played."));
+      element.onerror = () => fail(new Error('The audio the machine sent could not be played.'));
       try {
         void Promise.resolve(element.play()).catch(fail);
       } catch (cause) {

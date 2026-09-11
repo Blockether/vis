@@ -11,7 +11,7 @@
  * and this module asks it ONCE at launch. Readers ask synchronously afterwards:
  * a keyboard decision is made in a focus handler, not in a promise.
  */
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor, registerPlugin } from '@capacitor/core';
 
 interface VisHostPlugin {
   info(): Promise<{ isMac: boolean }>;
@@ -26,14 +26,9 @@ export function isIosAppOnMac(): boolean {
 
 /** Ask the native host once; a build without the plugin, or any other platform, stays `false`. */
 export async function loadHost(): Promise<void> {
-  if (
-    Capacitor.getPlatform() !== "ios" ||
-    !Capacitor.isPluginAvailable("VisHost")
-  )
-    return;
+  if (Capacitor.getPlatform() !== 'ios' || !Capacitor.isPluginAvailable('VisHost')) return;
   try {
-    isMac =
-      (await registerPlugin<VisHostPlugin>("VisHost").info()).isMac === true;
+    isMac = (await registerPlugin<VisHostPlugin>('VisHost').info()).isMac === true;
   } catch {
     /* an app stamped before the plugin existed answers "not implemented" */
   }

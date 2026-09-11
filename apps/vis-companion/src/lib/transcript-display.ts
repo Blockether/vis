@@ -1,15 +1,15 @@
 /** Device-local transcript presentation, never an engine execution setting. */
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore } from 'react';
 
-const KEY = "vis.show_python_code";
-const CHANGE = "vis:transcript-display";
+const KEY = 'vis.show_python_code';
+const CHANGE = 'vis:transcript-display';
 let fallback = true;
 let storageWritable = true;
 
 export function readPythonCodeShown(): boolean {
   try {
     return storageWritable && globalThis.localStorage
-      ? localStorage.getItem(KEY) !== "hidden"
+      ? localStorage.getItem(KEY) !== 'hidden'
       : fallback;
   } catch {
     return fallback;
@@ -19,7 +19,7 @@ export function readPythonCodeShown(): boolean {
 export function setPythonCodeShown(shown: boolean): void {
   fallback = shown;
   try {
-    globalThis.localStorage?.setItem(KEY, shown ? "shown" : "hidden");
+    globalThis.localStorage?.setItem(KEY, shown ? 'shown' : 'hidden');
   } catch {
     // Restricted storage: keep the choice for this page's lifetime.
     storageWritable = false;
@@ -29,10 +29,10 @@ export function setPythonCodeShown(shown: boolean): void {
 
 function subscribe(changed: () => void): () => void {
   globalThis.addEventListener?.(CHANGE, changed);
-  globalThis.addEventListener?.("storage", changed);
+  globalThis.addEventListener?.('storage', changed);
   return () => {
     globalThis.removeEventListener?.(CHANGE, changed);
-    globalThis.removeEventListener?.("storage", changed);
+    globalThis.removeEventListener?.('storage', changed);
   };
 }
 

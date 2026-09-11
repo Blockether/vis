@@ -145,10 +145,7 @@ export function visibleAnsweredTurnCount(
     (turn) => turn.status !== 'running' && turn.status !== 'pending',
   ).length;
   const settledRunningTurn = runningTurnStatus != null && runningTurnStatus !== 'running' ? 1 : 0;
-  return Math.max(
-    answeredTurnCount(session),
-    settledTranscriptTurns + settledRunningTurn,
-  );
+  return Math.max(answeredTurnCount(session), settledTranscriptTurns + settledRunningTurn);
 }
 
 /**

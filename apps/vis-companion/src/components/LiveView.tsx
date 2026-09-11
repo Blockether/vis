@@ -1,13 +1,13 @@
-import { startTransition, useEffect, useId, useMemo, useRef, useState, type HTMLAttributes } from 'react';
 import {
-  Button,
-  Disclosure,
-  Input,
-  ListRow,
-  LoadMore,
-  PROSE,
-  Spinner,
-} from './ui';
+  startTransition,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type HTMLAttributes,
+} from 'react';
+import { Button, Disclosure, Input, ListRow, LoadMore, PROSE, Spinner } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import {
   ArrowOutIcon,
@@ -254,7 +254,9 @@ function ProgressRow({ node }: { node: LiveProgressNode }) {
         <>
           <ProgressMeter value={fraction} label={node.label ?? 'Progress'} />
           <p className="mt-1.5 flex items-baseline gap-2 font-mono text-meta text-dialog-hint">
-            <span className="text-ui font-bold tabular-nums text-white">{livePercent(fraction)}%</span>
+            <span className="text-ui font-bold tabular-nums text-white">
+              {livePercent(fraction)}%
+            </span>
             {counted && <span className="tabular-nums">{counted}</span>}
           </p>
         </>
@@ -290,7 +292,9 @@ function StepsRows({ node }: { node: LiveStepsNode }) {
           <span className={`min-w-0 flex-1 truncate ${stepInk(step.tone)}`}>
             <InlineMarkdown>{step.label}</InlineMarkdown>
           </span>
-          {step.value && <span className="shrink-0 font-bold tabular-nums text-white">{step.value}</span>}
+          {step.value && (
+            <span className="shrink-0 font-bold tabular-nums text-white">{step.value}</span>
+          )}
           {step.detail && (
             <span className="shrink-0 text-meta text-dialog-hint">
               <InlineMarkdown>{step.detail}</InlineMarkdown>
@@ -328,7 +332,12 @@ function LogRows({
   const [searchError, setSearchError] = useState(false);
   const searchRequest = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
-  useEffect(() => () => { searchRequest.current += 1; }, []);
+  useEffect(
+    () => () => {
+      searchRequest.current += 1;
+    },
+    [],
+  );
 
   const windowStart = Math.max(0, node.total_lines - node.lines.length);
   const knownFrom = earlier ? earlier.from : windowStart;
@@ -343,20 +352,34 @@ function LogRows({
     setSearchError(false);
   };
   const find = async (query: string, from = 0) => {
-    if (!query) { clearSearch(); return; }
+    if (!query) {
+      clearSearch();
+      return;
+    }
     const request = ++searchRequest.current;
     setSearch({ query, from });
     setResult(null);
     setSearchError(false);
     setIsSearching(true);
     try {
-      const matches = load ? [] : node.lines.flatMap((line, index) =>
-        line.toLowerCase().includes(query.toLowerCase()) ? [{ line, number: windowStart + index + 1 }] : []);
+      const matches = load
+        ? []
+        : node.lines.flatMap((line, index) =>
+            line.toLowerCase().includes(query.toLowerCase())
+              ? [{ line, number: windowStart + index + 1 }]
+              : [],
+          );
       const slice = matches.slice(from, from + LOG_PAGE);
-      const page = load ? await load(from, LOG_PAGE, query) : {
-        node_id: node.id, from, total: node.total_lines, matched: matches.length,
-        lines: slice.map(match => match.line), line_numbers: slice.map(match => match.number),
-      };
+      const page = load
+        ? await load(from, LOG_PAGE, query)
+        : {
+            node_id: node.id,
+            from,
+            total: node.total_lines,
+            matched: matches.length,
+            lines: slice.map((match) => match.line),
+            line_numbers: slice.map((match) => match.number),
+          };
       if (request === searchRequest.current) setResult({ page, window: node.lines });
     } catch {
       if (request === searchRequest.current) setSearchError(true);
@@ -385,48 +408,121 @@ function LogRows({
 
   return (
     <div className="min-w-0">
-      <form className="flex items-center gap-2" onSubmit={event => { event.preventDefault(); void find(draft); }}>
-        <Input ref={searchInput} type="search" className="min-w-0 flex-1"
-          aria-label={`Search ${node.label || 'Output'}`} placeholder="Search log…" value={draft}
-          onChange={event => setDraft(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); clearSearch(); } }} />
-        <Button type="submit" variant="secondary" density="panel">Search</Button>
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void find(draft);
+        }}
+      >
+        <Input
+          ref={searchInput}
+          type="search"
+          className="min-w-0 flex-1"
+          aria-label={`Search ${node.label || 'Output'}`}
+          placeholder="Search log…"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              clearSearch();
+            }
+          }}
+        />
+        <Button type="submit" variant="secondary" density="panel">
+          Search
+        </Button>
       </form>
-      {search && <div className="mt-2 space-y-2">
-        <p role="status" className="break-words font-mono text-ui text-dialog-hint">
-          {`“${search.query}” · `}
-          {isSearching ? 'Searching…' : result ? `${result.page.matched} matches · ${result.page.total} recorded lines` : 'Search results'}
-          {!load && ' · Loaded lines only'}
-        </p>
-        {result && result.window !== node.lines && <p className="font-mono text-ui text-dialog-hint">Log changed. Refresh results.</p>}
-        {searchError && <p role="alert" className="font-mono text-ui text-err">Could not read log. Try again.</p>}
-        <div className="flex flex-wrap gap-x-2 gap-y-5">
-          <Button variant="secondary" onClick={() => void find(search.query)}>Refresh results</Button>
-          <Button variant="secondary" onClick={clearSearch}>Clear search</Button>
-          {(search.from > 0 || (result && result.page.matched > LOG_PAGE)) && <>
-            <Button variant="secondary" disabled={isSearching || search.from === 0}
-              onClick={() => void find(search.query, Math.max(0, search.from - LOG_PAGE))}>Previous matches</Button>
-            <Button variant="secondary" disabled={isSearching || !result || search.from + LOG_PAGE >= result.page.matched}
-              onClick={() => void find(search.query, search.from + LOG_PAGE)}>Next matches</Button>
-          </>}
+      {search && (
+        <div className="mt-2 space-y-2">
+          <p role="status" className="break-words font-mono text-ui text-dialog-hint">
+            {`“${search.query}” · `}
+            {isSearching
+              ? 'Searching…'
+              : result
+                ? `${result.page.matched} matches · ${result.page.total} recorded lines`
+                : 'Search results'}
+            {!load && ' · Loaded lines only'}
+          </p>
+          {result && result.window !== node.lines && (
+            <p className="font-mono text-ui text-dialog-hint">Log changed. Refresh results.</p>
+          )}
+          {searchError && (
+            <p role="alert" className="font-mono text-ui text-err">
+              Could not read log. Try again.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-x-2 gap-y-5">
+            <Button variant="secondary" onClick={() => void find(search.query)}>
+              Refresh results
+            </Button>
+            <Button variant="secondary" onClick={clearSearch}>
+              Clear search
+            </Button>
+            {(search.from > 0 || (result && result.page.matched > LOG_PAGE)) && (
+              <>
+                <Button
+                  variant="secondary"
+                  disabled={isSearching || search.from === 0}
+                  onClick={() => void find(search.query, Math.max(0, search.from - LOG_PAGE))}
+                >
+                  Previous matches
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={isSearching || !result || search.from + LOG_PAGE >= result.page.matched}
+                  onClick={() => void find(search.query, search.from + LOG_PAGE)}
+                >
+                  Next matches
+                </Button>
+              </>
+            )}
+          </div>
+          {result && result.page.lines.length === 0 && <Empty>No matching lines.</Empty>}
         </div>
-        {result && result.page.lines.length === 0 && <Empty>No matching lines.</Empty>}
-      </div>}
-      {!search && load && knownFrom > 0 && <LoadMore label={`Load ${Math.min(LOG_PAGE, knownFrom)} earlier lines`}
-        disabled={isReading} onClick={readEarlier}>
-        {isReading ? 'Reading...' : `${knownFrom} earlier lines`}
-      </LoadMore>}
-      {!search && readError && <p role="alert" className="font-mono text-ui text-err">Could not read log. Try again.</p>}
+      )}
+      {!search && load && knownFrom > 0 && (
+        <LoadMore
+          label={`Load ${Math.min(LOG_PAGE, knownFrom)} earlier lines`}
+          disabled={isReading}
+          onClick={readEarlier}
+        >
+          {isReading ? 'Reading...' : `${knownFrom} earlier lines`}
+        </LoadMore>
+      )}
+      {!search && readError && (
+        <p role="alert" className="font-mono text-ui text-err">
+          Could not read log. Try again.
+        </p>
+      )}
       {!search && node.lines.length === 0 && !earlier && <Empty>{EMPTY_LINE.log}</Empty>}
-      <pre role="region" tabIndex={0} aria-label={`${node.label || 'Output'} output`}
-        onKeyDown={event => { if (event.key === '/') { event.preventDefault(); event.stopPropagation(); searchInput.current?.focus(); } }}
-        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-words border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint">
-        {search ? result?.page.lines.map((line, index) => `${result.page.line_numbers[index]}: ${line}`).join('\n') : <>
-          {earlier && earlier.lines.join('\n')}
-          {hole > 0 && `\n... ${hole} lines scrolled past while you were reading\n`}
-          {earlier && hole === 0 && node.lines.length > 0 && '\n'}
-          {node.lines.join('\n')}
-        </>}
+      <pre
+        role="region"
+        tabIndex={0}
+        aria-label={`${node.label || 'Output'} output`}
+        onKeyDown={(event) => {
+          if (event.key === '/') {
+            event.preventDefault();
+            event.stopPropagation();
+            searchInput.current?.focus();
+          }
+        }}
+        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-words border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint"
+      >
+        {search ? (
+          result?.page.lines
+            .map((line, index) => `${result.page.line_numbers[index]}: ${line}`)
+            .join('\n')
+        ) : (
+          <>
+            {earlier && earlier.lines.join('\n')}
+            {hole > 0 && `\n... ${hole} lines scrolled past while you were reading\n`}
+            {earlier && hole === 0 && node.lines.length > 0 && '\n'}
+            {node.lines.join('\n')}
+          </>
+        )}
       </pre>
     </div>
   );
@@ -490,7 +586,9 @@ function RowFace({
           <InlineMarkdown>{name}</InlineMarkdown>
         </span>
         {value !== '' && (
-          <span className="shrink-0 tabular-nums text-meta text-dialog-hint sm:hidden">{value}</span>
+          <span className="shrink-0 tabular-nums text-meta text-dialog-hint sm:hidden">
+            {value}
+          </span>
         )}
       </span>
       {detail !== '' && (
@@ -515,11 +613,15 @@ function TableRows({
   const selected = useMemo(() => new Set(node.selected_ids), [node.selected_ids]);
   const grouped = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const row of rows) if (row.branch) counts.set(row.branch, (counts.get(row.branch) ?? 0) + 1);
+    for (const row of rows)
+      if (row.branch) counts.set(row.branch, (counts.get(row.branch) ?? 0) + 1);
     return counts;
   }, [rows]);
   const selectedGroups = useMemo(
-    () => new Set(rows.filter((row) => selected.has(row.id) && row.branch).map((row) => row.branch as string)),
+    () =>
+      new Set(
+        rows.filter((row) => selected.has(row.id) && row.branch).map((row) => row.branch as string),
+      ),
     [rows, selected],
   );
   const selectedGroupKey = JSON.stringify([...selectedGroups].sort());
@@ -681,7 +783,9 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
             </span>
           )}
           {link.target_kind !== 'url' && (
-            <span className="min-w-0 shrink truncate text-meta text-dialog-hint">{link.target}</span>
+            <span className="min-w-0 shrink truncate text-meta text-dialog-hint">
+              {link.target}
+            </span>
           )}
         </li>
       ))}
@@ -707,21 +811,42 @@ type NodePresentation = {
 };
 
 /** An operator button waits for acknowledgement and is inert in receipts. */
-function ActionButton({ node, onActivate, isSettled }: {
+function ActionButton({
+  node,
+  onActivate,
+  isSettled,
+}: {
   node: Extract<LiveNode, { type: 'button' }>;
   onActivate?: NodePresentation['onActivate'];
   isSettled: boolean;
 }) {
   const [pending, setPending] = useState(false);
-  return <Button variant="secondary" disabled={isSettled || node.is_disabled || pending || !onActivate}
-    aria-busy={pending} onClick={async () => {
-      if (!onActivate || pending) return;
-      setPending(true);
-      try { await onActivate(node.id); } finally { setPending(false); }
-    }}>{node.label}</Button>;
+  return (
+    <Button
+      variant="secondary"
+      disabled={isSettled || node.is_disabled || pending || !onActivate}
+      aria-busy={pending}
+      onClick={async () => {
+        if (!onActivate || pending) return;
+        setPending(true);
+        try {
+          await onActivate(node.id);
+        } finally {
+          setPending(false);
+        }
+      }}
+    >
+      {node.label}
+    </Button>
+  );
 }
 
-function NodeCell({ node, load, onSelect, presentation }: {
+function NodeCell({
+  node,
+  load,
+  onSelect,
+  presentation,
+}: {
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
   onSelect?: (nodeId: string, itemIds: string[]) => void;
@@ -731,40 +856,113 @@ function NodeCell({ node, load, onSelect, presentation }: {
   const isDisclosure = node.type === 'log' || (node.type === 'group' && node.is_collapsible);
   const isOpen = Object.hasOwn(presentation.expanded, node.id)
     ? presentation.expanded[node.id]
-    : (!presentation.isSettled && (node.type === 'log' || node.type === 'group') && node.default_expanded === true);
+    : !presentation.isSettled &&
+      (node.type === 'log' || node.type === 'group') &&
+      node.default_expanded === true;
   const label = node.label || (node.type === 'log' ? 'Output' : node.id);
-  const Heading = node.type === 'heading' ? (`h${node.level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') : 'h2';
+  const Heading =
+    node.type === 'heading' ? (`h${node.level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') : 'h2';
   return (
     <div className="min-w-0 space-y-1.5">
-      {isDisclosure ? <Disclosure isOpen={isOpen} tone="branch" density="comfortable" aria-label={label}
-        aria-controls={isOpen ? contentId : undefined}
-        onClick={() => presentation.toggle(node.id, !isOpen)}>
-        <NodeLabel>{label}</NodeLabel>{node.type === 'log' && <span className="ml-2 text-ui text-dialog-hint">{node.total_lines} lines</span>}
-      </Disclosure> : node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>}
-      {(!isDisclosure || isOpen) && <div id={contentId} className="min-w-0">
-        {node.type === 'group' && <div className={node.direction === 'row'
-          ? 'grid min-w-0 gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col' : 'min-w-0 space-y-3'}>
-          {node.fields.map((child) => <NodeCell key={child.id} node={child} load={load} onSelect={onSelect} presentation={presentation} />)}
-        </div>}
-        {node.type === 'paragraph' && <p className={`font-mono text-body text-white ${PROSE}`}><InlineMarkdown>{node.text}</InlineMarkdown></p>}
-        {node.type === 'heading' && <Heading className={`font-mono font-bold text-white ${node.level === 1 ? 'text-head' : node.level === 2 ? 'text-subhead' : 'text-title'}`}><InlineMarkdown>{node.text}</InlineMarkdown></Heading>}
-        {node.type === 'code' && <div className="min-w-0 bg-panel-2 p-2">
-          {node.language && <span className="font-mono text-ui text-dialog-hint">{node.language}</span>}
-          <pre tabIndex={0} aria-label={node.label || 'Code'} className="max-h-64 overflow-auto whitespace-pre font-mono text-body text-white"><code>{node.text}</code></pre>
-        </div>}
-        {node.type === 'spinner' && <p className="flex items-center gap-2 font-mono text-body text-white">
-          {node.is_active && !presentation.isSettled && <Spinner variant={node.variant} tone="accent" />}
-          <span>{node.text}</span>
-        </p>}
-        {node.type === 'button' && <ActionButton node={node} isSettled={presentation.isSettled} onActivate={presentation.onActivate} />}
-        {node.type === 'status' && <StatusRow node={node} />}
-        {node.type === 'progress' && <ProgressRow node={node} />}
-        {node.type === 'stat' && <StatRow node={node} />}
-        {node.type === 'steps' && <StepsRows node={node} />}
-        {node.type === 'log' && <LogRows node={node} load={load && ((from, limit, query) => query === undefined ? load(node.id, from, limit) : load(node.id, from, limit, query))} />}
-        {node.type === 'table' && <TableRows node={node} onSelect={onSelect} />}
-        {node.type === 'link' && <LinkRows node={node} />}
-      </div>}
+      {isDisclosure ? (
+        <Disclosure
+          isOpen={isOpen}
+          tone="branch"
+          density="comfortable"
+          aria-label={label}
+          aria-controls={isOpen ? contentId : undefined}
+          onClick={() => presentation.toggle(node.id, !isOpen)}
+        >
+          <NodeLabel>{label}</NodeLabel>
+          {node.type === 'log' && (
+            <span className="ml-2 text-ui text-dialog-hint">{node.total_lines} lines</span>
+          )}
+        </Disclosure>
+      ) : (
+        node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>
+      )}
+      {(!isDisclosure || isOpen) && (
+        <div id={contentId} className="min-w-0">
+          {node.type === 'group' && (
+            <div
+              className={
+                node.direction === 'row'
+                  ? 'grid min-w-0 gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col'
+                  : 'min-w-0 space-y-3'
+              }
+            >
+              {node.fields.map((child) => (
+                <NodeCell
+                  key={child.id}
+                  node={child}
+                  load={load}
+                  onSelect={onSelect}
+                  presentation={presentation}
+                />
+              ))}
+            </div>
+          )}
+          {node.type === 'paragraph' && (
+            <p className={`font-mono text-body text-white ${PROSE}`}>
+              <InlineMarkdown>{node.text}</InlineMarkdown>
+            </p>
+          )}
+          {node.type === 'heading' && (
+            <Heading
+              className={`font-mono font-bold text-white ${node.level === 1 ? 'text-head' : node.level === 2 ? 'text-subhead' : 'text-title'}`}
+            >
+              <InlineMarkdown>{node.text}</InlineMarkdown>
+            </Heading>
+          )}
+          {node.type === 'code' && (
+            <div className="min-w-0 bg-panel-2 p-2">
+              {node.language && (
+                <span className="font-mono text-ui text-dialog-hint">{node.language}</span>
+              )}
+              <pre
+                tabIndex={0}
+                aria-label={node.label || 'Code'}
+                className="max-h-64 overflow-auto whitespace-pre font-mono text-body text-white"
+              >
+                <code>{node.text}</code>
+              </pre>
+            </div>
+          )}
+          {node.type === 'spinner' && (
+            <p className="flex items-center gap-2 font-mono text-body text-white">
+              {node.is_active && !presentation.isSettled && (
+                <Spinner variant={node.variant} tone="accent" />
+              )}
+              <span>{node.text}</span>
+            </p>
+          )}
+          {node.type === 'button' && (
+            <ActionButton
+              node={node}
+              isSettled={presentation.isSettled}
+              onActivate={presentation.onActivate}
+            />
+          )}
+          {node.type === 'status' && <StatusRow node={node} />}
+          {node.type === 'progress' && <ProgressRow node={node} />}
+          {node.type === 'stat' && <StatRow node={node} />}
+          {node.type === 'steps' && <StepsRows node={node} />}
+          {node.type === 'log' && (
+            <LogRows
+              node={node}
+              load={
+                load &&
+                ((from, limit, query) =>
+                  query === undefined
+                    ? load(node.id, from, limit)
+                    : load(node.id, from, limit, query))
+              }
+            />
+          )}
+          {node.type === 'table' && <TableRows node={node} onSelect={onSelect} />}
+          {node.type === 'link' && <LinkRows node={node} />}
+        </div>
+      )}
     </div>
   );
 }
@@ -804,11 +1002,19 @@ export function LiveViewPanel({
   // was stopped and not merely that it was. `null` is "not armed" — an empty
   // string is an armed stop nobody has typed into yet.
   const phase = `${view.id}:${isSettled}`;
-  const [disclosures, setDisclosures] = useState<{ phase: string; values: Record<string, boolean> }>({ phase, values: {} });
+  const [disclosures, setDisclosures] = useState<{
+    phase: string;
+    values: Record<string, boolean>;
+  }>({ phase, values: {} });
   const presentation: NodePresentation = {
-    isSettled, onActivate,
+    isSettled,
+    onActivate,
     expanded: disclosures.phase === phase ? disclosures.values : {},
-    toggle: (id, value) => setDisclosures((held) => ({ phase, values: { ...(held.phase === phase ? held.values : {}), [id]: value } })),
+    toggle: (id, value) =>
+      setDisclosures((held) => ({
+        phase,
+        values: { ...(held.phase === phase ? held.values : {}), [id]: value },
+      })),
   };
   const [note, setNote] = useState<string | null>(null);
   const isArmed = note !== null;
@@ -838,7 +1044,12 @@ export function LiveViewPanel({
         </span>
         <ViewState view={view} isSettled={isSettled} />
         {!isSettled && onInterrupt && !isArmed && (
-          <Button variant="secondary" className="shrink-0 self-center" onClick={() => setNote('')} disabled={isInterrupting}>
+          <Button
+            variant="secondary"
+            className="shrink-0 self-center"
+            onClick={() => setNote('')}
+            disabled={isInterrupting}
+          >
             {isInterrupting ? 'Stopping...' : 'Interrupt'}
           </Button>
         )}
@@ -878,7 +1089,11 @@ export function LiveViewPanel({
           </Button>
         </form>
       )}
-      {error && <p className="border-b border-dialog-edge px-3 py-2 font-mono text-chip text-err">{error}</p>}
+      {error && (
+        <p className="border-b border-dialog-edge px-3 py-2 font-mono text-chip text-err">
+          {error}
+        </p>
+      )}
       <ul className="divide-y divide-dialog-edge">
         {view.nodes.map((node) => (
           // Table cells own their padding; an outer inset makes the first and last
@@ -1048,14 +1263,16 @@ export function LiveView({
     setError(null);
     try {
       const outcome = await client.viewAction(sid, viewId, { action: 'activate', node_id: nodeId });
-      if (!outcome.is_accepted) setError('That action is unavailable. The button may be disabled or the run finished.');
+      if (!outcome.is_accepted)
+        setError('That action is unavailable. The button may be disabled or the run finished.');
     } catch {
       setError('That action could not be confirmed. Check the run before trying again.');
     }
   };
 
-  const readLog = (viewId: string) => (nodeId: string, from: number, limit: number, query?: string) =>
-    client.liveViewLog(sid, viewId, nodeId, from, limit, query);
+  const readLog =
+    (viewId: string) => (nodeId: string, from: number, limit: number, query?: string) =>
+      client.liveViewLog(sid, viewId, nodeId, from, limit, query);
 
   return (
     <div className="space-y-3">

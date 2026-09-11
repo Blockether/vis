@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 /** One step of a gallery: the bytes to show and the name to title them with. */
 export type GalleryPicture = { src: string; name: string };
@@ -25,9 +18,7 @@ type GalleryRegistrar = {
 };
 
 const RegistrarContext = createContext<GalleryRegistrar | null>(null);
-const PicturesContext = createContext<ReadonlyMap<number, GalleryPicture> | null>(
-  null,
-);
+const PicturesContext = createContext<ReadonlyMap<number, GalleryPicture> | null>(null);
 
 /**
  * The pictures under it are ONE gallery: opening any of them can walk to the
@@ -41,9 +32,7 @@ const PicturesContext = createContext<ReadonlyMap<number, GalleryPicture> | null
  * happened to land.
  */
 export function ImageGallery({ children }: { children: ReactNode }) {
-  const [pictures, setPictures] = useState<ReadonlyMap<number, GalleryPicture>>(
-    () => new Map(),
-  );
+  const [pictures, setPictures] = useState<ReadonlyMap<number, GalleryPicture>>(() => new Map());
   const registrar = useMemo<GalleryRegistrar>(
     () => ({
       register(at, picture) {
@@ -71,9 +60,7 @@ export function ImageGallery({ children }: { children: ReactNode }) {
 
   return (
     <RegistrarContext.Provider value={registrar}>
-      <PicturesContext.Provider value={pictures}>
-        {children}
-      </PicturesContext.Provider>
+      <PicturesContext.Provider value={pictures}>{children}</PicturesContext.Provider>
     </RegistrarContext.Provider>
   );
 }
@@ -99,9 +86,7 @@ export function useGalleryStep(
 
   return useMemo(() => {
     if (!registered || at === undefined || registered.size < 2) return null;
-    const ordered = [...registered.entries()].sort(
-      ([left], [right]) => left - right,
-    );
+    const ordered = [...registered.entries()].sort(([left], [right]) => left - right);
     const step = ordered.findIndex(([ordinal]) => ordinal === at);
     if (step < 0) return null;
     return { pictures: ordered.map(([, entry]) => entry), at: step };

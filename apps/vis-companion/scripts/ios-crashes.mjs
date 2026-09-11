@@ -15,13 +15,7 @@
  *   npm run diagnostics:ios -- --device-only --device <CoreDevice id or UDID>
  */
 import { spawnSync } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,9 +42,7 @@ const keychain = (account) => {
     ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'],
     { encoding: 'utf8' },
   );
-  return result.status === 0 && result.stdout.trim()
-    ? unhex(result.stdout.trim())
-    : undefined;
+  return result.status === 0 && result.stdout.trim() ? unhex(result.stdout.trim()) : undefined;
 };
 
 const credentials = () => {
@@ -75,7 +67,10 @@ const safePart = (value) =>
     .replace(/^-+|-+$/g, '') || 'unknown';
 
 const timestampPart = (date) =>
-  new Date(date).toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/:/g, '');
+  new Date(date)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, 'Z')
+    .replace(/:/g, '');
 
 const writeJson = (path, value) =>
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -171,7 +166,10 @@ const collectAscFeedback = async ({ bundleId, cutoff, limit, outDir }) => {
         await download(screenshot.url, join(outDir, name));
         entry.files.push(name);
       } catch (error) {
-        entry.downloadErrors = [...(entry.downloadErrors ?? []), `screenshot ${index + 1}: ${error.message}`];
+        entry.downloadErrors = [
+          ...(entry.downloadErrors ?? []),
+          `screenshot ${index + 1}: ${error.message}`,
+        ];
       }
     }
   }
@@ -260,8 +258,7 @@ export const selectPhysicalDevice = (devices, requested) => {
   const physical = physicalIosDevices(devices);
   if (requested) {
     const found = physical.find(
-      (device) =>
-        device.identifier === requested || device.hardwareProperties?.udid === requested,
+      (device) => device.identifier === requested || device.hardwareProperties?.udid === requested,
     );
     if (!found) throw new Error(`paired physical iOS device ${requested} not found`);
     return found;
@@ -409,7 +406,8 @@ const valueFlag = (args, name) => {
 
 const positiveInteger = (value, fallback, name) => {
   const parsed = value === undefined ? fallback : Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`--${name} must be a positive integer`);
+  if (!Number.isInteger(parsed) || parsed < 1)
+    throw new Error(`--${name} must be a positive integer`);
   return parsed;
 };
 

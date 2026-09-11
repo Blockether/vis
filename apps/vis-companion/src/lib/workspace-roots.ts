@@ -13,9 +13,7 @@ import { createContext, useContext } from 'react';
  * Empty means "nothing to shorten against": the path falls back to its
  * home-relative form, which is what a machine with no open workspace shows anyway.
  */
-export const WorkspaceRootsContext = createContext<
-  readonly (string | null | undefined)[]
->([]);
+export const WorkspaceRootsContext = createContext<readonly (string | null | undefined)[]>([]);
 
 export function useWorkspaceRoots(): readonly (string | null | undefined)[] {
   return useContext(WorkspaceRootsContext);

@@ -22,9 +22,7 @@ vi.mock('../lib/gateway', async (importOriginal) => ({
       this.url = conn.url;
     }
     ping() {
-      return Promise.resolve(
-        !this.url.includes('127.0.0.1') && !this.url.includes('100.64.0.11'),
-      );
+      return Promise.resolve(!this.url.includes('127.0.0.1') && !this.url.includes('100.64.0.11'));
     }
   },
 }));
@@ -75,9 +73,7 @@ function fleet(conns: GatewayConn[] = [tower, nas], primaryUrl?: string) {
 /** Open one machine's addresses from its own row, and read the menu back. */
 async function openAddresses(machine: string) {
   const user = userEvent.setup();
-  await user.click(
-    screen.getByRole('button', { name: `Bind ${machine} to a different address` }),
-  );
+  await user.click(screen.getByRole('button', { name: `Bind ${machine} to a different address` }));
   return { menu: within(await screen.findByRole('dialog')), user };
 }
 
@@ -89,7 +85,7 @@ const rowsOf = (menu: ReturnType<typeof within>) =>
     .filter(Boolean);
 
 describe('binding a machine to one of its addresses', () => {
-  it('offers the address as the row\'s own verb, and only where there is a choice', () => {
+  it("offers the address as the row's own verb, and only where there is a choice", () => {
     fleet();
 
     // Regression, user report ("what for I need this bottom row? for changing address
@@ -128,7 +124,7 @@ describe('binding a machine to one of its addresses', () => {
     const bound = fleet();
     const { menu, user } = await openAddresses('tower');
 
-     await user.click(menu.getByRole('button', { name: /100\.64\.0\.10/ }));
+    await user.click(menu.getByRole('button', { name: /100\.64\.0\.10/ }));
     // The row's own machine, the address picked, and the rank that freezes it:
     // asking for a route by name outranks the durability order.
     expect(bound).toEqual([[LAN, TAILSCALE, true]]);
@@ -153,7 +149,7 @@ describe('binding a machine to one of its addresses', () => {
       'AutomaticFollow the most durable address that answers',
     );
 
-     await pinned.user.click(pinned.menu.getByRole('button', { name: /^Automatic/ }));
+    await pinned.user.click(pinned.menu.getByRole('button', { name: /^Automatic/ }));
     expect(bound).toEqual([[LAN, TAILSCALE, false]]);
   });
 
@@ -175,7 +171,7 @@ describe('binding a machine to one of its addresses', () => {
         '100.64.0.11:7890Works from anywhere your tailnet reachesno answer',
       ),
     );
-     await user.click(menu.getByRole('button', { name: /^Automatic/ }));
+    await user.click(menu.getByRole('button', { name: /^Automatic/ }));
 
     expect(bound).toEqual([[LAN, LAN, false]]);
   });

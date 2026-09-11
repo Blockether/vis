@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
-import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
+import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
 // jsdom lays nothing out, so the composer's geometry is handed over here: the
 // shipped box is `h-8 py-2 text-ui` — 32px around one 16px line between 8px
@@ -20,9 +20,7 @@ const layout = { width: 216 };
 /** The box the browser would report for the height this element carries. */
 function boxHeight(element: HTMLTextAreaElement): number {
   const inline = Number.parseFloat(element.style.height);
-  return Number.isNaN(inline)
-    ? BOX
-    : Math.min(CEILING, Math.max(BOX, inline));
+  return Number.isNaN(inline) ? BOX : Math.min(CEILING, Math.max(BOX, inline));
 }
 
 function installLayout(): void {
@@ -34,9 +32,9 @@ function installLayout(): void {
         return get(this);
       },
     });
-  define("clientWidth", () => layout.width);
-  define("clientHeight", boxHeight);
-  define("scrollHeight", (element) => {
+  define('clientWidth', () => layout.width);
+  define('clientHeight', boxHeight);
+  define('scrollHeight', (element) => {
     // A textarea measures its PLACEHOLDER when it holds no value, and the
     // composer's placeholder wraps to two lines on a phone.
     const text = element.value || element.placeholder;
@@ -49,7 +47,7 @@ function installLayout(): void {
 function installObserver(): (element: Element) => void {
   const watchers: { target: Element; run: () => void }[] = [];
   vi.stubGlobal(
-    "ResizeObserver",
+    'ResizeObserver',
     class {
       private readonly callback: () => void;
       constructor(callback: () => void) {
@@ -74,7 +72,7 @@ function installObserver(): (element: Element) => void {
 
 afterEach(() => {
   layout.width = 216;
-  for (const name of ["clientWidth", "clientHeight", "scrollHeight"]) {
+  for (const name of ['clientWidth', 'clientHeight', 'scrollHeight']) {
     Reflect.deleteProperty(HTMLTextAreaElement.prototype, name);
   }
   vi.unstubAllGlobals();
@@ -86,43 +84,41 @@ afterEach(() => {
 // mic button mounting with the capabilities answer — left the composer one line
 // tall around two lines, showing the line just typed cut in half inside its
 // bottom padding until the next keystroke happened to grow it.
-describe("composer height", () => {
-  it("grows with the text and comes back down when it is deleted", async () => {
+describe('composer height', () => {
+  it('grows with the text and comes back down when it is deleted', async () => {
     const user = userEvent.setup();
     installLayout();
     installObserver();
-    renderSessionScreen({ session: sessionFixture({ id: "typed" }) });
+    renderSessionScreen({ session: sessionFixture({ id: 'typed' }) });
 
-    const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
-    await user.type(composer, "a".repeat(30));
-    expect(composer.style.height).toBe("");
+    const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+    await user.type(composer, 'a'.repeat(30));
+    expect(composer.style.height).toBe('');
 
-    await user.type(composer, "a".repeat(10));
-    expect(composer.style.height).toBe("48px");
+    await user.type(composer, 'a'.repeat(10));
+    expect(composer.style.height).toBe('48px');
 
-    await user.type(composer, "{backspace}".repeat(10));
-    expect(composer.style.height).toBe("32px");
+    await user.type(composer, '{backspace}'.repeat(10));
+    expect(composer.style.height).toBe('32px');
   });
 
   // Regression: intermittent iOS typing stalls persisted for short drafts. Deleting
   // within a wrapped line must not collapse the live editor to measure its text.
-  it.each(["deleteContentBackward", "insertReplacementText"])(
-    "does not resize an unchanged two-line composer for %s",
+  it.each(['deleteContentBackward', 'insertReplacementText'])(
+    'does not resize an unchanged two-line composer for %s',
     (inputType) => {
       installLayout();
       installObserver();
       renderSessionScreen();
-      const composer = screen.getByLabelText(
-        "Message Vis",
-      ) as HTMLTextAreaElement;
-      fireEvent.input(composer, { target: { value: "a".repeat(50) } });
-      expect(composer.style.height).toBe("48px");
+      const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+      fireEvent.input(composer, { target: { value: 'a'.repeat(50) } });
+      expect(composer.style.height).toBe('48px');
       composer.focus();
-      const heightWrites = vi.spyOn(composer.style, "height", "set");
+      const heightWrites = vi.spyOn(composer.style, 'height', 'set');
       try {
         fireEvent.input(composer, {
           target: {
-            value: "a".repeat(49),
+            value: 'a'.repeat(49),
             selectionStart: 20,
             selectionEnd: 20,
           },
@@ -130,18 +126,18 @@ describe("composer height", () => {
         });
 
         expect(heightWrites).not.toHaveBeenCalled();
-        expect(composer.style.height).toBe("48px");
+        expect(composer.style.height).toBe('48px');
         expect(composer.selectionStart).toBe(20);
         expect(document.activeElement).toBe(composer);
-        expect(document.querySelectorAll("textarea")).toHaveLength(1);
+        expect(document.querySelectorAll('textarea')).toHaveLength(1);
 
         // A real line-count change writes only the final height, never `auto`.
         fireEvent.input(composer, {
-          target: { value: "a".repeat(30) },
+          target: { value: 'a'.repeat(30) },
           inputType,
         });
-        expect(heightWrites.mock.calls).toEqual([["32px"]]);
-        expect(document.querySelectorAll("textarea")).toHaveLength(1);
+        expect(heightWrites.mock.calls).toEqual([['32px']]);
+        expect(document.querySelectorAll('textarea')).toHaveLength(1);
       } finally {
         heightWrites.mockRestore();
       }
@@ -150,100 +146,100 @@ describe("composer height", () => {
 
   // Regression: shortening a long Polish draft (including an autocorrection)
   // reset the live box to `auto` and reflowed the transcript despite staying capped.
-  it.each(["deleteContentBackward", "insertReplacementText"])(
-    "does not reset a still-overflowing composer for %s",
+  it.each(['deleteContentBackward', 'insertReplacementText'])(
+    'does not reset a still-overflowing composer for %s',
     (inputType) => {
       installLayout();
       installObserver();
       renderSessionScreen();
-      const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
-      const text = "Zażółć gęślą jaźń. ".repeat(12) + "dluuugie";
+      const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+      const text = 'Zażółć gęślą jaźń. '.repeat(12) + 'dluuugie';
       fireEvent.input(composer, { target: { value: text } });
-      expect(composer.style.height).toBe("80px");
-      const heightWrites = vi.spyOn(composer.style, "height", "set");
+      expect(composer.style.height).toBe('80px');
+      const heightWrites = vi.spyOn(composer.style, 'height', 'set');
       const corrected =
-        inputType === "insertReplacementText"
-          ? text.replace("dluuugie", "długie")
+        inputType === 'insertReplacementText'
+          ? text.replace('dluuugie', 'długie')
           : text.slice(0, -1);
 
       fireEvent.input(composer, { target: { value: corrected }, inputType });
 
       expect(composer.value).toBe(corrected);
-      expect(composer.style.height).toBe("80px");
+      expect(composer.style.height).toBe('80px');
       expect(heightWrites).not.toHaveBeenCalled();
       heightWrites.mockRestore();
 
       // Crossing back below the ceiling must still shrink the box.
       fireEvent.input(composer, {
-        target: { value: "Krótka wiadomość" },
-        inputType: "deleteContentBackward",
+        target: { value: 'Krótka wiadomość' },
+        inputType: 'deleteContentBackward',
       });
-      expect(composer.style.height).toBe("32px");
+      expect(composer.style.height).toBe('32px');
     },
   );
 
-  it("refits when the box narrows under text that did not change", async () => {
+  it('refits when the box narrows under text that did not change', async () => {
     const user = userEvent.setup();
     installLayout();
     const resize = installObserver();
-    renderSessionScreen({ session: sessionFixture({ id: "narrowed" }) });
+    renderSessionScreen({ session: sessionFixture({ id: 'narrowed' }) });
 
-    const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
-    await user.type(composer, "a".repeat(30));
-    expect(composer.style.height).toBe("");
+    const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+    await user.type(composer, 'a'.repeat(30));
+    expect(composer.style.height).toBe('');
 
     layout.width = 150;
     act(() => resize(composer));
-    expect(composer.style.height).toBe("48px");
+    expect(composer.style.height).toBe('48px');
 
     layout.width = 320;
     act(() => resize(composer));
-    expect(composer.style.height).toBe("32px");
+    expect(composer.style.height).toBe('32px');
   });
 
-  it("keeps an empty composer at its own height, placeholder and all", () => {
+  it('keeps an empty composer at its own height, placeholder and all', () => {
     // Narrow enough that the placeholder itself wraps: an empty box measures
     // that text, and sizing to it would grow the composer around words nobody
     // typed.
     layout.width = 120;
     installLayout();
     const resize = installObserver();
-    renderSessionScreen({ session: sessionFixture({ id: "empty" }) });
+    renderSessionScreen({ session: sessionFixture({ id: 'empty' }) });
 
-    const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
-    expect(composer.value).toBe("");
+    const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+    expect(composer.value).toBe('');
     expect(composer.scrollHeight).toBeGreaterThan(composer.clientHeight);
 
     act(() => resize(composer));
-    expect(composer.style.height).toBe("");
+    expect(composer.style.height).toBe('');
   });
 
   // Regression, user report ("it goes outside of the input"): while a turn ran the
   // composer read "Message Vis — queues behind the running turn" — 43 characters in
   // a box that holds 36, so the placeholder wrapped to a second line that the box,
   // which deliberately never grows around text nobody typed, then clipped.
-  it("says a message queues in the one line the composer keeps", () => {
+  it('says a message queues in the one line the composer keeps', () => {
     installLayout();
     installObserver();
     renderSessionScreen({
-      session: sessionFixture({ id: "busy", status: "running" }),
+      session: sessionFixture({ id: 'busy', status: 'running' }),
       client: {
         cachedRunningTurn: () => ({
           turn: {
-            id: "t1",
-            request: "check the logs",
-            answer: "",
+            id: 't1',
+            request: 'check the logs',
+            answer: '',
             iterations: [],
             startedAt: Date.now(),
-            status: "running" as const,
+            status: 'running' as const,
           },
           seq: 1,
         }),
       },
     });
 
-    const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
-    expect(composer.placeholder).toContain("queues");
+    const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+    expect(composer.placeholder).toContain('queues');
     expect(composer.scrollHeight).toBe(composer.clientHeight);
   });
 });

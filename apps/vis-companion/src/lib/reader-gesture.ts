@@ -27,8 +27,7 @@ export function readerOwnsScroll(): boolean {
  * would be cancelled by the tap that requested it.
  */
 function onReaderMove(event: Event): void {
-  if (event.type === "pointermove" && (event as PointerEvent).buttons === 0)
-    return;
+  if (event.type === 'pointermove' && (event as PointerEvent).buttons === 0) return;
   noteReaderGesture();
 }
 
@@ -75,21 +74,21 @@ function onScroll(): void {
 // stopping propagation: window capture runs first. Passive, because an observer
 // must never be able to delay the scroll it is only watching. `scroll` does not
 // bubble at all, which is the other reason it is captured here.
-if (typeof window !== "undefined") {
-  for (const type of ["touchmove", "wheel", "pointermove"]) {
+if (typeof window !== 'undefined') {
+  for (const type of ['touchmove', 'wheel', 'pointermove']) {
     window.addEventListener(type, onReaderMove, {
       capture: true,
       passive: true,
     });
   }
-  window.addEventListener("touchstart", onTouchStart, {
+  window.addEventListener('touchstart', onTouchStart, {
     capture: true,
     passive: true,
   });
-  for (const type of ["touchend", "touchcancel"]) {
+  for (const type of ['touchend', 'touchcancel']) {
     window.addEventListener(type, onTouchEnd, { capture: true, passive: true });
   }
-  window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+  window.addEventListener('scroll', onScroll, { capture: true, passive: true });
 }
 
 // Keeping the reader's line while content lands above them is NOT here, and no

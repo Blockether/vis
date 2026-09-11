@@ -101,7 +101,8 @@ function fixtureClient(initial: McpServer[]): Parameters<typeof McpServersPanel>
     deleteMcpServer: async (name: string) => {
       servers = servers.filter((server) => server.name !== name);
     },
-    mcpAuthLogout: async (name: string) => update(name, { is_authorized: false, is_connected: false }),
+    mcpAuthLogout: async (name: string) =>
+      update(name, { is_authorized: false, is_connected: false }),
     testMcpServer: async (name: string) => ({ name, tools: [] }),
     saveMcpServer: async (name: string, spec: McpServer) => update(name, spec),
   };

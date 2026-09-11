@@ -17,8 +17,9 @@ const css = readFileSync(
 );
 
 /** Every family the stylesheet pulls in, and whether its italic axis came too. */
-const families = [...css.matchAll(/@import ['"]@fontsource-variable\/([^/'"]+)['"]/g)]
-  .map((match) => match[1]);
+const families = [...css.matchAll(/@import ['"]@fontsource-variable\/([^/'"]+)['"]/g)].map(
+  (match) => match[1],
+);
 
 describe('web fonts', () => {
   it('synthesises nothing, so every slant must be a real face', () => {
@@ -29,9 +30,7 @@ describe('web fonts', () => {
     expect(families.length).toBeGreaterThan(0);
     for (const family of families) {
       expect(css).toContain(`@import '@fontsource-variable/${family}';`);
-      expect(css).toContain(
-        `@import '@fontsource-variable/${family}/wght-italic.css';`,
-      );
+      expect(css).toContain(`@import '@fontsource-variable/${family}/wght-italic.css';`);
     }
   });
 });

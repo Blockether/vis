@@ -17,22 +17,16 @@
  * file server-side, one window at a time.
  */
 
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
-import { attachmentBytes } from "../lib/artifacts";
-import type { GatewayClient } from "../lib/gateway";
-import { liveRecordFromText, type LiveRecord } from "../lib/live-view";
-import { useStickyOverlay } from "../lib/sticky-overlay";
-import type { IterationAttachment } from "../lib/types";
-import { LiveViewPanel } from "./LiveView";
-import { ChevronIcon } from "./icons";
-import { ListRow, overlayLayer, OverlayScreen } from "./ui";
+import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { attachmentBytes } from '../lib/artifacts';
+import type { GatewayClient } from '../lib/gateway';
+import { liveRecordFromText, type LiveRecord } from '../lib/live-view';
+import { useStickyOverlay } from '../lib/sticky-overlay';
+import type { IterationAttachment } from '../lib/types';
+import { LiveViewPanel } from './LiveView';
+import { ChevronIcon } from './icons';
+import { ListRow, overlayLayer, OverlayScreen } from './ui';
 
 /** Under this, the whole record is folded patch by patch — the honest replay. */
 export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
@@ -46,45 +40,42 @@ export const LIVE_RECORD_EDGE = 1_250_000;
  * in the engine must not read as "ended" on the phone.
  */
 const REASON_WORDS: Record<string, string> = {
-  completed: "finished",
-  interrupted: "stopped by hand",
-  timeout: "timed out",
-  undeliverable: "lost its surface",
-  failed: "failed",
-  superseded: "superseded",
+  completed: 'finished',
+  interrupted: 'stopped by hand',
+  timeout: 'timed out',
+  undeliverable: 'lost its surface',
+  failed: 'failed',
+  superseded: 'superseded',
 };
 
 /** How the run ended, and the comment whoever stopped it left. */
 export function liveVerdictLine(record: LiveRecord): string {
-  const reason = record.reason ?? "";
+  const reason = record.reason ?? '';
   const word = reason
     ? (REASON_WORDS[reason] ?? reason)
     : record.is_completed
-      ? "finished"
-      : "still recording";
+      ? 'finished'
+      : 'still recording';
   return record.note ? `${word} — ${record.note}` : word;
 }
 
 /** The first COMPLETE line of a slice taken from the head of a record. */
 function firstLine(head: string): string {
-  const cut = head.indexOf("\n");
+  const cut = head.indexOf('\n');
   return cut < 0 ? head : head.slice(0, cut);
 }
 
 /** The last COMPLETE line of a slice taken from the tail of a record. */
 function lastLine(tail: string): string {
-  const lines = tail.split("\n").filter((line) => line.trim() !== "");
-  return lines.length > 1 ? lines[lines.length - 1] : "";
+  const lines = tail.split('\n').filter((line) => line.trim() !== '');
+  return lines.length > 1 ? lines[lines.length - 1] : '';
 }
 
 /**
  * The record folded from its two ENDS — what a long run is read as. Pure, so the
  * decision "the verdict is the picture" is testable without a byte of network.
  */
-export function liveRecordFromEdges(
-  head: string,
-  tail: string,
-): LiveRecord | null {
+export function liveRecordFromEdges(head: string, tail: string): LiveRecord | null {
   return liveRecordFromText(`${firstLine(head)}\n${lastLine(tail)}`);
 }
 
@@ -120,7 +111,7 @@ export function LiveArtifact({
   chrome: (parts: { subtitle: string; body: ReactNode }) => ReactNode;
 }) {
   const [record, setRecord] = useState<LiveRecord | null>(null);
-  const [shown, setShown] = useState<LiveRecord["view"] | null>(null);
+  const [shown, setShown] = useState<LiveRecord['view'] | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -143,33 +134,38 @@ export function LiveArtifact({
     };
   }, [url]);
 
-  const body = record && shown ? (
-    <div className="min-h-0 flex-1 overflow-y-auto p-3">
-      <LiveViewPanel
-        view={shown}
-        isSettled
-        onSelect={record.selection_snapshots?.length ? (nodeId, itemIds) => {
-          const wanted = itemIds.join("\u0000");
-          const snapshot = record.selection_snapshots?.find(
-            (one) => one.node_id === nodeId && one.selected_ids.join("\u0000") === wanted,
-          );
-          if (snapshot) setShown(snapshot.view);
-        } : undefined}
-        // The log is NOT in what was read: every page comes from the record on
-        // the gateway, which is why a run that logged 100 000 lines opens here at
-        // all. The view id is the record's own, so a page names the same file.
-        load={(nodeId, from, limit, query) =>
-          client.liveViewLog(sid, record.view.id, nodeId, from, limit, query)
-        }
-      />
-    </div>
-  ) : (
-    <p className="p-4 font-mono text-meta text-dialog-hint">
-      {failed ? "This run's record could not be read." : "Loading…"}
-    </p>
-  );
+  const body =
+    record && shown ? (
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <LiveViewPanel
+          view={shown}
+          isSettled
+          onSelect={
+            record.selection_snapshots?.length
+              ? (nodeId, itemIds) => {
+                  const wanted = itemIds.join('\u0000');
+                  const snapshot = record.selection_snapshots?.find(
+                    (one) => one.node_id === nodeId && one.selected_ids.join('\u0000') === wanted,
+                  );
+                  if (snapshot) setShown(snapshot.view);
+                }
+              : undefined
+          }
+          // The log is NOT in what was read: every page comes from the record on
+          // the gateway, which is why a run that logged 100 000 lines opens here at
+          // all. The view id is the record's own, so a page names the same file.
+          load={(nodeId, from, limit, query) =>
+            client.liveViewLog(sid, record.view.id, nodeId, from, limit, query)
+          }
+        />
+      </div>
+    ) : (
+      <p className="p-4 font-mono text-meta text-dialog-hint">
+        {failed ? "This run's record could not be read." : 'Loading…'}
+      </p>
+    );
 
-  return <>{chrome({ subtitle: record ? liveVerdictLine(record) : "", body })}</>;
+  return <>{chrome({ subtitle: record ? liveVerdictLine(record) : '', body })}</>;
 }
 
 /**
@@ -178,8 +174,8 @@ export function LiveArtifact({
  * says what ran rather than what the file is called.
  */
 export function liveRunName(filename?: string): string {
-  const name = filename ?? "";
-  return name.replace(/\.live\.ndjson$/i, "") || "run";
+  const name = filename ?? '';
+  return name.replace(/\.live\.ndjson$/i, '') || 'run';
 }
 
 /**
@@ -214,7 +210,7 @@ export const LiveRunRow = memo(function LiveRunRow({
   attachment: IterationAttachment;
 }) {
   const name = liveRunName(attachment.filename);
-  const iterationId = attachment.iteration_id ?? "";
+  const iterationId = attachment.iteration_id ?? '';
   const index = attachment.index ?? 0;
   // Keyed by the RECORD, not by this row: a turn settling re-mounts the row
   // under a different subtree, and an opened run must stay opened.
@@ -254,13 +250,9 @@ export const LiveRunRow = memo(function LiveRunRow({
         <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">
           RUN
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">
-          {name}
-        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">{name}</span>
         {sizeLabel ? (
-          <span className="shrink-0 font-mono text-chip text-footer-muted">
-            {sizeLabel}
-          </span>
+          <span className="shrink-0 font-mono text-chip text-footer-muted">{sizeLabel}</span>
         ) : null}
         <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
       </ListRow>
@@ -275,11 +267,7 @@ export const LiveRunRow = memo(function LiveRunRow({
               sid={sid}
               url={url}
               chrome={({ subtitle, body }) => (
-                <OverlayScreen
-                  title={name}
-                  subtitle={subtitle}
-                  onClose={close}
-                >
+                <OverlayScreen title={name} subtitle={subtitle} onClose={close}>
                   {body}
                 </OverlayScreen>
               )}
@@ -287,7 +275,7 @@ export const LiveRunRow = memo(function LiveRunRow({
           ) : (
             <OverlayScreen title={name} onClose={close}>
               <p className="p-4 font-mono text-meta text-dialog-hint">
-                {failed ? "This run's record could not be read." : "Loading…"}
+                {failed ? "This run's record could not be read." : 'Loading…'}
               </p>
             </OverlayScreen>
           ),

@@ -1,14 +1,8 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  clampArtifactText,
-  readArtifactText,
-  TEXT_ARTIFACT_LIMIT,
-  TextBody,
-} from "./TextArtifact";
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { clampArtifactText, readArtifactText, TEXT_ARTIFACT_LIMIT, TextBody } from './TextArtifact';
 
-const html = (node: Parameters<typeof renderToStaticMarkup>[0]) =>
-  renderToStaticMarkup(node);
+const html = (node: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(node);
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,39 +12,31 @@ afterEach(() => {
 // painted `# Heading` as `# Heading` — the source of the note instead of the
 // note — and the app has exactly one markdown renderer that already knows
 // better.
-describe("a written artifact", () => {
-  it("renders markdown as prose, not as its own source", () => {
+describe('a written artifact', () => {
+  it('renders markdown as prose, not as its own source', () => {
     const markup = html(
       <TextBody
-        text={"# Ship it\n\n- one\n- two\n"}
+        text={'# Ship it\n\n- one\n- two\n'}
         mime="text/markdown"
         name="vis-issue-115-comment.md"
       />,
     );
-    expect(markup).toContain("<h1");
-    expect(markup).toContain("Ship it");
-    expect(markup).toContain("<li");
-    expect(markup).not.toContain("# Ship it");
+    expect(markup).toContain('<h1');
+    expect(markup).toContain('Ship it');
+    expect(markup).toContain('<li');
+    expect(markup).not.toContain('# Ship it');
   });
 
-  it("trusts the name when the gateway only guessed a generic type", () => {
+  it('trusts the name when the gateway only guessed a generic type', () => {
     const markup = html(
-      <TextBody
-        text={"## Heading"}
-        mime="application/octet-stream"
-        name="notes.md"
-      />,
+      <TextBody text={'## Heading'} mime="application/octet-stream" name="notes.md" />,
     );
-    expect(markup).toContain("<h2");
+    expect(markup).toContain('<h2');
   });
 
-  it("paints anything else verbatim, wrapped and monospaced", () => {
+  it('paints anything else verbatim, wrapped and monospaced', () => {
     const markup = html(
-      <TextBody
-        text={"# not markdown\n  spaced"}
-        mime="text/plain"
-        name="a.log"
-      />,
+      <TextBody text={'# not markdown\n  spaced'} mime="text/plain" name="a.log" />,
     );
     expect(markup).toContain('<pre');
     expect(markup).toContain('tabindex="0"');
@@ -60,45 +46,40 @@ describe("a written artifact", () => {
   });
 });
 
-describe("reading the bytes", () => {
-  it("never asks a phone to lay out a whole log", () => {
-    const clamped = clampArtifactText("x".repeat(TEXT_ARTIFACT_LIMIT + 10));
+describe('reading the bytes', () => {
+  it('never asks a phone to lay out a whole log', () => {
+    const clamped = clampArtifactText('x'.repeat(TEXT_ARTIFACT_LIMIT + 10));
     expect(clamped.length).toBeLessThan(TEXT_ARTIFACT_LIMIT + 40);
-    expect(clamped).toContain("… truncated");
-    expect(clampArtifactText("short")).toBe("short");
+    expect(clamped).toContain('… truncated');
+    expect(clampArtifactText('short')).toBe('short');
   });
 
-  it("reads the artifact url as text", async () => {
+  it('reads the artifact url as text', async () => {
     vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("# hi", { status: 200 })),
+      'fetch',
+      vi.fn(async () => new Response('# hi', { status: 200 })),
     );
-    expect(await readArtifactText("blob:one")).toBe("# hi");
+    expect(await readArtifactText('blob:one')).toBe('# hi');
   });
 
-  it("refuses a failed read instead of painting an empty note", async () => {
+  it('refuses a failed read instead of painting an empty note', async () => {
     vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("nope", { status: 404 })),
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 404 })),
     );
-    await expect(readArtifactText("blob:two")).rejects.toThrow("404");
+    await expect(readArtifactText('blob:two')).rejects.toThrow('404');
   });
 });
 
 // A plan sitting INLINE in the session is source, not a rendered document: the
 // turn that produced it was being swallowed by a wall of headings.
-describe("a markdown artifact inline in the session", () => {
-  it("shows the source verbatim when asked for the raw form", () => {
+describe('a markdown artifact inline in the session', () => {
+  it('shows the source verbatim when asked for the raw form', () => {
     const markup = html(
-      <TextBody
-        text={"# Ship it\n\n- one\n"}
-        mime="text/markdown"
-        name="PLAN.md"
-        raw
-      />,
+      <TextBody text={'# Ship it\n\n- one\n'} mime="text/markdown" name="PLAN.md" raw />,
     );
-    expect(markup).toContain("<pre");
-    expect(markup).toContain("# Ship it");
-    expect(markup).not.toContain("<h1");
+    expect(markup).toContain('<pre');
+    expect(markup).toContain('# Ship it');
+    expect(markup).not.toContain('<h1');
   });
 });

@@ -58,9 +58,9 @@ describe('how a finished run reads', () => {
     expect(liveVerdictLine(ended({ reason: 'completed' }))).toBe('finished');
     expect(liveVerdictLine(ended({ reason: 'timeout' }))).toBe('timed out');
     expect(liveVerdictLine(ended({ reason: 'superseded' }))).toBe('superseded');
-    expect(
-      liveVerdictLine(ended({ reason: 'interrupted', note: 'flaky on rerun' })),
-    ).toBe('stopped by hand — flaky on rerun');
+    expect(liveVerdictLine(ended({ reason: 'interrupted', note: 'flaky on rerun' }))).toBe(
+      'stopped by hand — flaky on rerun',
+    );
   });
 
   it('shows a reason it has no word for verbatim rather than as "ended"', () => {
@@ -90,7 +90,9 @@ describe('a long record, read at its two ends', () => {
 
 describe('the artifact on screen', () => {
   it('paints the picture the run ended on, with nothing left running', async () => {
-    serve([openLine, closeLine({ reason: 'completed', is_completed: true, view: sealed })].join('\n'));
+    serve(
+      [openLine, closeLine({ reason: 'completed', is_completed: true, view: sealed })].join('\n'),
+    );
     render(
       <LiveArtifact
         client={client()}
@@ -218,8 +220,24 @@ describe('the settled run in the transcript', () => {
       is_selectable: true,
       selected_ids: ['linux'],
     };
-    const linux = { ...fixture, nodes: [jobs, { id: 'steps', type: 'steps', steps: [{ id: 'fail', label: 'Tests failed', tone: 'error' }] }] };
-    const macos = { ...fixture, nodes: [{ ...jobs, selected_ids: ['macos'] }, { id: 'steps', type: 'steps', steps: [{ id: 'pass', label: 'Tests passed', tone: 'ok' }] }] };
+    const linux = {
+      ...fixture,
+      nodes: [
+        jobs,
+        {
+          id: 'steps',
+          type: 'steps',
+          steps: [{ id: 'fail', label: 'Tests failed', tone: 'error' }],
+        },
+      ],
+    };
+    const macos = {
+      ...fixture,
+      nodes: [
+        { ...jobs, selected_ids: ['macos'] },
+        { id: 'steps', type: 'steps', steps: [{ id: 'pass', label: 'Tests passed', tone: 'ok' }] },
+      ],
+    };
     serve(
       [
         openLine,
@@ -250,27 +268,72 @@ describe('the settled run in the transcript', () => {
 
   it('does not offer archive table selection without recorded snapshots', async () => {
     // Regression #189: completed live controls cannot become no-op archive buttons.
-    const saved = { ...fixture, nodes: [{ id: 'jobs', type: 'table', is_selectable: true,
-      columns: [{ id: 'job', label: 'Job' }], rows: [{ id: 'job', cells: ['Recorded job'] }] }] };
+    const saved = {
+      ...fixture,
+      nodes: [
+        {
+          id: 'jobs',
+          type: 'table',
+          is_selectable: true,
+          columns: [{ id: 'job', label: 'Job' }],
+          rows: [{ id: 'job', cells: ['Recorded job'] }],
+        },
+      ],
+    };
     serve([openLine, closeLine({ reason: 'completed', view: saved })].join('\n'));
-    render(<LiveArtifact client={client()} sid="s1" url="blob:record" chrome={({ body }) => <div>{body}</div>} />);
+    render(
+      <LiveArtifact
+        client={client()}
+        sid="s1"
+        url="blob:record"
+        chrome={({ body }) => <div>{body}</div>}
+      />,
+    );
     await waitFor(() => expect(screen.getByText('Recorded job')).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Select Recorded job' })).toBeNull();
   });
 
   it('searches the archive through the bounded gateway log route', async () => {
-    const saved = { ...fixture, nodes: [{ id: 'tail', type: 'log', label: 'Archive log',
-      lines: ['latest'], total_lines: 500, window_lines: 1 }] };
+    const saved = {
+      ...fixture,
+      nodes: [
+        {
+          id: 'tail',
+          type: 'log',
+          label: 'Archive log',
+          lines: ['latest'],
+          total_lines: 500,
+          window_lines: 1,
+        },
+      ],
+    };
     serve([openLine, closeLine({ reason: 'completed', view: saved })].join('\n'));
     const c = client();
-    vi.mocked(c.liveViewLog).mockResolvedValue({ node_id: 'tail', from: 0, lines: ['ERROR older'],
-      line_numbers: [10], matched: 1, total: 500 });
-    render(<LiveArtifact client={c} sid="s1" url="blob:record" chrome={({ body }) => <div>{body}</div>} />);
+    vi.mocked(c.liveViewLog).mockResolvedValue({
+      node_id: 'tail',
+      from: 0,
+      lines: ['ERROR older'],
+      line_numbers: [10],
+      matched: 1,
+      total: 500,
+    });
+    render(
+      <LiveArtifact
+        client={c}
+        sid="s1"
+        url="blob:record"
+        chrome={({ body }) => <div>{body}</div>}
+      />,
+    );
     fireEvent.click(await screen.findByRole('button', { name: 'Archive log' }));
     const field = screen.getByRole('searchbox', { name: 'Search Archive log' });
     fireEvent.change(field, { target: { value: 'error' } });
     fireEvent.submit(field.closest('form')!);
-    await waitFor(() => expect(screen.getByRole('region', { name: 'Archive log output' }).textContent).toContain('10: ERROR older'));
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Archive log output' }).textContent).toContain(
+        '10: ERROR older',
+      ),
+    );
     expect(c.liveViewLog).toHaveBeenCalledWith('s1', fixture.id, 'tail', 0, 200, 'error');
   });
 
@@ -296,9 +359,7 @@ describe('the settled run in the transcript', () => {
     const { client: c } = rowClient(null);
     render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open run release' }));
-    await waitFor(() =>
-      expect(screen.getByText('Loading…')).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText('Loading…')).toBeTruthy());
   });
 
   it('paints nothing for a run no iteration owns', () => {

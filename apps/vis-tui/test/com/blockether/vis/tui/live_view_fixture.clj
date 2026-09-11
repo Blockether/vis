@@ -1,7 +1,6 @@
 (ns com.blockether.vis.tui.live-view-fixture
   "Small test builders for gateway-shaped live views. The standalone client consumes
-   these maps; it does not depend on the engine namespace that authors them."
-  (:refer-clojure :exclude [log]))
+   these maps; it does not depend on the engine namespace that authors them.")
 
 (defn status
   ([id text] (status id text nil))

@@ -6,48 +6,40 @@
  * dark-theme ink. A URL per story/palette is both faster than repeated builds and
  * faithful to how the app first paints a selected theme.
  */
-import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { extname, resolve, sep } from "node:path";
-import { chromium } from "playwright";
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { extname, resolve, sep } from 'node:path';
+import { chromium } from 'playwright';
 
 const require = createRequire(import.meta.url);
 const [axeSource, themeCatalog] = await Promise.all([
-  readFile(require.resolve("axe-core/axe.min.js"), "utf8"),
-  readFile(resolve("src/lib/themes.generated.ts"), "utf8"),
+  readFile(require.resolve('axe-core/axe.min.js'), 'utf8'),
+  readFile(resolve('src/lib/themes.generated.ts'), 'utf8'),
 ]);
-const staticRoot = resolve(process.argv[2] ?? "storybook-static");
-const themes = [...themeCatalog.matchAll(/\bid: '([^']+)'/g)].map(
-  (match) => match[1],
-);
-if (themes.length === 0)
-  throw new Error("The generated application theme catalog is empty.");
+const staticRoot = resolve(process.argv[2] ?? 'storybook-static');
+const themes = [...themeCatalog.matchAll(/\bid: '([^']+)'/g)].map((match) => match[1]);
+if (themes.length === 0) throw new Error('The generated application theme catalog is empty.');
 const mime = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".woff2": "font/woff2",
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2',
 };
 
 const server = createServer(async (request, response) => {
   try {
-    const pathname = decodeURIComponent(
-      new URL(request.url ?? "/", "http://localhost").pathname,
-    );
-    const file = resolve(
-      staticRoot,
-      pathname === "/" ? "index.html" : `.${pathname}`,
-    );
+    const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
+    const file = resolve(staticRoot, pathname === '/' ? 'index.html' : `.${pathname}`);
     if (file !== staticRoot && !file.startsWith(`${staticRoot}${sep}`)) {
       response.writeHead(403).end();
       return;
     }
     const body = await readFile(file);
     response.writeHead(200, {
-      "content-type": mime[extname(file)] ?? "application/octet-stream",
+      'content-type': mime[extname(file)] ?? 'application/octet-stream',
     });
     response.end(body);
   } catch {
@@ -55,24 +47,22 @@ const server = createServer(async (request, response) => {
   }
 });
 
-await new Promise((resolveListen) =>
-  server.listen(0, "127.0.0.1", resolveListen),
-);
+await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
 const address = server.address();
-if (typeof address === "string" || address === null)
-  throw new Error("Static Storybook did not bind a TCP port.");
+if (typeof address === 'string' || address === null)
+  throw new Error('Static Storybook did not bind a TCP port.');
 const base = `http://127.0.0.1:${address.port}`;
 const browser = await chromium.launch({ headless: true });
 
 try {
   const index = await (await fetch(`${base}/index.json`)).json();
   const storyIds = Object.values(index.entries)
-    .filter((entry) => entry.type === "story")
+    .filter((entry) => entry.type === 'story')
     .map((entry) => entry.id)
     .sort();
   const jobs = storyIds.flatMap((id) =>
     themes.flatMap((theme) =>
-      id === "session-jump-to-latest--default"
+      id === 'session-jump-to-latest--default'
         ? [
             { id, theme },
             { id, theme, hover: true },
@@ -89,20 +79,18 @@ try {
   async function runJob(page, { id, theme, hover }) {
     const query = new URLSearchParams({ id, globals: `theme:${theme}` });
     await page.goto(`${base}/iframe.html?${query}`, {
-      waitUntil: "networkidle",
+      waitUntil: 'networkidle',
       timeout: 30_000,
     });
-    await page.waitForSelector("#storybook-root > *", { timeout: 15_000 });
+    await page.waitForSelector('#storybook-root > *', { timeout: 15_000 });
     await page.evaluate(() => document.fonts?.ready);
     // CI exposed an inverted foreground left on the page-hover background.
     // Use a real pointer: DOM userEvent.hover does not activate CSS :hover.
     if (hover) {
-      const button = page.getByRole("button", { name: "Latest", exact: true });
+      const button = page.getByRole('button', { name: 'Latest', exact: true });
       await button.hover();
       await button.evaluate((element) =>
-        Promise.all(
-          element.getAnimations().map((animation) => animation.finished),
-        ),
+        Promise.all(element.getAnimations().map((animation) => animation.finished)),
       );
     }
     const violations = await page.evaluate(async (source) => {
@@ -110,13 +98,13 @@ try {
       const previousAxe = window.axe;
       const module = { exports: {} };
       try {
-        new Function("module", source)(module);
+        new Function('module', source)(module);
       } finally {
         window.axe = previousAxe;
       }
       const result = await module.exports.run(document, {
         iframes: false,
-        runOnly: { type: "rule", values: ["color-contrast"] },
+        runOnly: { type: 'rule', values: ['color-contrast'] },
       });
       return result.violations.flatMap((violation) =>
         violation.nodes.map((node) => ({
@@ -126,9 +114,7 @@ try {
         })),
       );
     }, axeSource);
-    failures.push(
-      ...violations.map((violation) => ({ id, theme, ...violation })),
-    );
+    failures.push(...violations.map((violation) => ({ id, theme, ...violation })));
   }
 
   async function worker() {
@@ -142,7 +128,7 @@ try {
         } catch (error) {
           failures.push({
             ...job,
-            rule: "scanner-error",
+            rule: 'scanner-error',
             target: String(error),
             data: {},
           });
@@ -162,14 +148,11 @@ try {
         `${failure.theme} · ${failure.id} · ${failure.rule} · ${failure.target} · ${JSON.stringify(failure.data)}`,
       );
     }
-    if (failures.length > 100)
-      console.error(`…and ${failures.length - 100} more.`);
+    if (failures.length > 100) console.error(`…and ${failures.length - 100} more.`);
     throw new Error(`${failures.length} Storybook contrast checks failed.`);
   }
 
-  console.log(
-    `${storyIds.length} stories × ${themes.length} themes: contrast clean.`,
-  );
+  console.log(`${storyIds.length} stories × ${themes.length} themes: contrast clean.`);
 } finally {
   await browser.close();
   await new Promise((resolveClose, rejectClose) =>

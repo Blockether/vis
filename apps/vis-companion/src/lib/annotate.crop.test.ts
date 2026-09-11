@@ -19,9 +19,7 @@ function stubCanvas(): { draws: Draw[]; output: HTMLCanvasElement } {
     getContext: () => context,
     toBlob: (done: (blob: Blob) => void) => done(new Blob(['png'])),
   };
-  vi.spyOn(document, 'createElement').mockReturnValue(
-    output as unknown as HTMLElement,
-  );
+  vi.spyOn(document, 'createElement').mockReturnValue(output as unknown as HTMLElement);
   return { draws, output: output as unknown as HTMLCanvasElement };
 }
 
@@ -71,8 +69,6 @@ describe('flattening a picture', () => {
 
   it('refuses a picture that has not loaded', () => {
     stubCanvas();
-    expect(() => flattenAnnotations(picture(0, 0), null)).toThrow(
-      'Image is not ready',
-    );
+    expect(() => flattenAnnotations(picture(0, 0), null)).toThrow('Image is not ready');
   });
 });

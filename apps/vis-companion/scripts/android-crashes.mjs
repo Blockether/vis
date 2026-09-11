@@ -33,16 +33,20 @@ const DEFAULT_REPORTS_PER_ISSUE = 3;
 const STACK_LINES = 40;
 
 // `security -w` prints hex whenever the stored secret is not plain printable ASCII.
-const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+const unhex = (s) =>
+  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
 
 const keychain = (service, account) => {
   if (process.platform !== 'darwin') return undefined;
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], { encoding: 'utf8' });
+  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
+    encoding: 'utf8',
+  });
   return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
 };
 
 /** The publishing service account, from the environment or the login keychain — never from disk. */
-const credentials = () => process.env.VIS_PLAY_SERVICE_ACCOUNT?.trim() || keychain('vis-play', 'service_account');
+const credentials = () =>
+  process.env.VIS_PLAY_SERVICE_ACCOUNT?.trim() || keychain('vis-play', 'service_account');
 
 /**
  * Google answers a project-level "this API is off" with a structured ErrorInfo whose metadata
@@ -52,14 +56,18 @@ const credentials = () => process.env.VIS_PLAY_SERVICE_ACCOUNT?.trim() || keycha
 export const disabledApi = (error, api = REPORTING_API) => {
   const info = (error?.details ?? []).find((d) => d.reason === 'SERVICE_DISABLED');
   if (info) {
-    return { api: info.metadata?.service ?? api, project: String(info.metadata?.consumer ?? '').replace(/^projects\//, '') };
+    return {
+      api: info.metadata?.service ?? api,
+      project: String(info.metadata?.consumer ?? '').replace(/^projects\//, ''),
+    };
   }
   const project = /has not been used in project (\d+)/.exec(error?.message ?? '')?.[1];
   return project ? { api, project } : undefined;
 };
 
 /** The one click that fixes a disabled API, in the project that actually owns the credential. */
-export const enableUrl = ({ api, project }) => `https://console.developers.google.com/apis/api/${api}/overview?project=${project}`;
+export const enableUrl = ({ api, project }) =>
+  `https://console.developers.google.com/apis/api/${api}/overview?project=${project}`;
 
 /**
  * A 403 that is NOT "API disabled" is the OTHER grant: the service account exists and holds a
@@ -72,7 +80,9 @@ export const dayOf = (value) => {
   if (!value) return undefined;
   if (typeof value === 'string') return value.slice(0, 10);
   const { year, month, day } = value;
-  return year && month && day ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` : undefined;
+  return year && month && day
+    ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    : undefined;
 };
 
 /**
@@ -91,8 +101,16 @@ export const dateTimeParams = (prefix, date) => ({
 });
 
 /** Query parameters for errorIssues:search / errorReports:search over the last `days`. */
-export const searchQuery = ({ days = DEFAULT_DAYS, limit = DEFAULT_LIMIT, now = new Date(), filter, orderBy } = {}) => {
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()));
+export const searchQuery = ({
+  days = DEFAULT_DAYS,
+  limit = DEFAULT_LIMIT,
+  now = new Date(),
+  filter,
+  orderBy,
+} = {}) => {
+  const end = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()),
+  );
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
   return {
     ...dateTimeParams('interval.startTime', start),
@@ -105,13 +123,19 @@ export const searchQuery = ({ days = DEFAULT_DAYS, limit = DEFAULT_LIMIT, now = 
 
 /** The metric set's own answer to "how recent can this query be", per aggregation period. */
 export const freshnessDay = (metricSet, aggregationPeriod = 'DAILY') =>
-  dayOf((metricSet?.freshnessInfo?.freshnesses ?? []).find((f) => f.aggregationPeriod === aggregationPeriod)?.latestEndTime);
+  dayOf(
+    (metricSet?.freshnessInfo?.freshnesses ?? []).find(
+      (f) => f.aggregationPeriod === aggregationPeriod,
+    )?.latestEndTime,
+  );
 
 /** One crash/ANR cluster per row, heaviest first — the same order the Play Console lists them in. */
 export const issueEntries = (response) =>
   (response?.errorIssues ?? [])
     .map((issue) => ({
-      id: String(issue.name ?? '').split('/').pop(),
+      id: String(issue.name ?? '')
+        .split('/')
+        .pop(),
       type: issue.type,
       cause: issue.cause,
       location: issue.location,
@@ -131,13 +155,22 @@ export const issueEntries = (response) =>
 /** One device event per row. The stack trace is truncated: a report is context, not an archive. */
 export const reportEntries = (response, stackLines = STACK_LINES) =>
   (response?.errorReports ?? []).map((report) => ({
-    id: String(report.name ?? '').split('/').pop(),
+    id: String(report.name ?? '')
+      .split('/')
+      .pop(),
     type: report.type,
     issueId: report.issueId,
     eventTime: report.eventTime,
-    device: [report.deviceModel?.deviceId?.buildBrand, report.deviceModel?.marketingName].filter(Boolean).join(' ') || undefined,
-    apiLevel: report.osVersion?.apiLevel === undefined ? undefined : String(report.osVersion.apiLevel),
-    versionCode: report.appVersion?.versionCode === undefined ? undefined : String(report.appVersion.versionCode),
+    device:
+      [report.deviceModel?.deviceId?.buildBrand, report.deviceModel?.marketingName]
+        .filter(Boolean)
+        .join(' ') || undefined,
+    apiLevel:
+      report.osVersion?.apiLevel === undefined ? undefined : String(report.osVersion.apiLevel),
+    versionCode:
+      report.appVersion?.versionCode === undefined
+        ? undefined
+        : String(report.appVersion.versionCode),
     stack: String(report.reportText ?? '')
       .split('\n')
       .slice(0, stackLines)
@@ -149,10 +182,16 @@ export const metricRows = (response) =>
   (response?.rows ?? []).map((row) => ({
     day: dayOf(row.startTime),
     dimensions: Object.fromEntries(
-      (row.dimensions ?? []).map((d) => [d.dimension, d.stringValue ?? d.int64Value ?? d.valueLabel ?? null]),
+      (row.dimensions ?? []).map((d) => [
+        d.dimension,
+        d.stringValue ?? d.int64Value ?? d.valueLabel ?? null,
+      ]),
     ),
     metrics: Object.fromEntries(
-      (row.metrics ?? []).map((m) => [m.metric, m.decimalValue?.value ?? m.int64Value ?? m.doubleValue ?? null]),
+      (row.metrics ?? []).map((m) => [
+        m.metric,
+        m.decimalValue?.value ?? m.int64Value ?? m.doubleValue ?? null,
+      ]),
     ),
   }));
 
@@ -164,14 +203,29 @@ export const metricRows = (response) =>
  * metrics are only aggregated after that day closes in America/Los_Angeles — so
  * the window ends at freshness, not at `now`.
  */
-export const timelineBody = ({ metrics, days = DEFAULT_DAYS, now = new Date(), until, dimensions = [] }) => {
-  const day = (d) => ({ year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(), timeZone: { id: 'America/Los_Angeles' } });
+export const timelineBody = ({
+  metrics,
+  days = DEFAULT_DAYS,
+  now = new Date(),
+  until,
+  dimensions = [],
+}) => {
+  const day = (d) => ({
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    timeZone: { id: 'America/Los_Angeles' },
+  });
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const fresh = until ? new Date(`${until}T00:00:00Z`) : undefined;
   const end = fresh && fresh.getTime() < today.getTime() ? fresh : today;
   return {
     // DAILY is fixed to America/Los_Angeles by the API; HOURLY is UTC.
-    timelineSpec: { aggregationPeriod: 'DAILY', startTime: day(new Date(end.getTime() - days * 24 * 60 * 60 * 1000)), endTime: day(end) },
+    timelineSpec: {
+      aggregationPeriod: 'DAILY',
+      startTime: day(new Date(end.getTime() - days * 24 * 60 * 60 * 1000)),
+      endTime: day(end),
+    },
     dimensions,
     metrics,
     pageSize: 200,
@@ -183,13 +237,18 @@ const call = async (token, method, path, { query, body } = {}) => {
   for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, v);
   const res = await fetch(url, {
     method,
-    headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await res.text();
   const json = text ? JSON.parse(text) : {};
   if (!res.ok) {
-    const err = new Error(`Reporting ${method} ${path} → ${res.status} ${json.error?.message ?? text}`);
+    const err = new Error(
+      `Reporting ${method} ${path} → ${res.status} ${json.error?.message ?? text}`,
+    );
     err.status = res.status;
     err.details = json.error?.details ?? [];
     throw err;
@@ -236,11 +295,19 @@ export const main = async (argv = process.argv.slice(2)) => {
   const days = Number(flag(argv, 'days', String(DEFAULT_DAYS)));
   const limit = Number(flag(argv, 'limit', String(DEFAULT_LIMIT)));
   const checkOnly = argv.includes('--check');
-  const outDir = resolve(flag(argv, 'out', join('/tmp', `vis-android-crashes-${new Date().toISOString().replace(/[:.]/g, '-')}`)));
+  const outDir = resolve(
+    flag(
+      argv,
+      'out',
+      join('/tmp', `vis-android-crashes-${new Date().toISOString().replace(/[:.]/g, '-')}`),
+    ),
+  );
 
   const account = credentials();
   if (!account) {
-    console.error('no Play service account: set VIS_PLAY_SERVICE_ACCOUNT or run `npm run secrets play <key.json>`');
+    console.error(
+      'no Play service account: set VIS_PLAY_SERVICE_ACCOUNT or run `npm run secrets play <key.json>`',
+    );
     return 1;
   }
   const { token, account: email } = await playToken(account, { scope: REPORTING_SCOPE });
@@ -252,11 +319,19 @@ export const main = async (argv = process.argv.slice(2)) => {
     console.error(`→ ${check.remedy}`);
     return 1;
   }
-  console.log(`✓ Reporting API reachable for ${pkg} (crash metrics fresh through ${check.freshness ?? 'unknown'})`);
+  console.log(
+    `✓ Reporting API reachable for ${pkg} (crash metrics fresh through ${check.freshness ?? 'unknown'})`,
+  );
   if (checkOnly) return 0;
 
   mkdirSync(outDir, { recursive: true });
-  const manifest = { generatedAt: new Date().toISOString(), package: pkg, days, freshness: check.freshness, errors: [] };
+  const manifest = {
+    generatedAt: new Date().toISOString(),
+    package: pkg,
+    days,
+    freshness: check.freshness,
+    errors: [],
+  };
 
   const issues = issueEntries(
     await call(token, 'GET', `/apps/${pkg}/errorIssues:search`, {
@@ -273,7 +348,11 @@ export const main = async (argv = process.argv.slice(2)) => {
     try {
       const entries = reportEntries(
         await call(token, 'GET', `/apps/${pkg}/errorReports:search`, {
-          query: searchQuery({ days, limit: DEFAULT_REPORTS_PER_ISSUE, filter: `errorIssueId = ${issue.id}` }),
+          query: searchQuery({
+            days,
+            limit: DEFAULT_REPORTS_PER_ISSUE,
+            filter: `errorIssueId = ${issue.id}`,
+          }),
         }),
       );
       if (entries.length) writeJson(join(outDir, 'reports', `${issue.id}.json`), entries);
@@ -291,7 +370,11 @@ export const main = async (argv = process.argv.slice(2)) => {
   ]) {
     const set = name === 'crash-rate' ? 'crashRateMetricSet' : 'anrRateMetricSet';
     try {
-      const rows = metricRows(await call(token, 'POST', `/apps/${pkg}/${set}:query`, { body: timelineBody({ metrics, days, until: check.freshness }) }));
+      const rows = metricRows(
+        await call(token, 'POST', `/apps/${pkg}/${set}:query`, {
+          body: timelineBody({ metrics, days, until: check.freshness }),
+        }),
+      );
       mkdirSync(join(outDir, 'metrics'), { recursive: true });
       writeJson(join(outDir, 'metrics', `${name}.json`), rows);
       console.log(`✓ ${rows.length} day(s) of ${name}`);
@@ -307,8 +390,11 @@ export const main = async (argv = process.argv.slice(2)) => {
 };
 
 if (process.argv[1] && process.argv[1].endsWith('android-crashes.mjs')) {
-  main().then((code) => process.exit(code), (error) => {
-    console.error(error.message);
-    process.exit(1);
-  });
+  main().then(
+    (code) => process.exit(code),
+    (error) => {
+      console.error(error.message);
+      process.exit(1);
+    },
+  );
 }

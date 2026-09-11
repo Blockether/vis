@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState } from 'react';
 
-import { keepKeyboard } from "../lib/keyboard";
-import { pasteSummary, type ComposerPaste } from "../lib/paste";
-import { useSafeBottomStyle } from "../lib/viewport";
-import { Button, DialogHeader } from "./ui";
+import { keepKeyboard } from '../lib/keyboard';
+import { pasteSummary, type ComposerPaste } from '../lib/paste';
+import { useSafeBottomStyle } from '../lib/viewport';
+import { Button, DialogHeader } from './ui';
 
 export function PasteEditor({
   paste,
@@ -38,13 +38,10 @@ export function PasteEditor({
         aria-modal="true"
         aria-labelledby="paste-editor-title"
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          if (event.key === 'Escape') {
             event.stopPropagation();
             onDismiss();
-          } else if (
-            event.key === "Enter" &&
-            (event.metaKey || event.ctrlKey)
-          ) {
+          } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
             save();
           }
@@ -75,14 +72,8 @@ export function PasteEditor({
           style={safeBottomStyle}
           className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4"
         >
-          <span className="mr-auto hidden truncate sm:block">
-            Esc cancels · ⌘↵ saves
-          </span>
-          <Button
-            variant="secondary"
-            onMouseDown={keepKeyboard}
-            onClick={onDismiss}
-          >
+          <span className="mr-auto hidden truncate sm:block">Esc cancels · ⌘↵ saves</span>
+          <Button variant="secondary" onMouseDown={keepKeyboard} onClick={onDismiss}>
             Cancel
           </Button>
           <Button onMouseDown={keepKeyboard} onClick={save}>

@@ -50,11 +50,11 @@ import {
   Undo2,
   X,
   Zap,
-} from "lucide-react";
+} from 'lucide-react';
 
 /** One class list from parts, so an absent one leaves no hole behind. */
 const classes = (...parts: (string | false | undefined)[]) =>
-  parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
 /** Does this class list already say how big the mark is? */
 const NAMES_A_SIZE = /(?:^|\s)(?:size|[hw])-/;
@@ -71,20 +71,16 @@ const NAMES_A_SIZE = /(?:^|\s)(?:size|[hw])-/;
 function Mark({
   icon: Drawn,
   className,
-  fill = "none",
+  fill = 'none',
 }: {
   icon: LucideIcon;
   className?: string;
-  fill?: "none" | "currentColor";
+  fill?: 'none' | 'currentColor';
 }) {
   return (
     <Drawn
-      className={classes(
-        "shrink-0",
-        !NAMES_A_SIZE.test(className ?? "") && "size-3.5",
-        className,
-      )}
-      fill={fill ?? "none"}
+      className={classes('shrink-0', !NAMES_A_SIZE.test(className ?? '') && 'size-3.5', className)}
+      fill={fill ?? 'none'}
       aria-hidden="true"
     />
   );
@@ -101,7 +97,7 @@ function Mark({
  * Only a mark sharing a line WITH TYPE takes it. A mark that is a control's whole
  * face is centred by its own box and must never be nudged.
  */
-export const MARK_NUDGE = "translate-y-[2px]";
+export const MARK_NUDGE = 'translate-y-[2px]';
 
 /** The mark of an ATTACHMENT. */
 export function ClipIcon({ className }: { className?: string }) {
@@ -154,8 +150,8 @@ export function ChevronIcon({
     <Mark
       icon={ChevronRight}
       className={classes(
-        "transition-transform duration-150 motion-reduce:transition-none",
-        open ? "rotate-90" : back && "rotate-180",
+        'transition-transform duration-150 motion-reduce:transition-none',
+        open ? 'rotate-90' : back && 'rotate-180',
         className,
       )}
     />
@@ -164,17 +160,17 @@ export function ChevronIcon({
 
 /** Play. Solid, because a hollow triangle at thumbnail size reads as a flaw. */
 export function PlayIcon({ className }: { className?: string }) {
-  return <Mark icon={Play} className={classes("fill-current", className)} />;
+  return <Mark icon={Play} className={classes('fill-current', className)} />;
 }
 
 /** Stop — a solid square paired with Play's solid triangle. */
 export function StopIcon({ className }: { className?: string }) {
-  return <Mark icon={Square} className={classes("fill-current", className)} />;
+  return <Mark icon={Square} className={classes('fill-current', className)} />;
 }
 
 /** Pause — the same solid weight as play, because they are one control. */
 export function PauseIcon({ className }: { className?: string }) {
-  return <Mark icon={Pause} className={classes("fill-current", className)} />;
+  return <Mark icon={Pause} className={classes('fill-current', className)} />;
 }
 
 /** More of the same, below: what "Load 12 more" does to the list. */
@@ -270,35 +266,20 @@ export function TrashIcon({ className }: { className?: string }) {
  * other action icons; the fill alone is too quiet to spot at a glance in a list,
  * so the swipe action still shows both states.
  */
-export function StarIcon({
-  filled = false,
-  className,
-}: {
-  filled?: boolean;
-  className?: string;
-}) {
+export function StarIcon({ filled = false, className }: { filled?: boolean; className?: string }) {
   return (
     <Mark
       icon={Star}
-      fill={filled ? "currentColor" : "none"}
-      className={classes(
-        filled ? "text-accent stroke-accent-ink" : "stroke-current",
-        className,
-      )}
+      fill={filled ? 'currentColor' : 'none'}
+      className={classes(filled ? 'text-accent stroke-accent-ink' : 'stroke-current', className)}
     />
   );
 }
 
 /** Which way a table is sorted, and that it can be sorted at all. */
-export function SortIcon({
-  dir,
-  className,
-}: {
-  dir?: "asc" | "desc";
-  className?: string;
-}) {
-  if (dir === "asc") return <Mark icon={ArrowUp} className={className} />;
-  if (dir === "desc") return <Mark icon={ArrowDown} className={className} />;
+export function SortIcon({ dir, className }: { dir?: 'asc' | 'desc'; className?: string }) {
+  if (dir === 'asc') return <Mark icon={ArrowUp} className={className} />;
+  if (dir === 'desc') return <Mark icon={ArrowDown} className={className} />;
   return <Mark icon={ChevronsUpDown} className={className} />;
 }
 
@@ -328,7 +309,7 @@ export function LoadingIcon({ className }: { className?: string }) {
   return (
     <Mark
       icon={LoaderCircle}
-      className={classes("animate-spin motion-reduce:animate-none", className)}
+      className={classes('animate-spin motion-reduce:animate-none', className)}
     />
   );
 }
@@ -344,10 +325,7 @@ export function RefreshIcon({
   return (
     <Mark
       icon={RefreshCw}
-      className={classes(
-        isBusy && "animate-spin motion-reduce:animate-none",
-        className,
-      )}
+      className={classes(isBusy && 'animate-spin motion-reduce:animate-none', className)}
     />
   );
 }

@@ -25,8 +25,8 @@
  * shrinks a hit box, so an iPad keeps 44px targets at desktop width.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ARTIFACT_FILTERS,
   docKindLabel,
@@ -37,29 +37,21 @@ import {
   pageBySize,
   SHEET_PAGE,
   type SessionArtifact,
-} from "../lib/artifacts";
-import { useAttachImage } from "../lib/attach-image";
-import { editedFilename } from "../lib/image-file";
-import type { GatewayClient } from "../lib/gateway";
-import { artifactShareVerb, shareArtifact } from "../lib/artifact-share";
-import { DataTable, parseCsv } from "./DataTable";
-import { DocFrame } from "./DocArtifact";
-import { ImageViewer } from "./ImageViewer";
-import { LiveArtifact } from "./LiveArtifact";
-import { MarkdownArtifact } from "./MarkdownArtifact";
-import { MediaRecording } from "./Media";
-import { PdfAnnotator } from "./PdfArtifact";
-import { readArtifactText } from "./TextArtifact";
-import { AlertIcon, ClipIcon, DotsIcon, MicIcon, PlayIcon } from "./icons";
-import {
-  BandButton,
-  Chip,
-  DialogHeader,
-  IconButton,
-  ListRow,
-  LoadMore,
-  overlayLayer,
-} from "./ui";
+} from '../lib/artifacts';
+import { useAttachImage } from '../lib/attach-image';
+import { editedFilename } from '../lib/image-file';
+import type { GatewayClient } from '../lib/gateway';
+import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
+import { DataTable, parseCsv } from './DataTable';
+import { DocFrame } from './DocArtifact';
+import { ImageViewer } from './ImageViewer';
+import { LiveArtifact } from './LiveArtifact';
+import { MarkdownArtifact } from './MarkdownArtifact';
+import { MediaRecording } from './Media';
+import { PdfAnnotator } from './PdfArtifact';
+import { readArtifactText } from './TextArtifact';
+import { AlertIcon, ClipIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
+import { BandButton, Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -68,22 +60,21 @@ import {
  * of the artifact, not a counter.
  */
 const ARTIFACT_HUES = [
-  "bg-machine-violet",
-  "bg-machine-teal",
-  "bg-machine-orange",
-  "bg-machine-aqua",
-  "bg-machine-indigo",
-  "bg-machine-rose",
-  "bg-machine-azure",
-  "bg-machine-brass",
-  "bg-machine-coral",
-  "bg-machine-olive",
+  'bg-machine-violet',
+  'bg-machine-teal',
+  'bg-machine-orange',
+  'bg-machine-aqua',
+  'bg-machine-indigo',
+  'bg-machine-rose',
+  'bg-machine-azure',
+  'bg-machine-brass',
+  'bg-machine-coral',
+  'bg-machine-olive',
 ];
 
 export function artifactHue(key: string): string {
   let hash = 0;
-  for (let at = 0; at < key.length; at += 1)
-    hash = (hash * 31 + key.charCodeAt(at)) >>> 0;
+  for (let at = 0; at < key.length; at += 1) hash = (hash * 31 + key.charCodeAt(at)) >>> 0;
   return ARTIFACT_HUES[hash % ARTIFACT_HUES.length];
 }
 
@@ -98,13 +89,13 @@ function Meta({ artifact }: { artifact: SessionArtifact }) {
   return (
     <span className="block truncate font-mono text-chip text-dialog-hint">
       {[
-        artifact.version > 1 ? `v${artifact.version}` : "",
+        artifact.version > 1 ? `v${artifact.version}` : '',
         artifact.media,
         artifact.sizeLabel,
         `turn ${artifact.turn}`,
       ]
         .filter(Boolean)
-        .join(" · ")}
+        .join(' · ')}
     </span>
   );
 }
@@ -118,13 +109,13 @@ function Meta({ artifact }: { artifact: SessionArtifact }) {
 export function describeArtifact(artifact: SessionArtifact): string {
   return [
     artifact.name,
-    artifact.version > 1 ? `version ${artifact.version}` : "",
+    artifact.version > 1 ? `version ${artifact.version}` : '',
     artifact.media,
     artifact.sizeLabel,
     `produced in turn ${artifact.turn}`,
   ]
     .filter(Boolean)
-    .join(", ");
+    .join(', ');
 }
 
 /**
@@ -139,9 +130,7 @@ function useArtifactSource(
   artifact: SessionArtifact,
   enabled: boolean,
 ) {
-  const [source, setSource] = useState<{ url: string; blob: Blob } | null>(
-    null,
-  );
+  const [source, setSource] = useState<{ url: string; blob: Blob } | null>(null);
   const [failed, setFailed] = useState(false);
   const { iterationId, index } = artifact;
   useEffect(() => {
@@ -198,7 +187,7 @@ const PREVIEW_LINES = 7;
 
 /** One line of a peek: WHAT it is, so the tile can paint it the way the reader does. */
 export type PreviewLine = {
-  kind: "heading" | "bullet" | "quote" | "code" | "text";
+  kind: 'heading' | 'bullet' | 'quote' | 'code' | 'text';
   text: string;
   /** A list's own column: `•`, `1.`, or a task's state. */
   mark?: string;
@@ -207,9 +196,9 @@ export type PreviewLine = {
 /** The head of a file, verbatim, blank lines dropped. */
 export function previewLines(text: string, limit = PREVIEW_LINES): string[] {
   const lines: string[] = [];
-  for (const line of text.split("\n")) {
+  for (const line of text.split('\n')) {
     const trimmed = line.trimEnd();
-    if (trimmed.trim() === "") continue;
+    if (trimmed.trim() === '') continue;
     lines.push(trimmed);
     if (lines.length === limit) break;
   }
@@ -219,13 +208,13 @@ export function previewLines(text: string, limit = PREVIEW_LINES): string[] {
 /** Everything markdown spells with punctuation, spent: the WORDS are the peek. */
 function inlineText(line: string): string {
   return line
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/<[^>]*>/g, "")
-    .replace(/`+/g, "")
-    .replace(/\*\*|__|~~/g, "")
-    .replace(/(^|[\s([])[*_]([^*_]+)[*_]/g, "$1$2")
-    .replace(/\s+/g, " ")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>]*>/g, '')
+    .replace(/`+/g, '')
+    .replace(/\*\*|__|~~/g, '')
+    .replace(/(^|[\s([])[*_]([^*_]+)[*_]/g, '$1$2')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -239,22 +228,15 @@ function inlineText(line: string): string {
  * hairline are the file's plumbing and are dropped — a tile has three lines to make
  * two notes distinguishable, and none of them is `---`.
  */
-export function previewBlocks(
-  text: string,
-  limit = PREVIEW_LINES,
-): PreviewLine[] {
+export function previewBlocks(text: string, limit = PREVIEW_LINES): PreviewLine[] {
   const out: PreviewLine[] = [];
-  const lines = text.split("\n");
-  let front = lines[0]?.trim() === "---";
+  const lines = text.split('\n');
+  let front = lines[0]?.trim() === '---';
   let fenced = false;
-  for (
-    let at = front ? 1 : 0;
-    at < lines.length && out.length < limit;
-    at += 1
-  ) {
+  for (let at = front ? 1 : 0; at < lines.length && out.length < limit; at += 1) {
     const line = lines[at].trim();
     if (front) {
-      if (line === "---" || line === "...") front = false;
+      if (line === '---' || line === '...') front = false;
       continue;
     }
     if (/^(```|~~~)/.test(line)) {
@@ -262,51 +244,51 @@ export function previewBlocks(
       continue;
     }
     if (fenced) {
-      if (line) out.push({ kind: "code", text: line });
+      if (line) out.push({ kind: 'code', text: line });
       continue;
     }
     if (!line) continue;
     if (/^([-*_=])\1{2,}$/.test(line)) continue;
-    if (/^\|?[\s:|-]*\|[\s:|-]*$/.test(line) && line.includes("-")) continue;
+    if (/^\|?[\s:|-]*\|[\s:|-]*$/.test(line) && line.includes('-')) continue;
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
-      const words = inlineText(heading[2].replace(/\s+#+$/, ""));
-      if (words) out.push({ kind: "heading", text: words });
+      const words = inlineText(heading[2].replace(/\s+#+$/, ''));
+      if (words) out.push({ kind: 'heading', text: words });
       continue;
     }
     const quote = /^>\s?(.*)$/.exec(line);
     if (quote) {
       const words = inlineText(quote[1]);
-      if (words) out.push({ kind: "quote", text: words });
+      if (words) out.push({ kind: 'quote', text: words });
       continue;
     }
     const bullet = /^([-*+]|\d+[.)])\s+(.*)$/.exec(line);
     if (bullet) {
       const task = /^\[([ xX])\]\s*(.*)$/.exec(bullet[2]);
       const words = inlineText(task ? task[2] : bullet[2]);
-      let mark = "•";
-      if (task) mark = task[1] === " " ? "○" : "✓";
+      let mark = '•';
+      if (task) mark = task[1] === ' ' ? '○' : '✓';
       else if (/^\d/.test(bullet[1])) mark = bullet[1];
-      if (words) out.push({ kind: "bullet", text: words, mark });
+      if (words) out.push({ kind: 'bullet', text: words, mark });
       continue;
     }
-    if (line.startsWith("|")) {
+    if (line.startsWith('|')) {
       const cells = line
-        .split("|")
+        .split('|')
         .map((cell) => inlineText(cell))
         .filter(Boolean);
-      if (cells.length) out.push({ kind: "text", text: cells.join(" · ") });
+      if (cells.length) out.push({ kind: 'text', text: cells.join(' · ') });
       continue;
     }
     const words = inlineText(line);
-    if (words) out.push({ kind: "text", text: words });
+    if (words) out.push({ kind: 'text', text: words });
   }
   return out;
 }
 
 /** The note's text, once its bytes are in hand. A failure simply peeks at nothing. */
 function useArtifactPreview(source: Blob | null, enabled: boolean): string {
-  const [text, setText] = useState("");
+  const [text, setText] = useState('');
   useEffect(() => {
     if (!enabled || !source) return;
     let alive = true;
@@ -315,7 +297,7 @@ function useArtifactPreview(source: Blob | null, enabled: boolean): string {
         if (alive) setText(next);
       })
       .catch(() => {
-        if (alive) setText("");
+        if (alive) setText('');
       });
     return () => {
       alive = false;
@@ -325,12 +307,12 @@ function useArtifactPreview(source: Blob | null, enabled: boolean): string {
 }
 
 /** How each kind of line is inked: the reader's own emphasis, at a ninth of the size. */
-const PEEK_TONE: Record<PreviewLine["kind"], string> = {
-  heading: "font-bold text-white",
-  bullet: "",
-  quote: "border-l border-dialog-edge pl-1",
-  code: "font-mono",
-  text: "",
+const PEEK_TONE: Record<PreviewLine['kind'], string> = {
+  heading: 'font-bold text-white',
+  bullet: '',
+  quote: 'border-l border-dialog-edge pl-1',
+  code: 'font-mono',
+  text: '',
 };
 
 /**
@@ -362,23 +344,20 @@ function Peek({
   return (
     <span
       aria-hidden="true"
-      className={`block text-chip text-dialog-hint ${plain ? "font-mono" : ""}`}
+      className={`block text-chip text-dialog-hint ${plain ? 'font-mono' : ''}`}
     >
       {lines.map((line, at) => {
         // The `⋯` is 32px in the same corner the first line starts filling, and a
         // truncated title running UNDER a button reads as a rendering bug. Only the
         // line the control actually covers gives up the width.
-        const clear = at === 0 && reserve ? "pr-9" : "";
+        const clear = at === 0 && reserve ? 'pr-9' : '';
         return line.mark ? (
           <span key={at} className={`flex gap-1 ${clear}`}>
             <span className="shrink-0">{line.mark}</span>
             <span className="min-w-0 flex-1 truncate">{line.text}</span>
           </span>
         ) : (
-          <span
-            key={at}
-            className={`block truncate ${PEEK_TONE[line.kind]} ${clear}`}
-          >
+          <span key={at} className={`block truncate ${PEEK_TONE[line.kind]} ${clear}`}>
             {line.text}
           </span>
         );
@@ -404,28 +383,28 @@ function Thumb({
   artifact: SessionArtifact;
   hasHistory: boolean;
 }) {
-  const box = "h-24 sm:h-28 shrink-0 border-b border-dialog-edge";
+  const box = 'h-24 sm:h-28 shrink-0 border-b border-dialog-edge';
   const table = isTableMedia(artifact.mediaType, artifact.name);
   const previewable =
-    artifact.kind === "doc" &&
+    artifact.kind === 'doc' &&
     (table || isTextMedia(artifact.mediaType, artifact.name)) &&
-    typeof artifact.size === "number" &&
+    typeof artifact.size === 'number' &&
     artifact.size <= PREVIEW_LIMIT;
   const { url, blob, failed } = useArtifactSource(
     client,
     sid,
     artifact,
-    artifact.kind === "image" || previewable,
+    artifact.kind === 'image' || previewable,
   );
   // Markdown is parsed into what its lines ARE; anything else is text and stays
   // verbatim — the same split the reader makes on the same two files.
   const head = useArtifactPreview(blob, previewable);
   const plain = !isMarkdownMedia(artifact.mediaType, artifact.name);
   const preview: PreviewLine[] = plain
-    ? previewLines(head).map((text): PreviewLine => ({ kind: "code", text }))
+    ? previewLines(head).map((text): PreviewLine => ({ kind: 'code', text }))
     : previewBlocks(head);
 
-  if (artifact.kind === "image") {
+  if (artifact.kind === 'image') {
     return (
       <span className={`block overflow-hidden bg-code ${box}`}>
         {url && !failed ? (
@@ -440,7 +419,7 @@ function Thumb({
           <span
             aria-hidden="true"
             className={`grid h-full w-full place-items-center text-dialog-hint ${
-              failed ? "" : "animate-pulse motion-reduce:animate-none"
+              failed ? '' : 'animate-pulse motion-reduce:animate-none'
             }`}
           >
             {failed ? <AlertIcon className="size-5" /> : null}
@@ -450,7 +429,7 @@ function Thumb({
     );
   }
 
-  if (artifact.kind === "live") {
+  if (artifact.kind === 'live') {
     // A run has no raster and no first page to peek at: its record is NDJSON. The
     // plate names it, and the meta line under the tile already carries the size
     // and the turn — nothing here downloads a single byte of the record.
@@ -469,13 +448,10 @@ function Thumb({
     );
   }
 
-  if (artifact.kind === "doc") {
+  if (artifact.kind === 'doc') {
     if (table && head) {
       const rows = parseCsv(head).slice(0, 5);
-      const columns = Math.min(
-        4,
-        Math.max(0, ...rows.map((row) => row.length)),
-      );
+      const columns = Math.min(4, Math.max(0, ...rows.map((row) => row.length)));
       if (rows.length && columns) {
         return (
           <span
@@ -486,7 +462,7 @@ function Thumb({
               <span
                 key={rowAt}
                 className={`flex min-w-0 border-dialog-edge ${
-                  rowAt === 0 ? "border-b font-bold text-white" : "border-b/50"
+                  rowAt === 0 ? 'border-b font-bold text-white' : 'border-b/50'
                 }`}
               >
                 {Array.from({ length: columns }, (_, columnAt) => (
@@ -494,7 +470,7 @@ function Thumb({
                     key={columnAt}
                     className="min-w-0 flex-1 truncate border-r border-dialog-edge px-1 py-0.5 last:border-r-0"
                   >
-                    {row[columnAt] ?? ""}
+                    {row[columnAt] ?? ''}
                   </span>
                 ))}
               </span>
@@ -545,7 +521,7 @@ function Thumb({
 
   // A recording has no frame to show: the mark says what it IS, and the row's
   // own name says which one.
-  if (artifact.kind === "audio") {
+  if (artifact.kind === 'audio') {
     return (
       <span
         className={`grid place-items-center bg-code text-dialog-hint ${box}`}
@@ -556,7 +532,7 @@ function Thumb({
     );
   }
 
-  if (artifact.kind === "video") {
+  if (artifact.kind === 'video') {
     return (
       <span
         className={`grid place-items-center bg-code text-dialog-hint ${box}`}
@@ -580,7 +556,7 @@ function Thumb({
       <span className="h-0.5 w-full bg-dialog-hint/25" />
       <span className="h-0.5 w-1/2 bg-dialog-hint/25" />
       <span className="absolute right-1 bottom-1 bg-dialog-title px-1 font-mono text-chip text-dialog-title-foreground">
-        {artifact.media || "FILE"}
+        {artifact.media || 'FILE'}
       </span>
     </span>
   );
@@ -608,16 +584,11 @@ function Tile({
   onVersions: (artifact: SessionArtifact) => void;
 }) {
   const shell =
-    "flex min-h-11 w-full min-w-0 flex-col border border-dialog-edge bg-panel text-left";
+    'flex min-h-11 w-full min-w-0 flex-col border border-dialog-edge bg-panel text-left';
   const versions = artifact.versions ?? [];
   const body = (
     <>
-      <Thumb
-        client={client}
-        sid={sid}
-        artifact={artifact}
-        hasHistory={versions.length > 1}
-      />
+      <Thumb client={client} sid={sid} artifact={artifact} hasHistory={versions.length > 1} />
       <span className="min-w-0 px-2 py-1.5">
         <span className="block truncate font-mono text-meta font-bold text-white">
           {artifact.name}
@@ -689,9 +660,7 @@ function FilterStrip({
         className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1.5"
       >
         {ARTIFACT_FILTERS.map((filter) => {
-          const count = list.filter((entry) =>
-            filter.kinds.includes(entry.kind),
-          ).length;
+          const count = list.filter((entry) => filter.kinds.includes(entry.kind)).length;
           const on = filter.label === active;
           return (
             <Chip
@@ -702,10 +671,7 @@ function FilterStrip({
               aria-label={`${filter.label}, ${count} artifacts`}
             >
               <span aria-hidden="true">{filter.label}</span>
-              <span
-                aria-hidden="true"
-                className={on ? "text-accent-foreground/70" : ""}
-              >
+              <span aria-hidden="true" className={on ? 'text-accent-foreground/70' : ''}>
                 {count}
               </span>
             </Chip>
@@ -751,21 +717,21 @@ function DetailOverlay({
   fill?: boolean;
   children: ReactNode;
 }) {
-  const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
-  const [shareStatus, setShareStatus] = useState("");
+  const [shareState, setShareState] = useState<'idle' | 'sharing'>('idle');
+  const [shareStatus, setShareStatus] = useState('');
   const shareAction = share ? (
     <BandButton
-      disabled={shareState === "sharing"}
+      disabled={shareState === 'sharing'}
       onClick={() => {
-        setShareState("sharing");
-        setShareStatus("");
+        setShareState('sharing');
+        setShareStatus('');
         void shareArtifact(share.blob, share.name, share.mediaType)
           .then(setShareStatus)
-          .catch(() => setShareStatus("Could not share artifact."))
-          .finally(() => setShareState("idle"));
+          .catch(() => setShareStatus('Could not share artifact.'))
+          .finally(() => setShareState('idle'));
       }}
     >
-      {shareState === "sharing"
+      {shareState === 'sharing'
         ? `${artifactShareVerb(share.name, share.mediaType)}…`
         : artifactShareVerb(share.name, share.mediaType)}
     </BandButton>
@@ -795,8 +761,8 @@ function DetailOverlay({
       <div
         className={
           fill
-            ? "flex min-h-0 min-w-0 flex-1 flex-col"
-            : "min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"
+            ? 'flex min-h-0 min-w-0 flex-1 flex-col'
+            : 'min-h-0 flex-1 overflow-y-auto p-3 sm:p-4'
         }
       >
         {children}
@@ -806,13 +772,7 @@ function DetailOverlay({
 }
 
 /** Read raw CSV/TSV bytes into the same table block used in the transcript. */
-function TableDetail({
-  url,
-  artifact,
-}: {
-  url: string;
-  artifact: SessionArtifact;
-}) {
+function TableDetail({ url, artifact }: { url: string; artifact: SessionArtifact }) {
   const [body, setBody] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -824,10 +784,7 @@ function TableDetail({
       .then((csv) => {
         if (!alive) return;
         const grid = parseCsv(csv);
-        const cols = grid.reduce(
-          (widest, row) => Math.max(widest, row.length),
-          0,
-        );
+        const cols = grid.reduce((widest, row) => Math.max(widest, row.length), 0);
         const rows = Math.max(0, grid.length - 1);
         setBody(
           [
@@ -837,24 +794,21 @@ function TableDetail({
             `${cols}x${rows}`,
             artifact.sizeLabel,
             csv,
-          ].join("\n"),
+          ].join('\n'),
         );
       })
       .catch(() => {
-        if (alive) setBody("");
+        if (alive) setBody('');
       });
     return () => {
       alive = false;
     };
   }, [url, artifact]);
 
-  if (body === null)
-    return <p className="p-4 font-mono text-meta text-dialog-hint">Loading…</p>;
+  if (body === null) return <p className="p-4 font-mono text-meta text-dialog-hint">Loading…</p>;
   if (!body)
     return (
-      <p className="p-4 font-mono text-meta text-dialog-hint">
-        This table could not be read.
-      </p>
+      <p className="p-4 font-mono text-meta text-dialog-hint">This table could not be read.</p>
     );
   return <DataTable body={body} compact fill />;
 }
@@ -882,7 +836,7 @@ function ArtifactDetail({
     return (
       <DetailOverlay name={artifact.name} onClose={onClose}>
         <p className="p-4 font-mono text-meta text-dialog-hint">
-          {failed ? "This artifact could not be loaded." : "Loading…"}
+          {failed ? 'This artifact could not be loaded.' : 'Loading…'}
         </p>
       </DetailOverlay>
     );
@@ -891,7 +845,7 @@ function ArtifactDetail({
   // A picture is handed straight to the viewer that already owns zoom, pan, the
   // pen and the share sheet — the whole point of indexing artifacts is that
   // reaching one costs nothing extra.
-  if (artifact.kind === "image") {
+  if (artifact.kind === 'image') {
     return (
       <ImageViewer
         src={url}
@@ -907,7 +861,7 @@ function ArtifactDetail({
             sid,
             artifact.iterationId,
             artifact.name,
-            artifact.mediaType || "image/png",
+            artifact.mediaType || 'image/png',
             new Uint8Array(await edited.arrayBuffer()),
           );
           if (attach) attach(edited, editedFilename(artifact.name));
@@ -920,18 +874,17 @@ function ArtifactDetail({
 
   // An arbitrary file may have no safe in-app reader, but its original bytes are
   // still useful. The detail states that honestly and gives the band one real verb.
-  if (artifact.kind === "file") {
+  if (artifact.kind === 'file') {
     return (
       <DetailOverlay name={artifact.name} share={share} onClose={onClose}>
         <p className="font-mono text-meta text-dialog-hint">
-          {artifact.media} · {artifact.sizeLabel || "size unknown"} · ready to
-          share
+          {artifact.media} · {artifact.sizeLabel || 'size unknown'} · ready to share
         </p>
       </DetailOverlay>
     );
   }
 
-  if (artifact.kind === "audio") {
+  if (artifact.kind === 'audio') {
     return (
       <DetailOverlay name={artifact.name} share={share} onClose={onClose}>
         <div className="p-3">
@@ -941,19 +894,14 @@ function ArtifactDetail({
             transcription={artifact.transcription}
             transcriptionStatus={artifact.transcriptionStatus}
           >
-            <audio
-              src={url}
-              controls
-              preload="metadata"
-              className="h-11 w-full"
-            />
+            <audio src={url} controls preload="metadata" className="h-11 w-full" />
           </MediaRecording>
         </div>
       </DetailOverlay>
     );
   }
 
-  if (artifact.kind === "video") {
+  if (artifact.kind === 'video') {
     return (
       <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
         <video
@@ -969,7 +917,7 @@ function ArtifactDetail({
 
   // A settled run is opened from its RECORD: the picture it ended on, and a log
   // still paged out of the file on the gateway rather than out of this document.
-  if (artifact.kind === "live") {
+  if (artifact.kind === 'live') {
     return (
       <LiveArtifact
         client={client}
@@ -1084,10 +1032,7 @@ function ArtifactVersions({
   const versions = artifact.versions ?? [artifact];
   return (
     <DetailOverlay name={artifact.name} onClose={onClose}>
-      <ul
-        aria-label={`Versions of ${artifact.name}`}
-        className="flex flex-col gap-2 p-3 sm:p-4"
-      >
+      <ul aria-label={`Versions of ${artifact.name}`} className="flex flex-col gap-2 p-3 sm:p-4">
         {versions.map((version, position) => (
           <li key={version.key}>
             <ListRow
@@ -1096,16 +1041,12 @@ function ArtifactVersions({
               aria-label={`Open ${describeArtifact(version)}`}
               className="gap-3"
             >
-              <span className="font-mono text-meta font-bold text-white">
-                v{version.version}
-              </span>
+              <span className="font-mono text-meta font-bold text-white">v{version.version}</span>
               <span className="min-w-0 flex-1">
                 <Meta artifact={version} />
               </span>
               {position === 0 && (
-                <span className="font-mono text-chip text-accent-ink">
-                  latest
-                </span>
+                <span className="font-mono text-chip text-accent-ink">latest</span>
               )}
             </ListRow>
           </li>
@@ -1133,7 +1074,7 @@ function ArtifactVersions({
 export function ArtifactsChip({
   count,
   open,
-  controls = "artifacts-surface",
+  controls = 'artifacts-surface',
   onToggle,
 }: {
   count: number;
@@ -1149,8 +1090,8 @@ export function ArtifactsChip({
   // accent on the screen: the composer it could compete with is hidden underneath the
   // sheet this chip just opened.
   const tone = open
-    ? "border-accent bg-accent text-accent-foreground"
-    : "border-transparent text-white hover:bg-hover";
+    ? 'border-accent bg-accent text-accent-foreground'
+    : 'border-transparent text-white hover:bg-hover';
   const label = `${count} artifacts produced by the model`;
   return (
     <button
@@ -1193,11 +1134,9 @@ export function ArtifactsSheet({
   voiceControl?: ReactNode;
   onClose: () => void;
 }) {
-  const [filter, setFilter] = useState("All");
+  const [filter, setFilter] = useState('All');
   const [opened, setOpened] = useState<SessionArtifact | null>(initialArtifact);
-  const openedRequest = useRef(
-    initialArtifact?.attachmentId ?? initialArtifact?.key ?? null,
-  );
+  const openedRequest = useRef(initialArtifact?.attachmentId ?? initialArtifact?.key ?? null);
   // The version list is its own surface, opened from the tile's dot and layered
   // UNDER the detail: opening a cut from it must return here, not to the grid.
   const [versionsOf, setVersionsOf] = useState<SessionArtifact | null>(null);
@@ -1205,14 +1144,12 @@ export function ArtifactsSheet({
   // two hundred requests the moment this sheet opens. One page at a time, by
   // count AND by weight, and a new filter starts its own first page.
   const [pages, setPages] = useState(1);
-  const kinds =
-    ARTIFACT_FILTERS.find((entry) => entry.label === filter)?.kinds ?? [];
+  const kinds = ARTIFACT_FILTERS.find((entry) => entry.label === filter)?.kinds ?? [];
   const shown = artifacts.filter((entry) => kinds.includes(entry.kind));
   const page = pageBySize(shown, (entry) => entry.size, pages, SHEET_PAGE);
 
   useEffect(() => {
-    const request =
-      initialArtifact?.attachmentId ?? initialArtifact?.key ?? null;
+    const request = initialArtifact?.attachmentId ?? initialArtifact?.key ?? null;
     if (!initialArtifact || request === openedRequest.current) return;
     openedRequest.current = request;
     setOpened(initialArtifact);
@@ -1220,7 +1157,7 @@ export function ArtifactsSheet({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== 'Escape') return;
       event.stopPropagation();
       // Innermost surface first: the opened cut, then the version list it was
       // opened from, then the sheet itself.
@@ -1234,8 +1171,8 @@ export function ArtifactsSheet({
       }
       onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose, opened, versionsOf]);
 
   const { host, position } = overlayLayer();
@@ -1248,11 +1185,7 @@ export function ArtifactsSheet({
     >
       {/* The sheet is an opened surface, so it opens the way every other one does:
           the app's dialog band, naming itself, with the one ✕ inheriting its ink. */}
-      <DialogHeader
-        title="Artifacts"
-        closeLabel="Close artifacts"
-        onClose={onClose}
-      />
+      <DialogHeader title="Artifacts" closeLabel="Close artifacts" onClose={onClose} />
       <FilterStrip
         list={artifacts}
         active={filter}

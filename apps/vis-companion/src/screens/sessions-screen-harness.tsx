@@ -6,13 +6,13 @@
 // recorded. Each mount gets its own gateway ORIGIN because the client cache and
 // its snapshots are keyed by URL — reusing one would let a previous test's rows
 // paint the next test's first frame.
-import { render } from "@testing-library/react";
+import { render } from '@testing-library/react';
 
-import { projectPath, sessionIsLive } from "../lib/fleet";
-import { SessionsScreen } from "./SessionsScreen";
-import type { GatewayConn, ProjectOverview, Session } from "../lib/types";
-import type { SessionSubscriptionHub } from "../lib/subscriptions";
-import type { SharedPayload } from "../lib/share-intake";
+import { projectPath, sessionIsLive } from '../lib/fleet';
+import { SessionsScreen } from './SessionsScreen';
+import type { GatewayConn, ProjectOverview, Session } from '../lib/types';
+import type { SessionSubscriptionHub } from '../lib/subscriptions';
+import type { SharedPayload } from '../lib/share-intake';
 
 export interface MachineFixture {
   /** Shown as the machine's name; the URL is assigned by the harness. */
@@ -81,22 +81,20 @@ const reads = new Map<string, number>();
 /** A read nobody answers: it ends when — and only when — the caller aborts it. */
 const blackhole = (signal?: AbortSignal | null) =>
   new Promise<Response>((_resolve, reject) => {
-    signal?.addEventListener(
-      "abort",
-      () => reject(new DOMException("Aborted", "AbortError")),
-      { once: true },
-    );
+    signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+      once: true,
+    });
   });
 
 /** A session row, filled in enough for the list to group and sort it. */
 export function listSession(overrides: Partial<Session> = {}): Session {
   return {
-    id: "s1",
-    title: "A session",
-    status: "idle",
+    id: 's1',
+    title: 'A session',
+    status: 'idle',
     turn_count: 1,
-    modified_at: new Date("2024-05-01T10:00:00Z").toISOString(),
-    workspace: { root: "/Users/dev/project" },
+    modified_at: new Date('2024-05-01T10:00:00Z').toISOString(),
+    workspace: { root: '/Users/dev/project' },
     ...overrides,
   } as Session;
 }
@@ -107,7 +105,7 @@ const DIRTY_BAND = 1;
 const REST_BAND = 2;
 
 function bandOf(row: Session, dirty: ReadonlySet<string>): number {
-  if (typeof row.favorite_rank === "number") return FAVORITE_BAND;
+  if (typeof row.favorite_rank === 'number') return FAVORITE_BAND;
   return dirty.has(row.id) ? DIRTY_BAND : REST_BAND;
 }
 
@@ -165,7 +163,7 @@ function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
     return {
       root,
       project_id: project?.project_id ?? null,
-      name: project?.name ?? "",
+      name: project?.name ?? '',
       session_count: group.length,
       live_count: group.filter(sessionIsLive).length,
       awaiting_count: group.filter((row) => row.is_awaiting_input === true).length,
@@ -191,22 +189,19 @@ function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
 export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverview[] = []) {
   // The device sends the ONE fact this gateway cannot know: which of its sessions
   // are holding words typed here. Everything else about the order is answered.
-  const dirty = new Set(
-    (url.searchParams.get("dirty") ?? "").split(",").filter((id) => id !== ""),
-  );
+  const dirty = new Set((url.searchParams.get('dirty') ?? '').split(',').filter((id) => id !== ''));
   const ranked = rankSessions(rows, dirty);
-  const root = url.searchParams.get("root");
+  const root = url.searchParams.get('root');
   const listed = root ? ranked.filter((row) => projectPath(row) === root) : ranked;
   // A real gateway answers a WINDOW, and a machine with more history than one page
   // makes the client come back for the rest — which is what paints a second
   // machine's rows a beat after the first machine's. The window is a KEYSET:
   // `after` is the cursor of the last row the client holds, so the page after it is
   // the same page however much the fleet moved meanwhile.
-  const limit = Number(url.searchParams.get("limit") ?? listed.length);
-  const after = url.searchParams.get("after");
+  const limit = Number(url.searchParams.get('limit') ?? listed.length);
+  const after = url.searchParams.get('after');
   const from = after ? listed.findIndex((row) => listCursor(row, dirty) === after) + 1 : 0;
-  const window =
-    after && from === 0 ? [] : listed.slice(from, from + (limit || listed.length));
+  const window = after && from === 0 ? [] : listed.slice(from, from + (limit || listed.length));
   const last = window[window.length - 1];
   const hasMore = from + window.length < listed.length;
   return {
@@ -224,7 +219,7 @@ export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverv
 
 export function renderSessionsScreen({
   machines = [{}] as MachineFixture[],
-  query = "",
+  query = '',
   onQuery = () => {},
   onOpen = () => {},
   onUnreachable,
@@ -264,7 +259,7 @@ export function renderSessionsScreen({
     at ??
     machines.map((machine, index) => ({
       url: `http://gateway-${++origins}.example.com`,
-      token: "t",
+      token: 't',
       label: machine.label ?? `machine-${index + 1}`,
     }));
   // Each mount gets its OWN copy of the fixture rows. A PATCH lands on the gateway's
@@ -280,7 +275,7 @@ export function renderSessionsScreen({
   const answer = (body: unknown) =>
     new Response(JSON.stringify(body), {
       status: 200,
-      headers: { "Content-Type": "application/json", ETag: `"${origins}"` },
+      headers: { 'Content-Type': 'application/json', ETag: `"${origins}"` },
     });
 
   // A list read that a test can hold open, so it can watch what does NOT wait for
@@ -300,17 +295,13 @@ export function renderSessionsScreen({
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url,
+      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
     );
     const machine = byOrigin.get(url.origin);
-    const sent = typeof init?.body === "string" ? init.body : undefined;
+    const sent = typeof init?.body === 'string' ? init.body : undefined;
     requests.push({
       machine: url.origin,
-      method: init?.method ?? "GET",
+      method: init?.method ?? 'GET',
       path: url.pathname + url.search,
       body: sent === undefined ? undefined : (JSON.parse(sent) as unknown),
       signal: init?.signal,
@@ -318,8 +309,8 @@ export function renderSessionsScreen({
     if (!machine) return answer({});
     // Kept as an explicit fixture seam for endpoint-specific tests. The screen itself
     // receives these same totals on the session-list head below.
-    if (url.pathname === "/v1/projects/overview") {
-      if (machine.down || machine.hangs) throw new TypeError("Failed to fetch");
+    if (url.pathname === '/v1/projects/overview') {
+      if (machine.down || machine.hangs) throw new TypeError('Failed to fetch');
       if (machine.routes && url.pathname in machine.routes)
         return answer(machine.routes[url.pathname]);
       return answer(overviewFor(machine.sessions ?? [], machine.projects));
@@ -328,31 +319,28 @@ export function renderSessionsScreen({
     // rides on whatever the machine is doing. What a fixture COUNTS is the fleet read
     // the poll makes, so `drops`, `hangs` and `heals` still name the reads they were
     // written for.
-    const isPage = url.searchParams.has("root");
+    const isPage = url.searchParams.has('root');
     const seen = (reads.get(url.origin) ?? 0) + (isPage ? 0 : 1);
     if (!isPage) reads.set(url.origin, seen);
     if (machine.hangs && seen > 1) return blackhole(init?.signal);
-    if (machine.drops?.includes(seen)) throw new TypeError("Failed to fetch");
+    if (machine.drops?.includes(seen)) throw new TypeError('Failed to fetch');
     // Alive to the list, dark to the search: the machine whose transcripts nobody is
     // reading answers everything else, so its darkness is something only a search can
     // discover — and something the next search has to remember.
-    if (machine.searchHangs && url.pathname === "/v1/sessions/actions/search")
+    if (machine.searchHangs && url.pathname === '/v1/sessions/actions/search')
       return blackhole(init?.signal);
-    if (machine.down && !(machine.heals && seen > 1)) throw new TypeError("Failed to fetch");
+    if (machine.down && !(machine.heals && seen > 1)) throw new TypeError('Failed to fetch');
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
-    if (
-      url.pathname === "/v1/projects/actions/ensure" &&
-      (init?.method ?? "GET") === "POST"
-    ) {
+    if (url.pathname === '/v1/projects/actions/ensure' && (init?.method ?? 'GET') === 'POST') {
       const body = (sent ? JSON.parse(sent) : {}) as Record<string, unknown>;
-      const root = typeof body.root === "string" ? body.root : "";
+      const root = typeof body.root === 'string' ? body.root : '';
       let project = machine.projects?.find((entry) => entry.root === root);
       if (!project) {
         project = {
           root,
           project_id: `project-${++created}`,
-          name: "",
+          name: '',
           session_count: 0,
           live_count: 0,
           awaiting_count: 0,
@@ -366,26 +354,26 @@ export function renderSessionsScreen({
     // star (or the rename) to its own row, echoes the row back, and every later list
     // read from this machine tells the same story.
     const one = /^\/v1\/sessions\/([^/]+)$/.exec(url.pathname);
-    if (one && (init?.method ?? "GET") === "PATCH") {
+    if (one && (init?.method ?? 'GET') === 'PATCH') {
       const rows = machine.sessions ?? [];
       const index = rows.findIndex((row) => row.id === decodeURIComponent(one[1]));
       if (index < 0) return answer({});
       const body = (sent ? JSON.parse(sent) : {}) as Record<string, unknown>;
       const ranks = rows
-        .map((row) => (typeof row.favorite_rank === "number" ? row.favorite_rank : 0))
+        .map((row) => (typeof row.favorite_rank === 'number' ? row.favorite_rank : 0))
         .concat(0);
       const row = { ...rows[index] };
-      if ("is_favorite" in body)
+      if ('is_favorite' in body)
         row.favorite_rank = body.is_favorite ? Math.max(...ranks) + 1 : null;
-      if (typeof body.title === "string") row.title = body.title;
+      if (typeof body.title === 'string') row.title = body.title;
       rows[index] = row;
       return answer(row);
     }
-    if (url.pathname === "/v1/sessions") {
+    if (url.pathname === '/v1/sessions') {
       // The create answers a session with an id, the way the gateway's 201 does:
       // without one the screen has nothing to open.
-      if ((init?.method ?? "GET") === "POST")
-        return answer({ id: `created-${++created}`, channel: "web", title: null });
+      if ((init?.method ?? 'GET') === 'POST')
+        return answer({ id: `created-${++created}`, channel: 'web', title: null });
       if (held) await held;
       const reads = (listReads.get(machine) ?? 0) + 1;
       listReads.set(machine, reads);
@@ -393,7 +381,7 @@ export function renderSessionsScreen({
         !pagesReleased &&
         (machine.holdsList ||
           (machine.holdsPages && reads > 1) ||
-          (machine.holdsDeeperPages && isPage && url.searchParams.has("after")))
+          (machine.holdsDeeperPages && isPage && url.searchParams.has('after')))
       ) {
         if (!heldPages)
           heldPages = new Promise<void>((resolve) => {
@@ -403,7 +391,7 @@ export function renderSessionsScreen({
       }
       return answer(sessionsWindow(machine.sessions ?? [], url, machine.projects));
     }
-    if (url.pathname === "/v1/sessions/actions/search") return answer({ matches: [] });
+    if (url.pathname === '/v1/sessions/actions/search') return answer({ matches: [] });
     return answer({});
   }) as typeof fetch;
 

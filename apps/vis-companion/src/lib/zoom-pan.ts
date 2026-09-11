@@ -25,19 +25,19 @@ export const FIT_SCALE = 1;
 export const NO_TRANSFORM: Transform = { scale: 1, x: 0, y: 0 };
 
 export type PinchGesture = {
-  kind: "pinch";
+  kind: 'pinch';
   distance: number;
   midpoint: Point;
   transform: Transform;
 };
 export type PanGesture = {
-  kind: "pan";
+  kind: 'pan';
   pointerId: number;
   start: Point;
   transform: Transform;
 };
 export type SwipeGesture = {
-  kind: "swipe";
+  kind: 'swipe';
   pointerId: number;
   start: Point;
 };
@@ -62,9 +62,7 @@ export function midpoint(a: Point, b: Point): Point {
 export function clampTransform(next: Transform): Transform {
   const scale = clamp(next.scale, MIN_SCALE, MAX_SCALE);
   // At or below 1:1 the picture fits, so an offset could only strand it.
-  return scale <= FIT_SCALE
-    ? { ...NO_TRANSFORM, scale }
-    : { scale, x: next.x, y: next.y };
+  return scale <= FIT_SCALE ? { ...NO_TRANSFORM, scale } : { scale, x: next.x, y: next.y };
 }
 
 /** A button or a wheel notch: scale about the centre, keeping the offset. */
@@ -94,17 +92,9 @@ const PINCH_RATE = 0.01;
 export const WHEEL_STEP_LIMIT = 1.25;
 
 /** The factor one wheel event asks for: proportional, normalized and capped. */
-export function wheelFactor(
-  deltaY: number,
-  deltaMode: number,
-  isPinch: boolean,
-): number {
+export function wheelFactor(deltaY: number, deltaMode: number, isPinch: boolean): number {
   const pixels =
-    deltaMode === 1
-      ? deltaY * LINE_PIXELS
-      : deltaMode === 2
-        ? deltaY * PAGE_PIXELS
-        : deltaY;
+    deltaMode === 1 ? deltaY * LINE_PIXELS : deltaMode === 2 ? deltaY * PAGE_PIXELS : deltaY;
   const factor = Math.exp(-pixels * (isPinch ? PINCH_RATE : SCROLL_RATE));
   return clamp(factor, 1 / WHEEL_STEP_LIMIT, WHEEL_STEP_LIMIT);
 }
@@ -136,11 +126,7 @@ export function zoomedAbout(
 }
 
 /** The transform a pinch has reached: scaled by the spread, following the midpoint. */
-export function pinchTransform(
-  gesture: PinchGesture,
-  a: Point,
-  b: Point,
-): Transform {
+export function pinchTransform(gesture: PinchGesture, a: Point, b: Point): Transform {
   const center = midpoint(a, b);
   return clampTransform({
     scale: gesture.transform.scale * (distance(a, b) / gesture.distance),
@@ -159,13 +145,9 @@ export function panTransform(gesture: PanGesture, point: Point): Transform {
 }
 
 /** The gesture two live pointers start, pinned to the transform they start from. */
-export function pinchFrom(
-  a: Point,
-  b: Point,
-  transform: Transform,
-): PinchGesture {
+export function pinchFrom(a: Point, b: Point, transform: Transform): PinchGesture {
   return {
-    kind: "pinch",
+    kind: 'pinch',
     distance: Math.max(1, distance(a, b)),
     midpoint: midpoint(a, b),
     transform: { ...transform },
@@ -173,12 +155,8 @@ export function pinchFrom(
 }
 
 /** The gesture one live pointer starts, pinned to the transform it starts from. */
-export function panFrom(
-  pointerId: number,
-  start: Point,
-  transform: Transform,
-): PanGesture {
-  return { kind: "pan", pointerId, start, transform: { ...transform } };
+export function panFrom(pointerId: number, start: Point, transform: Transform): PanGesture {
+  return { kind: 'pan', pointerId, start, transform: { ...transform } };
 }
 
 /**
@@ -193,7 +171,7 @@ export const SWIPE_RESISTANCE = 4;
 
 /** The gesture one live pointer starts on a picture that is already fitted. */
 export function swipeFrom(pointerId: number, start: Point): SwipeGesture {
-  return { kind: "swipe", pointerId, start };
+  return { kind: 'swipe', pointerId, start };
 }
 
 /**
@@ -210,9 +188,7 @@ export function swipeShift(
 ): number {
   const shift = point.x - gesture.start.x;
   if (Math.abs(shift) <= Math.abs(point.y - gesture.start.y)) return 0;
-  return (shift < 0 ? neighbours.forward : neighbours.back)
-    ? shift
-    : shift / SWIPE_RESISTANCE;
+  return (shift < 0 ? neighbours.forward : neighbours.back) ? shift : shift / SWIPE_RESISTANCE;
 }
 
 /**

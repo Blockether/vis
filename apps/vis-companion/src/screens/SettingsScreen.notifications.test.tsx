@@ -5,14 +5,14 @@
 // filed it under. A machine with no signing key of its own knows this device by
 // the relay GRANT it minted on some earlier launch — never by the OS push token
 // this run may not have been given.
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `vi.mock` factories run at import time, before module-scope `const`s of this
 // file exist — the shared state has to be hoisted with them.
 const native = vi.hoisted(() => ({ store: new Map<string, string>() }));
 
-vi.mock("@capacitor/preferences", () => ({
+vi.mock('@capacitor/preferences', () => ({
   Preferences: {
     get: async ({ key }: { key: string }) => ({
       value: native.store.get(key) ?? null,
@@ -26,9 +26,9 @@ vi.mock("@capacitor/preferences", () => ({
   },
 }));
 
-vi.mock("@capacitor/core", () => ({
+vi.mock('@capacitor/core', () => ({
   Capacitor: {
-    getPlatform: () => "ios",
+    getPlatform: () => 'ios',
     isNativePlatform: () => true,
     isPluginAvailable: () => true,
   },
@@ -40,34 +40,34 @@ vi.mock("@capacitor/core", () => ({
     getVoices: () => Promise.resolve({ voices: [] }),
   }),
 }));
-vi.mock("@capacitor/push-notifications", () => ({ PushNotifications: {} }));
+vi.mock('@capacitor/push-notifications', () => ({ PushNotifications: {} }));
 
 // The OS handed this run no token: the launch sweep asked before this panel was
 // opened, or it timed out, or the permission was granted after it ran.
-vi.mock("../lib/push", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/push")>()),
+vi.mock('../lib/push', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/push')>()),
   cachedPushToken: () => null,
-  pushPermission: async () => "granted" as const,
+  pushPermission: async () => 'granted' as const,
 }));
 
-import { NativeNotificationsPanel } from "./settings/NotificationSettings";
-import { maskToken } from "../lib/push";
-import { getGatewayNotify, setGatewayNotify, setRelayGrant } from "../lib/storage";
-import type { GatewayClient } from "../lib/gateway";
-import type { PushStatus } from "../lib/types";
+import { NativeNotificationsPanel } from './settings/NotificationSettings';
+import { maskToken } from '../lib/push';
+import { getGatewayNotify, setGatewayNotify, setRelayGrant } from '../lib/storage';
+import type { GatewayClient } from '../lib/gateway';
+import type { PushStatus } from '../lib/types';
 
-const MACHINE = "http://10.0.0.5:7890";
-const RELAY = "https://relay.example.com";
-const GRANT = "vg1.this-devices-own-grant";
+const MACHINE = 'http://10.0.0.5:7890';
+const RELAY = 'https://relay.example.com';
+const GRANT = 'vg1.this-devices-own-grant';
 
 /** A machine with no signing key: it wakes this device through the relay. */
 const relayed: PushStatus = {
   is_available: false,
-  provider: "relay",
+  provider: 'relay',
   devices: 1,
   apns: { is_available: false },
   fcm: { is_available: false },
-  relay: { is_available: true, url: RELAY, source: "env" },
+  relay: { is_available: true, url: RELAY, source: 'env' },
 };
 
 /** That machine, reduced to the two calls this panel makes of it. */
@@ -77,9 +77,7 @@ const machine = () => {
     cachedDevices: () => null,
     isDevicesUnsupported: () => false,
     devices: async () => ({
-      devices: [
-        { token_preview: maskToken(GRANT), platform: "ios", is_relayed: true },
-      ],
+      devices: [{ token_preview: maskToken(GRANT), platform: 'ios', is_relayed: true }],
       push: relayed,
     }),
     pushTarget: () => ({
@@ -115,17 +113,14 @@ const makeLocalStorage = () => {
 
 /** This device connected to that machine earlier, and it is registered there. */
 const connected = async () => {
-  await setRelayGrant(RELAY, { token: "", grant: GRANT });
+  await setRelayGrant(RELAY, { token: '', grant: GRANT });
   await setGatewayNotify(MACHINE, true);
   const { client, unregistered } = machine();
   render(
-    <NativeNotificationsPanel
-      client={client}
-      gateway={{ url: MACHINE, label: "buildbox" }}
-    />,
+    <NativeNotificationsPanel client={client} gateway={{ url: MACHINE, label: 'buildbox' }} />,
   );
-  const verb = await screen.findByRole("switch", {
-    name: "Notifications from buildbox: on",
+  const verb = await screen.findByRole('switch', {
+    name: 'Notifications from buildbox: on',
   });
   return { unregistered, verb };
 };
@@ -136,7 +131,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  document.body.innerHTML = "";
+  document.body.innerHTML = '';
 });
 
 // Regression, user report ("I clicked unsubscribe and still I got notifications
@@ -144,8 +139,8 @@ afterEach(() => {
 // cached push token, so on the machine that had filed it under a relay grant the
 // press did nothing at all -- nothing revoked, and no stored answer for the next
 // sweep to land, leaving that one machine alerting forever.
-describe("disconnecting a machine that knows this device by its relay grant", () => {
-  it("revokes the name that machine is actually holding", async () => {
+describe('disconnecting a machine that knows this device by its relay grant', () => {
+  it('revokes the name that machine is actually holding', async () => {
     const { unregistered, verb } = await connected();
 
     fireEvent.click(verb);
@@ -158,8 +153,6 @@ describe("disconnecting a machine that knows this device by its relay grant", ()
 
     fireEvent.click(verb);
 
-    await waitFor(async () =>
-      expect(await getGatewayNotify(MACHINE)).toBe(false),
-    );
+    await waitFor(async () => expect(await getGatewayNotify(MACHINE)).toBe(false));
   });
 });

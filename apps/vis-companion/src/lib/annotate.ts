@@ -33,9 +33,7 @@ export type PenToken = (typeof PEN_COLORS)[number]['token'];
 
 /** The live value behind a palette variable — canvas work cannot use a class. */
 export function paletteColor(token: string): string {
-  const value = getComputedStyle(document.documentElement)
-    .getPropertyValue(token)
-    .trim();
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
   return value || '#ef4444';
 }
 
@@ -75,10 +73,7 @@ function nib(context: CanvasRenderingContext2D, stroke: Stroke): void {
 }
 
 /** One stroke. A single tap is a DOT — a polyline of one point paints nothing. */
-export function paintStroke(
-  context: CanvasRenderingContext2D,
-  stroke: Stroke,
-): void {
+export function paintStroke(context: CanvasRenderingContext2D, stroke: Stroke): void {
   const first = stroke.points[0];
   if (!first) return;
   nib(context, stroke);
@@ -166,8 +161,8 @@ export function flattenAnnotations(
     // cuts the strokes: a trim keeps the marks that were inside it.
     context.drawImage(
       annotations,
-      (crop.x * annotations.width),
-      (crop.y * annotations.height),
+      crop.x * annotations.width,
+      crop.y * annotations.height,
       crop.width * annotations.width,
       crop.height * annotations.height,
       0,

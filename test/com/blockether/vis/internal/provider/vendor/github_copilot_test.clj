@@ -55,8 +55,8 @@
                    (get-in enterprise [:provider/preset :base-url])))
         (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
         ;; The curated defaults intentionally contain only the current cacheable fleets.
-        (expect (= #{"claude-opus-5" "claude-fable-5" "claude-sonnet-5" "gpt-6-astra"
-                     "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
+        (expect (= #{"claude-opus-5" "claude-fable-5" "claude-sonnet-5" "gpt-6-astra" "gpt-5.6-luna"
+                     "gpt-5.6-sol" "gpt-5.6-terra"}
                    models))
         (expect (= models (set (get-in enterprise [:provider/preset :default-models]))))
         (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))

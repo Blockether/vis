@@ -157,8 +157,8 @@ describe('parseShareLink', () => {
 describe('shared files', () => {
   it('reads file, name and type index aligned', () => {
     const share = parseShareLink(
-      'vis://share?file=%2Ftmp%2Fa%2Fmemo.m4a&name=memo.m4a&type=audio%2Fmp4'
-        + '&file=%2Ftmp%2Fb%2Fshot.png&name=shot.png&type=image%2Fpng',
+      'vis://share?file=%2Ftmp%2Fa%2Fmemo.m4a&name=memo.m4a&type=audio%2Fmp4' +
+        '&file=%2Ftmp%2Fb%2Fshot.png&name=shot.png&type=image%2Fpng',
     );
 
     expect(share?.files).toEqual([

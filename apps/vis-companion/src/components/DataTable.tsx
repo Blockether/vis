@@ -222,8 +222,7 @@ const VIEW_FRACTION = 0.6;
 
 /** A CSV is a document: one neutral paper, one typeface, and one ink. */
 const SHEET = 'bg-panel';
-const HEAD_CELL =
-  'sticky top-0 z-10 h-[30px] border-b border-code-edge bg-code p-0 align-middle';
+const HEAD_CELL = 'sticky top-0 z-10 h-[30px] border-b border-code-edge bg-code p-0 align-middle';
 const BODY_CELL = 'h-[26px] border-b border-code-edge p-0 align-middle';
 
 /** The `│` of the TUI grid: every column but the first carries its own rule. */
@@ -295,10 +294,7 @@ export const DataTable = memo(function DataTable({
   const [page, setPage] = useState(0);
   const [sheet, sheetRef] = useSheet();
 
-  const ordered = useMemo(
-    () => (sort ? sortRows(rows, sort.index, sort.dir) : rows),
-    [rows, sort],
-  );
+  const ordered = useMemo(() => (sort ? sortRows(rows, sort.index, sort.dir) : rows), [rows, sort]);
 
   const step = pageSize === 'fit' ? sheet.rows : pageSize;
   const pages = pageCount(ordered.length, step);
@@ -335,7 +331,6 @@ export const DataTable = memo(function DataTable({
     );
 
   const goPage = (value: number) => setPage(clampPage(value, ordered.length, step));
-
 
   const toggleCell = (row: number, col: number) =>
     setCell((currentCell) =>
@@ -435,7 +430,6 @@ export const DataTable = memo(function DataTable({
         </div>
       )}
 
-
       {paged && (
         <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
           <label className="flex shrink-0 items-center gap-1 text-ui text-code-foreground">
@@ -501,15 +495,14 @@ export const DataTable = memo(function DataTable({
           >
             <thead>
               <tr>
-                <th
-                  scope="col"
-                  className={`${HEAD_CELL} left-0 z-20 border-r border-code-edge`}
-                >
+                <th scope="col" className={`${HEAD_CELL} left-0 z-20 border-r border-code-edge`}>
                   <button
                     type="button"
                     tabIndex={-1}
                     onClick={toggleAll}
-                    aria-label={selected.size > 0 ? 'Clear selection' : 'Select every row on this page'}
+                    aria-label={
+                      selected.size > 0 ? 'Clear selection' : 'Select every row on this page'
+                    }
                     className="h-full w-full px-2 text-right text-chip font-bold text-code-foreground"
                   >
                     #
@@ -615,7 +608,6 @@ export const DataTable = memo(function DataTable({
           />
         )}
       </div>
-
     </div>
   );
 });

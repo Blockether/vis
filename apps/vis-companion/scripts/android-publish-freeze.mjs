@@ -38,10 +38,14 @@ export const ANDROID_PUBLISH_FREEZE = {
 };
 
 /** `frozen` or `allowed` — the whole state, in the one word a CI job can branch on. */
-export const freezeState = (freeze = ANDROID_PUBLISH_FREEZE) => (freeze.isFrozen ? 'frozen' : 'allowed');
+export const freezeState = (freeze = ANDROID_PUBLISH_FREEZE) =>
+  freeze.isFrozen ? 'frozen' : 'allowed';
 
 /** The refusal a caller should print, or `undefined` when publishing is allowed. */
-export const androidPublishRefusal = (what = 'Android publishing', freeze = ANDROID_PUBLISH_FREEZE) =>
+export const androidPublishRefusal = (
+  what = 'Android publishing',
+  freeze = ANDROID_PUBLISH_FREEZE,
+) =>
   freeze.isFrozen
     ? `${what} is frozen: ${freeze.reason}.\n` +
       `  Lifted by: ${freeze.liftedBy}.\n` +
@@ -54,7 +58,8 @@ export const assertAndroidPublishAllowed = (what, freeze = ANDROID_PUBLISH_FREEZ
   if (refusal) throw new Error(refusal);
 };
 
-const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const invokedDirectly =
+  process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   const state = freezeState();
   if (process.argv.includes('--github-output') && process.env.GITHUB_OUTPUT) {

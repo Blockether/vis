@@ -6,10 +6,10 @@
 // fails for a rename that changed nothing, so the screen is mounted instead:
 // the client is a plain object with the members the screen actually calls, and
 // every answer is the empty/no-op one unless a test hands over a fact.
-import { render } from "@testing-library/react";
+import { render } from '@testing-library/react';
 
-import { SessionScreen } from "./SessionScreen";
-import type { Session, SseEvent } from "../lib/types";
+import { SessionScreen } from './SessionScreen';
+import type { Session, SseEvent } from '../lib/types';
 
 /** The parts of the gateway client and hub this screen touches. */
 type Fake = Record<string, unknown>;
@@ -32,9 +32,9 @@ export function subscriptionHub() {
 
 export function sessionFixture(overrides: Partial<Session> = {}): Session {
   return {
-    id: "s1",
-    title: "A session",
-    status: "idle",
+    id: 's1',
+    title: 'A session',
+    status: 'idle',
     ...overrides,
   } as Session;
 }
@@ -53,7 +53,7 @@ export function renderSessionScreen({
 } = {}) {
   const nothing = () => null;
   const known: Fake = {
-    base: "http://gateway.example.com",
+    base: 'http://gateway.example.com',
     // Everything the screen reads from its cache on the first render.
     cachedSession: () => session,
     cachedQueuedTurns: () => [],
@@ -90,9 +90,7 @@ export function renderSessionScreen({
   const client = new Proxy(known, {
     get(target, key: string) {
       if (key in target) return target[key];
-      return key.startsWith("cached")
-        ? nothing
-        : () => Promise.resolve([]);
+      return key.startsWith('cached') ? nothing : () => Promise.resolve([]);
     },
     has: () => true,
   });

@@ -1,23 +1,23 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
-import { act, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from 'vitest';
+import { act, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
-import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
+import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 
 // Regression, iOS keyboard on slash-command tap: completing a command set the
 // prompt but left the native selection and the caret state where the original
 // "/" was — inside the freshly written word. The iOS virtual keyboard then sat
 // mid-word, fired autocorrect, and inserted at the wrong spot.
-describe("slash-command completion caret", () => {
-  it("parks the caret without refocusing the completed composer", async () => {
+describe('slash-command completion caret', () => {
+  it('parks the caret without refocusing the completed composer', async () => {
     const user = userEvent.setup();
     renderSessionScreen();
 
-    const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
-    await user.type(composer, "/relo");
-    const refocus = vi.spyOn(composer, "focus");
-    await user.click(await screen.findByText("/reload"));
+    const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+    await user.type(composer, '/relo');
+    const refocus = vi.spyOn(composer, 'focus');
+    await user.click(await screen.findByText('/reload'));
 
     // The caret is parked inside a frame the completion asks for.
     await act(async () => {
@@ -27,7 +27,7 @@ describe("slash-command completion caret", () => {
     // Refocusing an already-visible composer makes WKWebView move the transcript.
     expect(refocus).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(composer);
-    expect(composer.value).toBe("/reload ");
+    expect(composer.value).toBe('/reload ');
     expect(composer.selectionStart).toBe(composer.value.length);
     expect(composer.selectionEnd).toBe(composer.value.length);
   });
@@ -35,8 +35,8 @@ describe("slash-command completion caret", () => {
 
 // Regression: the screen fetched a gateway-global slash palette instead of the
 // active session's project-relative one.
-describe("session-scoped slash discovery", () => {
-  it("asks for the palette of the session on screen", async () => {
+describe('session-scoped slash discovery', () => {
+  it('asks for the palette of the session on screen', async () => {
     const slashes = vi.fn((sid: string) => {
       void sid;
       return Promise.resolve([]);
@@ -44,32 +44,30 @@ describe("session-scoped slash discovery", () => {
     renderSessionScreen({ client: { slashes } });
 
     await waitFor(() => expect(slashes).toHaveBeenCalled());
-    expect(slashes.mock.calls[0]?.[0]).toBe("s1");
+    expect(slashes.mock.calls[0]?.[0]).toBe('s1');
   });
 });
 
 // Skills keep their canonical namespace while remaining discoverable both by
 // unprefixed search and in the complete slash palette.
-describe("skill slash search", () => {
-  it("shows a prefixed skill by name and in the complete palette", async () => {
+describe('skill slash search', () => {
+  it('shows a prefixed skill by name and in the complete palette', async () => {
     const user = userEvent.setup();
     renderSessionScreen({
-      session: sessionFixture({ id: "skill-search" }),
+      session: sessionFixture({ id: 'skill-search' }),
       client: {
         slashes: () =>
-          Promise.resolve([
-            { name: "/skill:create-extension", doc: "Create an extension" },
-          ]),
+          Promise.resolve([{ name: '/skill:create-extension', doc: 'Create an extension' }]),
       },
     });
 
-    const composer = screen.getByLabelText("Message Vis");
-    await user.type(composer, "/create-ext");
+    const composer = screen.getByLabelText('Message Vis');
+    await user.type(composer, '/create-ext');
 
-    expect(await screen.findByText("/skill:create-extension")).toBeTruthy();
+    expect(await screen.findByText('/skill:create-extension')).toBeTruthy();
 
     await user.clear(composer);
-    await user.type(composer, "/");
-    expect(await screen.findByText("/skill:create-extension")).toBeTruthy();
+    await user.type(composer, '/');
+    expect(await screen.findByText('/skill:create-extension')).toBeTruthy();
   });
 });

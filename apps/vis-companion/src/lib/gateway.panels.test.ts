@@ -129,7 +129,7 @@ describe('settings panels across a cold start', () => {
 
 // The panel a reader opens has already answered, whichever machine it is: the
 // sweep is fleet-wide, and TTL-stamped so a wake costs nothing.
-describe('warming a machine\'s settings panels', () => {
+describe("warming a machine's settings panels", () => {
   it('asks each question once, and asks nothing at all on the next sweep', async () => {
     const asked: string[] = [];
     const answer = vi.fn((url: string) => {
@@ -143,13 +143,7 @@ describe('warming a machine\'s settings panels', () => {
     client.prefetchPanels();
     await vi.waitFor(() => expect(asked).toHaveLength(5));
     expect(new Set(asked)).toEqual(
-      new Set([
-        '/v1/settings',
-        '/v1/capabilities',
-        '/v1/mcp/servers',
-        '/v1/devices',
-        '/v1/router',
-      ]),
+      new Set(['/v1/settings', '/v1/capabilities', '/v1/mcp/servers', '/v1/devices', '/v1/router']),
     );
 
     // Wake, a re-render, another machine added: the sweep runs again and the
@@ -177,9 +171,7 @@ describe('capabilities shared by one machine', () => {
     ).resolves.toEqual([payload, payload]);
     expect(answer).toHaveBeenCalledTimes(1);
 
-    await expect(
-      new mod.GatewayClient(conn).capabilities(),
-    ).resolves.toEqual(payload);
+    await expect(new mod.GatewayClient(conn).capabilities()).resolves.toEqual(payload);
     expect(answer).toHaveBeenCalledTimes(1);
 
     // Reachability checks explicitly bypass freshness, without multiplying when
@@ -203,11 +195,9 @@ describe('capabilities shared by one machine', () => {
       (_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve, reject) => {
           pending.push(resolve);
-          init?.signal?.addEventListener(
-            'abort',
-            () => reject(new Error('aborted request')),
-            { once: true },
-          );
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted request')), {
+            once: true,
+          });
         }),
     );
     vi.stubGlobal('fetch', answer);

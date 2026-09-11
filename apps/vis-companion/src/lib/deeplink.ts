@@ -4,9 +4,7 @@
 
 import { App } from '@capacitor/app';
 
-export async function onPairingLink(
-  handler: (url: string) => void,
-): Promise<() => void> {
+export async function onPairingLink(handler: (url: string) => void): Promise<() => void> {
   try {
     const seen = new Set<string>();
     const once = (url: string) => {

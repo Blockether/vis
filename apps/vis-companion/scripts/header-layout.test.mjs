@@ -52,10 +52,7 @@ describe('app bar', () => {
   // 390px phone, permanently, for a question that is asked in bursts. It is a MARK
   // now, beside the cog, and pressing it turns the screen into the search.
   it('spends the bar on two marks and no box', () => {
-    const resting = app.slice(
-      app.indexOf('aria-label="Vis"'),
-      app.indexOf('</header>'),
-    );
+    const resting = app.slice(app.indexOf('aria-label="Vis"'), app.indexOf('</header>'));
     expect(resting).not.toContain('<SearchField');
     expect(labelledTag(app, 'Search all machines')).toContain('<IconButton');
     expect(labelledTag(app, 'Open preferences')).toContain('<IconButton');
@@ -68,10 +65,7 @@ describe('app bar', () => {
   // is the answer, and nothing else rides the bar while it is open. A fleet-wide query
   // is the screen, not a filter parked in a corner of it.
   it('turns the bar into the search page and hands it a way back', () => {
-    const page = app.slice(
-      app.indexOf('{isSearching ? ('),
-      app.indexOf('aria-label="Vis"'),
-    );
+    const page = app.slice(app.indexOf('{isSearching ? ('), app.indexOf('aria-label="Vis"'));
     expect(page).toContain('<BackButton label="Close search"');
     expect(page).toContain('label="Search sessions on every machine"');
     expect(page).toContain('placeholder="Search all machines…"');
@@ -94,12 +88,9 @@ describe('app bar', () => {
   // Leaving the page clears the query, so the list a human comes back to is the one
   // they left rather than a silently filtered copy of it.
   it('clears the query when the page closes', () => {
-    const close = app.slice(
-      app.indexOf('onCloseSearch={'),
-      app.indexOf('onAppSettings={'),
-    );
+    const close = app.slice(app.indexOf('onCloseSearch={'), app.indexOf('onAppSettings={'));
     expect(close).toContain('setSearching(false)');
-    expect(close).toContain('setQuery("")');
+    expect(close).toContain("setQuery('')");
   });
 
   // Reported earlier: the trailing controls sat at the wrong margin, a lone cog glyph

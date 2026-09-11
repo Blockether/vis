@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fitRows, useFitRows, type ListGeometry } from './fit-rows';
 
-const shell = vi.hoisted(() => ({ keyboardUp: false, rotate: null as ((phase: string) => void) | null }));
+const shell = vi.hoisted(() => ({
+  keyboardUp: false,
+  rotate: null as ((phase: string) => void) | null,
+}));
 
 vi.mock('./viewport', () => ({
   isSoftKeyboardUp: () => shell.keyboardUp,

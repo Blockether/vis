@@ -1,19 +1,19 @@
-import { expect, fn, userEvent, within } from "storybook/test";
-import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, fn, userEvent, within } from 'storybook/test';
+import type { Meta, StoryObj } from '@storybook/react-vite';
 
-import { ComposerAttachmentPicker } from "./ComposerAttachmentPicker";
+import { ComposerAttachmentPicker } from './ComposerAttachmentPicker';
 
 const meta = {
-  title: "Session/Composer attachment picker",
+  title: 'Session/Composer attachment picker',
   component: ComposerAttachmentPicker,
-  parameters: { layout: "fullscreen" },
+  parameters: { layout: 'fullscreen' },
   render: (args) => (
     <div className="flex h-screen items-end justify-center p-8">
       <ComposerAttachmentPicker {...args} />
     </div>
   ),
   args: {
-    accept: "image/*,video/*,audio/*",
+    accept: 'image/*,video/*,audio/*',
     disabled: false,
     isNative: true,
     commands: {
@@ -30,10 +30,10 @@ export const NativeMenu: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(
-      canvas.getByRole("button", {
-        name: "Attach a photo, clip, recording or file",
+      canvas.getByRole('button', {
+        name: 'Attach a photo, clip, recording or file',
       }),
     );
-    await expect(canvas.getByRole("dialog", { name: "Attach" })).toBeVisible();
+    await expect(canvas.getByRole('dialog', { name: 'Attach' })).toBeVisible();
   },
 };

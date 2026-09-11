@@ -36,9 +36,7 @@ beforeEach(() => {
   pointing('fine');
   vi.stubGlobal(
     'fetch',
-    vi.fn(() =>
-      Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 })),
-    ),
+    vi.fn(() => Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))),
   );
 });
 
@@ -79,7 +77,13 @@ describe('one field takes whatever the terminal printed', () => {
     // space inside an inline block collapses, and the command read as one word.
     const words = Array.from(command?.querySelectorAll('span') ?? []);
     expect(words.map((w) => w.textContent)).toEqual([
-      'vis-agent', 'gateway', 'start', '--host', '0.0.0.0', '--require-token', '--pair',
+      'vis-agent',
+      'gateway',
+      'start',
+      '--host',
+      '0.0.0.0',
+      '--require-token',
+      '--pair',
     ]);
     const gaps = Array.from(command?.childNodes ?? []).filter((n) => n.nodeType === Node.TEXT_NODE);
     expect(gaps.map((n) => n.textContent)).toEqual([' ', ' ', ' ', ' ', ' ', ' ']);
@@ -142,7 +146,9 @@ describe('one field takes whatever the terminal printed', () => {
     type('not an address');
     await pair();
     expect(onAdd).not.toHaveBeenCalled();
-    expect(document.body.textContent).toMatch(/"not an address" is not a pairing link or a machine address/);
+    expect(document.body.textContent).toMatch(
+      /"not an address" is not a pairing link or a machine address/,
+    );
   });
 
   it('is one component at every width: the owner decides the frame, not a prop', () => {

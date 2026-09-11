@@ -15,7 +15,7 @@
  * refused whole instead of silently corrupted.
  */
 
-import type { Notification } from "./types";
+import type { Notification } from './types';
 
 const encoder = new TextEncoder();
 
@@ -30,7 +30,7 @@ export function byteLength(value: string): number {
  */
 function keep(value: string, chars: number): string {
   if (chars >= value.length) return value;
-  if (chars <= 0) return "";
+  if (chars <= 0) return '';
   let cut = value.slice(0, chars);
   if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
   return `${cut.trimEnd()}\u2026`;
@@ -45,7 +45,7 @@ type Render = (notification: Notification) => string;
  */
 function shrink(
   notification: Notification,
-  field: "body" | "title",
+  field: 'body' | 'title',
   render: Render,
   limit: number,
 ): Notification {
@@ -72,7 +72,7 @@ export function fitNotification(
 ): Notification | null {
   if (byteLength(render(notification)) <= limit) return notification;
   let fitted = notification;
-  for (const field of ["body", "title"] as const) {
+  for (const field of ['body', 'title'] as const) {
     fitted = shrink(fitted, field, render, limit);
     if (byteLength(render(fitted)) <= limit) return fitted;
   }

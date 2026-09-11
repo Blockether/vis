@@ -30,7 +30,11 @@ export function parseRoute(hash: string): Route {
   if (segs[0] === 's' && segs[1]) {
     const params = new URLSearchParams(queryPart);
     const gw = params.get('gw');
-    return { name: 'session', sid: decodeURIComponent(segs[1]), gw: gw ? decodeURIComponent(gw) : undefined };
+    return {
+      name: 'session',
+      sid: decodeURIComponent(segs[1]),
+      gw: gw ? decodeURIComponent(gw) : undefined,
+    };
   }
   return { name: 'sessions' };
 }
@@ -89,9 +93,8 @@ export function tabHash(tab: 'sessions' | 'connect'): string {
  * pasted into a message and opened by another user's app.
  */
 export function sessionShareUrl(sid: string, gatewayId?: string): string {
-  const origin = typeof window !== 'undefined'
-    ? window.location.origin + window.location.pathname
-    : '';
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin + window.location.pathname : '';
   return `${origin}${sessionHash(sid, gatewayId)}`;
 }
 

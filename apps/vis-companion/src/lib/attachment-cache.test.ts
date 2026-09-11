@@ -28,9 +28,7 @@ describe('cacheVictims', () => {
   });
 
   it('keeps everything while both bounds hold', () => {
-    expect(
-      cacheVictims([entry('a', 10, 1), entry('b', 10, 2)], small),
-    ).toEqual([]);
+    expect(cacheVictims([entry('a', 10, 1), entry('b', 10, 2)], small)).toEqual([]);
   });
 
   it('evicts least recently used first, until the BYTE bound holds', () => {
@@ -61,10 +59,7 @@ describe('cacheVictims', () => {
   });
 
   it('can evict nothing at all when every entry is pinned', () => {
-    const victims = cacheVictims(
-      [entry('a', 900, 1, true), entry('b', 900, 2, true)],
-      small,
-    );
+    const victims = cacheVictims([entry('a', 900, 1, true), entry('b', 900, 2, true)], small);
     expect(victims).toEqual([]);
   });
 
@@ -151,8 +146,6 @@ describe('the persistent attachment cache', () => {
   it('budgets a phone, not a server', () => {
     expect(ATTACHMENT_DISK_BUDGET.maxBytes).toBe(96 * 1024 * 1024);
     expect(ATTACHMENT_DISK_BUDGET.maxEntries).toBe(256);
-    expect(ATTACHMENT_DISK_BUDGET.maxEntryBytes).toBeLessThan(
-      ATTACHMENT_DISK_BUDGET.maxBytes,
-    );
+    expect(ATTACHMENT_DISK_BUDGET.maxEntryBytes).toBeLessThan(ATTACHMENT_DISK_BUDGET.maxBytes);
   });
 });

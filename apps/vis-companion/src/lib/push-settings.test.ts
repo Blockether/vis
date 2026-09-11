@@ -9,10 +9,7 @@
 // rather than a button that would quietly do nothing.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  canOpenSystemNotificationSettings,
-  openSystemNotificationSettings,
-} from './push';
+import { canOpenSystemNotificationSettings, openSystemNotificationSettings } from './push';
 
 let platform = 'ios';
 let plugin = true;

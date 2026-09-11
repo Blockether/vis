@@ -268,10 +268,9 @@ describe('the app bar', () => {
     const [row] = within(dialog).getAllByRole('button', { name: /laptop/ });
     expect(row.textContent).toContain('laptop');
     expect(
-      within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole(
-        'button',
-        { name: 'Forget laptop' },
-      ),
+      within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole('button', {
+        name: 'Forget laptop',
+      }),
     ).toBeTruthy();
 
     // Pairing is one word in the band, and what it opens stands OVER this dialog
@@ -304,9 +303,7 @@ describe('the app bar', () => {
     );
     expect(await screen.findByRole('group', { name: 'Forget laptop?' })).toBeTruthy();
     await userEvent.keyboard('{Escape}');
-    await waitFor(() =>
-      expect(screen.queryByRole('group', { name: 'Forget laptop?' })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Forget laptop?' })).toBeNull());
     expect(screen.getAllByRole('button', { name: 'Close Settings' })).toHaveLength(1);
     await userEvent.click(close);
     await waitFor(() =>

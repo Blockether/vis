@@ -22,7 +22,9 @@ vi.mock('@capacitor/core', () => ({
 vi.mock('@capacitor/push-notifications', () => ({
   PushNotifications: {
     getDeliveredNotifications: async () => ({ notifications: native.delivered }),
-    removeDeliveredNotifications: async (arg: { notifications: { id: string; tag?: string }[] }) => {
+    removeDeliveredNotifications: async (arg: {
+      notifications: { id: string; tag?: string }[];
+    }) => {
       native.removed.push(arg.notifications);
     },
     createChannel: async (channel: Record<string, unknown>) => {
@@ -63,7 +65,9 @@ describe('dropDeliveredPushes', () => {
 
     expect(waiting).toBe(1);
     // The whole notification goes back, because Android cancels by tag AND id.
-    expect(native.removed).toEqual([[{ id: '1', tag: 's-read', data: { 'android.title': 'Vis' } }]]);
+    expect(native.removed).toEqual([
+      [{ id: '1', tag: 's-read', data: { 'android.title': 'Vis' } }],
+    ]);
   });
 
   it('matches an iOS alert by the session id in its payload', async () => {
@@ -108,14 +112,28 @@ describe('ensureAndroidChannel', () => {
     await ensureAndroidChannel();
 
     expect(native.channels).toHaveLength(1);
-    expect(native.channels[0]).toMatchObject({ id: PUSH_CHANNEL_ID, name: 'Answers', importance: 4 });
+    expect(native.channels[0]).toMatchObject({
+      id: PUSH_CHANNEL_ID,
+      name: 'Answers',
+      importance: 4,
+    });
     expect(native.channels[0].description).toBeTruthy();
   });
 
   // iOS has no channels at all, and the plugin throws when asked on the web.
   it.each([
-    ['ios', () => { native.platform = 'ios'; }],
-    ['the web', () => { native.isNative = false; }],
+    [
+      'ios',
+      () => {
+        native.platform = 'ios';
+      },
+    ],
+    [
+      'the web',
+      () => {
+        native.isNative = false;
+      },
+    ],
   ])('does nothing on %s', async (_name, arrange) => {
     arrange();
     const { ensureAndroidChannel } = await fresh();

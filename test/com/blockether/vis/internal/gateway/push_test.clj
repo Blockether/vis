@@ -401,11 +401,10 @@
 
       (keychain/reset-cache!)
       (try (with-redefs [sh/sh (fn [& args]
-                                                 (swap! forks conj (vec args))
-                                                 (if-let [v (get @answers
-                                                                 [(nth args 3) (nth args 5)])]
-                                                   {:exit 0 :out (str v "\n") :err ""}
-                                                   {:exit 44 :out "" :err "not found"}))]
+                                 (swap! forks conj (vec args))
+                                 (if-let [v (get @answers [(nth args 3) (nth args 5)])]
+                                   {:exit 0 :out (str v "\n") :err ""}
+                                   {:exit 44 :out "" :err "not found"}))]
              (let [a (keychain/secret "vis-apns" "topic")
                    b (keychain/secret "vis-apns" "topic")
                    c (keychain/secret "vis-apns" "team_id")

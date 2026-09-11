@@ -20,10 +20,10 @@
   (let [[_op binding-node & body] (:children node)]
     (when (api/vector-node? binding-node)
       (let [[sym & args] (:children binding-node)]
-        {:node (api/list-node
-                 (list* (api/token-node 'let)
-                        (api/vector-node [sym (api/token-node nil)])
-                        (concat args body)))}))))
+        {:node (api/list-node (list* (api/token-node 'let)
+                                     (api/vector-node [sym (api/token-node nil)])
+                                     (concat args body)))}))))
 
 (def with-own rewrite)
+
 (def with-own-env rewrite)

@@ -303,7 +303,10 @@ export function QrScannerView({
 
       <div className="space-y-2 border-t border-dialog-edge bg-panel px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-3">
         {error && (
-          <p className="border border-err/50 bg-err/10 px-3 py-2 font-mono text-meta text-err" role="status">
+          <p
+            className="border border-err/50 bg-err/10 px-3 py-2 font-mono text-meta text-err"
+            role="status"
+          >
             {error}
           </p>
         )}

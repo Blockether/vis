@@ -23,12 +23,7 @@ type Story = StoryObj<typeof meta>;
 
 function InteractiveDiagnosticsPanel() {
   const [isOpen, setOpen] = useState(false);
-  return (
-    <DiagnosticsPanel
-      isOpen={isOpen}
-      onToggle={() => setOpen((open) => !open)}
-    />
-  );
+  return <DiagnosticsPanel isOpen={isOpen} onToggle={() => setOpen((open) => !open)} />;
 }
 
 /** Resting: one band, nothing painted under it; pressing anywhere on it opens it. */

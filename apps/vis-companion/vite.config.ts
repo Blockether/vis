@@ -38,9 +38,7 @@ export default defineConfig(async ({ command }) => {
         apply: 'serve',
         transformIndexHtml() {
           const children = devConnectionStorageScript(devGateways);
-          return children
-            ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }]
-            : [];
+          return children ? [{ tag: 'script', children, injectTo: 'head-prepend' as const }] : [];
         },
       },
       react(),

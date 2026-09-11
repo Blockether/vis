@@ -10,23 +10,16 @@ import {
   useState,
   type PointerEvent,
   type ReactNode,
-} from "react";
-import Prism from "prismjs";
-import { DataTable } from "./DataTable";
-import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
-import { LiveRunRow } from "./LiveArtifact";
-import { ActivityPanel, ActivityAttachmentContext } from "./ActivityPanel";
-import type { ActivityProjection } from "../lib/activity";
-import { usePythonCodeShown } from "../lib/transcript-display";
-import {
-  AlertIcon,
-  ArrowOutIcon,
-  ChevronIcon,
-  ForkIcon,
-  PauseIcon,
-  PlayIcon,
-} from "./icons";
-import { artifactShareVerb, shareArtifact } from "../lib/artifact-share";
+} from 'react';
+import Prism from 'prismjs';
+import { DataTable } from './DataTable';
+import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
+import { LiveRunRow } from './LiveArtifact';
+import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
+import type { ActivityProjection } from '../lib/activity';
+import { usePythonCodeShown } from '../lib/transcript-display';
+import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
+import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
 import {
   artifactMedia,
   isDocMedia,
@@ -40,7 +33,7 @@ import {
   collapseAttachmentVersions,
   pageBySize,
   RAIL_PAGE,
-} from "../lib/artifacts";
+} from '../lib/artifacts';
 import {
   BandLabel,
   BandTally,
@@ -52,26 +45,26 @@ import {
   MetaButton,
   PROSE,
   Spinner,
-} from "./ui";
-import "prismjs/components/prism-bash";
-import "prismjs/components/prism-clojure";
-import "prismjs/components/prism-css";
-import "prismjs/components/prism-diff";
-import "prismjs/components/prism-java";
-import "prismjs/components/prism-json";
-import "prismjs/components/prism-markdown";
-import "prismjs/components/prism-python";
-import "prismjs/components/prism-rust";
-import "prismjs/components/prism-typescript";
-import "prismjs/components/prism-jsx";
-import "prismjs/components/prism-tsx";
-import "prismjs/components/prism-yaml";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
-import { parseUserMessage } from "../lib/paste";
-import { formatCost, formatTokens, turnUsage } from "../lib/usage";
-import { isViewportRotating, onViewportRotation } from "../lib/viewport";
+} from './ui';
+import 'prismjs/components/prism-bash';
+import 'prismjs/components/prism-clojure';
+import 'prismjs/components/prism-css';
+import 'prismjs/components/prism-diff';
+import 'prismjs/components/prism-java';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-markdown';
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-rust';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-jsx';
+import 'prismjs/components/prism-tsx';
+import 'prismjs/components/prism-yaml';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
+import remarkGfm from 'remark-gfm';
+import { parseUserMessage } from '../lib/paste';
+import { formatCost, formatTokens, turnUsage } from '../lib/usage';
+import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
   ContentBlock,
   GatewayAttachment,
@@ -80,60 +73,51 @@ import type {
   TranscriptForm,
   TranscriptIteration,
   TranscriptTurn,
-} from "../lib/types";
-import type { GatewayClient } from "../lib/gateway";
-import { speechOutput } from "../lib/speech";
-import type { SpokenTrack } from "../lib/speech";
-import { ExpandableImage } from "./ImageViewer";
+} from '../lib/types';
+import type { GatewayClient } from '../lib/gateway';
+import { speechOutput } from '../lib/speech';
+import type { SpokenTrack } from '../lib/speech';
+import { ExpandableImage } from './ImageViewer';
 import {
   mediaContentClass,
   mediaGroupLayout,
   mediaPendingClass,
   mediaTileContentClass,
   type MediaLayout,
-} from "../lib/media-frame";
-import {
-  MediaGrid,
-  MediaPlate,
-  MediaRecording,
-  MediaTile,
-  mediaMeta,
-  mediaSummary,
-} from "./Media";
+} from '../lib/media-frame';
+import { MediaGrid, MediaPlate, MediaRecording, MediaTile, mediaMeta, mediaSummary } from './Media';
 
 // An inline formatting context inherits its paragraph's justification. Code is an
 // atomic value instead: its own box keeps authored spaces natural while still
 // wrapping multi-word commands within a narrow transcript column.
 const INLINE_CODE_CLASS =
-  "mx-px inline-block max-w-full rounded-none bg-result-path px-0.5 py-px text-left font-mono font-medium text-result-path-foreground";
+  'mx-px inline-block max-w-full rounded-none bg-result-path px-0.5 py-px text-left font-mono font-medium text-result-path-foreground';
 // Transcript nodes the stream appends rise + fade in instead of popping into
 // place. A keyframe animation (see `--animate-transcript-*` in index.css) plays
 // exactly once — on the element's first paint after insertion — so a re-render
 // can never replay it. Only live subtrees pass `live`, so replaying history (or
 // a finished turn re-keyed out of the live slot into the turn list) stays
 // perfectly still.
-export const transcriptEnterClass =
-  "animate-transcript-enter motion-reduce:animate-none";
+export const transcriptEnterClass = 'animate-transcript-enter motion-reduce:animate-none';
 
 // For nodes that land INSIDE a bubble that is already on screen (a new tool
 // form, a result card joining the grid). They only rise: a second opacity ramp
 // nested in the first is what read as a wash-out, and content that is still
 // streaming must never fade.
-export const transcriptRiseClass =
-  "animate-transcript-rise motion-reduce:animate-none";
+export const transcriptRiseClass = 'animate-transcript-rise motion-reduce:animate-none';
 
 // Finished turns use their measured height for paint skipping; guessed intrinsic sizes
 // cause scroll drift. Keep containment at turn granularity, retain the bounded transcript
 // window, and stage newly mounted trace segments without inventing height.
 
-type DiffLineKind = "add" | "del" | "ctx";
+type DiffLineKind = 'add' | 'del' | 'ctx';
 type DiffLine =
-  | { kind: "meta"; text: string }
+  | { kind: 'meta'; text: string }
   | {
       kind: DiffLineKind;
       beforeLine: number | null;
       afterLine: number | null;
-      marker: "+" | "-" | " ";
+      marker: '+' | '-' | ' ';
       text: string;
     };
 
@@ -142,44 +126,44 @@ function unifiedDiff(value: string): DiffLine[] {
   let beforeLine: number | null = null;
   let afterLine: number | null = null;
 
-  for (const line of value.split("\n")) {
+  for (const line of value.split('\n')) {
     const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunk) {
       beforeLine = Number(hunk[1]);
       afterLine = Number(hunk[2]);
-      rows.push({ kind: "meta", text: line });
-    } else if (line.startsWith("---") || line.startsWith("+++")) {
-      rows.push({ kind: "meta", text: line });
-    } else if (line.startsWith("-")) {
+      rows.push({ kind: 'meta', text: line });
+    } else if (line.startsWith('---') || line.startsWith('+++')) {
+      rows.push({ kind: 'meta', text: line });
+    } else if (line.startsWith('-')) {
       rows.push({
-        kind: "del",
+        kind: 'del',
         beforeLine,
         afterLine: null,
-        marker: "-",
+        marker: '-',
         text: line.slice(1),
       });
       beforeLine = beforeLine === null ? null : beforeLine + 1;
-    } else if (line.startsWith("+")) {
+    } else if (line.startsWith('+')) {
       rows.push({
-        kind: "add",
+        kind: 'add',
         beforeLine: null,
         afterLine,
-        marker: "+",
+        marker: '+',
         text: line.slice(1),
       });
       afterLine = afterLine === null ? null : afterLine + 1;
-    } else if (line.startsWith(" ")) {
+    } else if (line.startsWith(' ')) {
       rows.push({
-        kind: "ctx",
+        kind: 'ctx',
         beforeLine,
         afterLine,
-        marker: " ",
+        marker: ' ',
         text: line.slice(1),
       });
       beforeLine = beforeLine === null ? null : beforeLine + 1;
       afterLine = afterLine === null ? null : afterLine + 1;
     } else {
-      rows.push({ kind: "meta", text: line });
+      rows.push({ kind: 'meta', text: line });
     }
   }
 
@@ -187,9 +171,9 @@ function unifiedDiff(value: string): DiffLine[] {
 }
 
 function diffLineClass(kind: DiffLineKind): string {
-  if (kind === "add") return "bg-code-ok text-code-success";
-  if (kind === "del") return "bg-code-err text-code-error";
-  return "bg-code text-code-foreground";
+  if (kind === 'add') return 'bg-code-ok text-code-success';
+  if (kind === 'del') return 'bg-code-err text-code-error';
+  return 'bg-code text-code-foreground';
 }
 
 // A diff cell NEVER clips its own text: the block's horizontal scroller (below) is
@@ -199,14 +183,14 @@ function diffLineClass(kind: DiffLineKind): string {
 // two fixed gutters retain both source coordinates without halving every line.
 function DiffLineView({
   line,
-  className = "",
+  className = '',
 }: {
-  line: Exclude<DiffLine, { kind: "meta" }>;
+  line: Exclude<DiffLine, { kind: 'meta' }>;
   className?: string;
 }) {
-  const lineNumber = line.kind === "add" ? line.afterLine : line.beforeLine;
+  const lineNumber = line.kind === 'add' ? line.afterLine : line.beforeLine;
   const label =
-    `${line.kind === "add" ? "Added" : line.kind === "del" ? "Removed" : "Unchanged"} line ${lineNumber ?? ""}`.trim();
+    `${line.kind === 'add' ? 'Added' : line.kind === 'del' ? 'Removed' : 'Unchanged'} line ${lineNumber ?? ''}`.trim();
 
   return (
     <span
@@ -214,15 +198,15 @@ function DiffLineView({
       aria-label={label}
     >
       <span className="w-8 shrink-0 select-none pr-1 text-right text-code-duration">
-        {line.beforeLine ?? ""}
+        {line.beforeLine ?? ''}
       </span>
       <span className="w-8 shrink-0 select-none pr-1 text-right text-code-duration">
-        {line.afterLine ?? ""}
+        {line.afterLine ?? ''}
       </span>
       <span className="w-4 shrink-0 select-none text-center" aria-hidden="true">
         {line.marker}
       </span>
-      <span className="pr-3">{line.text || " "}</span>
+      <span className="pr-3">{line.text || ' '}</span>
     </span>
   );
 }
@@ -239,30 +223,30 @@ const DiffBlock = memo(function DiffBlock({
   const rows = unifiedDiff(value);
   return (
     <div
-      className={`${compact ? "my-2" : "my-3"} relative overflow-hidden bg-code ${frameless ? "" : "border border-code-edge"}`}
+      className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden bg-code ${frameless ? '' : 'border border-code-edge'}`}
       aria-label="Unified diff"
     >
       {!frameless && (
         <div
-          className={`absolute right-0 z-10 bg-code pr-2 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
+          className={`absolute right-0 z-10 bg-code pr-2 ${compact ? 'top-0 mouse:top-0.5' : 'top-0.5 mouse:top-1'}`}
         >
           <CopyChip value={value} label="Copy code" />
         </div>
       )}
       <div
-        className={`${compact ? "text-meta" : "text-ui"} max-w-full overflow-x-auto overscroll-x-contain ${frameless ? "" : "py-2"} font-mono`}
+        className={`${compact ? 'text-meta' : 'text-ui'} max-w-full overflow-x-auto overscroll-x-contain ${frameless ? '' : 'py-2'} font-mono`}
       >
         <div className="w-max min-w-full">
           {rows.map((row, index) => {
             // The copy chip floats over the top-right corner; only the first row keeps
             // its tail clear. Long lines remain available through this block's scroller.
-            const clearance = !frameless && index === 0 ? " pr-16" : "";
-            return row.kind === "meta" ? (
+            const clearance = !frameless && index === 0 ? ' pr-16' : '';
+            return row.kind === 'meta' ? (
               <span
                 className={`flex w-max min-w-full whitespace-pre px-2 py-px text-code-syntax-keyword${clearance}`}
                 key={`${index}-${row.text}`}
               >
-                {row.text || " "}
+                {row.text || ' '}
               </span>
             ) : (
               <DiffLineView
@@ -279,54 +263,50 @@ const DiffBlock = memo(function DiffBlock({
 });
 
 const languageAliases: Record<string, string> = {
-  clj: "clojure",
-  edn: "clojure",
-  js: "javascript",
-  jsx: "jsx",
-  md: "markdown",
-  py: "python",
-  sh: "bash",
-  shell: "bash",
-  ts: "typescript",
-  yml: "yaml",
+  clj: 'clojure',
+  edn: 'clojure',
+  js: 'javascript',
+  jsx: 'jsx',
+  md: 'markdown',
+  py: 'python',
+  sh: 'bash',
+  shell: 'bash',
+  ts: 'typescript',
+  yml: 'yaml',
 };
 
 const syntaxTokenClasses: Record<string, string> = {
-  boolean: "text-code-syntax-number",
-  builtin: "text-code-syntax-special",
-  char: "text-code-syntax-string",
-  className: "text-code-syntax-special",
-  comment: "italic text-code-syntax-comment",
-  constant: "text-code-syntax-number",
-  decorator: "text-code-syntax-special",
-  function: "text-code-syntax-special",
-  important: "font-semibold text-code-syntax-keyword",
-  keyword: "font-medium text-code-syntax-keyword",
-  number: "text-code-syntax-number",
-  operator: "text-code-syntax-special",
-  regex: "text-code-syntax-string",
-  string: "text-code-syntax-string",
-  symbol: "text-code-syntax-number",
+  boolean: 'text-code-syntax-number',
+  builtin: 'text-code-syntax-special',
+  char: 'text-code-syntax-string',
+  className: 'text-code-syntax-special',
+  comment: 'italic text-code-syntax-comment',
+  constant: 'text-code-syntax-number',
+  decorator: 'text-code-syntax-special',
+  function: 'text-code-syntax-special',
+  important: 'font-semibold text-code-syntax-keyword',
+  keyword: 'font-medium text-code-syntax-keyword',
+  number: 'text-code-syntax-number',
+  operator: 'text-code-syntax-special',
+  regex: 'text-code-syntax-string',
+  string: 'text-code-syntax-string',
+  symbol: 'text-code-syntax-number',
 };
 
 function syntaxClass(token: Prism.Token): string {
-  const aliases = Array.isArray(token.alias)
-    ? token.alias
-    : token.alias
-      ? [token.alias]
-      : [];
+  const aliases = Array.isArray(token.alias) ? token.alias : token.alias ? [token.alias] : [];
   for (const candidate of [token.type, ...aliases]) {
-    const normalized = candidate === "class-name" ? "className" : candidate;
+    const normalized = candidate === 'class-name' ? 'className' : candidate;
     if (syntaxTokenClasses[normalized]) return syntaxTokenClasses[normalized];
   }
-  return "text-code-foreground";
+  return 'text-code-foreground';
 }
 
 type SyntaxSegment = { text: string; className: string };
 
 // The colour the `<pre>` already paints. A segment that only asks for it needs
 // no element of its own — see `SyntaxCodeBlock`.
-const CODE_DEFAULT_CLASS = "text-code-foreground";
+const CODE_DEFAULT_CLASS = 'text-code-foreground';
 
 function flattenSyntax(
   tokens: (string | Prism.Token)[],
@@ -334,14 +314,14 @@ function flattenSyntax(
   out: SyntaxSegment[],
 ): void {
   for (const token of tokens) {
-    if (typeof token === "string") {
+    if (typeof token === 'string') {
       if (token) out.push({ text: token, className: inherited });
       continue;
     }
     const className = syntaxClass(token);
     if (Array.isArray(token.content)) {
       flattenSyntax(token.content as (string | Prism.Token)[], className, out);
-    } else if (typeof token.content === "string") {
+    } else if (typeof token.content === 'string') {
       if (token.content) out.push({ text: token.content, className });
     } else {
       flattenSyntax([token.content as Prism.Token], className, out);
@@ -379,7 +359,7 @@ function segmentsToLines(segments: SyntaxSegment[]): SyntaxSegment[][] {
     else line.push({ text, className });
   };
   for (const segment of segments) {
-    const parts = segment.text.split("\n");
+    const parts = segment.text.split('\n');
     parts.forEach((part, index) => {
       if (index > 0) lines.push([]);
       push(part, segment.className);
@@ -395,10 +375,8 @@ const GUTTER_DIVIDER = /^(\s*\u22ef)\s*$/;
 // file language. Feeding those line numbers to Prism poisons the grammar, so
 // peel the gutter off, highlight the code, and restore the gutter uncolored —
 // exactly what the TUI does.
-function splitGutter(
-  value: string,
-): { gutters: string[]; code: string } | null {
-  const rawLines = value.split("\n");
+function splitGutter(value: string): { gutters: string[]; code: string } | null {
+  const rawLines = value.split('\n');
   const gutters: string[] = [];
   const codeLines: string[] = [];
   let numbered = 0;
@@ -413,18 +391,18 @@ function splitGutter(
     const divider = GUTTER_DIVIDER.exec(line);
     if (divider) {
       gutters.push(divider[1]);
-      codeLines.push("");
+      codeLines.push('');
       continue;
     }
-    if (line === "") {
-      gutters.push("");
-      codeLines.push("");
+    if (line === '') {
+      gutters.push('');
+      codeLines.push('');
       continue;
     }
     return null;
   }
   if (numbered < 2) return null;
-  return { gutters, code: codeLines.join("\n") };
+  return { gutters, code: codeLines.join('\n') };
 }
 
 // memo: during a live stream the turn re-renders every ~150 ms flush; memoized
@@ -454,46 +432,44 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   const gutter = splitGutter(value);
   const marks = extractMarks(gutter ? gutter.code : value);
   const source = marks.text;
-  const lines = segmentsToLines(
-    applyMarks(highlightSegments(source, language), marks.ranges),
-  );
+  const lines = segmentsToLines(applyMarks(highlightSegments(source, language), marks.ranges));
 
   return (
     <div
-      className={`relative overflow-hidden bg-code ${bare ? "" : `${compact ? "my-2" : "my-3"} ${frameless ? "" : "border border-code-edge"}`}`}
+      className={`relative overflow-hidden bg-code ${bare ? '' : `${compact ? 'my-2' : 'my-3'} ${frameless ? '' : 'border border-code-edge'}`}`}
     >
       {/* An enclosing card (a tool result) owns ONE copy control for the whole
           body, so a frameless block does not add a second, third, … chip. */}
       {!frameless && (
         <div
-          className={`absolute right-0 z-10 bg-code pr-2 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
+          className={`absolute right-0 z-10 bg-code pr-2 ${compact ? 'top-0 mouse:top-0.5' : 'top-0.5 mouse:top-1'}`}
         >
           <CopyChip value={copyValue ?? source} label="Copy code" />
         </div>
       )}
       <pre
-        className={`${compact ? "text-meta" : "text-ui"} ${padded ? (compact ? "py-2" : "py-2.5") : ""} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
-        role={frameless ? "group" : "region"}
-        aria-label={language ? `${language} code` : "Code"}
+        className={`${compact ? 'text-meta' : 'text-ui'} ${padded ? (compact ? 'py-2' : 'py-2.5') : ''} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
+        role={frameless ? 'group' : 'region'}
+        aria-label={language ? `${language} code` : 'Code'}
         tabIndex={0}
       >
         <code className="block min-w-max [tab-size:2]">
           {lines.map((segments, index) => (
             <div
               key={index}
-              className={`flex w-fit min-w-full whitespace-pre ${frameless && !padded ? "pr-3" : frameless ? "px-3" : "px-3 first:pr-16"}`}
+              className={`flex w-fit min-w-full whitespace-pre ${frameless && !padded ? 'pr-3' : frameless ? 'px-3' : 'px-3 first:pr-16'}`}
             >
               {gutter && (
                 <span
                   className="mr-3 shrink-0 select-none text-right text-code-duration"
                   aria-hidden="true"
                 >
-                  {gutter.gutters[index] ?? ""}
+                  {gutter.gutters[index] ?? ''}
                 </span>
               )}
               <span className="min-w-0">
                 {segments.length === 0
-                  ? " "
+                  ? ' '
                   : segments.map((segment, segmentIndex) =>
                       // A default-coloured run inherits the `<pre>`'s own class:
                       // wrapping it in a span buys nothing and costs a box to
@@ -520,7 +496,7 @@ type OpenAttachment = (attachmentId: string) => void;
 const ATTACHMENT_HREF =
   /^attachment:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const MARKDOWN_LINK =
-  "font-medium text-link underline underline-offset-3 break-all hover:text-link-hover";
+  'font-medium text-link underline underline-offset-3 break-all hover:text-link-hover';
 
 function attachmentIdFromHref(href: string): string | null {
   return ATTACHMENT_HREF.exec(href)?.[1] ?? null;
@@ -557,11 +533,8 @@ export const Markdown = memo(function Markdown({
   // rendered at `text-body`/`text-title` towered over the very rows it labels. Nested
   // headings therefore step DOWN to the card's own scale and separate by weight,
   // case and rule instead of by size.
-  const heading = (
-    nestedClass: string,
-    compactClass: string,
-    fullClass: string,
-  ) => (nested ? nestedClass : compact ? compactClass : fullClass);
+  const heading = (nestedClass: string, compactClass: string, fullClass: string) =>
+    nested ? nestedClass : compact ? compactClass : fullClass;
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -572,7 +545,7 @@ export const Markdown = memo(function Markdown({
         remarkPlugins={hardBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
         components={{
           a: ({ children: label, href, title }) => {
-            const attachmentId = attachmentIdFromHref(href ?? "");
+            const attachmentId = attachmentIdFromHref(href ?? '');
             if (attachmentId) {
               if (!onOpenAttachment) {
                 return <span className={MARKDOWN_LINK}>{label}</span>;
@@ -606,7 +579,7 @@ export const Markdown = memo(function Markdown({
           },
           blockquote: ({ children: quote }) => (
             <blockquote
-              className={`${compact ? "my-2 pl-3" : "my-3 pl-4"} border-l-2 border-answer-edge text-dialog-hint`}
+              className={`${compact ? 'my-2 pl-3' : 'my-3 pl-4'} border-l-2 border-answer-edge text-dialog-hint`}
             >
               {quote}
             </blockquote>
@@ -617,7 +590,7 @@ export const Markdown = memo(function Markdown({
           h1: ({ children: heading1 }) => (
             <h1
               aria-level={headingLevel}
-              className={`${heading("mb-1 mt-3 text-ui", "mb-1.5 mt-4 text-subhead", "mb-2 mt-6 text-head")} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}
+              className={`${heading('mb-1 mt-3 text-ui', 'mb-1.5 mt-4 text-subhead', 'mb-2 mt-6 text-head')} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}
             >
               {heading1}
             </h1>
@@ -625,7 +598,7 @@ export const Markdown = memo(function Markdown({
           h2: ({ children: heading2 }) => (
             <h2
               aria-level={headingLevel}
-              className={`${heading("mb-1 mt-3 text-ui", "mb-1 mt-3.5 text-title", "mb-1.5 mt-5 text-subhead")} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}
+              className={`${heading('mb-1 mt-3 text-ui', 'mb-1 mt-3.5 text-title', 'mb-1.5 mt-5 text-subhead')} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}
             >
               {heading2}
             </h2>
@@ -633,7 +606,7 @@ export const Markdown = memo(function Markdown({
           h3: ({ children: heading3 }) => (
             <h3
               aria-level={headingLevel}
-              className={`${heading("mb-0.5 mt-2.5 text-meta", "mb-1 mt-3 text-body", "mb-1 mt-4 text-title")} font-semibold text-heading-3`}
+              className={`${heading('mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-body', 'mb-1 mt-4 text-title')} font-semibold text-heading-3`}
             >
               {heading3}
             </h3>
@@ -641,7 +614,7 @@ export const Markdown = memo(function Markdown({
           h4: ({ children: heading4 }) => (
             <h4
               aria-level={headingLevel}
-              className={`${heading("mb-0.5 mt-2 text-meta", "mb-0.5 mt-2.5 text-body", "mb-1 mt-3.5 text-body")} font-semibold text-heading-3`}
+              className={`${heading('mb-0.5 mt-2 text-meta', 'mb-0.5 mt-2.5 text-body', 'mb-1 mt-3.5 text-body')} font-semibold text-heading-3`}
             >
               {heading4}
             </h4>
@@ -649,7 +622,7 @@ export const Markdown = memo(function Markdown({
           h5: ({ children: heading5 }) => (
             <h5
               aria-level={headingLevel}
-              className={`${heading("mb-0.5 mt-2 text-chip uppercase tracking-[0.06em]", "mb-0.5 mt-2.5 text-ui", "mb-1 mt-3 text-ui")} font-semibold text-heading-3`}
+              className={`${heading('mb-0.5 mt-2 text-chip uppercase tracking-[0.06em]', 'mb-0.5 mt-2.5 text-ui', 'mb-1 mt-3 text-ui')} font-semibold text-heading-3`}
             >
               {heading5}
             </h5>
@@ -657,66 +630,42 @@ export const Markdown = memo(function Markdown({
           h6: ({ children: heading6 }) => (
             <h6
               aria-level={headingLevel}
-              className={`${heading("mb-0.5 mt-2 text-chip", "mb-0.5 mt-2.5 text-meta", "mb-1 mt-3 text-meta")} font-semibold uppercase tracking-[0.08em] text-heading-3`}
+              className={`${heading('mb-0.5 mt-2 text-chip', 'mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-meta')} font-semibold uppercase tracking-[0.08em] text-heading-3`}
             >
               {heading6}
             </h6>
           ),
-          hr: () => (
-            <hr className={`${compact ? "my-3" : "my-5"} border-answer-edge`} />
-          ),
+          hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
           li: ({ children: item }) => (
-            <li
-              className={`${compact ? "my-0.5 pl-0.5" : "my-0.5 pl-1"} ${runningText}`}
-            >
+            <li className={`${compact ? 'my-0.5 pl-0.5' : 'my-0.5 pl-1'} ${runningText}`}>
               {item}
             </li>
           ),
           ol: ({ children: list }) => (
-            <ol
-              className={`${compact ? "my-2 pl-5" : "my-3 pl-6"} list-decimal space-y-0.5`}
-            >
+            <ol className={`${compact ? 'my-2 pl-5' : 'my-3 pl-6'} list-decimal space-y-0.5`}>
               {list}
             </ol>
           ),
           p: ({ children: paragraph }) => (
-            <p className={`${compact ? "my-2" : "my-2.5"} ${runningText}`}>
-              {paragraph}
-            </p>
+            <p className={`${compact ? 'my-2' : 'my-2.5'} ${runningText}`}>{paragraph}</p>
           ),
           pre: ({ children: codeNode }) => {
-            const raw = extractText(codeNode).replace(/\n$/, "");
+            const raw = extractText(codeNode).replace(/\n$/, '');
             const language = codeLanguage(codeNode);
-            if (
-              language === "diff" ||
-              language === "patch" ||
-              language === "udiff"
-            ) {
-              return (
-                <DiffBlock
-                  value={stripMarks(raw)}
-                  compact={compact}
-                  frameless={nested}
-                />
-              );
+            if (language === 'diff' || language === 'patch' || language === 'udiff') {
+              return <DiffBlock value={stripMarks(raw)} compact={compact} frameless={nested} />;
             }
             // A CSV/TSV artifact is DATA: `attach` fences it as `vis-table` and
             // both surfaces paint a real grid — the TUI's table dialog, this table.
-            if (language === "vis-table") {
-              return (
-                <DataTable
-                  body={stripMarks(raw)}
-                  compact={compact}
-                  frameless={nested}
-                />
-              );
+            if (language === 'vis-table') {
+              return <DataTable body={stripMarks(raw)} compact={compact} frameless={nested} />;
             }
             // A PDF or a note is a DOCUMENT: it never reaches the model, and the
             // fence carries a descriptor only. The attachment rail below the block
             // already shows that artifact as an openable tile, so painting the
             // fence too put the same file on screen twice — the fence itself is
             // rendered as nothing.
-            if (language === "vis-doc") return null;
+            if (language === 'vis-doc') return null;
             return (
               <SyntaxCodeBlock
                 value={raw}
@@ -727,15 +676,13 @@ export const Markdown = memo(function Markdown({
               />
             );
           },
-          strong: ({ children: strong }) => (
-            <strong className="font-semibold">{strong}</strong>
-          ),
+          strong: ({ children: strong }) => <strong className="font-semibold">{strong}</strong>,
           table: ({ children: table }) => (
             <div
               role="region"
               aria-label="Table"
               tabIndex={0}
-              className={`${compact ? "my-2" : "my-3"} max-w-full overflow-x-auto overscroll-x-contain border border-code-edge`}
+              className={`${compact ? 'my-2' : 'my-3'} max-w-full overflow-x-auto overscroll-x-contain border border-code-edge`}
             >
               {/* The table sits on the SAME step as the surrounding prose — hardcoding
                   `text-ui` made a tool result's table one step BIGGER than the compact
@@ -751,7 +698,7 @@ export const Markdown = memo(function Markdown({
               {/* The scroll viewport owns the frame; separate cell borders stay inside
                   it in WebKit, including the bottom edge and partly visible columns. */}
               <table
-                className={`w-full border-separate border-spacing-0 ${compact ? "text-meta" : "text-ui"} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
+                className={`w-full border-separate border-spacing-0 ${compact ? 'text-meta' : 'text-ui'} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
               >
                 {table}
               </table>
@@ -762,22 +709,20 @@ export const Markdown = memo(function Markdown({
           // when every cell starts on the first line.
           td: ({ children: cell }) => (
             <td
-              className={`${compact ? "px-1.5 py-1" : "px-2 py-1.5"} border-r border-t border-code-edge text-left align-top last:border-r-0`}
+              className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border-r border-t border-code-edge text-left align-top last:border-r-0`}
             >
               {cell}
             </td>
           ),
           th: ({ children: cell }) => (
             <th
-              className={`${compact ? "px-1.5 py-1" : "px-2 py-1.5"} border-r border-code-edge bg-code text-left align-top font-semibold last:border-r-0`}
+              className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border-r border-code-edge bg-code text-left align-top font-semibold last:border-r-0`}
             >
               {cell}
             </th>
           ),
           ul: ({ children: list }) => (
-            <ul
-              className={`${compact ? "my-2 pl-5" : "my-3 pl-6"} list-disc space-y-0.5`}
-            >
+            <ul className={`${compact ? 'my-2 pl-5' : 'my-3 pl-6'} list-disc space-y-0.5`}>
               {list}
             </ul>
           ),
@@ -790,26 +735,22 @@ export const Markdown = memo(function Markdown({
 });
 
 function extractText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(extractText).join("");
-  if (node && typeof node === "object" && "props" in node) {
-    return extractText(
-      (node as { props: { children?: ReactNode } }).props.children,
-    );
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  if (node && typeof node === 'object' && 'props' in node) {
+    return extractText((node as { props: { children?: ReactNode } }).props.children);
   }
-  return "";
+  return '';
 }
 
 function codeLanguage(node: ReactNode): string {
-  if (!isValidElement<{ className?: string }>(node)) return "";
-  return (
-    /(?:^|\s)language-([^\s]+)/.exec(node.props.className ?? "")?.[1] ?? ""
-  );
+  if (!isValidElement<{ className?: string }>(node)) return '';
+  return /(?:^|\s)language-([^\s]+)/.exec(node.props.className ?? '')?.[1] ?? '';
 }
 
 function jsonText(value: JsonValue | unknown): string {
-  if (typeof value === "string") return value;
-  if (value == null) return "";
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -818,32 +759,32 @@ function jsonText(value: JsonValue | unknown): string {
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
 // The engine paints grep needles with reverse video (`ESC[7m … ESC[27m`), exactly
 // like the TUI. Markdown cannot carry SGR, so the pair is rewritten into private-use
 // sentinels that survive fence parsing and are turned back into a highlighted span
 // by the code renderer (and dropped everywhere else).
-const MARK_OPEN = "\u0091";
-const MARK_CLOSE = "\u0092";
+const MARK_OPEN = '\u0091';
+const MARK_CLOSE = '\u0092';
 const MARK_SENTINELS = /[\u0091\u0092]/g;
-const MARK_CLASS = "bg-accent text-accent-foreground";
+const MARK_CLASS = 'bg-accent text-accent-foreground';
 
 function markAnsiHighlights(value: string): string {
   const marked = value
-    .replace(MARK_SENTINELS, "")
+    .replace(MARK_SENTINELS, '')
     .replace(/\u001b\[([0-9;]*)m/g, (match, params: string) => {
-      const codes = params === "" ? ["0"] : params.split(";");
-      if (codes.includes("7")) return MARK_OPEN;
-      if (codes.includes("27") || codes.includes("0")) return MARK_CLOSE;
+      const codes = params === '' ? ['0'] : params.split(';');
+      if (codes.includes('7')) return MARK_OPEN;
+      if (codes.includes('27') || codes.includes('0')) return MARK_CLOSE;
       return match;
     });
   return stripAnsi(marked);
 }
 
 function stripMarks(value: string): string {
-  return value.replace(MARK_SENTINELS, "");
+  return value.replace(MARK_SENTINELS, '');
 }
 
 // Pull the sentinels back out, leaving clean text plus the [from, to) offsets that
@@ -852,10 +793,9 @@ function extractMarks(value: string): {
   text: string;
   ranges: [number, number][];
 } {
-  if (!value.includes(MARK_OPEN) && !value.includes(MARK_CLOSE))
-    return { text: value, ranges: [] };
+  if (!value.includes(MARK_OPEN) && !value.includes(MARK_CLOSE)) return { text: value, ranges: [] };
   const ranges: [number, number][] = [];
-  let text = "";
+  let text = '';
   let open: number | null = null;
   for (const char of value) {
     if (char === MARK_OPEN) {
@@ -875,10 +815,7 @@ function extractMarks(value: string): {
 
 // Re-cut syntax segments so every highlighted range becomes its own segment; the
 // match class replaces the token class outright (reverse video wins, like the TUI).
-function applyMarks(
-  segments: SyntaxSegment[],
-  ranges: [number, number][],
-): SyntaxSegment[] {
+function applyMarks(segments: SyntaxSegment[], ranges: [number, number][]): SyntaxSegment[] {
   if (ranges.length === 0) return segments;
   const out: SyntaxSegment[] = [];
   let offset = 0;
@@ -915,30 +852,22 @@ function applyMarks(
 function formatDuration(value?: number): string | null {
   if (value == null || !Number.isFinite(value) || value < 0) return null;
   const milliseconds = Math.trunc(value);
-  if (milliseconds < 1) return "<1ms";
+  if (milliseconds < 1) return '<1ms';
   if (milliseconds < 1_000) return `${milliseconds}ms`;
   if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)}s`;
   const minutes = Math.floor(milliseconds / 60_000);
   return `${minutes}m ${Math.floor((milliseconds % 60_000) / 1_000)}s`;
 }
 
-const META_SEPARATOR = " · ";
+const META_SEPARATOR = ' · ';
 // Wire statuses a transcript row carries while its turn has NOT finished (the
 // engine persists the row at submit; the gateway overlay renames `running` to
 // `streaming`). Mirrors `IN_FLIGHT_ROW_STATUSES` in `SessionScreen`.
-const IN_FLIGHT_STATUSES = new Set([
-  "running",
-  "streaming",
-  "queued",
-  "pending",
-]);
+const IN_FLIGHT_STATUSES = new Set(['running', 'streaming', 'queued', 'pending']);
 
-function modelPair(value?: {
-  provider?: string;
-  model?: string;
-}): string | null {
-  const provider = value?.provider?.replace(/^:/, "").trim();
-  const model = value?.model?.trim().replaceAll("/", "-");
+function modelPair(value?: { provider?: string; model?: string }): string | null {
+  const provider = value?.provider?.replace(/^:/, '').trim();
+  const model = value?.model?.trim().replaceAll('/', '-');
   if (provider && model) return `${provider}/${model}`;
   return model || provider || null;
 }
@@ -957,8 +886,7 @@ function turnMetaSummary(turn: TranscriptTurn): string | null {
   if (turn.meta_summary?.trim()) return turn.meta_summary.trim();
 
   const routing = turnRouting(turn);
-  const cost =
-    typeof turn.cost === "object" && turn.cost ? turn.cost : undefined;
+  const cost = typeof turn.cost === 'object' && turn.cost ? turn.cost : undefined;
   const model =
     modelPair(routing.actual) ??
     modelPair({
@@ -969,9 +897,7 @@ function turnMetaSummary(turn: TranscriptTurn): string | null {
   const tokens = formatTokens(usage);
   const price = formatCost(usage.cost);
   const duration = formatDuration(turn.duration_ms);
-  const parts = [model, tokens, price, duration].filter(
-    (part): part is string => Boolean(part),
-  );
+  const parts = [model, tokens, price, duration].filter((part): part is string => Boolean(part));
   return parts.length ? parts.join(META_SEPARATOR) : null;
 }
 
@@ -979,44 +905,37 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
   if (turn.meta_fallback_note?.trim()) return turn.meta_fallback_note.trim();
   const routing = turnRouting(turn);
   const fallbackTypes = new Set([
-    "llm.routing/provider-fallback",
-    "llm.routing/model-fallback",
-    "llm.routing/format-fallback",
+    'llm.routing/provider-fallback',
+    'llm.routing/model-fallback',
+    'llm.routing/format-fallback',
   ]);
   const cacheBreakingTypes = new Set([
-    "llm.routing/provider-fallback",
-    "llm.routing/model-fallback",
+    'llm.routing/provider-fallback',
+    'llm.routing/model-fallback',
   ]);
   // `wire/->wire` transforms Clojure's `:event/type` into `event_type`.
   // Accept `type` too so old persisted traces remain legible.
-  const eventType = (item: Record<string, JsonValue>) =>
-    String(item.event_type ?? item.type ?? "");
-  const scopeOf = (item: Record<string, JsonValue>) =>
-    String(item.scope ?? "").replace(/^:/, "");
+  const eventType = (item: Record<string, JsonValue>) => String(item.event_type ?? item.type ?? '');
+  const scopeOf = (item: Record<string, JsonValue>) => String(item.scope ?? '').replace(/^:/, '');
   const retryEvents = routing.trace.filter(
-    (item) => eventType(item) === "llm.routing/provider-retry",
+    (item) => eventType(item) === 'llm.routing/provider-retry',
   );
   if (!routing.fallback && !retryEvents.length) return null;
 
   // A `session-pick` event records that the SESSION was repointed off a dead
   // credential, not how this turn was routed: it is reported at the end of the line,
   // never as the reason the turn moved (issue #154).
-  const pickMove = routing.trace.find(
-    (item) => scopeOf(item) === "session-pick",
-  );
+  const pickMove = routing.trace.find((item) => scopeOf(item) === 'session-pick');
   const fallbackEvent = routing.trace.find(
-    (item) =>
-      fallbackTypes.has(eventType(item)) && scopeOf(item) !== "session-pick",
+    (item) => fallbackTypes.has(eventType(item)) && scopeOf(item) !== 'session-pick',
   );
   // A changed provider or model means the peer never saw the cache the previous route
   // built, so every following request re-sends the whole context.
-  const cacheLost = routing.trace.some((item) =>
-    cacheBreakingTypes.has(eventType(item)),
-  );
+  const cacheLost = routing.trace.some((item) => cacheBreakingTypes.has(eventType(item)));
   // A trace value is JSON: an unnamed half of the pair arrives as `null`, which reads
   // as "not named" to `modelPair` only once it is undefined.
   const nameOf = (value: JsonValue | undefined) =>
-    typeof value === "string" && value.trim() ? value : undefined;
+    typeof value === 'string' && value.trim() ? value : undefined;
   const movedTo = pickMove
     ? modelPair({
         provider: nameOf(pickMove.to_provider),
@@ -1025,7 +944,7 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
     : null;
   const event = fallbackEvent ?? retryEvents.at(-1);
   const retries = retryEvents.length;
-  const from = modelPair(routing.selected) ?? "previous model";
+  const from = modelPair(routing.selected) ?? 'previous model';
   const status = event?.status;
   const reason = event?.reason;
   const error = event?.error;
@@ -1033,19 +952,19 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
     status != null
       ? String(status)
       : reason != null
-        ? String(reason).replace(/^:/, "")
+        ? String(reason).replace(/^:/, '')
         : error != null
-          ? typeof error === "string"
+          ? typeof error === 'string'
             ? error
             : jsonText(error)
           : null;
   const tail = [
     why,
     retries > 0 ? `retried ${retries}×` : null,
-    cacheLost ? "prompt cache lost" : null,
+    cacheLost ? 'prompt cache lost' : null,
     movedTo ? `session now on ${movedTo}` : null,
   ].filter((part): part is string => Boolean(part));
-  return `↳ from ${from}${tail.length ? ` — ${tail.join(", ")}` : ""}`;
+  return `↳ from ${from}${tail.length ? ` — ${tail.join(', ')}` : ''}`;
 }
 
 function assistantUsage(turn: TranscriptTurn): boolean {
@@ -1054,8 +973,8 @@ function assistantUsage(turn: TranscriptTurn): boolean {
 }
 
 function commandTurn(turn: TranscriptTurn): boolean {
-  const request = (turn.request ?? "").trimStart();
-  return request.startsWith("/") || request.startsWith("!");
+  const request = (turn.request ?? '').trimStart();
+  return request.startsWith('/') || request.startsWith('!');
 }
 
 // A fenced block must not be closable by the content it wraps: file text, tool
@@ -1063,36 +982,32 @@ function commandTurn(turn: TranscriptTurn): boolean {
 // fixed triple-backtick wrapper then closes EARLY — the rest of the payload
 // renders as prose (headings, blockquotes) instead of code. CommonMark allows
 // longer fences; pick the shortest safe one. Mirrors `strutil/fenced`.
-function fenced(body: string, lang = ""): string {
-  const longest = (body.match(/`+/g) ?? []).reduce(
-    (max, run) => Math.max(max, run.length),
-    0,
-  );
-  const delimiter = "`".repeat(Math.max(3, longest + 1));
+function fenced(body: string, lang = ''): string {
+  const longest = (body.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
+  const delimiter = '`'.repeat(Math.max(3, longest + 1));
   return `${delimiter}${lang}\n${body}\n${delimiter}`;
 }
 
 function interruptedPython(form: TranscriptForm): boolean {
   const error = form.error;
-  if (typeof error === "string")
-    return error === "java.lang.InterruptedException";
-  if (error == null || typeof error !== "object") return false;
+  if (typeof error === 'string') return error === 'java.lang.InterruptedException';
+  if (error == null || typeof error !== 'object') return false;
   const record = error as Record<string, unknown>;
   return (
-    record.type === "vis/interrupted" ||
-    record.type === ":vis/interrupted" ||
-    record.message === "java.lang.InterruptedException"
+    record.type === 'vis/interrupted' ||
+    record.type === ':vis/interrupted' ||
+    record.message === 'java.lang.InterruptedException'
   );
 }
 
 function resultBody(form: TranscriptForm): string {
-  if (interruptedPython(form)) return "";
+  if (interruptedPython(form)) return '';
   if (form.error != null) return jsonText(form.error);
 
   const stdout = form.stdout?.trimEnd();
-  if (!stdout) return "";
-  const rendered = ["````vis-image", "````vis-doc", "````vis-table"].some(
-    (marker) => stdout.includes(marker),
+  if (!stdout) return '';
+  const rendered = ['````vis-image', '````vis-doc', '````vis-table'].some((marker) =>
+    stdout.includes(marker),
   )
     ? stdout
     : fenced(stdout);
@@ -1102,11 +1017,11 @@ function resultBody(form: TranscriptForm): string {
 // Slash forms are persisted so history and resume retain the command, but their
 // answer band owns the visible output. A `!cmd` turn is different: its visible
 // form owns the one canonical stdout body.
-const HIDDEN_FORM_TAGS = new Set(["user-slash"]);
+const HIDDEN_FORM_TAGS = new Set(['user-slash']);
 
 /** A form the trace paints nothing for: explicit engine chrome or a slash command. */
 function hiddenForm(form: TranscriptForm): boolean {
-  return Boolean(form.silent) || HIDDEN_FORM_TAGS.has(String(form.tag ?? ""));
+  return Boolean(form.silent) || HIDDEN_FORM_TAGS.has(String(form.tag ?? ''));
 }
 
 // Every visible form is its own card; stdout belongs to that form and is never fanned out.
@@ -1131,29 +1046,21 @@ const INLINE_MARK = /[*_`~[]/;
  * the terminal takes (`live_view/markdown-mark`), which is what makes this
  * affordable once per table cell.
  */
-export const InlineMarkdown = memo(function InlineMarkdown({
-  children,
-}: {
-  children: string;
-}) {
+export const InlineMarkdown = memo(function InlineMarkdown({ children }: { children: string }) {
   if (!INLINE_MARK.test(children)) return <>{children}</>;
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      allowedElements={["p", "strong", "em", "del", "code"]}
+      allowedElements={['p', 'strong', 'em', 'del', 'code']}
       unwrapDisallowed
       components={{
         p: ({ children: content }) => <>{content}</>,
-        strong: ({ children: content }) => (
-          <strong className="font-bold">{content}</strong>
-        ),
+        strong: ({ children: content }) => <strong className="font-bold">{content}</strong>,
         em: ({ children: content }) => <em>{content}</em>,
         del: ({ children: content }) => <del>{content}</del>,
         // The code span inherits the line's font size while its own inline box
         // keeps paragraph justification out of the authored value.
-        code: ({ children: code }) => (
-          <code className={INLINE_CODE_CLASS}>{code}</code>
-        ),
+        code: ({ children: code }) => <code className={INLINE_CODE_CLASS}>{code}</code>,
       }}
     >
       {children}
@@ -1161,18 +1068,9 @@ export const InlineMarkdown = memo(function InlineMarkdown({
   );
 });
 
-function ToolSummary({
-  children,
-  className,
-}: {
-  children: string;
-  className: string;
-}) {
+function ToolSummary({ children, className }: { children: string; className: string }) {
   return (
-    <span
-      className={`min-w-0 flex-1 truncate text-chip font-medium ${className}`}
-      title={children}
-    >
+    <span className={`min-w-0 flex-1 truncate text-chip font-medium ${className}`} title={children}>
       <InlineMarkdown>{children}</InlineMarkdown>
     </span>
   );
@@ -1190,7 +1088,7 @@ function ToolSummary({
  * it. That padding is exactly what left one program header 41px tall beside a 33px
  * one, while a chip in a third header stood rule-to-rule with no air at all.
  */
-const CARD_BAND = "flex min-h-8 items-center gap-1.5";
+const CARD_BAND = 'flex min-h-8 items-center gap-1.5';
 
 const ToolCard = memo(function ToolCard({
   form,
@@ -1204,9 +1102,8 @@ const ToolCard = memo(function ToolCard({
   const interrupted = interruptedPython(form);
   const resultText = resultBody(form);
   const failed = form.error != null && !interrupted;
-  const hasOutcome =
-    interrupted || resultText !== "" || form.duration_ms != null;
-  const stateLabel = interrupted ? "Interrupted" : failed ? "Failed" : "";
+  const hasOutcome = interrupted || resultText !== '' || form.duration_ms != null;
+  const stateLabel = interrupted ? 'Interrupted' : failed ? 'Failed' : '';
   const running = !interrupted && !failed && !hasOutcome;
   const body = resultText;
   const duration = formatDuration(form.duration_ms);
@@ -1219,27 +1116,22 @@ const ToolCard = memo(function ToolCard({
   // one-way, so re-collapsing keeps the parsed body for the next open, and
   // "Copy result" copies `body` (the string), never the DOM.
   const [wasOpened, setWasOpened] = useState(false);
-  const stateTone = interrupted ? "hint" : failed ? "err" : "default";
+  const stateTone = interrupted ? 'hint' : failed ? 'err' : 'default';
   const stateClass = interrupted
-    ? "text-dialog-hint"
+    ? 'text-dialog-hint'
     : failed
-      ? "text-err"
+      ? 'text-err'
       : running
-        ? "text-code-result"
-        : "text-accent-ink";
+        ? 'text-code-result'
+        : 'text-accent-ink';
   // Failure status stays visible; diagnostic bodies require explicit expansion.
   const [resultOpen, setResultOpen] = useState(false);
   // The tally counts what the reader would see: fence rows around a stdout block are not output.
-  const resultLines = body
-    ? body.split("\n").filter((line) => !line.startsWith("```")).length
-    : 0;
+  const resultLines = body ? body.split('\n').filter((line) => !line.startsWith('```')).length : 0;
   const resultShown = interrupted || resultOpen;
   if (embedded)
     return (
-      <div
-        data-code-result
-        className="min-w-0 bg-result py-1 text-meta text-code-result"
-      >
+      <div data-code-result className="min-w-0 bg-result py-1 text-meta text-code-result">
         {interrupted ? (
           <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
         ) : (
@@ -1251,16 +1143,16 @@ const ToolCard = memo(function ToolCard({
             aria-label={
               failed
                 ? resultOpen
-                  ? "Collapse error details"
-                  : "Expand error details"
+                  ? 'Collapse error details'
+                  : 'Expand error details'
                 : resultOpen
-                  ? "Collapse result"
-                  : "Expand result"
+                  ? 'Collapse result'
+                  : 'Expand result'
             }
             onClick={() => setResultOpen((open) => !open)}
           >
             <BandLabel tone={stateTone}>
-              {failed ? "Failed" : "RESULT"}
+              {failed ? 'Failed' : 'RESULT'}
               {!failed && !resultOpen && resultLines > 0 && (
                 <BandTally> +{resultLines} more</BandTally>
               )}
@@ -1269,9 +1161,7 @@ const ToolCard = memo(function ToolCard({
         )}
         {resultShown &&
           (failed ? (
-            <pre className="m-0 whitespace-pre-wrap break-words font-mono">
-              {body}
-            </pre>
+            <pre className="m-0 whitespace-pre-wrap break-words font-mono">{body}</pre>
           ) : (
             <div>
               <Markdown compact nested>
@@ -1299,7 +1189,7 @@ const ToolCard = memo(function ToolCard({
   if (!body) {
     return (
       <div
-        className={`${CARD_BAND} ${isCopyable ? "px-2" : "pl-[33px] sm:pl-[35px] pr-0"} bg-result`}
+        className={`${CARD_BAND} ${isCopyable ? 'px-2' : 'pl-[33px] sm:pl-[35px] pr-0'} bg-result`}
       >
         {headline}
       </div>
@@ -1314,22 +1204,20 @@ const ToolCard = memo(function ToolCard({
       }}
     >
       <summary
-        className={`${CARD_BAND} ${isCopyable ? "px-2" : "pl-[15px] sm:pl-[17px] pr-0"} list-none cursor-pointer select-none text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden`}
+        className={`${CARD_BAND} ${isCopyable ? 'px-2' : 'pl-[15px] sm:pl-[17px] pr-0'} list-none cursor-pointer select-none text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden`}
       >
         <ChevronIcon
-          className={`size-3 shrink-0 group-open:rotate-90 ${failed ? "text-err" : "text-accent-ink"}`}
+          className={`size-3 shrink-0 group-open:rotate-90 ${failed ? 'text-err' : 'text-accent-ink'}`}
         />
         {headline}
-        {isCopyable && (
-          <CopyChip value={body} label="Copy result" className="shrink-0" />
-        )}
+        {isCopyable && <CopyChip value={body} label="Copy result" className="shrink-0" />}
       </summary>
       {/* A tool result is SUBORDINATE to the answer it feeds: its body is `text-meta`
           (10px), the step its compact code blocks and diffs already render at, so the
           card is internally uniform and steps down from the answer's `text-ui`. */}
       {wasOpened && (
         <div
-          className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result ${failed ? "text-code-error-result" : ""}`}
+          className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result ${failed ? 'text-code-error-result' : ''}`}
         >
           {failed ? (
             <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">
@@ -1350,13 +1238,13 @@ function formCode(form: TranscriptForm): string {
   // The canonical formatted surface, falling back to whatever source the event
   // carried. A block is the program the model wrote; there is no second dialect.
   const source = form.display_code ?? form.code ?? form.source ?? form.src;
-  return typeof source === "string" ? source.trim() : "";
+  return typeof source === 'string' ? source.trim() : '';
 }
 
 /** Highlighting language for a form's code block; python is the default surface. */
 function formCodeLanguage(form: TranscriptForm): string {
-  const language = (form.display_language ?? "").trim();
-  return language || "python";
+  const language = (form.display_language ?? '').trim();
+  return language || 'python';
 }
 
 // The program the model wrote is the evidence on screen in every state — while
@@ -1370,7 +1258,7 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
 /** Source disclosure containing a nested result fold. Failures remain visible. */
 const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value,
-  language = "python",
+  language = 'python',
   showCode,
   duration,
   failure,
@@ -1384,7 +1272,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const lineCount = value ? value.split("\n").length : 0;
+  const lineCount = value ? value.split('\n').length : 0;
   return (
     <section className="relative z-0 min-w-0 bg-code px-3" data-execution-code>
       <div className="flex min-h-11 min-w-0 items-center gap-2 mouse:min-h-7">
@@ -1394,12 +1282,10 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             tone="execution"
             inlineChevron
             className="min-w-0 flex-1"
-            aria-label={expanded ? "Collapse code" : "Expand code"}
+            aria-label={expanded ? 'Collapse code' : 'Expand code'}
             onClick={() => setExpanded((open) => !open)}
           >
-            <BandLabel>
-              CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}
-            </BandLabel>
+            <BandLabel>CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}</BandLabel>
           </Disclosure>
         ) : (
           <BandLabel className="min-w-0 flex-1">CODE</BandLabel>
@@ -1409,9 +1295,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             {duration}
           </span>
         )}
-        {showCode && (
-          <CopyChip value={value} label="Copy code" density="compact" edge />
-        )}
+        {showCode && <CopyChip value={value} label="Copy code" density="compact" edge />}
       </div>
       {expanded && showCode && (
         <div className="pb-2" data-code-body>
@@ -1450,12 +1334,12 @@ const CardGrid = memo(function CardGrid({
   // joined, some are not" - one run of work, one frame.
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? "" : " overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]"}${live ? ` ${transcriptRiseClass}` : ""}`}
-      aria-label={`${cards.length} ${cards.length === 1 ? "result" : "results"}`}
+      className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? '' : ' overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]'}${live ? ` ${transcriptRiseClass}` : ''}`}
+      aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
     >
       {cards.map((card, cardIndex) => (
         <ToolCard
-          key={`${card.scope ?? card.op ?? "result"}-${cardIndex}`}
+          key={`${card.scope ?? card.op ?? 'result'}-${cardIndex}`}
           form={card}
           isCopyable={isCopyable}
         />
@@ -1473,29 +1357,28 @@ const CardGrid = memo(function CardGrid({
 function pythonFormState(
   form: TranscriptForm,
   live: boolean,
-  activityState?: ActivityProjection["state"],
-): "INTERRUPTED" | "FAILED" | "CANCELLED" | "DONE" | "RUNNING" {
+  activityState?: ActivityProjection['state'],
+): 'INTERRUPTED' | 'FAILED' | 'CANCELLED' | 'DONE' | 'RUNNING' {
   const interrupted = interruptedPython(form);
-  const failed =
-    (form.error != null && !interrupted) || activityState === "failed";
+  const failed = (form.error != null && !interrupted) || activityState === 'failed';
   const settled =
     interrupted ||
-    activityState === "succeeded" ||
-    activityState === "cancelled" ||
+    activityState === 'succeeded' ||
+    activityState === 'cancelled' ||
     failed ||
     form.duration_ms != null ||
-    resultBody(form) !== "";
-  if (interrupted) return "INTERRUPTED";
-  if (failed) return "FAILED";
-  if (activityState === "cancelled") return "CANCELLED";
-  if (activityState === "succeeded") return "DONE";
+    resultBody(form) !== '';
+  if (interrupted) return 'INTERRUPTED';
+  if (failed) return 'FAILED';
+  if (activityState === 'cancelled') return 'CANCELLED';
+  if (activityState === 'succeeded') return 'DONE';
   // A step that MEASURED itself is over, whether or not the turn is. The duration
   // is the terminal frame's own number, and asking the turn instead made every
   // finished step of a live turn say RUNNING — invisible while only the last step
   // was on screen, and a whole column of open rings once the thread drew one marker
   // per step. Streamed output is NOT that marker: a shell prints for minutes while
   // it runs, so a live turn wants the duration and a settled one takes any result.
-  return (live ? form.duration_ms != null : settled) ? "DONE" : "RUNNING";
+  return (live ? form.duration_ms != null : settled) ? 'DONE' : 'RUNNING';
 }
 
 /**
@@ -1504,7 +1387,7 @@ function pythonFormState(
  * `halted` is cancelled or interrupted: stopped on purpose, so neither the tick
  * of a step that finished nor the cross of one that broke.
  */
-type StepMark = "running" | "failed" | "halted" | "done";
+type StepMark = 'running' | 'failed' | 'halted' | 'done';
 
 /**
  * WHAT A FORM'S ROW SAYS, AND WHETHER IT IS STILL MOVING.
@@ -1540,23 +1423,20 @@ function formStep(
   const activity = form.activity;
   const detected = Boolean(
     activity &&
-    (activity.rows.length > 0 ||
-      activity.omitted.rows > 0 ||
-      Object.values(activity.counts).some((count) => count > 0)),
+      (activity.rows.length > 0 ||
+        activity.omitted.rows > 0 ||
+        Object.values(activity.counts).some((count) => count > 0)),
   );
-  const settled =
-    activity != null &&
-    activity.state !== "running" &&
-    activity.state !== "idle";
+  const settled = activity != null && activity.state !== 'running' && activity.state !== 'idle';
   const state = pythonFormState(form, live, activity?.state);
-  const running = detected ? !settled : state === "RUNNING";
+  const running = detected ? !settled : state === 'RUNNING';
   const mark: StepMark = running
-    ? "running"
-    : state === "FAILED"
-      ? "failed"
-      : state === "CANCELLED" || state === "INTERRUPTED"
-        ? "halted"
-        : "done";
+    ? 'running'
+    : state === 'FAILED'
+      ? 'failed'
+      : state === 'CANCELLED' || state === 'INTERRUPTED'
+        ? 'halted'
+        : 'done';
   return {
     activity,
     detected,
@@ -1564,43 +1444,34 @@ function formStep(
     running,
     mark,
     status:
-      mark === "running" || mark === "done"
-        ? ""
-        : state.charAt(0) + state.slice(1).toLowerCase(),
+      mark === 'running' || mark === 'done' ? '' : state.charAt(0) + state.slice(1).toLowerCase(),
   };
 }
 
 /** A display-only group. Source forms and their wire projections stay untouched. */
-function executionGroup(
-  forms: TranscriptForm[],
-  live: boolean,
-): TranscriptForm {
+function executionGroup(forms: TranscriptForm[], live: boolean): TranscriptForm {
   if (forms.length === 1) return forms[0];
-  const states = forms.map((form) =>
-    pythonFormState(form, live, form.activity?.state),
-  );
-  const state = states.includes("RUNNING")
-    ? "running"
-    : states.includes("FAILED")
-      ? "failed"
-      : states.some((state) => state === "CANCELLED" || state === "INTERRUPTED")
-        ? "cancelled"
-        : "succeeded";
+  const states = forms.map((form) => pythonFormState(form, live, form.activity?.state));
+  const state = states.includes('RUNNING')
+    ? 'running'
+    : states.includes('FAILED')
+      ? 'failed'
+      : states.some((state) => state === 'CANCELLED' || state === 'INTERRUPTED')
+        ? 'cancelled'
+        : 'succeeded';
   const counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0 };
-  const omitted: ActivityProjection["omitted"] = {
+  const omitted: ActivityProjection['omitted'] = {
     rows: 0,
     by_classification: {},
   };
-  const rows: ActivityProjection["rows"] = [];
+  const rows: ActivityProjection['rows'] = [];
   const scopedRow = (
-    row: ActivityProjection["rows"][number],
+    row: ActivityProjection['rows'][number],
     scope: string,
-  ): ActivityProjection["rows"][number] => ({
+  ): ActivityProjection['rows'][number] => ({
     ...row,
     id: `${scope}:${row.id}`,
-    ...(row.children
-      ? { children: row.children.map((child) => scopedRow(child, scope)) }
-      : {}),
+    ...(row.children ? { children: row.children.map((child) => scopedRow(child, scope)) } : {}),
   });
   forms.forEach((form, index) => {
     const activity = form.activity;
@@ -1608,20 +1479,15 @@ function executionGroup(
     for (const key of Object.keys(counts) as Array<keyof typeof counts>)
       counts[key] += activity.counts[key];
     omitted.rows += activity.omitted.rows;
-    for (const [signal, count] of Object.entries(
-      activity.omitted.by_classification,
-    )) {
-      omitted.by_classification[signal] =
-        (omitted.by_classification[signal] ?? 0) + count;
+    for (const [signal, count] of Object.entries(activity.omitted.by_classification)) {
+      omitted.by_classification[signal] = (omitted.by_classification[signal] ?? 0) + count;
     }
-    for (const row of [...activity.rows].sort(
-      (a, b) => a.sequence - b.sequence,
-    )) {
+    for (const row of [...activity.rows].sort((a, b) => a.sequence - b.sequence)) {
       rows.push({ ...scopedRow(row, String(index)), sequence: rows.length });
     }
   });
   return {
-    source: forms.map(formCode).filter(Boolean).join("\n\n"),
+    source: forms.map(formCode).filter(Boolean).join('\n\n'),
     display_language: formCodeLanguage(forms[0]),
     // Total measured execution time, not wall time across concurrent calls.
     duration_ms: forms.every((form) => formatDuration(form.duration_ms) != null)
@@ -1644,22 +1510,17 @@ const FormTrace = memo(function FormTrace({
   const code = formCode(form);
   const cards = forms
     .flatMap(toolCards)
-    .filter((member) => member.error != null || resultBody(member) !== "");
+    .filter((member) => member.error != null || resultBody(member) !== '');
   // One result disclosure per execution group, matching the TUI. Keep errors
   // separate so they remain visible even while source and stdout are folded.
   const stdout = cards
     .filter((card) => card.error == null)
     .map((card) => card.stdout?.trimEnd())
     .filter(Boolean)
-    .join("\n");
-  const {
-    activity,
-    detected: detectedActivity,
-    running,
-    status,
-  } = formStep(form, live);
+    .join('\n');
+  const { activity, detected: detectedActivity, running, status } = formStep(form, live);
   return (
-    <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
+    <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {forms[0].comment?.trim() && (
         <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui text-vis-message">
           <Markdown compact>{forms[0].comment}</Markdown>
@@ -1675,9 +1536,7 @@ const FormTrace = memo(function FormTrace({
             cards.some((card) => card.error != null)
               ? cards
                   .filter((card) => card.error != null)
-                  .map((card, index) => (
-                    <ToolCard key={index} form={card} embedded />
-                  ))
+                  .map((card, index) => <ToolCard key={index} form={card} embedded />)
               : undefined
           }
         >
@@ -1685,12 +1544,10 @@ const FormTrace = memo(function FormTrace({
         </CollapsibleFormCode>
       )}
       <div
-        className={
-          detectedActivity ? "relative z-0 min-w-0 bg-code px-3" : "min-w-0"
-        }
+        className={detectedActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
         data-execution-activity={detectedActivity || undefined}
-        role={running ? "status" : "group"}
-        aria-live={running ? "polite" : undefined}
+        role={running ? 'status' : 'group'}
+        aria-live={running ? 'polite' : undefined}
         aria-label="Execution trace"
       >
         {status && <span className="sr-only">{status}</span>}
@@ -1701,14 +1558,14 @@ const FormTrace = memo(function FormTrace({
 });
 
 const ENCRYPTED_REASONING_PLACEHOLDER =
-  "[provider returned encrypted reasoning; plaintext reasoning is unavailable]";
+  '[provider returned encrypted reasoning; plaintext reasoning is unavailable]';
 
 /** Mirrors com.blockether.vis.internal.channel.render/normalize-reasoning. */
 function normalizeReasoning(value: string): string {
   return value
-    .replace(/[ \t\r\f\v]+\r?\n/g, "\n")
-    .replace(/(?:\r?\n){2,}/g, "\n")
-    .replace(/([.!?…]["')\]]?)\r?\n(?=\S)/g, "$1\n\n")
+    .replace(/[ \t\r\f\v]+\r?\n/g, '\n')
+    .replace(/(?:\r?\n){2,}/g, '\n')
+    .replace(/([.!?…]["')\]]?)\r?\n(?=\S)/g, '$1\n\n')
     .trim();
 }
 
@@ -1743,7 +1600,7 @@ let boxObserver: ResizeObserver | null = null;
  * decays back into a guess.
  */
 function isPaintSkipped(box: Element): boolean {
-  return typeof box.checkVisibility === "function"
+  return typeof box.checkVisibility === 'function'
     ? !box.checkVisibility({ contentVisibilityAuto: true })
     : false;
 }
@@ -1763,23 +1620,20 @@ function flushBoxes() {
 
 function scheduleBoxes(boxes: Iterable<Element>) {
   for (const box of boxes) pendingBoxes.add(box);
-  if (boxFrame !== null || typeof window === "undefined") return;
+  if (boxFrame !== null || typeof window === 'undefined') return;
   boxFrame = window.requestAnimationFrame(flushBoxes);
 }
 
-function observeBox(
-  box: Element,
-  measure: () => (() => void) | void,
-): () => void {
+function observeBox(box: Element, measure: () => (() => void) | void): () => void {
   boxMeasures.set(box, measure);
   observedBoxes.add(box);
-  if (typeof ResizeObserver !== "undefined") {
+  if (typeof ResizeObserver !== 'undefined') {
     if (!boxObserver) {
       boxObserver = new ResizeObserver((entries) =>
         scheduleBoxes(entries.map((entry) => entry.target)),
       );
       onViewportRotation((phase) => {
-        if (phase === "end") scheduleBoxes(observedBoxes);
+        if (phase === 'end') scheduleBoxes(observedBoxes);
       });
     }
     boxObserver.observe(box);
@@ -1793,9 +1647,9 @@ function observeBox(
 }
 
 // Rails align with role headings; content keeps a consistent inner gutter.
-const RAIL_SPINE = "ml-0";
+const RAIL_SPINE = 'ml-0';
 // Unstroked media begins just inside the two-pixel rail.
-const RAIL_SPINE_PAPER = "ml-0.5";
+const RAIL_SPINE_PAPER = 'ml-0.5';
 
 export const ThinkingBand = memo(function ThinkingBand({
   children,
@@ -1820,14 +1674,11 @@ export const ThinkingBand = memo(function ThinkingBand({
       // rotation, for every collapsed band in the transcript at once. A skipped
       // band is measured when it is rendered again, never before.
       if (isPaintSkipped(body)) return;
-      const lineHeight =
-        Number.parseFloat(window.getComputedStyle(body).lineHeight) || 20;
+      const lineHeight = Number.parseFloat(window.getComputedStyle(body).lineHeight) || 20;
       const previewHeight = lineHeight * REASONING_PREVIEW_LINES;
       const hiddenHeight = Math.max(0, body.scrollHeight - previewHeight);
       const nextHiddenRows = Math.ceil(hiddenHeight / lineHeight);
-      setHiddenRows(
-        nextHiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN ? nextHiddenRows : 0,
-      );
+      setHiddenRows(nextHiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN ? nextHiddenRows : 0);
     };
 
     measure();
@@ -1836,15 +1687,14 @@ export const ThinkingBand = memo(function ThinkingBand({
 
   // Collapsing is derived, not stored: a block with nothing hidden is never expanded.
   const expanded = isExpandRequested && hiddenRows > 0;
-  if (!normalized || normalized === ENCRYPTED_REASONING_PLACEHOLDER)
-    return null;
+  if (!normalized || normalized === ENCRYPTED_REASONING_PLACEHOLDER) return null;
   const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
 
   return (
     // A step's reasoning and code share one edge with no margin between them.
     // Standalone bands retain their spacing among other message blocks.
     <section
-      className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking ${railed ? "relative z-0" : "my-2 first:mt-0"}`}
+      className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking ${railed ? 'relative z-0' : 'my-2 first:mt-0'}`}
     >
       {collapsible && (
         <Disclosure
@@ -1861,7 +1711,7 @@ export const ThinkingBand = memo(function ThinkingBand({
       )}
       <div
         ref={bodyRef}
-        className={`${collapsible && !expanded ? "max-h-[3.75rem] overflow-hidden" : ""} min-w-0 italic`}
+        className={`${collapsible && !expanded ? 'max-h-[3.75rem] overflow-hidden' : ''} min-w-0 italic`}
       >
         <Markdown compact hardBreaks>
           {normalized}
@@ -1900,12 +1750,12 @@ const AttachmentTile = memo(function AttachmentTile({
   // loop, because a genuinely broken artifact gives up after the second try.
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
-  const iterationId = attachment.iteration_id ?? "";
+  const iterationId = attachment.iteration_id ?? '';
   const index = attachment.index ?? 0;
   const isVideo = attachmentIsVideo(attachment);
   const isAudio = attachmentIsAudio(attachment);
   const isPlayable = isVideo || isAudio || attachmentIsImage(attachment);
-  const name = attachment.filename || "attachment";
+  const name = attachment.filename || 'attachment';
 
   useEffect(() => {
     if (!isPlayable || !iterationId || !sid) return;
@@ -1960,10 +1810,7 @@ const AttachmentTile = memo(function AttachmentTile({
             <span className="min-w-0 truncate">{name}</span>
           </span>
         ) : !url ? (
-          <div
-            className="h-11 w-full animate-pulse bg-thinking-surface"
-            aria-hidden="true"
-          />
+          <div className="h-11 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
         ) : (
           <audio
             src={url}
@@ -1982,11 +1829,11 @@ const AttachmentTile = memo(function AttachmentTile({
   // it already holds: collapsing to a text line here would shove the reader
   // just as hard as growing did. The box belongs to `MediaPlate`/`MediaTile`,
   // which is why nothing below can change it.
-  const isTile = layout === "grid";
+  const isTile = layout === 'grid';
   const body = failed ? (
     <div
       className={`flex h-full w-full items-center gap-1.5 bg-thinking-surface font-mono text-chip text-footer-muted ${
-        isTile ? "justify-center" : "px-2"
+        isTile ? 'justify-center' : 'px-2'
       }`}
     >
       <AlertIcon className="size-3" />
@@ -2053,7 +1900,7 @@ type RecordedFile = {
 function recordedFiles(attachments: IterationAttachment[]): RecordedFile[] {
   const byIdentity = new Map<string, RecordedFile>();
   attachments.forEach((attachment) => {
-    const name = attachment.filename || "attachment";
+    const name = attachment.filename || 'attachment';
     const key = `${name}:${attachment.size ?? 0}`;
     const seen = byIdentity.get(key);
     if (seen) seen.count += 1;
@@ -2061,7 +1908,7 @@ function recordedFiles(attachments: IterationAttachment[]): RecordedFile[] {
       byIdentity.set(key, {
         key,
         name,
-        media: attachment.media_type ?? "",
+        media: attachment.media_type ?? '',
         size: attachment.size,
         count: 1,
       });
@@ -2093,9 +1940,9 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
   // own version cell, and then it is that cut's bytes the tile fetches.
   const [shownAt, setShownAt] = useState(0);
   const cut = versions[shownAt] ?? attachment;
-  const iterationId = cut.iteration_id ?? "";
+  const iterationId = cut.iteration_id ?? '';
   const index = cut.index ?? 0;
-  const name = attachment.filename || "document";
+  const name = attachment.filename || 'document';
   const needed = useCallback(() => setWanted(true), []);
 
   useEffect(() => {
@@ -2125,7 +1972,7 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
   return (
     <DocPreview
       name={name}
-      mime={attachment.media_type ?? ""}
+      mime={attachment.media_type ?? ''}
       sizeLabel={attachmentBytes(attachment.size)}
       url={url}
       failed={failed}
@@ -2166,9 +2013,7 @@ export const AttachmentRail = memo(function AttachmentRail({
   // group header summed both cuts ("2 documents · 25.6KB" over one 12.7KB note).
   // The newest cut is the row; the rest is the history the reader opens.
   const threads = collapseAttachmentVersions(
-    attachments.filter(
-      (entry) => attachmentIsPlayable(entry) || attachmentIsDoc(entry),
-    ),
+    attachments.filter((entry) => attachmentIsPlayable(entry) || attachmentIsDoc(entry)),
   );
   const media = threads.map((thread) => thread[0]);
   const threadOf = new Map(media.map((head, at) => [head, threads[at]]));
@@ -2186,7 +2031,7 @@ export const AttachmentRail = memo(function AttachmentRail({
   const layout = mediaGroupLayout(pictures.length);
   const gallery = pictures.map((attachment, at) => (
     <AttachmentTile
-      key={`${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+      key={`${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
       client={client}
       sid={sid}
       attachment={attachment}
@@ -2196,9 +2041,7 @@ export const AttachmentRail = memo(function AttachmentRail({
   ));
   // A tile with no iteration to fetch from paints nothing, so it must not count
   // towards the stack's own report either.
-  const docs = page.shown.filter(
-    (entry) => attachmentIsDoc(entry) && entry.iteration_id,
-  );
+  const docs = page.shown.filter((entry) => attachmentIsDoc(entry) && entry.iteration_id);
   // A SETTLED RUN IS A ROW OF THE TRACE, NOT A RECORDED FILE.
   //
   // Reported from the app: a finished `gh` watch read as "1 file ·
@@ -2206,16 +2049,12 @@ export const AttachmentRail = memo(function AttachmentRail({
   // while the record behind it holds the picture the run ended on and its whole
   // log. It is an artifact this app can open, so it gets an artifact's row.
   const runs = collapseAttachmentVersions(
-    attachments.filter(
-      (entry) => attachmentIsLive(entry) && entry.iteration_id,
-    ),
+    attachments.filter((entry) => attachmentIsLive(entry) && entry.iteration_id),
   ).map((thread) => thread[0]);
   const files = recordedFiles(
     attachments.filter(
       (entry) =>
-        !attachmentIsPlayable(entry) &&
-        !attachmentIsDoc(entry) &&
-        !attachmentIsLive(entry),
+        !attachmentIsPlayable(entry) && !attachmentIsDoc(entry) && !attachmentIsLive(entry),
     ),
   );
   const total = files.reduce((sum, file) => sum + file.count, 0);
@@ -2226,7 +2065,7 @@ export const AttachmentRail = memo(function AttachmentRail({
     <>
       {recordings.map((attachment) => (
         <AttachmentTile
-          key={`rec-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+          key={`rec-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
           client={client}
           sid={sid}
           attachment={attachment}
@@ -2235,14 +2074,14 @@ export const AttachmentRail = memo(function AttachmentRail({
       ))}
       {clips.map((attachment) => (
         <AttachmentTile
-          key={`${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+          key={`${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
           client={client}
           sid={sid}
           attachment={attachment}
           layout="plate"
         />
       ))}
-      {layout === "grid" ? (
+      {layout === 'grid' ? (
         <MediaGrid summary={mediaSummary(pictures)}>{gallery}</MediaGrid>
       ) : (
         gallery
@@ -2255,7 +2094,7 @@ export const AttachmentRail = memo(function AttachmentRail({
         <DocStack summary={docs.length > 1 ? docStackSummary(docs) : undefined}>
           {docs.map((attachment) => (
             <AttachmentDocTile
-              key={`doc-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+              key={`doc-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
               client={client}
               sid={sid}
               attachment={attachment}
@@ -2271,7 +2110,7 @@ export const AttachmentRail = memo(function AttachmentRail({
         <DocStack>
           {runs.map((attachment) => (
             <LiveRunRow
-              key={`run-${attachment.iteration_id ?? "iter"}-${attachment.index}`}
+              key={`run-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
               client={client}
               sid={sid}
               attachment={attachment}
@@ -2289,18 +2128,13 @@ export const AttachmentRail = memo(function AttachmentRail({
       )}
       {head && (
         <div className="mt-2 min-w-0">
-          <Disclosure
-            isOpen={open}
-            onClick={() => setOpen((current) => !current)}
-          >
+          <Disclosure isOpen={open} onClick={() => setOpen((current) => !current)}>
             <ArrowOutIcon className="size-3 shrink-0 opacity-70" />
             <span className="min-w-0 truncate">
               {head.name}
-              {head.count > 1 ? ` ×${head.count}` : ""}
+              {head.count > 1 ? ` ×${head.count}` : ''}
             </span>
-            {rest > 0 && (
-              <span className="shrink-0 opacity-70">+{rest} more</span>
-            )}
+            {rest > 0 && <span className="shrink-0 opacity-70">+{rest} more</span>}
           </Disclosure>
           {open && (
             <ul className="grid min-w-0 gap-0.5 pl-4">
@@ -2315,7 +2149,7 @@ export const AttachmentRail = memo(function AttachmentRail({
                     attachmentBytes(file.size),
                   ]
                     .filter(Boolean)
-                    .join(" · ")}
+                    .join(' · ')}
                 </li>
               ))}
             </ul>
@@ -2369,11 +2203,11 @@ function releaseRamp(id: symbol): void {
 /** Settled prose strings that are actually painted as the answer. */
 export function answeredProse(
   blocks: readonly ContentBlock[] | undefined,
-  promoted = "",
+  promoted = '',
 ): ReadonlySet<string> {
   const answered = new Set<string>();
   for (const block of blocks ?? []) {
-    if (block.type !== "prose") continue;
+    if (block.type !== 'prose') continue;
     const markdown = block.markdown?.trim();
     if (markdown) answered.add(markdown);
   }
@@ -2396,23 +2230,16 @@ const NOTHING_ANSWERED: ReadonlySet<string> = new Set<string>();
  * trace's width and again at the answer band's. The match is exact on the
  * trimmed text, so commentary that merely resembles the answer survives.
  */
-function traceProse(
-  iteration: TranscriptIteration,
-  answered: ReadonlySet<string>,
-): string {
-  const prose = iteration.assistant_prose?.trim() ?? "";
-  return answered.has(prose) ? "" : prose;
+function traceProse(iteration: TranscriptIteration, answered: ReadonlySet<string>): string {
+  const prose = iteration.assistant_prose?.trim() ?? '';
+  return answered.has(prose) ? '' : prose;
 }
 
-function traceEntry(
-  iteration: TranscriptIteration,
-  index: number,
-  answered: ReadonlySet<string>,
-) {
+function traceEntry(iteration: TranscriptIteration, index: number, answered: ReadonlySet<string>) {
   return {
     iteration,
     index,
-    thinking: iteration.thinking?.trim() ?? "",
+    thinking: iteration.thinking?.trim() ?? '',
     prose: traceProse(iteration, answered),
     forms: iteration.forms ?? [],
     attachments: iteration.attachments ?? [],
@@ -2428,12 +2255,12 @@ type TraceSegmentData = {
 };
 type Chunk =
   | {
-      kind: "code";
+      kind: 'code';
       key: string;
       forms: TranscriptForm[];
       isPython: boolean;
     }
-  | { kind: "cards"; key: string; cards: TranscriptForm[] };
+  | { kind: 'cards'; key: string; cards: TranscriptForm[] };
 
 // Consecutive TOOL-ONLY iterations are one run of work, not N bubbles: the model
 // kept calling tools without saying anything in between. Mirrors the TUI
@@ -2451,28 +2278,17 @@ function buildSegments(
         thinking ||
         prose ||
         attachments.length ||
-        forms.some(
-          (form) =>
-            showFormCode(form, formCode(form)) || toolCards(form).length,
-        ),
+        forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
     );
 
   const segments: TraceSegmentData[] = [];
   visible.forEach((entry) => {
     const open = segments.at(-1);
-    if (
-      open &&
-      !open.closed &&
-      !entry.thinking &&
-      !entry.prose &&
-      !entry.attachments.length
-    )
+    if (open && !open.closed && !entry.thinking && !entry.prose && !entry.attachments.length)
       open.items.push(entry);
     else {
       segments.push({
-        key: String(
-          entry.iteration.id ?? entry.iteration.position ?? entry.index,
-        ),
+        key: String(entry.iteration.id ?? entry.iteration.position ?? entry.index),
         head: entry,
         items: [entry],
         closed: false,
@@ -2508,12 +2324,7 @@ function sameTraceEntry(a: TraceEntry, b: TraceEntry): boolean {
 }
 
 function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
-  if (
-    a.live !== b.live ||
-    a.showCode !== b.showCode ||
-    a.client !== b.client ||
-    a.sid !== b.sid
-  )
+  if (a.live !== b.live || a.showCode !== b.showCode || a.client !== b.client || a.sid !== b.sid)
     return false;
   const before = a.segment;
   const after = b.segment;
@@ -2523,9 +2334,7 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
     before.closed === after.closed &&
     before.items.length === after.items.length &&
     sameTraceEntry(before.head, after.head) &&
-    before.items.every((entry, index) =>
-      sameTraceEntry(entry, after.items[index]),
-    )
+    before.items.every((entry, index) => sameTraceEntry(entry, after.items[index]))
   );
 }
 
@@ -2542,40 +2351,29 @@ const TraceSegment = memo(function TraceSegment({
     segment.items.forEach((entry) => {
       entry.forms.forEach((form, formIndex) => {
         if (hiddenForm(form)) return;
-        const key = `${entry.index}-${formIndex}-${form.scope ?? "form"}`;
+        const key = `${entry.index}-${formIndex}-${form.scope ?? 'form'}`;
         if (showFormCode(form, formCode(form))) {
           const pool = built.at(-1);
-          const isPython =
-            formCodeLanguage(form) === "python" && form.tag !== "user-shell";
-          if (
-            isPython &&
-            !form.comment?.trim() &&
-            pool?.kind === "code" &&
-            pool.isPython
-          )
+          const isPython = formCodeLanguage(form) === 'python' && form.tag !== 'user-shell';
+          if (isPython && !form.comment?.trim() && pool?.kind === 'code' && pool.isPython)
             pool.forms.push(form);
-          else built.push({ kind: "code", key, forms: [form], isPython });
+          else built.push({ kind: 'code', key, forms: [form], isPython });
           return;
         }
         const cards = toolCards(form);
         if (!cards.length) return;
         const pool = built.at(-1);
-        if (pool?.kind === "cards") pool.cards.push(...cards);
-        else built.push({ kind: "cards", key, cards: [...cards] });
+        if (pool?.kind === 'cards') pool.cards.push(...cards);
+        else built.push({ kind: 'cards', key, cards: [...cards] });
       });
     });
     return built;
   }, [segment]);
-  const attachments = useMemo(
-    () => segment.items.flatMap((entry) => entry.attachments),
-    [segment],
-  );
+  const attachments = useMemo(() => segment.items.flatMap((entry) => entry.attachments), [segment]);
 
   return (
-    <section className={`relative min-w-0 ${live ? transcriptEnterClass : ""}`}>
-      {segment.head.thinking && (
-        <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>
-      )}
+    <section className={`relative min-w-0 ${live ? transcriptEnterClass : ''}`}>
+      {segment.head.thinking && <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>}
       {segment.head.prose && (
         // The trace owns outer gaps; prose only separates bands within this segment.
         <div className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 [&+*]:mt-0">
@@ -2590,7 +2388,7 @@ const TraceSegment = memo(function TraceSegment({
           {chunks.map((chunk) => {
             return (
               <div key={chunk.key} className="relative min-w-0">
-                {chunk.kind === "code" ? (
+                {chunk.kind === 'code' ? (
                   <FormTrace
                     forms={chunk.forms}
                     live={live}
@@ -2604,9 +2402,7 @@ const TraceSegment = memo(function TraceSegment({
           })}
         </div>
       )}
-      {client && sid && (
-        <AttachmentRail client={client} sid={sid} attachments={attachments} />
-      )}
+      {client && sid && <AttachmentRail client={client} sid={sid} attachments={attachments} />}
     </section>
   );
 }, sameTraceSegment);
@@ -2634,16 +2430,13 @@ export const IterationTrace = memo(function IterationTrace({
   const showCode = codeOverride ?? preferredCode;
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
-  const [rampId] = useState(() => Symbol("trace-ramp"));
+  const [rampId] = useState(() => Symbol('trace-ramp'));
   useEffect(() => () => releaseRamp(rampId), [rampId]);
   // Adaptive ramp step: how many segments the next frame mounts, and when the
   // current one started (0 = none in flight).
   const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0 });
 
-  const segments = useMemo(
-    () => buildSegments(iterations, answered),
-    [iterations, answered],
-  );
+  const segments = useMemo(() => buildSegments(iterations, answered), [iterations, answered]);
 
   // How many segments at the START of the trace are still held back. The ramp
   // only ever SHRINKS it, which is what makes it safe on a turn that is still
@@ -2672,8 +2465,7 @@ export const IterationTrace = memo(function IterationTrace({
   // Where the ramp stops. `hidden` still only ever SHRINKS, so a trace that is
   // being written never folds away a segment it has already painted: the floor
   // rises under it and the ramp simply has nothing left to do.
-  const foldFloor =
-    whole || unfolded ? 0 : Math.max(0, segments.length - SEGMENT_FOLD);
+  const foldFloor = whole || unfolded ? 0 : Math.max(0, segments.length - SEGMENT_FOLD);
 
   const rampDone = hidden <= foldFloor;
 
@@ -2715,10 +2507,7 @@ export const IterationTrace = memo(function IterationTrace({
             : frameCost < RAMP_STEP_TARGET_MS
               ? step.size * RAMP_GROWTH
               : step.size;
-        step.size = Math.min(
-          SEGMENT_RAMP_MAX,
-          Math.max(SEGMENT_RAMP_MIN, next),
-        );
+        step.size = Math.min(SEGMENT_RAMP_MAX, Math.max(SEGMENT_RAMP_MIN, next));
       }
 
       step.startedAt = performance.now();
@@ -2743,21 +2532,17 @@ export const IterationTrace = memo(function IterationTrace({
           )
           .find((item) => item.attachment_id === id);
         return attachment && client && sid ? (
-          <AttachmentRail
-            client={client}
-            sid={sid}
-            attachments={[attachment]}
-          />
+          <AttachmentRail client={client} sid={sid} attachments={[attachment]} />
         ) : null;
       }}
     >
       <div ref={rootRef} className="mb-2.5 grid gap-2.5">
         {rampDone && hidden > 0 && (
           <LoadMore
-            label={`Show ${hidden} earlier step${hidden === 1 ? "" : "s"} of this turn`}
+            label={`Show ${hidden} earlier step${hidden === 1 ? '' : 's'} of this turn`}
             onClick={() => setUnfolded(true)}
           >
-            {hidden} earlier step{hidden === 1 ? "" : "s"}
+            {hidden} earlier step{hidden === 1 ? '' : 's'}
           </LoadMore>
         )}
         {shown.map((segment) => (
@@ -2780,16 +2565,13 @@ const speechDuration = (text: string) =>
 
 const speechTime = (seconds: number) => {
   const whole = Math.max(0, Math.round(seconds));
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 };
 
 const speechFrom = (text: string, position: number) => {
   if (position <= 0) return text;
-  const approximate = Math.min(
-    text.length - 1,
-    Math.floor(text.length * position),
-  );
-  const boundary = text.indexOf(" ", approximate);
+  const approximate = Math.min(text.length - 1, Math.floor(text.length * position));
+  const boundary = text.indexOf(' ', approximate);
   return text.slice(boundary < 0 ? approximate : boundary + 1).trimStart();
 };
 
@@ -2805,10 +2587,7 @@ const WAVE_ROOM = 3;
 const cutWaveTo = (source: number[], count: number) =>
   Array.from({ length: count }, (_, index) => {
     const from = Math.floor((index * source.length) / count);
-    const to = Math.max(
-      from + 1,
-      Math.floor(((index + 1) * source.length) / count),
-    );
+    const to = Math.max(from + 1, Math.floor(((index + 1) * source.length) / count));
     let peak = 0;
     for (let at = from; at < to; at += 1) peak = Math.max(peak, source[at]);
     return peak;
@@ -2820,7 +2599,7 @@ function SpeechWaveform({
   value,
   label,
   onSeek,
-  className = "",
+  className = '',
 }: {
   peaks: number[];
   value: number;
@@ -2834,16 +2613,13 @@ function SpeechWaveform({
   const frame = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
     const node = frame.current;
-    if (!node || typeof ResizeObserver === "undefined") return;
-    const watch = new ResizeObserver(([entry]) =>
-      setRoom(entry.contentRect.width),
-    );
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(([entry]) => setRoom(entry.contentRect.width));
     watch.observe(node);
     return () => watch.disconnect();
   }, []);
   const source = peaks.length ? peaks : new Array<number>(WAVE_FLAT).fill(0);
-  const fits =
-    room > 0 ? Math.max(8, Math.floor(room / WAVE_ROOM)) : source.length;
+  const fits = room > 0 ? Math.max(8, Math.floor(room / WAVE_ROOM)) : source.length;
   const bars = fits >= source.length ? source : cutWaveTo(source, fits);
   const played = value * bars.length;
   const clamp = (next: number) => onSeek(Math.max(0, Math.min(1, next)));
@@ -2853,9 +2629,7 @@ function SpeechWaveform({
     clamp((event.clientX - box.left) / box.width);
   };
   return (
-    <span
-      className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}
-    >
+    <span className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}>
       <span
         ref={frame}
         role="slider"
@@ -2869,16 +2643,12 @@ function SpeechWaveform({
           event.currentTarget.setPointerCapture?.(event.pointerId);
           seekAt(event);
         }}
-        onPointerUp={(event) =>
-          event.currentTarget.releasePointerCapture?.(event.pointerId)
-        }
+        onPointerUp={(event) => event.currentTarget.releasePointerCapture?.(event.pointerId)}
         onKeyDown={(event) => {
-          if (event.key === "ArrowRight" || event.key === "ArrowUp")
-            clamp(value + WAVE_STEP);
-          else if (event.key === "ArrowLeft" || event.key === "ArrowDown")
-            clamp(value - WAVE_STEP);
-          else if (event.key === "Home") onSeek(0);
-          else if (event.key === "End") onSeek(1);
+          if (event.key === 'ArrowRight' || event.key === 'ArrowUp') clamp(value + WAVE_STEP);
+          else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') clamp(value - WAVE_STEP);
+          else if (event.key === 'Home') onSeek(0);
+          else if (event.key === 'End') onSeek(1);
           else return;
           event.preventDefault();
         }}
@@ -2899,7 +2669,7 @@ function SpeechWaveform({
                 width={WAVE_BAR}
                 height={height}
                 rx={1}
-                className={index < played ? "fill-accent" : "fill-edge"}
+                className={index < played ? 'fill-accent' : 'fill-edge'}
               />
             );
           })}
@@ -2949,8 +2719,7 @@ export function SpeechBlock({ text }: { text: string }) {
       fromRef.current = from;
       measuredRef.current = false;
       rememberPosition(from);
-      startedAtRef.current =
-        performance.now() - from * durationRef.current * 1000;
+      startedAtRef.current = performance.now() - from * durationRef.current * 1000;
       setError(null);
       setSpeaking(true);
       void speechOutput
@@ -2991,10 +2760,7 @@ export function SpeechBlock({ text }: { text: string }) {
       // audio starts reporting its own clock - and then never again.
       if (measuredRef.current) return;
       rememberPosition(
-        Math.min(
-          0.995,
-          (performance.now() - startedAtRef.current) / (duration * 1000),
-        ),
+        Math.min(0.995, (performance.now() - startedAtRef.current) / (duration * 1000)),
       );
     }, 200);
     return () => window.clearInterval(timer);
@@ -3006,7 +2772,7 @@ export function SpeechBlock({ text }: { text: string }) {
     rememberPosition(next);
     if (speaking) play(next);
   };
-  const language = /[ąćęłńóśźż]/i.test(text) ? "pl" : "en";
+  const language = /[ąćęłńóśźż]/i.test(text) ? 'pl' : 'en';
 
   return (
     <div className="my-2">
@@ -3015,11 +2781,7 @@ export function SpeechBlock({ text }: { text: string }) {
           one row of wave and clock — and the reader opens it for the text, so the
           name is the app's field caption, caps at chip size, and keeps its chevron
           because it still opens something. */}
-      <Disclosure
-        isOpen={open}
-        tone="caption"
-        onClick={() => setOpen((was) => !was)}
-      >
+      <Disclosure isOpen={open} tone="caption" onClick={() => setOpen((was) => !was)}>
         Transcript
       </Disclosure>
       <section className="border border-accent bg-panel">
@@ -3031,7 +2793,7 @@ export function SpeechBlock({ text }: { text: string }) {
           className="flex min-h-12 items-center gap-2 pl-1 pr-2.5 mouse:min-h-9"
         >
           <IconButton
-            label={speaking ? "Pause" : "Play"}
+            label={speaking ? 'Pause' : 'Play'}
             variant="quiet"
             onClick={() => (speaking ? stop() : play())}
           >
@@ -3057,11 +2819,7 @@ export function SpeechBlock({ text }: { text: string }) {
             >
               {text}
             </p>
-            {error && (
-              <p className="px-2.5 pb-2 font-mono text-meta text-err">
-                {error}
-              </p>
-            )}
+            {error && <p className="px-2.5 pb-2 font-mono text-meta text-err">{error}</p>}
           </div>
         )}
       </section>
@@ -3070,51 +2828,46 @@ export function SpeechBlock({ text }: { text: string }) {
 }
 
 function errorText(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+  if (typeof value !== 'string') return undefined;
   const text = value.trim();
   return text || undefined;
 }
 
 function providerAttemptText(value: unknown): string | undefined {
-  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
   }
   const attempt = value as Record<string, unknown>;
   const provider = errorText(attempt.provider);
   const model = errorText(attempt.model);
   const status =
-    typeof attempt.status === "number" || typeof attempt.status === "string"
+    typeof attempt.status === 'number' || typeof attempt.status === 'string'
       ? String(attempt.status).trim()
-      : "";
+      : '';
   const reason = errorText(attempt.reason);
-  const route = [provider, model].filter(Boolean).join("/");
-  const verdict = [status, reason].filter(Boolean).join(" ");
-  return [route, verdict].filter(Boolean).join(": ") || undefined;
+  const route = [provider, model].filter(Boolean).join('/');
+  const verdict = [status, reason].filter(Boolean).join(' ');
+  return [route, verdict].filter(Boolean).join(': ') || undefined;
 }
 
 /** One failure, with the human decision first and machine evidence on demand. */
 export function ErrorBlockCard({ block }: { block: ContentBlock }) {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const structuredTitle = errorText(block.title);
-  const title = structuredTitle ?? "Turn failed";
-  const explanation = structuredTitle
-    ? errorText(block.explanation)
-    : errorText(block.message);
+  const title = structuredTitle ?? 'Turn failed';
+  const explanation = structuredTitle ? errorText(block.explanation) : errorText(block.message);
   const nextStep = errorText(block.next_step);
   const provider = errorText(block.provider);
   const requestId = errorText(block.request_id);
-  const status =
-    typeof block.status === "number" ? String(block.status) : undefined;
+  const status = typeof block.status === 'number' ? String(block.status) : undefined;
   const attempts = Array.isArray(block.attempts)
-    ? block.attempts
-        .map(providerAttemptText)
-        .filter((one): one is string => Boolean(one))
+    ? block.attempts.map(providerAttemptText).filter((one): one is string => Boolean(one))
     : [];
   const code = errorText(block.code);
   const body = errorText(block.body);
   const hasFacts = Boolean(status || provider || requestId);
   const hasDiagnostics = Boolean(code || attempts.length > 0 || body);
-  const providerLabel = block.kind === "unroutable" ? "Route" : "Provider";
+  const providerLabel = block.kind === 'unroutable' ? 'Route' : 'Provider';
   const headingId = `failure-${block.id}`;
 
   return (
@@ -3132,20 +2885,14 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
             {title}
           </h3>
           {explanation && (
-            <p className={`${PROSE} mt-1 text-body text-answer-foreground`}>
-              {explanation}
-            </p>
+            <p className={`${PROSE} mt-1 text-body text-answer-foreground`}>{explanation}</p>
           )}
         </div>
       </div>
 
       {nextStep && (
         <div className="border-t border-warn-edge px-3 py-2.5">
-          <p
-            className={`${PROSE} text-body font-medium text-answer-foreground`}
-          >
-            {nextStep}
-          </p>
+          <p className={`${PROSE} text-body font-medium text-answer-foreground`}>{nextStep}</p>
         </div>
       )}
 
@@ -3153,19 +2900,19 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
         <dl className="flex flex-wrap gap-x-5 gap-y-1 border-t border-warn-edge px-3 py-2 font-mono text-meta">
           {status && (
             <div>
-              <dt className="inline text-dialog-hint">HTTP</dt>{" "}
+              <dt className="inline text-dialog-hint">HTTP</dt>{' '}
               <dd className="inline font-semibold text-err">{status}</dd>
             </div>
           )}
           {provider && (
             <div>
-              <dt className="inline text-dialog-hint">{providerLabel}</dt>{" "}
+              <dt className="inline text-dialog-hint">{providerLabel}</dt>{' '}
               <dd className="inline">{provider}</dd>
             </div>
           )}
           {requestId && (
             <div className="min-w-0">
-              <dt className="inline text-dialog-hint">Request</dt>{" "}
+              <dt className="inline text-dialog-hint">Request</dt>{' '}
               <dd className="inline break-all">{requestId}</dd>
             </div>
           )}
@@ -3190,9 +2937,7 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
               )}
               {attempts.length > 0 && (
                 <div>
-                  <p className="font-semibold uppercase tracking-wide">
-                    Providers tried
-                  </p>
+                  <p className="font-semibold uppercase tracking-wide">Providers tried</p>
                   <ul className="mt-1 grid gap-0.5">
                     {attempts.map((attempt, index) => (
                       <li
@@ -3207,9 +2952,7 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
               )}
               {body && (
                 <div>
-                  <p className="font-semibold uppercase tracking-wide">
-                    Provider response
-                  </p>
+                  <p className="font-semibold uppercase tracking-wide">Provider response</p>
                   <pre className="mt-1 whitespace-pre-wrap break-words text-answer-foreground">
                     {body}
                   </pre>
@@ -3230,27 +2973,24 @@ export const ContentBlockView = memo(function ContentBlockView({
   onOpenAttachment?: OpenAttachment;
 }) {
   switch (block.type) {
-    case "prose":
+    case 'prose':
       return block.markdown ? (
-        <Markdown onOpenAttachment={onOpenAttachment}>
-          {block.markdown}
-        </Markdown>
+        <Markdown onOpenAttachment={onOpenAttachment}>{block.markdown}</Markdown>
       ) : null;
-    case "speech":
+    case 'speech':
       return block.text ? <SpeechBlock text={block.text} /> : null;
-    case "code":
+    case 'code':
       return (
         <Markdown onOpenAttachment={onOpenAttachment}>
-          {fenced(block.text ?? "", block.language ?? "")}
+          {fenced(block.text ?? '', block.language ?? '')}
         </Markdown>
       );
-    case "reasoning":
+    case 'reasoning':
       return block.text ? <ThinkingBand>{block.text}</ThinkingBand> : null;
-    case "tool": {
-      const output = block.output == null ? "" : jsonText(block.output);
-      const status =
-        typeof block.status === "string" ? block.status.trim() : "";
-      const stdout = [status, output].filter(Boolean).join("\n");
+    case 'tool': {
+      const output = block.output == null ? '' : jsonText(block.output);
+      const status = typeof block.status === 'string' ? block.status.trim() : '';
+      const stdout = [status, output].filter(Boolean).join('\n');
       const form: TranscriptForm = {
         op: block.tool ?? undefined,
         stdout: stdout || undefined,
@@ -3258,17 +2998,17 @@ export const ContentBlockView = memo(function ContentBlockView({
       };
       return <ToolCard form={form} />;
     }
-    case "error":
+    case 'error':
       return <ErrorBlockCard block={block} />;
-    case "attachment":
+    case 'attachment':
       return (
         <div className="my-2 flex w-fit items-center gap-1.5 border border-dialog-edge bg-panel px-2.5 py-1.5 font-mono text-meta text-dialog-foreground">
           <ArrowOutIcon />
-          <span className="min-w-0 truncate">{block.name ?? "Attachment"}</span>
+          <span className="min-w-0 truncate">{block.name ?? 'Attachment'}</span>
           <small className="text-dialog-hint">{block.media_type}</small>
         </div>
       );
-    case "notice":
+    case 'notice':
       return (
         <div className="my-2 border border-dialog-edge bg-panel px-2.5 py-2 font-mono text-meta text-dialog-hint">
           {block.message}
@@ -3285,18 +3025,17 @@ function fallbackAnswer(turn: TranscriptTurn): string {
     const answer = iterations[index].answer?.trim();
     if (answer) return answer;
   }
-  return "";
+  return '';
 }
 
 function runningTurnPhase(turn: TranscriptTurn, agentName: string): string {
   const iterations = turn.iterations ?? [];
   const iteration = iterations.length;
-  const request = (turn.request ?? "").trim();
+  const request = (turn.request ?? '').trim();
   if (iteration === 0) {
-    if (request.startsWith("!&")) return `${agentName} is starting a command`;
-    if (request.startsWith("!")) return `${agentName} is running a command`;
-    if (request.startsWith("/"))
-      return `${agentName} is running: ${request.split(/\s+/, 1)[0]}`;
+    if (request.startsWith('!&')) return `${agentName} is starting a command`;
+    if (request.startsWith('!')) return `${agentName} is running a command`;
+    if (request.startsWith('/')) return `${agentName} is running: ${request.split(/\s+/, 1)[0]}`;
     return `${agentName} is waiting for an update`;
   }
   const last = iterations.at(-1);
@@ -3340,10 +3079,7 @@ function TurnPhaseLine({
   // A phase with no start is a WAIT, not a run. The slot that says a finished turn
   // is being fetched used to print the whole turn's clock: "Loading latest
   // changes... 137m 42s", over an answer that had been on the screen for hours.
-  const elapsed =
-    startedAt === undefined
-      ? null
-      : formatDuration(Math.max(0, now - startedAt));
+  const elapsed = startedAt === undefined ? null : formatDuration(Math.max(0, now - startedAt));
 
   return (
     <>
@@ -3355,7 +3091,7 @@ function TurnPhaseLine({
         <span>
           {ticking ? <>&nbsp;&nbsp;</> : null}
           {phase}
-          {terminal ? null : "..."}
+          {terminal ? null : '...'}
           {ticking && elapsed ? <>&nbsp;&nbsp;{elapsed}</> : null}
         </span>
       </div>
@@ -3376,7 +3112,7 @@ const PAINT_SKIP_QUIET_MS = 400;
 
 // Keep the observed turn and one neighbor on each side warm; IntersectionObserver avoids
 // forced layout on the scroll path.
-const PAINT_SKIP_NEAR_MARGIN = "100%";
+const PAINT_SKIP_NEAR_MARGIN = '100%';
 
 /** Find and cache the transcript scroller used as the observer root. */
 const boxScrollers = new WeakMap<Element, Element | null>();
@@ -3386,14 +3122,10 @@ function scrollerOf(box: Element): Element | null {
   if (!wrapper) return null;
   if (boxScrollers.has(wrapper)) return boxScrollers.get(wrapper) ?? null;
   let scroller: Element | null = null;
-  if (typeof window !== "undefined") {
-    for (
-      let parent: Element | null = wrapper;
-      parent;
-      parent = parent.parentElement
-    ) {
+  if (typeof window !== 'undefined') {
+    for (let parent: Element | null = wrapper; parent; parent = parent.parentElement) {
       const overflow = window.getComputedStyle(parent).overflowY;
-      if (overflow === "auto" || overflow === "scroll") {
+      if (overflow === 'auto' || overflow === 'scroll') {
         scroller = parent;
         break;
       }
@@ -3443,7 +3175,7 @@ function settle(hood: Neighbourhood): void {
 }
 
 function neighbourhoodFor(root: Element | null): Neighbourhood | null {
-  if (typeof IntersectionObserver === "undefined") return null;
+  if (typeof IntersectionObserver === 'undefined') return null;
   const known = root ? scrollerNeighbourhoods.get(root) : windowNeighbourhood;
   if (known) return known;
   const seen = new Map<Element, boolean>();
@@ -3452,8 +3184,7 @@ function neighbourhoodFor(root: Element | null): Neighbourhood | null {
   const observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        if (seen.has(entry.target))
-          seen.set(entry.target, entry.isIntersecting);
+        if (seen.has(entry.target)) seen.set(entry.target, entry.isIntersecting);
       }
       settle(hood);
     },
@@ -3472,10 +3203,7 @@ function neighbourhoodFor(root: Element | null): Neighbourhood | null {
  * before the quiet period the skip waits out, and warmth gates nothing but
  * arming.
  */
-function observeNear(
-  box: Element,
-  onNear: (near: boolean) => void,
-): () => void {
+function observeNear(box: Element, onNear: (near: boolean) => void): () => void {
   const hood = neighbourhoodFor(scrollerOf(box));
   if (!hood) return () => {};
   hood.seen.set(box, false);
@@ -3517,7 +3245,7 @@ function useMeasuredPaintSkip(live: boolean) {
 
     /** Look again after the quiet period: nothing else will report stillness. */
     const soon = () => {
-      if (recheck !== null || typeof window === "undefined") return;
+      if (recheck !== null || typeof window === 'undefined') return;
       recheck = window.setTimeout(() => {
         recheck = null;
         scheduleBoxes([box]);
@@ -3527,15 +3255,15 @@ function useMeasuredPaintSkip(live: boolean) {
     const unwatch = () => {
       content?.disconnect();
       content = null;
-      box.removeEventListener("load", unarm, true);
+      box.removeEventListener('load', unarm, true);
     };
 
     const drop = () => {
       unwatch();
       armed = null;
       seen = null;
-      box.style.contentVisibility = "";
-      box.style.containIntrinsicSize = "";
+      box.style.contentVisibility = '';
+      box.style.containIntrinsicSize = '';
     };
 
     /** Something moved under the skip: measure the turn again, from scratch. */
@@ -3546,7 +3274,7 @@ function useMeasuredPaintSkip(live: boolean) {
     };
 
     const watchContent = () => {
-      if (content || typeof MutationObserver === "undefined") return;
+      if (content || typeof MutationObserver === 'undefined') return;
       // Attributes are left out on purpose: arming writes two of this box's
       // own, and a turn nobody is painting is a turn nobody can toggle. A
       // picture that finishes loading mutates no DOM at all, so its `load`
@@ -3557,7 +3285,7 @@ function useMeasuredPaintSkip(live: boolean) {
         childList: true,
         characterData: true,
       });
-      box.addEventListener("load", unarm, true);
+      box.addEventListener('load', unarm, true);
     };
 
     if (live) {
@@ -3614,7 +3342,7 @@ function useMeasuredPaintSkip(live: boolean) {
         // off-screen 20 000 px turn then advertises a 20 000 px intrinsic WIDTH,
         // widening the transcript until the whole app is rendered as a thin strip.
         box.style.containIntrinsicSize = `auto ${width}px auto ${height}px`;
-        box.style.contentVisibility = "auto";
+        box.style.contentVisibility = 'auto';
         watchContent();
       };
     };
@@ -3628,8 +3356,7 @@ function useMeasuredPaintSkip(live: boolean) {
     const stop = observeBox(box, measure);
     scheduleBoxes([box]);
     return () => {
-      if (recheck !== null && typeof window !== "undefined")
-        window.clearTimeout(recheck);
+      if (recheck !== null && typeof window !== 'undefined') window.clearTimeout(recheck);
       stop();
       unwatchNear();
       drop();
@@ -3641,7 +3368,7 @@ function useMeasuredPaintSkip(live: boolean) {
 
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
-  agentName = "Vis",
+  agentName = 'Vis',
   streaming = false,
   progressLabel,
   pending,
@@ -3684,31 +3411,26 @@ export const AssistantMessage = memo(function AssistantMessage({
   isForking?: boolean;
 }) {
   const blocks = turn.content ?? [];
-  const fallback = blocks.length ? "" : fallbackAnswer(turn);
+  const fallback = blocks.length ? '' : fallbackAnswer(turn);
   // One answer, one copy: the trace never repeats prose the answer band under it
   // already paints — including the answer PROMOTED out of the last iteration when
   // the row carries no content blocks (issue #145).
-  const answered = useMemo(
-    () => answeredProse(turn.content, fallback),
-    [turn.content, fallback],
-  );
-  const cancelled =
-    turn.status === "cancelled" || turn.prior_outcome === "cancelled";
+  const answered = useMemo(() => answeredProse(turn.content, fallback), [turn.content, fallback]);
+  const cancelled = turn.status === 'cancelled' || turn.prior_outcome === 'cancelled';
   const emptyStatus =
     !streaming &&
     !blocks.length &&
     !fallback &&
     !cancelled &&
-    turn.status !== "completed" &&
-    turn.status !== "running"
-      ? (turn.status ?? "No response")
+    turn.status !== 'completed' &&
+    turn.status !== 'running'
+      ? (turn.status ?? 'No response')
       : null;
   // A row still IN FLIGHT has no footer to show. Usage, cost and duration only
   // exist once the turn ends, so mid-turn the summary degrades to a bare
   // `provider/model` (the gateway stamps it from the last completed iteration's
   // routing) — a finished-looking meta line under a turn that is still working.
-  const inFlight =
-    streaming || IN_FLIGHT_STATUSES.has(String(turn.status ?? ""));
+  const inFlight = streaming || IN_FLIGHT_STATUSES.has(String(turn.status ?? ''));
   const meta =
     !inFlight && !commandTurn(turn) && (!cancelled || assistantUsage(turn))
       ? turnMetaSummary(turn)
@@ -3728,19 +3450,15 @@ export const AssistantMessage = memo(function AssistantMessage({
       ref={paintSkip}
     >
       <div
-        className={`mb-1 flex items-center justify-between gap-2 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
+        className={`mb-1 flex items-center justify-between gap-2 font-mono text-meta font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
       >
         <span>{agentName}</span>
         {onFork && (
           // Reserve the action's space; reveal it on answer hover or keyboard focus.
           <span className="-my-1 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
-            <MetaButton
-              onClick={onFork}
-              disabled={isForking}
-              aria-label="Fork from here"
-            >
+            <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from here">
               <ForkIcon className="size-3" aria-hidden />
-              {isForking ? "Forking..." : "Fork from here"}
+              {isForking ? 'Forking...' : 'Fork from here'}
             </MetaButton>
           </span>
         )}
@@ -3760,34 +3478,23 @@ export const AssistantMessage = memo(function AssistantMessage({
             label (`text-meta`) and the meta footer (`text-chip`) still step down from it. */}
         {(blocks.length > 0 || fallback || emptyStatus) && (
           <div
-            className={`bg-answer text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
+            className={`bg-answer text-ui ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}
           >
             {blocks.map((block) => (
-              <ContentBlockView
-                key={block.id}
-                block={block}
-                onOpenAttachment={onOpenAttachment}
-              />
+              <ContentBlockView key={block.id} block={block} onOpenAttachment={onOpenAttachment} />
             ))}
-            {fallback && (
-              <Markdown onOpenAttachment={onOpenAttachment}>
-                {fallback}
-              </Markdown>
-            )}
+            {fallback && <Markdown onOpenAttachment={onOpenAttachment}>{fallback}</Markdown>}
             {emptyStatus && <span>{emptyStatus}</span>}
           </div>
         )}
         {liveViewPanel}
         {streaming ? (
-          <TurnPhaseLine
-            phase={progressLabel ?? `${agentName} is working`}
-            startedAt={startedAt}
-          />
+          <TurnPhaseLine phase={progressLabel ?? `${agentName} is working`} startedAt={startedAt} />
         ) : cancelled ? (
           <TurnPhaseLine phase="Cancelled by user." terminal />
         ) : pending ? (
           <TurnPhaseLine phase={pending} />
-        ) : turn.status === "running" ? (
+        ) : turn.status === 'running' ? (
           // A row this screen has stopped following still reads `running`, so it
           // still says so: the spinner and the elapsed clock go (they are what
           // made a finished turn look alive), the words stay. Rendering nothing
@@ -3800,10 +3507,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         ) : null}
         {meta && (
           <footer className="mt-5 min-w-0 text-right font-mono text-chip text-footer-muted">
-            <div
-              className="overflow-hidden text-ellipsis whitespace-nowrap"
-              title={meta}
-            >
+            <div className="overflow-hidden text-ellipsis whitespace-nowrap" title={meta}>
               {meta}
             </div>
             {fallbackNote && (
@@ -3825,7 +3529,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 // picture survives a restart after the clipboard or temp file it came from is
 // gone. Some rows store the data URL whole and some only its payload.
 function attachmentSrc(att: GatewayAttachment): string {
-  return att.base64.startsWith("data:")
+  return att.base64.startsWith('data:')
     ? att.base64
     : `data:${att.media_type};base64,${att.base64}`;
 }
@@ -3839,38 +3543,58 @@ function attachmentKey(att: GatewayAttachment, index: number): string {
 /** User files keep their original bytes and a usable action in the transcript. */
 function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const name = attachment.filename || "Attachment";
+  const [notice, setNotice] = useState('');
+  const name = attachment.filename || 'Attachment';
   const media = attachment.media_type;
   const url = attachment.base64 ? attachmentSrc(attachment) : null;
   const size = attachmentBytes(attachment.size);
   if (isDocMedia(media, name)) {
-    return <DocPreview name={name} mime={media} sizeLabel={size} url={url}
-      failed={!url} onNeeded={() => {}} />;
+    return (
+      <DocPreview
+        name={name}
+        mime={media}
+        sizeLabel={size}
+        url={url}
+        failed={!url}
+        onNeeded={() => {}}
+      />
+    );
   }
   const verb = artifactShareVerb(name, media);
   return (
     <div>
-      <ListRow disabled={busy || !url} aria-label={`${verb} ${name}`} onClick={async () => {
-        if (!url) return;
-        setBusy(true);
-        setNotice("");
-        try {
-          const blob = await (await fetch(url)).blob();
-          setNotice(await shareArtifact(blob, name, media));
-        } catch {
-          setNotice("Could not share file. Try again.");
-        } finally {
-          setBusy(false);
-        }
-      }}>
+      <ListRow
+        disabled={busy || !url}
+        aria-label={`${verb} ${name}`}
+        onClick={async () => {
+          if (!url) return;
+          setBusy(true);
+          setNotice('');
+          try {
+            const blob = await (await fetch(url)).blob();
+            setNotice(await shareArtifact(blob, name, media));
+          } catch {
+            setNotice('Could not share file. Try again.');
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-title text-dialog-foreground" title={name}>{name}</span>
-          <span className="block font-mono text-ui text-dialog-hint">{[artifactMedia(attachment), size].filter(Boolean).join(" · ")}</span>
+          <span className="block truncate font-mono text-title text-dialog-foreground" title={name}>
+            {name}
+          </span>
+          <span className="block font-mono text-ui text-dialog-hint">
+            {[artifactMedia(attachment), size].filter(Boolean).join(' · ')}
+          </span>
         </span>
-        <span className="font-mono text-ui text-accent-ink">{busy ? "Preparing…" : verb}</span>
+        <span className="font-mono text-ui text-accent-ink">{busy ? 'Preparing…' : verb}</span>
       </ListRow>
-      {(notice || !url) && <p role="status" className="px-3 pb-2 font-mono text-ui text-dialog-hint">{!url ? "File bytes unavailable." : notice}</p>}
+      {(notice || !url) && (
+        <p role="status" className="px-3 pb-2 font-mono text-ui text-dialog-hint">
+          {!url ? 'File bytes unavailable.' : notice}
+        </p>
+      )}
     </div>
   );
 }
@@ -3886,25 +3610,19 @@ export const UserMessage = memo(function UserMessage({
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
   // in the assistant trace, so only the `user` rail belongs in the user bubble.
-  const userAttachments = (attachments ?? []).filter((a) => (a.source ?? "user") === "user");
-  const mediaAttachments = userAttachments.filter((a) =>
-    !!a.base64 && /^(image|video|audio)\//.test(a.media_type),
+  const userAttachments = (attachments ?? []).filter((a) => (a.source ?? 'user') === 'user');
+  const mediaAttachments = userAttachments.filter(
+    (a) => !!a.base64 && /^(image|video|audio)\//.test(a.media_type),
   );
   const files = userAttachments.filter((a) => !/^(image|video|audio)\//.test(a.media_type));
   // The very rule the assistant rail follows (`mediaGroupLayout`): ONE picture
   // is a plate with its own caption, several are a gallery. A clip always keeps
   // the plate, since the platform's controls do not fit a gallery tile, and a
   // recording is a row of its own because it has nothing to paint.
-  const recordings = mediaAttachments.filter((a) =>
-    Boolean(a.media_type?.startsWith("audio/")),
-  );
-  const clips = mediaAttachments.filter((a) =>
-    Boolean(a.media_type?.startsWith("video/")),
-  );
+  const recordings = mediaAttachments.filter((a) => Boolean(a.media_type?.startsWith('audio/')));
+  const clips = mediaAttachments.filter((a) => Boolean(a.media_type?.startsWith('video/')));
   const pictures = mediaAttachments.filter(
-    (a) =>
-      !a.media_type?.startsWith("video/") &&
-      !a.media_type?.startsWith("audio/"),
+    (a) => !a.media_type?.startsWith('video/') && !a.media_type?.startsWith('audio/'),
   );
   const layout = mediaGroupLayout(pictures.length);
   // These bytes are inline, so there is no pulse to swap out — but a picture
@@ -3917,7 +3635,7 @@ export const UserMessage = memo(function UserMessage({
     <ExpandableImage
       key={att.id ?? `pic-${index}`}
       src={attachmentSrc(att)}
-      alt={att.filename ?? "attachment"}
+      alt={att.filename ?? 'attachment'}
       galleryAt={index}
       frameClassName="h-full w-full"
       className={fill ? mediaTileContentClass : mediaContentClass}
@@ -3928,16 +3646,14 @@ export const UserMessage = memo(function UserMessage({
   // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
   return (
     <article className="mt-4 w-full">
-      <div className="mb-1 font-mono text-meta font-bold text-you-role">
-        You
-      </div>
+      <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
       <div
         className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}
       >
         {parts.map((part) =>
-          part.type === "text" ? (
+          part.type === 'text' ? (
             <span key={part.key}>{part.text}</span>
-          ) : part.type === "image" ? (
+          ) : part.type === 'image' ? (
             <span
               key={part.key}
               className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
@@ -3968,7 +3684,9 @@ export const UserMessage = memo(function UserMessage({
       {files.length > 0 && (
         <div className={`mt-2.5 min-w-0 ${RAIL_SPINE_PAPER}`}>
           <DocStack>
-            {files.map((attachment, index) => <UserFileAttachment key={attachmentKey(attachment, index)} attachment={attachment} />)}
+            {files.map((attachment, index) => (
+              <UserFileAttachment key={attachmentKey(attachment, index)} attachment={attachment} />
+            ))}
           </DocStack>
         </div>
       )}
@@ -3986,20 +3704,11 @@ export const UserMessage = memo(function UserMessage({
               transcription={att.transcription}
               transcriptionStatus={att.transcription_status}
             >
-              <audio
-                src={attachmentSrc(att)}
-                controls
-                preload="metadata"
-                className="h-11 w-full"
-              />
+              <audio src={attachmentSrc(att)} controls preload="metadata" className="h-11 w-full" />
             </MediaRecording>
           ))}
           {clips.map((att, index) => (
-            <MediaPlate
-              key={att.id ?? `clip-${index}`}
-              name={att.filename}
-              meta={mediaMeta(att)}
-            >
+            <MediaPlate key={att.id ?? `clip-${index}`} name={att.filename} meta={mediaMeta(att)}>
               <video
                 src={attachmentSrc(att)}
                 controls
@@ -4009,12 +3718,10 @@ export const UserMessage = memo(function UserMessage({
               />
             </MediaPlate>
           ))}
-          {layout === "grid" ? (
+          {layout === 'grid' ? (
             <MediaGrid summary={mediaSummary(pictures)}>
               {pictures.map((att, index) => (
-                <MediaTile key={att.id ?? `tile-${index}`}>
-                  {picture(att, index, true)}
-                </MediaTile>
+                <MediaTile key={att.id ?? `tile-${index}`}>{picture(att, index, true)}</MediaTile>
               ))}
             </MediaGrid>
           ) : (

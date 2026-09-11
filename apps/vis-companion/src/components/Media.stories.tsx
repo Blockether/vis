@@ -1,9 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import {
-  PICTURE_SUMMARY,
-  RECORDING_TRANSCRIPT,
-  STORY_PICTURES,
-} from '../dev/story-data';
+import { PICTURE_SUMMARY, RECORDING_TRANSCRIPT, STORY_PICTURES } from '../dev/story-data';
 import { mediaContentClass, mediaTileContentClass } from '../lib/media-frame';
 import { MediaGrid, MediaPlate, MediaRecording, MediaTile } from './Media';
 
@@ -65,11 +61,7 @@ export const Grid: Story = {
 /** A memo with words: the transcription folds under the player, quoted. */
 export const Recording: Story = {
   render: () => (
-    <MediaRecording
-      name="memo-2.m4a"
-      meta="M4A · 412KB"
-      transcription={RECORDING_TRANSCRIPT}
-    >
+    <MediaRecording name="memo-2.m4a" meta="M4A · 412KB" transcription={RECORDING_TRANSCRIPT}>
       <audio controls preload="metadata" className="h-11 w-full" />
     </MediaRecording>
   ),

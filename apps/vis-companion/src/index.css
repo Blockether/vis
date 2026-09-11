@@ -365,7 +365,6 @@
   }
 }
 
-
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
@@ -425,19 +424,19 @@
   label,
   select,
   a[href],
-  [role="button"],
-  [role="tab"],
-  [role="option"] {
+  [role='button'],
+  [role='tab'],
+  [role='option'] {
     @apply cursor-pointer;
   }
 
   button,
-  [role="button"] {
+  [role='button'] {
     @apply touch-manipulation select-none disabled:cursor-default;
   }
 
   button:disabled,
-  [aria-disabled="true"] {
+  [aria-disabled='true'] {
     @apply cursor-default;
   }
 }

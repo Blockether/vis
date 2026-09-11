@@ -67,7 +67,11 @@ const SECRETS = {
   apns_env: [APNS, 'environment', 'sandbox | production'],
   fcm_service_account: [FCM, 'service_account', 'Firebase service-account JSON (Android push)'],
   fcm_project_id: [FCM, 'project_id', 'Firebase project id (inferred from the JSON)'],
-  fcm_google_services: [FCM, 'google_services', 'google-services.json stamped into the Android build'],
+  fcm_google_services: [
+    FCM,
+    'google_services',
+    'google-services.json stamped into the Android build',
+  ],
   play_service_account: [PLAY, 'service_account', 'Google Play Developer API service-account JSON'],
   play_package: [PLAY, 'package', 'Play package name (defaults to the Capacitor appId)'],
   keystore: [ANDROID, 'keystore', 'upload keystore (.jks), base64 — signs every release build'],
@@ -88,14 +92,26 @@ const die = (msg) => {
   process.exit(1);
 };
 
-const entry = (name) => SECRETS[name] ?? die(`unknown secret "${name}"\n  known: ${Object.keys(SECRETS).join(', ')}`);
+const entry = (name) =>
+  SECRETS[name] ?? die(`unknown secret "${name}"\n  known: ${Object.keys(SECRETS).join(', ')}`);
 
 const put = (name, value) => {
   const [service, account] = entry(name);
   if (!value || !value.trim()) die(`refusing to store an empty ${name}`);
   const res = spawnSync(
     'security',
-    ['add-generic-password', '-U', '-s', service, '-a', account, '-l', `${service}:${account}`, '-w', value],
+    [
+      'add-generic-password',
+      '-U',
+      '-s',
+      service,
+      '-a',
+      account,
+      '-l',
+      `${service}:${account}`,
+      '-w',
+      value,
+    ],
     { stdio: ['ignore', 'ignore', 'inherit'] },
   );
   if (res.status !== 0) die(`could not store ${name} in the keychain`);
@@ -103,7 +119,8 @@ const put = (name, value) => {
 };
 
 // `security -w` prints hex for anything that is not plain printable ASCII.
-const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+const unhex = (s) =>
+  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
 
 const peek = (name) => {
   const [service, account] = entry(name);
@@ -114,7 +131,8 @@ const peek = (name) => {
 };
 
 const stdin = () => {
-  if (process.stdin.isTTY) die('no value given and stdin is a terminal — pipe it in, or pass it as an argument');
+  if (process.stdin.isTTY)
+    die('no value given and stdin is a terminal — pipe it in, or pass it as an argument');
   return readFileSync(0, 'utf8').trim();
 };
 
@@ -141,7 +159,9 @@ switch (cmd) {
           ? `${v.length} bytes of key material`
           : `${v.slice(0, 4)}…`
         : '—';
-      console.log(`${v ? '✓' : '·'} ${name.padEnd(14)} ${shown.padEnd(28)} ${service}/${account}  ${what}`);
+      console.log(
+        `${v ? '✓' : '·'} ${name.padEnd(14)} ${shown.padEnd(28)} ${service}/${account}  ${what}`,
+      );
     }
     break;
   }
@@ -158,32 +178,44 @@ switch (cmd) {
 
   case 'rm': {
     const [service, account] = entry(args[1]);
-    spawnSync('security', ['delete-generic-password', '-s', service, '-a', account], { stdio: 'inherit' });
+    spawnSync('security', ['delete-generic-password', '-s', service, '-a', account], {
+      stdio: 'inherit',
+    });
     break;
   }
 
   case 'asc': {
     // App Store Connect API key: what xcodebuild/altool authenticate with, so a
     // release never needs an interactive 2FA prompt.
-    const { pem, keyId } = readP8(args[1] ?? die('usage: secrets.mjs asc <AuthKey_XXXX.p8> --issuer <uuid>'));
-    const issuer = flag('issuer') ?? die('--issuer is required (App Store Connect > Users and Access > Integrations)');
+    const { pem, keyId } = readP8(
+      args[1] ?? die('usage: secrets.mjs asc <AuthKey_XXXX.p8> --issuer <uuid>'),
+    );
+    const issuer =
+      flag('issuer') ??
+      die('--issuer is required (App Store Connect > Users and Access > Integrations)');
     put('asc_key', pem);
     put('asc_key_id', flag('key-id') ?? keyId ?? die('cannot infer the key id — pass --key-id'));
     put('asc_issuer_id', issuer);
     if (flag('team')) put('team_id', flag('team'));
-    console.log('\n✓ App Store Connect key stored. `npm run release:ios` now uploads headlessly.\n');
+    console.log(
+      '\n✓ App Store Connect key stored. `npm run release:ios` now uploads headlessly.\n',
+    );
     break;
   }
 
   case 'apns': {
     // APNs auth key: read by the gateway, never by this app.
-    const { pem, keyId } = readP8(args[1] ?? die('usage: secrets.mjs apns <AuthKey_XXXX.p8> --team <id> --topic <bundle id>'));
+    const { pem, keyId } = readP8(
+      args[1] ?? die('usage: secrets.mjs apns <AuthKey_XXXX.p8> --team <id> --topic <bundle id>'),
+    );
     put('apns_key', pem);
     put('apns_key_id', flag('key-id') ?? keyId ?? die('cannot infer the key id — pass --key-id'));
     put('apns_team_id', flag('team') ?? die('--team is required'));
     put('apns_topic', flag('topic') ?? die('--topic is required (your bundle id, exactly)'));
     put('apns_env', flag('env') ?? 'production');
-    console.log('\n✓ APNs key stored. Restart the gateway; Settings ▸ Notifications flips to ready.');
+    console.log(
+      '\n✓ APNs key stored. Restart the gateway; Settings ▸ Notifications flips to ready.',
+    );
     console.log('  The .p8 on disk is now redundant — shred it:  rm -P <the file>\n');
     break;
   }
@@ -197,13 +229,18 @@ switch (cmd) {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      die(`${path} is not JSON — download it from Firebase console ▸ Project settings ▸ Service accounts`);
+      die(
+        `${path} is not JSON — download it from Firebase console ▸ Project settings ▸ Service accounts`,
+      );
     }
     if (parsed.type !== 'service_account' || !parsed.private_key || !parsed.client_email) {
       die('that JSON is not a service-account key (needs type, client_email, private_key)');
     }
     put('fcm_service_account', raw);
-    put('fcm_project_id', flag('project') ?? parsed.project_id ?? die('cannot infer the project id — pass --project'));
+    put(
+      'fcm_project_id',
+      flag('project') ?? parsed.project_id ?? die('cannot infer the project id — pass --project'),
+    );
     console.log(`\n✓ FCM service account stored for project ${parsed.project_id}.`);
     console.log('  Restart the gateway; Android devices can now be notified.');
     console.log('  The JSON on disk is now redundant — shred it:  rm -P <the file>\n');
@@ -222,8 +259,11 @@ switch (cmd) {
     } catch {
       die('that file is not valid JSON');
     }
-    const pkgs = (parsed.client ?? []).map((c) => c?.client_info?.android_client_info?.package_name).filter(Boolean);
-    if (!pkgs.length) die('that JSON is not a google-services.json (no client[].client_info.android_client_info)');
+    const pkgs = (parsed.client ?? [])
+      .map((c) => c?.client_info?.android_client_info?.package_name)
+      .filter(Boolean);
+    if (!pkgs.length)
+      die('that JSON is not a google-services.json (no client[].client_info.android_client_info)');
     put('fcm_google_services', raw);
     console.log(`\n✓ google-services.json stored for ${pkgs.join(', ')}.`);
     console.log('  Run `npm run prepare:android` (or any android script) to stamp it in.\n');
@@ -249,7 +289,9 @@ switch (cmd) {
     put('play_service_account', raw);
     if (flag('package')) put('play_package', flag('package'));
     console.log(`\n✓ Play service account stored (${parsed.client_email}).`);
-    console.log('  Grant it release access in Play Console ▸ Users and permissions if you have not.');
+    console.log(
+      '  Grant it release access in Play Console ▸ Users and permissions if you have not.',
+    );
     console.log('  Then: npm run release:android  # triggers the matching two-store release');
     console.log('  The JSON on disk is now redundant — shred it:  rm -P <the file>\n');
     break;
@@ -269,9 +311,28 @@ switch (cmd) {
       try {
         const res = spawnSync(
           'keytool',
-          ['-genkeypair', '-v', '-keystore', file, '-storetype', 'PKCS12', '-alias', alias, '-keyalg', 'RSA', '-keysize', '4096',
-            '-validity', '10000', '-storepass', password, '-keypass', password,
-            '-dname', flag('dname') ?? 'CN=Vis, OU=Vis Companion, O=Blockether, C=PL'],
+          [
+            '-genkeypair',
+            '-v',
+            '-keystore',
+            file,
+            '-storetype',
+            'PKCS12',
+            '-alias',
+            alias,
+            '-keyalg',
+            'RSA',
+            '-keysize',
+            '4096',
+            '-validity',
+            '10000',
+            '-storepass',
+            password,
+            '-keypass',
+            password,
+            '-dname',
+            flag('dname') ?? 'CN=Vis, OU=Vis Companion, O=Blockether, C=PL',
+          ],
           { stdio: ['ignore', 'ignore', 'inherit'] },
         );
         if (res.status !== 0) die('keytool failed — is a JDK on PATH? (brew install temurin)');
@@ -284,7 +345,9 @@ switch (cmd) {
       }
       console.log(`\n✓ generated a fresh upload keystore (alias ${alias}, PKCS12, RSA 4096).`);
       console.log('  It exists ONLY in the keychain — back the keychain up, or export it with');
-      console.log('    npm run secrets -- export-keystore > upload.jks   (then store it somewhere safe)\n');
+      console.log(
+        '    npm run secrets -- export-keystore > upload.jks   (then store it somewhere safe)\n',
+      );
       break;
     }
     if (args[1] === 'adopt') {
@@ -293,7 +356,8 @@ switch (cmd) {
       // replaced (Play ties the upload key to the app). Read from android/keystore.properties
       // so no password is ever typed on a command line.
       const props = resolve(new URL('../android/keystore.properties', import.meta.url).pathname);
-      if (!existsSync(props)) die('no android/keystore.properties to adopt — pass the .jks path instead');
+      if (!existsSync(props))
+        die('no android/keystore.properties to adopt — pass the .jks path instead');
       const kv = Object.fromEntries(
         readFileSync(props, 'utf8')
           .split('\n')
@@ -306,11 +370,17 @@ switch (cmd) {
       put('keystore_password', kv.storePassword ?? die('keystore.properties has no storePassword'));
       put('key_alias', kv.keyAlias ?? 'upload');
       put('key_password', kv.keyPassword ?? kv.storePassword);
-      console.log(`\n✓ adopted ${store} (alias ${kv.keyAlias}). It is now reproducible on any machine`);
+      console.log(
+        `\n✓ adopted ${store} (alias ${kv.keyAlias}). It is now reproducible on any machine`,
+      );
       console.log('  with this keychain, and CI can take it as VIS_ANDROID_KEYSTORE (base64).\n');
       break;
     }
-    const path = args[1] ?? die('usage: secrets.mjs keystore <upload.jks> --alias <a> [--store-pass <p>]  |  keystore create  |  keystore adopt');
+    const path =
+      args[1] ??
+      die(
+        'usage: secrets.mjs keystore <upload.jks> --alias <a> [--store-pass <p>]  |  keystore create  |  keystore adopt',
+      );
     const p = resolve(path.replace(/^~/, process.env.HOME ?? '~'));
     if (!existsSync(p)) die(`no such keystore: ${p}`);
     const storePass = flag('store-pass') ?? die('--store-pass is required');
@@ -335,18 +405,44 @@ switch (cmd) {
     const asc = need(['asc_key', 'asc_key_id', 'asc_issuer_id']);
     const apns = need(['apns_key', 'apns_key_id', 'apns_team_id', 'apns_topic']);
     const fcm = need(['fcm_service_account', 'fcm_project_id']);
-    console.log(asc.length ? `· release: falls back to Xcode's signed-in account (missing ${asc.join(', ')})` : '✓ release: App Store Connect API key ready');
-    console.log(apns.length ? `· push iOS:     NOT configured (missing ${apns.join(', ')})` : '✓ push iOS:     APNs key ready');
-    console.log(fcm.length ? `· push Android: NOT configured (missing ${fcm.join(', ')})` : '✓ push Android: FCM service account ready');
+    console.log(
+      asc.length
+        ? `· release: falls back to Xcode's signed-in account (missing ${asc.join(', ')})`
+        : '✓ release: App Store Connect API key ready',
+    );
+    console.log(
+      apns.length
+        ? `· push iOS:     NOT configured (missing ${apns.join(', ')})`
+        : '✓ push iOS:     APNs key ready',
+    );
+    console.log(
+      fcm.length
+        ? `· push Android: NOT configured (missing ${fcm.join(', ')})`
+        : '✓ push Android: FCM service account ready',
+    );
     const play = need(['play_service_account']);
     const ks = need(['keystore', 'keystore_password', 'key_alias']);
-    console.log(play.length ? '· Play:          NOT configured (missing play_service_account)' : '✓ Play:          Developer API service account ready');
-    console.log(ks.length ? `· Android sign:  NOT configured (missing ${ks.join(', ')}) — \`npm run secrets keystore create\`` : '✓ Android sign:  upload keystore ready');
-    if (!peek('team_id')) console.log('· team_id unset — VIS_IOS_TEAM_ID or the script default is used');
+    console.log(
+      play.length
+        ? '· Play:          NOT configured (missing play_service_account)'
+        : '✓ Play:          Developer API service account ready',
+    );
+    console.log(
+      ks.length
+        ? `· Android sign:  NOT configured (missing ${ks.join(', ')}) — \`npm run secrets keystore create\``
+        : '✓ Android sign:  upload keystore ready',
+    );
+    if (!peek('team_id'))
+      console.log('· team_id unset — VIS_IOS_TEAM_ID or the script default is used');
     break;
   }
 
   default:
-    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 32).join('\n'));
+    console.log(
+      readFileSync(new URL(import.meta.url), 'utf8')
+        .split('\n')
+        .slice(1, 32)
+        .join('\n'),
+    );
     process.exit(cmd ? 1 : 0);
 }

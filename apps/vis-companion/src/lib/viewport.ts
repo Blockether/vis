@@ -35,8 +35,7 @@ function isKeyboardInputElement(element: Element | null): element is HTMLElement
   return (
     tag === 'TEXTAREA' ||
     element.isContentEditable ||
-    (tag === 'INPUT' &&
-      !NON_TEXT_INPUT_TYPES.has((element as HTMLInputElement).type.toLowerCase()))
+    (tag === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((element as HTMLInputElement).type.toLowerCase()))
   );
 }
 
@@ -60,7 +59,9 @@ function keyboardCacheSlot(orientation = keyboardOrientation()): string {
 // first focus after a cold app launch can place the composer before that event.
 function loadKeyboardHeightCache(): KeyboardHeightCache {
   try {
-    const parsed: unknown = JSON.parse(globalThis.localStorage?.getItem(KEYBOARD_HEIGHT_CACHE_KEY) ?? '{}');
+    const parsed: unknown = JSON.parse(
+      globalThis.localStorage?.getItem(KEYBOARD_HEIGHT_CACHE_KEY) ?? '{}',
+    );
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return Object.fromEntries(
       Object.entries(parsed).filter(
@@ -87,10 +88,7 @@ function isPlausibleKeyboardHeight(height: number, fullHeight: number): boolean 
   return Number.isFinite(height) && height >= fullHeight * 0.15 && height <= fullHeight * 0.7;
 }
 
-function keyboardHeightForPrepin(
-  fullHeight: number,
-  orientation = keyboardOrientation(),
-): number {
+function keyboardHeightForPrepin(fullHeight: number, orientation = keyboardOrientation()): number {
   const cached = keyboardHeightCache[keyboardCacheSlot(orientation)];
   if (cached && isPlausibleKeyboardHeight(cached, fullHeight)) return cached;
   return Math.round(fullHeight * ESTIMATED_KEYBOARD_HEIGHT_RATIO[orientation]);
@@ -117,7 +115,10 @@ function viewportOrientationSettled(): boolean {
 function rememberKeyboardHeight(height: number): void {
   keyboardHeightCache[keyboardCacheSlot()] = height;
   try {
-    globalThis.localStorage?.setItem(KEYBOARD_HEIGHT_CACHE_KEY, JSON.stringify(keyboardHeightCache));
+    globalThis.localStorage?.setItem(
+      KEYBOARD_HEIGHT_CACHE_KEY,
+      JSON.stringify(keyboardHeightCache),
+    );
   } catch {
     // Private mode / quota: the in-memory cache still makes later focuses instant.
   }
@@ -366,12 +367,10 @@ export function scrollAnchorFor(
  * restore (no anchor, or the turn was unmounted meanwhile) and the caller owns
  * the fallback.
  */
-export function applyScrollAnchor(
-  viewport: AnchorScroller,
-  anchor: ScrollAnchor | null,
-): boolean {
+export function applyScrollAnchor(viewport: AnchorScroller, anchor: ScrollAnchor | null): boolean {
   if (!anchor || !anchor.el.isConnected) return false;
-  const drift = anchor.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - anchor.offset;
+  const drift =
+    anchor.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - anchor.offset;
   if (Math.abs(drift) > 0.5) viewport.scrollTop = Math.max(0, viewport.scrollTop + drift);
   return true;
 }
@@ -696,11 +695,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       // yielding to a keyboard driver that will never move again, and the shell
       // would stay frozen at a box the device no longer has. Release it here
       // unless the keyboard is genuinely still up.
-      if (
-        keyboardPinned &&
-        !softKeyboardUp &&
-        !isKeyboardInputElement(document.activeElement)
-      ) {
+      if (keyboardPinned && !softKeyboardUp && !isKeyboardInputElement(document.activeElement)) {
         keyboardPinned = false;
         pinnedShellHeight = null;
         setBox(null);
@@ -803,8 +798,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
             : Math.max(0, Math.min(Math.round(height), Math.round(physicalLimit)));
         const next = { height: nextHeight, top: 0 };
         const root = document.documentElement;
-        keyboardPinOrientation =
-          root.clientWidth > root.clientHeight ? 'landscape' : 'portrait';
+        keyboardPinOrientation = root.clientWidth > root.clientHeight ? 'landscape' : 'portrait';
         pinnedShellHeight = next.height;
         setBox(next);
       };
@@ -829,7 +823,8 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         keyboardPinned = true;
         setSafeBottom(SAFE_BOTTOM_KEYBOARD);
         pin(
-          rootHeight - keyboardHeightForPrepin(rootHeight, rootLandscape ? 'landscape' : 'portrait'),
+          rootHeight -
+            keyboardHeightForPrepin(rootHeight, rootLandscape ? 'landscape' : 'portrait'),
           rootHeight,
         );
         return true;
@@ -911,10 +906,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // same reversed pair while leaving the field focused, so the order alone
         // is not proof of rotation. Preserve the pin briefly, then require an
         // actual rotation signal; otherwise reclaim the full shell.
-        if (
-          outOfOrderDidHideTimer !== null &&
-          isKeyboardInputElement(document.activeElement)
-        ) {
+        if (outOfOrderDidHideTimer !== null && isKeyboardInputElement(document.activeElement)) {
           window.clearTimeout(outOfOrderDidHideTimer);
           outOfOrderDidHideTimer = window.setTimeout(() => {
             outOfOrderDidHideTimer = null;
@@ -961,8 +953,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // `onWillHide`; seeing it still set means this may be iOS's reversed
         // rotation pair, so hold briefly for the matching will event.
         if (softKeyboardUp && isKeyboardInputElement(document.activeElement)) {
-          if (outOfOrderDidHideTimer !== null)
-            window.clearTimeout(outOfOrderDidHideTimer);
+          if (outOfOrderDidHideTimer !== null) window.clearTimeout(outOfOrderDidHideTimer);
           outOfOrderDidHideTimer = window.setTimeout(() => {
             outOfOrderDidHideTimer = null;
             if (isViewportRotating() || keyboardExpectedAfterRotation) return;
@@ -988,15 +979,12 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // edges, in none of the app's colours, laid over the composer for as
         // long as you type. A screen here owns ONE field, so its field-to-field
         // arrows navigate nothing, and `Done` repeats the composer's own send.
-        void Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(
-          () => undefined,
-        );
+        void Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => undefined);
       } catch {
         /* plugin unavailable */
       }
       disposeKeyboard = () => {
-        if (outOfOrderDidHideTimer !== null)
-          window.clearTimeout(outOfOrderDidHideTimer);
+        if (outOfOrderDidHideTimer !== null) window.clearTimeout(outOfOrderDidHideTimer);
         for (const sub of subs) void sub.then((handle) => handle.remove()).catch(() => undefined);
       };
     }

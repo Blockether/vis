@@ -23,10 +23,17 @@ import {
 } from './human-input';
 
 it('reads the canonical SDK input View and its field values', async () => {
-  const { default: canonical } = await import('../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json');
+  const { default: canonical } = await import(
+    '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json'
+  );
   const request = humanInputRequestFromWire(canonical.input);
   expect(request?.id).toBe(canonical.answer.request_id);
-  expect(request?.fields[0]).toMatchObject({ id: 'name', name: 'name', type: 'plaintext', is_required: true });
+  expect(request?.fields[0]).toMatchObject({
+    id: 'name',
+    name: 'name',
+    type: 'plaintext',
+    is_required: true,
+  });
 });
 
 /** Engine `view/request->view` output; `gateway.view-test` pins these bytes. */
@@ -123,7 +130,9 @@ describe('humanInputRequestFromWire', () => {
     const named = humanInputRequestFromWire({
       id: 'r',
       title: 'T',
-      fields: [{ name: 'token', type: 'plaintext', label: 'API token', description: 'from 1Password' }],
+      fields: [
+        { name: 'token', type: 'plaintext', label: 'API token', description: 'from 1Password' },
+      ],
     });
     expect(named?.fields[0]?.name).toBe('token');
     expect(named?.fields[0]?.id).toBe('token');
@@ -157,13 +166,13 @@ describe('humanInputRequestFromWire', () => {
     expect(humanInputRequestFromWire({ title: 'T', fields: [{ id: 'a' }] })).toBeNull();
     expect(humanInputRequestFromWire({ id: 'r', fields: [{ id: 'a' }] })).toBeNull();
     expect(humanInputRequestFromWire({ id: 'r', title: 'T', fields: [] })).toBeNull();
-    expect(humanInputRequestFromWire({ id: 'r', title: 'T', fields: [{ type: 'plaintext' }] }))
-      .toBeNull();
+    expect(
+      humanInputRequestFromWire({ id: 'r', title: 'T', fields: [{ type: 'plaintext' }] }),
+    ).toBeNull();
   });
 
   it('keeps only the requests a REST snapshot can show', () => {
-    expect(inputViewsFromWire([WIRE, null, { id: 'x' }]).map((row) => row.id))
-      .toEqual(['req-1']);
+    expect(inputViewsFromWire([WIRE, null, { id: 'x' }]).map((row) => row.id)).toEqual(['req-1']);
     expect(inputViewsFromWire(undefined)).toEqual([]);
   });
 });
@@ -350,7 +359,9 @@ describe('range fields', () => {
   });
 });
 
-const only = (extra: Record<string, unknown>): { request: HumanInputRequest; field: HumanInputField } => {
+const only = (
+  extra: Record<string, unknown>,
+): { request: HumanInputRequest; field: HumanInputField } => {
   const request = humanInputRequestFromWire({
     id: 'r',
     title: 'T',
@@ -377,7 +388,6 @@ describe('otp fields', () => {
     expect(humanInputOtpDigits(field, '1234567890')).toBe('123456');
     expect(humanInputOtpDigits(field, 'nope')).toBe('');
   });
-
 });
 
 describe('validation', () => {

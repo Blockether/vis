@@ -2,20 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const nativeCompressionStream = globalThis.CompressionStream;
 const nativeDecompressionStream = globalThis.DecompressionStream;
 const files = vi.hoisted(() => new Map<string, string>());
-const appendFile = vi.hoisted(() => vi.fn(async ({ path, data }: { path: string; data: string }) => {
-  files.set(path, `${files.get(path) ?? ''}${data}`);
-}));
-const deleteFile = vi.hoisted(() => vi.fn(async ({ path }: { path: string }) => {
-  files.delete(path);
-}));
+const appendFile = vi.hoisted(() =>
+  vi.fn(async ({ path, data }: { path: string; data: string }) => {
+    files.set(path, `${files.get(path) ?? ''}${data}`);
+  }),
+);
+const deleteFile = vi.hoisted(() =>
+  vi.fn(async ({ path }: { path: string }) => {
+    files.delete(path);
+  }),
+);
 const shareArtifact = vi.hoisted(() =>
   vi.fn(
-    async (
-      _blob: Blob,
-      _name: string,
-      _mediaType: string,
-      _options: Record<string, unknown>,
-    ) => 'Diagnostics shared.',
+    async (_blob: Blob, _name: string, _mediaType: string, _options: Record<string, unknown>) =>
+      'Diagnostics shared.',
   ),
 );
 const lifecycle = vi.hoisted(() => ({
@@ -162,7 +162,10 @@ describe('persistent app diagnostics', () => {
       away_ms: 5_000,
       inflight_request_count: 1,
       inflight_requests: [
-        expect.objectContaining({ request_id: started.details.request_id, session_id: 'session-42' }),
+        expect.objectContaining({
+          request_id: started.details.request_id,
+          session_id: 'session-42',
+        }),
       ],
     });
     expect(finished.details).toMatchObject({
@@ -206,7 +209,10 @@ describe('persistent app diagnostics', () => {
     expect(mediaType).toBe('application/x-ndjson');
     expect(options).toMatchObject({ noun: 'Diagnostics', dialogTitle: 'Export Vis diagnostics' });
     const text = await (blob as Blob).text();
-    const records = text.trim().split('\n').map((line) => JSON.parse(line));
+    const records = text
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
     expect(records[0]).toMatchObject({ kind: 'vis-app-diagnostics', schema: 1 });
     expect(records.some((record) => record.event === 'older')).toBe(true);
     expect(records.some((record) => record.event === 'render_failed')).toBe(true);
@@ -223,9 +229,7 @@ describe('persistent app diagnostics', () => {
     const [blob, name, mediaType] = shareArtifact.mock.calls[0]!;
     expect(name).toMatch(/^vis-diagnostics-.*\.jsonl\.gz$/u);
     expect(mediaType).toBe('application/gzip');
-    const decompressed = (blob as Blob)
-      .stream()
-      .pipeThrough(new nativeDecompressionStream('gzip'));
+    const decompressed = (blob as Blob).stream().pipeThrough(new nativeDecompressionStream('gzip'));
     const text = await new Response(decompressed).text();
     expect(text).toContain('"event":"compress_me"');
   });

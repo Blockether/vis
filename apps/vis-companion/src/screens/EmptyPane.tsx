@@ -1,4 +1,4 @@
-import { SidebarToggle } from "../components/ui";
+import { SidebarToggle } from '../components/ui';
 
 /**
  * What the desk's transcript column holds while no session is open.
@@ -11,11 +11,7 @@ import { SidebarToggle } from "../components/ui";
  * Its one control is the list's own toggle, on the leading edge of a band the
  * height of a session's header, so the control stands still when a session opens.
  */
-export function EmptyPane({
-  sidebar,
-}: {
-  sidebar?: { isShown: boolean; onToggle: () => void };
-}) {
+export function EmptyPane({ sidebar }: { sidebar?: { isShown: boolean; onToggle: () => void } }) {
   return (
     <section
       aria-label="No session open"
@@ -34,12 +30,9 @@ export function EmptyPane({
           aria-hidden="true"
         />
         <div className="mt-4 max-w-md">
-          <h2 className="text-head font-semibold text-dialog-foreground">
-            Pick a session
-          </h2>
+          <h2 className="text-head font-semibold text-dialog-foreground">Pick a session</h2>
           <p className="mt-1 text-body text-dialog-hint">
-            Open one from the list, or start a new one with the + beside a
-            project.
+            Open one from the list, or start a new one with the + beside a project.
           </p>
         </div>
       </div>

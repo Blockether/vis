@@ -24,7 +24,8 @@ const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const RETRY_AFTER_CAP_MS = 60_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const base64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+const base64url = (buf) =>
+  Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
 /**
  * Service-account JWT → OAuth2 access token. Valid an hour; a release never outlives it.
@@ -34,23 +35,37 @@ const base64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, ''
 export const playToken = async (serviceAccount, { scope = SCOPE } = {}) => {
   const sa = typeof serviceAccount === 'string' ? JSON.parse(serviceAccount) : serviceAccount;
   if (sa.type !== 'service_account' || !sa.private_key || !sa.client_email) {
-    throw new Error('that JSON is not a Google service-account key (needs type, client_email, private_key)');
+    throw new Error(
+      'that JSON is not a Google service-account key (needs type, client_email, private_key)',
+    );
   }
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
   const claims = base64url(
-    JSON.stringify({ iss: sa.client_email, scope, aud: sa.token_uri ?? 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }),
+    JSON.stringify({
+      iss: sa.client_email,
+      scope,
+      aud: sa.token_uri ?? 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+    }),
   );
-  const signature = base64url(cryptoSign('RSA-SHA256', Buffer.from(`${header}.${claims}`), createPrivateKey(sa.private_key)));
+  const signature = base64url(
+    cryptoSign('RSA-SHA256', Buffer.from(`${header}.${claims}`), createPrivateKey(sa.private_key)),
+  );
   const assertion = `${header}.${claims}.${signature}`;
 
   const res = await fetch(sa.token_uri ?? 'https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
   });
   const json = await res.json();
-  if (!res.ok) throw new Error(`Google OAuth → ${res.status} ${json.error_description ?? json.error ?? ''}`);
+  if (!res.ok)
+    throw new Error(`Google OAuth → ${res.status} ${json.error_description ?? json.error ?? ''}`);
   return { token: json.access_token, account: sa.client_email };
 };
 
@@ -64,11 +79,18 @@ const parseJson = (text) => {
 
 const retryAfterMs = (res) => {
   const seconds = Number(res.headers?.get?.('retry-after'));
-  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1_000, RETRY_AFTER_CAP_MS) : undefined;
+  return Number.isFinite(seconds) && seconds > 0
+    ? Math.min(seconds * 1_000, RETRY_AFTER_CAP_MS)
+    : undefined;
 };
 
 /** One Play request, replayed through transient transport and API failures. */
-export const playCall = async (token, method, path, { body, contentType = 'application/json', base = API, wait = sleep } = {}) => {
+export const playCall = async (
+  token,
+  method,
+  path,
+  { body, contentType = 'application/json', base = API, wait = sleep } = {},
+) => {
   for (let n = 0; ; n += 1) {
     let res;
     let text;
@@ -79,7 +101,9 @@ export const playCall = async (token, method, path, { body, contentType = 'appli
           Authorization: `Bearer ${token}`,
           ...(body === undefined ? {} : { 'Content-Type': contentType }),
         },
-        ...(body === undefined ? {} : { body: contentType === 'application/json' ? JSON.stringify(body) : body }),
+        ...(body === undefined
+          ? {}
+          : { body: contentType === 'application/json' ? JSON.stringify(body) : body }),
       });
       text = await res.text();
     } catch (cause) {
@@ -105,7 +129,9 @@ const call = playCall;
 
 /** The track names this listing actually has, read inside an edit the caller already holds. */
 const editTracks = async (token, packageName, editId) =>
-  ((await call(token, 'GET', `/applications/${packageName}/edits/${editId}/tracks`)).tracks ?? []).map((t) => t.track);
+  (
+    (await call(token, 'GET', `/applications/${packageName}/edits/${editId}/tracks`)).tracks ?? []
+  ).map((t) => t.track);
 
 /**
  * The four tracks EVERY Play listing has, lowest to highest. A listing can carry more than
@@ -150,10 +176,12 @@ export const parseTracks = (values, available = PLAY_TRACKS) => {
     .map((v) => v.trim())
     .filter(Boolean);
   const known = available === null ? null : inPlayOrder(available);
-  if (!asked.length || asked.includes(ALL_TRACKS)) return (known ?? PLAY_TRACKS).filter((t) => t !== 'production');
+  if (!asked.length || asked.includes(ALL_TRACKS))
+    return (known ?? PLAY_TRACKS).filter((t) => t !== 'production');
   if (!known) return inPlayOrder(asked);
   const unknown = asked.find((t) => !known.includes(t));
-  if (unknown) throw new Error(`unknown track "${unknown}" (${[ALL_TRACKS, ...known].join(' | ')})`);
+  if (unknown)
+    throw new Error(`unknown track "${unknown}" (${[ALL_TRACKS, ...known].join(' | ')})`);
   return known.filter((t) => asked.includes(t));
 };
 
@@ -167,11 +195,20 @@ export const parseTracks = (values, available = PLAY_TRACKS) => {
  * rollout. `draft: true` uploads without releasing — the Play Console "draft" state.
  * `available` is the listing's real track names, so `all` means every track that EXISTS.
  */
-export const planRelease = ({ tracks, available, releaseName, notes, locale = 'en-US', userFraction, draft = false }) => {
+export const planRelease = ({
+  tracks,
+  available,
+  releaseName,
+  notes,
+  locale = 'en-US',
+  userFraction,
+  draft = false,
+}) => {
   const wanted = parseTracks(tracks, available);
   // Play stages a rollout per track, so one fraction shared by several tracks is not a thing
   // the API can express — and guessing which track the fraction meant is worse than refusing.
-  if (userFraction && wanted.length > 1) throw new Error(`a staged rollout targets exactly one track, not ${wanted.join(', ')}`);
+  if (userFraction && wanted.length > 1)
+    throw new Error(`a staged rollout targets exactly one track, not ${wanted.join(', ')}`);
   const status = draft ? 'draft' : userFraction ? 'inProgress' : 'completed';
   return {
     tracks: wanted,
@@ -181,7 +218,9 @@ export const planRelease = ({ tracks, available, releaseName, notes, locale = 'e
       versionCodes: [String(versionCode)],
       status,
       ...(userFraction && !draft ? { userFraction: Number(userFraction) } : {}),
-      ...(notes?.trim() ? { releaseNotes: [{ language: locale, text: notes.trim().slice(0, 500) }] } : {}),
+      ...(notes?.trim()
+        ? { releaseNotes: [{ language: locale, text: notes.trim().slice(0, 500) }] }
+        : {}),
     }),
   };
 };
@@ -217,7 +256,9 @@ const withEdit = async ({ token, packageName, log }, body) => {
 const assignTracks = async ({ token, packageName, editId, plan, versionCode, log }) => {
   const release = plan.release(versionCode);
   for (const track of plan.tracks) {
-    await call(token, 'PUT', `/applications/${packageName}/edits/${editId}/tracks/${track}`, { body: { track, releases: [release] } });
+    await call(token, 'PUT', `/applications/${packageName}/edits/${editId}/tracks/${track}`, {
+      body: { track, releases: [release] },
+    });
     log(`· track ${track} ← ${release.name} (${release.status})`);
   }
   return { ok: true, versionCode: String(versionCode), tracks: plan.tracks, status: plan.status };
@@ -231,21 +272,44 @@ const assignTracks = async ({ token, packageName, editId, plan, versionCode, log
  * the edit against the listing's real tracks — which is what makes `all` mean every track that
  * exists, custom closed tracks included, and what refuses a misspelled one before the upload.
  */
-export const publishBundle = async ({ serviceAccount, packageName, aab, log = console.log, ...plan }) => {
+export const publishBundle = async ({
+  serviceAccount,
+  packageName,
+  aab,
+  log = console.log,
+  ...plan
+}) => {
   planRelease({ ...plan, available: null });
   const { token, account } = await playToken(serviceAccount);
   log(`· authenticated as ${account}`);
 
   return withEdit({ token, packageName, log }, async (editId) => {
-    const planned = planRelease({ ...plan, available: await editTracks(token, packageName, editId) });
-    log(`· tracks ${planned.tracks.join(', ')}`);
-    const uploaded = await call(token, 'POST', `/applications/${packageName}/edits/${editId}/bundles?uploadType=media`, {
-      body: aab,
-      contentType: 'application/octet-stream',
-      base: UPLOAD,
+    const planned = planRelease({
+      ...plan,
+      available: await editTracks(token, packageName, editId),
     });
-    log(`· uploaded versionCode ${uploaded.versionCode} (sha1 ${uploaded.sha1?.slice(0, 12) ?? '?'}…)`);
-    return assignTracks({ token, packageName, editId, plan: planned, versionCode: uploaded.versionCode, log });
+    log(`· tracks ${planned.tracks.join(', ')}`);
+    const uploaded = await call(
+      token,
+      'POST',
+      `/applications/${packageName}/edits/${editId}/bundles?uploadType=media`,
+      {
+        body: aab,
+        contentType: 'application/octet-stream',
+        base: UPLOAD,
+      },
+    );
+    log(
+      `· uploaded versionCode ${uploaded.versionCode} (sha1 ${uploaded.sha1?.slice(0, 12) ?? '?'}…)`,
+    );
+    return assignTracks({
+      token,
+      packageName,
+      editId,
+      plan: planned,
+      versionCode: uploaded.versionCode,
+      log,
+    });
   });
 };
 
@@ -254,14 +318,24 @@ export const publishBundle = async ({ serviceAccount, packageName, aab, log = co
  * recovery path after an upload landed on the wrong track, and the cheap way to line a
  * lagging track up with the build the others already serve.
  */
-export const promoteBundle = async ({ serviceAccount, packageName, versionCode, log = console.log, ...plan }) => {
-  if (!/^\d+$/.test(String(versionCode))) throw new Error(`versionCode must be a positive integer, got "${versionCode}"`);
+export const promoteBundle = async ({
+  serviceAccount,
+  packageName,
+  versionCode,
+  log = console.log,
+  ...plan
+}) => {
+  if (!/^\d+$/.test(String(versionCode)))
+    throw new Error(`versionCode must be a positive integer, got "${versionCode}"`);
   planRelease({ ...plan, available: null });
   const { token, account } = await playToken(serviceAccount);
   log(`· authenticated as ${account}`);
 
   return withEdit({ token, packageName, log }, async (editId) => {
-    const planned = planRelease({ ...plan, available: await editTracks(token, packageName, editId) });
+    const planned = planRelease({
+      ...plan,
+      available: await editTracks(token, packageName, editId),
+    });
     log(`· reusing versionCode ${versionCode} on ${planned.tracks.join(', ')}`);
     return assignTracks({ token, packageName, editId, plan: planned, versionCode, log });
   });
@@ -272,10 +346,19 @@ export const tracks = async ({ serviceAccount, packageName }) => {
   const { token } = await playToken(serviceAccount);
   const edit = await call(token, 'POST', `/applications/${packageName}/edits`);
   try {
-    const { tracks: found = [] } = await call(token, 'GET', `/applications/${packageName}/edits/${edit.id}/tracks`);
+    const { tracks: found = [] } = await call(
+      token,
+      'GET',
+      `/applications/${packageName}/edits/${edit.id}/tracks`,
+    );
     return found.map((t) => ({
       track: t.track,
-      releases: (t.releases ?? []).map((r) => ({ name: r.name, status: r.status, versionCodes: r.versionCodes, userFraction: r.userFraction })),
+      releases: (t.releases ?? []).map((r) => ({
+        name: r.name,
+        status: r.status,
+        versionCodes: r.versionCodes,
+        userFraction: r.userFraction,
+      })),
     }));
   } finally {
     await call(token, 'DELETE', `/applications/${packageName}/edits/${edit.id}`).catch(() => {});

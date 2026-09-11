@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
-import { act, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type * as GatewayModule from "./lib/gateway";
+import type * as GatewayModule from './lib/gateway';
 
-type IncompatibleListener = Parameters<
-  typeof GatewayModule.onGatewayIncompatible
->[0];
+type IncompatibleListener = Parameters<typeof GatewayModule.onGatewayIncompatible>[0];
 
 const gatewayEvent = vi.hoisted(() => ({
   listener: null as IncompatibleListener | null,
   registrations: 0,
 }));
 
-vi.mock("./lib/gateway", async (importOriginal) => {
+vi.mock('./lib/gateway', async (importOriginal) => {
   const actual = await importOriginal<typeof GatewayModule>();
   return {
     ...actual,
@@ -27,8 +25,8 @@ vi.mock("./lib/gateway", async (importOriginal) => {
   };
 });
 
-import { renderApp } from "./app-harness";
-import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from "./lib/compat";
+import { renderApp } from './app-harness';
+import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from './lib/compat';
 
 let restore = () => {};
 afterEach(() => {
@@ -38,21 +36,21 @@ afterEach(() => {
   gatewayEvent.registrations = 0;
 });
 
-describe("the running app compatibility listener", () => {
+describe('the running app compatibility listener', () => {
   // Regression, issue #ea166d2d-d22f-4a89-b117-d058641b7422: the mismatch
   // screen exposed retry and machine-switch actions that should not be available.
-  it("keeps a settled refusal without recovery actions", async () => {
+  it('keeps a settled refusal without recovery actions', async () => {
     const view = renderApp({
       machines: [
         {
           routes: {
-            "/healthz": {
-              status: "ok",
+            '/healthz': {
+              status: 'ok',
               protocol: {
                 protocol: APP_PROTOCOL,
                 min_client: APP_PROTOCOL + 1,
                 min_gateway: APP_MIN_GATEWAY_PROTOCOL,
-                version: "0.0.0-test",
+                version: '0.0.0-test',
               },
             },
           },
@@ -64,19 +62,14 @@ describe("the running app compatibility listener", () => {
       view.restore();
     };
 
-    await waitFor(() =>
-      expect(screen.getByText("Update this app")).toBeTruthy(),
-    );
-    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Choose another machine" }),
-    ).toBeNull();
+    await waitFor(() => expect(screen.getByText('Update this app')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Choose another machine' })).toBeNull();
     expect(gatewayEvent.registrations).toBe(1);
     expect(gatewayEvent.listener).not.toBeNull();
 
     const healthReads = () =>
-      view.requests.filter((href) => new URL(href).pathname === "/healthz")
-        .length;
+      view.requests.filter((href) => new URL(href).pathname === '/healthz').length;
     const before = healthReads();
 
     await act(async () => {

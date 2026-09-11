@@ -5,7 +5,6 @@
 
 (def ^:private contract (delay (document/load! "test-runner")))
 
-
 (def selector-keys
   "Optional selector keys accepted by every runner."
   (mapv keyword (get @contract "selector_keys")))
@@ -23,7 +22,6 @@
   "True when `value` satisfies the test-result JSON Schema."
   [value]
   (document/valid? "test-runner" "result" value))
-
 
 (defn ->str-vec
   "Coerce a scalar or sequence to trimmed non-blank strings."

@@ -1,13 +1,13 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
-import { STORY_RESPONSE_CONTROL_VALUES } from "../dev/story-data";
-import { ComposerResponseControls } from "./ComposerResponseControls";
+import { STORY_RESPONSE_CONTROL_VALUES } from '../dev/story-data';
+import { ComposerResponseControls } from './ComposerResponseControls';
 
 const meta = {
-  title: "Session/Composer response controls",
+  title: 'Session/Composer response controls',
   component: ComposerResponseControls,
-  parameters: { layout: "centered" },
+  parameters: { layout: 'centered' },
   args: {
     controls: {
       model: { ...STORY_RESPONSE_CONTROL_VALUES.model, choose: fn() },
@@ -34,14 +34,12 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const AvailableOptions: Story = {
-  name: "All provider options",
+  name: 'All provider options',
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Change provider and model" }),
-    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Change provider and model' }));
     await expect(args.controls.model.choose).toHaveBeenCalledOnce();
-    await userEvent.click(canvas.getByRole("button", { name: /^Verbosity —/ }));
+    await userEvent.click(canvas.getByRole('button', { name: /^Verbosity —/ }));
     await expect(args.controls.verbosity?.cycle).toHaveBeenCalledOnce();
   },
 };

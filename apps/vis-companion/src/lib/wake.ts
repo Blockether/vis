@@ -101,12 +101,18 @@ function install(): void {
       if (removed) sub.remove();
       else pending.push(sub);
     };
-    void App.addListener('resume', scheduleFromNative).then(track).catch(() => {});
-    void App.addListener('pause', markAway).then(track).catch(() => {});
+    void App.addListener('resume', scheduleFromNative)
+      .then(track)
+      .catch(() => {});
+    void App.addListener('pause', markAway)
+      .then(track)
+      .catch(() => {});
     void App.addListener('appStateChange', ({ isActive }) => {
       if (isActive) scheduleFromNative();
       else markAway();
-    }).then(track).catch(() => {});
+    })
+      .then(track)
+      .catch(() => {});
     uninstallNative = () => {
       removed = true;
       for (const sub of pending.splice(0)) sub.remove();

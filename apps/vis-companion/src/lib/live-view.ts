@@ -16,7 +16,11 @@ export const LIVE_NODE_TYPES = [
   'log',
   'table',
   'link',
-  'paragraph', 'heading', 'code', 'spinner', 'button',
+  'paragraph',
+  'heading',
+  'code',
+  'spinner',
+  'button',
 ] as const;
 
 /**
@@ -39,14 +43,7 @@ export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
  * and gave it to the form that produced it, so a view no longer carries a
  * projection for a patch to replace.
  */
-export const LIVE_OPS = [
-  'set',
-  'append',
-  'remove',
-  'clear',
-  'add-node',
-  'remove-node',
-] as const;
+export const LIVE_OPS = ['set', 'append', 'remove', 'clear', 'add-node', 'remove-node'] as const;
 
 /** What a link POINTS AT (`live-link-targets`). CLOSED. */
 export const LIVE_LINK_TARGETS = ['attachment', 'path', 'url'] as const;
@@ -180,12 +177,33 @@ export interface LiveLinkNode extends LiveNodeBase {
   links: LiveLink[];
 }
 
-export interface LiveParagraphNode extends LiveNodeBase { type: 'paragraph'; text: string; }
-export interface LiveHeadingNode extends LiveNodeBase { type: 'heading'; text: string; level: 1 | 2 | 3 | 4 | 5 | 6; }
-export interface LiveCodeNode extends LiveNodeBase { type: 'code'; text: string; language?: string; }
+export interface LiveParagraphNode extends LiveNodeBase {
+  type: 'paragraph';
+  text: string;
+}
+export interface LiveHeadingNode extends LiveNodeBase {
+  type: 'heading';
+  text: string;
+  level: 1 | 2 | 3 | 4 | 5 | 6;
+}
+export interface LiveCodeNode extends LiveNodeBase {
+  type: 'code';
+  text: string;
+  language?: string;
+}
 export type LiveSpinnerVariant = 'braille' | 'dots' | 'line' | 'pulse';
-export interface LiveSpinnerNode extends LiveNodeBase { type: 'spinner'; text: string; variant: LiveSpinnerVariant; is_active: boolean; }
-export interface LiveButtonNode extends LiveNodeBase { type: 'button'; label: string; is_disabled: boolean; clicks: number; }
+export interface LiveSpinnerNode extends LiveNodeBase {
+  type: 'spinner';
+  text: string;
+  variant: LiveSpinnerVariant;
+  is_active: boolean;
+}
+export interface LiveButtonNode extends LiveNodeBase {
+  type: 'button';
+  label: string;
+  is_disabled: boolean;
+  clicks: number;
+}
 
 /**
  * Nodes standing side by side (`row`) or one under the other (`column`). The run
@@ -207,7 +225,12 @@ export type LiveLeafNode =
   | LiveStepsNode
   | LiveLogNode
   | LiveTableNode
-  | LiveLinkNode | LiveParagraphNode | LiveHeadingNode | LiveCodeNode | LiveSpinnerNode | LiveButtonNode;
+  | LiveLinkNode
+  | LiveParagraphNode
+  | LiveHeadingNode
+  | LiveCodeNode
+  | LiveSpinnerNode
+  | LiveButtonNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
@@ -391,8 +414,12 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
       type: 'group',
       direction: node.direction === 'row' ? 'row' : 'column',
       fields,
-      ...(node.is_collapsible === undefined ? {} : { is_collapsible: node.is_collapsible === true }),
-      ...(node.default_expanded === undefined ? {} : { default_expanded: node.default_expanded === true }),
+      ...(node.is_collapsible === undefined
+        ? {}
+        : { is_collapsible: node.is_collapsible === true }),
+      ...(node.default_expanded === undefined
+        ? {}
+        : { default_expanded: node.default_expanded === true }),
     };
   }
   if (!(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
@@ -400,13 +427,37 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
     case 'paragraph':
       return { ...base, type: 'paragraph', text: text(node.text) };
     case 'heading':
-      return { ...base, type: 'heading', text: text(node.text), level: Math.min(6, Math.max(1, count(node.level, 2))) as LiveHeadingNode['level'] };
+      return {
+        ...base,
+        type: 'heading',
+        text: text(node.text),
+        level: Math.min(6, Math.max(1, count(node.level, 2))) as LiveHeadingNode['level'],
+      };
     case 'code':
-      return { ...base, type: 'code', text: text(node.text), language: optionalText(node.language) };
+      return {
+        ...base,
+        type: 'code',
+        text: text(node.text),
+        language: optionalText(node.language),
+      };
     case 'spinner':
-      return { ...base, type: 'spinner', text: text(node.text) || 'Working', variant: (['braille', 'dots', 'line', 'pulse'].includes(text(node.variant)) ? node.variant : 'braille') as LiveSpinnerVariant, is_active: node.is_active !== false };
+      return {
+        ...base,
+        type: 'spinner',
+        text: text(node.text) || 'Working',
+        variant: (['braille', 'dots', 'line', 'pulse'].includes(text(node.variant))
+          ? node.variant
+          : 'braille') as LiveSpinnerVariant,
+        is_active: node.is_active !== false,
+      };
     case 'button':
-      return { ...base, type: 'button', label: base.label || id, is_disabled: node.is_disabled === true, clicks: count(node.clicks, 0) };
+      return {
+        ...base,
+        type: 'button',
+        label: base.label || id,
+        is_disabled: node.is_disabled === true,
+        clicks: count(node.clicks, 0),
+      };
     case 'status':
       return {
         ...base,
@@ -434,7 +485,9 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         lines: lines(node.lines),
         window_lines: count(node.window_lines, LIVE_LOG_WINDOW),
         total_lines: count(node.total_lines, lines(node.lines).length),
-        ...(node.default_expanded === undefined ? {} : { default_expanded: node.default_expanded === true }),
+        ...(node.default_expanded === undefined
+          ? {}
+          : { default_expanded: node.default_expanded === true }),
       };
     case 'table': {
       const tableRows = keyed(node.rows, rowFromWire);
@@ -543,7 +596,11 @@ function appendKey(node: LiveNode): 'lines' | 'rows' | 'stats' | 'steps' | 'link
 /** `set` MERGES the keys it carries onto the node (`live/apply-set`). */
 function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   switch (node.type) {
-    case 'paragraph': case 'heading': case 'code': case 'spinner': case 'button':
+    case 'paragraph':
+    case 'heading':
+    case 'code':
+    case 'spinner':
+    case 'button':
       return liveNodeFromWire({ ...node, ...op }) ?? node;
     case 'status':
       return {
@@ -682,11 +739,7 @@ function treeIds(nodes: LiveNode[]): string[] {
  * array when nothing matched — a frame naming a node that is gone must leave the
  * picture, and React's identity with it, exactly where it was (`live/node-path`).
  */
-function mapNode(
-  nodes: LiveNode[],
-  id: string,
-  rewrite: (node: LiveNode) => LiveNode,
-): LiveNode[] {
+function mapNode(nodes: LiveNode[], id: string, rewrite: (node: LiveNode) => LiveNode): LiveNode[] {
   let changed = false;
   const next = nodes.map((node) => {
     if (node.id === id) {
@@ -807,7 +860,9 @@ export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
 export function isLiveViewEvent(event: SseEvent): boolean {
   return (
     viewKind(event) === 'live' &&
-    (event.type === VIEW_OPEN_EVENT || event.type === VIEW_PATCH_EVENT || event.type === VIEW_CLOSE_EVENT)
+    (event.type === VIEW_OPEN_EVENT ||
+      event.type === VIEW_PATCH_EVENT ||
+      event.type === VIEW_CLOSE_EVENT)
   );
 }
 

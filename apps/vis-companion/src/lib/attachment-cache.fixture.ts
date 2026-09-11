@@ -15,9 +15,7 @@ export class FakeCache {
     this.store.set(url, response);
   }
 
-  async match(
-    request: string | { url: string },
-  ): Promise<Response | undefined> {
+  async match(request: string | { url: string }): Promise<Response | undefined> {
     const key = typeof request === 'string' ? request : request.url;
     return this.store.get(key)?.clone();
   }

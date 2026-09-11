@@ -211,8 +211,7 @@ export function ManageProjectsSheet({
   // toggle re-listed the same directory under its other spelling — the list blanked to
   // the folder it had, then landed again, one frame later and one row taller.
   const settled =
-    listing !== null &&
-    (wanted === listing.path || wanted === homeify(listing.path, listing.home));
+    listing !== null && (wanted === listing.path || wanted === homeify(listing.path, listing.home));
   const isTyping = typedSplit !== null;
   useEffect(() => {
     // The inventory is not a filesystem: while it is on screen the gateway is never
@@ -311,9 +310,7 @@ export function ManageProjectsSheet({
           next.add(project.root);
           return next;
         });
-        setRemoving((current) =>
-          current?.project.root === project.root ? null : current,
-        );
+        setRemoving((current) => (current?.project.root === project.root ? null : current));
       } catch (cause) {
         const message = (cause as Error).message;
         setRemoving((current) =>
@@ -428,7 +425,9 @@ export function ManageProjectsSheet({
           }
           onClose={onCancel}
           closeLabel={`Close projects on ${label}`}
-        >Projects</MenuHeading>
+        >
+          Projects
+        </MenuHeading>
       )}
 
       {!adding ? (
@@ -488,161 +487,161 @@ export function ManageProjectsSheet({
         </>
       ) : (
         <>
-      {/* Adding is a task, not a step in a tour, so its band carries the app's one way
+          {/* Adding is a task, not a step in a tour, so its band carries the app's one way
           out when the human ASKED for it by name (the start flow's `New project`).
           Reached from the inventory's own plus it IS a step inside this
           menu, and a step is left the way it was entered — otherwise the only exit
           from the browser is closing the sheet and finding the folder mark again. */}
-      {isAdding ? (
-        <MenuHeading
-          cells={projectCells}
-          onClose={onCancel}
-          closeLabel={`Close new project on ${label}`}
-        >New project</MenuHeading>
-      ) : (
-        <MenuBack
-          label={`Back to projects on ${label}`}
-          onBack={() => setAdding(false)}
-          cells={projectCells}
-        >New project</MenuBack>
-      )}
-
-      {alreadyProject && <MenuNote>It’s already a project</MenuNote>}
-
-      {typed === null ? (
-        <div
-          className={`${PATH_BAND} gap-1 bg-panel-2 ${SHEET_EDGE}`}
-        >
-          {crumbs.length > shown.length && (
-            <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden>
-              …
-            </span>
+          {isAdding ? (
+            <MenuHeading
+              cells={projectCells}
+              onClose={onCancel}
+              closeLabel={`Close new project on ${label}`}
+            >
+              New project
+            </MenuHeading>
+          ) : (
+            <MenuBack
+              label={`Back to projects on ${label}`}
+              onBack={() => setAdding(false)}
+              cells={projectCells}
+            >
+              New project
+            </MenuBack>
           )}
-          <span className="flex min-w-0 flex-1 items-center overflow-hidden">
-            {shown.map((crumb, index) => {
-              const isHere = index === shown.length - 1;
-              return (
-                <span key={crumb.path} className="flex min-w-0 items-center">
-                  {/* A separator BETWEEN crumbs, never in front of the first one: the
-                      bar used to open `› ~ › vis`, a chevron pointing at nothing. */}
-                  {(index > 0 || crumbs.length > shown.length) && (
-                    <ChevronIcon className="mx-0.5 size-3 shrink-0 text-dialog-hint" aria-hidden />
-                  )}
-                  {/* A crumb is a real target: the text-only ones were 14px tall in a
-                      sheet whose every other row was 44. */}
-                  <button
-                    type="button"
-                    disabled={isHere}
-                    aria-current={isHere ? 'location' : undefined}
-                    className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-6 ${
-                      isHere
-                        ? 'font-bold text-white'
-                        : 'text-accent-ink hover:bg-hover focus-visible:bg-hover'
-                    }`}
-                    onClick={() => enter(crumb.path)}
-                  >
-                    {crumb.label}
-                  </button>
+
+          {alreadyProject && <MenuNote>It’s already a project</MenuNote>}
+
+          {typed === null ? (
+            <div className={`${PATH_BAND} gap-1 bg-panel-2 ${SHEET_EDGE}`}>
+              {crumbs.length > shown.length && (
+                <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden>
+                  …
                 </span>
-              );
-            })}
-          </span>
-          {pencil}
-        </div>
-      ) : (
-        <div
-          className={`${PATH_BAND} gap-2 bg-panel-2 ${SHEET_EDGE}`}
-        >
-          <Input
-            autoFocus
-            value={typed}
-            aria-label="Path on this machine"
-            placeholder="~/code/thing"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            onChange={(event) => setTyped(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return;
-              if (exact) enter(exact.path);
-              else void commit();
-            }}
-          />
-          {pencil}
-        </div>
-      )}
-
-      {folder !== null && (
-        <div
-          className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}
-        >
-          <span aria-hidden className="shrink-0 font-mono text-ui text-accent-ink">
-            +
-          </span>
-          <Input
-            autoFocus
-            value={folder}
-            maxLength={64}
-            aria-label="New folder name"
-            placeholder="band-repaint"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            onChange={(event) => setFolder(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void commit();
-            }}
-          />
-        </div>
-      )}
-
-      {/* The last folder drops its rule so it cannot double the panel's bottom edge. */}
-      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
-        {error ? (
-          <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
-        ) : busy && !listing ? (
-          <MenuNote>
-            <Spinner tone="accent" />
-            Reading folders...
-          </MenuNote>
-        ) : rows.length === 0 ? (
-          <MenuNote>
-            {typedSplit?.leaf ? 'No folder here starts with that.' : 'No folders in here.'}
-          </MenuNote>
-        ) : (
-          // A folder row IS a menu row — a glyph, a name, the consequence of choosing
-          // it, and an optional badge — so it is the app's menu row, not a fourth
-          // near-copy of one. The badge's WORD says whether Vis already knows this
-          // folder or merely that it is a repo.
-          // `inert`, not `aria-hidden`: while a new folder is being named these rows
-          // are out of play, and a container that is merely hidden from the a11y tree
-          // still hands its buttons to the Tab key.
-          <div className={folder === null ? '' : 'opacity-40'} inert={folder !== null}>
-            {rows.map((entry) => (
-              <MenuItem
-                key={entry.path}
-                icon={<ChevronIcon className="size-3.5" />}
-                title={`${entry.name}/`}
-                hint={entryHint(entry)}
-                badge={
-                  entry.path === startAt
-                    ? 'current'
-                    : knownRoots.has(entry.path)
-                      ? 'project'
-                      : entry.is_repo
-                        ? 'git'
-                        : undefined
-                }
-                onSelect={() => enter(entry.path)}
+              )}
+              <span className="flex min-w-0 flex-1 items-center overflow-hidden">
+                {shown.map((crumb, index) => {
+                  const isHere = index === shown.length - 1;
+                  return (
+                    <span key={crumb.path} className="flex min-w-0 items-center">
+                      {/* A separator BETWEEN crumbs, never in front of the first one: the
+                      bar used to open `› ~ › vis`, a chevron pointing at nothing. */}
+                      {(index > 0 || crumbs.length > shown.length) && (
+                        <ChevronIcon
+                          className="mx-0.5 size-3 shrink-0 text-dialog-hint"
+                          aria-hidden
+                        />
+                      )}
+                      {/* A crumb is a real target: the text-only ones were 14px tall in a
+                      sheet whose every other row was 44. */}
+                      <button
+                        type="button"
+                        disabled={isHere}
+                        aria-current={isHere ? 'location' : undefined}
+                        className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-6 ${
+                          isHere
+                            ? 'font-bold text-white'
+                            : 'text-accent-ink hover:bg-hover focus-visible:bg-hover'
+                        }`}
+                        onClick={() => enter(crumb.path)}
+                      >
+                        {crumb.label}
+                      </button>
+                    </span>
+                  );
+                })}
+              </span>
+              {pencil}
+            </div>
+          ) : (
+            <div className={`${PATH_BAND} gap-2 bg-panel-2 ${SHEET_EDGE}`}>
+              <Input
+                autoFocus
+                value={typed}
+                aria-label="Path on this machine"
+                placeholder="~/code/thing"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={(event) => setTyped(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return;
+                  if (exact) enter(exact.path);
+                  else void commit();
+                }}
               />
-            ))}
-          </div>
-        )}
-        {listing?.is_truncated && (
-          <MenuNote>Only the first folders are listed — type the path instead.</MenuNote>
-        )}
-      </div>
+              {pencil}
+            </div>
+          )}
 
+          {folder !== null && (
+            <div className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}>
+              <span aria-hidden className="shrink-0 font-mono text-ui text-accent-ink">
+                +
+              </span>
+              <Input
+                autoFocus
+                value={folder}
+                maxLength={64}
+                aria-label="New folder name"
+                placeholder="band-repaint"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={(event) => setFolder(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void commit();
+                }}
+              />
+            </div>
+          )}
+
+          {/* The last folder drops its rule so it cannot double the panel's bottom edge. */}
+          <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
+            {error ? (
+              <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
+            ) : busy && !listing ? (
+              <MenuNote>
+                <Spinner tone="accent" />
+                Reading folders...
+              </MenuNote>
+            ) : rows.length === 0 ? (
+              <MenuNote>
+                {typedSplit?.leaf ? 'No folder here starts with that.' : 'No folders in here.'}
+              </MenuNote>
+            ) : (
+              // A folder row IS a menu row — a glyph, a name, the consequence of choosing
+              // it, and an optional badge — so it is the app's menu row, not a fourth
+              // near-copy of one. The badge's WORD says whether Vis already knows this
+              // folder or merely that it is a repo.
+              // `inert`, not `aria-hidden`: while a new folder is being named these rows
+              // are out of play, and a container that is merely hidden from the a11y tree
+              // still hands its buttons to the Tab key.
+              <div className={folder === null ? '' : 'opacity-40'} inert={folder !== null}>
+                {rows.map((entry) => (
+                  <MenuItem
+                    key={entry.path}
+                    icon={<ChevronIcon className="size-3.5" />}
+                    title={`${entry.name}/`}
+                    hint={entryHint(entry)}
+                    badge={
+                      entry.path === startAt
+                        ? 'current'
+                        : knownRoots.has(entry.path)
+                          ? 'project'
+                          : entry.is_repo
+                            ? 'git'
+                            : undefined
+                    }
+                    onSelect={() => enter(entry.path)}
+                  />
+                ))}
+              </div>
+            )}
+            {listing?.is_truncated && (
+              <MenuNote>Only the first folders are listed — type the path instead.</MenuNote>
+            )}
+          </div>
         </>
       )}
     </AnchoredPanel>

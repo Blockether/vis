@@ -18,7 +18,9 @@
     (skjema/read-schema resource)))
 
 (def ^:private common-schema (delay (read-resource "vis-contract/schema/common.json")))
+
 (def ^:private schemas (atom {}))
+
 (def ^:private validators (atom {}))
 
 (defn- schema

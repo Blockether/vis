@@ -5,13 +5,19 @@
  * device so minting more grants cannot increase one phone's abuse budget.
  */
 
-import { APNS_DEAD_REASONS, APNS_MAX_PAYLOAD_BYTES, apnsConfig, apnsPayload, sendApns } from "./apns";
-import { FCM_DEAD_REASONS, FCM_MAX_PAYLOAD_BYTES, fcmConfig, fcmPayload, sendFcm } from "./fcm";
-import { sha256Hex } from "./jwt";
-import { fitNotification } from "./payload";
-import { seal, unseal } from "./seal";
-import type { Deps, Env, Notification, Platform } from "./types";
-import { PLATFORMS } from "./types";
+import {
+  APNS_DEAD_REASONS,
+  APNS_MAX_PAYLOAD_BYTES,
+  apnsConfig,
+  apnsPayload,
+  sendApns,
+} from './apns';
+import { FCM_DEAD_REASONS, FCM_MAX_PAYLOAD_BYTES, fcmConfig, fcmPayload, sendFcm } from './fcm';
+import { sha256Hex } from './jwt';
+import { fitNotification } from './payload';
+import { seal, unseal } from './seal';
+import type { Deps, Env, Notification, Platform } from './types';
+import { PLATFORMS } from './types';
 
 export const defaultDeps: Deps = {
   fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
@@ -53,16 +59,16 @@ const TOKEN_SHAPES: Record<Platform, RegExp> = {
 };
 
 const SAFE_HEADERS: Record<string, string> = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "no-store",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
+  'content-type': 'application/json; charset=utf-8',
+  'cache-control': 'no-store',
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
   /**
    * Wildcard is safe here precisely because nothing is ambient: there is no
    * cookie and no session, a caller must already hold the grant it presents,
    * and the companion is a WebView that would otherwise be refused by CORS.
    */
-  "access-control-allow-origin": "*",
+  'access-control-allow-origin': '*',
 };
 
 function json(status: number, payload: unknown): Response {
@@ -74,13 +80,13 @@ function fail(status: number, code: string, message: string): Response {
 }
 
 function intVar(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
+  const parsed = Number.parseInt(String(value ?? ''), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function bearer(request: Request): string {
-  const header = request.headers.get("authorization") ?? "";
-  return header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
+  const header = request.headers.get('authorization') ?? '';
+  return header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
 }
 
 /**
@@ -88,7 +94,9 @@ function bearer(request: Request): string {
  * it; `x-forwarded-for` is only the fallback for a non-Cloudflare front.
  */
 function clientKey(request: Request): string {
-  return request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "anon";
+  return (
+    request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? 'anon'
+  );
 }
 
 /**
@@ -98,24 +106,28 @@ function clientKey(request: Request): string {
  */
 function sealKeys(env: Env): string[] {
   return [env.RELAY_SEAL_KEY, env.RELAY_SEAL_KEY_PREVIOUS]
-    .map((value) => (value ?? "").trim())
+    .map((value) => (value ?? '').trim())
     .filter((value) => value.length > 0);
 }
 
 function unsealed(): Response {
-  return fail(503, "relay_unconfigured", "this relay has no RELAY_SEAL_KEY and cannot issue or open grants");
+  return fail(
+    503,
+    'relay_unconfigured',
+    'this relay has no RELAY_SEAL_KEY and cannot issue or open grants',
+  );
 }
 
 /** A body big enough to cost CPU is refused before a single byte is parsed. */
-const TOO_LARGE = Symbol("too_large");
+const TOO_LARGE = Symbol('too_large');
 
 function isOversized(request: Request, limit: number): boolean {
-  const declared = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
+  const declared = Number.parseInt(request.headers.get('content-length') ?? '0', 10);
   return Number.isFinite(declared) && declared > limit;
 }
 
 function oversized(limit: number): Response {
-  return fail(413, "too_large", `a request body may not exceed ${limit} bytes`);
+  return fail(413, 'too_large', `a request body may not exceed ${limit} bytes`);
 }
 
 /**
@@ -163,14 +175,14 @@ async function readJson(
   }
   try {
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
   }
 }
 
 function str(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function notificationFrom(body: Record<string, unknown>): Notification | null {
@@ -179,14 +191,17 @@ function notificationFrom(body: Record<string, unknown>): Notification | null {
   if (!title && !text) return null;
   const data: Record<string, string> = {};
   const raw = body.data;
-  if (raw && typeof raw === "object") {
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(0, MAX_DATA_KEYS)) {
+  if (raw && typeof raw === 'object') {
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(
+      0,
+      MAX_DATA_KEYS,
+    )) {
       data[key] = String(value).slice(0, MAX_BODY_CHARS);
     }
   }
-  const badge = typeof body.badge === "number" ? body.badge : undefined;
+  const badge = typeof body.badge === 'number' ? body.badge : undefined;
   return {
-    title: title || "Vis",
+    title: title || 'Vis',
     body: text,
     data,
     threadId: str(body.thread_id) || undefined,
@@ -201,7 +216,7 @@ async function health(env: Env): Promise<Response> {
   const fcm = fcmConfig(env);
   return json(200, {
     is_ok: true,
-    service: "vis-companion-relay",
+    service: 'vis-companion-relay',
     is_accepting_grants: sealKeys(env).length > 0,
     apns: {
       is_available: apns !== null,
@@ -221,7 +236,7 @@ async function health(env: Env): Promise<Response> {
 
 async function createGrantHandler(request: Request, env: Env, deps: Deps): Promise<Response> {
   const { success } = await env.MINT_LIMIT.limit({ key: `mint:${clientKey(request)}` });
-  if (!success) return fail(429, "rate_limited", "too many grants from this address");
+  if (!success) return fail(429, 'rate_limited', 'too many grants from this address');
 
   const keys = sealKeys(env);
   if (keys.length === 0) return unsealed();
@@ -229,19 +244,19 @@ async function createGrantHandler(request: Request, env: Env, deps: Deps): Promi
   const limit = maxRequestBytes(env);
   const body = await readJson(request, limit);
   if (body === TOO_LARGE) return oversized(limit);
-  if (!body) return fail(400, "bad_request", "a JSON object body is required");
+  if (!body) return fail(400, 'bad_request', 'a JSON object body is required');
 
   const deviceToken = str(body.device_token);
-  const platform = str(body.platform || "ios") as Platform;
+  const platform = str(body.platform || 'ios') as Platform;
   if (!PLATFORMS.includes(platform)) {
-    return fail(400, "bad_request", `platform must be one of ${PLATFORMS.join(", ")}`);
+    return fail(400, 'bad_request', `platform must be one of ${PLATFORMS.join(', ')}`);
   }
   if (!TOKEN_SHAPES[platform].test(deviceToken)) {
-    return fail(400, "bad_request", `device_token is not a valid ${platform} registration token`);
+    return fail(400, 'bad_request', `device_token is not a valid ${platform} registration token`);
   }
 
   const expiresAt = deps.now() + intVar(env.GRANT_TTL_DAYS, DEFAULT_GRANT_TTL_DAYS) * 86_400_000;
-  const environment = str(body.environment) === "sandbox" ? "sandbox" : "production";
+  const environment = str(body.environment) === 'sandbox' ? 'sandbox' : 'production';
   const grant = await seal(keys[0], { deviceToken, platform, environment, expiresAt });
 
   return json(201, {
@@ -260,7 +275,7 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
    */
   const address = await env.PUSH_ADDRESS_LIMIT.limit({ key: `push:${clientKey(request)}` });
   if (!address.success) {
-    return fail(429, "rate_limited", "too many push attempts from this address");
+    return fail(429, 'rate_limited', 'too many push attempts from this address');
   }
 
   const keys = sealKeys(env);
@@ -272,7 +287,7 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
   const body = parsed ?? {};
   const presented = bearer(request) || str(body.grant);
   if (!presented) {
-    return fail(401, "no_grant", "an Authorization: Bearer <grant> header is required");
+    return fail(401, 'no_grant', 'an Authorization: Bearer <grant> header is required');
   }
 
   /**
@@ -281,10 +296,11 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
    * again, forget the device and let the app hand you a new one.
    */
   const grant = await unseal(keys, presented, deps.now());
-  if (!grant) return fail(404, "unknown_grant", "this grant is not valid on this relay, or has expired");
+  if (!grant)
+    return fail(404, 'unknown_grant', 'this grant is not valid on this relay, or has expired');
 
   const notification = notificationFrom(body);
-  if (!notification) return fail(400, "bad_request", "title or body is required");
+  if (!notification) return fail(400, 'bad_request', 'title or body is required');
 
   /**
    * Per device, not per grant: grants are free to mint, so a cap on one grant
@@ -294,14 +310,14 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
   const fingerprint = (await sha256Hex(grant.deviceToken)).slice(0, 32);
   const device = await env.PUSH_DEVICE_LIMIT.limit({ key: `device:${fingerprint}` });
   if (!device.success) {
-    return fail(429, "rate_limited", "this device is over its push quota");
+    return fail(429, 'rate_limited', 'this device is over its push quota');
   }
 
-  const isApple = grant.platform === "ios" || grant.platform === "ipados";
+  const isApple = grant.platform === 'ios' || grant.platform === 'ipados';
   const apns = isApple ? apnsConfig(env) : null;
   const fcm = isApple ? null : fcmConfig(env);
   if (isApple ? !apns : !fcm) {
-    return fail(503, "provider_unconfigured", `this relay cannot push to ${grant.platform}`);
+    return fail(503, 'provider_unconfigured', `this relay cannot push to ${grant.platform}`);
   }
 
   /**
@@ -320,7 +336,7 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
   if (!fitted) {
     return fail(
       413,
-      "payload_too_large",
+      'payload_too_large',
       `a ${grant.platform} push may carry ${payloadLimit} bytes and this notification's data alone exceeds them`,
     );
   }
@@ -354,7 +370,7 @@ async function pushHandler(request: Request, env: Env, deps: Deps): Promise<Resp
   return json(200, {
     is_delivered: true,
     status: 200,
-    reason: "",
+    reason: '',
     is_truncated: fitted !== notification,
     environment: result.environment ?? grant.environment,
   });
@@ -366,26 +382,27 @@ function preflight(): Response {
     status: 204,
     headers: {
       ...SAFE_HEADERS,
-      "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "authorization, content-type",
-      "access-control-max-age": "86400",
+      'access-control-allow-methods': 'GET, POST, OPTIONS',
+      'access-control-allow-headers': 'authorization, content-type',
+      'access-control-max-age': '86400',
     },
   });
 }
 
 async function route(request: Request, env: Env, deps: Deps): Promise<Response> {
   const url = new URL(request.url);
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const path = url.pathname.replace(/\/+$/, '') || '/';
   const method = request.method.toUpperCase();
 
   const limit = maxRequestBytes(env);
   if (isOversized(request, limit)) return oversized(limit);
 
-  if (method === "OPTIONS") return preflight();
-  if (method === "GET" && (path === "/healthz" || path === "/")) return await health(env);
-  if (method === "POST" && path === "/v1/grants") return await createGrantHandler(request, env, deps);
-  if (method === "POST" && path === "/v1/push") return await pushHandler(request, env, deps);
-  return fail(404, "not_found", `${method} ${path} is not a route of this relay`);
+  if (method === 'OPTIONS') return preflight();
+  if (method === 'GET' && (path === '/healthz' || path === '/')) return await health(env);
+  if (method === 'POST' && path === '/v1/grants')
+    return await createGrantHandler(request, env, deps);
+  if (method === 'POST' && path === '/v1/push') return await pushHandler(request, env, deps);
+  return fail(404, 'not_found', `${method} ${path} is not a route of this relay`);
 }
 
 /**
@@ -401,7 +418,7 @@ export async function handle(
   try {
     return await route(request, env, deps);
   } catch {
-    return fail(500, "internal_error", "the relay failed to handle this request");
+    return fail(500, 'internal_error', 'the relay failed to handle this request');
   }
 }
 

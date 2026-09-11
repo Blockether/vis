@@ -18,7 +18,11 @@ const repoRoot = resolve(appDir, '..', '..');
 const read = (...parts) => readFileSync(join(...parts), 'utf8');
 const script = (name) => join(appDir, 'scripts', name);
 
-const frozen = { isFrozen: true, reason: 'the submitted build is with review', liftedBy: 'the release owner' };
+const frozen = {
+  isFrozen: true,
+  reason: 'the submitted build is with review',
+  liftedBy: 'the release owner',
+};
 const lifted = { ...frozen, isFrozen: false };
 
 describe('the Android publish freeze', () => {
@@ -45,11 +49,15 @@ describe('the Android publish freeze', () => {
   it('gates CI through a green step, never a red run', () => {
     const out = join(mkdtempSync(join(tmpdir(), 'android-freeze-')), 'github-output');
     writeFileSync(out, '');
-    const res = spawnSync(process.execPath, [script('android-publish-freeze.mjs'), '--github-output'], {
-      cwd: appDir,
-      encoding: 'utf8',
-      env: { ...process.env, GITHUB_OUTPUT: out, GITHUB_ACTIONS: 'true' },
-    });
+    const res = spawnSync(
+      process.execPath,
+      [script('android-publish-freeze.mjs'), '--github-output'],
+      {
+        cwd: appDir,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_OUTPUT: out, GITHUB_ACTIONS: 'true' },
+      },
+    );
     expect(res.status).toBe(0);
     expect(readFileSync(out, 'utf8').trim()).toBe(`android=${freezeState()}`);
   });
@@ -59,18 +67,27 @@ describe('release:android:store', () => {
   it('asks the freeze before it builds anything', () => {
     const src = read(appDir, 'scripts', 'android-release.mjs');
     expect(src).toContain("from './android-publish-freeze.mjs'");
-    expect(src.indexOf('androidPublishRefusal(')).toBeLessThan(src.indexOf("run('npm', ['run', 'build'])"));
+    expect(src.indexOf('androidPublishRefusal(')).toBeLessThan(
+      src.indexOf("run('npm', ['run', 'build'])"),
+    );
   });
 
-  it.runIf(ANDROID_PUBLISH_FREEZE.isFrozen)('refuses an upload run, and says how to build anyway', () => {
-    const res = spawnSync(process.execPath, [script('android-release.mjs'), '--track', 'internal'], {
-      cwd: appDir,
-      encoding: 'utf8',
-    });
-    expect(res.status).toBe(1);
-    expect(res.stderr).toMatch(/frozen/i);
-    expect(res.stderr).toContain('--no-upload');
-  });
+  it.runIf(ANDROID_PUBLISH_FREEZE.isFrozen)(
+    'refuses an upload run, and says how to build anyway',
+    () => {
+      const res = spawnSync(
+        process.execPath,
+        [script('android-release.mjs'), '--track', 'internal'],
+        {
+          cwd: appDir,
+          encoding: 'utf8',
+        },
+      );
+      expect(res.status).toBe(1);
+      expect(res.stderr).toMatch(/frozen/i);
+      expect(res.stderr).toContain('--no-upload');
+    },
+  );
 });
 
 describe('CI', () => {
@@ -84,6 +101,8 @@ describe('CI', () => {
   it('skips Firebase App Distribution while frozen', () => {
     const workflow = read(repoRoot, '.github', 'workflows', 'android-companion.yml');
     expect(workflow).toContain('node scripts/android-publish-freeze.mjs --github-output');
-    expect(workflow).toMatch(/Distribute to Firebase App Distribution[\s\S]*steps\.freeze\.outputs\.android == 'allowed'/);
+    expect(workflow).toMatch(
+      /Distribute to Firebase App Distribution[\s\S]*steps\.freeze\.outputs\.android == 'allowed'/,
+    );
   });
 });

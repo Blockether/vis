@@ -114,7 +114,10 @@ export async function savePendingVoice(key: string, wav: Blob): Promise<void> {
 
 /** The audio still owed a transcript for this session, if any. */
 export async function readPendingVoice(key: string): Promise<Blob | null> {
-  const row = await run<PendingRow>('readonly', (store) => store.get(key) as IDBRequest<PendingRow>);
+  const row = await run<PendingRow>(
+    'readonly',
+    (store) => store.get(key) as IDBRequest<PendingRow>,
+  );
   if (!row?.bytes) return null;
   if (Date.now() - (row.at ?? 0) > MAX_AGE_MS) {
     void clearPendingVoice(key);

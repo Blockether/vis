@@ -77,11 +77,13 @@ describe('resolvePushIntent', () => {
     // Session ids are minted per gateway: `sess-42` on the desktop is a 404 at
     // best, and somebody else's session at worst.
     const intent = pushIntentFrom(TAP, 1_000);
-    expect(resolvePushIntent(intent, state({ conns: [laptop, desktop], active: desktop }))).toEqual({
-      action: 'open',
-      conn: laptop,
-      sid: 'sess-42',
-    });
+    expect(resolvePushIntent(intent, state({ conns: [laptop, desktop], active: desktop }))).toEqual(
+      {
+        action: 'open',
+        conn: laptop,
+        sid: 'sess-42',
+      },
+    );
   });
 
   it('opens on the sending machine before any of them is made active', () => {
@@ -95,11 +97,13 @@ describe('resolvePushIntent', () => {
 
   it('falls back to the active machine when the alert names no gateway', () => {
     const intent = pushIntentFrom(ANONYMOUS_TAP, 1_000);
-    expect(resolvePushIntent(intent, state({ conns: [laptop, desktop], active: desktop }))).toEqual({
-      action: 'open',
-      conn: desktop,
-      sid: 'sess-42',
-    });
+    expect(resolvePushIntent(intent, state({ conns: [laptop, desktop], active: desktop }))).toEqual(
+      {
+        action: 'open',
+        conn: desktop,
+        sid: 'sess-42',
+      },
+    );
     expect(resolvePushIntent(intent, state({ conns: [laptop] }))).toEqual({
       action: 'open',
       conn: laptop,
@@ -119,9 +123,9 @@ describe('resolvePushIntent', () => {
   it('forgets a tap nothing could open before it went stale', () => {
     const intent = pushIntentFrom(TAP, 1_000);
     const late = 1_000 + RESUMABLE_PUSH_MS + 1;
-    expect(resolvePushIntent(intent, state({ now: late, conns: [laptop], active: laptop }))).toEqual(
-      { action: 'drop' },
-    );
+    expect(
+      resolvePushIntent(intent, state({ now: late, conns: [laptop], active: laptop })),
+    ).toEqual({ action: 'drop' });
   });
 
   it('has nothing to do without an intent', () => {
@@ -243,7 +247,12 @@ describe('a tapped notification ends on the session screen', () => {
     expect(screens).toEqual(['connect', 'connect', 'session', 'session']);
     // And it is the only screen allowed to take the chrome, because it brings
     // its own header and status-bar padding.
-    expect(screens.map((screen) => isShellChromeVisible(screen))).toEqual([true, true, false, false]);
+    expect(screens.map((screen) => isShellChromeVisible(screen))).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
   });
 
   it('never reached the session on the shipped handler', () => {

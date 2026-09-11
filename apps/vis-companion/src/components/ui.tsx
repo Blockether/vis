@@ -48,13 +48,7 @@ import {
 import { createPortal } from 'react-dom';
 import viewSpec from '../../../../packages/vis-contract/resources/vis-contract/view.json';
 
-import {
-  CheckIcon,
-  ChevronIcon,
-  CloseIcon,
-  CopyIcon,
-  SidebarIcon,
-} from './icons';
+import { CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
@@ -199,7 +193,8 @@ export const Button = forwardRef<
   // be decided by Tailwind's emission order, not by the call site.
   const press = pressEffect === 'scale' ? 'active:scale-[0.98] disabled:active:scale-100' : '';
   // The pseudo-element extends the padding box (inside the 1px border) to 44px.
-  const touchReach = 'relative after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] mouse:after:content-none';
+  const touchReach =
+    'relative after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] mouse:after:content-none';
   const scale = {
     default: `${touchReach} min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7`,
     compact: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui sm:px-3 mouse:h-7 mouse:min-h-7 mouse:text-meta`,
@@ -284,7 +279,16 @@ export const IconButton = forwardRef<
     fullCell?: boolean;
   }
 >(function IconButton(
-  { label, className = '', variant = 'secondary', density = 'compact', edge, fullCell, children, ...props },
+  {
+    label,
+    className = '',
+    variant = 'secondary',
+    density = 'compact',
+    edge,
+    fullCell,
+    children,
+    ...props
+  },
   ref,
 ) {
   // `border-r-0`: this box ends ON the paper's own edge, and the paper already draws
@@ -321,7 +325,6 @@ export const IconButton = forwardRef<
     </Button>
   );
 });
-
 
 /**
  * A CHIP: one small word that is ON or OFF, and there is only one of it.
@@ -360,7 +363,6 @@ export const Chip = forwardRef<
     />
   );
 });
-
 
 /**
  * "THERE IS MORE OF THIS", and there is only one of it.
@@ -434,9 +436,9 @@ export function CopyChip({
   value,
   label,
   title,
-  density = "default",
+  density = 'default',
   edge = false,
-  className = "",
+  className = '',
   children,
 }: {
   /** What lands on the clipboard. */
@@ -452,7 +454,7 @@ export function CopyChip({
    * tall and centres a 24px chip, so a chip that grew there would stack padding on top
    * of its own height.
    */
-  density?: "default" | "compact";
+  density?: 'default' | 'compact';
   /** Execution-band copy: fixed trailing inset, with touch reach into the outer gutter. */
   edge?: boolean;
   /** Placement only; the chip's own face is fixed. */
@@ -486,8 +488,8 @@ export function CopyChip({
           variant="quiet"
           pressEffect="none"
           density={density}
-          aria-label={isCopied ? "Copied" : label}
-          title={isCopied ? "Copied" : (title ?? label)}
+          aria-label={isCopied ? 'Copied' : label}
+          title={isCopied ? 'Copied' : (title ?? label)}
           onClick={copy}
           className={`relative grid h-auto w-8 shrink-0 self-stretch items-center justify-items-end border-0 pl-0 pr-3 -mr-3 after:absolute after:top-0 after:bottom-0 after:left-0 after:-right-3 after:content-[""] sm:w-9 sm:pl-0 sm:pr-4 sm:-mr-4 sm:after:-right-2 mouse:h-auto mouse:w-7 mouse:after:content-none ${className}`}
         >
@@ -497,8 +499,8 @@ export function CopyChip({
     }
     return (
       <IconButton
-        label={isCopied ? "Copied" : label}
-        title={isCopied ? "Copied" : (title ?? label)}
+        label={isCopied ? 'Copied' : label}
+        title={isCopied ? 'Copied' : (title ?? label)}
         variant="quiet"
         density={density}
         onClick={copy}
@@ -518,14 +520,12 @@ export function CopyChip({
   // phone header has room for the mark alone, the box goes square instead of holding a
   // word's worth of air open beside the control next to it.
   const face =
-    density === "compact"
+    density === 'compact'
       ? `relative h-8 min-w-8 border-transparent bg-transparent text-ui after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-w-6 mouse:text-meta mouse:after:content-none sm:min-w-[6ch] ${
-          isCopied ? "text-ok" : "text-white"
+          isCopied ? 'text-ok' : 'text-white'
         }`
       : `h-6 min-w-[6ch] bg-button text-chip ${
-          isCopied
-            ? "border-ok text-ok"
-            : "border-dialog-edge text-button-foreground"
+          isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
         }`;
   return (
     <button
@@ -540,10 +540,8 @@ export function CopyChip({
       ) : (
         <CopyIcon className="size-3 opacity-60 transition-opacity group-hover:opacity-100" />
       )}
-      <span
-        className={`min-w-0 truncate ${density === "compact" ? "hidden sm:inline" : ""}`}
-      >
-        {isCopied ? "Copied" : children}
+      <span className={`min-w-0 truncate ${density === 'compact' ? 'hidden sm:inline' : ''}`}>
+        {isCopied ? 'Copied' : children}
       </span>
     </button>
   );
@@ -572,13 +570,7 @@ export const ListRow = forwardRef<
     density?: 'regular' | 'compact';
   }
 >(function ListRow(
-  {
-    isSelected = false,
-    isFramed = false,
-    density = 'regular',
-    className = '',
-    ...props
-  },
+  { isSelected = false, isFramed = false, density = 'regular', className = '', ...props },
   ref,
 ) {
   const paper = isFramed
@@ -737,14 +729,7 @@ export function Disclosure({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   isOpen: boolean;
-  tone?:
-    | 'step'
-    | 'thinking'
-    | 'muted'
-    | 'caption'
-    | 'branch'
-    | 'chronology'
-    | 'execution';
+  tone?: 'step' | 'thinking' | 'muted' | 'caption' | 'branch' | 'chronology' | 'execution';
   /**
    * Gives the row's own gutter back: the chevron lines its ink up with the card's
    * leading edge while the press target keeps the padding a finger needs. It is
@@ -816,16 +801,9 @@ export function BandLabel({
   tone?: 'default' | 'err' | 'hint';
   children: ReactNode;
 }) {
-  const ink =
-    tone === 'err'
-      ? 'text-err'
-      : tone === 'hint'
-        ? 'text-dialog-hint'
-        : 'text-white';
+  const ink = tone === 'err' ? 'text-err' : tone === 'hint' ? 'text-dialog-hint' : 'text-white';
   return (
-    <span
-      className={`select-none truncate font-mono text-ui ${BAND_NAME} ${ink} ${className}`}
-    >
+    <span className={`select-none truncate font-mono text-ui ${BAND_NAME} ${ink} ${className}`}>
       {children}
     </span>
   );
@@ -903,12 +881,7 @@ export function BackButton({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      className={`${bandEdgeClass} ${className}`}
-      {...props}
-    >
+    <button type="button" aria-label={label} className={`${bandEdgeClass} ${className}`} {...props}>
       <ChevronIcon back className="size-4" aria-hidden />
     </button>
   );
@@ -970,9 +943,7 @@ export function OptionRow({
       aria-selected={isActive}
       onMouseDown={(event) => event.preventDefault()}
       className={`grid min-h-9 w-full gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors duration-150 motion-reduce:transition-none ${
-        isActive
-          ? 'bg-accent text-accent-foreground'
-          : 'text-dialog-foreground hover:bg-hover'
+        isActive ? 'bg-accent text-accent-foreground' : 'text-dialog-foreground hover:bg-hover'
       } ${className}`}
       {...props}
     >
@@ -1089,7 +1060,8 @@ export function ComposerButton({
       ? 'size-11 border border-dialog-edge shadow-[4px_4px_0_var(--dialog-shadow)]'
       : '';
   const face = {
-    quiet: 'h-8 w-7 text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted mouse:h-7 mouse:w-6',
+    quiet:
+      'h-8 w-7 text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted mouse:h-7 mouse:w-6',
     recording: `${
       surface === 'overlay' ? overlayFrame : 'h-8 w-7 mouse:h-7 mouse:w-6'
     } animate-pulse bg-warn-surface text-err disabled:text-muted motion-reduce:animate-none`,
@@ -1286,9 +1258,7 @@ export function ChoiceCell({
           : leadingAction
             ? 'pl-3 pr-3'
             : 'px-3'
-      } ${
-        isLeaf ? 'min-h-9 mouse:min-h-8' : 'min-h-10 justify-between py-1.5 mouse:min-h-9'
-      } ${
+      } ${isLeaf ? 'min-h-9 mouse:min-h-8' : 'min-h-10 justify-between py-1.5 mouse:min-h-9'} ${
         isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
       } ${className}`}
       {...props}
@@ -1296,9 +1266,7 @@ export function ChoiceCell({
       {isLeaf ? (
         <>
           <span className="min-w-0 truncate font-mono text-ui font-bold">{title}</span>
-          {sub && (
-            <span className="ml-auto min-w-0 truncate font-mono text-chip">{sub}</span>
-          )}
+          {sub && <span className="ml-auto min-w-0 truncate font-mono text-chip">{sub}</span>}
         </>
       ) : (
         <span className="min-w-0">
@@ -1414,11 +1382,7 @@ export function SettingsChoiceGroup({
     <section
       role="group"
       aria-labelledby={headingId}
-      className={
-        isNested
-          ? 'min-w-0 border-l-2 border-t border-dialog-edge bg-panel'
-          : 'min-w-0'
-      }
+      className={isNested ? 'min-w-0 border-l-2 border-t border-dialog-edge bg-panel' : 'min-w-0'}
     >
       <header
         className={`flex min-h-6 items-center bg-panel pb-1.5 pt-3 ${
@@ -1789,9 +1753,7 @@ export const Input = forwardRef<
         </span>
       )}
       {action && (
-        <span className="absolute inset-y-0 right-0 flex items-center text-white">
-          {action}
-        </span>
+        <span className="absolute inset-y-0 right-0 flex items-center text-white">{action}</span>
       )}
     </span>
   );
@@ -1837,9 +1799,7 @@ export function Banner({
             <div className="block text-title font-bold">{title}</div>
             <div className="block truncate text-body text-footer-strong">{children}</div>
           </div>
-          {dismiss ? (
-            <CloseButton isBand label={dismiss.label} onClick={dismiss.onClick} />
-          ) : null}
+          {dismiss ? <CloseButton isBand label={dismiss.label} onClick={dismiss.onClick} /> : null}
         </>
       ) : (
         children
@@ -1900,8 +1860,7 @@ export function overlayLayer(): {
   host: HTMLElement;
   position: 'absolute' | 'fixed';
 } {
-  const host =
-    document.querySelector<HTMLElement>('[data-viewport-shell]') ?? document.body;
+  const host = document.querySelector<HTMLElement>('[data-viewport-shell]') ?? document.body;
   return { host, position: host === document.body ? 'fixed' : 'absolute' };
 }
 
@@ -2006,9 +1965,7 @@ export function Modal({
 export function closeWith(
   onClose: (() => void) | undefined,
   label: string,
-):
-  | { onClose: () => void; closeLabel: string }
-  | { onClose?: undefined; closeLabel?: undefined } {
+): { onClose: () => void; closeLabel: string } | { onClose?: undefined; closeLabel?: undefined } {
   return onClose ? { onClose, closeLabel: label } : {};
 }
 
@@ -2091,9 +2048,7 @@ export function DialogHeader({
           {title}
         </h2>
         {subtitle && (
-          <p className="truncate font-mono text-meta text-dialog-title-foreground">
-            {subtitle}
-          </p>
+          <p className="truncate font-mono text-meta text-dialog-title-foreground">{subtitle}</p>
         )}
       </div>
       {/* What the band OFFERS, before the way out and in cells of the band's own:
@@ -2101,9 +2056,7 @@ export function DialogHeader({
       {actions}
       {/* The two travel together by type; the second test is what TypeScript needs
           to see it, because a destructured union does not narrow on its own. */}
-      {onClose && closeLabel && (
-        <CloseButton isBand label={closeLabel} onClick={onClose} />
-      )}
+      {onClose && closeLabel && <CloseButton isBand label={closeLabel} onClick={onClose} />}
     </header>
   );
 }
@@ -2251,7 +2204,6 @@ const SPINNER_DELAYS = [
   '[animation-delay:-100ms]',
 ];
 
-
 /**
  * The waiting spinner: ten frames stacked in one grid cell, cross-faded by the
  * `spinner-frame` keyframe (see `index.css`).
@@ -2302,5 +2254,4 @@ export const LIST_EDGE = 'pl-3 sm:pl-4';
  * that column, while hyphenation and pretty wrapping moderate the spaces between
  * ordinary words on narrow phones.
  */
-export const PROSE =
-  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
+export const PROSE = 'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';

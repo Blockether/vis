@@ -64,10 +64,7 @@ export function machineLabel(conn: GatewayConn): string {
  * identity (and their rows), machines that were removed drop out, and newly
  * paired ones arrive blank. Identity matters — the list memoizes on it.
  */
-export function reconcileMachines(
-  conns: GatewayConn[],
-  previous: FleetMachine[],
-): FleetMachine[] {
+export function reconcileMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetMachine[] {
   const byKey = new Map(previous.map((machine) => [machineKey(machine.conn), machine]));
   return conns.map((conn) => {
     const existing = byKey.get(machineKey(conn));
@@ -189,9 +186,7 @@ export function searchFanout(
   silent: ReadonlySet<string>,
 ): SearchFanout {
   const failed = new Set(
-    machines
-      .filter((machine) => machine.error !== null)
-      .map((machine) => machineKey(machine.conn)),
+    machines.filter((machine) => machine.error !== null).map((machine) => machineKey(machine.conn)),
   );
   const targets = scopedConns(conns, scope);
   const isDark = (conn: GatewayConn) =>
@@ -206,7 +201,9 @@ export function searchFanout(
 /** True once every machine in scope has answered (or failed) at least once. */
 export function isFleetLoaded(machines: FleetMachine[], scope: string | null): boolean {
   const inScope = scope ? scopedMachines(machines, scope) : machines;
-  return inScope.length > 0 && inScope.every((machine) => machine.sessions !== null || !!machine.error);
+  return (
+    inScope.length > 0 && inScope.every((machine) => machine.sessions !== null || !!machine.error)
+  );
 }
 
 /**
@@ -226,7 +223,6 @@ export function fleetError(machines: FleetMachine[]): string | null {
   if (failed.some((machine) => machine.isRemembered)) return null;
   return failed[0]?.error ?? null;
 }
-
 
 /**
  * Per-machine tallies for its chip and its section header.
@@ -254,9 +250,10 @@ export function machineCounts(
  * 2 of 3 machines" is the only proof the query left this gateway. Machines with
  * no hit still count as searched — they just contributed nothing.
  */
-export function searchTally(
-  filtered: { machine: FleetMachine; sessions: Session[] }[],
-): { matches: number; machines: number } {
+export function searchTally(filtered: { machine: FleetMachine; sessions: Session[] }[]): {
+  matches: number;
+  machines: number;
+} {
   let matches = 0;
   let machines = 0;
   for (const entry of filtered) {
@@ -293,10 +290,7 @@ export const SEARCH_UNPLACED = Number.MAX_SAFE_INTEGER;
  * Bands the list paints itself (`sessionOrder`) are applied AFTER this, so a
  * starred row stays on top of its own search.
  */
-export function searchOrder(
-  sessions: Session[],
-  placeOf: (session: Session) => number,
-): Session[] {
+export function searchOrder(sessions: Session[], placeOf: (session: Session) => number): Session[] {
   const rows = sessions.map((session, index) => ({
     session,
     index,
@@ -356,11 +350,8 @@ export function sessionOrder(
 ): Session[] {
   const rows = sessions.map((session, index) => {
     const pin = rank.favoriteRank(session);
-    const band = pin !== null
-      ? FAVORITE_BAND
-      : rank.hasDraftMessage(session)
-        ? DIRTY_BAND
-        : REST_BAND;
+    const band =
+      pin !== null ? FAVORITE_BAND : rank.hasDraftMessage(session) ? DIRTY_BAND : REST_BAND;
     return { session, index, band, pin: pin ?? 0 };
   });
   if (rows.every((row) => row.band === REST_BAND)) return sessions;
@@ -374,8 +365,6 @@ export function sessionOrder(
   });
   return rows.map((row) => row.session);
 }
-
-
 
 /**
  * The rows a QUERY may match on one machine: what is loaded, plus the sessions a

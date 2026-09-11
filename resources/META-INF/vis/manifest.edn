@@ -1,20 +1,21 @@
-{:initialization
- [{:apropos "META-INF/vis/apropos/docs.edn"
-   :register com.blockether.vis.internal.foundation.core/register!}
-  {:apropos "META-INF/vis/apropos/shim-attach.edn"
-   :register com.blockether.vis.internal.foundation.shim-attach/register!}
-  {:apropos "META-INF/vis/apropos/shim-ls.edn"
-   :register com.blockether.vis.internal.foundation.shim-ls/register!}
-  com.blockether.vis.internal.foundation.mcp.core/register!
-  com.blockether.vis.internal.foundation.harness.core/register!
-  com.blockether.vis.internal.language.clojure.core/register!
-  com.blockether.vis.internal.language.python.core/register!
-  com.blockether.vis.internal.provider.vendor.alibaba/register!
-  com.blockether.vis.internal.provider.vendor.anthropic/register!
-  com.blockether.vis.internal.provider.vendor.github-copilot/register!
-  com.blockether.vis.internal.provider.vendor.openai-codex/register!
-  com.blockether.vis.internal.provider.vendor.opencode-go/register!
-  com.blockether.vis.internal.provider.vendor.openrouter/register!
-  com.blockether.vis.internal.provider.vendor.openai/register! com.blockether.vis.internal.provider.vendor.ollama/register!
-  com.blockether.vis.internal.provider.vendor.lmstudio/register!
-  com.blockether.vis.internal.provider.vendor.mistral/register! com.blockether.vis.internal.provider.vendor.zai/register!]}
+{:initialization [{:apropos "META-INF/vis/apropos/docs.edn"
+                   :register com.blockether.vis.internal.foundation.core/register!}
+                  {:apropos "META-INF/vis/apropos/shim-attach.edn"
+                   :register com.blockether.vis.internal.foundation.shim-attach/register!}
+                  {:apropos "META-INF/vis/apropos/shim-ls.edn"
+                   :register com.blockether.vis.internal.foundation.shim-ls/register!}
+                  com.blockether.vis.internal.foundation.mcp.core/register!
+                  com.blockether.vis.internal.foundation.harness.core/register!
+                  com.blockether.vis.internal.language.clojure.core/register!
+                  com.blockether.vis.internal.language.python.core/register!
+                  com.blockether.vis.internal.provider.vendor.alibaba/register!
+                  com.blockether.vis.internal.provider.vendor.anthropic/register!
+                  com.blockether.vis.internal.provider.vendor.github-copilot/register!
+                  com.blockether.vis.internal.provider.vendor.openai-codex/register!
+                  com.blockether.vis.internal.provider.vendor.opencode-go/register!
+                  com.blockether.vis.internal.provider.vendor.openrouter/register!
+                  com.blockether.vis.internal.provider.vendor.openai/register!
+                  com.blockether.vis.internal.provider.vendor.ollama/register!
+                  com.blockether.vis.internal.provider.vendor.lmstudio/register!
+                  com.blockether.vis.internal.provider.vendor.mistral/register!
+                  com.blockether.vis.internal.provider.vendor.zai/register!]}

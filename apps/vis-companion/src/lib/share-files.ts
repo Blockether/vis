@@ -27,9 +27,7 @@ import type { SharedFile } from './share-intake';
 const READ_TIMEOUT_MS = 30_000;
 
 function bytesFromBase64(base64: string): Uint8Array {
-  const payload = base64.startsWith('data:')
-    ? base64.slice(base64.indexOf(',') + 1)
-    : base64;
+  const payload = base64.startsWith('data:') ? base64.slice(base64.indexOf(',') + 1) : base64;
   const binary = atob(payload);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
@@ -67,7 +65,7 @@ export async function readSharedFiles(files: SharedFile[]): Promise<File[]> {
     // the same second word it gets in the picker.
     const type = candidateMediaType(file.name, file.type);
     const bytes: BlobPart =
-      typeof data === 'string' ? bytesFromBase64(data).buffer as ArrayBuffer : data;
+      typeof data === 'string' ? (bytesFromBase64(data).buffer as ArrayBuffer) : data;
     read.push(new File([bytes], file.name, { type }));
   }
   return read;

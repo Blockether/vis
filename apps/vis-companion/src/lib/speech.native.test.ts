@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const nativeSpeech = vi.hoisted(() => ({
   getVoices: vi.fn(),
@@ -6,13 +6,13 @@ const nativeSpeech = vi.hoisted(() => ({
   stop: vi.fn(),
 }));
 
-vi.mock("@capacitor/core", () => ({
-  Capacitor: { getPlatform: () => "ios" },
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { getPlatform: () => 'ios' },
   registerPlugin: () => nativeSpeech,
 }));
 
-import { deviceVoices } from "./speech-voices";
-import { speechOutput } from "./speech";
+import { deviceVoices } from './speech-voices';
+import { speechOutput } from './speech';
 
 beforeEach(() => {
   nativeSpeech.getVoices.mockReset();
@@ -20,14 +20,14 @@ beforeEach(() => {
   nativeSpeech.stop.mockReset().mockResolvedValue(undefined);
 });
 
-describe("native iOS speech", () => {
+describe('native iOS speech', () => {
   it("reads Apple's public voice catalogue through the native bridge", async () => {
     nativeSpeech.getVoices.mockResolvedValue({
       voices: [
         {
-          id: "com.apple.voice.premium.en-US.Zoe",
-          label: "Zoe (Premium)",
-          language: "en-US",
+          id: 'com.apple.voice.premium.en-US.Zoe',
+          label: 'Zoe (Premium)',
+          language: 'en-US',
           quality: 500,
         },
       ],
@@ -35,9 +35,9 @@ describe("native iOS speech", () => {
 
     await expect(deviceVoices()).resolves.toEqual([
       {
-        id: "com.apple.voice.premium.en-US.Zoe",
-        label: "Zoe (Premium)",
-        language: "en-US",
+        id: 'com.apple.voice.premium.en-US.Zoe',
+        label: 'Zoe (Premium)',
+        language: 'en-US',
         isDefault: undefined,
         quality: 500,
         isLocal: undefined,
@@ -46,16 +46,16 @@ describe("native iOS speech", () => {
     expect(nativeSpeech.getVoices).toHaveBeenCalledOnce();
   });
 
-  it("speaks, auditions, and stops the exact public Apple voice natively", async () => {
+  it('speaks, auditions, and stops the exact public Apple voice natively', async () => {
     await speechOutput.playDeviceSample(
-      "This is what this voice sounds like.",
-      "com.apple.voice.premium.en-US.Zoe",
+      'This is what this voice sounds like.',
+      'com.apple.voice.premium.en-US.Zoe',
       1.2,
     );
 
     expect(nativeSpeech.speak).toHaveBeenCalledWith({
-      text: "This is what this voice sounds like.",
-      voice: "com.apple.voice.premium.en-US.Zoe",
+      text: 'This is what this voice sounds like.',
+      voice: 'com.apple.voice.premium.en-US.Zoe',
       rate: 1.2,
     });
     nativeSpeech.stop.mockClear();

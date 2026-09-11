@@ -1,9 +1,9 @@
-import type { ButtonHTMLAttributes } from "react";
-import { ArrowDownIcon } from "./icons";
+import type { ButtonHTMLAttributes } from 'react';
+import { ArrowDownIcon } from './icons';
 
 /** The transcript's single floating action returns a reader to the newest turn. */
 export function JumpToLatestButton({
-  className = "",
+  className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (

@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { InlineMarkdown, Markdown, SyntaxCodeBlock } from "./ChatContent";
-import { BandLabel, CopyChip, Disclosure, LoadMore } from "./ui";
+import { createContext, useContext, useState, type ReactNode } from 'react';
+import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
+import { BandLabel, CopyChip, Disclosure, LoadMore } from './ui';
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
@@ -9,19 +9,19 @@ import type {
   ActivityContent,
   ActivityTextEvidence,
   ActivityTextFormat,
-} from "../lib/activity";
+} from '../lib/activity';
 import {
   activityCopyText,
   argumentGroups,
   operationGroups,
   type OperationGroup,
-} from "../lib/activity";
-import { workspaceRelativePath } from "../lib/path";
-import { useWorkspaceRoots } from "../lib/workspace-roots";
+} from '../lib/activity';
+import { workspaceRelativePath } from '../lib/path';
+import { useWorkspaceRoots } from '../lib/workspace-roots';
 
 /** `2 more files`, `3 more steps` — what a rule holds back, counted and named. */
 function moreCount(n: number, noun: string) {
-  return `${n} more ${noun}${n === 1 ? "" : "s"}`;
+  return `${n} more ${noun}${n === 1 ? '' : 's'}`;
 }
 
 /**
@@ -31,29 +31,27 @@ function moreCount(n: number, noun: string) {
  */
 
 /** Select the verb from running, settled, failed or cancelled state. */
-const ACTIVITY_VERBS: Record<
-  string,
-  readonly [running: string, settled: string, failed: string]
-> = {
-  grep: ["Searching", "Searched", "Search failed"],
-  ls: ["Listing", "Listed", "List failed"],
-  cat: ["Reading", "Read", "Read failed"],
-  patch: ["Patching", "Patched", "Patch refused"],
-  shell: ["Running", "Ran", "Command failed"],
-  run_tests: ["Running tests", "Ran tests", "Tests failed"],
-  lint_code: ["Linting", "Linted", "Lint failed"],
-  format_code: ["Formatting", "Formatted", "Format failed"],
-  repl_eval: ["Evaluating", "Evaluated", "Eval failed"],
-  // What a code block did to the tree with its own hands. The change is already past
-  // when it is reported, and its head says how much of the tree moved at once.
-  change: ["Changing", "Changed", "Change failed"],
-  mkdir: ["Creating", "Created", "Create failed"],
-  write: ["Writing", "Wrote", "Write failed"],
-  copy: ["Copying", "Copied", "Copy failed"],
-  move: ["Moving", "Moved", "Move failed"],
-  link: ["Linking", "Linked", "Link failed"],
-  delete: ["Deleting", "Deleted", "Delete failed"],
-};
+const ACTIVITY_VERBS: Record<string, readonly [running: string, settled: string, failed: string]> =
+  {
+    grep: ['Searching', 'Searched', 'Search failed'],
+    ls: ['Listing', 'Listed', 'List failed'],
+    cat: ['Reading', 'Read', 'Read failed'],
+    patch: ['Patching', 'Patched', 'Patch refused'],
+    shell: ['Running', 'Ran', 'Command failed'],
+    run_tests: ['Running tests', 'Ran tests', 'Tests failed'],
+    lint_code: ['Linting', 'Linted', 'Lint failed'],
+    format_code: ['Formatting', 'Formatted', 'Format failed'],
+    repl_eval: ['Evaluating', 'Evaluated', 'Eval failed'],
+    // What a code block did to the tree with its own hands. The change is already past
+    // when it is reported, and its head says how much of the tree moved at once.
+    change: ['Changing', 'Changed', 'Change failed'],
+    mkdir: ['Creating', 'Created', 'Create failed'],
+    write: ['Writing', 'Wrote', 'Write failed'],
+    copy: ['Copying', 'Copied', 'Copy failed'],
+    move: ['Moving', 'Moved', 'Move failed'],
+    link: ['Linking', 'Linked', 'Link failed'],
+    delete: ['Deleting', 'Deleted', 'Delete failed'],
+  };
 
 function formatActivityDuration(value?: number): string | null {
   if (value == null || !Number.isFinite(value) || value <= 0) return null;
@@ -68,21 +66,18 @@ function formatActivityDuration(value?: number): string | null {
 function activityStepObject(row: ActivityRow): string {
   const summary = row.summary.trim();
   if (
-    (row.presenter === "shell" || row.operation.toLowerCase() === "shell") &&
-    summary.startsWith("running: ")
+    (row.presenter === 'shell' || row.operation.toLowerCase() === 'shell') &&
+    summary.startsWith('running: ')
   ) {
-    return summary.slice("running: ".length);
+    return summary.slice('running: '.length);
   }
-  return summary.toLowerCase() === row.operation.trim().toLowerCase()
-    ? ""
-    : summary;
+  return summary.toLowerCase() === row.operation.trim().toLowerCase() ? '' : summary;
 }
 
 function activityRowSummary(row: ActivityRow): string {
   const object = activityStepObject(row);
-  return (row.presenter === "shell" ||
-    row.operation.toLowerCase() === "shell") &&
-    row.summary.trim().startsWith("running: ")
+  return (row.presenter === 'shell' || row.operation.toLowerCase() === 'shell') &&
+    row.summary.trim().startsWith('running: ')
     ? `cmd: ${object}`
     : object;
 }
@@ -91,15 +86,13 @@ function activityRowSummary(row: ActivityRow): string {
 function activityStepLead(row: ActivityRow): string {
   const verb = ACTIVITY_VERBS[row.operation.trim().toLowerCase()];
   if (!verb) return row.operation.trim();
-  return verb[row.state === "failed" ? 2 : row.state === "succeeded" ? 1 : 0];
+  return verb[row.state === 'failed' ? 2 : row.state === 'succeeded' ? 1 : 0];
 }
 
 /** What one step reads as end to end: the verb, then the thing it was applied to. */
 function activityStepHeadline(row: ActivityRow): string {
   if (row.presentation) return row.presentation.headline;
-  return [activityStepLead(row), activityStepObject(row)]
-    .filter(Boolean)
-    .join(" · ");
+  return [activityStepLead(row), activityStepObject(row)].filter(Boolean).join(' · ');
 }
 
 /** One counter in the margin: the words, and the tone that repeats them. */
@@ -131,29 +124,25 @@ export interface ActivityCostPart {
  * in the theme's cool ink, checks in the margin's own — so a reader who cannot
  * separate two hues loses nothing.
  */
-export function activityCostParts(
-  activity?: ActivityProjection,
-): readonly ActivityCostPart[] {
-  const dropped: Record<string, number> =
-    activity?.omitted.by_classification ?? {};
+export function activityCostParts(activity?: ActivityProjection): readonly ActivityCostPart[] {
+  const dropped: Record<string, number> = activity?.omitted.by_classification ?? {};
   const rows = activity?.rows ?? [];
   const tally = (signal: string) =>
     rows.filter((row) => row.signal === signal).length + (dropped[signal] ?? 0);
-  const noun = (amount: number, word: string) =>
-    `${amount} ${word}${amount === 1 ? "" : "s"}`;
-  const observations = tally("observation");
-  const checks = tally("verification");
+  const noun = (amount: number, word: string) => `${amount} ${word}${amount === 1 ? '' : 's'}`;
+  const observations = tally('observation');
+  const checks = tally('verification');
   return [
-    { text: noun(tally("mutation"), "mutation"), tone: "text-accent-ink" },
+    { text: noun(tally('mutation'), 'mutation'), tone: 'text-accent-ink' },
     ...(observations
       ? [
           {
-            text: noun(observations, "observation"),
-            tone: "text-code-syntax-keyword",
+            text: noun(observations, 'observation'),
+            tone: 'text-code-syntax-keyword',
           },
         ]
       : []),
-    ...(checks ? [{ text: noun(checks, "check"), tone: "" }] : []),
+    ...(checks ? [{ text: noun(checks, 'check'), tone: '' }] : []),
   ];
 }
 
@@ -175,48 +164,38 @@ export function activityCostParts(
  * only once it is FINAL: a number that stops moving while the run is still going
  * is worse than no number.
  */
-export function activityReceiptText(
-  activity?: ActivityProjection,
-  durationMs?: number,
-): string {
-  const state = activity?.state ?? "idle";
-  const live = state === "running" || state === "idle";
+export function activityReceiptText(activity?: ActivityProjection, durationMs?: number): string {
+  const state = activity?.state ?? 'idle';
+  const live = state === 'running' || state === 'idle';
   const rows = activity?.rows ?? [];
   const omitted = Math.max(0, activity?.omitted.rows ?? 0);
   const shown = rows.slice(0, 3);
   const left = rows.length - shown.length + omitted;
-  const subject =
-    rows.length === 1 && left === 0 ? activityRowSummary(rows[0]) : "";
+  const subject = rows.length === 1 && left === 0 ? activityRowSummary(rows[0]) : '';
   const names = [...shown.map((row) => row.operation.toUpperCase()), subject]
     .filter(Boolean)
-    .join(" · ");
+    .join(' · ');
   const calls = names
-    ? `${names}${left > 0 ? ` + ${left} more` : ""}`
+    ? `${names}${left > 0 ? ` + ${left} more` : ''}`
     : left > 0
-      ? `${left} ${left === 1 ? "activity" : "activities"}`
+      ? `${left} ${left === 1 ? 'activity' : 'activities'}`
       : live
-        ? "running activity"
-        : "";
-  return [calls, live ? "" : formatActivityDuration(durationMs)]
-    .filter(Boolean)
-    .join(" · ");
+        ? 'running activity'
+        : '';
+  return [calls, live ? '' : formatActivityDuration(durationMs)].filter(Boolean).join(' · ');
 }
 
-function diffLineInk(
-  kind: ActivityDiffEvidence["lines"][number]["kind"],
-): string {
-  if (kind === "addition") return "bg-code-ok text-code-success";
-  if (kind === "deletion") return "bg-code-err text-code-error";
-  if (kind === "header" || kind === "hunk") return "text-code-syntax-keyword";
-  return "text-code-foreground";
+function diffLineInk(kind: ActivityDiffEvidence['lines'][number]['kind']): string {
+  if (kind === 'addition') return 'bg-code-ok text-code-success';
+  if (kind === 'deletion') return 'bg-code-err text-code-error';
+  if (kind === 'header' || kind === 'hunk') return 'text-code-syntax-keyword';
+  return 'text-code-foreground';
 }
 
-function diffLineMarker(
-  kind: ActivityDiffEvidence["lines"][number]["kind"],
-): string {
-  if (kind === "addition") return "+";
-  if (kind === "deletion") return "-";
-  return " ";
+function diffLineMarker(kind: ActivityDiffEvidence['lines'][number]['kind']): string {
+  if (kind === 'addition') return '+';
+  if (kind === 'deletion') return '-';
+  return ' ';
 }
 
 /** The patch a step left, in the transcript's own diff ink. */
@@ -232,13 +211,10 @@ function ActivityDiff({ diff }: { diff: ActivityDiffEvidence }) {
             key={`${index}-${line.kind}-${line.text}`}
             className={`flex w-max min-w-full whitespace-pre px-2 py-px ${diffLineInk(line.kind)}`}
           >
-            <span
-              className="w-3 shrink-0 select-none text-center"
-              aria-hidden="true"
-            >
+            <span className="w-3 shrink-0 select-none text-center" aria-hidden="true">
               {diffLineMarker(line.kind)}
             </span>
-            <span className="pr-3">{line.text || " "}</span>
+            <span className="pr-3">{line.text || ' '}</span>
           </span>
         ))}
       </div>
@@ -253,7 +229,7 @@ function activityStepDelta(row: ActivityRow): {
 } {
   return row.evidence.reduce(
     (total, item) =>
-      item.kind === "diff"
+      item.kind === 'diff'
         ? {
             additions: total.additions + item.additions,
             deletions: total.deletions + item.deletions,
@@ -279,14 +255,12 @@ function activityStepDelta(row: ActivityRow): {
 function ActivityPath({ id }: { id: string }) {
   const roots = useWorkspaceRoots();
   const shown = workspaceRelativePath(id, roots) || id;
-  const cut = shown.lastIndexOf("/");
-  const directory = cut < 0 ? "" : shown.slice(0, cut + 1);
+  const cut = shown.lastIndexOf('/');
+  const directory = cut < 0 ? '' : shown.slice(0, cut + 1);
   const name = cut < 0 ? shown : shown.slice(cut + 1);
   return (
     <span className="flex min-w-0 max-w-full" data-path={id} title={id}>
-      {directory && (
-        <span className="truncate text-dialog-hint">{directory}</span>
-      )}
+      {directory && <span className="truncate text-dialog-hint">{directory}</span>}
       <span className="max-w-full shrink-0 truncate">{name}</span>
     </span>
   );
@@ -339,21 +313,12 @@ function activityFileRows(
  * a thumb has to hit. Two heights in one list is the honest reading — a target that
  * measured 18px would be the design lying about what can be pressed.
  */
-function ActivityFileRow({
-  id,
-  diff,
-}: {
-  id: string;
-  diff?: ActivityDiffEvidence;
-}) {
+function ActivityFileRow({ id, diff }: { id: string; diff?: ActivityDiffEvidence }) {
   const [open, setOpen] = useState(false);
   if (!diff)
     return (
       <li className="flex min-w-0 items-center gap-1.5 py-0.5 pr-1 font-mono text-chip text-code-result">
-        <span
-          aria-hidden="true"
-          className="w-3 shrink-0 text-center text-code-duration"
-        >
+        <span aria-hidden="true" className="w-3 shrink-0 text-center text-code-duration">
           &rsaquo;
         </span>
         <ActivityPath id={id} />
@@ -365,7 +330,7 @@ function ActivityFileRow({
         isOpen={open}
         tone="chronology"
         bleed
-        aria-label={`${open ? "Collapse" : "Expand"} the diff of ${id}`}
+        aria-label={`${open ? 'Collapse' : 'Expand'} the diff of ${id}`}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
       >
         <ActivityPath id={id} />
@@ -405,10 +370,10 @@ function ActivityFiles({
       </ul>
       {hidden > 0 && (
         <LoadMore
-          label={showAll ? "Show fewer paths" : `Show ${hidden} more paths`}
+          label={showAll ? 'Show fewer paths' : `Show ${hidden} more paths`}
           onClick={() => setShowAll((wasOpen) => !wasOpen)}
         >
-          {showAll ? "show fewer files" : `show ${moreCount(hidden, "file")}`}
+          {showAll ? 'show fewer files' : `show ${moreCount(hidden, 'file')}`}
         </LoadMore>
       )}
     </div>
@@ -434,11 +399,7 @@ function ActivityChanges({
   files: ActivityResource[];
 }) {
   const alone = files.length === 0 && diffs.length === 1 ? diffs[0] : undefined;
-  return alone ? (
-    <ActivityDiff diff={alone} />
-  ) : (
-    <ActivityFiles resources={files} diffs={diffs} />
-  );
+  return alone ? <ActivityDiff diff={alone} /> : <ActivityFiles resources={files} diffs={diffs} />;
 }
 
 /**
@@ -451,7 +412,7 @@ function ActivityChanges({
  * where the event is built.
  */
 function ActivityError({ evidence }: { evidence: ActivityTextEvidence }) {
-  const lines = evidence.text.split("\n");
+  const lines = evidence.text.split('\n');
   return (
     <div className="mt-1.5 min-w-0 border border-err-edge bg-err-surface">
       {/* No head. The step above already said which operation failed, on what,
@@ -470,10 +431,10 @@ function ActivityError({ evidence }: { evidence: ActivityTextEvidence }) {
           <p
             key={`${index}-${line}`}
             className={`-indent-4 whitespace-pre-wrap break-words pl-4 font-mono text-meta ${
-              index === 0 ? "text-err-ink" : "text-vis-message"
+              index === 0 ? 'text-err-ink' : 'text-vis-message'
             }`}
           >
-            {line || " "}
+            {line || ' '}
           </p>
         ))}
       </div>
@@ -499,8 +460,7 @@ function ActivityText({
   block?: boolean;
 }) {
   if (!format) return <>{text}</>;
-  if (format === "markdown" && block)
-    return <Markdown compact>{text}</Markdown>;
+  if (format === 'markdown' && block) return <Markdown compact>{text}</Markdown>;
   return <InlineMarkdown>{text}</InlineMarkdown>;
 }
 
@@ -517,61 +477,48 @@ function ActivityText({
  * tree printed into a chronology and nothing on this axis is worth that.
  */
 /** The containing trace resolves only attachments belonging to this transcript. */
-export const ActivityAttachmentContext = createContext<
-  ((id: string) => ReactNode) | null
->(null);
+export const ActivityAttachmentContext = createContext<((id: string) => ReactNode) | null>(null);
 
-function ActivityBody({
-  content,
-  running,
-}: {
-  content: ActivityContent[];
-  running: boolean;
-}) {
+function ActivityBody({ content, running }: { content: ActivityContent[]; running: boolean }) {
   const attachment = useContext(ActivityAttachmentContext);
   return (
     <div className="grid min-w-0 gap-1" data-activity-content>
       {content.map((block, index) => {
         switch (block.type) {
-          case "heading":
+          case 'heading':
             return (
               <h5
                 key={index}
-                className={`text-meta font-bold text-code-result ${index > 0 ? "mt-3" : "mt-[var(--text-meta--line-height)]"}`}
+                className={`text-meta font-bold text-code-result ${index > 0 ? 'mt-3' : 'mt-[var(--text-meta--line-height)]'}`}
               >
                 {block.text}
               </h5>
             );
-          case "text":
+          case 'text':
             return (
-              <p
-                key={index}
-                className="whitespace-pre-wrap break-words text-meta text-code-result"
-              >
+              <p key={index} className="whitespace-pre-wrap break-words text-meta text-code-result">
                 {block.text}
               </p>
             );
-          case "markdown":
+          case 'markdown':
             return (
               <Markdown key={index} compact nested headingLevel={5}>
                 {block.text}
               </Markdown>
             );
-          case "code":
-          case "diff":
+          case 'code':
+          case 'diff':
             return (
               <SyntaxCodeBlock
                 key={index}
                 value={block.text}
-                language={
-                  block.type === "diff" ? "diff" : (block.language ?? "text")
-                }
+                language={block.type === 'diff' ? 'diff' : (block.language ?? 'text')}
                 compact
                 bare
                 frameless
               />
             );
-          case "table":
+          case 'table':
             return (
               <div
                 key={index}
@@ -598,10 +545,7 @@ function ActivityBody({
                     {block.rows.map((row, at) => (
                       <tr key={at}>
                         {row.map((cell, col) => (
-                          <td
-                            key={col}
-                            className="whitespace-pre-wrap px-2 py-1"
-                          >
+                          <td key={col} className="whitespace-pre-wrap px-2 py-1">
                             {cell}
                           </td>
                         ))}
@@ -609,12 +553,10 @@ function ActivityBody({
                     ))}
                   </tbody>
                 </table>
-                {!block.rows.length && (
-                  <p className="text-meta text-dialog-hint">No rows</p>
-                )}
+                {!block.rows.length && <p className="text-meta text-dialog-hint">No rows</p>}
               </div>
             );
-          case "progress":
+          case 'progress':
             return (
               <div key={index} className="text-meta text-dialog-hint">
                 <p>
@@ -622,8 +564,8 @@ function ActivityBody({
                   {block.total !== undefined
                     ? ` · ${block.value} / ${block.total}`
                     : running
-                      ? " · In progress"
-                      : " · Stopped"}
+                      ? ' · In progress'
+                      : ' · Stopped'}
                 </p>
                 {(running || block.total !== undefined) && (
                   <progress
@@ -640,9 +582,7 @@ function ActivityBody({
               <div key={index} className="min-w-0">
                 <p className="text-meta text-dialog-hint">{block.label}</p>
                 {attachment?.(block.attachment_id) ?? (
-                  <p className="text-meta text-dialog-hint">
-                    Attachment unavailable
-                  </p>
+                  <p className="text-meta text-dialog-hint">Attachment unavailable</p>
                 )}
               </div>
             );
@@ -652,16 +592,10 @@ function ActivityBody({
   );
 }
 
-function ActivityStep({
-  row,
-  depth = 0,
-}: {
-  row: ActivityRow;
-  depth?: number;
-}) {
+function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) {
   const nested = depth > 0;
-  const failed = row.state === "failed";
-  const running = row.state === "running";
+  const failed = row.state === 'failed';
+  const running = row.state === 'running';
   // Headline and summary remain visible. Only content follows this disclosure;
   // running and failed steps start open until the reader makes a choice.
   const [toggled, setToggled] = useState<boolean | null>(null);
@@ -670,45 +604,29 @@ function ActivityStep({
   const lead = presentation?.headline ?? activityStepLead(row);
   const content = presentation?.content;
   const sections = presentation?.sections ?? [];
-  const summary = presentation ? "" : activityStepObject(row);
-  const caption = presentation
-    ? (row.error_summary ?? presentation.summary)
-    : "";
+  const summary = presentation ? '' : activityStepObject(row);
+  const caption = presentation ? (row.error_summary ?? presentation.summary) : '';
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
   const children = nested
     ? []
-    : [...(row.children ?? [])].sort(
-        (left, right) => left.sequence - right.sequence,
-      );
+    : [...(row.children ?? [])].sort((left, right) => left.sequence - right.sequence);
   const hasChildren = children.length > 0;
-  const Headline = nested ? "p" : "h4";
-  const diffs = row.evidence.filter(
-    (item): item is ActivityDiffEvidence => item.kind === "diff",
-  );
-  const error = row.evidence.find(
-    (item): item is ActivityTextEvidence => item.kind === "error",
-  );
+  const Headline = nested ? 'p' : 'h4';
+  const diffs = row.evidence.filter((item): item is ActivityDiffEvidence => item.kind === 'diff');
+  const error = row.evidence.find((item): item is ActivityTextEvidence => item.kind === 'error');
   // A failed step says WHY once: the machine's own text when it left one, and
   // the engine's summary line only when it did not. There is no pill — a framed
   // word beside a filled red mark, under a verb that already says "refused",
   // was the same fact spelled a third time.
-  const outcome = !error ? (row.error_summary ?? "") : "";
+  const outcome = !error ? (row.error_summary ?? '') : '';
   const touched = row.resources.filter(
     (resource) =>
       resource.id !== summary &&
-      ![
-        "shell-handle",
-        "council-group",
-        "council-thread",
-        "council-entry",
-      ].includes(resource.type),
+      !['shell-handle', 'council-group', 'council-thread', 'council-entry'].includes(resource.type),
   );
-  const object = countsVisibleFiles(
-    summary,
-    Math.min(touched.length, ACTIVITY_FILES_SHOWN),
-  )
-    ? ""
+  const object = countsVisibleFiles(summary, Math.min(touched.length, ACTIVITY_FILES_SHOWN))
+    ? ''
     : summary;
   const showsOutcome = Boolean(outcome) && (!presentation || failed);
   const showsFiles = diffs.length === 0 && !hasChildren && touched.length > 0;
@@ -727,19 +645,13 @@ function ActivityStep({
 
   const label = (
     <span className="flex min-w-0 flex-1 items-baseline gap-x-2">
-      <span
-        className="min-w-0 truncate font-semibold"
-        title={activityStepHeadline(row)}
-      >
+      <span className="min-w-0 truncate font-semibold" title={activityStepHeadline(row)}>
         {lead}
       </span>
-      {object ? " " : null}
+      {object ? ' ' : null}
       {object && (
-        <span
-          className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
-          title={object}
-        >
-          {row.operation === "cat" || row.operation === "patch" ? (
+        <span className="min-w-0 flex-1 truncate font-normal text-dialog-hint" title={object}>
+          {row.operation === 'cat' || row.operation === 'patch' ? (
             <ActivityPath id={object} />
           ) : (
             <ActivityText text={object} format={row.summary_format} />
@@ -756,7 +668,7 @@ function ActivityStep({
             className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
             title={caption}
           >
-            {row.operation === "cat" || row.operation === "patch" ? (
+            {row.operation === 'cat' || row.operation === 'patch' ? (
               <ActivityPath id={caption} />
             ) : (
               caption
@@ -766,7 +678,7 @@ function ActivityStep({
       )}
       {delta.additions + delta.deletions > 0 && (
         <>
-          {" "}
+          {' '}
           <span className="ml-[5px] font-mono font-normal text-dialog-hint">
             +{delta.additions} &minus;{delta.deletions}
           </span>
@@ -781,10 +693,7 @@ function ActivityStep({
         </time>
       )}
       {!duration && running && (
-        <span
-          aria-label="Running"
-          className="ml-auto shrink-0 font-normal text-code-duration"
-        >
+        <span aria-label="Running" className="ml-auto shrink-0 font-normal text-code-duration">
           …
         </span>
       )}
@@ -792,17 +701,13 @@ function ActivityStep({
   );
 
   return (
-    <li
-      data-activity-row={row.id}
-      data-activity-depth={depth}
-      className="relative min-w-0"
-    >
+    <li data-activity-row={row.id} data-activity-depth={depth} className="relative min-w-0">
       <div className="min-w-0">
         <Headline
           className={
             nested
-              ? "min-w-0 text-ui font-medium text-code-result mouse:text-meta"
-              : "min-w-0 text-ui font-semibold text-code-result mouse:text-meta"
+              ? 'min-w-0 text-ui font-medium text-code-result mouse:text-meta'
+              : 'min-w-0 text-ui font-semibold text-code-result mouse:text-meta'
           }
         >
           {openable ? (
@@ -822,10 +727,10 @@ function ActivityStep({
       </div>
       {!open && failed && !presentation && (
         <p className="pb-1 pl-3 text-meta text-err-ink">
-          {row.error_summary || "Operation failed"}
+          {row.error_summary || 'Operation failed'}
         </p>
       )}
-      {row.state === "cancelled" && (
+      {row.state === 'cancelled' && (
         <p className="pb-1 pl-3 text-meta text-dialog-hint">Cancelled</p>
       )}
       {open && content && content.length > 0 && (
@@ -835,12 +740,9 @@ function ActivityStep({
         <section
           key={index}
           data-activity-section
-          className={`min-w-0 pl-4.5 ${row.operation === "ls" ? (index === 0 && !(open && content?.length) ? "mt-1" : "mt-[var(--text-ui--line-height)]") : ""}`}
+          className={`min-w-0 pl-4.5 ${row.operation === 'ls' ? (index === 0 && !(open && content?.length) ? 'mt-1' : 'mt-[var(--text-ui--line-height)]') : ''}`}
         >
-          <h5
-            className="truncate text-meta font-bold text-code-result"
-            title={section.headline}
-          >
+          <h5 className="truncate text-meta font-bold text-code-result" title={section.headline}>
             {section.headline}
           </h5>
           {section.summary && (
@@ -858,9 +760,7 @@ function ActivityStep({
         </section>
       ))}
       {open && showsOutcome && (
-        <p className="whitespace-pre-wrap break-words text-meta text-err-ink">
-          {outcome}
-        </p>
+        <p className="whitespace-pre-wrap break-words text-meta text-err-ink">{outcome}</p>
       )}
       {open && row.is_truncated && (
         <p className="mt-1.5 min-w-0 pl-4.5 font-mono text-meta text-dialog-hint">
@@ -889,54 +789,40 @@ function ActivityStep({
 function groupFacts(rows: readonly ActivityRow[]): string {
   const files = new Set(
     rows.flatMap((row) =>
-      row.resources
-        .filter((resource) => resource.type === "file")
-        .map((resource) => resource.id),
+      row.resources.filter((resource) => resource.type === 'file').map((resource) => resource.id),
     ),
   );
   const complete = rows.every(
-    (row) =>
-      !row.is_truncated &&
-      row.resources.some((resource) => resource.type === "file"),
+    (row) => !row.is_truncated && row.resources.some((resource) => resource.type === 'file'),
   );
   const deltas = rows.map(activityStepDelta);
   const additions = deltas.reduce((sum, delta) => sum + delta.additions, 0);
   const deletions = deltas.reduce((sum, delta) => sum + delta.deletions, 0);
   return [
     files.size
-      ? `${files.size} ${complete ? "" : "known "}${files.size === 1 ? "file" : "files"}`
-      : "",
-    additions + deletions ? `+${additions} −${deletions}` : "",
-    ...(["running", "failed", "cancelled"] as const).flatMap((state) => {
+      ? `${files.size} ${complete ? '' : 'known '}${files.size === 1 ? 'file' : 'files'}`
+      : '',
+    additions + deletions ? `+${additions} −${deletions}` : '',
+    ...(['running', 'failed', 'cancelled'] as const).flatMap((state) => {
       const count = rows.filter((row) => row.state === state).length;
       return count ? [`${count} ${state}`] : [];
     }),
-    rows.some((row) => row.is_truncated) ? "partial details" : "",
+    rows.some((row) => row.is_truncated) ? 'partial details' : '',
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(' · ');
 }
 
-function ActivityGroup({
-  group,
-  repeated = false,
-}: {
-  group: OperationGroup;
-  repeated?: boolean;
-}) {
+function ActivityGroup({ group, repeated = false }: { group: OperationGroup; repeated?: boolean }) {
   const [open, setOpen] = useState(false);
   if (group.rows.length === 1) return <ActivityStep row={group.rows[0]} />;
   const title = `${group.label} ×${group.rows.length}`;
   const facts = groupFacts(group.rows);
   const previewRows = group.rows.filter((row) =>
-    repeated ? row.state === "failed" : row.state !== "succeeded",
+    repeated ? row.state === 'failed' : row.state !== 'succeeded',
   );
   const previews = repeated
-    ? [
-        ...new Map(
-          previewRows.map((row) => [row.error_summary || row.state, row]),
-        ).values(),
-      ]
+    ? [...new Map(previewRows.map((row) => [row.error_summary || row.state, row])).values()]
     : previewRows;
   return (
     <li
@@ -959,12 +845,10 @@ function ActivityGroup({
         previews.map((row) => (
           <p
             key={row.id}
-            className={`min-w-0 break-words pb-1 pl-3 text-meta ${row.state === "failed" ? "text-err-ink" : "text-dialog-hint"}`}
+            className={`min-w-0 break-words pb-1 pl-3 text-meta ${row.state === 'failed' ? 'text-err-ink' : 'text-dialog-hint'}`}
           >
-            {activityStepObject(row) ||
-              row.presentation?.headline ||
-              row.operation}{" "}
-            · {row.error_summary || row.state}
+            {activityStepObject(row) || row.presentation?.headline || row.operation} ·{' '}
+            {row.error_summary || row.state}
           </p>
         ))}
       {open && (
@@ -976,8 +860,7 @@ function ActivityGroup({
                   key={argumentsGroup.id}
                   group={{
                     ...argumentsGroup,
-                    label:
-                      activityStepObject(argumentsGroup.rows[0]) || group.label,
+                    label: activityStepObject(argumentsGroup.rows[0]) || group.label,
                   }}
                   repeated
                 />
@@ -993,17 +876,13 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   const groups = operationGroups(activity?.rows ?? []);
   const omitted = activity?.omitted.rows ?? 0;
   return (
-    <ol
-      aria-label="Operation groups"
-      data-activity-chronology
-      className="min-w-0 pb-1"
-    >
+    <ol aria-label="Operation groups" data-activity-chronology className="min-w-0 pb-1">
       {groups.map((group) => (
         <ActivityGroup key={group.id} group={group} />
       ))}
       {omitted > 0 && (
         <li className="text-meta text-dialog-hint">
-          {omitted} {omitted === 1 ? "step" : "steps"} omitted · Activity limit
+          {omitted} {omitted === 1 ? 'step' : 'steps'} omitted · Activity limit
         </li>
       )}
     </ol>
@@ -1024,10 +903,9 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
     activity.rows.length + activity.omitted.rows,
     Object.values(activity.counts).reduce((sum, count) => sum + count, 0),
   );
-  const summary = `${total} ${total === 1 ? "operation" : "operations"}`;
-  const states = (["running", "failed", "cancelled"] as const).flatMap(
-    (state) =>
-      activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
+  const summary = `${total} ${total === 1 ? 'operation' : 'operations'}`;
+  const states = (['running', 'failed', 'cancelled'] as const).flatMap((state) =>
+    activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
   );
   return (
     <section className="isolate min-w-0" aria-live="off" data-activity-axis>
@@ -1036,7 +914,7 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
           className="min-w-0 flex-1"
           tone="execution"
           isOpen={open}
-          aria-label={open ? "Collapse Activity" : "Expand Activity"}
+          aria-label={open ? 'Collapse Activity' : 'Expand Activity'}
           onClick={() => setOpen((value) => !value)}
         >
           <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -1045,21 +923,14 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
               {[
                 summary,
                 ...states,
-                !open && activity.omitted.rows
-                  ? `${activity.omitted.rows} omitted`
-                  : "",
+                !open && activity.omitted.rows ? `${activity.omitted.rows} omitted` : '',
               ]
                 .filter(Boolean)
-                .join(" · ")}
+                .join(' · ')}
             </span>
           </span>
         </Disclosure>
-        <CopyChip
-          value={activityCopyText(activity)}
-          label="Copy activity"
-          density="compact"
-          edge
-        />
+        <CopyChip value={activityCopyText(activity)} label="Copy activity" density="compact" edge />
       </div>
       <div hidden={!open}>
         <ActivityThread activity={activity} />

@@ -7,7 +7,7 @@ import { syncPackageVersion } from './version.mjs';
 
 vi.mock('node:child_process', () => ({ spawnSync: vi.fn(() => ({ status: 0 })) }));
 vi.mock('node:fs', async (importOriginal) => ({
-  ...await importOriginal(),
+  ...(await importOriginal()),
   existsSync: vi.fn(() => true),
   mkdirSync: vi.fn(),
   renameSync: vi.fn(),
@@ -19,7 +19,9 @@ vi.mock('./version.mjs', () => ({ appDir: '/app', syncPackageVersion: vi.fn(() =
 // and every OS the workflow runs on must have at least one target to build.
 describe('desktop package', () => {
   it('names an asset by version, platform and installer type', () => {
-    expect(assetName('0.1.30', desktopTargets('darwin', 'arm64')[0])).toBe('vis-companion-0.1.30-macos-universal.dmg');
+    expect(assetName('0.1.30', desktopTargets('darwin', 'arm64')[0])).toBe(
+      'vis-companion-0.1.30-macos-universal.dmg',
+    );
     expect(desktopTargets('linux', 'x64').map((t) => assetName('0.1.30', t))).toEqual([
       'vis-companion-0.1.30-linux-x64.deb',
       'vis-companion-0.1.30-linux-x64.AppImage',
@@ -27,31 +29,60 @@ describe('desktop package', () => {
   });
 
   it('covers every release runner OS with distinct asset names', () => {
-    const targets = [['darwin', 'arm64'], ['linux', 'x64'], ['linux', 'arm64']].flatMap(([os, arch]) => desktopTargets(os, arch));
+    const targets = [
+      ['darwin', 'arm64'],
+      ['linux', 'x64'],
+      ['linux', 'arm64'],
+    ].flatMap(([os, arch]) => desktopTargets(os, arch));
     const names = targets.map((t) => assetName('1.0.0', t));
     expect(names).toHaveLength(5);
     expect(new Set(names).size).toBe(names.length);
   });
 
   it('packages the local bundle, keeps the native title bar and builds macOS universal', () => {
-    const args = pakeArgs({ distDir: '/tmp/dist', version: '0.1.30', target: desktopTargets('darwin', 'arm64')[0], icon: '/i.png' });
+    const args = pakeArgs({
+      distDir: '/tmp/dist',
+      version: '0.1.30',
+      target: desktopTargets('darwin', 'arm64')[0],
+      icon: '/i.png',
+    });
     expect(args[0]).toBe('/tmp/dist');
     expect(args).toContain('--use-local-file');
     expect(args).toContain('--multi-arch');
     expect(args).not.toContain('--hide-title-bar');
-    expect(args.slice(args.indexOf('--app-version'), args.indexOf('--app-version') + 2)).toEqual(['--app-version', '0.1.30']);
-    const linux = pakeArgs({ distDir: '/tmp/dist', version: '0.1.30', target: desktopTargets('linux', 'arm64')[0], icon: '/i.png' });
+    expect(args.slice(args.indexOf('--app-version'), args.indexOf('--app-version') + 2)).toEqual([
+      '--app-version',
+      '0.1.30',
+    ]);
+    const linux = pakeArgs({
+      distDir: '/tmp/dist',
+      version: '0.1.30',
+      target: desktopTargets('linux', 'arm64')[0],
+      icon: '/i.png',
+    });
     expect(linux).not.toContain('--multi-arch');
-    expect(linux.slice(linux.indexOf('--targets'), linux.indexOf('--targets') + 2)).toEqual(['--targets', 'deb']);
+    expect(linux.slice(linux.indexOf('--targets'), linux.indexOf('--targets') + 2)).toEqual([
+      '--targets',
+      'deb',
+    ]);
   });
 });
 
 // v0.1.43 ran before checkout on fresh Linux runners and had no ARM64 package job.
-const workflow = readFileSync(new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url), 'utf8');
+const workflow = readFileSync(
+  new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url),
+  'utf8',
+);
 
 describe('desktop release signing', () => {
   it('requires macOS signing credentials and notarization before uploading', () => {
-    for (const name of ['VIS_DESKTOP_P12', 'VIS_DESKTOP_P12_PASSWORD', 'VIS_ASC_KEY_ID', 'VIS_ASC_ISSUER_ID', 'VIS_ASC_KEY']) {
+    for (const name of [
+      'VIS_DESKTOP_P12',
+      'VIS_DESKTOP_P12_PASSWORD',
+      'VIS_ASC_KEY_ID',
+      'VIS_ASC_ISSUER_ID',
+      'VIS_ASC_KEY',
+    ]) {
       expect(workflow).toContain(`secrets.${name}`);
     }
     expect(workflow).toContain('Missing required signing credential: $name');
@@ -62,14 +93,26 @@ describe('desktop release signing', () => {
     expect(workflow).toContain('security delete-keychain "$keychain"');
     // The first signed CI run failed with errSecInternalComponent on the shared Mac.
     // Keep other applications' keychain credentials available while signing.
-    expect(workflow).toContain('security list-keychains -d user -s "$keychain" "${original_keychains[@]}"');
+    expect(workflow).toContain(
+      'security list-keychains -d user -s "$keychain" "${original_keychains[@]}"',
+    );
     expect(workflow).toContain('security set-key-partition-list -S apple-tool:,apple:,codesign:');
     expect(workflow).toContain('for certificate in DeveloperIDCA DeveloperIDG2CA');
     expect(workflow).toContain('unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD VIS_ASC_KEY');
-    expect(workflow.indexOf('codesign --force --timestamp')).toBeLessThan(workflow.lastIndexOf('npm run package:desktop'));
-    for (const check of ['codesign --verify --deep --strict', 'xcrun stapler validate', 'spctl --assess --type execute']) {
-      expect(workflow.indexOf(check)).toBeGreaterThan(workflow.indexOf('name: Sign and notarize macOS'));
-      expect(workflow.indexOf(check)).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
+    expect(workflow.indexOf('codesign --force --timestamp')).toBeLessThan(
+      workflow.lastIndexOf('npm run package:desktop'),
+    );
+    for (const check of [
+      'codesign --verify --deep --strict',
+      'xcrun stapler validate',
+      'spctl --assess --type execute',
+    ]) {
+      expect(workflow.indexOf(check)).toBeGreaterThan(
+        workflow.indexOf('name: Sign and notarize macOS'),
+      );
+      expect(workflow.indexOf(check)).toBeLessThan(
+        workflow.indexOf('uses: actions/upload-artifact'),
+      );
     }
     expect(workflow).toContain('name: Package Linux with Pake');
     expect(workflow).toContain("if: runner.os == 'Linux'");
@@ -84,13 +127,18 @@ describe('desktop release platforms', () => {
 
   it.each(['x64', 'arm64'])('packages native Linux %s with truthful asset names', (arch) => {
     // Pake lowercases Linux names; the runner filesystem is case-sensitive.
-    existsSync.mockImplementation((path) => ['index.html', 'vis.deb', 'vis.AppImage'].includes(basename(path)));
+    existsSync.mockImplementation((path) =>
+      ['index.html', 'vis.deb', 'vis.AppImage'].includes(basename(path)),
+    );
     const assets = packageDesktop({ platform: 'linux', arch, log: vi.fn() });
     expect(assets.map((asset) => basename(asset))).toEqual([
       `vis-companion-1.0.0-linux-${arch}.deb`,
       `vis-companion-1.0.0-linux-${arch}.AppImage`,
     ]);
-    expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual(['vis.deb', 'vis.AppImage']);
+    expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual([
+      'vis.deb',
+      'vis.AppImage',
+    ]);
     expect(spawnSync).toHaveBeenCalledTimes(2);
     for (const [command, args] of spawnSync.mock.calls) {
       expect(command).toBe('npx');
@@ -100,15 +148,22 @@ describe('desktop release platforms', () => {
 
   it.each(['x64', 'arm64'])('packages universal macOS on a %s host', (arch) => {
     const assets = packageDesktop({ platform: 'darwin', arch, log: vi.fn() });
-    expect(assets.map((asset) => basename(asset))).toEqual(['vis-companion-1.0.0-macos-universal.dmg']);
+    expect(assets.map((asset) => basename(asset))).toEqual([
+      'vis-companion-1.0.0-macos-universal.dmg',
+    ]);
     expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual(['Vis.dmg']);
     expect(spawnSync).toHaveBeenCalledTimes(1);
     expect(spawnSync.mock.calls[0][1]).toContain('--multi-arch');
   });
 
   it.each([
-    ['win32', 'x64'], ['win32', 'arm64'], ['linux', 'ia32'], ['linux', 'arm'],
-    ['linux', 's390x'], ['darwin', 'ia32'], ['freebsd', 'x64'],
+    ['win32', 'x64'],
+    ['win32', 'arm64'],
+    ['linux', 'ia32'],
+    ['linux', 'arm'],
+    ['linux', 's390x'],
+    ['darwin', 'ia32'],
+    ['freebsd', 'x64'],
   ])('refuses %s/%s before inspecting or modifying the build', (platform, arch) => {
     expect(() => packageDesktop({ platform, arch, log: vi.fn() })).toThrow(/no desktop target/);
     expect(existsSync).not.toHaveBeenCalled();
@@ -118,12 +173,16 @@ describe('desktop release platforms', () => {
 
   it('runs only universal macOS and native x64/ARM64 Linux builders', () => {
     expect([...workflow.matchAll(/^\s+label: (.+)$/gm)].map((match) => match[1])).toEqual([
-      'macOS universal', 'Linux x64', 'Linux ARM64',
+      'macOS universal',
+      'Linux x64',
+      'Linux ARM64',
     ]);
     // Only macOS is self-hosted; Linux must not depend on Mac emulation.
     expect(workflow).toContain('runs-on: ${{ matrix.runner }}');
     expect([...workflow.matchAll(/^\s+- runner: (.+)$/gm)].map((match) => match[1])).toEqual([
-      '[self-hosted, macOS, ARM64, vis-macos-arm64]', 'ubuntu-24.04', 'ubuntu-24.04-arm',
+      '[self-hosted, macOS, ARM64, vis-macos-arm64]',
+      'ubuntu-24.04',
+      'ubuntu-24.04-arm',
     ]);
     expect(workflow).not.toMatch(/VIS_CONTAINER_|--linux|Podman|Docker/);
     expect(workflow).toContain('runner: ubuntu-24.04');
@@ -135,7 +194,9 @@ describe('desktop release platforms', () => {
 
   it('installs xdg-open explicitly for Linux AppImage bundling', () => {
     // The ARM64 hosted runner lacks the xdg-utils package present on x64.
-    const dependencies = workflow.split('name: Install Linux WebKit build dependencies')[1].split('      - name:')[0];
+    const dependencies = workflow
+      .split('name: Install Linux WebKit build dependencies')[1]
+      .split('      - name:')[0];
     expect(dependencies).toContain("if: runner.os == 'Linux'");
     expect(dependencies).toMatch(/\bxdg-utils\b/);
   });

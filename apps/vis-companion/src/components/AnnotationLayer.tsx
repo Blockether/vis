@@ -4,7 +4,7 @@ import {
   useRef,
   type PointerEvent as ReactPointerEvent,
   type Ref,
-} from "react";
+} from 'react';
 import {
   PEN_COLORS,
   canvasPoint,
@@ -15,9 +15,9 @@ import {
   strokeWidthFor,
   type PenToken,
   type Stroke,
-} from "../lib/annotate";
-import { ClearIcon, UndoIcon } from "./icons";
-import { IconButton } from "./ui";
+} from '../lib/annotate';
+import { ClearIcon, UndoIcon } from './icons';
+import { IconButton } from './ui';
 
 /**
  * A transparent sheet you can draw on, and the tools that drive it.
@@ -62,8 +62,8 @@ export function AnnotationLayer({
   ref,
   active,
   color,
-  className = "",
-  label = "Drawing layer",
+  className = '',
+  label = 'Drawing layer',
   onStrokesChange,
 }: {
   ref?: Ref<AnnotationSurface>;
@@ -100,7 +100,7 @@ export function AnnotationLayer({
 
   function repaint(): void {
     const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
+    const context = canvas?.getContext('2d');
     if (canvas && context) repaintStrokes(context, canvas, strokesRef.current);
     announce();
   }
@@ -127,7 +127,7 @@ export function AnnotationLayer({
     };
     strokesRef.current = [...strokesRef.current, stroke];
     drawingRef.current = stroke;
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext('2d');
     if (context) paintStroke(context, stroke);
     announce();
     return true;
@@ -141,7 +141,7 @@ export function AnnotationLayer({
     if (!point) return false;
     const previous = stroke.points[stroke.points.length - 1];
     stroke.points.push(point);
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext('2d');
     if (previous && context) paintSegment(context, stroke, previous, point);
     return true;
   }
@@ -232,8 +232,8 @@ export function AnnotationLayer({
     <canvas
       ref={canvasRef}
       aria-label={label}
-      data-annotation={active ? "active" : "idle"}
-      className={`[touch-action:none] select-none [-webkit-touch-callout:none] ${active ? "pointer-events-auto cursor-crosshair" : "pointer-events-none"} ${className}`}
+      data-annotation={active ? 'active' : 'idle'}
+      className={`[touch-action:none] select-none [-webkit-touch-callout:none] ${active ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'} ${className}`}
       onPointerDown={begin}
       onPointerMove={extend}
       onPointerUp={finish}
@@ -255,7 +255,7 @@ export function PenToolbar({
   strokeCount,
   onUndo,
   onClear,
-  className = "",
+  className = '',
 }: {
   color: PenToken;
   onColor: (token: PenToken) => void;
@@ -281,7 +281,7 @@ export function PenToolbar({
         >
           <span
             className={`size-7 rounded-full border-2 ${pen.className} ${
-              color === pen.token ? "border-accent" : "border-edge-strong"
+              color === pen.token ? 'border-accent' : 'border-edge-strong'
             }`}
           />
         </button>

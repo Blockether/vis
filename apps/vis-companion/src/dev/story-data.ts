@@ -213,15 +213,13 @@ export const ACTIVITY_LONG_LABELS = projection({
     {
       id: 'long-markdown',
       operation: 'grep',
-      summary:
-        '`release_bundle_preserves_platform_specific_runtime_dependencies`',
+      summary: '`release_bundle_preserves_platform_specific_runtime_dependencies`',
       summary_format: 'markdown',
     },
     {
       id: 'long-filename',
       operation: 'patch',
-      summary:
-        'test/release_bundle_preserves_platform_specific_runtime_dependencies_test.clj',
+      summary: 'test/release_bundle_preserves_platform_specific_runtime_dependencies_test.clj',
     },
     {
       id: 'long-directory',
@@ -341,7 +339,10 @@ export const ACTIVITY_CHRONOLOGY = projection({
           lines: [
             { kind: 'context', text: '  const face = ACTIVITY_FACE[row.state];' },
             { kind: 'deletion', text: '  className="border-t border-code-edge bg-result"' },
-            { kind: 'addition', text: '  className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5"' },
+            {
+              kind: 'addition',
+              text: '  className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5"',
+            },
             { kind: 'addition', text: '  data-activity-row={row.id}' },
           ],
           additions: 4,
@@ -517,7 +518,10 @@ export const ACTIVITY_TREE_CHANGES = projection({
           duration_ms: 9,
           resources: [
             { type: 'file', id: '/Users/dev/vis/apps/vis-companion/src/dev/story-data.ts' },
-            { type: 'file', id: '/Users/dev/vis/apps/vis-companion/src/components/ActivityPanel.tsx' },
+            {
+              type: 'file',
+              id: '/Users/dev/vis/apps/vis-companion/src/components/ActivityPanel.tsx',
+            },
             { type: 'file', id: '/Users/dev/vis/apps/vis-companion/src/lib/path.ts' },
           ],
           evidence: [
@@ -545,7 +549,10 @@ export const ACTIVITY_TREE_CHANGES = projection({
                 { kind: 'hunk', text: '@@ -415,7 +415,9 @@' },
                 { kind: 'context', text: '  return (' },
                 { kind: 'deletion', text: '    <ActivityFiles resources={touched} />' },
-                { kind: 'addition', text: '    <ActivityFiles resources={touched} diffs={diffs} />' },
+                {
+                  kind: 'addition',
+                  text: '    <ActivityFiles resources={touched} diffs={diffs} />',
+                },
               ],
               additions: 1,
               deletions: 1,
@@ -666,13 +673,14 @@ export const NOTE_MARKDOWN = [
   '- `stop` ends the running turn, `send` starts the next one',
   '',
   '```ts',
-  "<ComposerButton label=\"Send message\" tone=\"send\" />",
+  '<ComposerButton label="Send message" tone="send" />',
   '```',
 ].join('\n');
 
 /** A memo's loudness, deterministic so two frames of one story agree. */
-export const RECORDING_PEAKS: number[] = Array.from({ length: 96 }, (_, i) =>
-  Math.abs(Math.sin(i / 3.1)) * (0.35 + 0.65 * Math.abs(Math.sin(i / 17))),
+export const RECORDING_PEAKS: number[] = Array.from(
+  { length: 96 },
+  (_, i) => Math.abs(Math.sin(i / 3.1)) * (0.35 + 0.65 * Math.abs(Math.sin(i / 17))),
 );
 
 /** What the gateway's speech engine heard, for the recording row's quotation. */
@@ -934,12 +942,17 @@ export function storyProviderAuth(
     addProvider: nothing,
     removeProvider: nothing,
   } as unknown as ProviderAuth;
- }
+}
 
 /** Synthetic fresh browser flow: no account, authorization code or live gateway. */
 export const STORY_BROWSER_AUTH: ProviderAuth = {
-  ...storyProviderAuth([{ ...STORY_PROVIDERS[0], id: 'anthropic-coding-plan',
-    status: { is_authenticated: false, auth_state: 'unverified' } }]),
+  ...storyProviderAuth([
+    {
+      ...STORY_PROVIDERS[0],
+      id: 'anthropic-coding-plan',
+      status: { is_authenticated: false, auth_state: 'unverified' },
+    },
+  ]),
   flow: {
     flow_id: 'story-browser-return',
     provider_id: 'anthropic-coding-plan',
@@ -953,27 +966,52 @@ export const STORY_BROWSER_AUTH: ProviderAuth = {
 
 /** The registered Codex device shape; the real gateway owns the polling capability. */
 export const STORY_DEVICE_AUTH: ProviderAuth = {
-  ...storyProviderAuth([{ ...STORY_PROVIDERS[1], id: 'openai-codex', label: 'OpenAI Codex',
-    is_fallback: false, fallback_model: null, models: ['gpt-5.6-terra'],
-    status: { is_authenticated: false, auth_state: 'unverified' } }]),
+  ...storyProviderAuth([
+    {
+      ...STORY_PROVIDERS[1],
+      id: 'openai-codex',
+      label: 'OpenAI Codex',
+      is_fallback: false,
+      fallback_model: null,
+      models: ['gpt-5.6-terra'],
+      status: { is_authenticated: false, auth_state: 'unverified' },
+    },
+  ]),
   flow: {
-    flow_id: 'story-device-return', provider_id: 'openai-codex', kind: 'device',
-    url: 'https://auth.openai.com/codex/device', user_code: 'ABCD-EFGH', interval_ms: 5000,
-    instructions: ['Sign in to ChatGPT and enter this one-time code.',
+    flow_id: 'story-device-return',
+    provider_id: 'openai-codex',
+    kind: 'device',
+    url: 'https://auth.openai.com/codex/device',
+    user_code: 'ABCD-EFGH',
+    interval_ms: 5000,
+    instructions: [
+      'Sign in to ChatGPT and enter this one-time code.',
       'Only approve a code for a sign-in you started in Vis.',
-      'Return to Vis after approval; sign-in finishes automatically.'],
+      'Return to Vis after approval; sign-in finishes automatically.',
+    ],
   },
 };
 
 /** An adapter that registers Vis' app callback, not a claim about Claude's fixed redirect. */
 export const STORY_APP_AUTH: ProviderAuth = {
-  ...storyProviderAuth([{ ...STORY_PROVIDERS[0], id: 'example-oauth', label: 'Company model',
-    status: { is_authenticated: false, auth_state: 'unverified' } }]),
+  ...storyProviderAuth([
+    {
+      ...STORY_PROVIDERS[0],
+      id: 'example-oauth',
+      label: 'Company model',
+      status: { is_authenticated: false, auth_state: 'unverified' },
+    },
+  ]),
   flow: {
-    flow_id: 'story-app-return', kind: 'pkce', provider_id: 'example-oauth',
-    callback_mode: 'app', redirect_uri: 'com.blockether.viscompanion://oauth/callback',
+    flow_id: 'story-app-return',
+    kind: 'pkce',
+    provider_id: 'example-oauth',
+    callback_mode: 'app',
+    redirect_uri: 'com.blockether.viscompanion://oauth/callback',
     url: 'https://gateway.example.com/authorize?state=story-state&redirect_uri=com.blockether.viscompanion%3A%2F%2Foauth%2Fcallback',
-    instructions: ['Approve sign-in in the browser. The callback opens Vis and sign-in finishes automatically.'],
+    instructions: [
+      'Approve sign-in in the browser. The callback opens Vis and sign-in finishes automatically.',
+    ],
   },
 };
 /**
@@ -1029,9 +1067,7 @@ export const STORY_QUEUED_TURNS: QueuedTurn[] = [
     turnId: 'turn-2',
     request: 'Inspect the release manifest',
     preview: 'Inspect the release manifest',
-    attachments: [
-      { filename: 'manifest.png', mediaType: 'image/png', sizeLabel: '24 KB' },
-    ],
+    attachments: [{ filename: 'manifest.png', mediaType: 'image/png', sizeLabel: '24 KB' }],
   },
   {
     turnId: 'turn-3',
@@ -1056,13 +1092,14 @@ const STORY_LONG_QUEUE_REQUESTS = [
   'Lint and verify the release',
 ];
 
-export const STORY_LONG_QUEUED_TURNS: QueuedTurn[] =
-  STORY_LONG_QUEUE_REQUESTS.map((request, index) => ({
+export const STORY_LONG_QUEUED_TURNS: QueuedTurn[] = STORY_LONG_QUEUE_REQUESTS.map(
+  (request, index) => ({
     turnId: `long-queue-${index + 1}`,
     request,
     preview: request,
     attachments: [],
-  }));
+  }),
+);
 
 export const STORY_QUEUE_PAUSED: QueuePausedInfo = {
   held: 2,
@@ -1264,8 +1301,7 @@ export const STORY_TURN_ITERATIONS: TranscriptIteration[] = [
     forms: [
       {
         scope: 'python',
-        display_code:
-          'print(patch("src/components/ChatContent.tsx", edits))',
+        display_code: 'print(patch("src/components/ChatContent.tsx", edits))',
         duration_ms: 940,
         result_kind: 'ok',
         // No activity at all: a bare edit that reported nothing but its own
@@ -1279,8 +1315,7 @@ export const STORY_TURN_ITERATIONS: TranscriptIteration[] = [
   {
     id: 'i3',
     position: 3,
-    thinking:
-      'Now prove it: the suite first, then the story sheet at both widths.',
+    thinking: 'Now prove it: the suite first, then the story sheet at both widths.',
     forms: [
       {
         scope: 'python',
@@ -1334,10 +1369,7 @@ export const STORY_TURN_ITERATIONS_SETTLED: TranscriptIteration[] = STORY_TURN_I
 export const STORY_TURN_ITERATIONS_LONG: TranscriptIteration[] = Array.from(
   { length: 120 },
   (_, index) => {
-    const source =
-      STORY_TURN_ITERATIONS_SETTLED[
-        index % STORY_TURN_ITERATIONS_SETTLED.length
-      ];
+    const source = STORY_TURN_ITERATIONS_SETTLED[index % STORY_TURN_ITERATIONS_SETTLED.length];
     return { ...source, id: `long-i${index}`, position: index };
   },
 );
@@ -1431,38 +1463,91 @@ export const STORY_COMPACT_EXECUTIONS: TranscriptIteration[] = [
 
 export const ACTIVITY_RICH: ActivityProjection = {
   ...ACTIVITY_RUNNING,
-  rows: [{ ...ACTIVITY_RUNNING.rows[0], operation: 'run_checks', presenter: 'tests',
-    summary: 'Run checks', duration_ms: undefined, result_summary: undefined,
-    state: 'running', presentation: { headline: 'Verification', summary: '297 checks passed', content: [
-    { type: 'markdown', text: '**Prepared** the workspace.\n\n- Source loaded\n- Checks selected' },
-    { type: 'table', columns: ['Suite', 'Passed', 'Failed'], rows: [['Unit', '285', '0'], ['Integration', '12', '0']] },
-    { type: 'diff', text: '-old presentation\n+symbol content' },
-    { type: 'progress', label: 'Checking browser scenarios', value: 12, total: 20 },
-    { type: 'progress', label: 'Waiting for video' },
-    { type: 'image', attachment_id: 'screenshot', label: 'Browser screenshot' },
-    { type: 'video', attachment_id: 'recording', label: 'Browser recording' },
-   ] } }],
+  rows: [
+    {
+      ...ACTIVITY_RUNNING.rows[0],
+      operation: 'run_checks',
+      presenter: 'tests',
+      summary: 'Run checks',
+      duration_ms: undefined,
+      result_summary: undefined,
+      state: 'running',
+      presentation: {
+        headline: 'Verification',
+        summary: '297 checks passed',
+        content: [
+          {
+            type: 'markdown',
+            text: '**Prepared** the workspace.\n\n- Source loaded\n- Checks selected',
+          },
+          {
+            type: 'table',
+            columns: ['Suite', 'Passed', 'Failed'],
+            rows: [
+              ['Unit', '285', '0'],
+              ['Integration', '12', '0'],
+            ],
+          },
+          { type: 'diff', text: '-old presentation\n+symbol content' },
+          { type: 'progress', label: 'Checking browser scenarios', value: 12, total: 20 },
+          { type: 'progress', label: 'Waiting for video' },
+          { type: 'image', attachment_id: 'screenshot', label: 'Browser screenshot' },
+          { type: 'video', attachment_id: 'recording', label: 'Browser recording' },
+        ],
+      },
+    },
+  ],
 };
 
 /** First migrated symbol: the listing owns its heading, totals and entries. */
-export const STORY_LISTING: TranscriptIteration[] = [{
-  id: 'listing', position: 1, forms: [{
-    source: 'paths = ls("apps/vis-companion/src")\nprint(paths)',
-    duration_ms: 42,
-    activity: { state: 'succeeded', counts: {running: 0, succeeded: 1, failed: 0, cancelled: 0},
-      omitted: {rows: 0, by_classification: {}}, rows: [{
-        id: 'ls-1', sequence: 1, operation: 'ls', presenter: 'observation', signal: 'observation',
-        state: 'succeeded', summary: '', resources: [], evidence: [], duration_ms: 42,
-        presentation: {
-          headline: 'Listed apps/vis-companion/src', summary: '3 directories · 2 files', content: [
-          {type: 'table', columns: ['Name', 'Kind', 'Bytes'], rows: [
-            ['components/', 'Directory', '—'], ['dev/', 'Directory', '—'],
-            ['lib/', 'Directory', '—'], ['main.tsx', 'File', '2048'], ['styles.css', 'File', '8192']
-          ]}
-        ] }
-      }]}
-  }]
-}];
+export const STORY_LISTING: TranscriptIteration[] = [
+  {
+    id: 'listing',
+    position: 1,
+    forms: [
+      {
+        source: 'paths = ls("apps/vis-companion/src")\nprint(paths)',
+        duration_ms: 42,
+        activity: {
+          state: 'succeeded',
+          counts: { running: 0, succeeded: 1, failed: 0, cancelled: 0 },
+          omitted: { rows: 0, by_classification: {} },
+          rows: [
+            {
+              id: 'ls-1',
+              sequence: 1,
+              operation: 'ls',
+              presenter: 'observation',
+              signal: 'observation',
+              state: 'succeeded',
+              summary: '',
+              resources: [],
+              evidence: [],
+              duration_ms: 42,
+              presentation: {
+                headline: 'Listed apps/vis-companion/src',
+                summary: '3 directories · 2 files',
+                content: [
+                  {
+                    type: 'table',
+                    columns: ['Name', 'Kind', 'Bytes'],
+                    rows: [
+                      ['components/', 'Directory', '—'],
+                      ['dev/', 'Directory', '—'],
+                      ['lib/', 'Directory', '—'],
+                      ['main.tsx', 'File', '2048'],
+                      ['styles.css', 'File', '8192'],
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ],
+  },
+];
 /** One short thought directly above its program, without intervening narration. */
 export const STORY_THINKING_AND_CODE: TranscriptIteration[] = STORY_LISTING.map((iteration) => ({
   ...iteration,
@@ -1473,15 +1558,38 @@ export const STORY_THINKING_AND_CODE: TranscriptIteration[] = STORY_LISTING.map(
 export const ACTIVITY_LISTING = STORY_LISTING[0].forms![0].activity!;
 export const ACTIVITY_LISTING_BATCH: ActivityProjection = {
   ...ACTIVITY_LISTING,
-  rows: [{ ...ACTIVITY_LISTING.rows[0], id: 'listing-batch', presentation: {
-    headline: 'Listed 2 directories', summary: '7 entries', content: [],
-    sections: [
-      { headline: 'apps/vis-companion/src', summary: '3 directories · 2 files', content: ACTIVITY_LISTING.rows[0].presentation!.content },
-      { headline: 'apps/vis-companion/test', summary: '0 directories · 2 files', content: [
-        { type: 'table', columns: ['Name', 'Kind', 'Bytes'], rows: [['activity.test.ts', 'File', '4096'], ['listing.test.ts', 'File', '2048']] },
-      ] },
-    ],
-  } }],
+  rows: [
+    {
+      ...ACTIVITY_LISTING.rows[0],
+      id: 'listing-batch',
+      presentation: {
+        headline: 'Listed 2 directories',
+        summary: '7 entries',
+        content: [],
+        sections: [
+          {
+            headline: 'apps/vis-companion/src',
+            summary: '3 directories · 2 files',
+            content: ACTIVITY_LISTING.rows[0].presentation!.content,
+          },
+          {
+            headline: 'apps/vis-companion/test',
+            summary: '0 directories · 2 files',
+            content: [
+              {
+                type: 'table',
+                columns: ['Name', 'Kind', 'Bytes'],
+                rows: [
+                  ['activity.test.ts', 'File', '4096'],
+                  ['listing.test.ts', 'File', '2048'],
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
 };
 
 /**
@@ -1701,7 +1809,6 @@ export const STORY_PROVIDER_ERRORS: ContentBlock[] = [
   ),
 ];
 
-
 /**
  * THE FLEET A LIST STORY READS, AND IT IS A GATEWAY, NOT A PROP.
  *
@@ -1763,8 +1870,21 @@ export const STORY_FLEET_PROJECTS: StoryProject[] = [
         ...fleetRow('~/rewrite', 'fd3c03f9', STORY_SESSION.title, 1, 61, 'running'),
         favorite_rank: 1,
       },
-      fleetRow('~/rewrite', '41d78df4', 'Scrolling up in a long session is 180 screens', 14, 118, 'awaiting'),
-      fleetRow('~/rewrite', '9c1e77ab', 'Keep the running placeholder out of the render window', 52, 24),
+      fleetRow(
+        '~/rewrite',
+        '41d78df4',
+        'Scrolling up in a long session is 180 screens',
+        14,
+        118,
+        'awaiting',
+      ),
+      fleetRow(
+        '~/rewrite',
+        '9c1e77ab',
+        'Keep the running placeholder out of the render window',
+        52,
+        24,
+      ),
       ...Array.from({ length: 110 }, (_, index) =>
         fleetRow(
           '~/rewrite',
@@ -1781,7 +1901,14 @@ export const STORY_FLEET_PROJECTS: StoryProject[] = [
     name: 'svar',
     projectId: 'project-svar',
     rows: [
-      fleetRow('~/svar', '6ba99088', 'Routing falls back to the coding plan on 429', 38, 31, 'running'),
+      fleetRow(
+        '~/svar',
+        '6ba99088',
+        'Routing falls back to the coding plan on 429',
+        38,
+        31,
+        'running',
+      ),
       fleetRow('~/svar', 'd41ab7c5', 'Structured output refuses a partial object', 210, 17),
       fleetRow('~/svar', '8c02e6f1', 'Provider cache metrics are transport-independent', 640, 22),
       fleetRow('~/svar', 'f93b18a0', 'Retry budget per route, not per call', 1_020, 5),
@@ -1792,9 +1919,27 @@ export const STORY_FLEET_PROJECTS: StoryProject[] = [
     name: 'reviewer',
     projectId: 'project-reviewer',
     rows: [
-      fleetRow('~/work/tools/reviewer', '4a7c9d63', 'Content boundaries in the snapshot output', 155, 14),
-      fleetRow('~/work/tools/reviewer', '17e6b02f', 'Wait for copy the story owns, never the shell', 480, 9),
-      fleetRow('~/work/tools/reviewer', 'ba3f5e41', 'Device emulation before the first navigation', 1_320, 3),
+      fleetRow(
+        '~/work/tools/reviewer',
+        '4a7c9d63',
+        'Content boundaries in the snapshot output',
+        155,
+        14,
+      ),
+      fleetRow(
+        '~/work/tools/reviewer',
+        '17e6b02f',
+        'Wait for copy the story owns, never the shell',
+        480,
+        9,
+      ),
+      fleetRow(
+        '~/work/tools/reviewer',
+        'ba3f5e41',
+        'Device emulation before the first navigation',
+        1_320,
+        3,
+      ),
     ],
   },
   {
@@ -1803,7 +1948,13 @@ export const STORY_FLEET_PROJECTS: StoryProject[] = [
     projectId: 'project-infra',
     rows: [
       fleetRow('~/infrastructure', '2f8d47b9', 'Rotate the relay signing key', 2_600, 11),
-      fleetRow('~/infrastructure', 'cc51a30e', 'Ingress health check answers before the unit starts', 4_100, 2),
+      fleetRow(
+        '~/infrastructure',
+        'cc51a30e',
+        'Ingress health check answers before the unit starts',
+        4_100,
+        2,
+      ),
     ],
   },
 ];
@@ -1819,9 +1970,7 @@ const fleetCursor = (row: Session) => `2:0:${row.id}`;
  * `/v1/sessions` window, cut by `root=`, `limit=` and `after=` exactly as
  * `state/list-sessions-page` cuts it. Deterministic, and it never touches the network.
  */
-export function storyFleetFetch(
-  projects: StoryProject[] = STORY_FLEET_PROJECTS,
-): typeof fetch {
+export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS): typeof fetch {
   const all = projects.flatMap((project) => project.rows);
   const isLive = (row: Session) => row.live === true;
   const isAwaiting = (row: Session) => row.is_awaiting_input === true;
@@ -1847,20 +1996,15 @@ export function storyFleetFetch(
       headers: { 'Content-Type': 'application/json', ETag: '"story-fleet"' },
     });
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const href =
-      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
     if (url.pathname === '/v1/projects/overview') return answer(overview);
     if (url.pathname === '/v1/sessions' && (init?.method ?? 'GET') === 'GET') {
       const root = url.searchParams.get('root');
-      const listed = root
-        ? (projects.find((project) => project.root === root)?.rows ?? [])
-        : all;
+      const listed = root ? (projects.find((project) => project.root === root)?.rows ?? []) : all;
       const limit = Number(url.searchParams.get('limit') ?? listed.length) || listed.length;
       const after = url.searchParams.get('after');
-      const from = after
-        ? listed.findIndex((row) => fleetCursor(row) === after) + 1
-        : 0;
+      const from = after ? listed.findIndex((row) => fleetCursor(row) === after) + 1 : 0;
       const window = after && from === 0 ? [] : listed.slice(from, from + limit);
       const last = window[window.length - 1];
       const hasMore = from + window.length < listed.length;
@@ -1877,49 +2021,116 @@ export function storyFleetFetch(
 }
 
 /** Deterministic design states. These are projection fixtures, not a live gateway. */
-function joinedActivity(state: "running" | "succeeded" | "failed"): ActivityProjection {
+function joinedActivity(state: 'running' | 'succeeded' | 'failed'): ActivityProjection {
   return projection({
     state,
-    counts: { running: state === "running" ? 1 : 0, succeeded: state === "succeeded" ? 13 : 12, failed: state === "failed" ? 1 : 0, cancelled: 0 },
+    counts: {
+      running: state === 'running' ? 1 : 0,
+      succeeded: state === 'succeeded' ? 13 : 12,
+      failed: state === 'failed' ? 1 : 0,
+      cancelled: 0,
+    },
     omitted: { rows: 0, by_classification: {} },
     rows: [
       ...Array.from({ length: 8 }, (_, index) => ({
-        id: `read-${index}`, sequence: index, operation: "cat", presenter: "observation", signal: "observation", state: "succeeded",
-        summary: `src/component-${index % 6}.tsx`, result_summary: "Read source", duration_ms: 12,
-        resources: [{ type: "file", id: `src/component-${index % 6}.tsx` }], evidence: [],
+        id: `read-${index}`,
+        sequence: index,
+        operation: 'cat',
+        presenter: 'observation',
+        signal: 'observation',
+        state: 'succeeded',
+        summary: `src/component-${index % 6}.tsx`,
+        result_summary: 'Read source',
+        duration_ms: 12,
+        resources: [{ type: 'file', id: `src/component-${index % 6}.tsx` }],
+        evidence: [],
       })),
       ...Array.from({ length: 3 }, (_, index) => ({
-        id: `patch-${index}`, sequence: 8 + index, operation: "patch", presenter: "patch", signal: "mutation", state: "succeeded",
-        summary: `src/component-${index % 2}.tsx`, result_summary: "Patch applied", duration_ms: 24,
-        resources: [{ type: "file", id: `src/component-${index % 2}.tsx` }],
-        evidence: [{ kind: "diff", text: `src/component-${index % 2}.tsx`, additions: 14, deletions: index === 2 ? 3 : 4, modifications: 0, is_truncated: false, is_redacted: false,
-          lines: [
-            ...Array.from({ length: index === 2 ? 3 : 4 }, (_, line) => ({ kind: "deletion", text: `const oldGroup${line} = false;` })),
-            ...Array.from({ length: 14 }, (_, line) => ({ kind: "addition", text: `const group${line} = true;` })),
-          ] }],
+        id: `patch-${index}`,
+        sequence: 8 + index,
+        operation: 'patch',
+        presenter: 'patch',
+        signal: 'mutation',
+        state: 'succeeded',
+        summary: `src/component-${index % 2}.tsx`,
+        result_summary: 'Patch applied',
+        duration_ms: 24,
+        resources: [{ type: 'file', id: `src/component-${index % 2}.tsx` }],
+        evidence: [
+          {
+            kind: 'diff',
+            text: `src/component-${index % 2}.tsx`,
+            additions: 14,
+            deletions: index === 2 ? 3 : 4,
+            modifications: 0,
+            is_truncated: false,
+            is_redacted: false,
+            lines: [
+              ...Array.from({ length: index === 2 ? 3 : 4 }, (_, line) => ({
+                kind: 'deletion',
+                text: `const oldGroup${line} = false;`,
+              })),
+              ...Array.from({ length: 14 }, (_, line) => ({
+                kind: 'addition',
+                text: `const group${line} = true;`,
+              })),
+            ],
+          },
+        ],
       })),
-      ...["npm run lint", "npm run build"].map((command, index) => ({
-        id: `shell-${index}`, sequence: 11 + index, operation: "shell", presenter: "shell", signal: "verification",
-        state: index === 0 ? "succeeded" : state, summary: command,
-        ...(index === 1 && state === "running" ? {} : { duration_ms: 1200, result_summary: "Passed" }),
-        ...(index === 1 && state === "failed" ? { error_summary: "Build failed · exit 1", result_summary: undefined } : {}),
-        resources: [], evidence: [],
+      ...['npm run lint', 'npm run build'].map((command, index) => ({
+        id: `shell-${index}`,
+        sequence: 11 + index,
+        operation: 'shell',
+        presenter: 'shell',
+        signal: 'verification',
+        state: index === 0 ? 'succeeded' : state,
+        summary: command,
+        ...(index === 1 && state === 'running'
+          ? {}
+          : { duration_ms: 1200, result_summary: 'Passed' }),
+        ...(index === 1 && state === 'failed'
+          ? { error_summary: 'Build failed · exit 1', result_summary: undefined }
+          : {}),
+        resources: [],
+        evidence: [],
       })),
     ],
   });
 }
 
 export const STORY_JOINED_ACTIVITY = Object.fromEntries(
-  (["running", "succeeded", "failed"] as const).map((state) => [state, [{
-    id: `joined-${state}`, position: 1, thinking: "Checking the Activity layout and grouping.",
-    forms: [{ source: "results = await gather(read_files(), apply_changes())\nprint(results)", activity: joinedActivity(state) }],
-  }]])
-) as Record<"running" | "succeeded" | "failed", TranscriptIteration[]>;
+  (['running', 'succeeded', 'failed'] as const).map((state) => [
+    state,
+    [
+      {
+        id: `joined-${state}`,
+        position: 1,
+        thinking: 'Checking the Activity layout and grouping.',
+        forms: [
+          {
+            source: 'results = await gather(read_files(), apply_changes())\nprint(results)',
+            activity: joinedActivity(state),
+          },
+        ],
+      },
+    ],
+  ]),
+) as Record<'running' | 'succeeded' | 'failed', TranscriptIteration[]>;
 
 export const STORY_GOAL = {
-  id: "goal-example", objective: "Implement explicit session goals and verify the SDK and phone header.",
-  status: "active" as const, iteration_budget: 30, iterations_used: 12, tokens_used: 12400, time_used_ms: 32000,
-  revision: 3, version: 1, reason: null, created_at: 1780000000000, updated_at: 1780000032000,
+  id: 'goal-example',
+  objective: 'Implement explicit session goals and verify the SDK and phone header.',
+  status: 'active' as const,
+  iteration_budget: 30,
+  iterations_used: 12,
+  tokens_used: 12400,
+  time_used_ms: 32000,
+  revision: 3,
+  version: 1,
+  reason: null,
+  created_at: 1780000000000,
+  updated_at: 1780000032000,
 };
 
 /** Settings transport: two reachable machines, one unavailable, and empty machine configuration. */

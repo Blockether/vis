@@ -1,40 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from 'react';
 
-import type { GatewayConn, SpeechPrefs, ThemePref } from "../lib/types";
-import { applyTheme } from "../lib/theme";
-import {
-  usePythonCodeShown,
-  setPythonCodeShown,
-} from "../lib/transcript-display";
-import {
-  DEFAULT_SPEECH_PREFS,
-  getSpeechPrefs,
-  getThemePref,
-  setThemePref,
-} from "../lib/storage";
-import { speechOutput } from "../lib/speech";
-import { PlusIcon } from "../components/icons";
-import {
-  DEFAULT_THEME,
-  THEMES,
-  type ThemeChoice,
-} from "../lib/themes.generated";
-import {
-  Banner,
-  ChoiceCell,
-  DialogFrame,
-  IconButton,
-  Modal,
-  Switch,
-} from "../components/ui";
-import {
-  AddMachine,
-  MachineRows,
-  useFleetHealth,
-} from "../components/Machines";
-import { DiagnosticsPanel } from "./settings/DiagnosticsPanel";
-import { MachineSettings } from "./settings/MachineSettings";
-import { SettingsColumn, SettingsPanel } from "./settings/SettingsLayout";
+import type { GatewayConn, SpeechPrefs, ThemePref } from '../lib/types';
+import { applyTheme } from '../lib/theme';
+import { usePythonCodeShown, setPythonCodeShown } from '../lib/transcript-display';
+import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from '../lib/storage';
+import { speechOutput } from '../lib/speech';
+import { PlusIcon } from '../components/icons';
+import { DEFAULT_THEME, THEMES, type ThemeChoice } from '../lib/themes.generated';
+import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch } from '../components/ui';
+import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
+import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
+import { MachineSettings } from './settings/MachineSettings';
+import { SettingsColumn, SettingsPanel } from './settings/SettingsLayout';
 
 /** A machine's identity across an address change: a URL is a property of it, not it. */
 function machineId(conn: GatewayConn): string {
@@ -84,26 +61,18 @@ export function SettingsDialog({
    * fleet's verbs all pointed at one row, and the row under the thumb was not it.
    */
   onMakePrimary?: (conn: GatewayConn) => void | Promise<void>;
-  onRename?: (
-    conn: GatewayConn,
-    label: string | undefined,
-  ) => void | Promise<void>;
+  onRename?: (conn: GatewayConn, label: string | undefined) => void | Promise<void>;
   onRemove?: (conn: GatewayConn) => void | Promise<void>;
   /**
    * Bind one machine to a different address. It acts on the ROW it came out of —
    * the machine's own address line — and never on another machine's.
    */
-  onSelectAddress?: (
-    conn: GatewayConn,
-    url: string,
-    pinned: boolean,
-  ) => void | Promise<void>;
+  onSelectAddress?: (conn: GatewayConn, url: string, pinned: boolean) => void | Promise<void>;
   onClose: () => void;
 }) {
   const showPythonCode = usePythonCodeShown();
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
-  const [speechPrefs, setSpeechPrefs] =
-    useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
+  const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Pairing opens over this dialog rather than inside it: see the sheet at the
@@ -113,10 +82,7 @@ export function SettingsDialog({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [theme, speech] = await Promise.all([
-        getThemePref(),
-        getSpeechPrefs(),
-      ]);
+      const [theme, speech] = await Promise.all([getThemePref(), getSpeechPrefs()]);
       if (cancelled) return;
       setPref(theme);
       setSpeechPrefs(speech);
@@ -128,7 +94,7 @@ export function SettingsDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== 'Escape') return;
       // One Escape, one surface: the pairing sheet standing over this dialog
       // leaves first, or adding a machine and reading its settings ended on the
       // same keystroke.
@@ -138,8 +104,8 @@ export function SettingsDialog({
       }
       onClose();
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isAdding, onClose]);
 
   async function chooseTheme(next: ThemeChoice) {
@@ -155,9 +121,7 @@ export function SettingsDialog({
     }
   }
 
-  async function changeSpeech(
-    write: () => Promise<void>,
-  ): Promise<SpeechPrefs> {
+  async function changeSpeech(write: () => Promise<void>): Promise<SpeechPrefs> {
     await write();
     const next = await getSpeechPrefs();
     speechOutput.apply(next);
@@ -170,9 +134,7 @@ export function SettingsDialog({
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(
     () =>
       new Set(
-        gateways
-          .filter((conn) => conn.url === providerMachineUrl)
-          .map((conn) => machineId(conn)),
+        gateways.filter((conn) => conn.url === providerMachineUrl).map((conn) => machineId(conn)),
       ),
   );
   const toggleMachine = useCallback((conn: GatewayConn) => {
@@ -183,9 +145,7 @@ export function SettingsDialog({
     });
   }, []);
   const openUrls = new Set(
-    gateways
-      .filter((conn) => openIds.has(machineId(conn)))
-      .map((conn) => conn.url),
+    gateways.filter((conn) => openIds.has(machineId(conn))).map((conn) => conn.url),
   );
 
   // On a phone the columns stack and the machines lead, so the application's own
@@ -271,7 +231,7 @@ export function SettingsDialog({
             disclosure={{
               isOpen: appOpen,
               onToggle: () => setAppOpen((open) => !open),
-              label: `${appOpen ? "Hide" : "Show"} application settings`,
+              label: `${appOpen ? 'Hide' : 'Show'} application settings`,
             }}
           >
             {err && (
@@ -283,12 +243,10 @@ export function SettingsDialog({
             <SettingsPanel title="Transcript">
               <div className="flex items-center justify-between gap-4 px-4 py-3">
                 <div className="min-w-0">
-                  <p className="font-mono text-ui font-bold text-white">
-                    Show Python code
-                  </p>
+                  <p className="font-mono text-ui font-bold text-white">Show Python code</p>
                   <p className="text-ui text-dialog-hint">
-                    One expandable source line before Activity. Hiding code
-                    keeps every activity and result.
+                    One expandable source line before Activity. Hiding code keeps every activity and
+                    result.
                   </p>
                 </div>
                 <Switch
@@ -309,16 +267,13 @@ export function SettingsDialog({
                     title={choice.label}
                     isSelected={pref === choice.id}
                     isLeaf
-                    disabled={pending?.startsWith("theme:") ?? false}
+                    disabled={pending?.startsWith('theme:') ?? false}
                     onClick={() => void chooseTheme(choice)}
                   />
                 ))}
               </div>
             </SettingsPanel>
-            <DiagnosticsPanel
-              isOpen={diagOpen}
-              onToggle={() => setDiagOpen((open) => !open)}
-            />
+            <DiagnosticsPanel isOpen={diagOpen} onToggle={() => setDiagOpen((open) => !open)} />
           </SettingsColumn>
         </div>
       </DialogFrame>

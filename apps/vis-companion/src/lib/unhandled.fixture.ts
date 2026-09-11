@@ -9,8 +9,8 @@
  * an app that ships no Node.
  */
 interface RejectionChannel {
-  on(event: "unhandledRejection", listener: (reason: unknown) => void): void;
-  off(event: "unhandledRejection", listener: (reason: unknown) => void): void;
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+  off(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
 }
 
 export interface RejectionWatch {
@@ -23,11 +23,11 @@ export interface RejectionWatch {
 /** Start recording rejections nobody handled. */
 export function watchUnhandledRejections(): RejectionWatch {
   const channel = (globalThis as { process?: RejectionChannel }).process;
-  if (!channel) throw new Error("no unhandled-rejection channel to watch");
+  if (!channel) throw new Error('no unhandled-rejection channel to watch');
   const escaped: unknown[] = [];
   const record = (reason: unknown) => escaped.push(reason);
-  channel.on("unhandledRejection", record);
-  return { escaped, stop: () => channel.off("unhandledRejection", record) };
+  channel.on('unhandledRejection', record);
+  return { escaped, stop: () => channel.off('unhandledRejection', record) };
 }
 
 /**

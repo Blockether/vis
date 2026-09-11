@@ -33,11 +33,13 @@ const meta = {
     return (
       <SettingsColumn
         {...args}
-        disclosure={args.disclosure && {
-          isOpen: open,
-          onToggle: () => setOpen((current) => !current),
-          label: `${open ? 'Hide' : 'Show'} application settings`,
-        }}
+        disclosure={
+          args.disclosure && {
+            isOpen: open,
+            onToggle: () => setOpen((current) => !current),
+            label: `${open ? 'Hide' : 'Show'} application settings`,
+          }
+        }
       />
     );
   },
@@ -103,7 +105,9 @@ export const DiagnosticsFooter: Story = {
     const columnBody = diagnostics.parentElement!;
     // Regression: the column's bottom border drew a full-width line below Export app logs.
     await expect(getComputedStyle(columnBody).borderBottomWidth).toBe('0px');
-    await expect(getComputedStyle(diagnostics.previousElementSibling!).borderBottomWidth).toBe('1px');
+    await expect(getComputedStyle(diagnostics.previousElementSibling!).borderBottomWidth).toBe(
+      '1px',
+    );
     await expect(canvas.getByRole('button', { name: 'Export app logs' })).toBeVisible();
   },
 };

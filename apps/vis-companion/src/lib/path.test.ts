@@ -17,15 +17,15 @@ describe('path labels', () => {
   // arrives absolute — no longer matched, and it printed in full.
   it('matches a root in its home form as well as its absolute one', () => {
     expect(workspaceRelativePath('~/vis/src/a.ts', ['/Users/ana/vis'])).toBe('src/a.ts');
-    expect(workspaceRelativePath('/Users/ana/vis/src/a.ts', ['/Users/ana/vis'])).toBe(
-      'src/a.ts',
-    );
+    expect(workspaceRelativePath('/Users/ana/vis/src/a.ts', ['/Users/ana/vis'])).toBe('src/a.ts');
   });
 });
 
 describe('compactProjectPath', () => {
   it('does not repeat the project name already printed above it', () => {
-    expect(compactProjectPath('/Users/ana/rewrite/uberworkspace', 'uberworkspace')).toBe('~/rewrite');
+    expect(compactProjectPath('/Users/ana/rewrite/uberworkspace', 'uberworkspace')).toBe(
+      '~/rewrite',
+    );
   });
 
   it('keeps the useful suffix of a deep parent path', () => {

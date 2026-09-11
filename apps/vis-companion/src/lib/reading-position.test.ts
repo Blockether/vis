@@ -80,7 +80,6 @@ describe('following the end while the transcript grows', () => {
   });
 });
 
-
 // Regression, session 15db52fb-9a44-45db-96e7-13b423eff274: opening a session walked
 // the transcript for a few frames and then stopped 6 917 px above its newest turn
 // with "↓ Latest" over the composer. The scroll event our own pin-to-the-end raised
@@ -112,7 +111,6 @@ describe('a correction is not a gesture', () => {
   });
 });
 
-
 // Regression, session 15db52fb-9a44-45db-96e7-13b423eff274: the opening veil lifted
 // as soon as the last turn was MOUNTED, and the reader then watched ten more frames
 // of the transcript growing under them — measured live at 36 212 px, 36 422, 37 020,
@@ -122,8 +120,7 @@ describe('the opening veil waits for the transcript to hold still', () => {
   // The heights the live scroller reported, frame by frame, from the reveal the
   // reader used to get to the one they should have got.
   const ramp = [
-    29_728, 36_799, 37_009, 37_607, 40_901, 42_589, 44_647, 46_364, 47_912,
-    48_706, 49_834,
+    29_728, 36_799, 37_009, 37_607, 40_901, 42_589, 44_647, 46_364, 47_912, 48_706, 49_834,
   ];
 
   it('stays up for every frame the transcript is still growing', () => {
@@ -182,7 +179,6 @@ describe('arriving at an end that is still being written', () => {
     expect(arrivedAtEnd(box(44_000, 48_100, 800), 47_500)).toBe(false);
   });
 });
-
 
 // Regression, user report ("I tap the input to write a new message and the Latest
 // pill shows up — I am writing, that makes no sense"): the keyboard is the only

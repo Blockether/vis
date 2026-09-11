@@ -43,7 +43,10 @@ const capture = (cmd, args, opts = {}) => {
 
 const tidy = (subject) => {
   // Conventional-commit prefixes are for the log, not for a tester.
-  const stripped = subject.replace(/^(feat|fix|perf|refactor|docs|build|ci|test|style|chore)(\([^)]*\))?!?:\s*/i, '');
+  const stripped = subject.replace(
+    /^(feat|fix|perf|refactor|docs|build|ci|test|style|chore)(\([^)]*\))?!?:\s*/i,
+    '',
+  );
   return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 };
 
@@ -59,7 +62,11 @@ export const gitLogArgs = (sinceSha, scope = COMPANION_SCOPE, known = false) => 
 /** Commit subjects since `sinceSha` (exclusive), newest first, de-noised and de-duplicated. */
 export const collectCommits = (sinceSha, scope = COMPANION_SCOPE) => {
   // A CHANGELOG sha can outlive its commit (rebase, shallow clone) — verify, never assume.
-  const known = Boolean(sinceSha && sinceSha.length >= 7 && spawnSync('git', ['cat-file', '-e', `${sinceSha}^{commit}`], { cwd: repoRoot }).status === 0);
+  const known = Boolean(
+    sinceSha &&
+      sinceSha.length >= 7 &&
+      spawnSync('git', ['cat-file', '-e', `${sinceSha}^{commit}`], { cwd: repoRoot }).status === 0,
+  );
   const args = gitLogArgs(sinceSha, scope, known);
 
   const out = capture('git', args);
@@ -113,7 +120,8 @@ const renderEntry = ({ version, build, bullets, sha, date }) =>
 export const buildNotes = ({ version, build, scope = COMPANION_SCOPE, write = true } = {}) => {
   const entries = readChangelog();
   const existing = entries.find((e) => e.version === version && e.build === build);
-  if (existing?.bullets.length) return { bullets: existing.bullets, text: toWhatsNew(existing.bullets), reused: true };
+  if (existing?.bullets.length)
+    return { bullets: existing.bullets, text: toWhatsNew(existing.bullets), reused: true };
 
   const bullets = collectCommits(entries[0]?.sha, scope);
   if (!bullets.length) return { bullets: [], text: '', reused: false };
@@ -126,7 +134,8 @@ export const buildNotes = ({ version, build, scope = COMPANION_SCOPE, write = tr
       sha: capture('git', ['rev-parse', 'HEAD']) || 'unknown',
       date: new Date().toISOString().slice(0, 10),
     });
-    const head = '# Vis Companion — release notes\n\nWhat each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.\n';
+    const head =
+      '# Vis Companion — release notes\n\nWhat each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.\n';
     const prev = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : '';
     // Keep only the existing entries: everything from the first `## ` heading on.
     // Slicing at the first blank line would leave the preamble behind and duplicate it.
@@ -139,7 +148,8 @@ export const buildNotes = ({ version, build, scope = COMPANION_SCOPE, write = tr
 
 const toWhatsNew = (bullets) => {
   let text = bullets.map((b) => `• ${b}`).join('\n');
-  if (text.length > WHATS_NEW_LIMIT) text = `${text.slice(0, WHATS_NEW_LIMIT - 1).replace(/\n[^\n]*$/, '')}\n…`;
+  if (text.length > WHATS_NEW_LIMIT)
+    text = `${text.slice(0, WHATS_NEW_LIMIT - 1).replace(/\n[^\n]*$/, '')}\n…`;
   return text;
 };
 
@@ -151,7 +161,18 @@ const toWhatsNew = (bullets) => {
  * A freshly uploaded build only appears once Apple has ingested it, so poll rather than
  * fail — `timeoutMs: 0` gives up immediately (useful when re-running for an old build).
  */
-export const publishNotes = async ({ keyId, issuerId, keyPem, bundleId, version, build, notes, locale = 'en-US', timeoutMs = 15 * 60 * 1000, log = console.log }) => {
+export const publishNotes = async ({
+  keyId,
+  issuerId,
+  keyPem,
+  bundleId,
+  version,
+  build,
+  notes,
+  locale = 'en-US',
+  timeoutMs = 15 * 60 * 1000,
+  log = console.log,
+}) => {
   if (!notes?.trim()) return { ok: false, reason: 'no notes' };
   if (!keyId || !issuerId || !keyPem) return { ok: false, reason: 'no App Store Connect API key' };
 
@@ -169,9 +190,14 @@ export const publishNotes = async ({ keyId, issuerId, keyPem, bundleId, version,
 
     const found = await waitForBuild(mint, { appId, build, timeoutMs, log: (m) => log(`· ${m}`) });
     const buildId = found?.id;
-    if (!buildId) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
+    if (!buildId)
+      return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
 
-    const existing = await asc(mint, 'GET', `/v1/builds/${buildId}/betaBuildLocalizations?limit=50`);
+    const existing = await asc(
+      mint,
+      'GET',
+      `/v1/builds/${buildId}/betaBuildLocalizations?limit=50`,
+    );
     const mine = existing.data?.find((l) => l.attributes?.locale === locale);
     if (mine) {
       await asc(mint, 'PATCH', `/v1/betaBuildLocalizations/${mine.id}`, {
@@ -204,10 +230,15 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
 
   // Same keychain-first credential rule as scripts/ios-release.mjs: env wins, then the
   // macOS login keychain, never a dotfile in the repo.
-  const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+  const unhex = (s) =>
+    /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
   const keychain = (account) => {
     if (process.platform !== 'darwin') return undefined;
-    const res = spawnSync('security', ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'], { encoding: 'utf8' });
+    const res = spawnSync(
+      'security',
+      ['find-generic-password', '-s', 'vis-ios', '-a', account, '-w'],
+      { encoding: 'utf8' },
+    );
     return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
   };
   const secret = (envName, account) => process.env[envName]?.trim() || keychain(account);
@@ -217,19 +248,30 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const build = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
   const scope = flag('scope') ? [flag('scope')] : undefined;
 
-  const { bullets, text, reused } = buildNotes({ version, build, scope, write: !has('no-changelog') });
+  const { bullets, text, reused } = buildNotes({
+    version,
+    build,
+    scope,
+    write: !has('no-changelog'),
+  });
   if (!bullets.length) {
-    console.error('\n✗ no release-worthy commits found — write CHANGELOG.md by hand or pass --scope\n');
+    console.error(
+      '\n✗ no release-worthy commits found — write CHANGELOG.md by hand or pass --scope\n',
+    );
     process.exit(1);
   }
-  console.log(`\nRelease notes for ${version} (${build})${reused ? ' — from CHANGELOG.md' : ''}:\n\n${text}\n`);
+  console.log(
+    `\nRelease notes for ${version} (${build})${reused ? ' — from CHANGELOG.md' : ''}:\n\n${text}\n`,
+  );
 
   if (has('print')) process.exit(0);
 
   const result = await publishNotes({
     keyId: secret('VIS_ASC_KEY_ID', 'asc_key_id'),
     issuerId: secret('VIS_ASC_ISSUER_ID', 'asc_issuer_id'),
-    keyPem: process.env.VIS_ASC_KEY_PATH ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8') : keychain('asc_key'),
+    keyPem: process.env.VIS_ASC_KEY_PATH
+      ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8')
+      : keychain('asc_key'),
     bundleId: flag('bundle-id') ?? 'com.blockether.viscompanion',
     version,
     build,
@@ -239,8 +281,12 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   if (result.ok) console.log(`✓ TestFlight "What to Test" set for build ${build}\n`);
   else {
     console.error(`\n✗ notes not published: ${result.reason}`);
-    console.error(`  Apple was already retried; they are in CHANGELOG.md, so re-running is safe: npm run release:notes -- --build ${build}`);
-    console.error('  Or paste them into App Store Connect ▸ TestFlight ▸ the build ▸ What to Test.\n');
+    console.error(
+      `  Apple was already retried; they are in CHANGELOG.md, so re-running is safe: npm run release:notes -- --build ${build}`,
+    );
+    console.error(
+      '  Or paste them into App Store Connect ▸ TestFlight ▸ the build ▸ What to Test.\n',
+    );
     process.exit(1);
   }
 }

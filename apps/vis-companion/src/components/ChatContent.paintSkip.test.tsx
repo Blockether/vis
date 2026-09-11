@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { act, render } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AssistantMessage } from "./ChatContent";
-import type { TranscriptTurn } from "../lib/types";
+import { act, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AssistantMessage } from './ChatContent';
+import type { TranscriptTurn } from '../lib/types';
 
 // Regression, reported as "scrolling a big session is slow, and it flickers":
 // a long transcript is ONE paint tree, so every scroll frame costs the whole
@@ -31,7 +31,7 @@ const QUIET_MS = 400;
 const watchers: { target: Element; fire: () => void }[] = [];
 
 vi.stubGlobal(
-  "ResizeObserver",
+  'ResizeObserver',
   class {
     private readonly callback: (entries: { target: Element }[]) => void;
     constructor(callback: (entries: { target: Element }[]) => void) {
@@ -62,16 +62,12 @@ const neighbours: {
 }[] = [];
 
 vi.stubGlobal(
-  "IntersectionObserver",
+  'IntersectionObserver',
   class {
-    private readonly callback: (
-      entries: { target: Element; isIntersecting: boolean }[],
-    ) => void;
+    private readonly callback: (entries: { target: Element; isIntersecting: boolean }[]) => void;
     private readonly options: { root?: Element | null; rootMargin?: string };
     constructor(
-      callback: (
-        entries: { target: Element; isIntersecting: boolean }[],
-      ) => void,
+      callback: (entries: { target: Element; isIntersecting: boolean }[]) => void,
       options: { root?: Element | null; rootMargin?: string } = {},
     ) {
       this.callback = callback;
@@ -81,15 +77,12 @@ vi.stubGlobal(
       neighbours.push({
         target,
         root: this.options.root ?? null,
-        rootMargin: this.options.rootMargin ?? "",
-        report: (near: boolean) =>
-          this.callback([{ target, isIntersecting: near }]),
+        rootMargin: this.options.rootMargin ?? '',
+        report: (near: boolean) => this.callback([{ target, isIntersecting: near }]),
       });
     }
     unobserve(target: Element) {
-      const at = neighbours.findIndex(
-        (neighbour) => neighbour.target === target,
-      );
+      const at = neighbours.findIndex((neighbour) => neighbour.target === target);
       if (at >= 0) neighbours.splice(at, 1);
     }
     disconnect() {}
@@ -100,7 +93,7 @@ vi.stubGlobal(
 );
 const frames: FrameRequestCallback[] = [];
 
-vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
   frames.push(callback);
   return frames.length;
 });
@@ -136,7 +129,7 @@ function nearby(target: Element, near: boolean): void {
 }
 /** The box the browser would report for this turn. */
 function layout(box: HTMLElement, width: number, height: number): void {
-  Object.defineProperty(box, "offsetWidth", {
+  Object.defineProperty(box, 'offsetWidth', {
     configurable: true,
     value: width,
   });
@@ -145,21 +138,19 @@ function layout(box: HTMLElement, width: number, height: number): void {
 }
 
 const turn: TranscriptTurn = {
-  turn_id: "turn-1",
-  status: "completed",
-  iterations: [
-    { id: "iteration-1", forms: [{ op: "shell", stdout: "ok\n" }] },
-  ],
+  turn_id: 'turn-1',
+  status: 'completed',
+  iterations: [{ id: 'iteration-1', forms: [{ op: 'shell', stdout: 'ok\n' }] }],
 } as TranscriptTurn;
 
 function mount(streaming = false) {
   const view = render(<AssistantMessage turn={turn} streaming={streaming} />);
-  const box = view.container.querySelector("article") as HTMLElement;
+  const box = view.container.querySelector('article') as HTMLElement;
   return { view, box };
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
 });
 
 afterEach(() => {
@@ -173,7 +164,7 @@ afterEach(() => {
   watchers.length = 0;
 });
 
-describe("a finished turn is skipped at its own measured size", () => {
+describe('a finished turn is skipped at its own measured size', () => {
   // Regression, reported as "the part above a new request jumps like anything,
   // in even steps": arming implies `contain:layout`, so a turn that was not
   // already a formatting context grows by its last child's bottom margin the
@@ -183,7 +174,7 @@ describe("a finished turn is skipped at its own measured size", () => {
   // dropped, and re-armed a quiet period later, stepping the whole transcript
   // below it 8 px every ~533 ms for as long as that turn stayed on screen.
   // jsdom lays nothing out, so what is pinned here is the precondition itself.
-  it("puts the skip on a box arming it cannot resize", () => {
+  it('puts the skip on a box arming it cannot resize', () => {
     const { box } = mount();
 
     // The look this mount queued is drained before the check: the module keeps
@@ -191,10 +182,10 @@ describe("a finished turn is skipped at its own measured size", () => {
     // one measure nothing.
     flushFrames();
 
-    expect(box.className.split(/\s+/u)).toContain("flow-root");
+    expect(box.className.split(/\s+/u)).toContain('flow-root');
   });
 
-  it("skips nothing during the commit that rendered the turn", () => {
+  it('skips nothing during the commit that rendered the turn', () => {
     const { box } = mount();
     layout(box, 390, 4321.5);
 
@@ -202,21 +193,21 @@ describe("a finished turn is skipped at its own measured size", () => {
     // layout per turn, which is the cost this is buying back.
     flushFrames();
 
-    expect(box.style.contentVisibility).toBe("");
+    expect(box.style.contentVisibility).toBe('');
   });
 
-  it("arms the skip at the width and height the turn held still at", () => {
+  it('arms the skip at the width and height the turn held still at', () => {
     const { box } = mount();
     layout(box, 390, 4321.5);
     flushFrames();
 
     waitOut();
 
-    expect(box.style.contentVisibility).toBe("auto");
-    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 4321.5px");
+    expect(box.style.contentVisibility).toBe('auto');
+    expect(box.style.containIntrinsicSize).toBe('auto 390px auto 4321.5px');
   });
 
-  it("keeps waiting while the turn is still growing", () => {
+  it('keeps waiting while the turn is still growing', () => {
     const { box } = mount();
     layout(box, 390, 1000);
     flushFrames();
@@ -233,25 +224,25 @@ describe("a finished turn is skipped at its own measured size", () => {
     // not stillness.
     waitOut(250);
 
-    expect(box.style.contentVisibility).toBe("");
+    expect(box.style.contentVisibility).toBe('');
 
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 4000px");
+    expect(box.style.containIntrinsicSize).toBe('auto 390px auto 4000px');
   });
 
-  it("never skips the turn that is streaming", () => {
+  it('never skips the turn that is streaming', () => {
     const { box } = mount(true);
     layout(box, 390, 4321);
     flushFrames();
 
     waitOut();
 
-    expect(box.style.contentVisibility).toBe("");
-    expect(box.style.containIntrinsicSize).toBe("");
+    expect(box.style.contentVisibility).toBe('');
+    expect(box.style.containIntrinsicSize).toBe('');
   });
 
-  it("arms a running turn once it finishes", () => {
+  it('arms a running turn once it finishes', () => {
     const { view, box } = mount(true);
     layout(box, 390, 900);
 
@@ -261,10 +252,10 @@ describe("a finished turn is skipped at its own measured size", () => {
     flushFrames();
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 900px");
+    expect(box.style.containIntrinsicSize).toBe('auto 390px auto 900px');
   });
 
-  it("declares nothing for a turn it could not measure", () => {
+  it('declares nothing for a turn it could not measure', () => {
     const { box } = mount();
 
     // No geometry handed over: jsdom reports a zero box, which means "not laid
@@ -272,11 +263,11 @@ describe("a finished turn is skipped at its own measured size", () => {
     flushFrames();
     waitOut();
 
-    expect(box.style.contentVisibility).toBe("");
-    expect(box.style.containIntrinsicSize).toBe("");
+    expect(box.style.contentVisibility).toBe('');
+    expect(box.style.containIntrinsicSize).toBe('');
   });
 
-  it("refuses the placeholder height a skipped turn reports", () => {
+  it('refuses the placeholder height a skipped turn reports', () => {
     const { box } = mount();
     layout(box, 390, 4321);
     flushFrames();
@@ -290,10 +281,10 @@ describe("a finished turn is skipped at its own measured size", () => {
     resized(box);
     flushFrames();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 4321px");
+    expect(box.style.containIntrinsicSize).toBe('auto 390px auto 4321px');
   });
 
-  it("drops the skip when the width changes under it", () => {
+  it('drops the skip when the width changes under it', () => {
     const { box } = mount();
     layout(box, 390, 4321);
     flushFrames();
@@ -307,53 +298,53 @@ describe("a finished turn is skipped at its own measured size", () => {
     resized(box);
     flushFrames();
 
-    expect(box.style.contentVisibility).toBe("");
-    expect(box.style.containIntrinsicSize).toBe("");
+    expect(box.style.contentVisibility).toBe('');
+    expect(box.style.containIntrinsicSize).toBe('');
 
     box.checkVisibility = () => true;
     layout(box, 844, 2600);
     flushFrames();
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 844px auto 2600px");
+    expect(box.style.containIntrinsicSize).toBe('auto 844px auto 2600px');
   });
 
-  it("drops the skip when content lands under it", async () => {
+  it('drops the skip when content lands under it', async () => {
     const { box } = mount();
     layout(box, 390, 4321);
     flushFrames();
     waitOut();
-    expect(box.style.contentVisibility).toBe("auto");
+    expect(box.style.contentVisibility).toBe('auto');
 
     // Deferred markdown arriving into a subtree nobody is laying out: no
     // resize can report it, so the mutation itself has to.
     box.checkVisibility = () => false;
-    box.append(document.createElement("span"));
+    box.append(document.createElement('span'));
     await act(async () => {});
 
-    expect(box.style.contentVisibility).toBe("");
+    expect(box.style.contentVisibility).toBe('');
 
     box.checkVisibility = () => true;
     layout(box, 390, 5000);
     flushFrames();
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 5000px");
+    expect(box.style.containIntrinsicSize).toBe('auto 390px auto 5000px');
   });
 
-  it("drops the skip when a picture under it finishes loading", () => {
+  it('drops the skip when a picture under it finishes loading', () => {
     const { box } = mount();
-    const picture = document.createElement("img");
+    const picture = document.createElement('img');
     box.append(picture);
     layout(box, 390, 4321);
     flushFrames();
     waitOut();
-    expect(box.style.contentVisibility).toBe("auto");
+    expect(box.style.contentVisibility).toBe('auto');
 
     // A picture that lands changes no DOM at all — it just takes more room.
-    picture.dispatchEvent(new Event("load"));
+    picture.dispatchEvent(new Event('load'));
 
-    expect(box.style.contentVisibility).toBe("");
+    expect(box.style.contentVisibility).toBe('');
   });
 });
 
@@ -364,18 +355,18 @@ describe("a finished turn is skipped at its own measured size", () => {
 // out and rasterize it before it could paint anything. What a reader scrolling
 // up saw was the placeholder: a correctly sized box of bare paper, and the turn
 // a frame or two later.
-describe("the turn beside the one being read is never skipped", () => {
-  it("measures the band against the scroller, not the window", () => {
-    const scroller = document.createElement("div");
-    scroller.style.overflowY = "auto";
-    const column = document.createElement("div");
+describe('the turn beside the one being read is never skipped', () => {
+  it('measures the band against the scroller, not the window', () => {
+    const scroller = document.createElement('div');
+    scroller.style.overflowY = 'auto';
+    const column = document.createElement('div');
     scroller.append(column);
     document.body.append(scroller);
 
     const view = render(<AssistantMessage turn={turn} />, {
       container: column,
     });
-    const box = view.container.querySelector("article") as HTMLElement;
+    const box = view.container.querySelector('article') as HTMLElement;
     flushFrames();
 
     // A root margin only ever expands the ROOT's own rect. Rooted at the
@@ -384,13 +375,13 @@ describe("the turn beside the one being read is never skipped", () => {
     // reveal this exists to get ahead of.
     const watching = neighbours.find((neighbour) => neighbour.target === box);
     expect(watching?.root).toBe(scroller);
-    expect(watching?.rootMargin).toBe("100%");
+    expect(watching?.rootMargin).toBe('100%');
 
     view.unmount();
     scroller.remove();
   });
 
-  it("refuses to arm the turn the reader is about to reach", () => {
+  it('refuses to arm the turn the reader is about to reach', () => {
     const { box } = mount();
     layout(box, 390, 4321);
     flushFrames();
@@ -404,32 +395,32 @@ describe("the turn beside the one being read is never skipped", () => {
     resized(box);
     waitOut();
 
-    expect(box.style.contentVisibility).toBe("");
-    expect(box.style.containIntrinsicSize).toBe("");
+    expect(box.style.contentVisibility).toBe('');
+    expect(box.style.containIntrinsicSize).toBe('');
   });
 
-  it("gives the skip back a screen before the reader arrives", () => {
+  it('gives the skip back a screen before the reader arrives', () => {
     const { box } = mount();
     layout(box, 390, 4321);
     flushFrames();
     waitOut();
-    expect(box.style.contentVisibility).toBe("auto");
+    expect(box.style.contentVisibility).toBe('auto');
 
     nearby(box, true);
 
     // Laid out now, on a frame nobody is reading, instead of on the frame that
     // puts it under the reader's eyes.
-    expect(box.style.contentVisibility).toBe("");
-    expect(box.style.containIntrinsicSize).toBe("");
+    expect(box.style.contentVisibility).toBe('');
+    expect(box.style.containIntrinsicSize).toBe('');
   });
 
-  it("arms again once the reader has left it a screen behind", () => {
+  it('arms again once the reader has left it a screen behind', () => {
     const { box } = mount();
     layout(box, 390, 4321);
     flushFrames();
     nearby(box, true);
     waitOut();
-    expect(box.style.contentVisibility).toBe("");
+    expect(box.style.contentVisibility).toBe('');
 
     // Far again — and armed from a fresh measurement, never from the size it
     // was carrying when the reader walked past it.
@@ -437,24 +428,22 @@ describe("the turn beside the one being read is never skipped", () => {
     nearby(box, false);
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 5000px");
+    expect(box.style.containIntrinsicSize).toBe('auto 390px auto 5000px');
   });
 
-  it("holds the whole turn before the one on screen, however tall it is", () => {
+  it('holds the whole turn before the one on screen, however tall it is', () => {
     const view = render(
       <>
         <AssistantMessage turn={turn} />
-        <AssistantMessage turn={{ ...turn, turn_id: "turn-2" }} />
+        <AssistantMessage turn={{ ...turn, turn_id: 'turn-2' }} />
       </>,
     );
-    const [above, reading] = [
-      ...view.container.querySelectorAll("article"),
-    ] as HTMLElement[];
+    const [above, reading] = [...view.container.querySelectorAll('article')] as HTMLElement[];
     layout(above, 390, 21778);
     layout(reading, 390, 10694);
     flushFrames();
     waitOut();
-    expect(above.style.contentVisibility).toBe("auto");
+    expect(above.style.contentVisibility).toBe('auto');
 
     // Measured in the browser, one turn of a 30-turn session stands 16 000 to
     // 22 000 px in a 708 px viewport: the reader is inside the turn below this
@@ -463,7 +452,7 @@ describe("the turn beside the one being read is never skipped", () => {
     // the one on screen is what keeps it laid out.
     nearby(reading, true);
 
-    expect(above.style.contentVisibility).toBe("");
-    expect(reading.style.contentVisibility).toBe("");
+    expect(above.style.contentVisibility).toBe('');
+    expect(reading.style.contentVisibility).toBe('');
   });
 });

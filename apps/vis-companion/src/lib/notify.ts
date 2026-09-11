@@ -2,12 +2,7 @@
 // device. Reconcile on launch and fleet changes, reading device state before writing
 // only disagreements. Pending revocations outlive removal of a machine.
 
-import {
-  clearRevocation,
-  getGatewayNotify,
-  pendingRevocations,
-  setGatewayNotify,
-} from './storage';
+import { clearRevocation, getGatewayNotify, pendingRevocations, setGatewayNotify } from './storage';
 import { isHeldBy, notifyVerdict, rememberNotifyVerdict } from './notify-verdict';
 import type { GatewayConn, PushDevice, PushStatus } from './types';
 
@@ -32,10 +27,7 @@ export interface FleetPush {
    * quiet on a device that never changed its mind. Answered from this device's
    * own storage (`lib/relay.ts`), so it costs no request.
    */
-  isRenewalDue?: (
-    conn: GatewayConn,
-    push: PushStatus | undefined,
-  ) => Promise<boolean>;
+  isRenewalDue?: (conn: GatewayConn, push: PushStatus | undefined) => Promise<boolean>;
 }
 
 /** What the sweep found, and the little it had to change, per gateway URL. */
@@ -116,8 +108,7 @@ export async function syncFleetPush(
     if (isCancelled()) break;
     let isHeld = isHeldBy(state.devices, ids);
     try {
-      const isRenewalDue =
-        isHeld && (await fleet.isRenewalDue?.(conn, state.push)) === true;
+      const isRenewalDue = isHeld && (await fleet.isRenewalDue?.(conn, state.push)) === true;
       if (isWanted && (!isHeld || isRenewalDue)) {
         await fleet.register(conn);
         isHeld = true;
@@ -199,4 +190,3 @@ export async function applyGatewayNotify(
 export async function applyWebGatewayNotify(url: string, on: boolean): Promise<void> {
   await setGatewayNotify(url, on);
 }
-

@@ -46,7 +46,11 @@ async function lintFile(file) {
       plugins: [['babel-plugin-react-compiler', { target: '19', logger }]],
     });
   } catch (cause) {
-    failures.push({ file: path.relative(ROOT, file), severity: 'Fatal', message: String(cause?.message ?? cause) });
+    failures.push({
+      file: path.relative(ROOT, file),
+      severity: 'Fatal',
+      message: String(cause?.message ?? cause),
+    });
   }
 }
 

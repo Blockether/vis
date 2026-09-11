@@ -1138,7 +1138,7 @@
     (let [ts (slurp "apps/vis-companion/src/lib/gateway.ts")]
       (is (str/includes?
             ts
-            (str "export const VOICE_JOB_EVENT = \"" gateway-contract/voice-job-event "\";")))
+            (str "export const VOICE_JOB_EVENT = '" gateway-contract/voice-job-event "';")))
       (is (str/includes? ts "if (event !== VOICE_JOB_EVENT) return;"))
       (is (str/includes? ts "if (frameName === VOICE_JOB_EVENT) return;")))))
 

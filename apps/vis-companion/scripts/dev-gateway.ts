@@ -93,9 +93,7 @@ export async function discoverDevGatewayConnections(
     }
   });
   const entries = (
-    await Promise.all(
-      candidates.map(async (entry) => ((await probeGateway(entry)) ? entry : null)),
-    )
+    await Promise.all(candidates.map(async (entry) => ((await probeGateway(entry)) ? entry : null)))
   ).filter((entry): entry is RegistryEntry => entry !== null);
   entries.sort((a, b) => b.createdAt - a.createdAt || a.url.localeCompare(b.url));
 

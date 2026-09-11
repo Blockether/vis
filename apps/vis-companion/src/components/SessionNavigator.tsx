@@ -281,9 +281,7 @@ export function HeaderTitle({
             onCommit={onRename}
           />
         ) : (
-          <span
-            className={`max-w-[100%] min-w-0 truncate font-semibold text-white ${HEADER_TYPE}`}
-          >
+          <span className={`max-w-[100%] min-w-0 truncate font-semibold text-white ${HEADER_TYPE}`}>
             {name}
           </span>
         )}
@@ -563,9 +561,7 @@ export const RowDisclosure = forwardRef<
 /** A header's smaller quiet voice: what it counts, in the list's monospace hint ink. */
 export function HeaderMeta({ children }: { children: ReactNode }) {
   return (
-    <span className="flex items-center gap-2 font-mono text-meta text-dialog-hint">
-      {children}
-    </span>
+    <span className="flex items-center gap-2 font-mono text-meta text-dialog-hint">{children}</span>
   );
 }
 
@@ -603,7 +599,11 @@ export function ProjectStatusCounts({
   const running = Math.max(0, live - awaiting);
   const statuses = [
     running > 0
-      ? { label: `${running} live`, tone: 'text-ok-ink', dot: 'animate-pulse bg-ok motion-reduce:animate-none' }
+      ? {
+          label: `${running} live`,
+          tone: 'text-ok-ink',
+          dot: 'animate-pulse bg-ok motion-reduce:animate-none',
+        }
       : null,
     awaiting > 0
       ? {
@@ -627,7 +627,9 @@ export function ProjectStatusCounts({
           the live pulse and the amber demand beside a pager and a verb, and at 440px
           those three facts wanted 250px of the 238px left — `1 needs input` lost
           its last word to an ellipsis. Eight pixels a side was the difference. */}
-      <span aria-hidden className="mx-2 @max-md:mx-1">·</span>
+      <span aria-hidden className="mx-2 @max-md:mx-1">
+        ·
+      </span>
       <span className={`whitespace-nowrap font-bold ${status.tone}`}>
         <span
           className={`mr-1 inline-block size-1.5 align-[0.05em] ${status.dot}`}
@@ -742,9 +744,7 @@ export function MachineTab({
       }`}
     >
       {children}
-      {note && (
-        <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>
-      )}
+      {note && <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>}
       {hasUnread && !isDown && (
         <span className="inline-block size-1.5 shrink-0 bg-accent">
           <span className="sr-only">unread</span>
@@ -802,7 +802,6 @@ export function NewSessionButton({
     </IconButton>
   );
 }
-
 
 /**
  * A MACHINE'S PROJECTS: the inventory of one gateway, opened from the thing that

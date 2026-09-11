@@ -33,7 +33,15 @@ const tower: GatewayConn = { url: 'http://tower.local:7890' };
 const vps: GatewayConn = { url: 'http://10.0.0.5:7890', label: 'vps-eu' };
 
 function session(id: string, extra: Partial<Session> = {}): Session {
-  return { id, title: id, live: false, current_turn_id: null, turn_count: 0, server_time_ms: 0, ...extra };
+  return {
+    id,
+    title: id,
+    live: false,
+    current_turn_id: null,
+    turn_count: 0,
+    server_time_ms: 0,
+    ...extra,
+  };
 }
 
 describe('canonical session liveness', () => {
@@ -42,7 +50,11 @@ describe('canonical session liveness', () => {
     expect(sessionIsLive(session('s', { live: true, status: 'idle' }))).toBe(true);
   });
 });
-function machine(conn: GatewayConn, sessions: Session[] | null, error: string | null = null): FleetMachine {
+function machine(
+  conn: GatewayConn,
+  sessions: Session[] | null,
+  error: string | null = null,
+): FleetMachine {
   return { conn, sessions, error, answered: error === null && sessions !== null };
 }
 
@@ -59,20 +71,18 @@ describe('isDraftWorkspace', () => {
     expect(isDraftWorkspace(session('x'))).toBe(false);
   });
   it('trusts the gateway is_draft flag when present', () => {
-    expect(
-      isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: true } })),
-    ).toBe(true);
-    expect(
-      isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: false } })),
-    ).toBe(false);
+    expect(isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: true } }))).toBe(
+      true,
+    );
+    expect(isDraftWorkspace(session('x', { workspace: { root: '/vis', is_draft: false } }))).toBe(
+      false,
+    );
   });
   it('falls back to the drafts path for a gateway without the flag', () => {
     expect(
       isDraftWorkspace(session('x', { workspace: { root: '/Users/me/.vis/drafts/vis/wire' } })),
     ).toBe(true);
-    expect(
-      isDraftWorkspace(session('x', { workspace: { root: '/Users/me/vis' } })),
-    ).toBe(false);
+    expect(isDraftWorkspace(session('x', { workspace: { root: '/Users/me/vis' } }))).toBe(false);
   });
 });
 
@@ -251,7 +261,12 @@ describe('scope', () => {
   // it seconds later when its probe timed out, so every open of the list flashed a
   // machine that had been asleep for days.
   it('keeps a machine out of the fleet view until it has answered', () => {
-    const cachedOnly: FleetMachine = { conn: tower, sessions: [session('c')], error: null, answered: false };
+    const cachedOnly: FleetMachine = {
+      conn: tower,
+      sessions: [session('c')],
+      error: null,
+      answered: false,
+    };
     const half = [machines[0], cachedOnly];
     expect(scopedMachines(half, null)).toEqual([machines[0]]);
     expect(scopedSessions(half, null).map((s) => s.id)).toEqual(['a', 'b']);
@@ -307,16 +322,19 @@ describe('resolveScope', () => {
 
 describe('fleetError', () => {
   it('stays silent while anything still answers', () => {
-    expect(fleetError([machine(studio, [session('a')]), machine(tower, null, 'offline')])).toBeNull();
+    expect(
+      fleetError([machine(studio, [session('a')]), machine(tower, null, 'offline')]),
+    ).toBeNull();
     expect(fleetError([machine(studio, null)])).toBeNull();
     expect(fleetError([])).toBeNull();
   });
 
   it('reports the first failure when every machine is down', () => {
-    expect(fleetError([machine(studio, null, 'refused'), machine(tower, null, 'offline')])).toBe('refused');
+    expect(fleetError([machine(studio, null, 'refused'), machine(tower, null, 'offline')])).toBe(
+      'refused',
+    );
   });
 });
-
 
 describe('machineCounts', () => {
   it('tallies sessions, live and unread for one machine', () => {
@@ -330,7 +348,13 @@ describe('machineCounts', () => {
   });
 
   it('a machine that has not answered counts as nothing', () => {
-    expect(machineCounts(machine(tower, null), () => true, () => true)).toEqual({
+    expect(
+      machineCounts(
+        machine(tower, null),
+        () => true,
+        () => true,
+      ),
+    ).toEqual({
       sessions: 0,
       live: 0,
       unread: 0,
@@ -353,7 +377,11 @@ describe('search across the fleet', () => {
   // was asked again, and the reader waited on it again.
   it('puts the question only to machines that can still answer one', () => {
     const conns = [studio, tower, vps];
-    const fleet = [machine(studio, [session('a')]), machine(tower, null, 'offline'), machine(vps, [session('b')])];
+    const fleet = [
+      machine(studio, [session('a')]),
+      machine(tower, null, 'offline'),
+      machine(vps, [session('b')]),
+    ];
     const fanout = searchFanout(conns, fleet, SCOPE_ALL, new Set([machineKey(vps)]));
     expect(fanout.ask).toEqual([studio]);
     // Both kinds of dark are still ASKED: a fleet that shrinks to the machines that work
@@ -449,11 +477,7 @@ describe('withSearchHits', () => {
       }),
       session('changed', { modified_at: '2024-03-01T10:00:00Z' }),
     ];
-    expect(withSearchHits(loaded, hits).map((row) => row.id)).toEqual([
-      'a',
-      'changed',
-      'touched',
-    ]);
+    expect(withSearchHits(loaded, hits).map((row) => row.id)).toEqual(['a', 'changed', 'touched']);
   });
 });
 
@@ -517,9 +541,9 @@ describe('sessionOrder', () => {
 
   it('leaves a list with nothing starred and nothing unsent exactly as it came', () => {
     const rows = [session('a'), session('b')];
-    expect(
-      sessionOrder(rows, { favoriteRank: () => null, hasDraftMessage: () => false }),
-    ).toBe(rows);
+    expect(sessionOrder(rows, { favoriteRank: () => null, hasDraftMessage: () => false })).toBe(
+      rows,
+    );
   });
 
   it('pins the stars above unsent work, in the order they were starred', () => {
@@ -560,7 +584,6 @@ describe('sessionOrder', () => {
 // Paging shortens a long list, and "show more" must never be the thing that hides
 // a favorite: stars sort to the front of their own machine, but a project group
 // concatenates machines, so a star CAN land past the page boundary.
-
 
 describe('projectGroups', () => {
   const rows = (extra: Array<Partial<Session>>) =>
@@ -674,8 +697,6 @@ describe('projectGroups', () => {
     expect(refreshed[0]?.sessions).toEqual([draft]);
   });
 });
-
-
 
 // Regression, user report (paraphrased: switching gateways flickered the project
 // list and then the counts inside it): the numbers were a tally of the session

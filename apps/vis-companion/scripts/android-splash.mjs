@@ -6,7 +6,8 @@ const SPLASH_THEME_ITEM = '<item name="windowSplashScreenBackground">@color/vis_
 const LAUNCH_THEME = /(<style name="AppTheme\.NoActionBarLaunch"[^>]*>)([\s\S]*?)(<\/style>)/;
 
 export const brandLaunchTheme = (styles) => {
-  if (!LAUNCH_THEME.test(styles)) throw new Error('values/styles.xml has no AppTheme.NoActionBarLaunch to brand');
+  if (!LAUNCH_THEME.test(styles))
+    throw new Error('values/styles.xml has no AppTheme.NoActionBarLaunch to brand');
   return styles.replace(LAUNCH_THEME, (_, opening, body, closing) => {
     const withoutColour = body.replace(
       /\s*<item name="(?:android:)?windowSplashScreenBackground">[\s\S]*?<\/item>/g,

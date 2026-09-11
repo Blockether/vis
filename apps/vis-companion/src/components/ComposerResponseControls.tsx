@@ -1,6 +1,6 @@
-import { FastIcon, ReasoningIcon, VerbosityIcon } from "./icons";
-import { keepKeyboard } from "../lib/keyboard";
-import { MetaButton } from "./ui";
+import { FastIcon, ReasoningIcon, VerbosityIcon } from './icons';
+import { keepKeyboard } from '../lib/keyboard';
+import { MetaButton } from './ui';
 
 type CycleControl = {
   label: string;
@@ -25,9 +25,7 @@ export type ComposerResponseControlsModel = {
 };
 
 function Divider() {
-  return (
-    <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
-  );
+  return <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />;
 }
 
 /** Provider and response knobs that apply to the next submitted turn. */
@@ -101,11 +99,11 @@ export function ComposerResponseControls({
             disabled={controls.fast.busy}
             aria-busy={controls.fast.busy}
             aria-pressed={controls.fast.enabled}
-            aria-label={`Fast mode — ${controls.fast.enabled ? "on" : "off"}`}
-            title={`Fast mode: ${controls.fast.enabled ? "on" : "off"}`}
+            aria-label={`Fast mode — ${controls.fast.enabled ? 'on' : 'off'}`}
+            title={`Fast mode: ${controls.fast.enabled ? 'on' : 'off'}`}
           >
             <FastIcon className="size-3" />
-            {controls.fast.enabled ? "fast" : "standard"}
+            {controls.fast.enabled ? 'fast' : 'standard'}
           </MetaButton>
         </>
       )}

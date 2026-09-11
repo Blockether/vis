@@ -6,16 +6,16 @@ import {
   useEffect,
   useRef,
   useState,
-} from "react";
+} from 'react';
 
-import type { GatewayClient } from "../lib/gateway";
+import type { GatewayClient } from '../lib/gateway';
 import {
   GENERAL_LABEL,
   parseAnnotated,
   quoteOf,
   renderAnnotated,
   type MarkdownComment,
-} from "../lib/markdown-annotations";
+} from '../lib/markdown-annotations';
 import {
   annotationDraftKey,
   clearAnnotationDraft,
@@ -23,15 +23,15 @@ import {
   readAnnotationDraft,
   sameComments,
   writeAnnotationDraft,
-} from "../lib/annotation-drafts";
-import { Markdown } from "./ChatContent";
-import { readArtifactText } from "./TextArtifact";
-import { CheckIcon, TrashIcon } from "./icons";
-import { BandButton, Button, IconButton, PROSE, Spinner } from "./ui";
-import { useSafeBottomStyle } from "../lib/viewport";
+} from '../lib/annotation-drafts';
+import { Markdown } from './ChatContent';
+import { readArtifactText } from './TextArtifact';
+import { CheckIcon, TrashIcon } from './icons';
+import { BandButton, Button, IconButton, PROSE, Spinner } from './ui';
+import { useSafeBottomStyle } from '../lib/viewport';
 
 /** The blocks a tap may quote: one paragraph, heading, item or cell. */
-const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
+const QUOTABLE_BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th';
 
 /** A press that travelled further than this was a scroll, not a tap (CSS px). */
 const TAP_SLOP = 10;
@@ -49,16 +49,16 @@ const TAP_SLOP = 10;
  * every theme, so the marks move with it.
  */
 export const ANNOTATION_COLORS = [
-  "var(--warning)",
-  "var(--link-fg)",
-  "var(--ok)",
-  "var(--code-syntax-special)",
-  "var(--code-syntax-number)",
-  "var(--code-syntax-string)",
-  "var(--code-syntax-keyword)",
-  "var(--warning-border)",
-  "var(--code-syntax-comment)",
-  "color-mix(in oklab, var(--code-syntax-special) 60%, var(--link-fg))",
+  'var(--warning)',
+  'var(--link-fg)',
+  'var(--ok)',
+  'var(--code-syntax-special)',
+  'var(--code-syntax-number)',
+  'var(--code-syntax-string)',
+  'var(--code-syntax-keyword)',
+  'var(--warning-border)',
+  'var(--code-syntax-comment)',
+  'color-mix(in oklab, var(--code-syntax-special) 60%, var(--link-fg))',
 ];
 
 export function annotationColor(index: number): string {
@@ -95,7 +95,7 @@ export function annotationWash(index: number): string {
  * says it again on the next open, because the remarks come back with it
  * (`lib/annotation-drafts`).
  */
-export const UNSAVED_NOTE = "Unsaved draft";
+export const UNSAVED_NOTE = 'Unsaved draft';
 
 export type DocumentChrome = (parts: {
   actions: ReactNode;
@@ -162,7 +162,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
         sid,
         iterationId,
         name,
-        mediaType || (plain ? "text/plain" : "text/markdown"),
+        mediaType || (plain ? 'text/plain' : 'text/markdown'),
         text,
       );
       return saved.version;
@@ -173,10 +173,10 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   if (failed || loaded === null) {
     return chrome({
       actions: null,
-      note: "",
+      note: '',
       body: (
         <p className="p-4 font-mono text-meta text-dialog-hint">
-          {failed ? "This artifact could not be read." : "Loading…"}
+          {failed ? 'This artifact could not be read.' : 'Loading…'}
         </p>
       ),
     });
@@ -203,7 +203,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
 const PlainText = memo(function PlainText({ text }: { text: string }) {
   return (
     <div className="font-mono text-body text-foreground">
-      {text.split("\n").map((line, at) => (
+      {text.split('\n').map((line, at) => (
         <p key={at} className="min-h-[18px] break-words whitespace-pre-wrap">
           {line}
         </p>
@@ -254,12 +254,12 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   });
   const [comments, setComments] = useState<MarkdownComment[]>(opened.comments);
   const [quote, setQuote] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState('');
   /** The remark this composer is REWRITING, or `null` while it writes a new one. */
   const [editing, setEditing] = useState<number | null>(null);
   const [dirty, setDirty] = useState(opened.isDraft);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState('');
   // The column carries `--safe-bottom` itself rather than inheriting it from the
   // document root; see `useSafeBottomStyle`.
   const safeBottomStyle = useSafeBottomStyle();
@@ -326,11 +326,10 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     // A real drag-selection inside the prose wins; otherwise the tapped block.
     const selection = window.getSelection?.();
     const node = selection?.anchorNode ?? null;
-    const dragged =
-      !!node && prose.contains(node) ? quoteOf(selection?.toString() ?? "") : "";
+    const dragged = !!node && prose.contains(node) ? quoteOf(selection?.toString() ?? '') : '';
     if (dragged.length > 0) {
       setQuote(dragged);
-      setStatus("");
+      setStatus('');
       return;
     }
     if (!from) return;
@@ -338,11 +337,10 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     if (travelled > TAP_SLOP) return;
     const target = event.target as HTMLElement | null;
     const block = target?.closest?.(QUOTABLE_BLOCKS) as HTMLElement | null;
-    const tapped =
-      block && prose.contains(block) ? quoteOf(block.textContent ?? "") : "";
+    const tapped = block && prose.contains(block) ? quoteOf(block.textContent ?? '') : '';
     if (tapped.length === 0) return;
     setQuote((current) => (current === tapped ? null : tapped));
-    setStatus("");
+    setStatus('');
   }, []);
 
   const commit = useCallback(() => {
@@ -354,7 +352,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         : old.map((entry, at) => (at === editing ? remark : entry)),
     );
     setQuote(null);
-    setDraft("");
+    setDraft('');
     setEditing(null);
     setDirty(true);
   }, [quote, draft, editing]);
@@ -373,14 +371,14 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       setEditing(at);
       setQuote(target.quote);
       setDraft(target.body);
-      setStatus("");
+      setStatus('');
     },
     [comments],
   );
 
   const closeComposer = useCallback(() => {
     setQuote(null);
-    setDraft("");
+    setDraft('');
     setEditing(null);
   }, []);
 
@@ -389,7 +387,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   const removeComment = useCallback((at: number) => {
     setComments((old) => old.filter((_, index) => index !== at));
     setQuote(null);
-    setDraft("");
+    setDraft('');
     setEditing(null);
     setDirty(true);
   }, []);
@@ -399,12 +397,10 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   useEffect(() => {
     const prose = proseRef.current;
     if (!prose) return;
-    const blocks = Array.from(
-      prose.querySelectorAll<HTMLElement>(QUOTABLE_BLOCKS),
-    );
+    const blocks = Array.from(prose.querySelectorAll<HTMLElement>(QUOTABLE_BLOCKS));
     const painted: HTMLElement[] = [];
     for (const block of blocks) {
-      const text = quoteOf(block.textContent ?? "");
+      const text = quoteOf(block.textContent ?? '');
       const hits: number[] = [];
       comments.forEach((comment, at) => {
         if (text.length > 0 && comment.quote === text) hits.push(at);
@@ -428,32 +424,31 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     if (quote) {
       for (const block of blocks) {
         if (painted.includes(block)) continue;
-        if (quoteOf(block.textContent ?? "") !== quote) continue;
-        block.style.backgroundColor =
-          "color-mix(in oklab, var(--accent) 24%, transparent)";
-        block.dataset.quotePending = "true";
+        if (quoteOf(block.textContent ?? '') !== quote) continue;
+        block.style.backgroundColor = 'color-mix(in oklab, var(--accent) 24%, transparent)';
+        block.dataset.quotePending = 'true';
         painted.push(block);
       }
     }
     return () => {
       for (const block of painted) {
         delete block.dataset.quotePending;
-        block.style.backgroundColor = "";
+        block.style.backgroundColor = '';
       }
     };
   }, [comments, body, quote]);
 
   const save = useCallback(() => {
     setSaving(true);
-    setStatus("");
+    setStatus('');
     onSave(renderAnnotated(body, comments))
       .then((version) => {
         setDirty(false);
         // The document now carries them: the device's copy is spent.
         if (draftKey) clearAnnotationDraft(draftKey);
-        setStatus(version ? `Saved as v${version}` : "Saved");
+        setStatus(version ? `Saved as v${version}` : 'Saved');
       })
-      .catch(() => setStatus("Could not save this revision."))
+      .catch(() => setStatus('Could not save this revision.'))
       .finally(() => setSaving(false));
   }, [onSave, body, comments, draftKey]);
 
@@ -501,7 +496,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
           />
           <div className="flex items-center gap-2 *:flex-1 sm:*:flex-none">
             <Button type="button" onClick={commit} disabled={!draft.trim()}>
-              {editing === null ? "Add comment" : "Update comment"}
+              {editing === null ? 'Add comment' : 'Update comment'}
             </Button>
             <Button type="button" variant="quiet" onClick={closeComposer}>
               Cancel
@@ -542,9 +537,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
                 </sup>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-meta text-dialog-hint">
-                    {comment.quote.length === 0
-                      ? GENERAL_LABEL
-                      : `“${comment.quote}”`}
+                    {comment.quote.length === 0 ? GENERAL_LABEL : `“${comment.quote}”`}
                   </span>
                   {/* A remark remains visually distinct from the document as italic
                       quoted prose, while preserving natural word spacing. */}
@@ -590,10 +583,10 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         <BandButton
           type="button"
           onClick={() => {
-            setQuote("");
-            setDraft("");
+            setQuote('');
+            setDraft('');
             setEditing(null);
-            setStatus("");
+            setStatus('');
           }}
           disabled={quote !== null}
           aria-label={`Comment on the ${GENERAL_LABEL.toLowerCase()}`}
@@ -603,7 +596,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         </BandButton>
         <BandButton
           type="button"
-          label={saving ? "Saving changes" : "Save changes"}
+          label={saving ? 'Saving changes' : 'Save changes'}
           isPrimary
           onClick={save}
           disabled={!dirty || saving}
@@ -614,7 +607,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     ),
     // What just happened to this document, said under its name — and until it
     // does, that something is waiting to.
-    note: status || (dirty ? UNSAVED_NOTE : ""),
+    note: status || (dirty ? UNSAVED_NOTE : ''),
     body: column,
   });
 });

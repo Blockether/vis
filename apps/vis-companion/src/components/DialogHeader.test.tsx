@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BandButton, DialogFrame, DialogHeader } from "./ui";
+import { BandButton, DialogFrame, DialogHeader } from './ui';
 
 afterEach(() => {
-  document.body.innerHTML = "";
+  document.body.innerHTML = '';
 });
 
 // Regression, user report ("the portal close vs the dialog close and dialog headers are
@@ -18,61 +18,66 @@ afterEach(() => {
 // application settings, the model picker and the paste editor), two paddings — and FOUR
 // of the closes were hand-built at the call site, in two different boxes, none of them
 // the `CloseButton` this app says is its only way out.
-describe("every dialog header is the one dialog header", () => {
-  const band = () => document.querySelector("header")!;
+describe('every dialog header is the one dialog header', () => {
+  const band = () => document.querySelector('header')!;
 
-  it("is ONE band that spells its own height and paper", () => {
+  it('is ONE band that spells its own height and paper', () => {
     render(
       <DialogFrame title="Machine settings" onClose={() => {}}>
         <p>body</p>
       </DialogFrame>,
     );
 
-    expect(document.querySelectorAll("header")).toHaveLength(1);
+    expect(document.querySelectorAll('header')).toHaveLength(1);
     // A title band inside a dialog/region is not the application's banner landmark.
-    expect(band().getAttribute("role")).toBe("presentation");
-    expect(band().className).not.toContain("rounded-t-panel");
+    expect(band().getAttribute('role')).toBe('presentation');
+    expect(band().className).not.toContain('rounded-t-panel');
   });
 
   // Regression, user report: when dialog rows moved upward, the title band ended in
   // rounded lower corners while the rectangular scrollport started below it. The two
   // wedges of body paper made one sheet read as a capsule laid over a second surface.
-  it("meets the scrolling body on one uninterrupted edge", () => {
+  it('meets the scrolling body on one uninterrupted edge', () => {
     render(
       <DialogFrame title="Model" onClose={() => {}}>
         <p>Provider rows</p>
       </DialogFrame>,
     );
 
-    const frame = screen.getByRole("dialog", { name: "Model" });
-    const header = frame.querySelector("header")!;
+    const frame = screen.getByRole('dialog', { name: 'Model' });
+    const header = frame.querySelector('header')!;
     expect(header.nextElementSibling).toBeTruthy();
     expect(header.className).not.toMatch(/\brounded-b-/);
   });
 
-  it("aligns the title left and lets it hold a subtitle", () => {
+  it('aligns the title left and lets it hold a subtitle', () => {
     render(
-      <DialogHeader title="Model" subtitle="gateway.example.com" closeLabel="Close Model" onClose={() => {}} />,
+      <DialogHeader
+        title="Model"
+        subtitle="gateway.example.com"
+        closeLabel="Close Model"
+        onClose={() => {}}
+      />,
     );
 
     // Centring cost `px-12` of dead space on both sides to clear a close welded to one
     // of them, and could not hold the gateway / model / paste line four surfaces need.
-    expect(band().className).not.toContain("justify-center");
-    expect(band().className).not.toContain("px-12");
-    expect(screen.getByText("gateway.example.com")).toBeTruthy();
-    const title = screen.getByText("Model");
+    expect(band().className).not.toContain('justify-center');
+    expect(band().className).not.toContain('px-12');
+    expect(screen.getByText('gateway.example.com')).toBeTruthy();
+    const title = screen.getByText('Model');
     expect(title.getBoundingClientRect().left).toBeLessThanOrEqual(
-      screen.getByText("gateway.example.com").getBoundingClientRect().left,
+      screen.getByText('gateway.example.com').getBoundingClientRect().left,
     );
   });
 
   // A `vis.ask` question IS the title, and one clipped to a single line is no longer a
   // question anyone can answer. `HumanInputPrompt.test.tsx` pins the depth.
-  it("wraps a question instead of eating it", () => {
+  it('wraps a question instead of eating it', () => {
     render(<DialogHeader title="Which of these three branches should the run start from?" />);
     const title = screen.getByText(/Which of these three branches/);
-    expect(title.className).toContain("line-clamp-3");
-    expect(title.className).not.toContain("truncate");
+    expect(title.className).toContain('line-clamp-3');
+    expect(title.className).not.toContain('truncate');
   });
 
   // Regression, user report from a phone ("the headline has wrong height and the …
@@ -84,7 +89,7 @@ describe("every dialog header is the one dialog header", () => {
   // to need, and `CloseButton isBand`, which stretches to that row, shipped 48x30 rather
   // than the 48x48 square it is on every other band — under the app's own 44px minimum
   // for the one gesture that leaves a screen.
-  it("stands the notch strip ABOVE its own row, never out of it", () => {
+  it('stands the notch strip ABOVE its own row, never out of it', () => {
     const worn = () => band().className.split(/\s+/).filter(Boolean);
     const view = render(
       <DialogHeader title="report.png" closeLabel="Close report.png" onClose={() => {}} />,
@@ -92,7 +97,12 @@ describe("every dialog header is the one dialog header", () => {
     const plain = worn();
 
     view.rerender(
-      <DialogHeader title="report.png" isUnderNotch closeLabel="Close report.png" onClose={() => {}} />,
+      <DialogHeader
+        title="report.png"
+        isUnderNotch
+        closeLabel="Close report.png"
+        onClose={() => {}}
+      />,
     );
     const notched = worn();
 
@@ -100,13 +110,13 @@ describe("every dialog header is the one dialog header", () => {
     // notch over it — the notch adds a STRIP and nothing else.
     expect(notched).toEqual(expect.arrayContaining(plain));
     expect(notched.filter((one) => !plain.includes(one)).sort()).toEqual([
-      "box-content",
-      "pt-[env(safe-area-inset-top)]",
-      "sm:pt-0",
+      'box-content',
+      'pt-[env(safe-area-inset-top)]',
+      'sm:pt-0',
     ]);
   });
 
-  it("routes every close through the one way out, and makes it say its name", async () => {
+  it('routes every close through the one way out, and makes it say its name', async () => {
     const onClose = vi.fn();
     const view = render(
       <DialogFrame title="report.pdf" onClose={onClose}>
@@ -116,7 +126,7 @@ describe("every dialog header is the one dialog header", () => {
 
     // The way out is icon-only, so it says WHAT it closes: three of these bands can
     // stand over one another and a plain "Close" names all three the same.
-    const close = screen.getByRole("button", { name: "Close report.pdf" });
+    const close = screen.getByRole('button', { name: 'Close report.pdf' });
     expect(band().contains(close)).toBe(true);
     await userEvent.click(close);
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -127,7 +137,7 @@ describe("every dialog header is the one dialog header", () => {
         <p>body</p>
       </DialogFrame>,
     );
-    expect(screen.getByRole("button", { name: "Cancel this request" })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Cancel this request' })).toBeTruthy();
 
     // ...and a band with no way out builds no button at all.
     view.rerender(
@@ -135,7 +145,7 @@ describe("every dialog header is the one dialog header", () => {
         <p>body</p>
       </DialogFrame>,
     );
-    expect(band().querySelectorAll("button")).toHaveLength(0);
+    expect(band().querySelectorAll('button')).toHaveLength(0);
   });
 
   // Regression, user report ("these two buttons should be up and then this dialog can
@@ -156,13 +166,13 @@ describe("every dialog header is the one dialog header", () => {
     );
 
     const cells = [...band().children];
-    const refresh = screen.getByRole("button", { name: "Refresh" });
-    const close = screen.getByRole("button", { name: "Close Model" });
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    const close = screen.getByRole('button', { name: 'Close Model' });
 
     // A verb is a CELL of the band, and the way out is still the last one.
     expect(cells).toContain(refresh);
     expect(cells.indexOf(refresh)).toBeLessThan(cells.indexOf(close));
-    expect(refresh.className).not.toContain("self-center");
+    expect(refresh.className).not.toContain('self-center');
 
     await userEvent.click(refresh);
     expect(onRefresh).toHaveBeenCalledTimes(1);

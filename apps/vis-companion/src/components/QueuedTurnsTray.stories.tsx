@@ -1,20 +1,20 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
+import type { Meta, StoryObj } from '@storybook/react-vite';
 
 import {
   STORY_LONG_QUEUED_TURNS,
   STORY_QUEUED_TURNS,
   STORY_QUEUE_CLIENT,
   STORY_QUEUE_PAUSED,
-} from "../dev/story-data";
-import { QueuedTurnsTray } from "./QueuedTurnsTray";
+} from '../dev/story-data';
+import { QueuedTurnsTray } from './QueuedTurnsTray';
 
 const meta = {
-  title: "Session/Queued turns",
+  title: 'Session/Queued turns',
   component: QueuedTurnsTray,
-  parameters: { layout: "centered" },
+  parameters: { layout: 'centered' },
   args: {
     client: STORY_QUEUE_CLIENT,
-    sid: "session-preview",
+    sid: 'session-preview',
     queued: STORY_QUEUED_TURNS,
     paused: STORY_QUEUE_PAUSED,
     onError: () => {},

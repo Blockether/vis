@@ -33,8 +33,9 @@
                   (expect (not (str/includes? html "<script>"))))
               (do (expect (str/includes? html "Prism.languages.python="))
                   (expect (str/includes? html "Prism.highlightAll();</script>"))))
-            (expect (str/includes? css ".content p img{max-width:100%;height:auto}"))
-            (expect (str/includes? css ".content pre code.language-python{font-size:.75rem}"))))))
+            (expect (re-find #"\.content p img\s*\{\s*max-width: 100%;\s*height: auto;\s*\}" css))
+            (expect (re-find #"\.content pre code\.language-python\s*\{\s*font-size: 0\.75rem;\s*\}"
+                             css))))))
   (it
     "resolves screenshot sources and full-size links in both modes"
     (let [{:keys [pages] :as site} (docs/collect)]
@@ -117,7 +118,7 @@
                      (expect (str/includes? html "class=\"hamburger\""))
                      (expect (str/includes? html "id=\"navtoggle\""))
                      (expect (not (str/includes? css ".hamburger:hover")))
-                     (expect (str/includes? css "-webkit-tap-highlight-color:transparent"))))))
+                     (expect (str/includes? css "-webkit-tap-highlight-color: transparent"))))))
 
 (defdescribe
   mobile-sidebar-scroll-test
@@ -138,48 +139,49 @@
                       (rendered-theme html mode)
 
                       drawer
-                      (second (re-find #"(?s)@media\(max-width:820px\).*?\.side\{([^}]+)\}" css))]]
+                      (second (re-find #"(?s)@media\s*\(max-width: 820px\).*?\.side\s*\{([^}]+)\}"
+                                       css))]]
 
           ;; WebKit expands a fixed grid item with height:auto to its contents,
           ;; leaving no internal overflow even when the last links are offscreen.
-          (expect (str/includes? drawer "height:calc(100dvh - 4rem - env(safe-area-inset-top))"))
-          (expect (not (str/includes? drawer "height:auto")))
-          (expect (re-find #"\.side\{[^}]*overflow-y:auto" css))
-          (expect (str/includes? drawer "overscroll-behavior-y:contain"))
+          (expect (str/includes? drawer "height: calc(100dvh - 4rem - env(safe-area-inset-top))"))
+          (expect (not (str/includes? drawer "height: auto")))
+          (expect (re-find #"\.side\s*\{[^}]*overflow-y: auto" css))
+          (expect (str/includes? drawer "overscroll-behavior-y: contain"))
           (expect (str/includes? drawer
-                                 "padding-bottom:calc(3rem + env(safe-area-inset-bottom))"))))))
+                                 "padding-bottom: calc(3rem + env(safe-area-inset-bottom))"))))))
 
-(defdescribe responsive-typography-test
-             (it "uses one bundled font and compact, wrapping tables in both outputs"
-                 (let [{:keys [pages] :as site}
-                       (docs/collect)
+(defdescribe
+  responsive-typography-test
+  (it "uses one bundled font and compact, wrapping tables in both outputs"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
 
-                       page
-                       (first (filter #(= "extending" (:slug %)) pages))]
+            page
+            (first (filter #(= "extending" (:slug %)) pages))]
 
-                   (doseq [mode
-                           [:static :live]
+        (doseq [mode
+                [:static :live]
 
-                           :let [html
-                                 (docs/page-html site page mode)
+                :let [html
+                      (docs/page-html site page mode)
 
-                                 css
-                                 (rendered-theme html mode)]]
+                      css
+                      (rendered-theme html mode)]]
 
-                     (expect (str/includes? css "font-family:var(--font)"))
-                     (expect (str/includes? css "--font:'JetBrains Mono',monospace"))
-                     (expect (not (str/includes? css "Hanken")))
-                     (expect (str/includes? css "--text-small:.8125rem"))
-                     (expect (str/includes? css "--text-small:.75rem"))
-                     (expect (str/includes? css "overflow-wrap:anywhere"))
-                     (expect (str/includes? css "table-layout:fixed"))
-                     (expect (str/includes? css ".content pre{font-family:inherit"))
-                     (expect (re-find #"\.content th,\.content td\{[^}]*white-space:normal" css))
-                     (expect (str/includes? css
-                                            ".content th code,.content td code{font-size:inherit"))
-                     (expect (str/includes? html "<thead>"))
-                     (expect (str/includes? html "initial-scale=1,viewport-fit=cover"))
-                     (expect (not (re-find #"user-scalable=no|maximum-scale=" html)))))))
+          (expect (str/includes? css "font-family: var(--font)"))
+          (expect (str/includes? css "--font: 'JetBrains Mono', monospace"))
+          (expect (not (str/includes? css "Hanken")))
+          (expect (str/includes? css "--text-small: 0.8125rem"))
+          (expect (str/includes? css "--text-small: 0.75rem"))
+          (expect (str/includes? css "overflow-wrap: anywhere"))
+          (expect (str/includes? css "table-layout: fixed"))
+          (expect (re-find #"\.content pre\s*\{\s*font-family: inherit" css))
+          (expect (re-find #"\.content th,\s*\.content td\s*\{[^}]*white-space: normal" css))
+          (expect (re-find #"\.content th code,\s*\.content td code\s*\{\s*font-size: inherit" css))
+          (expect (str/includes? html "<thead>"))
+          (expect (str/includes? html "initial-scale=1,viewport-fit=cover"))
+          (expect (not (re-find #"user-scalable=no|maximum-scale=" html)))))))
 
 (defdescribe shared-theme-test
              (it "shares one stylesheet, external in static output and embedded in live output"
@@ -261,12 +263,13 @@
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
         (expect (not (str/includes? html "<p><a href=\"#why-vis\">")))
-        (let [link-css (second (re-find #"(?s)(?:^|\n)\.quick-links a\{([^}]+)\}" css))]
-          (doseq [fragment ["min-height:2.75rem" "white-space:nowrap"]]
+        (let [link-css (second (re-find #"(?s)(?:^|\})\s*\.quick-links a\s*\{([^}]+)\}" css))]
+          (doseq [fragment ["min-height: 2.75rem" "white-space: nowrap"]]
             (expect (str/includes? (or link-css "") fragment) fragment)))
-        (doseq [fragment [".quick-links{display:flex;flex-wrap:wrap;gap:.5rem"
-                          ".quick-links a:hover" "a:focus-visible"
-                          ".quick-links a{flex-basis:calc(50% - .25rem)}"]]
+        (expect (re-find #"\.quick-links\s*\{\s*display: flex;\s*flex-wrap: wrap;\s*gap: 0\.5rem"
+                         css))
+        (expect (re-find #"\.quick-links a\s*\{\s*flex-basis: calc\(50% - 0\.25rem\);\s*\}" css))
+        (doseq [fragment [".quick-links a:hover" "a:focus-visible"]]
           (expect (str/includes? css fragment) fragment))))))
 
 (defdescribe
@@ -285,12 +288,13 @@
               :let [html
                     (docs/page-html site home mode)]]
 
-        (doseq [needle ["text-align:justify" "text-align-last:start" "padding-inline-start:3ch"
-                        "pre:has(>code.language-bash)" "white-space:pre-wrap"
+        (doseq [needle ["text-align: justify" "text-align-last: start" "padding-inline-start: 3ch"
+                        "pre:has(> code.language-bash)" "white-space: pre-wrap"
                         "class=\"store-links\"" "https://testflight.apple.com/join/4anYT4Wk"
                         "https://play.google.com/apps/testing/com.blockether.viscompanion"
-                        "TestFlight" "Google Play beta" "hyphens:none" "list-style-position:outside"
-                        "a:focus-visible" "class=\"store-apple\"" "class=\"store-android\""]]
+                        "TestFlight" "Google Play beta" "hyphens: none"
+                        "list-style-position: outside" "a:focus-visible" "class=\"store-apple\""
+                        "class=\"store-android\""]]
           (expect (or (str/includes? html needle) (str/includes? (rendered-theme html mode) needle))
                   needle))
         (let [command (second (re-find #"(?s)<pre><code class=\"language-bash\">(.*?)</code></pre>"
@@ -322,7 +326,9 @@
                       (rendered-theme html mode)]]
 
           (expect (str/includes? html "<ol>"))
-          (expect (str/includes? css ".content ol>li::marker{content:counter(list-item) '. '}")
+          (expect (re-find
+                    #"\.content ol > li::marker\s*\{\s*content: counter\(list-item\) '\. ';\s*\}"
+                    css)
                   "Ordered markers must not depend on the browser's native separator width.")))))
 
 (defdescribe handle-md-redirect-test

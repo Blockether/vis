@@ -41,15 +41,19 @@ describe('VisNotify badge extension', () => {
   // An extension only ever runs when the payload asks for it; `push.clj` and
   // `relay.clj` send `mutable-content`, and this is the target that answers.
   it('is stamped as a second target the app embeds', () => {
-    expect(prepare).toContain("const notifyTarget = { name: 'VisNotify', bundleSuffix: 'notify' };");
+    expect(prepare).toContain(
+      "const notifyTarget = { name: 'VisNotify', bundleSuffix: 'notify' };",
+    );
     expect(prepare).toContain('VisNotify.appex in Embed Foundation Extensions');
-    expect(prepare).toContain('extensionSettings(notifyTarget, notifyIds.debug');
-    expect(prepare).toContain('extensionSettings(notifyTarget, notifyIds.release');
+    expect(prepare).toMatch(/extensionSettings\(\s*notifyTarget,\s*notifyIds.debug,/);
+    expect(prepare).toMatch(/extensionSettings\(\s*notifyTarget,\s*notifyIds.release,/);
   });
 
   it('signs the extension along with the app', () => {
     expect(release).toContain('const notifyBundleId = `${appBundleId}.notify`;');
-    expect(release.match(/bundleIds: \[appBundleId, shareBundleId, notifyBundleId\]/g)?.length).toBe(2);
+    expect(
+      release.match(/bundleIds: \[appBundleId, shareBundleId, notifyBundleId\]/g)?.length,
+    ).toBe(2);
   });
 });
 
@@ -65,14 +69,18 @@ describe('VisBadge plugin', () => {
   // Capacitor only loads a plugin named in `packageClassList`; without this the
   // bridge answers "not implemented" and the app half silently does nothing.
   it('is registered with the Capacitor bridge', () => {
-    expect(prepare).toContain("const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin', 'VisHostPlugin', 'OAuthLoopbackPlugin'];");
+    expect(prepare).toMatch(
+      /const appPluginClasses = \[\s*'VisBadgePlugin',\s*'NativeSpeechPlugin',\s*'VisHostPlugin',\s*'OAuthLoopbackPlugin',\s*\];/,
+    );
     expect(prepare).toContain("packageClassList.includes('VisBadgePlugin')");
   });
 
   // `--check` is what CI runs; a host missing the badge pieces must fail it,
   // exactly as a host missing the share extension does.
   it('is part of what --check refuses to pass without', () => {
-    expect(prepare).toContain('delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk');
+    expect(prepare.replace(/\s+/g, ' ')).toContain(
+      'delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk',
+    );
     expect(prepare).toContain('const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;');
   });
 });

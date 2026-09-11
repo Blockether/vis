@@ -13,7 +13,9 @@ export interface Usage {
 }
 
 function finiteNumber(...values: unknown[]): number | undefined {
-  return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return values.find(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value),
+  );
 }
 
 /** 35 → `35`, 11461 → `11.5k`, 2000000 → `2M`. One decimal, trailing `.0` dropped. */
@@ -32,7 +34,15 @@ export function humanizeCount(value: number): string {
  * `11.5k→35`, with ` ↺ 4.1k` only when cached input is positive. Null for
  * a zero-usage turn so a failed provider call never renders a bare `0→0`.
  */
-export function formatTokens({ input, output, cached }: { input?: number; output?: number; cached?: number }): string | null {
+export function formatTokens({
+  input,
+  output,
+  cached,
+}: {
+  input?: number;
+  output?: number;
+  cached?: number;
+}): string | null {
   const inTok = input ?? 0;
   const outTok = output ?? 0;
   if (inTok <= 0 && outTok <= 0) return null;
@@ -45,7 +55,6 @@ export function formatCost(value?: number): string | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
   return `~$${value.toFixed(value >= 1 ? 2 : value >= 0.0001 ? 4 : 6)}`;
 }
-
 
 /**
  * One turn's totals, memoized on the turn OBJECT. A decoded turn never mutates,
@@ -65,9 +74,12 @@ export function turnUsage(turn: TranscriptTurn): Usage {
     output: finiteNumber(turn.tokens?.output, turn.output_tokens) ?? 0,
     cached: finiteNumber(turn.tokens?.cached, turn.input_cache_read_tokens) ?? 0,
     cost:
-      finiteNumber(turn.total_cost, typeof turn.cost === 'number' ? turn.cost : undefined, costMap?.total_cost) ?? 0,
+      finiteNumber(
+        turn.total_cost,
+        typeof turn.cost === 'number' ? turn.cost : undefined,
+        costMap?.total_cost,
+      ) ?? 0,
   };
   turnTotals.set(turn, usage);
   return usage;
 }
-

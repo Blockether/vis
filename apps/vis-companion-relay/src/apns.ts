@@ -7,11 +7,11 @@
  * there and works when deployed (workerd#4841). Use `wrangler dev --remote`.
  */
 
-import { isPkcs8Pem, signJwt } from "./jwt";
-import type { Deps, Env, Notification, PushResult } from "./types";
+import { isPkcs8Pem, signJwt } from './jwt';
+import type { Deps, Env, Notification, PushResult } from './types';
 
-export const APNS_PRODUCTION_HOST = "https://api.push.apple.com";
-export const APNS_SANDBOX_HOST = "https://api.sandbox.push.apple.com";
+export const APNS_PRODUCTION_HOST = 'https://api.push.apple.com';
+export const APNS_SANDBOX_HOST = 'https://api.sandbox.push.apple.com';
 
 /**
  * Apple rejects a provider token older than one hour with `ExpiredProviderToken`
@@ -35,10 +35,10 @@ export interface ApnsConfig {
 }
 
 export function apnsConfig(env: Env): ApnsConfig | null {
-  const keyP8 = (env.APNS_KEY_P8 ?? "").trim();
-  const keyId = (env.APNS_KEY_ID ?? "").trim();
-  const teamId = (env.APNS_TEAM_ID ?? "").trim();
-  const topic = (env.APNS_TOPIC ?? "").trim();
+  const keyP8 = (env.APNS_KEY_P8 ?? '').trim();
+  const keyId = (env.APNS_KEY_ID ?? '').trim();
+  const teamId = (env.APNS_TEAM_ID ?? '').trim();
+  const topic = (env.APNS_TOPIC ?? '').trim();
   if (!keyP8 || !keyId || !teamId || !topic) return null;
   if (!isPkcs8Pem(keyP8)) return null;
   return {
@@ -46,7 +46,7 @@ export function apnsConfig(env: Env): ApnsConfig | null {
     keyId,
     teamId,
     topic,
-    defaultEnvironment: env.APNS_DEFAULT_ENV === "sandbox" ? "sandbox" : "production",
+    defaultEnvironment: env.APNS_DEFAULT_ENV === 'sandbox' ? 'sandbox' : 'production',
   };
 }
 
@@ -62,7 +62,7 @@ export async function providerToken(cfg: ApnsConfig, now: number): Promise<strin
   const cached = providerTokens.get(cacheKey);
   if (cached && now - cached.mintedAt < JWT_TTL_MS) return cached.jwt;
   const jwt = await signJwt(
-    "ES256",
+    'ES256',
     cfg.keyP8,
     { kid: cfg.keyId },
     { iss: cfg.teamId, iat: Math.floor(now / 1000) },
@@ -72,7 +72,7 @@ export async function providerToken(cfg: ApnsConfig, now: number): Promise<strin
 }
 
 export function apnsHost(environment: string): string {
-  return environment === "sandbox" ? APNS_SANDBOX_HOST : APNS_PRODUCTION_HOST;
+  return environment === 'sandbox' ? APNS_SANDBOX_HOST : APNS_PRODUCTION_HOST;
 }
 
 /**
@@ -89,12 +89,12 @@ export const APNS_MAX_PAYLOAD_BYTES = 4096;
 export function apnsPayload(notification: Notification): string {
   const aps: Record<string, unknown> = {
     alert: { title: notification.title, body: notification.body },
-    sound: "default",
-    "interruption-level": "active",
+    sound: 'default',
+    'interruption-level': 'active',
   };
-  if (notification.threadId) aps["thread-id"] = notification.threadId;
-  if (typeof notification.badge === "number") aps.badge = notification.badge;
-  if (notification.isMutable) aps["mutable-content"] = 1;
+  if (notification.threadId) aps['thread-id'] = notification.threadId;
+  if (typeof notification.badge === 'number') aps.badge = notification.badge;
+  if (notification.isMutable) aps['mutable-content'] = 1;
   return JSON.stringify({ aps, ...(notification.data ?? {}) });
 }
 
@@ -107,40 +107,44 @@ async function post(
 ): Promise<PushResult> {
   const headers: Record<string, string> = {
     authorization: `bearer ${await providerToken(cfg, deps.now())}`,
-    "apns-topic": cfg.topic,
-    "apns-push-type": "alert",
-    "apns-priority": "10",
-    "content-type": "application/json",
+    'apns-topic': cfg.topic,
+    'apns-push-type': 'alert',
+    'apns-priority': '10',
+    'content-type': 'application/json',
   };
-  if (notification.collapseId) headers["apns-collapse-id"] = notification.collapseId.slice(0, 64);
+  if (notification.collapseId) headers['apns-collapse-id'] = notification.collapseId.slice(0, 64);
 
   try {
     const response = await deps.fetch(
       `${apnsHost(environment)}/3/device/${encodeURIComponent(deviceToken)}`,
       {
-        method: "POST",
+        method: 'POST',
         headers,
         body: apnsPayload(notification),
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       },
     );
     const text = await response.text();
-    let reason = "";
+    let reason = '';
     try {
-      reason = String((JSON.parse(text || "{}") as { reason?: string }).reason ?? "");
+      reason = String((JSON.parse(text || '{}') as { reason?: string }).reason ?? '');
     } catch {
-      reason = "";
+      reason = '';
     }
     return { status: response.status, reason, environment };
   } catch (error) {
-    return { status: 0, reason: error instanceof Error ? error.message : "transport-error" };
+    return { status: 0, reason: error instanceof Error ? error.message : 'transport-error' };
   }
 }
 
 /** APNs' verdicts that mean the registration is gone for good. */
-export const APNS_DEAD_REASONS = new Set(["BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"]);
+export const APNS_DEAD_REASONS = new Set([
+  'BadDeviceToken',
+  'Unregistered',
+  'DeviceTokenNotForTopic',
+]);
 
-const APNS_WRONG_ENVIRONMENT = new Set(["BadDeviceToken", "BadEnvironmentKeyInToken"]);
+const APNS_WRONG_ENVIRONMENT = new Set(['BadDeviceToken', 'BadEnvironmentKeyInToken']);
 
 /**
  * Apple documents 500 and 503 as "retry after a delay", and a Worker's fetch to
@@ -175,12 +179,12 @@ export async function sendApns(
   args: { deviceToken: string; environment: string; notification: Notification },
   deps: Deps,
 ): Promise<PushResult> {
-  const environment = args.environment === "sandbox" ? "sandbox" : "production";
+  const environment = args.environment === 'sandbox' ? 'sandbox' : 'production';
   const attempt = await attemptTwice(() =>
     post(cfg, environment, args.deviceToken, args.notification, deps),
   );
   if (attempt.status === 200 || !APNS_WRONG_ENVIRONMENT.has(attempt.reason)) return attempt;
-  const other = environment === "sandbox" ? "production" : "sandbox";
+  const other = environment === 'sandbox' ? 'production' : 'sandbox';
   const retry = await attemptTwice(() =>
     post(cfg, other, args.deviceToken, args.notification, deps),
   );

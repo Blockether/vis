@@ -17,9 +17,13 @@
     (assoc :op/refusal (get op "refusal"))))
 
 (defn ops "Every declared host op, in document order." [] (mapv op->engine (get @source "ops")))
+
 (defn op "The op named `name`, or nil." [name] (first (filter #(= name (:op/name %)) (ops))))
+
 (defn op-names "Host operation names, in document order." [] (mapv :op/name (ops)))
+
 (defn host-globals "Host globals the engine binds, in document order." [] (mapv :op/global (ops)))
+
 (defn version "The Python host contract version." [] (get @source "version"))
 
 (defn shell-vocabulary

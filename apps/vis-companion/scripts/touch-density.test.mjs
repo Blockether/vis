@@ -210,9 +210,9 @@ describe('type scale', () => {
  *  this check resolves a control's box, so it must not read prose or a `class`
  *  fragment out of an unrelated string. */
 export function classLists(source) {
-  return [
-    ...source.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\}|\{'([^']*)'\})/g),
-  ].map((match) => match[1] ?? match[2] ?? match[3] ?? '');
+  return [...source.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\}|\{'([^']*)'\})/g)].map(
+    (match) => match[1] ?? match[2] ?? match[3] ?? '',
+  );
 }
 
 /** A vertical Tailwind magnitude in px, or null when it carries none. */
@@ -254,7 +254,11 @@ export function clipsItsLineBox(source, steps) {
       const line = lineBox.get(at.step);
       if (height === null || !line) continue;
       const pad =
-        (at.py !== undefined ? (pixels(at.py) ?? 0) * 2 : (at.p !== undefined ? (pixels(at.p) ?? 0) * 2 : 0)) +
+        (at.py !== undefined
+          ? (pixels(at.py) ?? 0) * 2
+          : at.p !== undefined
+            ? (pixels(at.p) ?? 0) * 2
+            : 0) +
         (pixels(at.pt ?? '') ?? 0) +
         (pixels(at.pb ?? '') ?? 0);
       if (height - pad < line) {

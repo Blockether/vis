@@ -1,27 +1,19 @@
 // @vitest-environment jsdom
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { GatewayClient } from "../lib/gateway";
-import type { QueuedTurn } from "../lib/types";
-import { QueuedTurnsTray } from "./QueuedTurnsTray";
+import type { GatewayClient } from '../lib/gateway';
+import type { QueuedTurn } from '../lib/types';
+import { QueuedTurnsTray } from './QueuedTurnsTray';
 
 afterEach(cleanup);
 
 const queued: QueuedTurn[] = [
   {
-    turnId: "turn-2",
-    request: "Inspect the release manifest",
-    preview: "Inspect the release manifest",
-    attachments: [
-      { filename: "manifest.png", mediaType: "image/png", sizeLabel: "24 KB" },
-    ],
+    turnId: 'turn-2',
+    request: 'Inspect the release manifest',
+    preview: 'Inspect the release manifest',
+    attachments: [{ filename: 'manifest.png', mediaType: 'image/png', sizeLabel: '24 KB' }],
   },
 ];
 
@@ -34,8 +26,8 @@ function gateway(methods: Partial<GatewayClient> = {}): GatewayClient {
   } as unknown as GatewayClient;
 }
 
-describe("queued turns tray", () => {
-  it("edits through the gateway without rewriting its row optimistically", async () => {
+describe('queued turns tray', () => {
+  it('edits through the gateway without rewriting its row optimistically', async () => {
     const client = gateway();
     render(
       <QueuedTurnsTray
@@ -47,26 +39,26 @@ describe("queued turns tray", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTitle("Tap to edit"));
-    const input = screen.getByLabelText("Edit queued message 1");
+    fireEvent.click(screen.getByTitle('Tap to edit'));
+    const input = screen.getByLabelText('Edit queued message 1');
     fireEvent.change(input, {
-      target: { value: "Inspect the signed release manifest" },
+      target: { value: 'Inspect the signed release manifest' },
     });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() =>
       expect(client.updateQueuedTurn).toHaveBeenCalledWith(
-        "session-1",
-        "turn-2",
-        "Inspect the signed release manifest",
+        'session-1',
+        'turn-2',
+        'Inspect the signed release manifest',
       ),
     );
-    expect(screen.getByText("Inspect the release manifest")).toBeTruthy();
-    expect(screen.getByText("manifest.png")).toBeTruthy();
+    expect(screen.getByText('Inspect the release manifest')).toBeTruthy();
+    expect(screen.getByText('manifest.png')).toBeTruthy();
   });
 
-  it("owns removal and paused-queue recovery, including failures", async () => {
-    const failure = new Error("queue changed first");
+  it('owns removal and paused-queue recovery, including failures', async () => {
+    const failure = new Error('queue changed first');
     const client = gateway({
       deleteQueuedTurn: vi.fn().mockRejectedValue(failure),
     });
@@ -76,25 +68,21 @@ describe("queued turns tray", () => {
         client={client}
         sid="session-1"
         queued={queued}
-        paused={{ held: 2, reason: "turn_failed" }}
+        paused={{ held: 2, reason: 'turn_failed' }}
         onError={onError}
       />,
     );
 
-    expect(screen.getByText("2 held · turn failed")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Continue queue" }));
-    expect(client.resumeQueue).toHaveBeenCalledWith("session-1");
+    expect(screen.getByText('2 held · turn failed')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue queue' }));
+    expect(client.resumeQueue).toHaveBeenCalledWith('session-1');
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Remove queued message 1" }),
-    );
-    expect(client.deleteQueuedTurn).toHaveBeenCalledWith("session-1", "turn-2");
-    expect(screen.getByText("Inspect the release manifest")).toBeTruthy();
-    await waitFor(() =>
-      expect(onError).toHaveBeenCalledWith("queue changed first"),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove queued message 1' }));
+    expect(client.deleteQueuedTurn).toHaveBeenCalledWith('session-1', 'turn-2');
+    expect(screen.getByText('Inspect the release manifest')).toBeTruthy();
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('queue changed first'));
   });
-  it("keeps the queued label while letting compact removal set the row rhythm", () => {
+  it('keeps the queued label while letting compact removal set the row rhythm', () => {
     render(
       <QueuedTurnsTray
         client={gateway()}
@@ -105,30 +93,26 @@ describe("queued turns tray", () => {
       />,
     );
 
-    expect(screen.getByText("Queued · 1")).toBeTruthy();
-    const queue = screen.getByRole("region", { name: "Queued messages" });
+    expect(screen.getByText('Queued · 1')).toBeTruthy();
+    const queue = screen.getByRole('region', { name: 'Queued messages' });
     for (const row of queue.querySelectorAll('[role="listitem"]')) {
-      expect(row.className).toContain("py-0.5");
+      expect(row.className).toContain('py-0.5');
     }
-    for (const remove of screen.getAllByRole("button", {
+    for (const remove of screen.getAllByRole('button', {
       name: /Remove queued message/,
     })) {
-      expect(remove.className).toContain("size-6");
-      expect(remove.className).toContain("mouse:size-5");
-      const face = remove.querySelector("span");
-      expect(face?.className).toContain("size-4");
-      expect(face?.className).toContain("mouse:size-3.5");
-      expect(face?.className).toContain("blockether-light:bg-accent");
-      expect(face?.className).toContain(
-        "blockether-light:text-accent-foreground",
-      );
-      expect(remove.querySelector("svg")?.className.baseVal).toContain(
-        "size-2.5",
-      );
+      expect(remove.className).toContain('size-6');
+      expect(remove.className).toContain('mouse:size-5');
+      const face = remove.querySelector('span');
+      expect(face?.className).toContain('size-4');
+      expect(face?.className).toContain('mouse:size-3.5');
+      expect(face?.className).toContain('blockether-light:bg-accent');
+      expect(face?.className).toContain('blockether-light:text-accent-foreground');
+      expect(remove.querySelector('svg')?.className.baseVal).toContain('size-2.5');
     }
   });
 
-  it("keeps a long queue in a named keyboard-scrollable region", () => {
+  it('keeps a long queue in a named keyboard-scrollable region', () => {
     render(
       <QueuedTurnsTray
         client={gateway()}
@@ -143,8 +127,8 @@ describe("queued turns tray", () => {
       />,
     );
 
-    const queue = screen.getByRole("region", { name: "Queued messages" });
+    const queue = screen.getByRole('region', { name: 'Queued messages' });
     expect(queue.tabIndex).toBe(0);
-    expect(screen.getAllByRole("listitem")).toHaveLength(12);
+    expect(screen.getAllByRole('listitem')).toHaveLength(12);
   });
 });

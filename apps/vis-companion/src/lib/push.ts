@@ -249,7 +249,8 @@ export async function dropDeliveredPushes(
   try {
     const { notifications } = await PushNotifications.getDeliveredNotifications();
     const done = notifications.filter((notification) => isDone(deliveredSession(notification)));
-    if (done.length > 0) await PushNotifications.removeDeliveredNotifications({ notifications: done });
+    if (done.length > 0)
+      await PushNotifications.removeDeliveredNotifications({ notifications: done });
     return notifications.length - done.length;
   } catch {
     // Purely cosmetic — never let tray housekeeping break a foreground resume.

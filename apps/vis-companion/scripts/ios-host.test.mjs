@@ -24,6 +24,6 @@ describe('iOS host plugin', () => {
     expect(prepare).toContain('VisHost.swift in Sources');
     expect(prepare).toContain("'VisHostPlugin'");
     expect(prepare).toContain('const hostOk = hostFileOk && hostProjectOk && hostConfigOk;');
-    expect(prepare).toContain('badgeOk && speechOk && hostOk');
+    expect(prepare.replace(/\s+/g, ' ')).toContain('badgeOk && speechOk && hostOk');
   });
 });

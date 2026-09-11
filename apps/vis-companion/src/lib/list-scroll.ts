@@ -76,7 +76,10 @@ function hydrate(): void {
 }
 
 /** What to remember about `box`, or `null` when it is parked at the top. */
-export function markListScroll(box: ScrollBox | null, anchor: ListAnchor | null): ListScrollMark | null {
+export function markListScroll(
+  box: ScrollBox | null,
+  anchor: ListAnchor | null,
+): ListScrollMark | null {
   if (!box || box.scrollTop <= AT_TOP_PX) return null;
   return { top: box.scrollTop, anchor };
 }
@@ -138,7 +141,6 @@ export function rowOffset(viewport: HTMLElement | null, id: string): number | nu
   const row = viewport.querySelector<HTMLElement>(`[data-session-id="${CSS.escape(id)}"]`);
   return row ? row.getBoundingClientRect().top - viewport.getBoundingClientRect().top : null;
 }
-
 
 /**
  * Keep `viewport`'s place parked for as long as this screen owns it.

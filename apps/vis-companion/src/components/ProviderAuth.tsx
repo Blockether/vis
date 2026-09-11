@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
-import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, ProviderResetOutcome, RouterProvider } from '../lib/types';
+import type {
+  AuthFlow,
+  ProviderAuthState,
+  ProviderLimitRow,
+  ProviderPreset,
+  ProviderResetOutcome,
+  RouterProvider,
+} from '../lib/types';
 import { ProviderLimitReset } from './ProviderLimitReset';
 import { clientAuthFlow, openAuthUrl, watchAuth, type AuthWatch } from '../lib/oauth';
 import { Banner, Button, ConfirmRow, DialogFrame, IconButton, Input, ListRow, Modal } from './ui';
@@ -41,7 +48,10 @@ export function defaultFirstProviders(providers: RouterProvider[]): RouterProvid
 /** Present a provider's explicit default model first, preserving every other model's order. */
 export function preferredModelFirst(models: string[], preferred?: string | null): string[] {
   if (!preferred) return [...models];
-  return [...models.filter((model) => model === preferred), ...models.filter((model) => model !== preferred)];
+  return [
+    ...models.filter((model) => model === preferred),
+    ...models.filter((model) => model !== preferred),
+  ];
 }
 
 /** Request an external browser window; native hosts own their platform URL handling. */
@@ -109,7 +119,9 @@ export function providerStatusLine(provider: RouterProvider): string {
     return status?.error ?? limitsMessage ?? 'Provider credentials were rejected.';
   }
   if (authState === 'degraded') {
-    return status?.warning ?? status?.error ?? limitsMessage ?? 'Limits are temporarily unavailable.';
+    return (
+      status?.warning ?? status?.error ?? limitsMessage ?? 'Limits are temporarily unavailable.'
+    );
   }
   if (!status?.is_authenticated) return status?.detail ?? 'Not signed in';
   const source = status.source ? (SOURCE_LABELS[status.source] ?? status.source) : undefined;
@@ -354,9 +366,15 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
     }
   }, [reload, setNote, setPending]);
 
-  useEffect(() => client.onProviderLimits((providerId, limits) => {
-    setProviders(rows => rows?.map(row => row.id === providerId ? { ...row, limits } : row) ?? rows);
-  }), [client]);
+  useEffect(
+    () =>
+      client.onProviderLimits((providerId, limits) => {
+        setProviders(
+          (rows) => rows?.map((row) => (row.id === providerId ? { ...row, limits } : row)) ?? rows,
+        );
+      }),
+    [client],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -395,28 +413,48 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
   const [presets, setPresets] = useState<ProviderPreset[] | null>(null);
   const watchRef = useRef<AuthWatch | null>(null);
   const startGeneration = useRef(0);
-  const stopPolling = useCallback(() => { watchRef.current?.stop(); watchRef.current = null; }, []);
+  const stopPolling = useCallback(() => {
+    watchRef.current?.stop();
+    watchRef.current = null;
+  }, []);
 
   useEffect(() => {
-    setFlow(null); setRedirectUrl(''); setApiKey('');
-    return () => { startGeneration.current += 1; stopPolling(); };
+    setFlow(null);
+    setRedirectUrl('');
+    setApiKey('');
+    return () => {
+      startGeneration.current += 1;
+      stopPolling();
+    };
   }, [client, setFlow, stopPolling]);
 
-  const watchFlow = useCallback((started: AuthFlow) => {
-    watchRef.current = watchAuth(started, {
-      complete: input => started.kind === 'api-key'
-        ? client.submitProviderKey(started.provider_id, started.flow_id, input)
-        : client.completeProviderAuth(started.provider_id, started.flow_id, input),
-      poll: () => client.pollProviderAuth(started.provider_id, started.flow_id),
-      cancel: () => client.cancelProviderAuth(started.provider_id, started.flow_id),
-    }, verdict => {
-      setFlow(null); setErr(null); setRedirectUrl(''); setApiKey('');
-      if (verdict.status === 'ok') {
-        setNote(`Signed in to ${started.provider_id}.`, started.provider_id);
-        void reload(undefined, { force: true });
-      } else setErr(verdict.message ?? 'Authorization failed.', started.provider_id);
-    }, message => setErr(message, started.provider_id));
-  }, [client, reload, setErr, setFlow, setNote]);
+  const watchFlow = useCallback(
+    (started: AuthFlow) => {
+      watchRef.current = watchAuth(
+        started,
+        {
+          complete: (input) =>
+            started.kind === 'api-key'
+              ? client.submitProviderKey(started.provider_id, started.flow_id, input)
+              : client.completeProviderAuth(started.provider_id, started.flow_id, input),
+          poll: () => client.pollProviderAuth(started.provider_id, started.flow_id),
+          cancel: () => client.cancelProviderAuth(started.provider_id, started.flow_id),
+        },
+        (verdict) => {
+          setFlow(null);
+          setErr(null);
+          setRedirectUrl('');
+          setApiKey('');
+          if (verdict.status === 'ok') {
+            setNote(`Signed in to ${started.provider_id}.`, started.provider_id);
+            void reload(undefined, { force: true });
+          } else setErr(verdict.message ?? 'Authorization failed.', started.provider_id);
+        },
+        (message) => setErr(message, started.provider_id),
+      );
+    },
+    [client, reload, setErr, setFlow, setNote],
+  );
 
   const signIn = useCallback(
     async (provider: RouterProvider) => {
@@ -478,32 +516,60 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     [client, setErr, setPending, setProviders],
   );
 
-  const resetLimits = useCallback(async (providerId: string, accountId: string) => {
-    try {
-      return await client.consumeProviderResetCredit(providerId, accountId);
-    } finally {
-      // Do not keep an old allowance actionable if the following live read fails.
-      setProviders(rows => rows?.map(row => row.id === providerId ? {
-        ...row,
-        limits: { ...row.limits, dynamic: { ...row.limits?.dynamic, reset_credits: {
-          status: 'error' as const, account_id: accountId, message: 'Refresh to check available resets.',
-        } } },
-      } : row) ?? rows);
-      await recheck(providerId);
-    }
-  }, [client, recheck, setProviders]);
+  const resetLimits = useCallback(
+    async (providerId: string, accountId: string) => {
+      try {
+        return await client.consumeProviderResetCredit(providerId, accountId);
+      } finally {
+        // Do not keep an old allowance actionable if the following live read fails.
+        setProviders(
+          (rows) =>
+            rows?.map((row) =>
+              row.id === providerId
+                ? {
+                    ...row,
+                    limits: {
+                      ...row.limits,
+                      dynamic: {
+                        ...row.limits?.dynamic,
+                        reset_credits: {
+                          status: 'error' as const,
+                          account_id: accountId,
+                          message: 'Refresh to check available resets.',
+                        },
+                      },
+                    },
+                  }
+                : row,
+            ) ?? rows,
+        );
+        await recheck(providerId);
+      }
+    },
+    [client, recheck, setProviders],
+  );
 
-  const hasPendingReset = useCallback((providerId: string, accountId: string) =>
-    client.hasPendingProviderReset(providerId, accountId), [client]);
+  const hasPendingReset = useCallback(
+    (providerId: string, accountId: string) =>
+      client.hasPendingProviderReset(providerId, accountId),
+    [client],
+  );
 
-  const finishInput = useCallback(async (input: string) => {
-    if (!flow || !input.trim() || !watchRef.current) return;
-    const generation = startGeneration.current;
-    setPending('auth:complete');
-    try { await watchRef.current.complete(input.trim()); }
-    catch (e) { if (generation === startGeneration.current) setErr((e as Error).message, flow.provider_id); }
-    finally { if (generation === startGeneration.current) setPending(null); }
-  }, [flow, setErr, setPending]);
+  const finishInput = useCallback(
+    async (input: string) => {
+      if (!flow || !input.trim() || !watchRef.current) return;
+      const generation = startGeneration.current;
+      setPending('auth:complete');
+      try {
+        await watchRef.current.complete(input.trim());
+      } catch (e) {
+        if (generation === startGeneration.current) setErr((e as Error).message, flow.provider_id);
+      } finally {
+        if (generation === startGeneration.current) setPending(null);
+      }
+    },
+    [flow, setErr, setPending],
+  );
 
   const finishPkce = useCallback(() => finishInput(redirectUrl), [finishInput, redirectUrl]);
   const finishApiKey = useCallback(() => finishInput(apiKey), [finishInput, apiKey]);
@@ -692,13 +758,14 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
   const showManual = manual || !flow.callback_mode || flow.callback_mode === 'manual';
   // Only an api-key flow gets its daemon guidance pruned to the navigable line;
   // null means "nothing of it belongs here" rather than "no instructions".
-  const apiKeyHint =
-    flow.kind === 'api-key' ? apiKeyHintLine(flow.instructions) : null;
+  const apiKeyHint = flow.kind === 'api-key' ? apiKeyHintLine(flow.instructions) : null;
 
   return (
     <div className="space-y-3 border border-accent/50 bg-panel-2 p-3">
       <p className="font-mono text-body font-bold text-white">
-        {flow.kind === 'api-key' || (flow.kind === 'pkce' && showManual) ? 'Finish sign-in' : 'Waiting for authorization…'}
+        {flow.kind === 'api-key' || (flow.kind === 'pkce' && showManual)
+          ? 'Finish sign-in'
+          : 'Waiting for authorization…'}
       </p>
 
       {flow.user_code && (
@@ -718,11 +785,7 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
       ) : null}
 
       {flow.url && (
-        <Button
-          variant="secondary"
-          className="w-full"
-          onClick={auth.openSignInPage}
-        >
+        <Button variant="secondary" className="w-full" onClick={auth.openSignInPage}>
           Open sign-in page again
         </Button>
       )}
@@ -1046,7 +1109,9 @@ function ProviderModelMenu({
           key={model}
           title={model}
           badge={isHeld && model === held ? 'in use' : undefined}
-          icon={role === 'fallback' ? <SortIcon className="size-4" /> : <StarIcon className="size-4" />}
+          icon={
+            role === 'fallback' ? <SortIcon className="size-4" /> : <StarIcon className="size-4" />
+          }
           onSelect={() => onSelect(model)}
         />
       ))}
@@ -1154,7 +1219,9 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
             label: 'Refresh',
             name: `Refresh limits for ${provider.label}`,
             icon: <RefreshIcon isBusy={isProbing} className="size-4" />,
-            onSelect: () => { if (!pending) void auth.recheck(provider.id); },
+            onSelect: () => {
+              if (!pending) void auth.recheck(provider.id);
+            },
           });
         if (provider.models.length > 0)
           actions.push({
@@ -1241,7 +1308,11 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                   >
                     {!authed ? 'Sign in' : (mark ?? '')}
                   </span>
-                  <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" aria-hidden />
+                  <ChevronIcon
+                    open={isOpen}
+                    className="size-3 shrink-0 text-dialog-hint"
+                    aria-hidden
+                  />
                 </ListRow>
               </div>
             </SwipeActions>
@@ -1270,8 +1341,14 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                   <ProviderLimitReset
                     credits={provider.limits?.dynamic?.reset_credits}
                     isChecking={isProbing}
-                    hasPending={!!provider.limits?.dynamic?.reset_credits?.account_id && auth.hasPendingReset(provider.id, provider.limits.dynamic.reset_credits.account_id)}
-                    onConsume={accountId => auth.resetLimits(provider.id, accountId)}
+                    hasPending={
+                      !!provider.limits?.dynamic?.reset_credits?.account_id &&
+                      auth.hasPendingReset(
+                        provider.id,
+                        provider.limits.dynamic.reset_credits.account_id,
+                      )
+                    }
+                    onConsume={(accountId) => auth.resetLimits(provider.id, accountId)}
                   />
                 )}
               </div>

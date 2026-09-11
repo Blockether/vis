@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-const prepare = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ios-prepare.mjs'), 'utf8');
+const prepare = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'ios-prepare.mjs'),
+  'utf8',
+);
 
 describe('iOS background keyboard release', () => {
   // Regression, TestFlight build 3423: backgrounding with an active WebKit editor

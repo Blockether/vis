@@ -79,9 +79,7 @@ export const Fleet: Story = {
     }
     const folderBox = projects.getBoundingClientRect();
     const machinesBox = machines.getBoundingClientRect();
-    await expect(folderBox.y + folderBox.height / 2).toBe(
-      machinesBox.y + machinesBox.height / 2,
-    );
+    await expect(folderBox.y + folderBox.height / 2).toBe(machinesBox.y + machinesBox.height / 2);
     // Regression: the project has one hover action, a session has three. Neither
     // strip may move the permanent + / disclosure off the list's shared right edge.
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;

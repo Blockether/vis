@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, fireEvent, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
-import { noteReaderGesture } from "../lib/reader-gesture";
+import { renderSessionScreen, sessionFixture } from './session-screen-harness';
+import { noteReaderGesture } from '../lib/reader-gesture';
 
 // Regression, user report ("it was live, I even scrolled all the way down, and
 // it never remembered that I want the new things — it kept putting me back
@@ -23,7 +23,7 @@ function transcript() {
   return [1, 2, 3].map((position) => ({
     turn_id: `t${position}`,
     request: `question ${position}`,
-    status: "completed",
+    status: 'completed',
     iterations: [
       {
         position,
@@ -35,21 +35,17 @@ function transcript() {
   }));
 }
 
-function measure(
-  viewport: HTMLElement,
-  live: { height: number },
-  moves: number[],
-): void {
+function measure(viewport: HTMLElement, live: { height: number }, moves: number[]): void {
   let top = 0;
-  Object.defineProperty(viewport, "scrollHeight", {
+  Object.defineProperty(viewport, 'scrollHeight', {
     configurable: true,
     get: () => live.height,
   });
-  Object.defineProperty(viewport, "clientHeight", {
+  Object.defineProperty(viewport, 'clientHeight', {
     configurable: true,
     get: () => SHELL,
   });
-  Object.defineProperty(viewport, "scrollTop", {
+  Object.defineProperty(viewport, 'scrollTop', {
     configurable: true,
     get: () => top,
     set: (value: number) => {
@@ -62,11 +58,11 @@ function measure(
 /** Frames run by hand: `handleScroll` batches its measurement into one. */
 function installFrames() {
   const frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
     frames.push(callback);
     return frames.length;
   });
-  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal('cancelAnimationFrame', () => {});
   return async () => {
     for (let round = 0; round < 4; round += 1) {
       const due = frames.splice(0);
@@ -82,7 +78,7 @@ function installFrames() {
 function installObserver(): (element: Element) => void {
   const watchers: { target: Element; run: () => void }[] = [];
   vi.stubGlobal(
-    "ResizeObserver",
+    'ResizeObserver',
     class {
       private readonly callback: () => void;
       constructor(callback: () => void) {
@@ -107,10 +103,10 @@ function installObserver(): (element: Element) => void {
 
 /** Is the "↓ Latest" offer on screen? */
 function latestOffered(): boolean {
-  return !!screen.queryByRole("button", { name: /Latest/ });
+  return !!screen.queryByRole('button', { name: /Latest/ });
 }
 
-describe("a reader reaching the end of a turn that is still being written", () => {
+describe('a reader reaching the end of a turn that is still being written', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -133,11 +129,11 @@ describe("a reader reaching the end of a turn that is still being written", () =
     const paint = installFrames();
     const live = { height: 46_000 };
     renderSessionScreen({
-      session: sessionFixture({ id: sid, status: "running" }),
+      session: sessionFixture({ id: sid, status: 'running' }),
       client: { transcript: () => Promise.resolve(transcript()) },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();
@@ -160,9 +156,9 @@ describe("a reader reaching the end of a turn that is still being written", () =
     return { viewport, live, moves };
   }
 
-  it("treats the end they were reaching for as the end", async () => {
+  it('treats the end they were reaching for as the end', async () => {
     const { viewport, live } = await readerDrags({
-      sid: "chasing",
+      sid: 'chasing',
       steps: 7,
       step: 700,
       growth: FLUSH,
@@ -178,21 +174,21 @@ describe("a reader reaching the end of a turn that is still being written", () =
   // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: nudging a
   // streaming transcript upward by less than the 64 px bottom tolerance left follow
   // armed, so the first live flush after the gesture grace snapped it to the end.
-  it("honours even a small upward gesture from the live end", async () => {
+  it('honours even a small upward gesture from the live end', async () => {
     const paint = installFrames();
     const resize = installObserver();
     const live = { height: 46_000 };
     let now = Date.now();
-    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     renderSessionScreen({
-      session: sessionFixture({ id: "small-retreat", status: "running" }),
+      session: sessionFixture({ id: 'small-retreat', status: 'running' }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
       },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const content = viewport.firstElementChild!;
     const moves: number[] = [];
     measure(viewport, live, moves);
@@ -220,20 +216,20 @@ describe("a reader reaching the end of a turn that is still being written", () =
   // scrolling with native momentum after touchcancel and after the gesture grace.
   // The viewport visibly retreated into a running turn, but follow stayed armed, so
   // the geometrically stale state suppressed “Latest” while the reader sat mid-turn.
-  it("offers Latest when native momentum retreats after gesture ownership expires", async () => {
+  it('offers Latest when native momentum retreats after gesture ownership expires', async () => {
     const paint = installFrames();
     const live = { height: 46_000 };
     let now = Date.now() + 10_000;
-    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     renderSessionScreen({
-      session: sessionFixture({ id: "momentum-retreat", status: "running" }),
+      session: sessionFixture({ id: 'momentum-retreat', status: 'running' }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
       },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();
@@ -251,9 +247,9 @@ describe("a reader reaching the end of a turn that is still being written", () =
     expect(latestOffered()).toBe(true);
   });
 
-  it("leaves a reader who stayed in history where they are", async () => {
+  it('leaves a reader who stayed in history where they are', async () => {
     const { viewport, live } = await readerDrags({
-      sid: "reading",
+      sid: 'reading',
       steps: 3,
       step: 700,
       growth: FLUSH,
@@ -269,20 +265,20 @@ describe("a reader reaching the end of a turn that is still being written", () =
   // tool and result cards arrived while Live View was pinned, but every card larger
   // than a quarter-screen disabled follow. The transcript appeared frozen until a
   // delayed jump, then the next large card froze it again.
-  it("keeps a pinned Live View on the newest content through large batches", async () => {
+  it('keeps a pinned Live View on the newest content through large batches', async () => {
     const paint = installFrames();
     const resize = installObserver();
     const live = { height: 46_000 };
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1_000);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000);
     renderSessionScreen({
-      session: sessionFixture({ id: "large-live-batches", status: "running" }),
+      session: sessionFixture({ id: 'large-live-batches', status: 'running' }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
       },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const content = viewport.firstElementChild!;
     const moves: number[] = [];
     measure(viewport, live, moves);
@@ -305,21 +301,21 @@ describe("a reader reaching the end of a turn that is still being written", () =
   // Regression, session 237a00b5-2c5e-466c-9b2f-c94a9793a499: content size was
   // being used as a proxy for reader intent. Follow must stop only after the reader
   // actually moves upward, and later large batches must preserve that chosen line.
-  it("holds the line after the reader scrolls upward during Live View", async () => {
+  it('holds the line after the reader scrolls upward during Live View', async () => {
     const paint = installFrames();
     const resize = installObserver();
     const live = { height: 46_000 };
     let now = Date.now() + 10_000;
-    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     renderSessionScreen({
-      session: sessionFixture({ id: "manual-live-retreat", status: "running" }),
+      session: sessionFixture({ id: 'manual-live-retreat', status: 'running' }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
       },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const content = viewport.firstElementChild!;
     const moves: number[] = [];
     measure(viewport, live, moves);
@@ -349,21 +345,21 @@ describe("a reader reaching the end of a turn that is still being written", () =
   // the keyboard changing the shell's height — shrinks the transcript, and the browser
   // CLAMPS scrollTop to the new end. Read as an upward gesture, that dropped follow
   // under a finger that had only tapped, and the running turn stopped being carried.
-  it("keeps following when shrinking content clamps the scroller", async () => {
+  it('keeps following when shrinking content clamps the scroller', async () => {
     const paint = installFrames();
     const resize = installObserver();
     const live = { height: 46_000 };
     let now = Date.now() + 10_000;
-    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     renderSessionScreen({
-      session: sessionFixture({ id: "clamped", status: "running" }),
+      session: sessionFixture({ id: 'clamped', status: 'running' }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
       },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const content = viewport.firstElementChild!;
     const moves: number[] = [];
     measure(viewport, live, moves);
@@ -393,19 +389,19 @@ describe("a reader reaching the end of a turn that is still being written", () =
   // suspended at the end, WebKit briefly reflowed the scroller and emitted a scroll.
   // It restored the bottom on foreground without another event, leaving “Latest” on
   // screen even though tapping it had nowhere to go.
-  it("remeasures Latest after waking at the bottom", async () => {
+  it('remeasures Latest after waking at the bottom', async () => {
     vi.useFakeTimers();
     const paint = installFrames();
     const live = { height: 46_000 };
     renderSessionScreen({
-      session: sessionFixture({ id: "wake-at-end", status: "running" }),
+      session: sessionFixture({ id: 'wake-at-end', status: 'running' }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
       },
     });
     await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const viewport = screen.getByRole('region', { name: 'Transcript' });
     const moves: number[] = [];
     measure(viewport, live, moves);
     await paint();
@@ -424,7 +420,7 @@ describe("a reader reaching the end of a turn that is still being written", () =
     // WebKit restores its viewport before the wake bus fires, but emits no scroll.
     viewport.scrollTop = live.height - SHELL;
     act(() => {
-      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event('online'));
       vi.advanceTimersByTime(251);
     });
     await paint();

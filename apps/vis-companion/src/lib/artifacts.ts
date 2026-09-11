@@ -17,135 +17,105 @@
  * which is why the whole vocabulary is testable without rendering a session.
  */
 
-import type {
-  IterationAttachment,
-  SessionArtifactRow,
-  TranscriptTurn,
-} from "./types";
+import type { IterationAttachment, SessionArtifactRow, TranscriptTurn } from './types';
 
 /** Media types that ride the transcript as a document, never as model input. */
-const FRAME_MEDIA = new Set([
-  "application/pdf",
-  "text/html",
-  "application/xhtml+xml",
-]);
+const FRAME_MEDIA = new Set(['application/pdf', 'text/html', 'application/xhtml+xml']);
 
-const TABLE_MEDIA = new Set(["text/csv", "text/tab-separated-values"]);
+const TABLE_MEDIA = new Set(['text/csv', 'text/tab-separated-values']);
 
 // Markdown and plain text are documents the app READS ITSELF. An iframe would
 // paint a `.md` artifact as its own source — hashes, pipes and all — so these
 // media types are routed to `TextArtifact` instead of to a sandboxed frame.
 const TEXT_MEDIA = new Set([
-  "text/markdown",
-  "text/x-markdown",
-  "text/plain",
-  "text/x-web-markdown",
+  'text/markdown',
+  'text/x-markdown',
+  'text/plain',
+  'text/x-web-markdown',
 ]);
 
 // The MIME is the gateway's guess and it is often `application/octet-stream`:
 // what the human NAMED the file is the better evidence of what it is.
-const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdown", "mkd"]);
-const TEXT_EXTENSIONS = new Set([...MARKDOWN_EXTENSIONS, "txt", "text", "log"]);
+const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd']);
+const TEXT_EXTENSIONS = new Set([...MARKDOWN_EXTENSIONS, 'txt', 'text', 'log']);
 
 function baseMedia(mime: string | undefined): string {
-  return (mime ?? "").split(";")[0].trim().toLowerCase();
+  return (mime ?? '').split(';')[0].trim().toLowerCase();
 }
 
 function extensionOf(filename: string | undefined): string {
-  const name = (filename ?? "").trim().toLowerCase();
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot + 1) : "";
+  const name = (filename ?? '').trim().toLowerCase();
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1) : '';
 }
 
 /** Markdown: rendered as prose, not shown as source. */
-export function isMarkdownMedia(
-  mime: string | undefined,
-  filename?: string,
-): boolean {
+export function isMarkdownMedia(mime: string | undefined, filename?: string): boolean {
   const media = baseMedia(mime);
-  if (media === "text/markdown" || media === "text/x-markdown") return true;
-  if (media && media !== "text/plain" && media !== "application/octet-stream")
-    return false;
+  if (media === 'text/markdown' || media === 'text/x-markdown') return true;
+  if (media && media !== 'text/plain' && media !== 'application/octet-stream') return false;
   return MARKDOWN_EXTENSIONS.has(extensionOf(filename));
 }
 
 /** Tabular text the app renders as a sortable data grid. */
-export function isTableMedia(
-  mime: string | undefined,
-  filename?: string,
-): boolean {
+export function isTableMedia(mime: string | undefined, filename?: string): boolean {
   const media = baseMedia(mime);
   if (TABLE_MEDIA.has(media)) return true;
-  if (media && media !== "application/octet-stream" && media !== "text/plain")
-    return false;
-  return new Set(["csv", "tsv"]).has(extensionOf(filename));
+  if (media && media !== 'application/octet-stream' && media !== 'text/plain') return false;
+  return new Set(['csv', 'tsv']).has(extensionOf(filename));
 }
 
 /** Text the app renders itself — markdown as prose, anything else verbatim. */
-export function isTextMedia(
-  mime: string | undefined,
-  filename?: string,
-): boolean {
+export function isTextMedia(mime: string | undefined, filename?: string): boolean {
   if (TEXT_MEDIA.has(baseMedia(mime))) return true;
   if (isMarkdownMedia(mime, filename)) return true;
   const media = baseMedia(mime);
-  if (media && media !== "application/octet-stream") return false;
+  if (media && media !== 'application/octet-stream') return false;
   return TEXT_EXTENSIONS.has(extensionOf(filename));
 }
 
-export function isDocMedia(
-  mime: string | undefined,
-  filename?: string,
-): boolean {
+export function isDocMedia(mime: string | undefined, filename?: string): boolean {
   return (
-    FRAME_MEDIA.has(baseMedia(mime)) ||
-    isTableMedia(mime, filename) ||
-    isTextMedia(mime, filename)
+    FRAME_MEDIA.has(baseMedia(mime)) || isTableMedia(mime, filename) || isTextMedia(mime, filename)
   );
 }
 
 export function isPdfMedia(mime: string | undefined): boolean {
-  return baseMedia(mime) === "application/pdf";
+  return baseMedia(mime) === 'application/pdf';
 }
 
 /** The chip beside the name: what KIND of document this is. */
-export function docKindLabel(
-  mime: string | undefined,
-  filename?: string,
-): string {
-  if (isPdfMedia(mime)) return "PDF";
+export function docKindLabel(mime: string | undefined, filename?: string): string {
+  if (isPdfMedia(mime)) return 'PDF';
   if (isTableMedia(mime, filename))
-    return extensionOf(filename) === "tsv" || baseMedia(mime) === "text/tab-separated-values"
-      ? "TSV"
-      : "CSV";
-  if (isMarkdownMedia(mime, filename)) return "MD";
-  if (isTextMedia(mime, filename)) return "TXT";
-  if (isDocMedia(mime, filename)) return "HTML";
-  return "DOC";
+    return extensionOf(filename) === 'tsv' || baseMedia(mime) === 'text/tab-separated-values'
+      ? 'TSV'
+      : 'CSV';
+  if (isMarkdownMedia(mime, filename)) return 'MD';
+  if (isTextMedia(mime, filename)) return 'TXT';
+  if (isDocMedia(mime, filename)) return 'HTML';
+  return 'DOC';
 }
 
 export function attachmentIsImage(attachment: IterationAttachment): boolean {
-  const media = attachment.media_type ?? "";
-  return media ? media.startsWith("image/") : attachment.kind === "image";
+  const media = attachment.media_type ?? '';
+  return media ? media.startsWith('image/') : attachment.kind === 'image';
 }
 
 export function attachmentIsVideo(attachment: IterationAttachment): boolean {
-  return (attachment.media_type ?? "").startsWith("video/");
+  return (attachment.media_type ?? '').startsWith('video/');
 }
 
 // A RECORDING is what the human asked to HEAR — a voice memo, a dictation, a clip
 // of a call. It has no frame to paint, so nothing here tries to give it one.
 export function attachmentIsAudio(attachment: IterationAttachment): boolean {
-  return (attachment.media_type ?? "").startsWith("audio/");
+  return (attachment.media_type ?? '').startsWith('audio/');
 }
 // A PDF, an HTML page or a written note is a DOCUMENT: `attach` clamps it to
 // `audience: "user"`, so its bytes never reach the model and the app owes the
 // human a reader for them instead of one more line in the recorded-files row.
 export function attachmentIsDoc(attachment: IterationAttachment): boolean {
-  return (
-    isDocMedia(attachment.media_type, attachment.filename) ||
-    attachment.kind === "doc"
-  );
+  return isDocMedia(attachment.media_type, attachment.filename) || attachment.kind === 'doc';
 }
 
 /**
@@ -154,11 +124,9 @@ export function attachmentIsDoc(attachment: IterationAttachment): boolean {
  * name: the picture the run ended on is in it, and its log is still readable a
  * page at a time from the gateway.
  */
-export const LIVE_ARTIFACT_MEDIA = "application/vnd.vis.live+ndjson";
+export const LIVE_ARTIFACT_MEDIA = 'application/vnd.vis.live+ndjson';
 
-export function attachmentIsLive(
-  attachment: Partial<IterationAttachment>,
-): boolean {
+export function attachmentIsLive(attachment: Partial<IterationAttachment>): boolean {
   return baseMedia(attachment.media_type) === LIVE_ARTIFACT_MEDIA;
 }
 // A still, a clip and a recording belong to the SAME rail: each is something the
@@ -166,15 +134,12 @@ export function attachmentIsLive(
 // a recorded file.
 export function attachmentIsPlayable(attachment: IterationAttachment): boolean {
   return (
-    attachmentIsImage(attachment) ||
-    attachmentIsVideo(attachment) ||
-    attachmentIsAudio(attachment)
+    attachmentIsImage(attachment) || attachmentIsVideo(attachment) || attachmentIsAudio(attachment)
   );
 }
 
 export function attachmentBytes(bytes?: number): string {
-  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0)
-    return "";
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '';
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
@@ -186,21 +151,15 @@ export function attachmentBytes(bytes?: number): string {
  * can play but never show, a settled live view it can re-open and page the log of,
  * a document it can read in a sandboxed frame, and a file it can only name.
  */
-export type ArtifactKind =
-  | "image"
-  | "video"
-  | "audio"
-  | "live"
-  | "doc"
-  | "file";
+export type ArtifactKind = 'image' | 'video' | 'audio' | 'live' | 'doc' | 'file';
 
 export function artifactKind(attachment: IterationAttachment): ArtifactKind {
-  if (attachmentIsImage(attachment)) return "image";
-  if (attachmentIsVideo(attachment)) return "video";
-  if (attachmentIsAudio(attachment)) return "audio";
-  if (attachmentIsLive(attachment)) return "live";
-  if (attachmentIsDoc(attachment)) return "doc";
-  return "file";
+  if (attachmentIsImage(attachment)) return 'image';
+  if (attachmentIsVideo(attachment)) return 'video';
+  if (attachmentIsAudio(attachment)) return 'audio';
+  if (attachmentIsLive(attachment)) return 'live';
+  if (attachmentIsDoc(attachment)) return 'doc';
+  return 'file';
 }
 
 /**
@@ -211,17 +170,11 @@ export function artifactKind(attachment: IterationAttachment): ArtifactKind {
  * at all.
  */
 export function artifactMedia(attachment: Partial<IterationAttachment>): string {
-  if (attachmentIsLive(attachment)) return "RUN";
-  const extension = (attachment.filename ?? "").split(".").pop() ?? "";
-  if (extension && /^[a-z0-9]{1,5}$/i.test(extension))
-    return extension.toUpperCase();
-  const subtype = (attachment.media_type ?? "")
-    .split(";")[0]
-    .split("/")
-    .pop()
-    ?.split("+")
-    .pop();
-  return (subtype || "FILE").toUpperCase();
+  if (attachmentIsLive(attachment)) return 'RUN';
+  const extension = (attachment.filename ?? '').split('.').pop() ?? '';
+  if (extension && /^[a-z0-9]{1,5}$/i.test(extension)) return extension.toUpperCase();
+  const subtype = (attachment.media_type ?? '').split(';')[0].split('/').pop()?.split('+').pop();
+  return (subtype || 'FILE').toUpperCase();
 }
 
 /** One produced artifact, flattened out of the turn that made it. */
@@ -279,9 +232,9 @@ function toArtifact(
     key: `${where.iterationId}:${index}`,
     attachmentId: attachment.attachment_id,
     kind: artifactKind(attachment),
-    name: attachment.filename || "attachment",
+    name: attachment.filename || 'attachment',
     media: artifactMedia(attachment),
-    mediaType: attachment.media_type ?? "",
+    mediaType: attachment.media_type ?? '',
     size: attachment.size,
     sizeLabel: attachmentBytes(attachment.size),
     turn: where.turn,
@@ -293,15 +246,12 @@ function toArtifact(
   };
 }
 
-export function collectArtifacts(
-  turns: TranscriptTurn[],
-  earlier = 0,
-): SessionArtifact[] {
+export function collectArtifacts(turns: TranscriptTurn[], earlier = 0): SessionArtifact[] {
   const list: SessionArtifact[] = [];
   turns.forEach((turn, position) => {
     const ordinal = earlier + position + 1;
     for (const iteration of turn.iterations ?? []) {
-      const iterationId = iteration.id ?? "";
+      const iterationId = iteration.id ?? '';
       for (const attachment of iteration.attachments ?? []) {
         list.push(toArtifact(attachment, { turn: ordinal, iterationId }));
       }
@@ -322,14 +272,12 @@ export function collectArtifacts(
  * A row the transcript also holds is preferred anyway — that copy is already
  * folded with any revision saved on this screen — see [[mergeArtifacts]].
  */
-export function artifactsFromIndex(
-  rows: SessionArtifactRow[],
-): SessionArtifact[] {
+export function artifactsFromIndex(rows: SessionArtifactRow[]): SessionArtifact[] {
   return rows
     .map((row) =>
       toArtifact(row, {
         turn: row.turn ?? 0,
-        iterationId: row.iteration_id ?? "",
+        iterationId: row.iteration_id ?? '',
       }),
     )
     .reverse();
@@ -363,9 +311,7 @@ export function mergeArtifacts(
  * its bytes. An artifact with a single cut is unchanged apart from carrying a
  * one-element `versions`, so nothing downstream needs to ask which case it is.
  */
-export function collapseArtifactVersions(
-  list: SessionArtifact[],
-): SessionArtifact[] {
+export function collapseArtifactVersions(list: SessionArtifact[]): SessionArtifact[] {
   const threads = new Map<string, SessionArtifact[]>();
   for (const entry of list) {
     const thread = threads.get(entry.name);
@@ -405,12 +351,10 @@ export function findArtifactByAttachmentId(
  * order their name first appears. The head is the row; the rest is the history
  * behind it.
  */
-export function collapseAttachmentVersions(
-  list: IterationAttachment[],
-): IterationAttachment[][] {
+export function collapseAttachmentVersions(list: IterationAttachment[]): IterationAttachment[][] {
   const threads = new Map<string, IterationAttachment[]>();
   for (const entry of list) {
-    const name = entry.filename || "attachment";
+    const name = entry.filename || 'attachment';
     const thread = threads.get(name);
     if (thread) thread.push(entry);
     else threads.set(name, [entry]);
@@ -441,7 +385,7 @@ export function withSavedAttachment(
   turns: TranscriptTurn[],
   saved: IterationAttachment,
 ): TranscriptTurn[] {
-  const owner = saved.iteration_id ?? "";
+  const owner = saved.iteration_id ?? '';
   if (!owner) return turns;
   let landed = false;
   const next = turns.map((turn) => {
@@ -461,9 +405,7 @@ export function withSavedAttachment(
           attachments:
             at < 0
               ? [...held, saved]
-              : held.map((entry, position) =>
-                  position === at ? saved : entry,
-                ),
+              : held.map((entry, position) => (position === at ? saved : entry)),
         };
       }),
     };
@@ -477,21 +419,19 @@ export function withSavedAttachment(
  * sheet loudly instead of only from one chip.
  */
 export const ARTIFACT_FILTERS: { label: string; kinds: ArtifactKind[] }[] = [
-  { label: "All", kinds: ["image", "video", "audio", "live", "doc", "file"] },
-  { label: "Pictures", kinds: ["image", "video"] },
-  { label: "Recordings", kinds: ["audio"] },
-  { label: "Runs", kinds: ["live"] },
-  { label: "Documents", kinds: ["doc"] },
-  { label: "Files", kinds: ["file"] },
+  { label: 'All', kinds: ['image', 'video', 'audio', 'live', 'doc', 'file'] },
+  { label: 'Pictures', kinds: ['image', 'video'] },
+  { label: 'Recordings', kinds: ['audio'] },
+  { label: 'Runs', kinds: ['live'] },
+  { label: 'Documents', kinds: ['doc'] },
+  { label: 'Files', kinds: ['file'] },
 ];
 
 /** How much of it there is, added up. Empty when nothing declared a size. */
 export function artifactTotalLabel(list: SessionArtifact[]): string {
-  const known = list.filter((entry) => typeof entry.size === "number");
-  if (!known.length) return "";
-  return attachmentBytes(
-    known.reduce((sum, entry) => sum + (entry.size ?? 0), 0),
-  );
+  const known = list.filter((entry) => typeof entry.size === 'number');
+  if (!known.length) return '';
+  return attachmentBytes(known.reduce((sum, entry) => sum + (entry.size ?? 0), 0));
 }
 
 /**
@@ -558,13 +498,11 @@ export function pageBySize<T>(
   }
   const rest = items.slice(at);
   const restBytes = rest.reduce((sum, item) => sum + size(item), 0);
-  const weight = restBytes > 0 ? attachmentBytes(restBytes) : "";
+  const weight = restBytes > 0 ? attachmentBytes(restBytes) : '';
   return {
     shown: items.slice(0, at),
     rest,
     restBytes,
-    restLabel: rest.length
-      ? `${rest.length} more${weight ? ` · ${weight}` : ""}`
-      : "",
+    restLabel: rest.length ? `${rest.length} more${weight ? ` · ${weight}` : ''}` : '',
   };
 }

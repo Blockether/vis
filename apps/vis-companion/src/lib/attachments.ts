@@ -47,11 +47,7 @@ const DEFAULT_AUDIO_MEDIA_TYPES = [
 
 // A document is stored for the human and named to the model. The Files door must
 // advertise these even though the gallery door has nothing to do with them.
-const DEFAULT_DOCUMENT_MEDIA_TYPES = [
-  'application/pdf',
-  'application/xhtml+xml',
-  'text/html',
-];
+const DEFAULT_DOCUMENT_MEDIA_TYPES = ['application/pdf', 'application/xhtml+xml', 'text/html'];
 
 const DEFAULT_MEDIA_TYPES = [
   ...DEFAULT_IMAGE_MEDIA_TYPES,
@@ -93,9 +89,7 @@ export interface AttachmentLimits {
 }
 
 function base64AsBlob(base64: string, mimeType: string): Blob {
-  const payload = base64.startsWith('data:')
-    ? base64.slice(base64.indexOf(',') + 1)
-    : base64;
+  const payload = base64.startsWith('data:') ? base64.slice(base64.indexOf(',') + 1) : base64;
   const binary = atob(payload);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
@@ -112,10 +106,7 @@ function retyped(blob: Blob, mediaType: string): Blob {
 
 // The picker hands back whichever of data/blob/path the platform had; the rest
 // of this module only ever wants a Blob, because that is what decodes.
-async function pickedFileBlob(
-  file: PickedFile,
-  mediaType: string,
-): Promise<Blob> {
+async function pickedFileBlob(file: PickedFile, mediaType: string): Promise<Blob> {
   if (file.blob) return retyped(file.blob, mediaType);
   if (file.data) return base64AsBlob(file.data, mediaType);
   if (file.path) {
@@ -289,10 +280,7 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
 const UNNAMED_MEDIA_TYPES = ['application/octet-stream', 'binary/octet-stream'];
 
 /** What a picked file CLAIMS to be: the platform's word, else its extension. */
-export function candidateMediaType(
-  name: string,
-  declared: string | null | undefined,
-): string {
+export function candidateMediaType(name: string, declared: string | null | undefined): string {
   const claim = (declared ?? '').trim().toLowerCase();
   if (claim && !UNNAMED_MEDIA_TYPES.includes(claim)) return claim;
   const extension = (name.split('.').pop() ?? '').toLowerCase();
@@ -353,8 +341,7 @@ export async function pickDocumentAttachments(
 export async function capturePhotoAttachment(
   limits: AttachmentLimits = {},
 ): Promise<PickAttachmentResult> {
-  const { Camera, CameraResultType, CameraSource } =
-    await import('@capacitor/camera');
+  const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
   const permission = await Camera.requestPermissions({
     permissions: ['camera'],
   });
@@ -374,8 +361,7 @@ export async function capturePhotoAttachment(
 
   const format = photo.format.toLowerCase();
   const extension = format === 'jpeg' ? 'jpg' : format;
-  const mimeType =
-    format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
+  const mimeType = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
   const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
   const response = await fetch(photo.webPath);
   if (!response.ok) throw new Error('Could not read the captured photo');
@@ -441,8 +427,7 @@ export async function editedAttachment(
 ): Promise<PendingAttachment> {
   const mediaType = edited.type || 'image/png';
   const gate = attachmentGate(limits);
-  if (!gate.accepts(mediaType))
-    throw new Error(`${mediaType} is not accepted here`);
+  if (!gate.accepts(mediaType)) throw new Error(`${mediaType} is not accepted here`);
   const prepared = await prepareAttachment(
     edited,
     pngFilename(previous.filename),

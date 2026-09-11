@@ -18,7 +18,7 @@
  * never re-opens a viewer the reader had left behind.
  */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from 'react';
 
 /**
  * How long an unmounted row's overlay stays claimable. The live-to-settled swap
@@ -52,9 +52,7 @@ export function dropOverlayHandovers(): void {
  * ARTIFACT, not the component instance, because the instance is exactly what
  * does not survive.
  */
-export function useStickyOverlay(
-  key: string,
-): [boolean, (next: boolean) => void] {
+export function useStickyOverlay(key: string): [boolean, (next: boolean) => void] {
   const [open, setOpen] = useState(false);
   // The unmount cleanup must read the LATEST key and openness, and must run on
   // unmount only — a key that changes under a live row is a new artifact, not a

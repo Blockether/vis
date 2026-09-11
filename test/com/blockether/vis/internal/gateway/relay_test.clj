@@ -341,7 +341,7 @@
         (slurp (io/file "apps/vis-companion/src/lib/relay.ts"))
 
         named
-        (second (re-find #"PUBLISHER_RELAY_URL\s*=\s*\n?\s*\"([^\"]+)\"" src))]
+        (second (re-find #"PUBLISHER_RELAY_URL\s*=\s*['\"]([^'\"]+)['\"]" src))]
 
     (is (= "https://vis.relay.blockether.com" relay/DEFAULT-URL))
     (is (some? named))

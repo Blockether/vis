@@ -10,7 +10,6 @@ import { BandButton } from './ui';
 // with no band and one hand-built row. The same glyph, one line apart in the same
 // list, opened two different-looking things — so `⋯` stopped being a promise.
 describe('Menu parts', () => {
-
   it('places from exactly the width the panel paints', () => {
     // The popover is positioned before it has ever been measured, so the number
     // and the `sm:w-80` class have to travel together.

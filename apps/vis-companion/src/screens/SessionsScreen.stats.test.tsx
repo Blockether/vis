@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
+import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
 let restore = () => {};
 afterEach(() => restore());
@@ -13,7 +13,7 @@ afterEach(() => restore());
 // its number grid — two rankings nobody read, one of them the only warn-coloured ink
 // on the card. A gateway that still sends `top_tools`/`top_errors` must not bring
 // them back.
-describe("the expanded session card", () => {
+describe('the expanded session card', () => {
   const usage = {
     health: {
       last_request_tokens: 32_000,
@@ -21,8 +21,21 @@ describe("the expanded session card", () => {
       reminder_tokens: 150_000,
       model_input_limit: 272_000,
       call: 5,
-      breakdown: [{ label: "Main AGENTS.md", tokens: 1_200, path: "/work/AGENTS.md" }],
-      roots: [{ path: "/work/linked", guidance: { status: "available", path: "/work/linked/AGENTS.md", tokens: 800 } }],
+      // Derived budget fields come from the gateway, not client-side arithmetic.
+      budget_state: 'within-budget',
+      budget_used_percent: 16,
+      budget_used_ratio: 0.16,
+      budget_remaining_tokens: 168_000,
+      estimated_input_tokens: 32_000,
+      estimate_difference_tokens: 0,
+      estimate_difference_percent: 0,
+      breakdown: [{ label: 'Main AGENTS.md', tokens: 1_200, path: '/work/AGENTS.md' }],
+      roots: [
+        {
+          path: '/work/linked',
+          guidance: { status: 'available', path: '/work/linked/AGENTS.md', tokens: 800 },
+        },
+      ],
     },
     turn_count: 2,
     iteration_count: 5,
@@ -36,100 +49,99 @@ describe("the expanded session card", () => {
     prompt_cache_reused_tokens: 79_400,
     prompt_cache_sample_count: 4,
     prompt_cache_estimated_sample_count: 1,
+    reusable_prefix_estimated: true,
     cost_usd: 0.21,
     duration_ms: 47_000,
-    provider: "anthropic-coding-plan",
-    model: "claude-opus-5",
-    top_tools: [{ name: "python_execution", count: 59 }],
+    provider: 'anthropic-coding-plan',
+    model: 'claude-opus-5',
+    top_tools: [{ name: 'python_execution', count: 59 }],
     error_count: 3,
-    top_errors: [{ name: "python_execution", count: 3 }],
+    top_errors: [{ name: 'python_execution', count: 3 }],
   };
 
   const open = async () => {
     const view = renderSessionsScreen({
       machines: [
         {
-          sessions: [listSession({ id: "s1", title: "Chat session" })],
-          routes: { "/v1/sessions/s1/usage": { usage } },
+          sessions: [listSession({ id: 's1', title: 'Chat session' })],
+          routes: { '/v1/sessions/s1/usage': { usage } },
         },
       ],
     });
     restore = view.restore;
-    await screen.findByText("Chat session");
-    await userEvent.click(
-      screen.getByRole("button", { name: "Show details for Chat session" }),
-    );
+    await screen.findByText('Chat session');
+    await userEvent.click(screen.getByRole('button', { name: 'Show details for Chat session' }));
     return view;
   };
 
-  it("renders the measured request from the usage endpoint, not lifetime totals", async () => {
+  it('renders the measured request from the usage endpoint, not lifetime totals', async () => {
     const view = await open();
-    expect(await screen.findByRole("meter", { name: "Context budget" })).toBeTruthy();
-    expect(screen.getByText("16%")).toBeTruthy();
-    expect(screen.getByText("32k")).toBeTruthy();
-    expect(screen.getByText("85k")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: /Context breakdown/ }));
-    expect(screen.getByText("/work/AGENTS.md")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: /Linked filesystems/ }));
-    expect(screen.getByText("AGENTS.md · ≈800 tokens on disk")).toBeTruthy();
-    expect(view.requests.filter((r) => r.path.endsWith("/usage"))).toHaveLength(1);
+    expect(await screen.findByRole('meter', { name: 'Context budget' })).toBeTruthy();
+    expect(screen.getByText('16%')).toBeTruthy();
+    expect(screen.getByText('32k')).toBeTruthy();
+    expect(screen.getByText('85k')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /Context breakdown/ }));
+    expect(screen.getByText('/work/AGENTS.md')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /Linked filesystems/ }));
+    expect(screen.getByText('AGENTS.md · ≈800 tokens on disk')).toBeTruthy();
+    expect(view.requests.filter((r) => r.path.endsWith('/usage'))).toHaveLength(1);
   });
 
-  it("keeps the totals and drops the tool and error rankings", async () => {
+  it('keeps the totals and drops the tool and error rankings', async () => {
     await open();
     // The grid the report kept, proving the card did expand.
-    expect(await screen.findByText("Cost")).toBeTruthy();
-    expect(screen.getByText("85k")).toBeTruthy();
-    expect(screen.getByText("2.3k")).toBeTruthy();
-    expect(screen.getByText("$0.21")).toBeTruthy();
-    expect(screen.getByText("59")).toBeTruthy();
+    expect(await screen.findByText('Cost')).toBeTruthy();
+    expect(screen.getByText('85k')).toBeTruthy();
+    expect(screen.getByText('2.3k')).toBeTruthy();
+    expect(screen.getByText('$0.21')).toBeTruthy();
+    expect(screen.getByText('59')).toBeTruthy();
 
     // Model and Active are the whole labelled meta row now.
-    expect(screen.getByText("Model")).toBeTruthy();
-    expect(screen.getByText("Active")).toBeTruthy();
-    expect(screen.queryByText("Top tools")).toBeNull();
-    expect(screen.queryByText("Top errors")).toBeNull();
+    expect(screen.getByText('Model')).toBeTruthy();
+    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.queryByText('Top tools')).toBeNull();
+    expect(screen.queryByText('Top errors')).toBeNull();
     expect(screen.queryByText(/python_execution/)).toBeNull();
   });
 
-  it("puts both cache metrics in a separate explained row", async () => {
+  it('puts both cache metrics in a separate explained row', async () => {
     await open();
-    const cachedInput = await screen.findByText("Cached input");
-    const reuseCoverage = screen.getByText("Reuse coverage");
-    expect(screen.getByText("Share of all input served from provider cache")).toBeTruthy();
+    const cachedInput = await screen.findByText('Cached input');
+    const reuseCoverage = screen.getByText('Reuse coverage');
+    expect(screen.getByText('Share of all input served from provider cache')).toBeTruthy();
     expect(
       screen.getByText(
-        "Estimated share of reusable prior input recovered from cache · 4 of 5 calls",
+        'Estimated share of reusable prior input recovered from cache · 4 of 5 calls',
       ),
     ).toBeTruthy();
-    expect(cachedInput.closest("dl")).toBe(reuseCoverage.closest("dl"));
-    expect(cachedInput.closest("dl")).not.toBe(screen.getByText("Turns").closest("dl"));
-    expect(screen.getByText("77%")).toBeTruthy();
-    expect(screen.getByText("≈98%")).toBeTruthy();
+    expect(cachedInput.closest('dl')).toBe(reuseCoverage.closest('dl'));
+    expect(cachedInput.closest('dl')).not.toBe(screen.getByText('Turns').closest('dl'));
+    expect(screen.getByText('77%')).toBeTruthy();
+    expect(screen.getByText('≈98%')).toBeTruthy();
   });
 
   // Regression, user report ("alignment is wrong"): the cache row put its label on the
   // left and pushed its percentage to the right edge of each half, so both values
   // floated away from the left-aligned label-over-value columns of the grid above it.
-  it("stacks each cache value under its own label", async () => {
+  it('stacks each cache value under its own label', async () => {
     await open();
-    const label = await screen.findByText("Cached input");
-    const value = screen.getByText("77%");
+    const label = await screen.findByText('Cached input');
+    const value = screen.getByText('77%');
     expect(value.previousElementSibling).toBe(label);
     expect(value.parentElement).toBe(label.parentElement);
-    expect(value.parentElement?.className).not.toContain("justify-between");
+    expect(value.parentElement?.className).not.toContain('justify-between');
   });
 
-  it("keeps each cache value attached to its label", async () => {
+  it('keeps each cache value attached to its label', async () => {
     await open();
-    const cacheValue = await screen.findByText("77%");
-    expect(cacheValue.tagName).toBe("DD");
-    expect(cacheValue.previousElementSibling?.textContent).toBe("Cached input");
+    const cacheValue = await screen.findByText('77%');
+    expect(cacheValue.tagName).toBe('DD');
+    expect(cacheValue.previousElementSibling?.textContent).toBe('Cached input');
   });
 
-  it("leaves no warn-coloured value behind on the card", async () => {
+  it('leaves no warn-coloured value behind on the card', async () => {
     const view = await open();
-    await screen.findByText("Cost");
-    expect(view.container.querySelectorAll(".text-warn-strong")).toHaveLength(0);
+    await screen.findByText('Cost');
+    expect(view.container.querySelectorAll('.text-warn-strong')).toHaveLength(0);
   });
 });

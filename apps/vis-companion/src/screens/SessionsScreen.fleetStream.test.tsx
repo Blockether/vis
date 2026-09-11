@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SseEvent } from "../lib/types";
-import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
+import type { SseEvent } from '../lib/types';
+import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
 /** Let every poll, repaint and effect that fits inside `ms` happen. */
 const settle = async (ms = 0) => {
@@ -16,7 +16,7 @@ const settle = async (ms = 0) => {
 // project's page is a read of its own (`GatewayClient.listProjectPage`).
 const listReads = (requests: { path: string }[]) =>
   requests.filter(
-    (request) => request.path.startsWith("/v1/sessions?") && !request.path.includes("root="),
+    (request) => request.path.startsWith('/v1/sessions?') && !request.path.includes('root='),
   ).length;
 
 /**
@@ -63,7 +63,7 @@ let restore = () => {};
 // learned that a run had started, parked on a human or ended was to re-read its whole
 // window every five seconds — a payload whose ETag any one active session invalidates,
 // so a phone paid the window over and over to discover a single boolean.
-describe("a session list carried by the fleet stream", () => {
+describe('a session list carried by the fleet stream', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -74,51 +74,51 @@ describe("a session list carried by the fleet stream", () => {
 
   const oneRow = (fleet: ReturnType<typeof fleetHub>) =>
     renderSessionsScreen({
-      machines: [{ sessions: [listSession({ id: "s1", title: "First" })] }],
+      machines: [{ sessions: [listSession({ id: 's1', title: 'First' })] }],
       subscriptions: fleet.hub as never,
     });
 
-  it("paints a run the stream announced without reading the window again", async () => {
+  it('paints a run the stream announced without reading the window again', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);
     restore = view.restore;
     await settle(50);
-    expect(screen.getByText("First")).toBeTruthy();
-    expect(screen.queryByText("LIVE")).toBeNull();
+    expect(screen.getByText('First')).toBeTruthy();
+    expect(screen.queryByText('LIVE')).toBeNull();
     const read = listReads(view.requests);
 
     await fleet.emit({
-      type: "session.status",
-      session_id: "s1",
+      type: 'session.status',
+      session_id: 's1',
       is_live: true,
       is_awaiting_input: false,
-      current_turn_id: "t1",
+      current_turn_id: 't1',
     });
 
-    expect(screen.getByText("LIVE")).toBeTruthy();
+    expect(screen.getByText('LIVE')).toBeTruthy();
     expect(listReads(view.requests)).toBe(read);
   });
 
   // Regression, Vis session 448b3266-8836-4115-9cf5-6ed0679aa2f9: a settled fleet
   // frame painted NEW from metadata alone, before the finished transcript was warm.
-  it("reads the settled row before replacing LIVE with its finished state", async () => {
+  it('reads the settled row before replacing LIVE with its finished state', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);
     restore = view.restore;
     await settle(50);
 
     await fleet.emit({
-      type: "session.status",
-      session_id: "s1",
+      type: 'session.status',
+      session_id: 's1',
       is_live: true,
       is_awaiting_input: false,
-      current_turn_id: "t1",
+      current_turn_id: 't1',
     });
     const read = listReads(view.requests);
 
     await fleet.emit({
-      type: "session.status",
-      session_id: "s1",
+      type: 'session.status',
+      session_id: 's1',
       is_live: false,
       is_awaiting_input: false,
       current_turn_id: null,
@@ -136,12 +136,12 @@ describe("a session list carried by the fleet stream", () => {
     const read = listReads(view.requests);
 
     await fleet.emit({
-      type: "session.title_updated",
-      session_id: "s1",
-      title: "Renamed by the engine",
+      type: 'session.title_updated',
+      session_id: 's1',
+      title: 'Renamed by the engine',
     });
 
-    expect(screen.getByText("Renamed by the engine")).toBeTruthy();
+    expect(screen.getByText('Renamed by the engine')).toBeTruthy();
     expect(listReads(view.requests)).toBe(read);
   });
 
@@ -154,8 +154,8 @@ describe("a session list carried by the fleet stream", () => {
       machines: [
         {
           sessions: [
-            listSession({ id: "s1", title: "First" }),
-            listSession({ id: "s2", title: "Second" }),
+            listSession({ id: 's1', title: 'First' }),
+            listSession({ id: 's2', title: 'Second' }),
           ],
         },
       ],
@@ -165,19 +165,19 @@ describe("a session list carried by the fleet stream", () => {
     await settle(50);
 
     await fleet.emit({
-      type: "session.title_updated",
-      session_id: "s2",
-      titled_session_id: "s1",
-      title: "First renamed",
+      type: 'session.title_updated',
+      session_id: 's2',
+      titled_session_id: 's1',
+      title: 'First renamed',
     });
 
-    expect(screen.getByText("First renamed")).toBeTruthy();
-    expect(screen.getByText("Second")).toBeTruthy();
+    expect(screen.getByText('First renamed')).toBeTruthy();
+    expect(screen.getByText('Second')).toBeTruthy();
   });
 
   // A frame about a session this window does not hold is news about MEMBERSHIP, and
   // where that row belongs is the gateway's arithmetic, never this device's.
-  it("re-reads the window for a session it does not hold", async () => {
+  it('re-reads the window for a session it does not hold', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);
     restore = view.restore;
@@ -185,18 +185,18 @@ describe("a session list carried by the fleet stream", () => {
     const read = listReads(view.requests);
 
     await fleet.emit({
-      type: "session.status",
-      session_id: "somewhere-else",
+      type: 'session.status',
+      session_id: 'somewhere-else',
       is_live: true,
       is_awaiting_input: false,
-      current_turn_id: "t9",
+      current_turn_id: 't9',
     });
     await settle(200);
 
     expect(listReads(view.requests)).toBeGreaterThan(read);
   });
 
-  it("slows its safety net while the stream delivers, and speeds back up when it drops", async () => {
+  it('slows its safety net while the stream delivers, and speeds back up when it drops', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);
     restore = view.restore;

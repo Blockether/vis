@@ -72,13 +72,7 @@ describe('painting strokes', () => {
         { x: 9, y: 1 },
       ]),
     );
-    expect(calls).toEqual([
-      'beginPath',
-      'moveTo(0,0)',
-      'lineTo(5,5)',
-      'lineTo(9,1)',
-      'stroke',
-    ]);
+    expect(calls).toEqual(['beginPath', 'moveTo(0,0)', 'lineTo(5,5)', 'lineTo(9,1)', 'stroke']);
   });
 
   it('ignores a stroke with no points at all', () => {
@@ -101,12 +95,7 @@ describe('painting strokes', () => {
   it('paints only the segment the hand just moved through', () => {
     const { calls, context } = recordingContext();
     paintSegment(context, stroke([]), { x: 1, y: 1 }, { x: 4, y: 8 });
-    expect(calls).toEqual([
-      'beginPath',
-      'moveTo(1,1)',
-      'lineTo(4,8)',
-      'stroke',
-    ]);
+    expect(calls).toEqual(['beginPath', 'moveTo(1,1)', 'lineTo(4,8)', 'stroke']);
   });
 });
 

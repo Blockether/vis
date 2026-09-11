@@ -1,36 +1,22 @@
-import {
-  memo,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useState,
-} from "react";
-import { createPortal } from "react-dom";
+import { memo, type ReactNode, useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
-import type { GatewayClient } from "../lib/gateway";
+import type { GatewayClient } from '../lib/gateway';
 import {
   attachmentBytes,
   docKindLabel,
   isMarkdownMedia,
   isPdfMedia,
   isTextMedia,
-} from "../lib/artifacts";
-import { parseAnnotated } from "../lib/markdown-annotations";
-import type { IterationAttachment } from "../lib/types";
-import {
-  type DocumentChrome,
-  MarkdownArtifact,
-} from "./MarkdownArtifact";
-import { PdfAnnotator } from "./PdfArtifact";
-import { readArtifactText, TextFrame } from "./TextArtifact";
-import { ChevronIcon } from "./icons";
-import {
-  BandButton,
-  ListRow,
-  overlayLayer,
-  OverlayScreen,
-} from "./ui";
-import { useStickyOverlay } from "../lib/sticky-overlay";
+} from '../lib/artifacts';
+import { parseAnnotated } from '../lib/markdown-annotations';
+import type { IterationAttachment } from '../lib/types';
+import { type DocumentChrome, MarkdownArtifact } from './MarkdownArtifact';
+import { PdfAnnotator } from './PdfArtifact';
+import { readArtifactText, TextFrame } from './TextArtifact';
+import { ChevronIcon } from './icons';
+import { BandButton, ListRow, overlayLayer, OverlayScreen } from './ui';
+import { useStickyOverlay } from '../lib/sticky-overlay';
 
 /**
  * What an OPENED artifact needs in order to be marked up: which session and
@@ -83,8 +69,8 @@ export type AnnotateContext = {
  * built-in viewer, which refuses to paint without it, never the artifact.
  */
 export function docSandbox(mime: string | undefined): string {
-  if (isPdfMedia(mime)) return "allow-scripts";
-  return "allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads";
+  if (isPdfMedia(mime)) return 'allow-scripts';
+  return 'allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads';
 }
 
 /**
@@ -130,8 +116,7 @@ function DocBody({
         This document could not be loaded from the gateway.
       </p>
     );
-  if (!url)
-    return <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>;
+  if (!url) return <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>;
   // Markdown and plain text are read by the APP: an iframe would paint
   // `# Heading` as `# Heading`, the source instead of the document.
   return isTextMedia(mime, name) ? (
@@ -151,7 +136,7 @@ function DocBody({
  *
  * The header is the group's own report — `4 documents · 31.4KB` — and it only
  * exists when there IS a group: one document is a single row with no header at
-  * all, so the common turn pays nothing for the rarer one.
+ * all, so the common turn pays nothing for the rarer one.
  *
  * A settled RUN is a row of this same stack: an artifact the reader opens,
  * under the rule the documents already share.
@@ -188,10 +173,10 @@ export const DocStack = memo(function DocStack({
  * smaller one.
  */
 export function docStackSummary(docs: { size?: number }[]): string {
-  const things = `${docs.length} ${docs.length === 1 ? "document" : "documents"}`;
-  const total = docs.every((doc) => typeof doc.size === "number")
+  const things = `${docs.length} ${docs.length === 1 ? 'document' : 'documents'}`;
+  const total = docs.every((doc) => typeof doc.size === 'number')
     ? attachmentBytes(docs.reduce((sum, doc) => sum + (doc.size ?? 0), 0))
-    : "";
+    : '';
   return total ? `${things} · ${total}` : things;
 }
 
@@ -253,9 +238,7 @@ export const DocOverlay = memo(function DocOverlay({
   const chrome: DocumentChrome = ({ actions, note, body }) => (
     <OverlayScreen
       title={name}
-      subtitle={
-        note || [docKindLabel(mime), shownLabel].filter(Boolean).join(" · ")
-      }
+      subtitle={note || [docKindLabel(mime), shownLabel].filter(Boolean).join(' · ')}
       actions={
         <>
           {versionCell}
@@ -281,7 +264,7 @@ export const DocOverlay = memo(function DocOverlay({
           className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3 sm:p-4"
         >
           {cuts.map((cut, at) => (
-            <li key={`${cut.iteration_id ?? "iter"}-${cut.index}`}>
+            <li key={`${cut.iteration_id ?? 'iter'}-${cut.index}`}>
               <ListRow
                 isFramed
                 onClick={() => {
@@ -299,7 +282,7 @@ export const DocOverlay = memo(function DocOverlay({
                 </span>
                 {at === shownAt || at === 0 ? (
                   <span className="font-mono text-chip text-accent-ink">
-                    {at === shownAt ? "reading" : "latest"}
+                    {at === shownAt ? 'reading' : 'latest'}
                   </span>
                 ) : null}
               </ListRow>
@@ -344,7 +327,7 @@ export const DocOverlay = memo(function DocOverlay({
 
   return chrome({
     actions: null,
-    note: "",
+    note: '',
     body: <DocBody name={name} mime={mime} url={url} failed={failed} />,
   });
 });
@@ -431,15 +414,10 @@ export const DocPreview = memo(function DocPreview({
   const open = useCallback(() => setOpened(true), [setOpened]);
 
   const revisionLine = revision
-    ? [
-        `v${revision}`,
-        comments > 0
-          ? `${comments} ${comments === 1 ? "comment" : "comments"}`
-          : "",
-      ]
+    ? [`v${revision}`, comments > 0 ? `${comments} ${comments === 1 ? 'comment' : 'comments'}` : '']
         .filter(Boolean)
-        .join(" · ")
-    : "";
+        .join(' · ')
+    : '';
 
   return (
     <>
@@ -452,15 +430,11 @@ export const DocPreview = memo(function DocPreview({
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-mono text-chip text-muted">{name}</span>
           {revisionLine ? (
-            <span className="truncate font-mono text-chip text-footer-muted">
-              {revisionLine}
-            </span>
+            <span className="truncate font-mono text-chip text-footer-muted">{revisionLine}</span>
           ) : null}
         </span>
         {sizeLabel ? (
-          <span className="shrink-0 font-mono text-chip text-footer-muted">
-            {sizeLabel}
-          </span>
+          <span className="shrink-0 font-mono text-chip text-footer-muted">{sizeLabel}</span>
         ) : null}
         <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
       </ListRow>

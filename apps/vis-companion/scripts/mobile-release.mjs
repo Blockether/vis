@@ -63,21 +63,25 @@ if (regularCommit === head) {
   console.log(`Vis version:      ${version}`);
   console.log(`Store build:      ${capture('git', ['rev-list', '--count', 'HEAD'])}`);
   console.log(`Regular release:  ${regularTag} already points at HEAD`);
-  console.log('\n✓ No companion tag needed: the regular Vis release triggers both stores automatically.');
+  console.log(
+    '\n✓ No companion tag needed: the regular Vis release triggers both stores automatically.',
+  );
   process.exit(0);
 }
-if (command('git', ['merge-base', '--is-ancestor', regularCommit, head], { allowFailure: true }).status !== 0) {
+if (
+  command('git', ['merge-base', '--is-ancestor', regularCommit, head], { allowFailure: true })
+    .status !== 0
+) {
   die(`${regularTag} is not an ancestor of HEAD; VIS_VERSION cannot describe this branch`);
 }
 
-const remoteTagObject = command(
-  'git',
-  ['ls-remote', '--refs', 'origin', `refs/tags/${companionTag}`],
-).stdout.trim().split(/\s+/)[0] || '';
+const remoteTagObject =
+  command('git', ['ls-remote', '--refs', 'origin', `refs/tags/${companionTag}`])
+    .stdout.trim()
+    .split(/\s+/)[0] || '';
 if (remoteTagObject) {
   die(`${companionTag} already exists on origin; companion release tags are immutable`);
 }
-
 
 console.log(`Vis version:      ${version}`);
 console.log(`Store build:      ${build}`);
@@ -85,7 +89,9 @@ console.log(`Regular release:  ${regularTag} (${regularCommit.slice(0, 10)})`);
 console.log(`Companion trigger: create ${companionTag} -> ${head.slice(0, 10)}`);
 
 const androidFrozen = androidPublishRefusal('the Android leg of this companion release');
-console.log(`Stores:            ${androidFrozen ? 'iOS only (Android publishing is frozen)' : 'iOS + Android'}`);
+console.log(
+  `Stores:            ${androidFrozen ? 'iOS only (Android publishing is frozen)' : 'iOS + Android'}`,
+);
 if (androidFrozen) console.log(`\n! ${androidFrozen}`);
 if (dryRun) {
   console.log('\nDry run only; no tag changed.');

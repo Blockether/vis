@@ -4,12 +4,12 @@
 // every single open of the settings dialog painted a pulsing amber `Connect`
 // labelled `Checking…` first and settled into a quiet `Disconnect` a moment
 // later — on a machine this device had been connected to for days.
-import { act, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const native = vi.hoisted(() => ({ store: new Map<string, string>() }));
 
-vi.mock("@capacitor/preferences", () => ({
+vi.mock('@capacitor/preferences', () => ({
   Preferences: {
     get: async ({ key }: { key: string }) => ({
       value: native.store.get(key) ?? null,
@@ -23,9 +23,9 @@ vi.mock("@capacitor/preferences", () => ({
   },
 }));
 
-vi.mock("@capacitor/core", () => ({
+vi.mock('@capacitor/core', () => ({
   Capacitor: {
-    getPlatform: () => "ios",
+    getPlatform: () => 'ios',
     isNativePlatform: () => true,
     isPluginAvailable: () => true,
   },
@@ -35,30 +35,27 @@ vi.mock("@capacitor/core", () => ({
     getVoices: () => Promise.resolve({ voices: [] }),
   }),
 }));
-vi.mock("@capacitor/push-notifications", () => ({ PushNotifications: {} }));
+vi.mock('@capacitor/push-notifications', () => ({ PushNotifications: {} }));
 
-vi.mock("../lib/push", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/push")>()),
-  cachedPushToken: () => "device-token",
-  pushPermission: async () => "granted" as const,
+vi.mock('../lib/push', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/push')>()),
+  cachedPushToken: () => 'device-token',
+  pushPermission: async () => 'granted' as const,
 }));
 
-import { NativeNotificationsPanel } from "./settings/NotificationSettings";
-import { maskToken } from "../lib/push";
-import { syncFleetPush } from "../lib/notify";
-import { setGatewayNotify } from "../lib/storage";
-import {
-  cachedNotifyVerdict,
-  rememberNotifyVerdict,
-} from "../lib/notify-verdict";
-import type { GatewayClient } from "../lib/gateway";
-import type { PushStatus } from "../lib/types";
+import { NativeNotificationsPanel } from './settings/NotificationSettings';
+import { maskToken } from '../lib/push';
+import { syncFleetPush } from '../lib/notify';
+import { setGatewayNotify } from '../lib/storage';
+import { cachedNotifyVerdict, rememberNotifyVerdict } from '../lib/notify-verdict';
+import type { GatewayClient } from '../lib/gateway';
+import type { PushStatus } from '../lib/types';
 
-const MACHINE = "http://10.0.0.5:7890";
+const MACHINE = 'http://10.0.0.5:7890';
 
 const signing: PushStatus = {
   is_available: true,
-  provider: "apns",
+  provider: 'apns',
   devices: 1,
   apns: { is_available: true },
   fcm: { is_available: false },
@@ -67,8 +64,8 @@ const signing: PushStatus = {
 const held = {
   devices: [
     {
-      token_preview: maskToken("device-token"),
-      platform: "ios",
+      token_preview: maskToken('device-token'),
+      platform: 'ios',
       is_relayed: false,
     },
   ],
@@ -112,7 +109,7 @@ const open = (cached: typeof held | null, hasDevices = true) =>
   render(
     <NativeNotificationsPanel
       client={slowMachine(cached, hasDevices)}
-      gateway={{ url: MACHINE, label: "buildbox" }}
+      gateway={{ url: MACHINE, label: 'buildbox' }}
     />,
   );
 
@@ -122,31 +119,31 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  document.body.innerHTML = "";
+  document.body.innerHTML = '';
 });
 
-describe("reopening the notifications panel", () => {
-  it("paints the verdict it settled on last time, with no Checking frame", () => {
+describe('reopening the notifications panel', () => {
+  it('paints the verdict it settled on last time, with no Checking frame', () => {
     rememberNotifyVerdict(MACHINE, true);
 
     open(held);
 
     expect(
-      screen.getByRole("switch", {
-        name: "Notifications from buildbox: on",
+      screen.getByRole('switch', {
+        name: 'Notifications from buildbox: on',
       }),
     ).toBeTruthy();
     expect(
       screen
-        .getByRole("switch", { name: "Notifications from buildbox: on" })
-        .getAttribute("aria-busy"),
-    ).toBe("false");
+        .getByRole('switch', { name: 'Notifications from buildbox: on' })
+        .getAttribute('aria-busy'),
+    ).toBe('false');
   });
 
   // Regression: cached devices and fast registration IDs must not turn the
   // remembered switch off while the remaining async inputs are still loading.
   it.each([true, false])(
-    "keeps the cached verdict until revalidation settles (%s)",
+    'keeps the cached verdict until revalidation settles (%s)',
     async (wanted) => {
       rememberNotifyVerdict(MACHINE, true);
       await setGatewayNotify(MACHINE, wanted);
@@ -157,23 +154,16 @@ describe("reopening the notifications panel", () => {
       const client = slowMachine(held);
       client.devices = () => response;
       const view = render(
-        <NativeNotificationsPanel
-          client={client}
-          gateway={{ url: MACHINE, label: "buildbox" }}
-        />,
+        <NativeNotificationsPanel client={client} gateway={{ url: MACHINE, label: 'buildbox' }} />,
       );
       await act(async () => {});
-      expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
-        "true",
-      );
+      expect(screen.getByRole('switch').getAttribute('aria-checked')).toBe('true');
       expect(cachedNotifyVerdict(MACHINE)).toBe(true);
 
       await act(async () => {
         resolveDevices(held);
       });
-      expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
-        String(wanted),
-      );
+      expect(screen.getByRole('switch').getAttribute('aria-checked')).toBe(String(wanted));
       expect(cachedNotifyVerdict(MACHINE)).toBe(wanted);
       view.unmount();
     },
@@ -182,31 +172,29 @@ describe("reopening the notifications panel", () => {
   // the headers, the settings are too big): the panel used to SPELL `Checking…` on
   // a full-width button, so waiting was a word. It is the control's own busy state
   // now — the title says what is being asked, the knob pulses, the press is refused.
-  it("still asks where this device has never been told", () => {
+  it('still asks where this device has never been told', () => {
     open(null);
 
-    const control = screen.getByRole("switch", {
-      name: "Notifications from buildbox: off",
+    const control = screen.getByRole('switch', {
+      name: 'Notifications from buildbox: off',
     });
-    expect(control.getAttribute("title")).toBe(
-      "Asking buildbox whether this device is registered",
-    );
-    expect(control.getAttribute("aria-busy")).toBe("true");
-    expect(control.hasAttribute("disabled")).toBe(true);
+    expect(control.getAttribute('title')).toBe('Asking buildbox whether this device is registered');
+    expect(control.getAttribute('aria-busy')).toBe('true');
+    expect(control.hasAttribute('disabled')).toBe(true);
   });
 
   // Regression, same report: a machine too old to carry `/v1/devices` painted
   // the whole panel and then deleted it, so MCP and everything under it jumped
   // up the screen a moment after the dialog opened. The refusal is remembered
   // per machine, so the next open never paints a panel it is about to remove.
-  it("stays away on a machine that already refused the device route", () => {
+  it('stays away on a machine that already refused the device route', () => {
     const view = open(null, false);
 
     expect(view.container.firstChild).toBeNull();
-    expect(screen.queryByText("Notifications")).toBeNull();
+    expect(screen.queryByText('Notifications')).toBeNull();
   });
 
-  it("remembers a machine this device is NOT connected to", async () => {
+  it('remembers a machine this device is NOT connected to', async () => {
     rememberNotifyVerdict(MACHINE, true);
     expect(cachedNotifyVerdict(MACHINE)).toBe(true);
 
@@ -218,7 +206,7 @@ describe("reopening the notifications panel", () => {
   // The whole fleet is answered by the launch sweep, so a machine whose Settings
   // this device has NEVER opened is settled on its first open too — and that
   // open adds no request of its own: it paints what the one sweep read.
-  it("paints a machine the fleet sweep answered for, never opened here", async () => {
+  it('paints a machine the fleet sweep answered for, never opened here', async () => {
     await setGatewayNotify(MACHINE, true);
     let asked = 0;
 
@@ -232,7 +220,7 @@ describe("reopening the notifications panel", () => {
         register: async () => undefined,
         unregister: async () => undefined,
       },
-      [maskToken("device-token")],
+      [maskToken('device-token')],
       false,
     );
 
@@ -240,14 +228,14 @@ describe("reopening the notifications panel", () => {
 
     expect(asked).toBe(1);
     expect(
-      screen.getByRole("switch", {
-        name: "Notifications from buildbox: on",
+      screen.getByRole('switch', {
+        name: 'Notifications from buildbox: on',
       }),
     ).toBeTruthy();
     expect(
       screen
-        .getByRole("switch", { name: "Notifications from buildbox: on" })
-        .getAttribute("aria-busy"),
-    ).toBe("false");
+        .getByRole('switch', { name: 'Notifications from buildbox: on' })
+        .getAttribute('aria-busy'),
+    ).toBe('false');
   });
 });

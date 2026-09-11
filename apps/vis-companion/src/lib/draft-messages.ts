@@ -116,7 +116,8 @@ function parseAttachments(value: unknown, bytes: StoredBytes): PendingAttachment
     if (typeof attachment.id !== 'string') continue;
     const base64 = bytes[attachment.id];
     if (!base64) continue;
-    if (typeof attachment.filename !== 'string' || typeof attachment.media_type !== 'string') continue;
+    if (typeof attachment.filename !== 'string' || typeof attachment.media_type !== 'string')
+      continue;
     out.push({
       id: attachment.id,
       filename: attachment.filename,
@@ -237,14 +238,18 @@ export function writeDraftMessage(
   } else {
     const previous = current[key];
     if (
-      previous
-      && previous.text === text
-      && sameKeys(previous.pastes.map((paste) => paste.token), pastes.map((paste) => paste.token))
-      && sameKeys(
+      previous &&
+      previous.text === text &&
+      sameKeys(
+        previous.pastes.map((paste) => paste.token),
+        pastes.map((paste) => paste.token),
+      ) &&
+      sameKeys(
         previous.attachments.map((attachment) => attachment.id),
         attachments.map((attachment) => attachment.id),
       )
-    ) return;
+    )
+      return;
     current[key] = {
       text,
       pastes,
@@ -335,8 +340,9 @@ function persistable(current: DraftMessageStore): {
   const bytes: StoredBytes = {};
   const staged: string[] = [];
   let budget = MAX_STORED_ATTACHMENT_CHARS;
-  const newestFirst = Object.keys(current)
-    .sort((a, b) => (current[b]?.at ?? 0) - (current[a]?.at ?? 0));
+  const newestFirst = Object.keys(current).sort(
+    (a, b) => (current[b]?.at ?? 0) - (current[a]?.at ?? 0),
+  );
   for (const key of newestFirst) {
     const message = current[key];
     const attachments: StoredAttachment[] = [];
@@ -452,7 +458,7 @@ export function useDraftMessages(isVisible: boolean): DraftMessageStore {
     void hydrateDraftMessages();
   }, []);
   const subscribeVisible = useCallback(
-    (listener: () => void) => isVisible ? subscribe(listener) : () => {},
+    (listener: () => void) => (isVisible ? subscribe(listener) : () => {}),
     [isVisible],
   );
   return useSyncExternalStore(

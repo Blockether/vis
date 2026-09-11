@@ -74,10 +74,7 @@ export function forgetNotifyVerdict(url: string): void {
  * Whether one machine's list holds this device — under either name it may be
  * filed under: its OS push token, or the relay grant it was registered with.
  */
-export function isHeldBy(
-  devices: readonly PushDevice[],
-  ids: readonly string[],
-): boolean {
+export function isHeldBy(devices: readonly PushDevice[], ids: readonly string[]): boolean {
   return devices.some((device) => ids.includes(device.token_preview));
 }
 

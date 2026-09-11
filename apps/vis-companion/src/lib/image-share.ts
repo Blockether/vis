@@ -37,10 +37,7 @@ export function shareVerb(): 'Share' | 'Save' {
 export async function copyImage(blob: Blob, name: string): Promise<string> {
   if (Capacitor.isNativePlatform()) {
     await Clipboard.write({ image: await blobAsDataUrl(blob), label: name });
-  } else if (
-    navigator.clipboard?.write &&
-    typeof ClipboardItem !== 'undefined'
-  ) {
+  } else if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
   } else {
     throw new Error('Image copying is not supported by this browser');

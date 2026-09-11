@@ -13,12 +13,7 @@ import {
   unscopedMessage,
   type ProviderAuth,
 } from './ProviderAuth';
-import {
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CircleDashedIcon,
-  CircleXIcon,
-} from './icons';
+import { CircleAlertIcon, CircleCheckIcon, CircleDashedIcon, CircleXIcon } from './icons';
 
 afterEach(cleanup);
 
@@ -246,9 +241,7 @@ describe('provider authentication verdict', () => {
       tone: 'text-err',
       label: 'Authentication rejected',
     });
-    expect(providerStatusLine(rejected)).toBe(
-      'Z.ai (Coding Plan) rejected the current API key.',
-    );
+    expect(providerStatusLine(rejected)).toBe('Z.ai (Coding Plan) rejected the current API key.');
   });
 
   it('paints a transient limits failure yellow while keeping the provider usable', () => {
@@ -335,16 +328,26 @@ describe('ProviderRows', () => {
     expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
   });
 
-  it.each([null, 'status:github-copilot', 'auth:complete'])('keeps row refresh read-only and ignores it while busy (%s)', pending => {
-    const asked: string[] = [];
-    render(<ProviderRows auth={state({
-      providers: [signedIn()], pending,
-      recheck: async providerId => { asked.push(providerId); },
-    })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh limits for GITHUB-COPILOT' }));
-    expect(asked).toEqual(pending ? [] : ['github-copilot']);
-    expect(screen.getByRole('button', { name: /GITHUB-COPILOT/i, expanded: false })).toBeTruthy();
-  });
+  it.each([null, 'status:github-copilot', 'auth:complete'])(
+    'keeps row refresh read-only and ignores it while busy (%s)',
+    (pending) => {
+      const asked: string[] = [];
+      render(
+        <ProviderRows
+          auth={state({
+            providers: [signedIn()],
+            pending,
+            recheck: async (providerId) => {
+              asked.push(providerId);
+            },
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh limits for GITHUB-COPILOT' }));
+      expect(asked).toEqual(pending ? [] : ['github-copilot']);
+      expect(screen.getByRole('button', { name: /GITHUB-COPILOT/i, expanded: false })).toBeTruthy();
+    },
+  );
 
   it('presses into a live re-check for an account that is already signed in', () => {
     const asked: string[] = [];
@@ -381,7 +384,9 @@ describe('ProviderRows', () => {
     expect(screen.getByText('Signed in')).toBeTruthy();
     expect(screen.queryByText(/Checking/)).toBeNull();
     expect(screen.queryByText('No limits reported by this provider.')).toBeNull();
-    expect(row.querySelector('[title="Authentication verified"]')?.className).not.toContain('animate-pulse');
+    expect(row.querySelector('[title="Authentication verified"]')?.className).not.toContain(
+      'animate-pulse',
+    );
   });
 
   it('presses into the sign-in of an account that has none', () => {
@@ -433,7 +438,9 @@ describe('ProviderRows', () => {
       };
       render(<ProviderRows auth={state({ providers: [row] })} />);
       expect(screen.queryByRole('button', { name: /remove it from this machine/ })).toBeNull();
-      expect(screen.getByRole('button', { name: 'Run every turn on EXTENSION-OWNED' })).toBeTruthy();
+      expect(
+        screen.getByRole('button', { name: 'Run every turn on EXTENSION-OWNED' }),
+      ).toBeTruthy();
     },
   );
 
@@ -450,10 +457,16 @@ describe('ProviderRows', () => {
   it('keeps removal as the row’s last verb, and asks inside the row before it destroys', () => {
     const removed: RouterProvider[] = [];
     const row = { ...provider('anthropic'), is_managed: false };
-    render(<ProviderRows auth={state({
-      providers: [row],
-      removeProvider: async (provider) => { removed.push(provider); },
-    })} />);
+    render(
+      <ProviderRows
+        auth={state({
+          providers: [row],
+          removeProvider: async (provider) => {
+            removed.push(provider);
+          },
+        })}
+      />,
+    );
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Sign out of ANTHROPIC and remove it from this machine',

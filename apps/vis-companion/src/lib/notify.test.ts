@@ -27,12 +27,7 @@ vi.mock('@capacitor/preferences', () => ({
   },
 }));
 
-import {
-  applyGatewayNotify,
-  drainPushRevocations,
-  syncFleetPush,
-  type FleetPush,
-} from './notify';
+import { applyGatewayNotify, drainPushRevocations, syncFleetPush, type FleetPush } from './notify';
 import {
   getGatewayNotify,
   loadConnections,
@@ -43,10 +38,7 @@ import {
   switchConnectionUrl,
   upsertConnection,
 } from './storage';
-import {
-  cachedNotifyVerdict,
-  rememberNotifyVerdict,
-} from './notify-verdict';
+import { cachedNotifyVerdict, rememberNotifyVerdict } from './notify-verdict';
 import type { GatewayConn, PushDevice } from './types';
 
 const makeLocalStorage = () => {
@@ -121,11 +113,8 @@ const device = (preview: string): PushDevice =>
   ({ token_preview: preview, platform: 'ios', is_relayed: false }) as PushDevice;
 
 /** Everything the sweep asked of the fleet, counted. */
-const requests = (calls: {
-  read: string[];
-  registered: string[];
-  unregistered: string[];
-}) => calls.read.length + calls.registered.length + calls.unregistered.length;
+const requests = (calls: { read: string[]; registered: string[]; unregistered: string[] }) =>
+  calls.read.length + calls.registered.length + calls.unregistered.length;
 
 beforeEach(() => {
   native.store.clear();
@@ -233,12 +222,7 @@ describe('syncFleetPush', () => {
   it('re-registers a machine whose relay grant is about to lapse', async () => {
     await setGatewayNotify(LAPTOP, true);
     const { calls, fleet } = fleetOf({ [LAPTOP]: ['mine'] });
-    await syncFleetPush(
-      [paired[0]],
-      { ...fleet, isRenewalDue: async () => true },
-      ['mine'],
-      false,
-    );
+    await syncFleetPush([paired[0]], { ...fleet, isRenewalDue: async () => true }, ['mine'], false);
     expect(calls.registered).toEqual([LAPTOP]);
   });
 
@@ -383,12 +367,7 @@ describe('the verdict a row opens on', () => {
     await setGatewayNotify(LAPTOP, true);
     const { fleet } = fleetOf({ [LAPTOP]: ['someone-else'] }, [], [LAPTOP]);
 
-    const result = await syncFleetPush(
-      [{ url: LAPTOP, token: 'a' }],
-      fleet,
-      ['mine'],
-      false,
-    );
+    const result = await syncFleetPush([{ url: LAPTOP, token: 'a' }], fleet, ['mine'], false);
 
     expect(result.failed).toEqual([LAPTOP]);
     expect(cachedNotifyVerdict(LAPTOP)).toBe(false);
@@ -410,12 +389,7 @@ describe('the verdict a row opens on', () => {
     await setGatewayNotify(LAPTOP, true);
     const { fleet } = fleetOf({}, [LAPTOP]);
 
-    const result = await syncFleetPush(
-      [{ url: LAPTOP, token: 'a' }],
-      fleet,
-      ['mine'],
-      false,
-    );
+    const result = await syncFleetPush([{ url: LAPTOP, token: 'a' }], fleet, ['mine'], false);
 
     expect(result.failed).toEqual([LAPTOP]);
     expect(cachedNotifyVerdict(LAPTOP)).toBe(true);

@@ -24,7 +24,15 @@
  *   node scripts/ios-prepare.mjs
  *   node scripts/ios-prepare.mjs --check   # exit 1 if the project needs preparation
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -106,7 +114,9 @@ const splashFilesOk =
   splashImages.every(
     ([source, target]) =>
       existsSync(join(splashDir, target)) &&
-      readFileSync(join(splashDir, target)).equals(readFileSync(join(root, 'native-assets', 'ios', source))),
+      readFileSync(join(splashDir, target)).equals(
+        readFileSync(join(root, 'native-assets', 'ios', source)),
+      ),
   );
 
 // The colour lives in the asset catalog because `UILaunchScreen` names it there — the one
@@ -168,7 +178,8 @@ const launchBoardSource = `<?xml version="1.0" encoding="UTF-8"?>
     </resources>
 </document>
 `;
-const launchBoardOk = existsSync(launchBoard) && readFileSync(launchBoard, 'utf8') === launchBoardSource;
+const launchBoardOk =
+  existsSync(launchBoard) && readFileSync(launchBoard, 'utf8') === launchBoardSource;
 const splashOk = splashFilesOk && splashColorOk && launchBoardOk;
 
 const die = (msg) => {
@@ -299,9 +310,12 @@ const plistEntries = [
 const currentPlist = readFileSync(infoPlist, 'utf8');
 // Capacitor's scaffold points at the storyboard; `UILaunchScreen` only wins once that key is
 // gone, so the removal is part of being prepared rather than a one-off cleanup.
-const launchStoryboardEntry = /[\t ]*<key>UILaunchStoryboardName<\/key>\n[\t ]*<string>[^<]*<\/string>\n/;
+const launchStoryboardEntry =
+  /[\t ]*<key>UILaunchStoryboardName<\/key>\n[\t ]*<string>[^<]*<\/string>\n/;
 const launchStoryboardStale = launchStoryboardEntry.test(currentPlist);
-const missingPlistEntries = plistEntries.filter(([key]) => !currentPlist.includes(`<key>${key}</key>`));
+const missingPlistEntries = plistEntries.filter(
+  ([key]) => !currentPlist.includes(`<key>${key}</key>`),
+);
 let preparedPlist = currentPlist.replace(launchStoryboardEntry, '');
 if (missingPlistEntries.length > 0) {
   const at = preparedPlist.lastIndexOf('</dict>');
@@ -957,14 +971,14 @@ public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesize
 `;
 const fileOk = (path, contents) => existsSync(path) && readFileSync(path, 'utf8') === contents;
 const shareFilesOk =
-  fileOk(shareController, shareControllerSource)
-  && fileOk(sharePlist, sharePlistSource)
-  && fileOk(shareEntitlements, appGroupEntitlements)
-  && fileOk(shortcutsSwift, shortcutsSource);
+  fileOk(shareController, shareControllerSource) &&
+  fileOk(sharePlist, sharePlistSource) &&
+  fileOk(shareEntitlements, appGroupEntitlements) &&
+  fileOk(shortcutsSwift, shortcutsSource);
 const notifyFilesOk =
-  fileOk(notifyService, notifyServiceSource)
-  && fileOk(notifyPlist, notifyPlistSource)
-  && fileOk(badgeSwift, badgeSource);
+  fileOk(notifyService, notifyServiceSource) &&
+  fileOk(notifyPlist, notifyPlistSource) &&
+  fileOk(badgeSwift, badgeSource);
 const speechFileOk = fileOk(speechSwift, speechSource);
 // THE HOST THE WEB LAYER CANNOT SEE. "Designed for iPad" on an Apple-silicon Mac is
 // iOS WebKit in a Mac window: it answers `(pointer: coarse)` under a trackpad and
@@ -994,13 +1008,20 @@ public class VisHostPlugin: CAPPlugin, CAPBridgedPlugin {
 `;
 const hostFileOk = fileOk(hostSwift, hostSource);
 const oauthSwift = join(appDir, 'OAuthLoopback.swift');
-const oauthSource = readFileSync(join(root, 'native/oauth/Sources/OAuthLoopback/OAuthLoopback.swift'), 'utf8')
-  + '\n' + readFileSync(join(root, 'native/ios/OAuthLoopbackPlugin.swift'), 'utf8');
+const oauthSource =
+  readFileSync(join(root, 'native/oauth/Sources/OAuthLoopback/OAuthLoopback.swift'), 'utf8') +
+  '\n' +
+  readFileSync(join(root, 'native/ios/OAuthLoopbackPlugin.swift'), 'utf8');
 const oauthFileOk = fileOk(oauthSwift, oauthSource);
 // `cap sync` rewrites this file from the INSTALLED packages, so plugin classes
 // that live in the app target are dropped from it every time. Putting them back
 // is exactly what this hook is for — it runs as `postsync`.
-const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin', 'VisHostPlugin', 'OAuthLoopbackPlugin'];
+const appPluginClasses = [
+  'VisBadgePlugin',
+  'NativeSpeechPlugin',
+  'VisHostPlugin',
+  'OAuthLoopbackPlugin',
+];
 const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
 const packageClassList = capConfigJson?.packageClassList ?? [];
 const badgeConfigOk = !capConfigJson || packageClassList.includes('VisBadgePlugin');
@@ -1067,7 +1088,8 @@ const hostIds = {
 
 const projectOk = project.includes(ids.target) && project.includes(ids.shortcutsRef);
 const notifyProjectOk = project.includes(notifyIds.target) && project.includes(notifyIds.badgeRef);
-const speechProjectOk = project.includes(speechIds.swiftRef) && project.includes(speechIds.swiftBuild);
+const speechProjectOk =
+  project.includes(speechIds.swiftRef) && project.includes(speechIds.swiftBuild);
 const hostProjectOk = project.includes(hostIds.swiftRef) && project.includes(hostIds.swiftBuild);
 
 const after = (pattern, addition, what) => {
@@ -1089,14 +1111,23 @@ if (!projectObject) die('project.pbxproj has no Project object');
 const marketing = /MARKETING_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1.0';
 const buildVersion = /CURRENT_PROJECT_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1';
 
-const shareTarget = { name: 'VisShare', bundleSuffix: 'share', entitlements: 'VisShare/VisShare.entitlements' };
+const shareTarget = {
+  name: 'VisShare',
+  bundleSuffix: 'share',
+  entitlements: 'VisShare/VisShare.entitlements',
+};
 const notifyTarget = { name: 'VisNotify', bundleSuffix: 'notify' };
 
 // The share extension DOES need an entitlement of its own — the App Group that
 // carries a shared file to the app. The notification service does not: the host's
 // aps-environment on an app extension is rejected outright, and that extension is
 // entitled by the notification it is handed, not by push.
-const extensionSettings = ({ name, bundleSuffix, entitlements }, configId, configName, extra) => `\t\t${configId} /* ${configName} */ = {
+const extensionSettings = (
+  { name, bundleSuffix, entitlements },
+  configId,
+  configName,
+  extra,
+) => `\t\t${configId} /* ${configName} */ = {
 \t\t\tisa = XCBuildConfiguration;
 \t\t\tbuildSettings = {
 ${entitlements ? `\t\t\t\tCODE_SIGN_ENTITLEMENTS = ${entitlements};\n` : ''}\t\t\t\tCODE_SIGN_STYLE = Automatic;
@@ -1121,7 +1152,6 @@ ${extra}\t\t\t\tSWIFT_VERSION = 5.0;
 `;
 
 if (!projectOk) {
-
   // App target first: the additions below carry the same shapes (an empty
   // `dependencies`, a `Resources` phase) and would otherwise be matched instead.
   after(
@@ -1149,7 +1179,11 @@ if (!projectOk) {
     'Products group',
   );
   after(/\n(\s*)targets = \(/, `\n\t\t\t\t${ids.target} /* VisShare */,`, 'targets list');
-  after(/TargetAttributes = \{/, `\n\t\t\t\t\t${ids.target} = {\n\t\t\t\t\t\tProvisioningStyle = Automatic;\n\t\t\t\t\t};`, 'TargetAttributes');
+  after(
+    /TargetAttributes = \{/,
+    `\n\t\t\t\t\t${ids.target} = {\n\t\t\t\t\t\tProvisioningStyle = Automatic;\n\t\t\t\t\t};`,
+    'TargetAttributes',
+  );
   // The group that holds the extension's own sources.
   before(
     '/* End PBXGroup section */',
@@ -1282,8 +1316,18 @@ if (!projectOk) {
   );
   before(
     '/* End XCBuildConfiguration section */',
-    extensionSettings(shareTarget, ids.debug, 'Debug', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n')
-      + extensionSettings(shareTarget, ids.release, 'Release', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n'),
+    extensionSettings(
+      shareTarget,
+      ids.debug,
+      'Debug',
+      '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n',
+    ) +
+      extensionSettings(
+        shareTarget,
+        ids.release,
+        'Release',
+        '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n',
+      ),
   );
   before(
     '/* End XCConfigurationList section */',
@@ -1321,7 +1365,9 @@ if (!notifyProjectOk) {
     'App dependencies list',
   );
   after(
-    new RegExp(`\\n(\\s*)${ids.embedBuild} \\/\\* VisShare\\.appex in Embed Foundation Extensions \\*\\/,`),
+    new RegExp(
+      `\\n(\\s*)${ids.embedBuild} \\/\\* VisShare\\.appex in Embed Foundation Extensions \\*\\/,`,
+    ),
     `\n\t\t\t\t${notifyIds.embedBuild} /* VisNotify.appex in Embed Foundation Extensions */,`,
     'Embed Foundation Extensions phase',
   );
@@ -1446,8 +1492,18 @@ if (!notifyProjectOk) {
   );
   before(
     '/* End XCBuildConfiguration section */',
-    extensionSettings(notifyTarget, notifyIds.debug, 'Debug', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n')
-      + extensionSettings(notifyTarget, notifyIds.release, 'Release', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n'),
+    extensionSettings(
+      notifyTarget,
+      notifyIds.debug,
+      'Debug',
+      '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n',
+    ) +
+      extensionSettings(
+        notifyTarget,
+        notifyIds.release,
+        'Release',
+        '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n',
+      ),
   );
   before(
     '/* End XCConfigurationList section */',
@@ -1510,14 +1566,24 @@ if (!hostProjectOk) {
 const oauthIds = { swiftRef: objectId(40), swiftBuild: objectId(41) };
 const oauthProjectOk = project.includes(oauthIds.swiftRef) && project.includes(oauthIds.swiftBuild);
 if (!oauthProjectOk) {
-  after(new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
-    `\n\t\t\t\t${oauthIds.swiftBuild} /* OAuthLoopback.swift in Sources */,`, 'App Sources phase');
-  after(new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
-    `\n\t\t\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */,`, 'App group');
-  before('/* End PBXBuildFile section */',
-    `\t\t${oauthIds.swiftBuild} /* OAuthLoopback.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${oauthIds.swiftRef} /* OAuthLoopback.swift */; };\n`);
-  before('/* End PBXFileReference section */',
-    `\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthLoopback.swift; sourceTree = "<group>"; };\n`);
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${oauthIds.swiftBuild} /* OAuthLoopback.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */,`,
+    'App group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${oauthIds.swiftBuild} /* OAuthLoopback.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${oauthIds.swiftRef} /* OAuthLoopback.swift */; };\n`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthLoopback.swift; sourceTree = "<group>"; };\n`,
+  );
 }
 const oauthOk = oauthFileOk && oauthProjectOk && oauthConfigOk;
 const shareOk = shareFilesOk && projectOk;
@@ -1526,8 +1592,21 @@ const speechOk = speechFileOk && speechProjectOk && speechConfigOk;
 const hostOk = hostFileOk && hostProjectOk && hostConfigOk;
 
 if (check) {
-  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && speechOk && hostOk && oauthOk && splashOk) {
-    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts, badge extension, public speech bridge and host plugin');
+  if (
+    delegateOk &&
+    boardOk &&
+    plistOk &&
+    appIconOk &&
+    shareOk &&
+    badgeOk &&
+    speechOk &&
+    hostOk &&
+    oauthOk &&
+    splashOk
+  ) {
+    console.log(
+      '· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts, badge extension, public speech bridge and host plugin',
+    );
     process.exit(0);
   }
   const missing = missingPlistEntries.map(([key]) => key).join(', ') || 'updated app capabilities';
@@ -1546,10 +1625,11 @@ if (check) {
                 ? 'ios: no NativeSpeech public TTS plugin — run `node scripts/ios-prepare.mjs`'
                 : !hostOk
                   ? 'ios: no VisHost plugin — run `node scripts/ios-prepare.mjs`'
-                   : !oauthOk ? 'ios: no OAuth loopback browser — run `node scripts/ios-prepare.mjs`'
-                   : !splashOk
-                    ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
-                    : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
+                  : !oauthOk
+                    ? 'ios: no OAuth loopback browser — run `node scripts/ios-prepare.mjs`'
+                    : !splashOk
+                      ? "ios: launch screen still shows Capacitor's splash — run `node scripts/ios-prepare.mjs`"
+                      : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -1584,7 +1664,10 @@ if (!shareFilesOk) {
 if (!existsSync(appEntitlements) || !readFileSync(appEntitlements, 'utf8').includes(appGroup)) {
   const existing = existsSync(appEntitlements) ? readFileSync(appEntitlements, 'utf8') : '';
   const group = `\t<key>com.apple.security.application-groups</key>\n\t<array>\n\t\t<string>${appGroup}</string>\n\t</array>\n</dict>`;
-  writeFileSync(appEntitlements, existing.includes('</dict>') ? existing.replace('</dict>', group) : appGroupEntitlements);
+  writeFileSync(
+    appEntitlements,
+    existing.includes('</dict>') ? existing.replace('</dict>', group) : appGroupEntitlements,
+  );
 }
 if (!notifyFilesOk) {
   mkdirSync(notifyDir, { recursive: true });
@@ -1615,7 +1698,10 @@ if (!project.includes('CODE_SIGN_ENTITLEMENTS = App/App.entitlements')) {
 // extension target, so the block above is skipped — the group entitlement is
 // still put on it here, where it is missing.
 if (!project.includes(`CODE_SIGN_ENTITLEMENTS = ${shareTarget.entitlements}`)) {
-  const sharePattern = `${bundleId}.${shareTarget.bundleSuffix}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const sharePattern = `${bundleId}.${shareTarget.bundleSuffix}`.replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&',
+  );
   project = project.replaceAll(
     new RegExp(`(\\n(\\s*)PRODUCT_BUNDLE_IDENTIFIER = "?${sharePattern}"?;)`, 'g'),
     `$1\n$2CODE_SIGN_ENTITLEMENTS = ${shareTarget.entitlements};`,
@@ -1626,11 +1712,17 @@ if (project !== projectBefore) writeFileSync(pbxprojPath, project);
 console.log(
   `· ios: ${delegateOk ? 'AppDelegate already prepared' : 'prepared AppDelegate'}; ${
     boardOk ? 'stock Capacitor bridge' : 'removed the viewport bridge'
-  }; ${plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ') || 'app capabilities'}`
+  }; ${
+    plistOk
+      ? 'app capabilities already present'
+      : `stamped ${missingPlistEntries.map(([key]) => key).join(', ') || 'app capabilities'}`
   }; ${appIconOk ? 'branded icon already present' : 'stamped branded app icon'}; ${
-    shareOk ? 'share extension + Shortcuts already present' : 'stamped VisShare extension + App Intents'
+    shareOk
+      ? 'share extension + Shortcuts already present'
+      : 'stamped VisShare extension + App Intents'
   }; ${badgeOk ? 'badge extension already present' : 'stamped VisNotify extension + VisBadge plugin'}; ${
     speechOk ? 'public speech bridge already present' : 'stamped NativeSpeech public TTS plugin'
-  }; ${hostOk ? 'host plugin already present' : 'stamped VisHost plugin'
+  }; ${
+    hostOk ? 'host plugin already present' : 'stamped VisHost plugin'
   }; ${splashOk ? 'branded launch screen already present' : 'stamped the Vis launch screen'}`,
 );

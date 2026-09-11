@@ -20,9 +20,7 @@ import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
 /** The dialog owns the fold's state, so the harness owns it the same way. */
 function Harness({ initialOpen = false }: { initialOpen?: boolean }) {
   const [isOpen, setOpen] = useState(initialOpen);
-  return (
-    <DiagnosticsPanel isOpen={isOpen} onToggle={() => setOpen((open) => !open)} />
-  );
+  return <DiagnosticsPanel isOpen={isOpen} onToggle={() => setOpen((open) => !open)} />;
 }
 
 describe('application diagnostics settings', () => {
@@ -38,9 +36,7 @@ describe('application diagnostics settings', () => {
     const fold = screen.getByRole('button', { name: 'Show diagnostics' });
     expect(fold).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText(APP_VERSION)).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Export app logs' }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Export app logs' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('heading', { name: 'Diagnostics' }));
 
@@ -50,14 +46,10 @@ describe('application diagnostics settings', () => {
     expect(screen.getByText(APP_BUILD_COMMIT)).toBeInTheDocument();
     // The compact matrix preserves both wire facts as distinct terms instead of
     // flattening them into one sentence; retention remains an explicit fact too.
-    expect(
-      screen.getByText(`${APP_MIN_GATEWAY_PROTOCOL}+`),
-    ).toBeInTheDocument();
+    expect(screen.getByText(`${APP_MIN_GATEWAY_PROTOCOL}+`)).toBeInTheDocument();
     expect(screen.getByText(`${APP_PROTOCOL}`)).toBeInTheDocument();
     expect(
-      screen.getByText(
-        `${RETAINED_LOG_POLICY.days} days · ${RETAINED_LOG_POLICY.megabytes} MB`,
-      ),
+      screen.getByText(`${RETAINED_LOG_POLICY.days} days · ${RETAINED_LOG_POLICY.megabytes} MB`),
     ).toBeInTheDocument();
   });
 

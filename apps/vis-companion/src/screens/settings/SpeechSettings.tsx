@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { GatewayClient, GatewayError } from "../../lib/gateway";
+import { GatewayClient, GatewayError } from '../../lib/gateway';
 import type {
   GatewayCapabilities,
   SpeechPrefs,
@@ -8,7 +8,7 @@ import type {
   SpeechVoices,
   VoiceEngineAbsence,
   VoiceModelState,
-} from "../../lib/types";
+} from '../../lib/types';
 import {
   SPEECH_RATES,
   setSpeechAsrEngine,
@@ -16,23 +16,17 @@ import {
   setSpeechGatewayVoice,
   setSpeechRate,
   setSpeechTtsEngine,
-} from "../../lib/storage";
-import { speechOutput } from "../../lib/speech";
-import { startWavRecording, type WavRecording } from "../../lib/voice";
-import {
-  DownloadIcon,
-  MicIcon,
-  PlayIcon,
-  StopIcon,
-  TrashIcon,
-} from "../../components/icons";
+} from '../../lib/storage';
+import { speechOutput } from '../../lib/speech';
+import { startWavRecording, type WavRecording } from '../../lib/voice';
+import { DownloadIcon, MicIcon, PlayIcon, StopIcon, TrashIcon } from '../../components/icons';
 import {
   bestDeviceVoices,
   deviceVoices,
   iosVoiceDownloadGuidance,
   type DeviceVoice,
-} from "../../lib/speech-voices";
-import { onWake } from "../../lib/wake";
+} from '../../lib/speech-voices';
+import { onWake } from '../../lib/wake';
 import {
   Banner,
   Button,
@@ -42,9 +36,9 @@ import {
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
   SettingsDisclosure,
-} from "../../components/ui";
-import { SwipeActions } from "../../components/SwipeActions";
-import { FormLabel, SettingsPanel } from "./SettingsLayout";
+} from '../../components/ui';
+import { SwipeActions } from '../../components/SwipeActions';
+import { FormLabel, SettingsPanel } from './SettingsLayout';
 
 /**
  * Voices for one engine, including local recording and file import for cloning engines.
@@ -67,28 +61,22 @@ export function VoicesPanel({
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [clip, setClip] = useState<File | null>(null);
-  const [voiceName, setVoiceName] = useState("");
-  const [language, setLanguage] = useState("");
-  const [says, setSays] = useState("");
+  const [voiceName, setVoiceName] = useState('');
+  const [language, setLanguage] = useState('');
+  const [says, setSays] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
-  const [confirmingInstall, setConfirmingInstall] = useState<string | null>(
-    null,
-  );
+  const [confirmingInstall, setConfirmingInstall] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const canImport = catalogue?.engine?.is_voice_import === true;
-  const [recording, setRecording] = useState<
-    "starting" | "recording" | "stopping" | null
-  >(null);
+  const [recording, setRecording] = useState<'starting' | 'recording' | 'stopping' | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const recordingRef = useRef<{ recorder: WavRecording | null } | null>(null);
   const cancelRecording = useCallback(() => {
     const take = recordingRef.current;
     recordingRef.current = null;
     void take?.recorder?.cancel().catch(() => {
-      setErr(
-        "Could not release the microphone. Check this device's microphone access.",
-      );
+      setErr("Could not release the microphone. Check this device's microphone access.");
     });
     setRecording(null);
   }, []);
@@ -99,7 +87,7 @@ export function VoicesPanel({
   }, [cancelRecording, client, engine, canImport]);
 
   useEffect(() => {
-    if (recording !== "recording") return;
+    if (recording !== 'recording') return;
     const started = Date.now();
     const timer = window.setInterval(() => {
       setRecordingSeconds(Math.floor((Date.now() - started) / 1000));
@@ -108,10 +96,10 @@ export function VoicesPanel({
   }, [recording]);
   // Which voice this device is auditioning right now. One at a time on purpose: the
   // player has one output, so a second press replaces the sound instead of layering it.
-  const [testText, setTestText] = useState("");
+  const [testText, setTestText] = useState('');
   const [playing, setPlaying] = useState<{
     voice: string | null;
-    phase: "loading" | "playing";
+    phase: 'loading' | 'playing';
   } | null>(null);
   const auditionRef = useRef<AbortController | null>(null);
   const cancelAudition = useCallback((resetControl = true) => {
@@ -159,10 +147,7 @@ export function VoicesPanel({
   useEffect(() => () => cancelAudition(), [cancelAudition, client, engine]);
 
   useEffect(() => {
-    if (
-      !catalogue?.voices?.some((voice) => voice.model?.status === "downloading")
-    )
-      return;
+    if (!catalogue?.voices?.some((voice) => voice.model?.status === 'downloading')) return;
     const timer = window.setTimeout(() => void load(), ENGINE_POLL_MS);
     return () => window.clearTimeout(timer);
   }, [catalogue, load]);
@@ -179,7 +164,7 @@ export function VoicesPanel({
     const controller = new AbortController();
     auditionRef.current = controller;
     const previewVoice = voice?.id ?? null;
-    setPlaying({ voice: previewVoice, phase: "loading" });
+    setPlaying({ voice: previewVoice, phase: 'loading' });
     setErr(null);
     try {
       const options = { signal: controller.signal, engine };
@@ -189,13 +174,11 @@ export function VoicesPanel({
             ...options,
             voice: selectedVoice?.id ?? null,
           });
-      if (controller.signal.aborted || auditionRef.current !== controller)
-        return;
-      setPlaying({ voice: previewVoice, phase: "playing" });
+      if (controller.signal.aborted || auditionRef.current !== controller) return;
+      setPlaying({ voice: previewVoice, phase: 'playing' });
       await speechOutput.playSample(audio);
     } catch (e) {
-      if (controller.signal.aborted || auditionRef.current !== controller)
-        return;
+      if (controller.signal.aborted || auditionRef.current !== controller) return;
       setErr((e as Error).message);
     } finally {
       if (auditionRef.current === controller) {
@@ -208,12 +191,12 @@ export function VoicesPanel({
     setClip(file);
     setNote(null);
     setErr(null);
-    if (fileRef.current && !file) fileRef.current.value = "";
+    if (fileRef.current && !file) fileRef.current.value = '';
     if (file && !voiceName.trim()) {
       setVoiceName(
         file.name
-          .replace(/\.[^.]+$/, "")
-          .replace(/[_-]+/g, " ")
+          .replace(/\.[^.]+$/, '')
+          .replace(/[_-]+/g, ' ')
           .trim(),
       );
     }
@@ -224,7 +207,7 @@ export function VoicesPanel({
     cancelAudition();
     const take: { recorder: WavRecording | null } = { recorder: null };
     recordingRef.current = take;
-    setRecording("starting");
+    setRecording('starting');
     setRecordingSeconds(0);
     setErr(null);
     setNote(null);
@@ -233,9 +216,7 @@ export function VoicesPanel({
         onInterrupted: () => {
           if (recordingRef.current !== take) return;
           cancelRecording();
-          setErr(
-            "Recording interrupted. Record again or import an audio file.",
-          );
+          setErr('Recording interrupted. Record again or import an audio file.');
         },
       });
       if (recordingRef.current !== take) {
@@ -243,13 +224,13 @@ export function VoicesPanel({
         return;
       }
       take.recorder = recorder;
-      setRecording("recording");
+      setRecording('recording');
     } catch (e) {
       if (recordingRef.current !== take) return;
       recordingRef.current = null;
       setRecording(null);
       setErr(
-        `${e instanceof Error ? e.message : "Microphone could not start"}. Record again or import an audio file.`,
+        `${e instanceof Error ? e.message : 'Microphone could not start'}. Record again or import an audio file.`,
       );
     }
   }
@@ -259,15 +240,15 @@ export function VoicesPanel({
     const recorder = take?.recorder;
     if (!recorder) return;
     take.recorder = null;
-    setRecording("stopping");
+    setRecording('stopping');
     try {
       const audio = await recorder.stop();
       if (recordingRef.current !== take) return;
-      chooseClip(new File([audio], "My voice.wav", { type: "audio/wav" }));
+      chooseClip(new File([audio], 'My voice.wav', { type: 'audio/wav' }));
     } catch (e) {
       if (recordingRef.current !== take) return;
       setErr(
-        `${e instanceof Error ? e.message : "Recording could not be saved"}. Record again or import an audio file.`,
+        `${e instanceof Error ? e.message : 'Recording could not be saved'}. Record again or import an audio file.`,
       );
     } finally {
       if (recordingRef.current === take) {
@@ -278,7 +259,7 @@ export function VoicesPanel({
   }
   async function importClip() {
     if (!clip || !voiceName.trim()) return;
-    setPending("import");
+    setPending('import');
     setErr(null);
     try {
       const voice = await client.importSpeechVoice(
@@ -292,9 +273,9 @@ export function VoicesPanel({
       );
       chooseClip(null);
       setNote(`${voice.label ?? voice.id} can speak on this machine now.`);
-      setVoiceName("");
-      setLanguage("");
-      setSays("");
+      setVoiceName('');
+      setLanguage('');
+      setSays('');
       await load();
     } catch (e) {
       setErr((e as Error).message);
@@ -329,12 +310,12 @@ export function VoicesPanel({
         isLicenseAccepted,
       });
       setConfirmingInstall(null);
-      if (state.status === "failed") {
+      if (state.status === 'failed') {
         setErr(state.error ?? `Could not download ${voice.label ?? voice.id}.`);
         setNote(null);
       } else {
         setNote(
-          state.status === "ready"
+          state.status === 'ready'
             ? `${voice.label ?? voice.id} is ready.`
             : `${voice.label ?? voice.id} is downloading.`,
         );
@@ -357,7 +338,7 @@ export function VoicesPanel({
     !!testText.trim() &&
     !recording &&
     !pending &&
-    (!selectedVoice?.model || selectedVoice.model.status === "ready");
+    (!selectedVoice?.model || selectedVoice.model.status === 'ready');
 
   return (
     <SettingsChoiceGroup label="Voices" isNested>
@@ -377,9 +358,7 @@ export function VoicesPanel({
 
         {catalogue && voices.length === 0 && (
           <p className="px-3 py-3 font-mono text-body text-dialog-hint sm:px-4">
-            {canImport
-              ? "No custom voices yet."
-              : "This engine speaks in no named voice."}
+            {canImport ? 'No custom voices yet.' : 'This engine speaks in no named voice.'}
           </p>
         )}
 
@@ -398,34 +377,29 @@ export function VoicesPanel({
           const name = voice.label ?? voice.id;
           const isPlaying = playing?.voice === voice.id;
           const model = voice.model;
-          const canPrepare =
-            model?.status === "absent" || model?.status === "failed";
-          const isDownloading = model?.status === "downloading";
+          const canPrepare = model?.status === 'absent' || model?.status === 'failed';
+          const isDownloading = model?.status === 'downloading';
           const hasDownloadAction = canPrepare || isDownloading;
           const modelWord =
-            model?.status === "downloading"
-              ? `${model.phase === "extracting" ? "unpacking" : "downloading"}${
-                  typeof model.progress === "number"
-                    ? ` ${Math.round(model.progress)}%`
-                    : ""
+            model?.status === 'downloading'
+              ? `${model.phase === 'extracting' ? 'unpacking' : 'downloading'}${
+                  typeof model.progress === 'number' ? ` ${Math.round(model.progress)}%` : ''
                 }`
-              : model?.status === "absent"
-                ? "not downloaded yet"
-                : model?.status === "failed"
-                  ? "failed"
-                  : model?.status === "ready"
-                    ? "ready"
+              : model?.status === 'absent'
+                ? 'not downloaded yet'
+                : model?.status === 'failed'
+                  ? 'failed'
+                  : model?.status === 'ready'
+                    ? 'ready'
                     : null;
           // Once the model is local, a ready or cheap-to-prepare sample can be heard without
           // changing the choice. Until then, the model download is the row's leading action.
-          const canHear = !!(
-            voice.is_sample_ready || voice.is_sample_preparable
-          );
+          const canHear = !!(voice.is_sample_ready || voice.is_sample_preparable);
           const leadingAction = hasDownloadAction
             ? {
                 label: isDownloading
                   ? `Downloading ${name}`
-                  : model?.status === "failed"
+                  : model?.status === 'failed'
                     ? `Retry download ${name}`
                     : `Download ${name}`,
                 icon: <DownloadIcon className="size-3" />,
@@ -439,9 +413,7 @@ export function VoicesPanel({
               }
             : canHear
               ? {
-                  label: isPlaying
-                    ? `Stop the sample of ${name}`
-                    : `Play a sample of ${name}`,
+                  label: isPlaying ? `Stop the sample of ${name}` : `Play a sample of ${name}`,
                   icon: isPlaying ? (
                     <StopIcon className="size-3" />
                   ) : (
@@ -461,11 +433,11 @@ export function VoicesPanel({
                   voice.is_imported && confirming !== voice.id
                     ? [
                         {
-                          key: "forget",
-                          label: "Forget",
+                          key: 'forget',
+                          label: 'Forget',
                           name: `Forget ${name}`,
                           icon: <TrashIcon />,
-                          tone: "danger",
+                          tone: 'danger',
                           onSelect: () => setConfirming(voice.id),
                         },
                       ]
@@ -478,23 +450,21 @@ export function VoicesPanel({
                   title={name}
                   sub={[
                     voice.language,
-                    voice.is_imported
-                      ? "imported here"
-                      : (modelWord ?? "ships with the engine"),
+                    voice.is_imported ? 'imported here' : (modelWord ?? 'ships with the engine'),
                   ]
                     .filter(Boolean)
-                    .join(" · ")}
+                    .join(' · ')}
                   isSelected={prefs?.gatewayVoice === voice.id}
-                  showSelectionMark={!model || model.status === "ready"}
+                  showSelectionMark={!model || model.status === 'ready'}
                   leadingAction={leadingAction}
-                  disabled={!!model && model.status !== "ready"}
+                  disabled={!!model && model.status !== 'ready'}
                   onClick={() => {
                     void chooseVoice(voice.id);
                     if (canHear) void playSample(voice);
                   }}
                 />
               </SwipeActions>
-              {model?.status === "failed" && model.error && (
+              {model?.status === 'failed' && model.error && (
                 <div className="border-t border-dialog-edge p-3">
                   <Banner kind="err">{model.error}</Banner>
                 </div>
@@ -502,13 +472,8 @@ export function VoicesPanel({
               {confirmingInstall === voice.id && (
                 <div className="border-t border-dialog-edge">
                   <div className="space-y-2 px-3 pt-3 font-mono text-meta text-dialog-hint sm:px-4">
-                    <p>
-                      {voice.notice ??
-                        `This voice requires acceptance of ${voice.license}.`}
-                    </p>
-                    {voice.license && (
-                      <p className="font-bold text-white">{voice.license}</p>
-                    )}
+                    <p>{voice.notice ?? `This voice requires acceptance of ${voice.license}.`}</p>
+                    {voice.license && <p className="font-bold text-white">{voice.license}</p>}
                     {voice.source_url && (
                       <a
                         className="block truncate text-accent underline"
@@ -521,7 +486,7 @@ export function VoicesPanel({
                     )}
                   </div>
                   <ConfirmRow
-                    question={`Accept ${voice.license ?? "these terms"} and download ${voice.label ?? voice.id}?`}
+                    question={`Accept ${voice.license ?? 'these terms'} and download ${voice.label ?? voice.id}?`}
                     confirmLabel="Accept and download"
                     isBusy={pending === `install:${voice.id}`}
                     onKeep={() => setConfirmingInstall(null)}
@@ -589,7 +554,7 @@ export function VoicesPanel({
           </div>
           {isTesting && (
             <p role="status" className="font-mono text-ui text-dialog-hint">
-              {playing.phase === "loading" ? "Synthesizing…" : "Playing…"}
+              {playing.phase === 'loading' ? 'Synthesizing…' : 'Playing…'}
             </p>
           )}
         </form>
@@ -608,23 +573,22 @@ export function VoicesPanel({
           {clip === null ? (
             <div className="space-y-3 px-3 py-3 sm:px-4">
               <p className="font-mono text-body text-dialog-hint">
-                Use 10–30 seconds of clear speech, without music or other
-                voices.
+                Use 10–30 seconds of clear speech, without music or other voices.
               </p>
               {recording ? (
                 <>
                   <p role="status" className="font-mono text-ui text-white">
-                    {recording === "starting"
-                      ? "Waiting for microphone permission…"
-                      : recording === "stopping"
-                        ? "Preparing recording…"
-                        : `Recording · ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`}
+                    {recording === 'starting'
+                      ? 'Waiting for microphone permission…'
+                      : recording === 'stopping'
+                        ? 'Preparing recording…'
+                        : `Recording · ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, '0')}`}
                   </p>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-5">
                     <Button
                       variant="secondary"
                       density="panel"
-                      disabled={recording !== "recording"}
+                      disabled={recording !== 'recording'}
                       onClick={() => void stopRecording()}
                     >
                       <span className="flex items-center gap-2">
@@ -632,32 +596,20 @@ export function VoicesPanel({
                         Stop recording
                       </span>
                     </Button>
-                    <Button
-                      variant="quiet"
-                      density="panel"
-                      onClick={() => cancelRecording()}
-                    >
+                    <Button variant="quiet" density="panel" onClick={() => cancelRecording()}>
                       Cancel recording
                     </Button>
                   </div>
                 </>
               ) : (
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-5">
-                  <Button
-                    variant="secondary"
-                    density="panel"
-                    onClick={() => void recordClip()}
-                  >
+                  <Button variant="secondary" density="panel" onClick={() => void recordClip()}>
                     <span className="flex items-center gap-2">
                       <MicIcon className="size-3" />
                       Record your voice
                     </span>
                   </Button>
-                  <Button
-                    variant="quiet"
-                    density="panel"
-                    onClick={() => fileRef.current?.click()}
-                  >
+                  <Button variant="quiet" density="panel" onClick={() => fileRef.current?.click()}>
                     Import voice
                   </Button>
                 </div>
@@ -665,13 +617,8 @@ export function VoicesPanel({
             </div>
           ) : (
             <div className="space-y-3 px-3 py-3 sm:px-4">
-              <FormLabel
-                label="Recording"
-                hint="Ten to thirty seconds of clear speech is plenty."
-              >
-                <p className="break-words font-mono text-ui text-white">
-                  {clip.name}
-                </p>
+              <FormLabel label="Recording" hint="Ten to thirty seconds of clear speech is plenty.">
+                <p className="break-words font-mono text-ui text-white">{clip.name}</p>
               </FormLabel>
               <FormLabel label="Name">
                 <Input
@@ -704,20 +651,20 @@ export function VoicesPanel({
                 <Button
                   variant="primary"
                   density="panel"
-                  disabled={!voiceName.trim() || pending === "import"}
+                  disabled={!voiceName.trim() || pending === 'import'}
                   onClick={() => void importClip()}
                 >
-                  {pending === "import" ? "Saving voice…" : "Save voice"}
+                  {pending === 'import' ? 'Saving voice…' : 'Save voice'}
                 </Button>
                 <Button
                   variant="quiet"
                   density="panel"
-                  disabled={pending === "import"}
+                  disabled={pending === 'import'}
                   onClick={() => {
                     chooseClip(null);
-                    setVoiceName("");
-                    setLanguage("");
-                    setSays("");
+                    setVoiceName('');
+                    setLanguage('');
+                    setSays('');
                   }}
                 >
                   Cancel
@@ -732,22 +679,20 @@ export function VoicesPanel({
 }
 
 /** One persisted speech preference write, shared by every open machine panel. */
-export type SaveSpeechPrefs = (
-  write: () => Promise<void>,
-) => Promise<SpeechPrefs>;
+export type SaveSpeechPrefs = (write: () => Promise<void>) => Promise<SpeechPrefs>;
 
 /** How often a moving model refreshes its own progress. */
 const ENGINE_POLL_MS = 1200;
 
 /** What each device speed sounds like, so the number is not the only thing on the cell. */
 const SPEECH_RATE_WORDS: Record<string, string> = {
-  "0.85": "unhurried",
-  "1": "natural",
-  "1.2": "brisk",
+  '0.85': 'unhurried',
+  '1': 'natural',
+  '1.2': 'brisk',
 };
 
 /** One stable line lets the ear compare device voices rather than compare wording. */
-const DEVICE_VOICE_SAMPLE = "This is what this voice sounds like.";
+const DEVICE_VOICE_SAMPLE = 'This is what this voice sounds like.';
 
 type EngineReading = {
   state: VoiceModelState | null;
@@ -765,18 +710,16 @@ function selectedEngine(
   fallback: string | null | undefined,
   engines: EngineChoice[],
 ): string | null {
-  if (requested && engines.some((engine) => engine.id === requested))
-    return requested;
-  if (fallback && engines.some((engine) => engine.id === fallback))
-    return fallback;
+  if (requested && engines.some((engine) => engine.id === requested)) return requested;
+  if (fallback && engines.some((engine) => engine.id === fallback)) return fallback;
   return engines[0]?.id ?? null;
 }
 
 /** A machine engine is local TO THE GATEWAY, which the Companion names explicitly. */
 function gatewayEngineName(engine: EngineChoice): string {
   return (engine.label?.trim() || engine.id)
-    .replace(/\s*\((?:local|gateway)\)\s*$/i, "")
-    .replace(/[-_\s]+local$/i, "")
+    .replace(/\s*\((?:local|gateway)\)\s*$/i, '')
+    .replace(/[-_\s]+local$/i, '')
     .trim();
 }
 
@@ -784,25 +727,24 @@ function gatewayEngineLabel(engine: EngineChoice): string {
   return `${gatewayEngineName(engine)} (gateway)`;
 }
 function engineWord(reading: EngineReading | null): string {
-  if (reading === null) return "checking…";
-  if (reading.absence) return "not installed";
-  if (reading.error) return "cannot be read";
+  if (reading === null) return 'checking…';
+  if (reading.absence) return 'not installed';
+  if (reading.error) return 'cannot be read';
   switch (reading.state?.status) {
-    case "ready":
-      return "ready";
-    case "downloading": {
-      const action =
-        reading.state.phase === "extracting" ? "unpacking" : "downloading";
-      return typeof reading.state.progress === "number"
+    case 'ready':
+      return 'ready';
+    case 'downloading': {
+      const action = reading.state.phase === 'extracting' ? 'unpacking' : 'downloading';
+      return typeof reading.state.progress === 'number'
         ? `${action} ${Math.round(reading.state.progress)}%`
         : action;
     }
-    case "failed":
-      return "failed";
-    case "absent":
-      return "not downloaded yet";
+    case 'failed':
+      return 'failed';
+    case 'absent':
+      return 'not downloaded yet';
     default:
-      return "unavailable";
+      return 'unavailable';
   }
 }
 
@@ -822,39 +764,30 @@ function EngineProblem({
   const canPrepare =
     reading !== null &&
     !reading.absence &&
-    (state?.status === "absent" ||
-      state?.status === "failed" ||
-      !!reading.error);
-  if (
-    !reading?.absence &&
-    !reading?.error &&
-    state?.status !== "failed" &&
-    !canPrepare
-  ) {
+    (state?.status === 'absent' || state?.status === 'failed' || !!reading.error);
+  if (!reading?.absence && !reading?.error && state?.status !== 'failed' && !canPrepare) {
     return null;
   }
-  const isDownload = state?.status === "absent";
+  const isDownload = state?.status === 'absent';
   return (
     <div className="space-y-2 border-t border-dialog-edge px-3 py-3 sm:px-4">
       {reading?.absence && (
         <p className="font-mono text-chip text-dialog-hint">
           {reading.absence.reasons?.length
-            ? reading.absence.reasons.join(" · ")
-            : "This machine has no engine for this direction installed."}
+            ? reading.absence.reasons.join(' · ')
+            : 'This machine has no engine for this direction installed.'}
         </p>
       )}
-      {state?.status === "failed" && state.error && (
-        <Banner kind="err">{state.error}</Banner>
-      )}
+      {state?.status === 'failed' && state.error && <Banner kind="err">{state.error}</Banner>}
       {reading?.error && <Banner kind="err">{reading.error}</Banner>}
       {canPrepare && (
         <Button
           variant="primary"
           disabled={isBusy}
-          aria-label={`${isDownload ? "Download" : "Retry"} ${engineName} model`}
+          aria-label={`${isDownload ? 'Download' : 'Retry'} ${engineName} model`}
           onClick={onPrepare}
         >
-          {isBusy ? "Asking…" : isDownload ? "Download model" : "Try again"}
+          {isBusy ? 'Asking…' : isDownload ? 'Download model' : 'Try again'}
         </Button>
       )}
     </div>
@@ -877,22 +810,20 @@ export function SpeechEnginesPanel({
   prefs: SpeechPrefs;
   onChange: SaveSpeechPrefs;
 }) {
-  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(
-    () => client.cachedCapabilities(),
+  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(() =>
+    client.cachedCapabilities(),
   );
-  const [open, setOpen] = useState<"asr" | "tts" | null>(null);
+  const [open, setOpen] = useState<'asr' | 'tts' | null>(null);
   const [listening, setListening] = useState<EngineReadings>({});
   const [speaking, setSpeaking] = useState<EngineReadings>({});
   const [voices, setVoices] = useState<DeviceVoice[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [openTtsSettings, setOpenTtsSettings] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const [openTtsSettings, setOpenTtsSettings] = useState<ReadonlySet<string>>(() => new Set());
   const [err, setErr] = useState<string | null>(null);
   // `undefined` is silence; `null` is the system default actively speaking.
-  const [playingDeviceVoice, setPlayingDeviceVoice] = useState<
-    string | null | undefined
-  >(undefined);
+  const [playingDeviceVoice, setPlayingDeviceVoice] = useState<string | null | undefined>(
+    undefined,
+  );
   const deviceAuditionRef = useRef<object | null>(null);
   const cancelDeviceAudition = useCallback((resetControl = true) => {
     if (!deviceAuditionRef.current) return;
@@ -903,22 +834,11 @@ export function SpeechEnginesPanel({
 
   const voiceFeature = capabilities?.features?.voice;
   const speechFeature = capabilities?.features?.speech;
-  const asrEngines = useMemo(
-    () => voiceFeature?.engines ?? [],
-    [voiceFeature?.engines],
-  );
-  const ttsEngines = useMemo(
-    () => speechFeature?.engines ?? [],
-    [speechFeature?.engines],
-  );
-  const asrEngine = selectedEngine(
-    prefs.asrEngine,
-    voiceFeature?.selected,
-    asrEngines,
-  );
+  const asrEngines = useMemo(() => voiceFeature?.engines ?? [], [voiceFeature?.engines]);
+  const ttsEngines = useMemo(() => speechFeature?.engines ?? [], [speechFeature?.engines]);
+  const asrEngine = selectedEngine(prefs.asrEngine, voiceFeature?.selected, asrEngines);
   const chosenTtsEngine =
-    prefs.ttsEngine &&
-    ttsEngines.some((engine) => engine.id === prefs.ttsEngine)
+    prefs.ttsEngine && ttsEngines.some((engine) => engine.id === prefs.ttsEngine)
       ? prefs.ttsEngine
       : null;
 
@@ -985,13 +905,9 @@ export function SpeechEnginesPanel({
       engines: EngineChoice[],
       ask: (engine: string | null) => Promise<VoiceModelState>,
     ): Promise<EngineReadings> => {
-      const ids: Array<string | null> =
-        engines.length > 0 ? engines.map(({ id }) => id) : [null];
+      const ids: Array<string | null> = engines.length > 0 ? engines.map(({ id }) => id) : [null];
       const answers = await Promise.all(
-        ids.map(
-          async (engine) =>
-            [engine ?? "", await readOne(() => ask(engine))] as const,
-        ),
+        ids.map(async (engine) => [engine ?? '', await readOne(() => ask(engine))] as const),
       );
       return Object.fromEntries(answers);
     },
@@ -1001,12 +917,8 @@ export function SpeechEnginesPanel({
   const loadModels = useCallback(
     async (signal?: AbortSignal) => {
       const [heard, spoken] = await Promise.all([
-        readDirection(asrEngines, (engine) =>
-          client.voiceModel({ signal, engine }),
-        ),
-        readDirection(ttsEngines, (engine) =>
-          client.speechModel({ signal, engine }),
-        ),
+        readDirection(asrEngines, (engine) => client.voiceModel({ signal, engine })),
+        readDirection(ttsEngines, (engine) => client.speechModel({ signal, engine })),
       ]);
       if (signal?.aborted) return;
       setListening(heard);
@@ -1021,22 +933,19 @@ export function SpeechEnginesPanel({
     return () => controller.abort();
   }, [loadModels]);
 
-  const isMoving = [
-    ...Object.values(listening),
-    ...Object.values(speaking),
-  ].some((reading) => reading.state?.status === "downloading");
+  const isMoving = [...Object.values(listening), ...Object.values(speaking)].some(
+    (reading) => reading.state?.status === 'downloading',
+  );
   useEffect(() => {
     if (!isMoving) return;
     const timer = window.setInterval(() => void loadModels(), ENGINE_POLL_MS);
     return () => window.clearInterval(timer);
   }, [isMoving, loadModels]);
 
-  async function choose(direction: "asr" | "tts", engine: string | null) {
+  async function choose(direction: 'asr' | 'tts', engine: string | null) {
     try {
       await onChange(() =>
-        direction === "asr"
-          ? setSpeechAsrEngine(engine)
-          : setSpeechTtsEngine(engine),
+        direction === 'asr' ? setSpeechAsrEngine(engine) : setSpeechTtsEngine(engine),
       );
       setErr(null);
     } catch (cause) {
@@ -1060,11 +969,7 @@ export function SpeechEnginesPanel({
     setPlayingDeviceVoice(voiceId);
     setErr(null);
     try {
-      await speechOutput.playDeviceSample(
-        DEVICE_VOICE_SAMPLE,
-        voiceId,
-        prefs.rate,
-      );
+      await speechOutput.playDeviceSample(DEVICE_VOICE_SAMPLE, voiceId, prefs.rate);
     } catch (cause) {
       if (deviceAuditionRef.current !== audition) return;
       setErr((cause as Error).message);
@@ -1085,16 +990,16 @@ export function SpeechEnginesPanel({
     });
   }
 
-  async function prepare(direction: "asr" | "tts", engine: string) {
+  async function prepare(direction: 'asr' | 'tts', engine: string) {
     const busyKey = `${direction}:${engine}`;
     setBusy(busyKey);
     try {
       const state =
-        direction === "asr"
+        direction === 'asr'
           ? await client.voiceModel({ start: true, engine })
           : await client.speechModel({ start: true, engine });
       const reading: EngineReading = { state, absence: null, error: null };
-      if (direction === "asr") {
+      if (direction === 'asr') {
         setListening((current) => ({ ...current, [engine]: reading }));
       } else {
         setSpeaking((current) => ({ ...current, [engine]: reading }));
@@ -1105,7 +1010,7 @@ export function SpeechEnginesPanel({
         absence: null,
         error: (cause as Error).message,
       };
-      if (direction === "asr") {
+      if (direction === 'asr') {
         setListening((current) => ({ ...current, [engine]: failed }));
       } else {
         setSpeaking((current) => ({ ...current, [engine]: failed }));
@@ -1118,18 +1023,16 @@ export function SpeechEnginesPanel({
   const asrChoice = asrEngines.find((engine) => engine.id === asrEngine);
   const asrLabel = asrChoice
     ? gatewayEngineLabel(asrChoice)
-    : (asrEngine ?? (capabilities ? "Not installed" : "Checking…"));
+    : (asrEngine ?? (capabilities ? 'Not installed' : 'Checking…'));
   const ttsChoice = ttsEngines.find((engine) => engine.id === chosenTtsEngine);
   const deviceList = bestDeviceVoices(voices ?? [], prefs.deviceVoice);
   const voiceDownloadGuidance = iosVoiceDownloadGuidance();
-  const chosenDeviceVoice = deviceList.find(
-    (voice) => voice.id === prefs.deviceVoice,
-  );
+  const chosenDeviceVoice = deviceList.find((voice) => voice.id === prefs.deviceVoice);
   const ttsLabel = ttsChoice
     ? gatewayEngineLabel(ttsChoice)
     : chosenDeviceVoice
       ? `This device · ${chosenDeviceVoice.label}`
-      : "This device";
+      : 'This device';
 
   return (
     <SettingsPanel title="Speech engines">
@@ -1144,17 +1047,12 @@ export function SpeechEnginesPanel({
           <SettingsDisclosure
             label="ASR"
             value={asrLabel}
-            isOpen={open === "asr"}
+            isOpen={open === 'asr'}
             aria-controls="speech-asr-engines"
-            onClick={() =>
-              setOpen((current) => (current === "asr" ? null : "asr"))
-            }
+            onClick={() => setOpen((current) => (current === 'asr' ? null : 'asr'))}
           />
-          {open === "asr" && (
-            <div
-              id="speech-asr-engines"
-              className="border-t border-dialog-edge"
-            >
+          {open === 'asr' && (
+            <div id="speech-asr-engines" className="border-t border-dialog-edge">
               {asrEngines.length > 0 ? (
                 <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                   {asrEngines.map((engine) => {
@@ -1166,13 +1064,13 @@ export function SpeechEnginesPanel({
                           sub={engineWord(reading)}
                           isSelected={engine.id === asrEngine}
                           isLeaf
-                          onClick={() => void choose("asr", engine.id)}
+                          onClick={() => void choose('asr', engine.id)}
                         />
                         <EngineProblem
                           engineName={gatewayEngineName(engine)}
                           reading={reading}
                           isBusy={busy === `asr:${engine.id}`}
-                          onPrepare={() => void prepare("asr", engine.id)}
+                          onPrepare={() => void prepare('asr', engine.id)}
                         />
                       </div>
                     );
@@ -1185,7 +1083,7 @@ export function SpeechEnginesPanel({
                   </p>
                   <EngineProblem
                     engineName="ASR"
-                    reading={listening[""] ?? null}
+                    reading={listening[''] ?? null}
                     isBusy={false}
                     onPrepare={() => undefined}
                   />
@@ -1199,30 +1097,25 @@ export function SpeechEnginesPanel({
           <SettingsDisclosure
             label="TTS"
             value={ttsLabel}
-            isOpen={open === "tts"}
+            isOpen={open === 'tts'}
             aria-controls="speech-tts-engines"
-            onClick={() =>
-              setOpen((current) => (current === "tts" ? null : "tts"))
-            }
+            onClick={() => setOpen((current) => (current === 'tts' ? null : 'tts'))}
           />
-          {open === "tts" && (
-            <div
-              id="speech-tts-engines"
-              className="border-t border-dialog-edge"
-            >
+          {open === 'tts' && (
+            <div id="speech-tts-engines" className="border-t border-dialog-edge">
               <SettingsChoiceGroup label="TTS engines">
                 <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                   <div data-speech-engine="device" className="grid bg-input">
                     <SettingsChoiceDisclosure
                       title="This device"
-                      sub={chosenDeviceVoice?.label ?? "system TTS"}
+                      sub={chosenDeviceVoice?.label ?? 'system TTS'}
                       isSelected={chosenTtsEngine === null}
-                      isOpen={openTtsSettings.has("device")}
+                      isOpen={openTtsSettings.has('device')}
                       controls="speech-tts-settings-device"
-                      onSelect={() => void choose("tts", null)}
-                      onToggle={() => toggleTtsSettings("device")}
+                      onSelect={() => void choose('tts', null)}
+                      onToggle={() => toggleTtsSettings('device')}
                     />
-                    {openTtsSettings.has("device") && (
+                    {openTtsSettings.has('device') && (
                       <div id="speech-tts-settings-device" className="grid">
                         {voices === null && (
                           <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
@@ -1245,8 +1138,8 @@ export function SpeechEnginesPanel({
                                 leadingAction={{
                                   label:
                                     playingDeviceVoice === null
-                                      ? "Stop the sample of System default"
-                                      : "Play a sample of System default",
+                                      ? 'Stop the sample of System default'
+                                      : 'Play a sample of System default',
                                   icon:
                                     playingDeviceVoice === null ? (
                                       <StopIcon className="size-3" />
@@ -1254,30 +1147,23 @@ export function SpeechEnginesPanel({
                                       <PlayIcon className="size-3" />
                                     ),
                                   onClick: () => {
-                                    if (playingDeviceVoice === null)
-                                      cancelDeviceAudition();
+                                    if (playingDeviceVoice === null) cancelDeviceAudition();
                                     else void playDeviceVoice(null);
                                   },
                                 }}
                                 onClick={() =>
-                                  void chooseDeviceSetting(() =>
-                                    setSpeechDeviceVoice(null),
-                                  )
+                                  void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
                                 }
                               />
                               {deviceList.map((voice) => {
-                                const isPlaying =
-                                  playingDeviceVoice === voice.id;
+                                const isPlaying = playingDeviceVoice === voice.id;
                                 return (
                                   <ChoiceCell
                                     key={voice.id}
                                     title={voice.label}
-                                    sub={[
-                                      voice.language,
-                                      voice.isDefault ? "device default" : null,
-                                    ]
+                                    sub={[voice.language, voice.isDefault ? 'device default' : null]
                                       .filter(Boolean)
-                                      .join(" · ")}
+                                      .join(' · ')}
                                     isSelected={prefs.deviceVoice === voice.id}
                                     isLeaf
                                     leadingAction={{
@@ -1295,9 +1181,7 @@ export function SpeechEnginesPanel({
                                       },
                                     }}
                                     onClick={() =>
-                                      void chooseDeviceSetting(() =>
-                                        setSpeechDeviceVoice(voice.id),
-                                      )
+                                      void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
                                     }
                                   />
                                 );
@@ -1316,13 +1200,9 @@ export function SpeechEnginesPanel({
                               <ChoiceCell
                                 key={rate}
                                 title={`${rate}×`}
-                                sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
+                                sub={SPEECH_RATE_WORDS[String(rate)] ?? 'speed'}
                                 isSelected={prefs.rate === rate}
-                                onClick={() =>
-                                  void chooseDeviceSetting(() =>
-                                    setSpeechRate(rate),
-                                  )
-                                }
+                                onClick={() => void chooseDeviceSetting(() => setSpeechRate(rate))}
                               />
                             ))}
                           </div>
@@ -1330,7 +1210,7 @@ export function SpeechEnginesPanel({
                         {ttsEngines.length === 0 && (
                           <EngineProblem
                             engineName="TTS"
-                            reading={speaking[""] ?? null}
+                            reading={speaking[''] ?? null}
                             isBusy={false}
                             onPrepare={() => undefined}
                           />
@@ -1344,18 +1224,14 @@ export function SpeechEnginesPanel({
                     const isSettingsOpen = openTtsSettings.has(engine.id);
                     const settingsId = `speech-tts-settings-${engine.id}`;
                     return (
-                      <div
-                        key={engine.id}
-                        data-speech-engine={engine.id}
-                        className="grid bg-input"
-                      >
+                      <div key={engine.id} data-speech-engine={engine.id} className="grid bg-input">
                         <SettingsChoiceDisclosure
                           title={gatewayEngineLabel(engine)}
                           sub={engineWord(reading)}
                           isSelected={isSelected}
                           isOpen={isSettingsOpen}
                           controls={settingsId}
-                          onSelect={() => void choose("tts", engine.id)}
+                          onSelect={() => void choose('tts', engine.id)}
                           onToggle={() => toggleTtsSettings(engine.id)}
                         />
                         {isSettingsOpen && (
@@ -1364,7 +1240,7 @@ export function SpeechEnginesPanel({
                               engineName={gatewayEngineName(engine)}
                               reading={reading}
                               isBusy={busy === `tts:${engine.id}`}
-                              onPrepare={() => void prepare("tts", engine.id)}
+                              onPrepare={() => void prepare('tts', engine.id)}
                             />
                             <VoicesPanel
                               client={client}

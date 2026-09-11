@@ -71,10 +71,7 @@ export async function shareArtifact(
     const file = new File([blob], filename, {
       type: mediaType || blob.type || 'application/octet-stream',
     });
-    if (
-      navigator.share &&
-      (!navigator.canShare || navigator.canShare({ files: [file] }))
-    ) {
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
       await navigator.share({ title, files: [file] });
       return `${noun} shared.`;
     }

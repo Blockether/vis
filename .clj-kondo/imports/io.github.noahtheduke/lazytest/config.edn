@@ -1,4 +1,12 @@
-{:lint-as {lazytest.core/given clojure.core/let
+{:hooks {:analyze-call {;; Expectations v2
+                        lazytest.extensions.expectations/more-> hooks.lazytest.expectations/more->
+                        lazytest.extensions.expectations/more-of hooks.lazytest.expectations/more-of
+                        lazytest.experimental.interfaces.expectations/more->
+                        hooks.lazytest.expectations/more->
+                        lazytest.experimental.interfaces.expectations/more-of
+                        hooks.lazytest.expectations/interface-more-of
+                        lazytest.hooks/defhook hooks.lazytest.hooks/defhook}}
+ :lint-as {lazytest.core/given clojure.core/let
            lazytest.core/around clojure.core/fn
            lazytest.core/around-each clojure.core/fn
            lazytest.core/defdescribe clojure.core/def
@@ -15,18 +23,10 @@
            lazytest.extensions.expectations/=? clojure.core/=
            lazytest.experimental.interfaces.expectations/defexpect clojure.core/def
            lazytest.experimental.interfaces.expectations/from-each clojure.core/for
-           lazytest.experimental.interfaces.expectations/=? clojure.core/=
-           }
- :hooks {:analyze-call {;; Expectations v2
-                        lazytest.extensions.expectations/more-> hooks.lazytest.expectations/more->
-                        lazytest.extensions.expectations/more-of hooks.lazytest.expectations/more-of
-                        lazytest.experimental.interfaces.expectations/more-> hooks.lazytest.expectations/more->
-                        lazytest.experimental.interfaces.expectations/more-of hooks.lazytest.expectations/interface-more-of
-                        lazytest.hooks/defhook hooks.lazytest.hooks/defhook
-                        }}
- :linters {:lazytest/hook-impl {:level :error}
-           :clojure-lsp/unused-public-var
-           {:exclude-when-defined-by #{lazytest.core/defdescribe
-                                       lazytest.experimental.interfaces.xunit/defsuite
-                                       lazytest.experimental.interfaces.clojure-test/deftest
-                                       lazytest.experimental.interfaces.expectations/defexpect}}}}
+           lazytest.experimental.interfaces.expectations/=? clojure.core/=}
+ :linters {:clojure-lsp/unused-public-var {:exclude-when-defined-by
+                                           #{lazytest.core/defdescribe
+                                             lazytest.experimental.interfaces.clojure-test/deftest
+                                             lazytest.experimental.interfaces.expectations/defexpect
+                                             lazytest.experimental.interfaces.xunit/defsuite}}
+           :lazytest/hook-impl {:level :error}}}

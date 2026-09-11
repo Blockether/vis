@@ -5,13 +5,8 @@
  * separate models. This reducer owns only the first. A `block.activity` frame
  * replaces `forms[i].activity`; `turn.progress` is only the turn ticker.
  */
-import { activityProjectionFromWire, type ActivityProjection } from "./activity";
-import {
-  eventBlockKey,
-  eventFormKey,
-  eventIterationPosition,
-  eventString,
-} from "./session-stream";
+import { activityProjectionFromWire, type ActivityProjection } from './activity';
+import { eventBlockKey, eventFormKey, eventIterationPosition, eventString } from './session-stream';
 import type {
   ContentBlock,
   GatewayAttachment,
@@ -19,7 +14,7 @@ import type {
   SseEvent,
   TranscriptForm,
   TranscriptIteration,
-} from "./types";
+} from './types';
 
 export interface TurnProgress {
   kind: string;
@@ -43,7 +38,7 @@ export interface RunningTurn {
   progress?: TurnProgress;
   startedAt: number;
   cancelling?: boolean;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   /** Bytes sent by this device; the running-turn wire carries descriptors only. */
   attachments?: GatewayAttachment[];
   /** Terminal-frame content retained until the persisted transcript takes over. */
@@ -51,7 +46,7 @@ export interface RunningTurn {
 }
 
 function applyText(_current: string, event: SseEvent): string {
-  return eventString(event, "cumulative");
+  return eventString(event, 'cumulative');
 }
 
 function updateRunningIteration(
@@ -59,9 +54,7 @@ function updateRunningIteration(
   position: number,
   update: (iteration: TranscriptIteration) => TranscriptIteration,
 ): RunningTurn {
-  const index = turn.iterations.findIndex(
-    (iteration) => iteration.position === position,
-  );
+  const index = turn.iterations.findIndex((iteration) => iteration.position === position);
   if (index < 0) {
     return {
       ...turn,
@@ -77,24 +70,21 @@ function updateRunningIteration(
 }
 
 function formFromEvent(event: SseEvent): TranscriptForm {
-  const cards = Array.isArray(event.cards)
-    ? (event.cards as TranscriptForm[])
-    : undefined;
+  const cards = Array.isArray(event.cards) ? (event.cards as TranscriptForm[]) : undefined;
   return {
     block_id: eventFormKey(event),
-    scope: eventString(event, "scope") || undefined,
-    code: eventString(event, "code") || undefined,
-    display_code: eventString(event, "display_code") || undefined,
-    display_language: eventString(event, "display_language") || undefined,
-    comment: eventString(event, "comment") || undefined,
-    op: eventString(event, "op") || undefined,
-    result_kind: eventString(event, "result_kind") || undefined,
-    error: event.error as TranscriptForm["error"],
-    stdout: eventString(event, "stdout") || undefined,
+    scope: eventString(event, 'scope') || undefined,
+    code: eventString(event, 'code') || undefined,
+    display_code: eventString(event, 'display_code') || undefined,
+    display_language: eventString(event, 'display_language') || undefined,
+    comment: eventString(event, 'comment') || undefined,
+    op: eventString(event, 'op') || undefined,
+    result_kind: eventString(event, 'result_kind') || undefined,
+    error: event.error as TranscriptForm['error'],
+    stdout: eventString(event, 'stdout') || undefined,
     cards,
     silent: event.silent === true,
-    duration_ms:
-      typeof event.duration_ms === "number" ? event.duration_ms : undefined,
+    duration_ms: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
   };
 }
 
@@ -102,10 +92,10 @@ function upsertRunningForm(
   iteration: TranscriptIteration,
   next: TranscriptForm,
 ): TranscriptIteration {
-  const key = next.block_id == null ? "" : String(next.block_id);
+  const key = next.block_id == null ? '' : String(next.block_id);
 
   const forms = [...(iteration.forms ?? [])];
-  const index = forms.findIndex((form) => String(form.block_id ?? "") === key);
+  const index = forms.findIndex((form) => String(form.block_id ?? '') === key);
   if (index < 0) forms.push(next);
   else {
     const defined = Object.fromEntries(
@@ -123,16 +113,12 @@ function applyFormActivity(
   activity: ActivityProjection,
 ): RunningTurn {
   const position = eventIterationPosition(event);
-  const iterationIndex = turn.iterations.findIndex(
-    (iteration) => iteration.position === position,
-  );
+  const iterationIndex = turn.iterations.findIndex((iteration) => iteration.position === position);
   if (iterationIndex < 0) return turn;
 
   const key = eventFormKey(event);
   const forms = [...(turn.iterations[iterationIndex].forms ?? [])];
-  const formIndex = forms.findIndex(
-    (form) => String(form.block_id ?? "") === key,
-  );
+  const formIndex = forms.findIndex((form) => String(form.block_id ?? '') === key);
   // Activity never creates its owner. `block.started`/`block.preview` creates the
   // form; an orphan snapshot is ignored instead of becoming a blank card.
   if (formIndex < 0) return turn;
@@ -149,15 +135,15 @@ export function reduceRunningTurnEvent(
   event: SseEvent,
 ): RunningTurn | null {
   const type = event.type;
-  if (type === "turn.started") {
-    const startedId = eventString(event, "turn_id");
+  if (type === 'turn.started') {
+    const startedId = eventString(event, 'turn_id');
     // The bubble we are already painting, if this frame names it. It carries the
     // image bytes `turn.started` never does — and OUR clock.
     const own = turn && (!turn.id || turn.id === startedId) ? turn : null;
     return {
       id: startedId,
-      request: eventString(event, "request"),
-      answer: "",
+      request: eventString(event, 'request'),
+      answer: '',
       iterations: [],
       // `started_at` is the GATEWAY host's clock; the elapsed line under "Vis" is
       // `Date.now() - startedAt` on the device. Stamping our own bubble with the
@@ -169,37 +155,37 @@ export function reduceRunningTurnEvent(
       // started ourselves keeps the stamp it started with.
       startedAt: own
         ? own.startedAt
-        : typeof event.started_at === "number"
+        : typeof event.started_at === 'number'
           ? event.started_at
           : Date.now(),
-      status: "running",
+      status: 'running',
       // `turn.started` for an optimistically painted turn carries no image bytes.
       attachments: own?.attachments,
     };
   }
   if (!turn) return turn;
   // A settled bubble never re-animates on a trailing or replayed body frame.
-  if (turn.status !== "running") return turn;
+  if (turn.status !== 'running') return turn;
 
-  if (type === "content.block.delta") {
-    const field = eventString(event, "field");
+  if (type === 'content.block.delta') {
+    const field = eventString(event, 'field');
     const blockId = eventBlockKey(event);
     const position = eventIterationPosition(event);
-    if (field === "text") {
+    if (field === 'text') {
       const next = updateRunningIteration(turn, position, (iteration) => ({
         ...iteration,
-        thinking: applyText(iteration.thinking ?? "", event),
+        thinking: applyText(iteration.thinking ?? '', event),
       }));
       return { ...next, progress: undefined };
     }
-    if (field === "markdown" && blockId.includes(":assistant-prose:")) {
+    if (field === 'markdown' && blockId.includes(':assistant-prose:')) {
       const next = updateRunningIteration(turn, position, (iteration) => ({
         ...iteration,
-        assistant_prose: applyText(iteration.assistant_prose ?? "", event),
+        assistant_prose: applyText(iteration.assistant_prose ?? '', event),
       }));
-      return { ...next, answer: "", progress: undefined };
+      return { ...next, answer: '', progress: undefined };
     }
-    if (field === "markdown") {
+    if (field === 'markdown') {
       return {
         ...turn,
         answer: applyText(turn.answer, event),
@@ -209,7 +195,7 @@ export function reduceRunningTurnEvent(
     return turn;
   }
 
-  if (type === "iteration.completed") {
+  if (type === 'iteration.completed') {
     const position = eventIterationPosition(event);
     const attached = Array.isArray(event.attachments)
       ? (event.attachments as IterationAttachment[])
@@ -217,11 +203,10 @@ export function reduceRunningTurnEvent(
     const next = updateRunningIteration(turn, position, (iteration) => ({
       ...iteration,
       // Present null deliberately rejects a raw fragment; only omission falls back.
-      thinking: Object.prototype.hasOwnProperty.call(event, "thinking")
-        ? eventString(event, "thinking")
+      thinking: Object.prototype.hasOwnProperty.call(event, 'thinking')
+        ? eventString(event, 'thinking')
         : iteration.thinking,
-      assistant_prose:
-        eventString(event, "assistant_prose") || iteration.assistant_prose,
+      assistant_prose: eventString(event, 'assistant_prose') || iteration.assistant_prose,
       attachments: attached?.length ? attached : iteration.attachments,
       error: undefined,
     }));
@@ -230,12 +215,12 @@ export function reduceRunningTurnEvent(
     )?.assistant_prose;
     return {
       ...next,
-      answer: promoted ? "" : turn.answer,
+      answer: promoted ? '' : turn.answer,
       progress: undefined,
     };
   }
 
-  if (type === "block.preview") {
+  if (type === 'block.preview') {
     const form = formFromEvent(event);
     if (!form.block_id) return turn;
     const position = eventIterationPosition(event);
@@ -245,36 +230,36 @@ export function reduceRunningTurnEvent(
     return { ...next, progress: undefined };
   }
 
-  if (type === "block.activity") {
+  if (type === 'block.activity') {
     const activity = activityProjectionFromWire(event.activity);
     return activity ? applyFormActivity(turn, event, activity) : turn;
   }
 
-  if (type === "block.started" || type === "block.output") {
+  if (type === 'block.started' || type === 'block.output') {
     const form = formFromEvent(event);
     if (!form.block_id) return turn;
     const position = eventIterationPosition(event);
     const next = updateRunningIteration(turn, position, (iteration) =>
       upsertRunningForm(iteration, form),
     );
-    if (type === "block.output") return { ...next, progress: undefined };
+    if (type === 'block.output') return { ...next, progress: undefined };
     return {
       ...next,
       progress: {
-        kind: "code",
+        kind: 'code',
         iteration: position,
         operation: form.scope,
       },
     };
   }
 
-  if (type === "turn.progress") {
-    const kind = eventString(event, "progress");
+  if (type === 'turn.progress') {
+    const kind = eventString(event, 'progress');
     const rawIteration = event.iteration;
     const iteration =
-      typeof rawIteration === "number"
+      typeof rawIteration === 'number'
         ? rawIteration
-        : typeof rawIteration === "string" && rawIteration.trim()
+        : typeof rawIteration === 'string' && rawIteration.trim()
           ? Number(rawIteration)
           : undefined;
     return {
@@ -283,24 +268,24 @@ export function reduceRunningTurnEvent(
         ? {
             kind,
             iteration: Number.isFinite(iteration) ? iteration : undefined,
-            command: eventString(event, "cmd") || undefined,
-            operation: eventString(event, "op") || undefined,
-            label: eventString(event, "label") || undefined,
-            phrase: eventString(event, "phrase") || undefined,
-            model: eventString(event, "model") || undefined,
+            command: eventString(event, 'cmd') || undefined,
+            operation: eventString(event, 'op') || undefined,
+            label: eventString(event, 'label') || undefined,
+            phrase: eventString(event, 'phrase') || undefined,
+            model: eventString(event, 'model') || undefined,
           }
         : undefined,
     };
   }
 
-  if (type === "iteration.error" || type === "provider.retry") {
+  if (type === 'iteration.error' || type === 'provider.retry') {
     const position = eventIterationPosition(event);
     const next = updateRunningIteration(turn, position, (iteration) => ({
       ...iteration,
       error: (event.error_data ??
         event.error ??
         event.detail ??
-        "retrying") as TranscriptIteration["error"],
+        'retrying') as TranscriptIteration['error'],
     }));
     return { ...next, progress: undefined };
   }

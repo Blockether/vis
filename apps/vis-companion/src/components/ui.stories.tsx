@@ -1,9 +1,9 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent } from "storybook/test";
-import { useRef, useState, type ReactNode } from "react";
-import { STORY_MACHINES, STORY_SESSION } from "../dev/story-data";
-import { HUMAN_INPUT_CHOICE_MARKS } from "../lib/human-input";
-import { Markdown } from "./ChatContent";
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, userEvent } from 'storybook/test';
+import { useRef, useState, type ReactNode } from 'react';
+import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
+import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
+import { Markdown } from './ChatContent';
 import {
   CheckIcon,
   CopyIcon,
@@ -15,7 +15,7 @@ import {
   SearchIcon,
   SettingsIcon,
   StopIcon,
-} from "./icons";
+} from './icons';
 import {
   BackButton,
   BandButton,
@@ -49,7 +49,7 @@ import {
   Spinner,
   Switch,
   TextButton,
-} from "./ui";
+} from './ui';
 import {
   HeaderActions,
   HeaderMeta,
@@ -67,7 +67,7 @@ import {
   PullToSearchHint,
   RowDisclosure,
   SectionHeader,
-} from "./SessionNavigator";
+} from './SessionNavigator';
 
 /**
  * THE VOCABULARY, DRAWN ONCE EACH, BY THE CODE THAT SHIPS IT.
@@ -93,7 +93,7 @@ import {
  * so the fleet, the session and the payloads are the SAME ones in every frame.
  */
 const meta = {
-  title: "Vocabulary/Controls",
+  title: 'Vocabulary/Controls',
 } satisfies Meta;
 
 export default meta;
@@ -147,18 +147,27 @@ export const Buttons: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const pointer = matchMedia("(min-width: 640px) and (pointer: fine)").matches;
-    for (const name of ["Connect", "Rename", "Cancel", "Delete", "Disabled", "Default", "Compact", "Panel"]) {
-      const button = canvas.getByRole("button", { name });
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    for (const name of [
+      'Connect',
+      'Rename',
+      'Cancel',
+      'Delete',
+      'Disabled',
+      'Default',
+      'Compact',
+      'Panel',
+    ]) {
+      const button = canvas.getByRole('button', { name });
       await expect(button.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
       if (!pointer) {
-        const reach = getComputedStyle(button, "::after");
+        const reach = getComputedStyle(button, '::after');
         await expect(parseFloat(reach.height)).toBeGreaterThanOrEqual(44);
       }
     }
-    await expect(canvas.getByRole("button", { name: "Disabled" })).toBeDisabled();
+    await expect(canvas.getByRole('button', { name: 'Disabled' })).toBeDisabled();
     await userEvent.tab();
-    await expect(canvas.getByRole("button", { name: "Connect" })).toHaveFocus();
+    await expect(canvas.getByRole('button', { name: 'Connect' })).toHaveFocus();
   },
 };
 
@@ -204,54 +213,52 @@ export const CodeCopy: Story = {
     <Sheet>
       <Markdown>
         {[
-          "After starting the new version, retry:",
-          "",
-          "```bash",
-          "vis-agent python uv sync --project ./einmal --locked",
-          "```",
-          "",
-          "Then run `/reload`. The gateway was not restarted.",
-          "",
-          "```diff",
-          "--- a/config.txt",
-          "+++ b/config.txt",
-          "@@ -1 +1 @@",
-          "-before",
-          "+after",
-          "```",
-        ].join("\n")}
+          'After starting the new version, retry:',
+          '',
+          '```bash',
+          'vis-agent python uv sync --project ./einmal --locked',
+          '```',
+          '',
+          'Then run `/reload`. The gateway was not restarted.',
+          '',
+          '```diff',
+          '--- a/config.txt',
+          '+++ b/config.txt',
+          '@@ -1 +1 @@',
+          '-before',
+          '+after',
+          '```',
+        ].join('\n')}
       </Markdown>
     </Sheet>
   ),
   play: async ({ canvas }) => {
     // Storybook supplies a clipboard stub; native clipboard behavior is not exercised here.
     const user = userEvent.setup();
-    const buttons = canvas.getAllByRole("button", { name: "Copy code" });
-    const codeRegions = canvas.getAllByRole("region", { name: /code$/i });
+    const buttons = canvas.getAllByRole('button', { name: 'Copy code' });
+    const codeRegions = canvas.getAllByRole('region', { name: /code$/i });
     for (const region of codeRegions) {
-      const button = region.parentElement!.querySelector("button")!;
+      const button = region.parentElement!.querySelector('button')!;
       button.focus();
       await user.tab();
       await expect(region).toHaveFocus();
     }
     for (const button of buttons) {
-      await expect(button.textContent).toBe("");
+      await expect(button.textContent).toBe('');
       const box = button.getBoundingClientRect();
-      const blockElement = button.closest(".relative.bg-code")!;
+      const blockElement = button.closest('.relative.bg-code')!;
       const block = blockElement.getBoundingClientRect();
       // Long, horizontally scrolling code must not show through the copy icon.
-      await expect(
-        getComputedStyle(button.parentElement!).backgroundColor,
-      ).toBe(getComputedStyle(blockElement).backgroundColor);
+      await expect(getComputedStyle(button.parentElement!).backgroundColor).toBe(
+        getComputedStyle(blockElement).backgroundColor,
+      );
       await expect(box.left).toBeGreaterThan(block.left + block.width / 2);
       await expect(box.right).toBeLessThanOrEqual(block.right);
       await expect(box.top).toBeGreaterThanOrEqual(block.top);
       await expect(box.bottom).toBeLessThanOrEqual(block.bottom);
     }
     await user.click(buttons[0]);
-    await expect(
-      canvas.getByRole("button", { name: "Copied" }),
-    ).toHaveAttribute("title", "Copied");
+    await expect(canvas.getByRole('button', { name: 'Copied' })).toHaveAttribute('title', 'Copied');
   },
 };
 
@@ -263,10 +270,7 @@ export const Chips: Story = {
         <Chip isOn>Running</Chip>
       </Group>
       <Group of="CopyChip, icon-only and labeled">
-        <CopyChip
-          value="vis-agent python uv sync --project ./einmal --locked"
-          label="Copy code"
-        />
+        <CopyChip value="vis-agent python uv sync --project ./einmal --locked" label="Copy code" />
         <CopyChip value="fd3c03f9" label="Copy session id">
           fd3c03f9
         </CopyChip>
@@ -277,7 +281,12 @@ export const Chips: Story = {
       <Group of="CopyChip, execution-band target">
         <div className="flex min-h-11 items-center gap-2 mouse:min-h-7">
           <BandLabel>Activity</BandLabel>
-          <CopyChip value="ACTIVITY\n\ngrep [succeeded]\n  2 matches" label="Copy activity" density="compact" edge />
+          <CopyChip
+            value="ACTIVITY\n\ngrep [succeeded]\n  2 matches"
+            label="Copy activity"
+            density="compact"
+            edge
+          />
         </div>
       </Group>
       <Group of="Band furniture">
@@ -290,17 +299,11 @@ export const Chips: Story = {
 
 function SwitchDemo() {
   const [isOn, setIsOn] = useState(true);
-  return (
-    <Switch
-      label="Notify on this machine"
-      isOn={isOn}
-      onClick={() => setIsOn((on) => !on)}
-    />
-  );
+  return <Switch label="Notify on this machine" isOn={isOn} onClick={() => setIsOn((on) => !on)} />;
 }
 
 function SearchFieldDemo() {
-  const [value, setValue] = useState("timeout");
+  const [value, setValue] = useState('timeout');
   const input = useRef<HTMLInputElement>(null);
   return (
     <Input
@@ -312,15 +315,17 @@ function SearchFieldDemo() {
       onChange={(event) => setValue(event.target.value)}
       className="flex-1"
       icon={<SearchIcon className="size-3" />}
-      action={value ? (
-        <CloseButton
-          label="Clear search"
-          onClick={() => {
-            setValue("");
-            input.current?.focus();
-          }}
-        />
-      ) : null}
+      action={
+        value ? (
+          <CloseButton
+            label="Clear search"
+            onClick={() => {
+              setValue('');
+              input.current?.focus();
+            }}
+          />
+        ) : null
+      }
     />
   );
 }
@@ -329,22 +334,14 @@ export const Fields: Story = {
   render: () => (
     <Sheet>
       <Group of="Input with an icon action">
-        <Input
-          aria-label="Project name"
-          placeholder="Project name"
-          className="min-w-0 flex-1"
-        />
+        <Input aria-label="Project name" placeholder="Project name" className="min-w-0 flex-1" />
         <IconButton label="Add project">
           <PlusIcon className="size-3" />
         </IconButton>
         <Button variant="secondary">Create</Button>
       </Group>
       <Group of="Voice settings input">
-        <Input
-          aria-label="Voice name"
-          placeholder="Voice name"
-          className="min-w-0 flex-1"
-        />
+        <Input aria-label="Voice name" placeholder="Voice name" className="min-w-0 flex-1" />
         <Button variant="secondary" density="panel">
           Save voice
         </Button>
@@ -356,18 +353,8 @@ export const Fields: Story = {
         </Button>
       </Group>
       <Group of="Password, read-only and disabled inputs">
-        <Input
-          type="password"
-          aria-label="API key"
-          defaultValue="example-key"
-          className="flex-1"
-        />
-        <Input
-          aria-label="Machine address"
-          defaultValue="127.0.0.1"
-          readOnly
-          className="flex-1"
-        />
+        <Input type="password" aria-label="API key" defaultValue="example-key" className="flex-1" />
+        <Input aria-label="Machine address" defaultValue="127.0.0.1" readOnly className="flex-1" />
         <Input
           aria-label="Unavailable voice"
           placeholder="Voice unavailable"
@@ -382,70 +369,67 @@ export const Fields: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const input = canvas.getByRole("textbox", { name: "Project name" });
+    const input = canvas.getByRole('textbox', { name: 'Project name' });
     await input.ownerDocument.fonts.ready;
     for (const [fieldName, actionNames] of [
-      ["Project name", ["Add project", "Create"]],
-      ["Voice name", ["Save voice"]],
-      ["Search output", ["Find"]],
-      ["API key", []],
-      ["Machine address", []],
-      ["Unavailable voice", []],
+      ['Project name', ['Add project', 'Create']],
+      ['Voice name', ['Save voice']],
+      ['Search output', ['Find']],
+      ['API key', []],
+      ['Machine address', []],
+      ['Unavailable voice', []],
     ] as const) {
       const fieldInput = canvas.getByLabelText(fieldName);
       const field = fieldInput.getBoundingClientRect();
       // Regression: form inputs must match across locations, not only their own action.
-      await expect(field.height).toBeCloseTo(
-        input.getBoundingClientRect().height, 0,
-      );
+      await expect(field.height).toBeCloseTo(input.getBoundingClientRect().height, 0);
       for (const name of actionNames) {
-        const button = canvas.getByRole("button", { name });
+        const button = canvas.getByRole('button', { name });
         const action = button.getBoundingClientRect();
         await expect(action.top).toBeCloseTo(field.top, 0);
         await expect(action.height).toBeCloseTo(field.height, 0);
-        if (name !== "Add project") {
+        if (name !== 'Add project') {
           await expect(getComputedStyle(fieldInput).fontSize).toBe(
             getComputedStyle(button).fontSize,
           );
         }
       }
     }
-    await userEvent.type(input, "Companion");
-    await expect(input).toHaveValue("Companion");
-    const search = canvas.getByRole("searchbox", { name: "Search output" });
-    await userEvent.click(canvas.getByRole("button", { name: "Clear search" }));
-    await expect(search).toHaveValue("");
+    await userEvent.type(input, 'Companion');
+    await expect(input).toHaveValue('Companion');
+    const search = canvas.getByRole('searchbox', { name: 'Search output' });
+    await userEvent.click(canvas.getByRole('button', { name: 'Clear search' }));
+    await expect(search).toHaveValue('');
     await expect(search).toHaveFocus();
-    await userEvent.type(search, "gateway");
-    await expect(search).toHaveValue("gateway");
-    await userEvent.type(canvas.getByLabelText("Machine address"), "changed");
-    await expect(canvas.getByLabelText("Machine address")).toHaveValue("127.0.0.1");
-    await expect(canvas.getByLabelText("Unavailable voice")).toBeDisabled();
-    if (!matchMedia("(min-width: 640px) and (pointer: fine)").matches) {
+    await userEvent.type(search, 'gateway');
+    await expect(search).toHaveValue('gateway');
+    await userEvent.type(canvas.getByLabelText('Machine address'), 'changed');
+    await expect(canvas.getByLabelText('Machine address')).toHaveValue('127.0.0.1');
+    await expect(canvas.getByLabelText('Unavailable voice')).toBeDisabled();
+    if (!matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       const box = input.getBoundingClientRect();
-      const strip = input.ownerDocument.elementFromPoint(
-        box.left + box.width / 2, box.bottom + 5,
-      );
+      const strip = input.ownerDocument.elementFromPoint(box.left + box.width / 2, box.bottom + 5);
       await expect(strip).toBe(input.parentElement);
       await userEvent.click(strip!);
       await expect(input).toHaveFocus();
       const upperStrip = input.ownerDocument.elementFromPoint(
-        box.left + box.width / 2, box.top - 5,
+        box.left + box.width / 2,
+        box.top - 5,
       );
       await expect(upperStrip).toBe(input.parentElement);
     }
-    const notifications = canvas.getByRole("switch", {
+    const notifications = canvas.getByRole('switch', {
       name: /^Notify on this machine/,
     });
-    await expect(notifications).toHaveAttribute("aria-checked", "true");
+    await expect(notifications).toHaveAttribute('aria-checked', 'true');
     await userEvent.click(notifications);
-    await expect(notifications).toHaveAttribute("aria-checked", "false");
+    await expect(notifications).toHaveAttribute('aria-checked', 'false');
   },
 };
 
 export const FieldsPointer: Story = {
   ...Fields,
-  globals: { viewport: { value: "desktop", isRotated: false } },
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 export const Rows: Story = {
@@ -471,17 +455,12 @@ export const Rows: Story = {
             sub="downloading, 42%"
             isSelected={false}
             leadingAction={{
-              label: "Download Piper English",
+              label: 'Download Piper English',
               icon: <DownloadIcon className="size-3" />,
               onClick: noop,
             }}
           />
-          <ChoiceCell
-            className="w-full"
-            title="System voice"
-            sub="ready"
-            isSelected
-          />
+          <ChoiceCell className="w-full" title="System voice" sub="ready" isSelected />
         </div>
       </Group>
       <Group of="Disclosure and OptionRow">
@@ -494,12 +473,7 @@ export const Rows: Story = {
         <Disclosure className="w-full" isOpen={false} tone="execution">
           Read ×8 · 6 files
         </Disclosure>
-        <Disclosure
-          className="w-full"
-          isOpen={false}
-          tone="execution"
-          inlineChevron
-        >
+        <Disclosure className="w-full" isOpen={false} tone="execution" inlineChevron>
           CODE +12 more
         </Disclosure>
         <div className="isolate w-full">
@@ -577,7 +551,7 @@ export const Feedback: Story = {
         <Banner
           kind="err"
           title="Authentication rejected"
-          dismiss={{ label: "Dismiss", onClick: noop }}
+          dismiss={{ label: 'Dismiss', onClick: noop }}
         >
           Sign in again to keep this provider.
         </Banner>
@@ -593,20 +567,14 @@ export const Feedback: Story = {
 
 /** A pick that owns which one is picked, because a sheet has to show both faces. */
 function ChoiceRowDemo() {
-  const [picked, setPicked] = useState("production");
-  const [any, setAny] = useState<string[]>(["tests"]);
+  const [picked, setPicked] = useState('production');
+  const [any, setAny] = useState<string[]>(['tests']);
   const toggle = (value: string) =>
-    setAny((on) =>
-      on.includes(value) ? on.filter((v) => v !== value) : [...on, value],
-    );
+    setAny((on) => (on.includes(value) ? on.filter((v) => v !== value) : [...on, value]));
   return (
     <div className="flex w-full flex-col gap-3">
-      <div
-        className="flex flex-col gap-1"
-        role="radiogroup"
-        aria-label="Environment"
-      >
-        {["production", "staging"].map((value) => (
+      <div className="flex flex-col gap-1" role="radiogroup" aria-label="Environment">
+        {['production', 'staging'].map((value) => (
           <ChoiceRow
             key={value}
             isOn={picked === value}
@@ -623,12 +591,8 @@ function ChoiceRowDemo() {
           </ChoiceRow>
         ))}
       </div>
-      <div
-        className="flex flex-col gap-1"
-        role="group"
-        aria-label="What to run"
-      >
-        {["tests", "lint"].map((value) => (
+      <div className="flex flex-col gap-1" role="group" aria-label="What to run">
+        {['tests', 'lint'].map((value) => (
           <ChoiceRow
             key={value}
             isOn={any.includes(value)}
@@ -666,33 +630,25 @@ export const Selection: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const staging = canvas.getByRole("radio", { name: "staging" });
+    const staging = canvas.getByRole('radio', { name: 'staging' });
     await userEvent.click(staging);
-    await expect(staging).toHaveAttribute("aria-checked", "true");
+    await expect(staging).toHaveAttribute('aria-checked', 'true');
 
-    const lint = canvas.getByRole("button", { name: "lint" });
+    const lint = canvas.getByRole('button', { name: 'lint' });
     await userEvent.click(lint);
-    await expect(lint).toHaveAttribute("aria-pressed", "true");
+    await expect(lint).toHaveAttribute('aria-pressed', 'true');
   },
 };
 
 /** The production header's name edits in place. */
 function HeaderRenameDemo() {
   const [name, setName] = useState<string>(STORY_MACHINES[0].name);
-  return (
-    <HeaderTitle
-      name={name}
-      onRename={setName}
-      renameLabel={`Rename ${name}`}
-    />
-  );
+  return <HeaderTitle name={name} onRename={setName} renameLabel={`Rename ${name}`} />;
 }
 
 function PagerDemo() {
   const [page, setPage] = useState(2);
-  return (
-    <Pager page={page} pageCount={7} onPage={setPage} label="vis sessions" />
-  );
+  return <Pager page={page} pageCount={7} onPage={setPage} label="vis sessions" />;
 }
 
 /**
@@ -718,7 +674,7 @@ export const Bands: Story = {
           name={STORY_SESSION.project}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
-          disclosure={{ isOpen: true, onToggle: noop, label: "Collapse vis" }}
+          disclosure={{ isOpen: true, onToggle: noop, label: 'Collapse vis' }}
         />
       </Group>
       <Group of="What a band counts">
@@ -733,10 +689,7 @@ export const Bands: Story = {
       </Group>
       <Group of="The trailing cluster of a row">
         <HeaderActions>
-          <RowDisclosure
-            label={`Show details for ${STORY_SESSION.id}`}
-            isOpen={false}
-          />
+          <RowDisclosure label={`Show details for ${STORY_SESSION.id}`} isOpen={false} />
         </HeaderActions>
       </Group>
       <Group of="A header name that edits in place, and the step through a long list">
@@ -780,11 +733,7 @@ function MachineSwitcherDemo() {
             }
             onClick={() => setOn(machine.name)}
           >
-            <MachineMark
-              color={machine.color}
-              isHollow={machine.isDown}
-              isChecking={isChecking}
-            />
+            <MachineMark color={machine.color} isHollow={machine.isDown} isChecking={isChecking} />
             {machine.name}
           </MachineTab>
         );
@@ -803,11 +752,7 @@ export const Machines: Story = {
     <Sheet>
       <Group of="MachineMark, two sizes, one still being checked and one that is not answering">
         {STORY_MACHINES.map((machine) => (
-          <MachineMark
-            key={machine.name}
-            color={machine.color}
-            isHollow={machine.isDown}
-          />
+          <MachineMark key={machine.name} color={machine.color} isHollow={machine.isDown} />
         ))}
         <MachineMark color={STORY_MACHINES[1].color} isChecking />
         <MachineMark color={STORY_MACHINES[0].color} size="banner" />
@@ -823,20 +768,9 @@ export const Machines: Story = {
           where={STORY_SESSION.where}
           onPress={noop}
         />
-        <NewSessionButton
-          machine={STORY_MACHINES[0].name}
-          isBusy
-          onPress={noop}
-        />
-        <MachineProjectsButton
-          machine={STORY_MACHINES[0].name}
-          onPress={noop}
-        />
-        <MachineProjectsButton
-          machine={STORY_MACHINES[0].name}
-          isQuiet
-          onPress={noop}
-        />
+        <NewSessionButton machine={STORY_MACHINES[0].name} isBusy onPress={noop} />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={noop} />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={noop} />
       </Group>
     </Sheet>
   ),
@@ -844,24 +778,21 @@ export const Machines: Story = {
 
 function SettingsChoiceDemo() {
   const [open, setOpen] = useState(true);
-  const [engine, setEngine] = useState("piper");
+  const [engine, setEngine] = useState('piper');
   return (
     <div className="grid w-full grid-cols-1 gap-px bg-dialog-edge">
       <div className="grid bg-input">
         <SettingsChoiceDisclosure
           title="Piper (gateway)"
           sub="ready"
-          isSelected={engine === "piper"}
+          isSelected={engine === 'piper'}
           isOpen={open}
           controls="story-piper-settings"
-          onSelect={() => setEngine("piper")}
+          onSelect={() => setEngine('piper')}
           onToggle={() => setOpen((one) => !one)}
         />
         {open && (
-          <p
-            id="story-piper-settings"
-            className="px-3 py-2 font-mono text-meta text-dialog-hint"
-          >
+          <p id="story-piper-settings" className="px-3 py-2 font-mono text-meta text-dialog-hint">
             English · downloaded
           </p>
         )}
@@ -870,10 +801,10 @@ function SettingsChoiceDemo() {
         <SettingsChoiceDisclosure
           title="This device"
           sub="system TTS"
-          isSelected={engine === "device"}
+          isSelected={engine === 'device'}
           isOpen={false}
           controls="story-device-settings"
-          onSelect={() => setEngine("device")}
+          onSelect={() => setEngine('device')}
           onToggle={() => undefined}
         />
         <p id="story-device-settings" hidden>
@@ -889,12 +820,7 @@ export const Settings: Story = {
   render: () => (
     <Sheet>
       <Group of="A setting that opens, and the value it already holds">
-        <SettingsDisclosure
-          label="Voice"
-          value="Piper English"
-          isOpen={false}
-          className="w-full"
-        />
+        <SettingsDisclosure label="Voice" value="Piper English" isOpen={false} className="w-full" />
       </Group>
       <Group of="A group of choices, one of them opened">
         <SettingsChoiceGroup label="TTS engines">
@@ -902,11 +828,7 @@ export const Settings: Story = {
         </SettingsChoiceGroup>
       </Group>
       <Group of="The switch that speaks for one machine">
-        <NotifyConnectionSwitch
-          machine={STORY_MACHINES[0].name}
-          isOn
-          onClick={noop}
-        />
+        <NotifyConnectionSwitch machine={STORY_MACHINES[0].name} isOn onClick={noop} />
         <NotifyConnectionSwitch
           machine={STORY_MACHINES[1].name}
           isOn={false}
@@ -982,8 +904,7 @@ export const Overlay: Story = {
     >
       <div className="p-4">
         <p className="font-mono text-meta text-dialog-hint">
-          The artifact stands here, and the band above it is the same one every
-          dialog wears.
+          The artifact stands here, and the band above it is the same one every dialog wears.
         </p>
       </div>
     </OverlayScreen>
@@ -1007,12 +928,7 @@ export const Band: Story = {
       </Group>
       <Group of="Stacked over another band, and clearing the notch">
         <div className="w-full">
-          <DialogHeader
-            title="fleet.csv"
-            isStacked
-            closeLabel="Close fleet.csv"
-            onClose={noop}
-          />
+          <DialogHeader title="fleet.csv" isStacked closeLabel="Close fleet.csv" onClose={noop} />
         </div>
       </Group>
     </Sheet>
@@ -1023,7 +939,7 @@ export const Band: Story = {
 export const Gestures: Story = {
   render: () => (
     <Sheet>
-      {(["none", "pulling", "armed"] as const).map((phase) => (
+      {(['none', 'pulling', 'armed'] as const).map((phase) => (
         <Group key={phase} of={`PullToSearchHint — ${phase}`}>
           <div className="relative h-16 w-full transform-gpu overflow-hidden bg-level-project">
             <PullToSearchHint phase={phase} />

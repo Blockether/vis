@@ -35,7 +35,15 @@
  *   node scripts/android-prepare.mjs --check        # verify branded launcher assets after sync
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncPackageVersion } from './version.mjs';
@@ -57,15 +65,19 @@ const die = (msg) => {
 };
 
 // `security -w` prints hex for anything that is not plain printable ASCII.
-const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+const unhex = (s) =>
+  /^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s;
 
 const keychain = (service, account) => {
   if (process.platform !== 'darwin') return undefined;
-  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], { encoding: 'utf8' });
+  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
+    encoding: 'utf8',
+  });
   return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
 };
 // Env first so CI (which has no keychain) injects the same values as GitHub secrets.
-const secret = (envName, service, account) => process.env[envName]?.trim() || keychain(service, account);
+const secret = (envName, service, account) =>
+  process.env[envName]?.trim() || keychain(service, account);
 
 const home = process.env.HOME ?? '';
 const expand = (p) => resolve(p.replace(/^~/, home));
@@ -135,7 +147,8 @@ if (has('check')) {
   }
   const stock = stockSplashBitmaps();
   if (stock.length) die(`Capacitor's stock splash is still in the project: ${stock.join(', ')}`);
-  if (!launchThemeOk()) die('values/styles.xml launch theme does not match the Vis AndroidX splash theme');
+  if (!launchThemeOk())
+    die('values/styles.xml launch theme does not match the Vis AndroidX splash theme');
   console.log('✓ launcher icons match tracked Vis branding');
   process.exit(0);
 }
@@ -156,9 +169,13 @@ const services =
   undefined;
 
 if (!services) {
-  console.log('\n\u00b7 no google-services.json (keychain vis-fcm/google_services, ~/.vis/fcm/, or --file)');
+  console.log(
+    '\n\u00b7 no google-services.json (keychain vis-fcm/google_services, ~/.vis/fcm/, or --file)',
+  );
   console.log('  Android push stays off; everything else builds normally.');
-  console.log('  Firebase console \u25b8 Project settings \u25b8 your Android app \u25b8 download, then:');
+  console.log(
+    '  Firebase console \u25b8 Project settings \u25b8 your Android app \u25b8 download, then:',
+  );
   console.log('    npm run secrets android <google-services.json>\n');
 } else {
   let parsed;
@@ -167,13 +184,20 @@ if (!services) {
   } catch {
     die('that google-services.json is not valid JSON');
   }
-  const packages = (parsed.client ?? []).map((c) => c?.client_info?.android_client_info?.package_name).filter(Boolean);
-  if (!packages.length) die('that JSON has no client[].client_info.android_client_info.package_name — wrong file?');
+  const packages = (parsed.client ?? [])
+    .map((c) => c?.client_info?.android_client_info?.package_name)
+    .filter(Boolean);
+  if (!packages.length)
+    die('that JSON has no client[].client_info.android_client_info.package_name — wrong file?');
   if (!packages.includes(appId)) {
-    die(`google-services.json is for ${packages.join(', ')}, but this app is ${appId}\n  Add an Android app with that exact package name in the Firebase console.`);
+    die(
+      `google-services.json is for ${packages.join(', ')}, but this app is ${appId}\n  Add an Android app with that exact package name in the Firebase console.`,
+    );
   }
   writeFileSync(join(androidApp, 'google-services.json'), services, { mode: 0o600 });
-  console.log(`\u2713 google-services.json \u2192 android/app  (${appId}, project ${parsed.project_info?.project_id ?? '?'})`);
+  console.log(
+    `\u2713 google-services.json \u2192 android/app  (${appId}, project ${parsed.project_info?.project_id ?? '?'})`,
+  );
 }
 
 // Capacitor registers plugins from this generated manifest. The package remains
@@ -184,7 +208,9 @@ const pluginsPath = join(androidApp, 'src', 'main', 'assets', 'capacitor.plugins
 const plugins = JSON.parse(readFileSync(pluginsPath, 'utf8'));
 const configuredPlugins = configureAndroidPushPlugin(plugins, Boolean(services));
 writeFileSync(pluginsPath, `${JSON.stringify(configuredPlugins, null, '\t')}\n`);
-console.log(`\u2713 Android push plugin ${services ? 'enabled' : 'disabled'} (${services ? 'Firebase configured' : 'no Firebase config'})`);
+console.log(
+  `\u2713 Android push plugin ${services ? 'enabled' : 'disabled'} (${services ? 'Firebase configured' : 'no Firebase config'})`,
+);
 
 // ── 2. upload keystore ────────────────────────────────────────────────────────────────
 // Stored base64 because a JKS is binary and the keychain holds text. Play App Signing
@@ -195,7 +221,8 @@ console.log(`\u2713 Android push plugin ${services ? 'enabled' : 'disabled'} (${
 const ksB64 = secret('VIS_ANDROID_KEYSTORE', 'vis-android', 'keystore');
 const storePassword = secret('VIS_ANDROID_KEYSTORE_PASSWORD', 'vis-android', 'keystore_password');
 const keyAlias = secret('VIS_ANDROID_KEY_ALIAS', 'vis-android', 'key_alias') ?? 'upload';
-const keyPassword = secret('VIS_ANDROID_KEY_PASSWORD', 'vis-android', 'key_password') ?? storePassword;
+const keyPassword =
+  secret('VIS_ANDROID_KEY_PASSWORD', 'vis-android', 'key_password') ?? storePassword;
 
 if (ksB64 && storePassword) {
   writeFileSync(keystorePath, Buffer.from(ksB64, 'base64'), { mode: 0o600 });
@@ -208,10 +235,14 @@ if (ksB64 && storePassword) {
 } else if (existsSync(keystoreProps)) {
   console.log('\u00b7 keystore.properties already present — leaving it alone');
 } else {
-  console.log('\n\u00b7 no upload keystore (keychain vis-android/keystore). Release builds will be UNSIGNED');
+  console.log(
+    '\n\u00b7 no upload keystore (keychain vis-android/keystore). Release builds will be UNSIGNED',
+  );
   console.log('  and Play will reject them. Create one once:');
   console.log('    npm run secrets keystore create        # generate a fresh one');
-  console.log('    npm run secrets keystore adopt         # import the one android/keystore.properties points at\n');
+  console.log(
+    '    npm run secrets keystore adopt         # import the one android/keystore.properties points at\n',
+  );
 }
 
 // ── 3. SDK location ───────────────────────────────────────────────────────────────────
@@ -249,7 +280,9 @@ if (existsSync(varsPath)) {
   const current = Number(/minSdkVersion\s*=\s*(\d+)/.exec(vars)?.[1] ?? 0);
   if (current && current < MIN_SDK) {
     writeFileSync(varsPath, vars.replace(/minSdkVersion\s*=\s*\d+/, `minSdkVersion = ${MIN_SDK}`));
-    console.log(`\u2713 variables.gradle  minSdkVersion ${current} \u2192 ${MIN_SDK} (barcode scanner requires it)`);
+    console.log(
+      `\u2713 variables.gradle  minSdkVersion ${current} \u2192 ${MIN_SDK} (barcode scanner requires it)`,
+    );
   }
 }
 
@@ -302,13 +335,20 @@ $1buildTypes {`,
 }
 
 if (!/release \{\s*\n\s*signingConfig signingConfigs\.release/.test(gradle)) {
-  gradle = gradle.replace(/(buildTypes \{\s*\n(\s*)release \{\n)/m, `$1$2    signingConfig signingConfigs.release\n`);
+  gradle = gradle.replace(
+    /(buildTypes \{\s*\n(\s*)release \{\n)/m,
+    `$1$2    signingConfig signingConfigs.release\n`,
+  );
 }
 
-gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`).replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
+gradle = gradle
+  .replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
+  .replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
 
 if (gradle !== before) writeFileSync(gradlePath, gradle);
-console.log(`\u2713 app/build.gradle  versionName ${versionName}, versionCode ${versionCode}, signingConfig release`);
+console.log(
+  `\u2713 app/build.gradle  versionName ${versionName}, versionCode ${versionCode}, signingConfig release`,
+);
 
 /**
  * 4. Cleartext HTTP to the gateway.
@@ -343,14 +383,23 @@ for (const permission of [
   'android.permission.BLUETOOTH',
 ]) {
   if (!manifest.includes(`android:name="${permission}"`)) {
-    manifest = manifest.replace(/\s*<application\b/, `\n    <uses-permission android:name="${permission}" />\n\n    <application`);
+    manifest = manifest.replace(
+      /\s*<application\b/,
+      `\n    <uses-permission android:name="${permission}" />\n\n    <application`,
+    );
   }
 }
 if (!manifest.includes('android:usesCleartextTraffic')) {
-  manifest = manifest.replace(/<application\b/, '<application\n        android:usesCleartextTraffic="true"');
+  manifest = manifest.replace(
+    /<application\b/,
+    '<application\n        android:usesCleartextTraffic="true"',
+  );
 }
 if (!manifest.includes('android:networkSecurityConfig')) {
-  manifest = manifest.replace(/<application\b/, '<application\n        android:networkSecurityConfig="@xml/network_security_config"');
+  manifest = manifest.replace(
+    /<application\b/,
+    '<application\n        android:networkSecurityConfig="@xml/network_security_config"',
+  );
 }
 
 // Firebase draws the tray notification itself, and `CommonNotificationBuilder`
@@ -371,7 +420,9 @@ for (const [name, resource] of [
 }
 if (manifest !== manifestBefore) writeFileSync(manifestPath, manifest);
 console.log('✓ Android network + microphone permissions');
-console.log('✓ notification icon → @drawable/ic_stat_vis + @color/vis_notification  (Firebase small icon)');
+console.log(
+  '✓ notification icon → @drawable/ic_stat_vis + @color/vis_notification  (Firebase small icon)',
+);
 
 // ── Launch screen ─────────────────────────────────────────────────────────────────────
 //
@@ -383,7 +434,9 @@ console.log('✓ notification icon → @drawable/ic_stat_vis + @color/vis_notifi
 // the paper the web layer paints a frame later.
 for (const relative of stockSplashBitmaps()) rmSync(join(androidResources, relative));
 prepareAndroidSplash(stylesPath);
-console.log('✓ launch screen  @drawable/splash → Vis mark on @color/vis_splash  (+ Android 12 splash colour)');
+console.log(
+  '✓ launch screen  @drawable/splash → Vis mark on @color/vis_splash  (+ Android 12 splash colour)',
+);
 
 // ── Push notification channel ─────────────────────────────────────────────────────────
 //
@@ -394,7 +447,10 @@ console.log('✓ launch screen  @drawable/splash → Vis mark on @color/vis_spla
 // channel, this stamps the SAME id as Firebase's default, and there is one truth to change.
 const pushSource = readFileSync(join(root, 'src', 'lib', 'push.ts'), 'utf8');
 const channelId = /PUSH_CHANNEL_ID = '([a-z0-9_]+)'/.exec(pushSource)?.[1];
-if (!channelId) die('src/lib/push.ts no longer exports PUSH_CHANNEL_ID — the manifest default and the channel the app creates must be one id');
+if (!channelId)
+  die(
+    'src/lib/push.ts no longer exports PUSH_CHANNEL_ID — the manifest default and the channel the app creates must be one id',
+  );
 const CHANNEL_META = 'com.google.firebase.messaging.default_notification_channel_id';
 let channelManifest = readFileSync(manifestPath, 'utf8');
 if (!channelManifest.includes(CHANNEL_META)) {
@@ -788,7 +844,10 @@ public class AudioRoutePlugin extends Plugin {
     }
 }
 `;
-if (!existsSync(audioRoutePluginPath) || readFileSync(audioRoutePluginPath, 'utf8') !== audioRoutePlugin) {
+if (
+  !existsSync(audioRoutePluginPath) ||
+  readFileSync(audioRoutePluginPath, 'utf8') !== audioRoutePlugin
+) {
   writeFileSync(audioRoutePluginPath, audioRoutePlugin);
 }
 
@@ -955,7 +1014,10 @@ public class NativeSpeechPlugin extends Plugin {
     }
 }
 `;
-if (!existsSync(nativeSpeechPluginPath) || readFileSync(nativeSpeechPluginPath, 'utf8') !== nativeSpeechPlugin) {
+if (
+  !existsSync(nativeSpeechPluginPath) ||
+  readFileSync(nativeSpeechPluginPath, 'utf8') !== nativeSpeechPlugin
+) {
   writeFileSync(nativeSpeechPluginPath, nativeSpeechPlugin);
 }
 
@@ -966,20 +1028,21 @@ if (!existsSync(nativeSpeechPluginPath) || readFileSync(nativeSpeechPluginPath, 
 // app in the sheet that refuses what it was handed is worse than one that is
 // not offered.
 const SHARE_MEDIA_TYPES = ['text/plain', 'image/*', 'audio/*', 'video/*', 'application/pdf'];
-const shareFilter = (action, types) => types
-  .map(
-    (type) => `            <intent-filter>
+const shareFilter = (action, types) =>
+  types
+    .map(
+      (type) => `            <intent-filter>
                 <action android:name="android.intent.action.${action}" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="${type}" />
             </intent-filter>
 `,
-  )
-  .join('');
+    )
+    .join('');
 const shareFilters =
-  shareFilter('SEND', SHARE_MEDIA_TYPES)
-  + shareFilter('SEND_MULTIPLE', SHARE_MEDIA_TYPES)
-  + shareFilter('PROCESS_TEXT', ['text/plain']);
+  shareFilter('SEND', SHARE_MEDIA_TYPES) +
+  shareFilter('SEND_MULTIPLE', SHARE_MEDIA_TYPES) +
+  shareFilter('PROCESS_TEXT', ['text/plain']);
 let shareManifest = readFileSync(manifestPath, 'utf8');
 const shareManifestBefore = shareManifest;
 // Stamped, never appended to: an earlier build's filter set is REPLACED, or
@@ -1003,8 +1066,11 @@ const oauthFilter = `            <intent-filter>
             </intent-filter>
 `;
 shareManifest = shareManifest.replace(
-  /[ \t]*<intent-filter>(?:(?!<\/intent-filter>)[\s\S])*?android:scheme="com\.blockether\.viscompanion"[\s\S]*?<\/intent-filter>\n/g, '',
+  /[ \t]*<intent-filter>(?:(?!<\/intent-filter>)[\s\S])*?android:scheme="com\.blockether\.viscompanion"[\s\S]*?<\/intent-filter>\n/g,
+  '',
 );
 shareManifest = shareManifest.replace('</activity>', oauthFilter + '        </activity>');
 if (shareManifest !== shareManifestBefore) writeFileSync(manifestPath, shareManifest);
-console.log('\u2713 share target   MainActivity SEND/PROCESS_TEXT \u2192 vis://share + AndroidManifest filters');
+console.log(
+  '\u2713 share target   MainActivity SEND/PROCESS_TEXT \u2192 vis://share + AndroidManifest filters',
+);

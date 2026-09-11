@@ -20,25 +20,17 @@
 // Minting is deliberately rate-limited at the relay, so the grant is cached by
 // `storage` and reused across machines and launches; see `relayGrants`.
 
-import {
-  getRelayGrant,
-  relayGrants,
-  setRelayGrant,
-  type RelayGrant,
-} from "./storage";
-import type { PushDeviceInput, PushStatus } from "./types";
+import { getRelayGrant, relayGrants, setRelayGrant, type RelayGrant } from './storage';
+import type { PushDeviceInput, PushStatus } from './types';
 
 /** How this device named itself to one gateway. */
 export interface PushIdentity {
-  kind: "token" | "grant";
+  kind: 'token' | 'grant';
   value: string;
 }
 
 /** How a grant is obtained; injected so tests never reach the network. */
-export type MintGrant = (
-  relayUrl: string,
-  device: PushDeviceInput,
-) => Promise<RelayGrant>;
+export type MintGrant = (relayUrl: string, device: PushDeviceInput) => Promise<RelayGrant>;
 
 /**
  * Re-mint this long before expiry.
@@ -65,7 +57,7 @@ const RENEW_BEFORE_MS = 7 * 24 * 60 * 60 * 1000;
  * paired machine may still name its own relay, which overrides this: an
  * operator who runs one knows something the build does not.
  */
-export const PUBLISHER_RELAY_URL = "https://vis.relay.blockether.com";
+export const PUBLISHER_RELAY_URL = 'https://vis.relay.blockether.com';
 
 /**
  * The relay one gateway needs to reach THIS device, or null when it can sign
@@ -76,20 +68,15 @@ export const PUBLISHER_RELAY_URL = "https://vis.relay.blockether.com";
  * not for an iPhone, so the verdict is per platform, never the summary flag.
  */
 function signsItself(push: PushStatus, platform: string): boolean {
-  if (platform === "web") return false;
-  return Boolean(
-    platform === "android" ? push.fcm?.is_available : push.apns?.is_available,
-  );
+  if (platform === 'web') return false;
+  return Boolean(platform === 'android' ? push.fcm?.is_available : push.apns?.is_available);
 }
 
-export function relayUrlFor(
-  push: PushStatus | undefined,
-  platform: string,
-): string | null {
+export function relayUrlFor(push: PushStatus | undefined, platform: string): string | null {
   if (!push) return null;
   // Browser subscriptions are delivered by the gateway that owns their VAPID key;
   // they never enter the native relay path.
-  if (platform === "web") return null;
+  if (platform === 'web') return null;
   if (signsItself(push, platform)) return null;
   const named = push.relay?.url;
   // A machine that names no relay is the ordinary case, not a broken one: it
@@ -98,9 +85,7 @@ export function relayUrlFor(
   // so a named relay is TLS or nothing, and quietly rerouting an `http` one to
   // the publisher would hide the misconfiguration `refusedRelayUrl` reports.
   if (!named) return PUBLISHER_RELAY_URL;
-  return named.startsWith("https://") && !push.relay?.is_insecure
-    ? named
-    : null;
+  return named.startsWith('https://') && !push.relay?.is_insecure ? named : null;
 }
 
 /**
@@ -114,14 +99,11 @@ export function relayUrlFor(
  * for a signing key they do not need. Name the address instead: only they can
  * change it.
  */
-export function refusedRelayUrl(
-  push: PushStatus | undefined,
-  platform: string,
-): string | null {
+export function refusedRelayUrl(push: PushStatus | undefined, platform: string): string | null {
   if (!push || signsItself(push, platform)) return null;
   const url = push.relay?.url;
   if (!url) return null;
-  return url.startsWith("https://") && !push.relay?.is_insecure ? null : url;
+  return url.startsWith('https://') && !push.relay?.is_insecure ? null : url;
 }
 
 /** A relay address as a person reads it: the host, never the path. */
@@ -136,9 +118,9 @@ export function relayHost(url: string | null | undefined): string | null {
 
 /** `POST /v1/grants`: hand the relay this device's token, get back a capability. */
 export const mintGrant: MintGrant = async (relayUrl, device) => {
-  const response = await fetch(`${relayUrl.replace(/\/+$/, "")}/v1/grants`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
+  const response = await fetch(`${relayUrl.replace(/\/+$/, '')}/v1/grants`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       device_token: device.token,
       platform: device.platform,
@@ -146,33 +128,24 @@ export const mintGrant: MintGrant = async (relayUrl, device) => {
     }),
   });
   if (!response.ok)
-    throw new Error(
-      `The relay refused a grant for this device (${response.status}).`,
-    );
+    throw new Error(`The relay refused a grant for this device (${response.status}).`);
   const body = (await response.json()) as {
     grant?: unknown;
     expires_at?: unknown;
   };
-  if (typeof body.grant !== "string" || !body.grant) {
-    throw new Error("The relay returned no grant.");
+  if (typeof body.grant !== 'string' || !body.grant) {
+    throw new Error('The relay returned no grant.');
   }
   return {
-    token: String(device.token ?? ""),
+    token: String(device.token ?? ''),
     grant: body.grant,
-    expires_at:
-      typeof body.expires_at === "number" ? body.expires_at : undefined,
+    expires_at: typeof body.expires_at === 'number' ? body.expires_at : undefined,
   };
 };
 
-function isUsable(
-  cached: RelayGrant | null,
-  token: string,
-  now: number,
-): boolean {
+function isUsable(cached: RelayGrant | null, token: string, now: number): boolean {
   if (!cached || cached.token !== token) return false;
-  return (
-    cached.expires_at === undefined || cached.expires_at - now > RENEW_BEFORE_MS
-  );
+  return cached.expires_at === undefined || cached.expires_at - now > RENEW_BEFORE_MS;
 }
 
 /** The grant this device presents to one relay, minting only when it must. */
@@ -182,7 +155,7 @@ export async function grantFor(
   mint: MintGrant = mintGrant,
   now: number = Date.now(),
 ): Promise<string> {
-  const token = String(device.token ?? "");
+  const token = String(device.token ?? '');
   const cached = await getRelayGrant(relayUrl);
   if (cached && isUsable(cached, token, now)) return cached.grant;
   const minted = await mint(relayUrl, device);
@@ -230,13 +203,10 @@ export async function registerForPush(
   mint: MintGrant = mintGrant,
   now: number = Date.now(),
 ): Promise<PushIdentity> {
-  const relayUrl = relayUrlFor(
-    await gateway.status(),
-    String(device.platform ?? ""),
-  );
+  const relayUrl = relayUrlFor(await gateway.status(), String(device.platform ?? ''));
   if (!relayUrl) {
     await gateway.register(device);
-    return { kind: "token", value: String(device.token ?? "") };
+    return { kind: 'token', value: String(device.token ?? '') };
   }
   const grant = await grantFor(relayUrl, device, mint, now);
   // The grant is gibberish to every relay but the one that sealed it, so the
@@ -248,7 +218,7 @@ export async function registerForPush(
     grant,
     relay_url: relayUrl,
   });
-  return { kind: "grant", value: grant };
+  return { kind: 'grant', value: grant };
 }
 
 /**
@@ -278,7 +248,7 @@ export async function registeredIds(token: string): Promise<string[]> {
  */
 export async function unregisterFromPush(
   token: string,
-  gateway: Pick<PushGateway, "unregister">,
+  gateway: Pick<PushGateway, 'unregister'>,
 ): Promise<void> {
   let failure: unknown = null;
   for (const id of await registeredIds(token)) {

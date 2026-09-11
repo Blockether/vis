@@ -72,19 +72,24 @@ describe('android launch screen assets', () => {
 
   it('paints the colour the web layer paints a frame later', () => {
     const colours = readFileSync(join(resources, 'values', 'vis_splash_color.xml'), 'utf8');
-    const page = /--bg:\s*(#[0-9a-f]{6})/i.exec(readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'));
+    const page = /--bg:\s*(#[0-9a-f]{6})/i.exec(
+      readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'),
+    );
     expect(page).not.toBeNull();
     expect(colours).toContain(`<color name="vis_splash">${page[1]}</color>`);
   });
 
   // Regression: aapt2 refuses an XML comment containing a double hyphen, and the build died
   // on `values/vis_splash_color.xml` naming the CSS token by its own dashed spelling.
-  it.each(['values/vis_splash_color.xml', 'drawable/splash.xml'])('%s has XML-legal comments', (relative) => {
-    const xml = readFileSync(join(resources, relative), 'utf8');
-    for (const comment of xml.match(/<!--[\s\S]*?-->/g) ?? []) {
-      expect(comment.slice(4, -3)).not.toContain('--');
-    }
-  });
+  it.each(['values/vis_splash_color.xml', 'drawable/splash.xml'])(
+    '%s has XML-legal comments',
+    (relative) => {
+      const xml = readFileSync(join(resources, relative), 'utf8');
+      for (const comment of xml.match(/<!--[\s\S]*?-->/g) ?? []) {
+        expect(comment.slice(4, -3)).not.toContain('--');
+      }
+    },
+  );
 
   it('removes the stock splash bitmaps and brands both launch systems', () => {
     // Below Android 12 the theme's window background IS the splash; from 12 the platform
@@ -95,7 +100,10 @@ describe('android launch screen assets', () => {
   });
 
   it('--check refuses a project still showing the stock splash', () => {
-    const check = source.slice(source.indexOf("if (has('check'))"), source.indexOf('// ── Launch screen'));
+    const check = source.slice(
+      source.indexOf("if (has('check'))"),
+      source.indexOf('// ── Launch screen'),
+    );
     expect(check).toContain('stockSplashBitmaps()');
     expect(check).toContain('launchThemeOk()');
   });
@@ -107,7 +115,8 @@ describe('android launch screen assets', () => {
     '<item name="windowSplashScreenBackground">@color/old</item>',
     '<item name="windowSplashScreenBackground">@color/vis_splash</item><item name="android:windowSplashScreenBackground">@color/vis_splash</item>',
   ])('uses only the AndroidX splash attribute, idempotently: %s', (previousColour) => {
-    const otherTheme = '<style name="AppTheme"><item name="android:background">@color/other</item></style>';
+    const otherTheme =
+      '<style name="AppTheme"><item name="android:background">@color/other</item></style>';
     const styles = `<resources>${otherTheme}<style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         ${previousColour}
         <item name="android:background">@drawable/splash</item>

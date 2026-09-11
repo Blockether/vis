@@ -57,10 +57,7 @@ export const ATTACHMENT_MEMORY_BUDGET: CacheBudget = {
  * beats a freed URL), so a tier may legitimately sit over its bound while that
  * many artifacts are genuinely on screen.
  */
-export function cacheVictims(
-  entries: CacheEntry[],
-  budget: CacheBudget,
-): string[] {
+export function cacheVictims(entries: CacheEntry[], budget: CacheBudget): string[] {
   let bytes = entries.reduce((sum, entry) => sum + Math.max(0, entry.bytes), 0);
   let count = entries.length;
   if (bytes <= budget.maxBytes && count <= budget.maxEntries) return [];
@@ -177,10 +174,7 @@ async function cachedEntries(cache: Cache): Promise<CacheEntry[]> {
   return entries;
 }
 
-async function evictCachedAttachments(
-  cache: Cache,
-  budget: CacheBudget,
-): Promise<void> {
+async function evictCachedAttachments(cache: Cache, budget: CacheBudget): Promise<void> {
   const victims = cacheVictims(await cachedEntries(cache), budget);
   for (const url of victims) {
     used.delete(url);

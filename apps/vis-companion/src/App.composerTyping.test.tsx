@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { fireEvent, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // The list's fleet-wide pass over the rows, counted where it actually runs: once
 // per machine in scope, every time the sessions list recomputes what it shows.
 const counters = vi.hoisted(() => ({ passes: 0 }));
-vi.mock("./lib/fleet", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib/fleet")>();
+vi.mock('./lib/fleet', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/fleet')>();
   return {
     ...actual,
     withSearchHits: (...args: Parameters<typeof actual.withSearchHits>) => {
@@ -16,9 +16,9 @@ vi.mock("./lib/fleet", async (importOriginal) => {
   };
 });
 
-import { renderApp } from "./app-harness";
-import { flushDraftMessages } from "./lib/draft-messages";
-import { listSession } from "./screens/sessions-screen-harness";
+import { renderApp } from './app-harness';
+import { flushDraftMessages } from './lib/draft-messages';
+import { listSession } from './screens/sessions-screen-harness';
 
 let restore = () => {};
 afterEach(() => {
@@ -31,11 +31,11 @@ afterEach(() => {
 // thing that can name its row.
 const fleet = () => [
   {
-    label: "laptop",
+    label: 'laptop',
     sessions: Array.from({ length: 12 }, (_, index) =>
       listSession({
         id: `s${index}`,
-        title: index === 0 ? "" : `Session ${index}`,
+        title: index === 0 ? '' : `Session ${index}`,
         workspace: { root: `/Users/dev/project-${index % 4}` },
       }),
     ),
@@ -47,10 +47,8 @@ const settle = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const openFirstSession = async () => {
   const view = renderApp({ machines: fleet() });
   restore = view.restore;
-  fireEvent.click(await screen.findByText("Untitled session"));
-  const composer = (await screen.findByLabelText(
-    "Message Vis",
-  )) as HTMLTextAreaElement;
+  fireEvent.click(await screen.findByText('Untitled session'));
+  const composer = (await screen.findByLabelText('Message Vis')) as HTMLTextAreaElement;
   // The stored draft message is read asynchronously and nothing is recorded
   // until it lands, so let it land before a keystroke is measured.
   await settle(50);
@@ -71,87 +69,81 @@ const type = async (composer: HTMLTextAreaElement, text: string) => {
 // published a fresh snapshot object, so a character re-ran the fleet-wide pass
 // over every machine and every session, and re-rendered every project group, for
 // a screen the reader cannot see.
-describe("typing in the composer", () => {
-  it("does not re-run the sessions list behind it", async () => {
+describe('typing in the composer', () => {
+  it('does not re-run the sessions list behind it', async () => {
     const { view, composer } = await openFirstSession();
 
     // Once the draft is nonempty, further characters do not change row presence.
-    await type(composer, "h");
+    await type(composer, 'h');
     const before = counters.passes;
-    await type(composer, "hello there");
+    await type(composer, 'hello there');
 
-    expect(composer.value).toBe("hello there");
+    expect(composer.value).toBe('hello there');
     expect(counters.passes - before).toBe(0);
     view.unmount();
   });
 
   // The iOS report includes fleet reads during typing. The first dirty character
   // and each persisted pause used to wake the hidden list despite paused polling.
-  it("does not reload the hidden fleet when a draft first becomes dirty", async () => {
+  it('does not reload the hidden fleet when a draft first becomes dirty', async () => {
     const { view, composer } = await openFirstSession();
     const listReads = () =>
-      view.requests.filter(
-        (request) => new URL(request).pathname === "/v1/sessions",
-      ).length;
+      view.requests.filter((request) => new URL(request).pathname === '/v1/sessions').length;
     const before = listReads();
 
-    await type(composer, "h");
+    await type(composer, 'h');
 
     expect(listReads() - before).toBe(0);
-    expect(composer.value).toBe("h");
+    expect(composer.value).toBe('h');
     view.unmount();
   });
 
-  it("persists typing pauses without recomputing the hidden fleet", async () => {
+  it('persists typing pauses without recomputing the hidden fleet', async () => {
     const { view, composer } = await openFirstSession();
-    await type(composer, "h");
+    await type(composer, 'h');
     const before = counters.passes;
 
-    for (const text of ["hello", "hello there", "hello there again"]) {
+    for (const text of ['hello', 'hello there', 'hello there again']) {
       await type(composer, text);
       await flushDraftMessages();
       await settle();
     }
 
     expect(counters.passes - before).toBe(0);
-    expect(localStorage.getItem("vis.draftMessages")).toContain(
-      "hello there again",
-    );
+    expect(localStorage.getItem('vis.draftMessages')).toContain('hello there again');
     view.unmount();
   });
 
-  it("does not reload the session on foreground window focus", async () => {
+  it('does not reload the session on foreground window focus', async () => {
     const { view, composer } = await openFirstSession();
-    await type(composer, "keep these words");
+    await type(composer, 'keep these words');
     const refreshes = () =>
-      view.requests.filter((request) =>
-        new URL(request).pathname.endsWith("/slashes"),
-      ).length;
+      view.requests.filter((request) => new URL(request).pathname.endsWith('/slashes')).length;
     const before = refreshes();
     expect(before).toBeGreaterThan(0);
 
     // These signals are spaced beyond wake coalescing, as in the phone diagnostics.
     // The app never left the foreground, so focus must not reload the transcript.
     for (let index = 0; index < 3; index += 1) {
-      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event('focus'));
       await settle(350);
     }
 
-    expect(composer.value).toBe("keep these words");
+    expect(composer.value).toBe('keep these words');
     expect(refreshes() - before).toBe(0);
     view.unmount();
   });
 
-  it("hands the list the words on the way out", async () => {
+  it('hands the list the words on the way out', async () => {
     const { view, composer } = await openFirstSession();
-    await type(composer, "half a thought");
+    await type(composer, 'half a thought');
 
-    fireEvent.click(screen.getByRole("button", { name: "Back to sessions" }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to sessions' }));
 
     // Leaving persists the message, and that is when the list is told: the row
     // of a session with no title of its own is named by what is waiting in it.
-    expect(await screen.findByText("half a thought")).toBeTruthy();
-    expect(screen.getByText("dirty")).toBeTruthy();
+    expect(await screen.findByText('half a thought')).toBeTruthy();
+    expect(screen.getByText('dirty')).toBeTruthy();
     view.unmount();
   });
 });

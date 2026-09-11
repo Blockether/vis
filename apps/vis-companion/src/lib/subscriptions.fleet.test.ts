@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest';
 
-import { SessionSubscriptionHub } from "./subscriptions";
-import type { GatewayClient } from "./gateway";
-import type { SseEvent } from "./types";
+import { SessionSubscriptionHub } from './subscriptions';
+import type { GatewayClient } from './gateway';
+import type { SseEvent } from './types';
 
 /** A client that is nothing but the two streams the hub can open. */
 function fakeClient() {
@@ -13,10 +13,7 @@ function fakeClient() {
     deliver: null as ((event: SseEvent) => void) | null,
   };
   const client = {
-    streamFleetStatus(
-      onEvent: (event: SseEvent) => void,
-      opts: { onOpen?: () => void } = {},
-    ) {
+    streamFleetStatus(onEvent: (event: SseEvent) => void, opts: { onOpen?: () => void } = {}) {
       state.opened += 1;
       state.deliver = onEvent;
       opts.onOpen?.();
@@ -37,7 +34,7 @@ function fakeClient() {
 // window on a timer to notice that a run had started or ended. The fleet stream is that
 // channel — and a machine must not stream to a list nobody is looking at.
 describe("the hub's fleet stream", () => {
-  it("runs only while somebody is listening", () => {
+  it('runs only while somebody is listening', () => {
     const { state, client } = fakeClient();
     const hub = new SessionSubscriptionHub(client);
     expect(state.opened).toBe(0);
@@ -61,7 +58,7 @@ describe("the hub's fleet stream", () => {
     expect(state.stopped).toBe(2);
   });
 
-  it("hands every frame to its listeners and says whether it is delivering", () => {
+  it('hands every frame to its listeners and says whether it is delivering', () => {
     const { state, client } = fakeClient();
     const hub = new SessionSubscriptionHub(client);
     const streaming: boolean[] = [];
@@ -73,8 +70,8 @@ describe("the hub's fleet stream", () => {
     const stop = hub.subscribeFleet((event) => seen.push(event));
     expect(streaming).toEqual([false, true]);
 
-    state.deliver?.({ type: "session.status", session_id: "s1", is_live: true });
-    expect(seen).toEqual([{ type: "session.status", session_id: "s1", is_live: true }]);
+    state.deliver?.({ type: 'session.status', session_id: 's1', is_live: true });
+    expect(seen).toEqual([{ type: 'session.status', session_id: 's1', is_live: true }]);
 
     stop();
     expect(streaming).toEqual([false, true, false]);

@@ -6,10 +6,10 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
-import { PEN_COLORS, flattenAnnotations, type PenToken } from "../lib/annotate";
-import { copyImage, shareImage, shareVerb } from "../lib/image-share";
+} from 'react';
+import { createPortal } from 'react-dom';
+import { PEN_COLORS, flattenAnnotations, type PenToken } from '../lib/annotate';
+import { copyImage, shareImage, shareVerb } from '../lib/image-share';
 import {
   NO_TRANSFORM,
   FIT_SCALE,
@@ -31,16 +31,20 @@ import {
   type Gesture,
   type Point,
   type Transform,
-} from "../lib/zoom-pan";
+} from '../lib/zoom-pan';
+import { AnnotationLayer, PenToolbar, type AnnotationSurface } from './AnnotationLayer';
 import {
-  AnnotationLayer,
-  PenToolbar,
-  type AnnotationSurface,
-} from "./AnnotationLayer";
-import { CheckIcon, ChevronIcon, CopyIcon, DownloadIcon, DrawIcon, ShareIcon, TrimIcon } from "./icons";
-import { Button, DialogHeader, IconButton, Spinner } from "./ui";
-import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
-import { useStickyOverlay } from "../lib/sticky-overlay";
+  CheckIcon,
+  ChevronIcon,
+  CopyIcon,
+  DownloadIcon,
+  DrawIcon,
+  ShareIcon,
+  TrimIcon,
+} from './icons';
+import { Button, DialogHeader, IconButton, Spinner } from './ui';
+import { useGalleryStep, type GalleryPicture } from '../lib/gallery';
+import { useStickyOverlay } from '../lib/sticky-overlay';
 
 interface ExpandableImageProps {
   src: string;
@@ -49,8 +53,8 @@ interface ExpandableImageProps {
   children?: ReactNode;
   /** Extra classes for the zoom trigger itself, e.g. `shrink-0` inside a flex row. */
   frameClassName?: string;
-  loading?: "eager" | "lazy";
-  decoding?: "async" | "auto" | "sync";
+  loading?: 'eager' | 'lazy';
+  decoding?: 'async' | 'auto' | 'sync';
   onError?: () => void;
   /**
    * Given, the viewer can hand the picture BACK: the flattened image (original
@@ -93,9 +97,9 @@ export function ExpandableImage({
   alt,
   className,
   children,
-  frameClassName = "",
-  loading = "lazy",
-  decoding = "async",
+  frameClassName = '',
+  loading = 'lazy',
+  decoding = 'async',
   onError,
   onApply,
   galleryAt,
@@ -123,7 +127,7 @@ export function ExpandableImage({
       <button
         type="button"
         className={`${
-          children ? "flex min-w-0 items-center gap-1.5" : "block"
+          children ? 'flex min-w-0 items-center gap-1.5' : 'block'
         } max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 text-left ${frameClassName}`}
         onClick={() => setOpen(true)}
         aria-label={`Open ${alt} full screen`}
@@ -179,7 +183,7 @@ export function ImageViewer({
   name,
   onClose,
   onApply,
-  applyLabel = "Save",
+  applyLabel = 'Save',
   pictures,
   at,
 }: ImageViewerProps) {
@@ -196,12 +200,10 @@ export function ImageViewer({
   const [drawingToolsOpen, setDrawingToolsOpen] = useState(true);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
-  const [busy, setBusy] = useState<
-    "copy" | "share" | "apply" | "trim" | null
-  >(null);
+  const [busy, setBusy] = useState<'copy' | 'share' | 'apply' | 'trim' | null>(null);
   // Probed once per open: the sheet cannot appear or disappear mid-viewer.
   const [shareAction] = useState(shareVerb);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState('');
   // A gallery of one is not a gallery: nothing to step to, so no stepper, no
   // arrow keys and no position to report.
   const gallery = pictures && pictures.length > 1 ? pictures : null;
@@ -215,9 +217,7 @@ export function ImageViewer({
   // A trim REPLACES the picture on screen with the part of it that was in
   // view: everything after it — the pen, copy, share, apply — belongs to
   // those pixels. The original is never touched, so one tap gets it back.
-  const [trimmed, setTrimmed] = useState<{ src: string; name: string } | null>(
-    null,
-  );
+  const [trimmed, setTrimmed] = useState<{ src: string; name: string } | null>(null);
   const trimUrlsRef = useRef<string[]>([]);
   const dropTrim = useCallback(() => {
     for (const url of trimUrlsRef.current) URL.revokeObjectURL(url);
@@ -227,9 +227,7 @@ export function ImageViewer({
   // A trim lives in memory for as long as the viewer is open and not one
   // moment longer — a closed dialog that keeps its blobs is a leak per tap.
   useEffect(() => dropTrim, [dropTrim]);
-  const found = gallery
-    ? gallery.findIndex((picture) => picture.src === shownSrc)
-    : -1;
+  const found = gallery ? gallery.findIndex((picture) => picture.src === shownSrc) : -1;
   const step = found < 0 ? (at ?? 0) : found;
   const untrimmed = (found < 0 ? undefined : gallery?.[found]) ?? { src, name };
   const shown = trimmed ?? untrimmed;
@@ -254,8 +252,7 @@ export function ImageViewer({
       const transform = clampTransform(next);
       transformRef.current = transform;
       paint();
-      if (zoomLabelRef.current)
-        zoomLabelRef.current.textContent = zoomLabel(transform);
+      if (zoomLabelRef.current) zoomLabelRef.current.textContent = zoomLabel(transform);
     },
     [paint],
   );
@@ -292,7 +289,7 @@ export function ImageViewer({
       annotationRef.current?.clear();
       dropTrim();
       resetTransform();
-      setStatus("");
+      setStatus('');
       setShownSrc(gallery[target].src);
     },
     [gallery, drawing, step, resetTransform, dropTrim],
@@ -300,26 +297,25 @@ export function ImageViewer({
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    document.body.style.overflow = 'hidden';
     // Left and right are what a reader already presses in front of a gallery,
     // on a phone keyboard as much as on a desktop one, so the viewer answers
     // them instead of making the reader close it once per picture.
     const keyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-      if (event.key === "ArrowLeft") stepTo(step - 1);
-      if (event.key === "ArrowRight") stepTo(step + 1);
+      if (event.key === 'Escape') onClose();
+      if (event.key === 'ArrowLeft') stepTo(step - 1);
+      if (event.key === 'ArrowRight') stepTo(step + 1);
     };
-    window.addEventListener("keydown", keyDown);
+    window.addEventListener('keydown', keyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener('keydown', keyDown);
     };
   }, [onClose, stepTo, step]);
 
   function fitAnnotations() {
     const image = imageRef.current;
-    if (image)
-      annotationRef.current?.fit(image.naturalWidth, image.naturalHeight);
+    if (image) annotationRef.current?.fit(image.naturalWidth, image.naturalHeight);
   }
 
   function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
@@ -351,8 +347,7 @@ export function ImageViewer({
     // meant for button/reset snaps fights that at exactly the frame rate a
     // finger moves, which is what read as stutter and a lagging, rubber-banded
     // pinch. Only a finger on the glass suspends it.
-    if (transformedRef.current)
-      transformedRef.current.style.transitionDuration = "0ms";
+    if (transformedRef.current) transformedRef.current.style.transitionDuration = '0ms';
     // A picture that is not zoomed in has nothing to pan, so the finger's whole
     // travel means the NEIGHBOURING picture instead — the gallery is walked by
     // swiping it, which is why no pair of arrows is left on the toolbar. A second
@@ -379,7 +374,7 @@ export function ImageViewer({
       return;
     }
     if (!gesture) return;
-    if (gesture.kind === "swipe" && gesture.pointerId === event.pointerId) {
+    if (gesture.kind === 'swipe' && gesture.pointerId === event.pointerId) {
       event.preventDefault();
       slide(
         swipeShift(
@@ -391,18 +386,12 @@ export function ImageViewer({
       return;
     }
     const [a, b] = [...pointersRef.current.values()];
-    if (gesture.kind === "pinch" && a && b) {
+    if (gesture.kind === 'pinch' && a && b) {
       event.preventDefault();
       applyTransform(pinchTransform(gesture, a, b));
-    } else if (
-      !drawing &&
-      gesture.kind === "pan" &&
-      gesture.pointerId === event.pointerId
-    ) {
+    } else if (!drawing && gesture.kind === 'pan' && gesture.pointerId === event.pointerId) {
       event.preventDefault();
-      applyTransform(
-        panTransform(gesture, { x: event.clientX, y: event.clientY }),
-      );
+      applyTransform(panTransform(gesture, { x: event.clientX, y: event.clientY }));
     }
   }
 
@@ -410,17 +399,16 @@ export function ImageViewer({
     const swipe = gestureRef.current;
     pointersRef.current.delete(event.pointerId);
     if (drawing) annotationRef.current?.endStroke();
-    if (swipe?.kind === "swipe" && swipe.pointerId === event.pointerId) {
+    if (swipe?.kind === 'swipe' && swipe.pointerId === event.pointerId) {
       // Let go with the transition back on, so a swipe that never reached its
       // neighbour GLIDES home instead of snapping there.
-      if (transformedRef.current)
-        transformedRef.current.style.transitionDuration = "";
+      if (transformedRef.current) transformedRef.current.style.transitionDuration = '';
       slide(0);
       // A CANCELLED pointer is the system taking the touch away — a call, a
       // notification, the edge of the screen — and never a reader's decision, so
       // the picture goes home and the gallery stays where it was.
       const direction =
-        event.type === "pointercancel"
+        event.type === 'pointercancel'
           ? 0
           : swipeStep(swipe, { x: event.clientX, y: event.clientY });
       if (direction) stepTo(step + direction);
@@ -430,13 +418,11 @@ export function ImageViewer({
     // out, where the remaining finger belongs to the stroke, never a pan.
     const [remaining] = [...pointersRef.current.entries()];
     gestureRef.current =
-      remaining && !drawing
-        ? panFrom(remaining[0], remaining[1], transformRef.current)
-        : null;
+      remaining && !drawing ? panFrom(remaining[0], remaining[1], transformRef.current) : null;
     // Last finger up: restore the CSS transition so a clamp snap-back (e.g.
     // pinching past 1x) and the toolbar's own zoom buttons animate again.
     if (!gestureRef.current && transformedRef.current)
-      transformedRef.current.style.transitionDuration = "";
+      transformedRef.current.style.transitionDuration = '';
   }
 
   function zoomBy(factor: number) {
@@ -468,10 +454,10 @@ export function ImageViewer({
     const direct = () => {
       const node = transformedRef.current;
       if (!node) return;
-      node.style.transitionDuration = "0ms";
+      node.style.transitionDuration = '0ms';
       clearTimeout(settle);
       settle = setTimeout(() => {
-        if (!gestureRef.current) node.style.transitionDuration = "";
+        if (!gestureRef.current) node.style.transitionDuration = '';
       }, 120);
     };
     const frameCenter = (): Point => {
@@ -523,11 +509,11 @@ export function ImageViewer({
     };
 
     const gestures: [string, (event: SafariGestureEvent) => void][] = [
-      ["gesturestart", onGestureStart],
-      ["gesturechange", onGestureChange],
-      ["gestureend", onGestureEnd],
+      ['gesturestart', onGestureStart],
+      ['gesturechange', onGestureChange],
+      ['gestureend', onGestureEnd],
     ];
-    viewport.addEventListener("wheel", onWheel, { passive: false });
+    viewport.addEventListener('wheel', onWheel, { passive: false });
     for (const [type, handler] of gestures) {
       viewport.addEventListener(type, handler as EventListener, {
         passive: false,
@@ -535,7 +521,7 @@ export function ImageViewer({
     }
     return () => {
       clearTimeout(settle);
-      viewport.removeEventListener("wheel", onWheel);
+      viewport.removeEventListener('wheel', onWheel);
       for (const [type, handler] of gestures) {
         viewport.removeEventListener(type, handler as EventListener);
       }
@@ -561,22 +547,15 @@ export function ImageViewer({
     const image = imageRef.current;
     const frame = viewportRef.current;
     if (!image || !frame) return;
-    const part = visiblePart(
-      image.getBoundingClientRect(),
-      frame.getBoundingClientRect(),
-    );
+    const part = visiblePart(image.getBoundingClientRect(), frame.getBoundingClientRect());
     if (!part) {
-      setStatus("Zoom in first — the whole picture is already in view.");
+      setStatus('Zoom in first — the whole picture is already in view.');
       return;
     }
-    setBusy("trim");
-    setStatus("Trimming…");
+    setBusy('trim');
+    setStatus('Trimming…');
     try {
-      const blob = await flattenAnnotations(
-        image,
-        annotationRef.current?.canvas() ?? null,
-        part,
-      );
+      const blob = await flattenAnnotations(image, annotationRef.current?.canvas() ?? null, part);
       const url = URL.createObjectURL(blob);
       trimUrlsRef.current.push(url);
       const size = partPixels(part, image.naturalWidth, image.naturalHeight);
@@ -587,9 +566,7 @@ export function ImageViewer({
       setTrimmed({ src: url, name: shown.name });
       setStatus(`Trimmed to ${size.width} × ${size.height}.`);
     } catch (cause) {
-      setStatus(
-        cause instanceof Error ? cause.message : "Could not trim this image",
-      );
+      setStatus(cause instanceof Error ? cause.message : 'Could not trim this image');
     } finally {
       setBusy(null);
     }
@@ -597,7 +574,7 @@ export function ImageViewer({
 
   function editedImage(): Promise<Blob> {
     const image = imageRef.current;
-    if (!image) throw new Error("Image is not ready");
+    if (!image) throw new Error('Image is not ready');
     return flattenAnnotations(image, annotationRef.current?.canvas() ?? null);
   }
 
@@ -607,12 +584,12 @@ export function ImageViewer({
    * the work and the sentence to fall back to.
    */
   async function run(
-    kind: "copy" | "share" | "apply",
+    kind: 'copy' | 'share' | 'apply',
     fallback: string,
     work: (blob: Blob) => Promise<string>,
   ) {
     setBusy(kind);
-    setStatus("Preparing image…");
+    setStatus('Preparing image…');
     try {
       setStatus(await work(await editedImage()));
     } catch (cause) {
@@ -639,10 +616,10 @@ export function ImageViewer({
       onClose();
       return;
     }
-    await run("apply", "Could not save this edit", async (blob) => {
+    await run('apply', 'Could not save this edit', async (blob) => {
       await onApply(blob);
       onClose();
-      return "";
+      return '';
     });
   }
 
@@ -669,8 +646,8 @@ export function ImageViewer({
         <div className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 sm:right-4">
           <IconButton
             variant="overlay"
-            label={drawingToolsOpen ? "Hide drawing tools" : "Show drawing tools"}
-            title={drawingToolsOpen ? "Hide drawing tools" : "Show drawing tools"}
+            label={drawingToolsOpen ? 'Hide drawing tools' : 'Show drawing tools'}
+            title={drawingToolsOpen ? 'Hide drawing tools' : 'Show drawing tools'}
             aria-expanded={drawingToolsOpen}
             onClick={() => setDrawingToolsOpen((open) => !open)}
           >
@@ -747,11 +724,7 @@ export function ImageViewer({
             className="flex shrink-0 items-center overflow-hidden rounded-control border border-edge-strong [&>button]:rounded-none"
             aria-label="Zoom controls"
           >
-            <Button
-              variant="secondary"
-              onClick={() => zoomBy(1 / 1.35)}
-              aria-label="Zoom out"
-            >
+            <Button variant="secondary" onClick={() => zoomBy(1 / 1.35)} aria-label="Zoom out">
               −
             </Button>
             <Button
@@ -763,36 +736,32 @@ export function ImageViewer({
             >
               <span ref={zoomLabelRef}>100%</span>
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => zoomBy(1.35)}
-              aria-label="Zoom in"
-            >
+            <Button variant="secondary" onClick={() => zoomBy(1.35)} aria-label="Zoom in">
               +
             </Button>
           </div>
 
           <IconButton
-            variant={onApply && hasEdits ? "primary" : "secondary"}
+            variant={onApply && hasEdits ? 'primary' : 'secondary'}
             label={
               onApply && (drawing || hasEdits)
-                ? applyLabel === "Save"
-                  ? busy === "apply"
-                    ? "Saving changes"
-                    : "Save changes"
+                ? applyLabel === 'Save'
+                  ? busy === 'apply'
+                    ? 'Saving changes'
+                    : 'Save changes'
                   : applyLabel
                 : drawing
-                  ? "Finish drawing"
-                  : "Draw on image"
+                  ? 'Finish drawing'
+                  : 'Draw on image'
             }
             title={
               onApply && (drawing || hasEdits)
-                ? applyLabel === "Save"
-                  ? "Save changes"
+                ? applyLabel === 'Save'
+                  ? 'Save changes'
                   : applyLabel
                 : drawing
-                  ? "Finish drawing"
-                  : "Draw on image"
+                  ? 'Finish drawing'
+                  : 'Draw on image'
             }
             onClick={() => {
               if (onApply && (drawing || hasEdits)) {
@@ -801,12 +770,12 @@ export function ImageViewer({
               }
               resetTransform();
               setDrawing((current) => !current);
-              setStatus("");
+              setStatus('');
             }}
             aria-pressed={drawing}
             disabled={busy !== null}
           >
-            {busy === "apply" ? (
+            {busy === 'apply' ? (
               <Spinner />
             ) : drawing || (onApply && hasEdits) ? (
               <CheckIcon />
@@ -832,7 +801,7 @@ export function ImageViewer({
                 annotationRef.current?.clear();
                 dropTrim();
                 resetTransform();
-                setStatus("");
+                setStatus('');
               }}
               disabled={busy !== null}
               aria-label="Undo trim"
@@ -847,9 +816,7 @@ export function ImageViewer({
               label="Copy image"
               title="Copy image"
               onClick={() =>
-                run("copy", "Could not copy image", (blob) =>
-                  copyImage(blob, shown.name),
-                )
+                run('copy', 'Could not copy image', (blob) => copyImage(blob, shown.name))
               }
               disabled={busy !== null}
             >
@@ -858,21 +825,18 @@ export function ImageViewer({
             {/* The check becomes the primary only after there is an edit to keep;
                 until then Share remains the strip's one filled verb. */}
             <IconButton
-              variant={onApply && hasEdits ? "secondary" : "primary"}
+              variant={onApply && hasEdits ? 'secondary' : 'primary'}
               label={`${shareAction} image`}
               title={`${shareAction} image`}
               onClick={() =>
-                run("share", "Could not share image", (blob) =>
-                  shareImage(blob, shown.name),
-                )
+                run('share', 'Could not share image', (blob) => shareImage(blob, shown.name))
               }
               disabled={busy !== null}
             >
-              {shareAction === "Share" ? <ShareIcon /> : <DownloadIcon />}
+              {shareAction === 'Share' ? <ShareIcon /> : <DownloadIcon />}
             </IconButton>
           </div>
         </div>
-
 
         <div
           className="mx-auto min-h-4 max-w-[1400px] truncate pt-1 text-center font-mono text-chip text-dialog-hint"
@@ -881,13 +845,13 @@ export function ImageViewer({
           {status ||
             (drawing
               ? onApply
-                ? applyLabel === "Save"
-                  ? "Draw on the image, then use the check."
+                ? applyLabel === 'Save'
+                  ? 'Draw on the image, then use the check.'
                   : `Draw on the image, then ${applyLabel}.`
-                : "Draw on the image, then use the check to copy or share it."
+                : 'Draw on the image, then use the check to copy or share it.'
               : gallery
                 ? `${step + 1} of ${gallery.length} · swipe for the next image, or press ← and →.`
-                : "Pinch, scroll, or double-click to zoom, then Trim to keep just that.")}
+                : 'Pinch, scroll, or double-click to zoom, then Trim to keep just that.')}
         </div>
       </div>
     </div>

@@ -24,7 +24,13 @@ it('materializes the canonical SDK live View lifecycle', () => {
   const opened = liveViewFromWire(canonical.live);
   expect(opened?.id).toBe('live-one');
   if (!opened) throw new Error('canonical live View must be paintable');
-  const patched = applyLivePatch(opened, { type: VIEW_PATCH_EVENT, kind: 'live', view_id: canonical.live.id, first_seq: 1, patch: canonical.patch });
+  const patched = applyLivePatch(opened, {
+    type: VIEW_PATCH_EVENT,
+    kind: 'live',
+    view_id: canonical.live.id,
+    first_seq: 1,
+    patch: canonical.patch,
+  });
   expect(patched.nodes[0]).toMatchObject({ id: 'status', text: 'Done', tone: 'ok' });
   expect(patched.nodes).toEqual(canonical.result.view.nodes);
 });
@@ -39,7 +45,8 @@ function opened(): LiveView {
 /** One coalesced patch frame, shaped exactly as the gateway publishes it. */
 function frame(view: LiveView, seq: number, ops: unknown[], firstSeq = seq): SseEvent {
   return {
-    type: VIEW_PATCH_EVENT, kind: 'live',
+    type: VIEW_PATCH_EVENT,
+    kind: 'live',
     view_id: view.id,
     first_seq: firstSeq,
     patch: { view_id: view.id, seq, ops },
@@ -106,7 +113,11 @@ describe('a live view read off the wire', () => {
   it('drops what it cannot paint instead of guessing', () => {
     const view = liveViewFromWire({
       ...fixture,
-      nodes: [{ id: 'now', type: 'hologram' }, { type: 'status', text: 'unnamed' }, fixture.nodes[0]],
+      nodes: [
+        { id: 'now', type: 'hologram' },
+        { type: 'status', text: 'unnamed' },
+        fixture.nodes[0],
+      ],
     });
     expect(view && ids(view)).toEqual(['now']);
     expect(liveViewFromWire({ ...fixture, id: '' })).toBeNull();
@@ -186,13 +197,9 @@ describe('a patch frame', () => {
     if (!raw) throw new Error('the selectable table must be paintable');
 
     expect(nodeOfType(raw, 'jobs', 'table').selected_ids).toEqual(['b']);
-    const selected = patched(raw, 1, [
-      { op: 'set', node_id: 'jobs', selected_ids: ['a', 'b'] },
-    ]);
+    const selected = patched(raw, 1, [{ op: 'set', node_id: 'jobs', selected_ids: ['a', 'b'] }]);
     expect(nodeOfType(selected, 'jobs', 'table').selected_ids).toEqual(['a', 'b']);
-    const removed = patched(selected, 2, [
-      { op: 'remove', node_id: 'jobs', item_ids: ['a'] },
-    ]);
+    const removed = patched(selected, 2, [{ op: 'remove', node_id: 'jobs', item_ids: ['a'] }]);
     expect(nodeOfType(removed, 'jobs', 'table').selected_ids).toEqual(['b']);
     const cleared = patched(removed, 3, [{ op: 'clear', node_id: 'jobs' }]);
     expect(nodeOfType(cleared, 'jobs', 'table').selected_ids).toEqual([]);
@@ -214,7 +221,11 @@ describe('a patch frame', () => {
     // A newcomer lands in the list its sibling lives in, so naming a node inside
     // a row grows THAT row and not the column the view itself stands in.
     const grown = patched(view, 2, [
-      { op: 'add-node', after: 'hosts', node_spec: { id: 'note', type: 'status', text: 'db-2 only' } },
+      {
+        op: 'add-node',
+        after: 'hosts',
+        node_spec: { id: 'note', type: 'status', text: 'db-2 only' },
+      },
     ]);
     expect(nodeOfType(grown, 'reading', 'group').fields.map((node) => node.id)).toEqual([
       'hosts',
@@ -237,9 +248,9 @@ describe('a patch frame', () => {
   // Folding it twice would append the same rows again.
   it('drops a frame that does not advance the picture', () => {
     const view = patched(opened(), 1, [{ op: 'set', node_id: 'now', text: 'Scanning db-3' }]);
-    expect(applyLivePatch(view, frame(view, 1, [{ op: 'set', node_id: 'now', text: 'again' }]))).toBe(
-      view,
-    );
+    expect(
+      applyLivePatch(view, frame(view, 1, [{ op: 'set', node_id: 'now', text: 'again' }])),
+    ).toBe(view);
   });
 
   // The frame still ADVANCES the picture even when every op named something it
@@ -289,7 +300,12 @@ describe('the three session events', () => {
   });
 
   it('opens once, however many times the frame arrives', () => {
-    const open: SseEvent = { type: VIEW_OPEN_EVENT, kind: 'live', view_id: fixture.id, view: fixture };
+    const open: SseEvent = {
+      type: VIEW_OPEN_EVENT,
+      kind: 'live',
+      view_id: fixture.id,
+      view: fixture,
+    };
     const once = applyLiveViewEvent([], open);
     const twice = applyLiveViewEvent(once, open);
     expect(once.map((view) => view.id)).toEqual([fixture.id]);
@@ -300,21 +316,30 @@ describe('the three session events', () => {
   // rows go back to the transcript exactly as the terminal gives its band back.
   it('drops the view the close event names, and keeps the list identity otherwise', () => {
     const views = applyLiveViewEvent([], {
-      type: VIEW_OPEN_EVENT, kind: 'live',
+      type: VIEW_OPEN_EVENT,
+      kind: 'live',
       view_id: fixture.id,
       view: fixture,
     });
     expect(
-      applyLiveViewEvent(views, { type: VIEW_CLOSE_EVENT, kind: 'live', view_id: fixture.id, result: {} }),
+      applyLiveViewEvent(views, {
+        type: VIEW_CLOSE_EVENT,
+        kind: 'live',
+        view_id: fixture.id,
+        result: {},
+      }),
     ).toEqual([]);
-    expect(applyLiveViewEvent(views, { type: VIEW_CLOSE_EVENT, kind: 'live', view_id: 'other' })).toBe(views);
+    expect(
+      applyLiveViewEvent(views, { type: VIEW_CLOSE_EVENT, kind: 'live', view_id: 'other' }),
+    ).toBe(views);
     expect(applyLiveViewEvent(views, frame({ ...views[0], id: 'other' }, 1, []))).toBe(views);
     expect(applyLiveViewEvent(views, other)).toBe(views);
   });
 
   it('folds a patch into the view it names', () => {
     const views = applyLiveViewEvent([], {
-      type: VIEW_OPEN_EVENT, kind: 'live',
+      type: VIEW_OPEN_EVENT,
+      kind: 'live',
       view_id: fixture.id,
       view: fixture,
     });
@@ -518,7 +543,11 @@ describe('the record of a settled view', () => {
 // carries one is not a picture this rail knows how to paint.
 describe('a view still wearing the retired Activity vocabulary', () => {
   it('is refused rather than tolerated', () => {
-    const view = { id: 'v-1', title: 'Build', nodes: [{ id: 'n1', type: 'status', text: 'go', tone: 'running' }] };
+    const view = {
+      id: 'v-1',
+      title: 'Build',
+      nodes: [{ id: 'n1', type: 'status', text: 'go', tone: 'running' }],
+    };
     expect(liveViewFromWire(view)).toMatchObject({ id: 'v-1' });
     expect(liveViewFromWire({ ...view, classification: 'activity' })).toBeNull();
     expect(liveViewFromWire({ ...view, activity: { state: 'running' } })).toBeNull();

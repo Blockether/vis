@@ -25,7 +25,9 @@ const header = (path) => {
 
 /** The page colour the web layer paints, as the generated theme declares it. */
 const pageColour = () => {
-  const found = /--bg:\s*#([0-9a-f]{6})/i.exec(readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'));
+  const found = /--bg:\s*#([0-9a-f]{6})/i.exec(
+    readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'),
+  );
   expect(found).not.toBeNull();
   return [1, 3, 5].map((at) => Number.parseInt(found[1].slice(at - 1, at + 1), 16));
 };
@@ -70,7 +72,10 @@ describe('ios launch screen', () => {
   });
 
   it('paints the colour the web layer paints a frame later', () => {
-    const colours = source.slice(source.indexOf('const splashColorContents'), source.indexOf('const splashColorOk'));
+    const colours = source.slice(
+      source.indexOf('const splashColorContents'),
+      source.indexOf('const splashColorOk'),
+    );
     const components = ['red', 'green', 'blue'].map((channel) => {
       const found = new RegExp(`"${channel}": "([\\d.]+)"`).exec(colours);
       expect(found).not.toBeNull();
@@ -82,14 +87,20 @@ describe('ios launch screen', () => {
   // The Xcode target lists the storyboard as a resource, so the bundle carries one either
   // way; it must not be the one with somebody else's logo in it.
   it('leaves no foreign logo in the storyboard the target still ships', () => {
-    const board = source.slice(source.indexOf('const launchBoardSource'), source.indexOf('const launchBoardOk'));
+    const board = source.slice(
+      source.indexOf('const launchBoardSource'),
+      source.indexOf('const launchBoardOk'),
+    );
     expect(board).toContain('contentMode="center"');
     expect(board).not.toContain('scaleAspectFill');
     expect(board).toContain('image="Splash"');
     expect(board).toContain('<image name="Splash" width="72" height="64"/>');
-    const colour = /<color key="backgroundColor" red="([\d.]+)" green="([\d.]+)" blue="([\d.]+)"/.exec(board);
+    const colour =
+      /<color key="backgroundColor" red="([\d.]+)" green="([\d.]+)" blue="([\d.]+)"/.exec(board);
     expect(colour).not.toBeNull();
-    expect(colour.slice(1, 4).map((value) => Math.round(Number(value) * 255))).toEqual(pageColour());
+    expect(colour.slice(1, 4).map((value) => Math.round(Number(value) * 255))).toEqual(
+      pageColour(),
+    );
   });
 
   it('--check refuses a project still showing Capacitor’s splash', () => {

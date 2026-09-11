@@ -1,13 +1,13 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { reserveAuthTab, watchAuth, type AuthTab, type AuthWatch } from "../../lib/oauth";
-import { SwipeActions, type SwipeAction } from "../../components/SwipeActions";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { reserveAuthTab, watchAuth, type AuthTab, type AuthWatch } from '../../lib/oauth';
+import { SwipeActions, type SwipeAction } from '../../components/SwipeActions';
 
 import {
   GatewayClient,
   GatewayError,
   GatewayOAuthError,
   INCOMPATIBLE_STATUS,
-} from "../../lib/gateway";
+} from '../../lib/gateway';
 import type {
   GatewayConn,
   McpAuthFlow,
@@ -17,7 +17,7 @@ import type {
   SpeechPrefs,
   Toggle,
   ToggleGroup,
-} from "../../lib/types";
+} from '../../lib/types';
 import {
   ArrowOutIcon,
   ChevronIcon,
@@ -32,7 +32,7 @@ import {
   PlusIcon,
   StopIcon,
   TrashIcon,
-} from "../../components/icons";
+} from '../../components/icons';
 import {
   Banner,
   Button,
@@ -43,16 +43,16 @@ import {
   ListRow,
   PROSE,
   Switch,
-} from "../../components/ui";
+} from '../../components/ui';
 import {
   AddProviderButton,
   ProviderRows,
   unscopedMessage,
   useProviderAuth,
-} from "../../components/ProviderAuth";
-import { NotificationsPanel } from "./NotificationSettings";
-import { SpeechEnginesPanel, type SaveSpeechPrefs } from "./SpeechSettings";
-import { FormLabel, SettingsPanel } from "./SettingsLayout";
+} from '../../components/ProviderAuth';
+import { NotificationsPanel } from './NotificationSettings';
+import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
+import { FormLabel, SettingsPanel } from './SettingsLayout';
 
 /** Native closed-choice setting: keyboard/touch selection, with saving disabling input. */
 export function EnumSetting({
@@ -74,27 +74,35 @@ export function EnumSetting({
       className="min-h-11 min-w-0 max-w-full self-center appearance-auto rounded-control border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted mouse:min-h-7"
     >
       {toggle.choices?.map((choice) => (
-        <option key={choice} value={choice}>{choice}</option>
+        <option key={choice} value={choice}>
+          {choice}
+        </option>
       ))}
     </select>
   );
 }
 
 /** Gateway-backed text setting. Drafts remain local until explicit Save/Enter. */
-export function StringSetting({ toggle, busy, onSave }: {
+export function StringSetting({
+  toggle,
+  busy,
+  onSave,
+}: {
   toggle: Toggle;
   busy: boolean;
   onSave: (value: string) => Promise<boolean>;
 }) {
-  const [draft, setDraft] = useState(toggle.value ?? "");
-  const changed = draft !== (toggle.value ?? "");
+  const [draft, setDraft] = useState(toggle.value ?? '');
+  const changed = draft !== (toggle.value ?? '');
   return (
     <form
       className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4"
       onSubmit={(event) => {
         event.preventDefault();
         if (!busy && changed && draft.trim()) {
-          void onSave(draft).then((saved) => { if (saved) setDraft(draft.trim()); });
+          void onSave(draft).then((saved) => {
+            if (saved) setDraft(draft.trim());
+          });
         }
       }}
     >
@@ -105,13 +113,34 @@ export function StringSetting({ toggle, busy, onSave }: {
         )}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Input aria-label={toggle.label} value={draft} maxLength={toggle.max_length}
-          disabled={busy} required className="flex-1"
-          onChange={(event) => setDraft(event.target.value)} />
-        <Button type="submit" density="panel" disabled={busy || !changed || !draft.trim()}
-          aria-busy={busy}>{busy ? "Saving…" : "Save"}</Button>
-        {changed && <Button type="button" variant="secondary" density="panel" disabled={busy}
-          onClick={() => setDraft(toggle.value ?? "")}>Cancel</Button>}
+        <Input
+          aria-label={toggle.label}
+          value={draft}
+          maxLength={toggle.max_length}
+          disabled={busy}
+          required
+          className="flex-1"
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <Button
+          type="submit"
+          density="panel"
+          disabled={busy || !changed || !draft.trim()}
+          aria-busy={busy}
+        >
+          {busy ? 'Saving…' : 'Save'}
+        </Button>
+        {changed && (
+          <Button
+            type="button"
+            variant="secondary"
+            density="panel"
+            disabled={busy}
+            onClick={() => setDraft(toggle.value ?? '')}
+          >
+            Cancel
+          </Button>
+        )}
       </div>
     </form>
   );
@@ -151,9 +180,9 @@ export function MachineSettings({
   );
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const [failure, setFailure] = useState<
-    "unreachable" | "unauthorized" | "incompatible" | null
-  >(null);
+  const [failure, setFailure] = useState<'unreachable' | 'unauthorized' | 'incompatible' | null>(
+    null,
+  );
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -173,17 +202,17 @@ export function MachineSettings({
         // NOT "offline" — otherwise the dialog contradicts the reachable list.
         if (e instanceof GatewayError && e.status === 401) {
           setErr(null);
-          setFailure("unauthorized");
+          setFailure('unauthorized');
           setGroups(null);
           return;
         }
         setErr((e as Error).message);
         setGroups(null);
         if (e instanceof GatewayError && e.status === INCOMPATIBLE_STATUS) {
-          setFailure("incompatible");
+          setFailure('incompatible');
           return;
         }
-        setFailure("unreachable");
+        setFailure('unreachable');
       }
     },
     [client],
@@ -204,9 +233,7 @@ export function MachineSettings({
       (current) =>
         current?.map((group) => ({
           ...group,
-          toggles: group.toggles.map((toggle) =>
-            toggle.id === updated.id ? updated : toggle,
-          ),
+          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
         })) ?? null,
     );
   }
@@ -214,7 +241,7 @@ export function MachineSettings({
   async function flip(toggle: Toggle) {
     setPending(toggle.id);
     try {
-      patch(await client.setSetting(toggle.id, "toggle"));
+      patch(await client.setSetting(toggle.id, 'toggle'));
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -226,7 +253,7 @@ export function MachineSettings({
     setErr(null);
     setPending(toggle.id);
     try {
-      patch(await client.setSetting(toggle.id, "value", value));
+      patch(await client.setSetting(toggle.id, 'value', value));
       return true;
     } catch (e) {
       setErr((e as Error).message);
@@ -255,20 +282,14 @@ export function MachineSettings({
           <ProvidersPanel client={client} />
           <NotificationsPanel client={client} gateway={gateway} />
           <McpServersPanel client={client} />
-          <SpeechEnginesPanel
-            client={client}
-            prefs={speechPrefs}
-            onChange={onSpeechChange}
-          />
+          <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
         </>
       )}
 
-      {failure === "incompatible" ? null : failure === "unreachable" ? (
+      {failure === 'incompatible' ? null : failure === 'unreachable' ? (
         <SettingsPanel title="Settings">
           <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-            <p className="font-mono text-body font-bold text-err">
-              Machine unreachable
-            </p>
+            <p className="font-mono text-body font-bold text-err">Machine unreachable</p>
             <p className="font-mono text-meta text-dialog-hint">
               Can't load settings — vis isn't responding on this machine.
             </p>
@@ -277,16 +298,16 @@ export function MachineSettings({
             </Button>
           </div>
         </SettingsPanel>
-      ) : failure === "unauthorized" ? (
+      ) : failure === 'unauthorized' ? (
         <SettingsPanel title="Settings" meta="unauthorized">
           <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
             <p className="font-mono text-body font-bold text-warn-strong">
               Token missing or invalid
             </p>
             <p className="max-w-sm font-mono text-meta text-dialog-hint">
-              The machine is online, but rejected this token. Re-pair from{" "}
-              <code className="text-accent-ink">vis-agent gateway pair</code>{" "}
-              and paste the fresh link to load its settings.
+              The machine is online, but rejected this token. Re-pair from{' '}
+              <code className="text-accent-ink">vis-agent gateway pair</code> and paste the fresh
+              link to load its settings.
             </p>
             <Button variant="secondary" onClick={() => void load()}>
               Retry
@@ -307,7 +328,7 @@ export function MachineSettings({
             <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint">
               Loading settings…
             </p>
-            {["w-1/2", "w-2/3", "w-2/5"].map((width) => (
+            {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
               <div
                 key={width}
                 className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
@@ -333,10 +354,15 @@ export function MachineSettings({
             <div className="divide-y divide-dialog-edge">
               {group.toggles.map((toggle) => {
                 const busy = pending === toggle.id;
-                if (toggle.type === "string") return (
-                  <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy}
-                    onSave={(value) => pick(toggle, value)} />
-                );
+                if (toggle.type === 'string')
+                  return (
+                    <StringSetting
+                      key={`${toggle.id}:${toggle.value}`}
+                      toggle={toggle}
+                      busy={busy}
+                      onSave={(value) => pick(toggle, value)}
+                    />
+                  );
                 // Regression, user report (paraphrased: now that the row ends in a
                 // real toggle, what is the mark on the left for): the row said its
                 // state twice — a ticked ring in one alphabet and, a column away, the
@@ -355,15 +381,13 @@ export function MachineSettings({
                         {toggle.label}
                       </p>
                       {toggle.description && (
-                        <p
-                          className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint`}
-                        >
+                        <p className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint`}>
                           {toggle.description}
                         </p>
                       )}
                     </div>
 
-                    {toggle.type === "boolean" && (
+                    {toggle.type === 'boolean' && (
                       // A CONTROL ANSWERS THE WHOLE ROW, not its first line. The mark
                       // beside the name rides the title's baseline, but a 28px switch
                       // pinned to `items-start` sat 6px above the centre of the two
@@ -380,7 +404,7 @@ export function MachineSettings({
                       />
                     )}
 
-                    {toggle.type === "enum" && toggle.choices && (
+                    {toggle.type === 'enum' && toggle.choices && (
                       <EnumSetting
                         toggle={toggle}
                         busy={busy}
@@ -415,24 +439,24 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   // The rows this machine gave last time are the first frame; `load` below
   // revalidates them underneath. Opening on `null` flashed an empty band and
   // then moved every panel under it down (see `cachedMcpServers`).
-  const [servers, setServers] = useState<McpServer[] | null>(() =>
-    client.cachedMcpServers(),
-  );
+  const [servers, setServers] = useState<McpServer[] | null>(() => client.cachedMcpServers());
   const [showForm, setShowForm] = useState(false);
-  const [transport, setTransport] = useState<"stdio" | "streamable_http">(
-    "stdio",
-  );
-  const [name, setName] = useState("");
-  const [command, setCommand] = useState("");
-  const [args, setArgs] = useState("");
-  const [cwd, setCwd] = useState("");
-  const [url, setUrl] = useState("");
-  const [env, setEnv] = useState("");
-  const [headers, setHeaders] = useState("");
+  const [transport, setTransport] = useState<'stdio' | 'streamable_http'>('stdio');
+  const [name, setName] = useState('');
+  const [command, setCommand] = useState('');
+  const [args, setArgs] = useState('');
+  const [cwd, setCwd] = useState('');
+  const [url, setUrl] = useState('');
+  const [env, setEnv] = useState('');
+  const [headers, setHeaders] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<McpTestResult | null>(null);
-  const [auth, setAuth] = useState<{ flow: McpAuthFlow; client: GatewayClient; tab?: AuthTab } | null>(null);
+  const [auth, setAuth] = useState<{
+    flow: McpAuthFlow;
+    client: GatewayClient;
+    tab?: AuthTab;
+  } | null>(null);
   const authFlow = auth?.client === client ? auth.flow : null;
   const authEpoch = useRef(0);
   const stopAuth = useRef<AuthWatch | null>(null);
@@ -446,33 +470,36 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   // The one destructive question open at a time, asked in the row itself.
   const [confirming, setConfirming] = useState<{
     name: string;
-    kind: "remove" | "signout";
+    kind: 'remove' | 'signout';
   } | null>(null);
 
   // Escape unwinds the row's own question first, before the dialog hears it.
   useEffect(() => {
     if (confirming === null) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== 'Escape') return;
       event.stopPropagation();
       setConfirming(null);
     };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [confirming]);
 
   // When the current settling episode began, or null while every row is settled.
   const settlingSince = useRef<number | null>(null);
-  const load = useCallback(async (isPoll = false) => {
-    // A verb opens a fresh settle window; a poll only spends the open one.
-    if (!isPoll) settlingSince.current = null;
-    try {
-      setServers(await client.mcpServers());
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [client]);
+  const load = useCallback(
+    async (isPoll = false) => {
+      // A verb opens a fresh settle window; a poll only spends the open one.
+      if (!isPoll) settlingSince.current = null;
+      try {
+        setServers(await client.mcpServers());
+        setError(null);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    },
+    [client],
+  );
 
   useEffect(() => {
     void load();
@@ -489,24 +516,40 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     return () => window.clearTimeout(timer);
   }, [servers, load]);
 
-  useEffect(() => () => { authEpoch.current += 1; }, [client]);
+  useEffect(
+    () => () => {
+      authEpoch.current += 1;
+    },
+    [client],
+  );
 
   useEffect(() => {
     if (!auth || auth.client !== client) return;
     const { client: paired, flow, tab } = auth;
     const verdictOf = (value: McpAuthFlow) => ({ status: value.status, message: value.error });
-    const watcher = watchAuth({ ...flow, expires_at: flow.expires_at_ms }, {
-      complete: input => paired.mcpAuthComplete(flow.server, flow.flow_id, input).then(verdictOf),
-      poll: () => paired.mcpAuthPoll(flow.server, flow.flow_id).then(verdictOf),
-      cancel: () => paired.mcpAuthCancel(flow.server, flow.flow_id),
-    }, verdict => {
-      authEpoch.current += 1;
-      setAuth(null); setBusy(null);
-      if (verdict.status === "ok") void load();
-      else setError(verdict.message ?? "Authorization failed. Start sign-in again.");
-    }, undefined, tab);
+    const watcher = watchAuth(
+      { ...flow, expires_at: flow.expires_at_ms },
+      {
+        complete: (input) =>
+          paired.mcpAuthComplete(flow.server, flow.flow_id, input).then(verdictOf),
+        poll: () => paired.mcpAuthPoll(flow.server, flow.flow_id).then(verdictOf),
+        cancel: () => paired.mcpAuthCancel(flow.server, flow.flow_id),
+      },
+      (verdict) => {
+        authEpoch.current += 1;
+        setAuth(null);
+        setBusy(null);
+        if (verdict.status === 'ok') void load();
+        else setError(verdict.message ?? 'Authorization failed. Start sign-in again.');
+      },
+      undefined,
+      tab,
+    );
     stopAuth.current = watcher;
-    return () => { watcher.stop(); if (stopAuth.current === watcher) stopAuth.current = null; };
+    return () => {
+      watcher.stop();
+      if (stopAuth.current === watcher) stopAuth.current = null;
+    };
   }, [auth, client, load]);
 
   // Editing loads the sanitized row back into the form. `env` and `headers` come
@@ -516,38 +559,38 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     setError(null);
     setTest(null);
     setEditing(server);
-    setTransport(server?.transport ?? "stdio");
-    setName(server?.name ?? "");
-    setCommand(server?.command ?? "");
-    setArgs((server?.args ?? []).join("\n"));
-    setCwd(server?.cwd ?? "");
-    setUrl(server?.url ?? "");
-    setEnv("");
-    setHeaders("");
+    setTransport(server?.transport ?? 'stdio');
+    setName(server?.name ?? '');
+    setCommand(server?.command ?? '');
+    setArgs((server?.args ?? []).join('\n'));
+    setCwd(server?.cwd ?? '');
+    setUrl(server?.url ?? '');
+    setEnv('');
+    setHeaders('');
     setShowForm(true);
   }
 
   function closeForm() {
     setShowForm(false);
     setEditing(null);
-    setName("");
-    setCommand("");
-    setArgs("");
-    setCwd("");
-    setUrl("");
-    setEnv("");
-    setHeaders("");
+    setName('');
+    setCommand('');
+    setArgs('');
+    setCwd('');
+    setUrl('');
+    setEnv('');
+    setHeaders('');
   }
 
   const spec = (): McpServerInput => {
     const keyValues = (text: string) =>
       Object.fromEntries(
         text
-          .split("\n")
+          .split('\n')
           .map((line) => line.trim())
           .filter(Boolean)
           .map((line) => {
-            const index = line.indexOf("=");
+            const index = line.indexOf('=');
             return [line.slice(0, index).trim(), line.slice(index + 1)];
           })
           .filter(([key]) => key),
@@ -558,13 +601,13 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
       ...(editing ? { enabled: editing.enabled } : {}),
       ...(editing?.timeout_ms ? { timeout_ms: editing.timeout_ms } : {}),
     };
-    return transport === "stdio"
+    return transport === 'stdio'
       ? {
           ...kept,
           transport,
           command: command.trim(),
           args: args
-            .split("\n")
+            .split('\n')
             .map((arg) => arg.trim())
             .filter(Boolean),
           ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
@@ -579,11 +622,9 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   };
 
   const valid = () => {
-    if (!name.trim()) return "Server name is required.";
-    if (transport === "stdio" && !command.trim())
-      return "An executable is required.";
-    if (transport === "streamable_http" && !url.trim())
-      return "An MCP endpoint is required.";
+    if (!name.trim()) return 'Server name is required.';
+    if (transport === 'stdio' && !command.trim()) return 'An executable is required.';
+    if (transport === 'streamable_http' && !url.trim()) return 'An MCP endpoint is required.';
     return null;
   };
 
@@ -593,7 +634,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     // Keyed by the name the gateway already knows when editing.
     const target = editing ? editing.name : name.trim();
     const candidate = spec();
-    setBusy("save");
+    setBusy('save');
     try {
       const result = await client.testMcpServer(target, candidate);
       setTest(result);
@@ -625,9 +666,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   async function setRunning(server: McpServer, running: boolean) {
     setBusy(server.name);
     try {
-      await (running
-        ? client.startMcpServer(server.name)
-        : client.killMcpServer(server.name));
+      await (running ? client.startMcpServer(server.name) : client.killMcpServer(server.name));
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -659,8 +698,12 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
       setAuth({ flow, client, tab });
     } catch (error) {
       tab?.close();
-      if (authEpoch.current === epoch) setError(error instanceof GatewayOAuthError ? error.message
-        : "Cannot start sign-in. Check the gateway and MCP server settings, then try again.");
+      if (authEpoch.current === epoch)
+        setError(
+          error instanceof GatewayOAuthError
+            ? error.message
+            : 'Cannot start sign-in. Check the gateway and MCP server settings, then try again.',
+        );
     } finally {
       if (authEpoch.current === epoch) setBusy(null);
     }
@@ -710,19 +753,15 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   const form = showForm && (
     <div className="space-y-3 border-t border-dialog-edge bg-panel-2 p-3">
       {!editing && (
-        <div
-          className="grid grid-cols-2 gap-1"
-          role="group"
-          aria-label="MCP transport"
-        >
-          {(["stdio", "streamable_http"] as const).map((kind) => (
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="MCP transport">
+          {(['stdio', 'streamable_http'] as const).map((kind) => (
             <Chip
               key={kind}
               isOn={transport === kind}
               onClick={() => setTransport(kind)}
               className="w-full uppercase"
             >
-              {kind === "stdio" ? "Local command" : "Streamable HTTP"}
+              {kind === 'stdio' ? 'Local command' : 'Streamable HTTP'}
             </Chip>
           ))}
         </div>
@@ -738,7 +777,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           />
         </FormLabel>
       )}
-      {transport === "stdio" ? (
+      {transport === 'stdio' ? (
         <>
           <FormLabel label="Executable">
             <Input
@@ -756,9 +795,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
             <textarea
               value={args}
               onChange={(event) => setArgs(event.target.value)}
-              placeholder={
-                "-y\n@modelcontextprotocol/server-filesystem\n/path"
-              }
+              placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'}
               className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
             />
           </FormLabel>
@@ -775,8 +812,8 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
             label="Environment variables (optional)"
             hint={
               editing
-                ? "One NAME=value per line. Leave blank to keep the values already stored."
-                : "One NAME=value per line. Values are write-only after saving."
+                ? 'One NAME=value per line. Leave blank to keep the values already stored.'
+                : 'One NAME=value per line. Values are write-only after saving.'
             }
           >
             <textarea
@@ -803,8 +840,8 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
             label="Headers (optional)"
             hint={
               editing
-                ? "One NAME=value per line. Leave blank to keep the values already stored."
-                : "One NAME=value per line. Values are write-only after saving."
+                ? 'One NAME=value per line. Leave blank to keep the values already stored.'
+                : 'One NAME=value per line. Values are write-only after saving.'
             }
           >
             <textarea
@@ -822,22 +859,11 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
         </Banner>
       )}
       <div className="flex flex-wrap justify-end gap-2 border-t border-dialog-edge pt-2">
-        <Button
-          variant="secondary"
-          disabled={busy !== null}
-          onClick={() => closeForm()}
-        >
+        <Button variant="secondary" disabled={busy !== null} onClick={() => closeForm()}>
           Cancel
         </Button>
-        <Button
-          disabled={busy !== null}
-          onClick={() => void validateAndSave()}
-        >
-          {busy === "save"
-            ? "Validating…"
-            : editing
-              ? "Validate & update"
-              : "Validate & save"}
+        <Button disabled={busy !== null} onClick={() => void validateAndSave()}>
+          {busy === 'save' ? 'Validating…' : editing ? 'Validate & update' : 'Validate & save'}
         </Button>
       </div>
     </div>
@@ -876,7 +902,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           // The confirm IS the row, at the row's own height — the way a session's
           // delete asks. A cost sentence made it taller than the row it replaces.
           if (confirming?.name === server.name)
-            return confirming.kind === "remove" ? (
+            return confirming.kind === 'remove' ? (
               <ConfirmRow
                 key={server.name}
                 question={`Remove ${server.name}?`}
@@ -912,21 +938,21 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               // While the browser holds the sign-in, the same slot takes it back.
               isSigningIn
                 ? {
-                    key: "auth",
-                    label: "Cancel",
+                    key: 'auth',
+                    label: 'Cancel',
                     name: `Cancel signing in to ${server.name}`,
                     icon: <CircleSlashIcon className="size-4" />,
                     onSelect: cancelAuth,
                   }
                 : {
-                    key: "auth",
-                    label: server.is_authorized ? "Re-auth" : "Sign in",
+                    key: 'auth',
+                    label: server.is_authorized ? 'Re-auth' : 'Sign in',
                     name: server.is_authorized
                       ? `Sign in to ${server.name} again`
                       : `Sign in to ${server.name}`,
                     icon: <ArrowOutIcon className="size-4" />,
                     // The one verb a server cannot work without wears the accent.
-                    tone: server.is_authorized ? "neutral" : "accent",
+                    tone: server.is_authorized ? 'neutral' : 'accent',
                     onSelect: () => {
                       if (idle) void authorize(server);
                     },
@@ -934,15 +960,15 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
             );
           if (server.url && server.is_authorized)
             actions.push({
-              key: "signout",
-              label: "Sign out",
+              key: 'signout',
+              label: 'Sign out',
               name: `Sign out of ${server.name}`,
               icon: <CircleSlashIcon className="size-4" />,
-              onSelect: () => setConfirming({ name: server.name, kind: "signout" }),
+              onSelect: () => setConfirming({ name: server.name, kind: 'signout' }),
             });
           actions.push({
-            key: "run",
-            label: server.is_killed ? "Start" : "Kill",
+            key: 'run',
+            label: server.is_killed ? 'Start' : 'Kill',
             name: server.is_killed
               ? `Start ${server.name}`
               : `Kill ${server.name} until it is started again`,
@@ -957,8 +983,8 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           });
           if (server.is_managed) {
             actions.push({
-              key: "edit",
-              label: "Edit",
+              key: 'edit',
+              label: 'Edit',
               name: `Edit ${server.name}`,
               icon: <PencilIcon className="size-4" />,
               onSelect: () => {
@@ -966,12 +992,12 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               },
             });
             actions.push({
-              key: "remove",
-              label: "Remove",
+              key: 'remove',
+              label: 'Remove',
               name: `Remove ${server.name} from this machine`,
               icon: <TrashIcon className="size-4" />,
-              tone: "danger",
-              onSelect: () => setConfirming({ name: server.name, kind: "remove" }),
+              tone: 'danger',
+              onSelect: () => setConfirming({ name: server.name, kind: 'remove' }),
             });
           }
 
@@ -1008,7 +1034,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                         own line, and the state is the RING's interior, never the
                         ink alone. */}
                     <span
-                      className={`shrink-0 self-start ${state.isSettling ? "animate-pulse motion-reduce:animate-none" : ""}`}
+                      className={`shrink-0 self-start ${state.isSettling ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                       title={state.label}
                     >
                       <state.Mark className={`${MARK_NUDGE} ${state.tone}`} />
@@ -1028,16 +1054,16 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                         )}
                       </span>
                       <span className="block truncate font-mono text-meta text-dialog-hint">
-                        {server.transport === "stdio" ? server.command : server.url}
+                        {server.transport === 'stdio' ? server.command : server.url}
                       </span>
                     </span>
                     <span
-                      className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${state.tone === "text-ok" ? "text-dialog-hint" : state.tone}`}
+                      className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${state.tone === 'text-ok' ? 'text-dialog-hint' : state.tone}`}
                       title={state.label}
                     >
                       {/* A managed server's switch already says "off"; the word is
                           for the config-file row that has no switch to say it. */}
-                      {server.is_managed && !server.enabled ? "" : state.word}
+                      {server.is_managed && !server.enabled ? '' : state.word}
                     </span>
                     <ChevronIcon
                       open={isOpen}
@@ -1076,46 +1102,49 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
  * trailing chip — the count of what a connected server offers, the state of one
  * that is not — so the row never says the same thing twice.
  */
-function mcpServerMark(server: McpServer, isSigningIn = false): {
+function mcpServerMark(
+  server: McpServer,
+  isSigningIn = false,
+): {
   Mark: typeof CircleCheckIcon;
   tone: string;
   label: string;
   word: string;
   isSettling?: boolean;
 } {
-  const tools = `${server.tools} ${server.tools === 1 ? "tool" : "tools"}`;
+  const tools = `${server.tools} ${server.tools === 1 ? 'tool' : 'tools'}`;
   // The browser has the sign-in; the row says so in the ring, not in a panel.
   if (isSigningIn)
     return {
       Mark: CircleDotIcon,
-      tone: "text-warn",
-      label: "Waiting for the browser to finish sign-in",
-      word: "signing in",
+      tone: 'text-warn',
+      label: 'Waiting for the browser to finish sign-in',
+      word: 'signing in',
       isSettling: true,
     };
   if (server.is_killed)
     return {
       Mark: CircleSlashIcon,
-      tone: "text-dialog-hint",
-      label: "Killed — start it to reconnect",
-      word: "killed",
+      tone: 'text-dialog-hint',
+      label: 'Killed — start it to reconnect',
+      word: 'killed',
     };
   if (!server.enabled)
-    return { Mark: CircleDashedIcon, tone: "text-dialog-hint", label: "Disabled", word: "off" };
+    return { Mark: CircleDashedIcon, tone: 'text-dialog-hint', label: 'Disabled', word: 'off' };
   if (server.is_connected)
-    return { Mark: CircleCheckIcon, tone: "text-ok", label: "Connected", word: tools };
+    return { Mark: CircleCheckIcon, tone: 'text-ok', label: 'Connected', word: tools };
   if (server.url && !server.is_authorized)
     return {
       Mark: CircleAlertIcon,
-      tone: "text-warn",
-      label: "Not signed in — sign in to connect",
-      word: "sign in",
+      tone: 'text-warn',
+      label: 'Not signed in — sign in to connect',
+      word: 'sign in',
     };
   return {
     Mark: CircleDotIcon,
-    tone: "text-warn",
-    label: "Connecting",
-    word: "connecting",
+    tone: 'text-warn',
+    label: 'Connecting',
+    word: 'connecting',
     isSettling: true,
   };
 }
@@ -1123,15 +1152,15 @@ function mcpServerMark(server: McpServer, isSigningIn = false): {
 /** The whole non-secret spec of one server, under its own row. */
 function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
   const rows: [string, string][] = [];
-  if (server.transport === "stdio") {
-    rows.push(["Command", server.command ?? ""]);
-    if (server.args?.length) rows.push(["Arguments", server.args.join(" ")]);
-    if (server.cwd) rows.push(["Directory", server.cwd]);
+  if (server.transport === 'stdio') {
+    rows.push(['Command', server.command ?? '']);
+    if (server.args?.length) rows.push(['Arguments', server.args.join(' ')]);
+    if (server.cwd) rows.push(['Directory', server.cwd]);
   } else {
-    rows.push(["Endpoint", server.url ?? ""]);
-    rows.push(["Sign-in", server.is_authorized ? "Signed in" : "Not signed in"]);
+    rows.push(['Endpoint', server.url ?? '']);
+    rows.push(['Sign-in', server.is_authorized ? 'Signed in' : 'Not signed in']);
   }
-  rows.push(["Tools", String(server.tools)]);
+  rows.push(['Tools', String(server.tools)]);
   return (
     <div
       id={id}

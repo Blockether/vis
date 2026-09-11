@@ -131,7 +131,12 @@ describe('sorting', () => {
   });
 
   it('round-trips selected rows back to quoted CSV', () => {
-    expect(toCsv([['a', 'b'], ['x,1', 'say "hi"']])).toBe('a,b\n"x,1","say ""hi"""');
+    expect(
+      toCsv([
+        ['a', 'b'],
+        ['x,1', 'say "hi"'],
+      ]),
+    ).toBe('a,b\n"x,1","say ""hi"""');
   });
 });
 
@@ -183,7 +188,7 @@ describe('DataTable', () => {
     expect(html).not.toContain('Filter rows');
   });
 
-  it('rules every column but the first — the TUI grid\'s │, in CSS', () => {
+  it("rules every column but the first — the TUI grid's │, in CSS", () => {
     const heads = html.match(/<th\b[^>]*>/g) ?? [];
     // heads[0] is the `#` gutter; heads[1] is the first data column.
     expect(heads[1]).not.toContain('border-l');
@@ -230,7 +235,17 @@ describe('DataTable', () => {
 
   it('says so instead of painting an empty grid', () => {
     const empty = renderToStaticMarkup(
-      <DataTable body={['[Table: none.csv 0 rows × 1 cols, 0 B]', 'none.csv', 'text/csv', '1x0', '0 B', 'name'].join('\n')} compact />,
+      <DataTable
+        body={[
+          '[Table: none.csv 0 rows × 1 cols, 0 B]',
+          'none.csv',
+          'text/csv',
+          '1x0',
+          '0 B',
+          'name',
+        ].join('\n')}
+        compact
+      />,
     );
     expect(text(empty)).toContain('No rows');
   });

@@ -61,6 +61,6 @@ export interface PushResult {
   environment?: string;
 }
 
-export type Platform = "ios" | "ipados" | "android";
+export type Platform = 'ios' | 'ipados' | 'android';
 
-export const PLATFORMS: readonly Platform[] = ["ios", "ipados", "android"];
+export const PLATFORMS: readonly Platform[] = ['ios', 'ipados', 'android'];

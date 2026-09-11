@@ -6443,9 +6443,10 @@ h = 8"
                    (into {}
                          (map (fn [[_ operation running settled failed]]
                                 [operation [running settled failed]]))
-                         (re-seq #"(?m)^ {2}(\w+): \[\"([^\"]+)\", \"([^\"]+)\", \"([^\"]+)\"\],"
-                                 (str (second (re-find #"(?s)const ACTIVITY_VERBS[^{]+\{(.*?)\n\};"
-                                                       (str source))))))
+                         (re-seq #"(?m)^\s+(\w+): \['([^']+)', '([^']+)', '([^']+)'\],"
+                                 (str (second (re-find
+                                                #"(?s)const ACTIVITY_VERBS[^{]+\{(.*?)\n\s*\};"
+                                                (str source))))))
 
                    web-number
                    (fn [nm]

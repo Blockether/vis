@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest';
 import {
   MAX_SCALE,
   MIN_SCALE,
@@ -20,12 +20,12 @@ import {
   swipeFrom,
   swipeShift,
   swipeStep,
-} from "./zoom-pan";
+} from './zoom-pan';
 
 // The viewer's geometry, stated without a screen: pinching a phone used to be
 // the only way to find out what any of this did.
-describe("zoom limits", () => {
-  it("zooms out to half the frame and never magnifies past 6x", () => {
+describe('zoom limits', () => {
+  it('zooms out to half the frame and never magnifies past 6x', () => {
     expect(clampTransform({ scale: 0.2, x: 0, y: 0 }).scale).toBe(MIN_SCALE);
     expect(clampTransform({ scale: 0.5, x: 0, y: 0 }).scale).toBe(0.5);
     expect(clampTransform({ scale: 99, x: 0, y: 0 }).scale).toBe(MAX_SCALE);
@@ -33,7 +33,7 @@ describe("zoom limits", () => {
 
   // A picture pinched back down but left dragged off screen is a picture the
   // human cannot get back, so 1:1 always means centred.
-  it("recentres at or below 1:1", () => {
+  it('recentres at or below 1:1', () => {
     expect(clampTransform({ scale: 1, x: -400, y: 260 })).toEqual(NO_TRANSFORM);
     expect(clampTransform({ scale: 0.5, x: -400, y: 260 })).toEqual({
       scale: 0.5,
@@ -47,7 +47,7 @@ describe("zoom limits", () => {
     });
   });
 
-  it("keeps the offset while it is zoomed in", () => {
+  it('keeps the offset while it is zoomed in', () => {
     expect(zoomedBy({ scale: 2, x: 30, y: -10 }, 1.35)).toEqual({
       scale: 2.7,
       x: 30,
@@ -61,8 +61,8 @@ describe("zoom limits", () => {
   });
 });
 
-describe("gestures", () => {
-  it("scales a pinch by the spread of the two fingers", () => {
+describe('gestures', () => {
+  it('scales a pinch by the spread of the two fingers', () => {
     const gesture = pinchFrom({ x: 0, y: 0 }, { x: 100, y: 0 }, NO_TRANSFORM);
     const next = pinchTransform(gesture, { x: 0, y: 0 }, { x: 200, y: 0 });
     expect(next.scale).toBeCloseTo(2, 5);
@@ -70,19 +70,15 @@ describe("gestures", () => {
 
   // The picture has to stay under the fingers: a pinch that scales without
   // following its own midpoint slides away from the detail being examined.
-  it("follows the midpoint the fingers moved to", () => {
-    const gesture = pinchFrom(
-      { x: 0, y: 0 },
-      { x: 100, y: 0 },
-      { scale: 2, x: 0, y: 0 },
-    );
+  it('follows the midpoint the fingers moved to', () => {
+    const gesture = pinchFrom({ x: 0, y: 0 }, { x: 100, y: 0 }, { scale: 2, x: 0, y: 0 });
     const next = pinchTransform(gesture, { x: 40, y: 20 }, { x: 140, y: 20 });
     expect(next.x).toBeCloseTo(40, 5);
     expect(next.y).toBeCloseTo(20, 5);
     expect(next.scale).toBeCloseTo(2, 5);
   });
 
-  it("moves a pan by exactly what the finger travelled", () => {
+  it('moves a pan by exactly what the finger travelled', () => {
     const gesture = panFrom(1, { x: 10, y: 10 }, { scale: 3, x: 5, y: 5 });
     expect(panTransform(gesture, { x: 30, y: 0 })).toEqual({
       scale: 3,
@@ -93,18 +89,16 @@ describe("gestures", () => {
 
   // A pan at 1:1 has nothing to reveal, so it is absorbed rather than left as a
   // picture floating away from its own frame.
-  it("cannot drag a picture that is not zoomed", () => {
+  it('cannot drag a picture that is not zoomed', () => {
     const gesture = panFrom(1, { x: 0, y: 0 }, NO_TRANSFORM);
     expect(panTransform(gesture, { x: 120, y: 90 })).toEqual(NO_TRANSFORM);
   });
 });
 
-describe("what the screen shows", () => {
-  it("composites on the GPU and reads out a whole percentage", () => {
-    expect(transformCss({ scale: 2, x: -3, y: 4 })).toBe(
-      "translate3d(-3px, 4px, 0) scale(2)",
-    );
-    expect(zoomLabel({ scale: 1.356, x: 0, y: 0 })).toBe("136%");
+describe('what the screen shows', () => {
+  it('composites on the GPU and reads out a whole percentage', () => {
+    expect(transformCss({ scale: 2, x: -3, y: 4 })).toBe('translate3d(-3px, 4px, 0) scale(2)');
+    expect(zoomLabel({ scale: 1.356, x: 0, y: 0 })).toBe('136%');
   });
 });
 
@@ -115,8 +109,8 @@ describe("what the screen shows", () => {
 // closer" multiplied by 1.15 sixty times and slammed into the 6x ceiling. Zoom is a
 // function of HOW MUCH was scrolled, not of how many events the browser chose to
 // send, and one event may never move it more than a notch.
-describe("a wheel, a trackpad and a Safari pinch", () => {
-  it("zooms by the distance scrolled, not by the event count", () => {
+describe('a wheel, a trackpad and a Safari pinch', () => {
+  it('zooms by the distance scrolled, not by the event count', () => {
     // One mouse notch on a desktop: about a quarter closer, in one step.
     expect(wheelFactor(-100, 0, false)).toBeCloseTo(WHEEL_STEP_LIMIT, 5);
     expect(wheelFactor(100, 0, false)).toBeCloseTo(1 / WHEEL_STEP_LIMIT, 5);
@@ -129,18 +123,12 @@ describe("a wheel, a trackpad and a Safari pinch", () => {
     expect(glide ** 60).toBeLessThan(4);
   });
 
-  it("reads a line and a page of scroll as the pixels they stand for", () => {
-    expect(wheelFactor(-3, 1, false)).toBeCloseTo(
-      wheelFactor(-48, 0, false),
-      6,
-    );
-    expect(wheelFactor(-1, 2, false)).toBeCloseTo(
-      wheelFactor(-800, 0, false),
-      6,
-    );
+  it('reads a line and a page of scroll as the pixels they stand for', () => {
+    expect(wheelFactor(-3, 1, false)).toBeCloseTo(wheelFactor(-48, 0, false), 6);
+    expect(wheelFactor(-1, 2, false)).toBeCloseTo(wheelFactor(-800, 0, false), 6);
   });
 
-  it("never lets one event move more than a notch", () => {
+  it('never lets one event move more than a notch', () => {
     expect(wheelFactor(-100000, 0, false)).toBe(WHEEL_STEP_LIMIT);
     expect(wheelFactor(100000, 0, true)).toBe(1 / WHEEL_STEP_LIMIT);
   });
@@ -148,13 +136,13 @@ describe("a wheel, a trackpad and a Safari pinch", () => {
   // A trackpad pinch (ctrl+wheel on Chrome/Firefox) carries much smaller deltas than
   // a scroll for the same intent, so it answers on its own rate — otherwise pinching
   // to zoom feels dead next to scrolling.
-  it("answers a pinch faster than a scroll of the same delta", () => {
+  it('answers a pinch faster than a scroll of the same delta', () => {
     expect(wheelFactor(-4, 0, true)).toBeGreaterThan(wheelFactor(-4, 0, false));
   });
 
   // Zooming about the FRAME centre moves whatever was under the cursor away from it,
   // which is what "not reliable" is: you aim at a detail and the picture slides off.
-  it("keeps the pixel under the cursor under the cursor", () => {
+  it('keeps the pixel under the cursor under the cursor', () => {
     const center = { x: 200, y: 150 };
     const cursor = { x: 260, y: 110 };
     const before = { scale: 1.5, x: 12, y: -8 };
@@ -169,20 +157,10 @@ describe("a wheel, a trackpad and a Safari pinch", () => {
     expect(after.scale).toBeCloseTo(2.4, 6);
   });
 
-  it("still obeys the ceiling and recentres at or below 1:1", () => {
+  it('still obeys the ceiling and recentres at or below 1:1', () => {
     const center = { x: 200, y: 150 };
-    expect(
-      zoomedAbout({ scale: 5, x: 0, y: 0 }, 4, { x: 260, y: 110 }, center)
-        .scale,
-    ).toBe(6);
-    expect(
-      zoomedAbout(
-        { scale: 1.2, x: 40, y: 40 },
-        0.1,
-        { x: 260, y: 110 },
-        center,
-      ),
-    ).toEqual({
+    expect(zoomedAbout({ scale: 5, x: 0, y: 0 }, 4, { x: 260, y: 110 }, center).scale).toBe(6);
+    expect(zoomedAbout({ scale: 1.2, x: 40, y: 40 }, 0.1, { x: 260, y: 110 }, center)).toEqual({
       scale: MIN_SCALE,
       x: 0,
       y: 0,
@@ -192,37 +170,29 @@ describe("a wheel, a trackpad and a Safari pinch", () => {
 // "Trim to view" is the answer to zooming into a detail and then wanting only
 // that detail: the region is chosen with the same pinch that reads it, and
 // stated here as two boxes so no phone is needed to find out what it keeps.
-describe("trim to view", () => {
+describe('trim to view', () => {
   const frame = { left: 0, top: 0, width: 400, height: 300 };
 
-  it("keeps only the part of the picture the frame shows", () => {
+  it('keeps only the part of the picture the frame shows', () => {
     // Twice as wide and twice as tall as the frame, centred: the middle quarter
     // is what is on screen.
-    const part = visiblePart(
-      { left: -200, top: -150, width: 800, height: 600 },
-      frame,
-    );
+    const part = visiblePart({ left: -200, top: -150, width: 800, height: 600 }, frame);
     expect(part).toEqual({ x: 0.25, y: 0.25, width: 0.5, height: 0.5 });
   });
 
-  it("follows a pan, so the crop is wherever the picture was dragged to", () => {
-    const part = visiblePart(
-      { left: -400, top: -300, width: 800, height: 600 },
-      frame,
-    );
+  it('follows a pan, so the crop is wherever the picture was dragged to', () => {
+    const part = visiblePart({ left: -400, top: -300, width: 800, height: 600 }, frame);
     expect(part).toEqual({ x: 0.5, y: 0.5, width: 0.5, height: 0.5 });
   });
 
   // A fitted picture has nothing outside the frame, and a pinch parks a
   // fraction of a pixel off 1:1 constantly — cropping that is a tap wasted.
-  it("has nothing to trim when the whole picture is in view", () => {
+  it('has nothing to trim when the whole picture is in view', () => {
     expect(visiblePart({ left: 40, top: 20, width: 320, height: 260 }, frame)).toBeNull();
-    expect(
-      visiblePart({ left: -0.4, top: -0.3, width: 400.8, height: 300.6 }, frame),
-    ).toBeNull();
+    expect(visiblePart({ left: -0.4, top: -0.3, width: 400.8, height: 300.6 }, frame)).toBeNull();
   });
 
-  it("has nothing to trim when the picture is off screen or has no size", () => {
+  it('has nothing to trim when the picture is off screen or has no size', () => {
     expect(visiblePart({ left: 900, top: 0, width: 200, height: 200 }, frame)).toBeNull();
     expect(visiblePart({ left: 0, top: 0, width: 0, height: 0 }, frame)).toBeNull();
   });
@@ -246,37 +216,33 @@ describe("trim to view", () => {
 // … on iOS and android we should have swipes working"): a gallery could only be
 // walked from two arrow buttons on the toolbar, so on glass the one gesture a
 // reader actually makes moved nothing.
-describe("a swipe through a gallery", () => {
+describe('a swipe through a gallery', () => {
   const swipe = swipeFrom(1, { x: 200, y: 300 });
   const both = { back: true, forward: true };
 
-  it("asks for the next picture when the finger pushes this one off to the left", () => {
+  it('asks for the next picture when the finger pushes this one off to the left', () => {
     expect(swipeStep(swipe, { x: 200 - SWIPE_TRAVEL, y: 300 })).toBe(1);
     expect(swipeStep(swipe, { x: 200 + SWIPE_TRAVEL, y: 300 })).toBe(-1);
   });
 
-  it("ignores a drag that stopped short, and one steeper than it is wide", () => {
+  it('ignores a drag that stopped short, and one steeper than it is wide', () => {
     expect(swipeStep(swipe, { x: 200 - SWIPE_TRAVEL + 1, y: 300 })).toBe(0);
     expect(swipeStep(swipe, { x: 100, y: 420 })).toBe(0);
   });
 
-  it("follows the finger exactly while there is a neighbour to bring in", () => {
+  it('follows the finger exactly while there is a neighbour to bring in', () => {
     expect(swipeShift(swipe, { x: 160, y: 306 }, both)).toBe(-40);
     expect(swipeShift(swipe, { x: 240, y: 306 }, both)).toBe(40);
   });
 
   // The ends of a gallery are told by the picture refusing to travel, now that no
   // greyed-out arrow is there to say it.
-  it("resists at the ends, where nothing can come in", () => {
-    expect(
-      swipeShift(swipe, { x: 160, y: 300 }, { back: true, forward: false }),
-    ).toBe(-10);
-    expect(
-      swipeShift(swipe, { x: 240, y: 300 }, { back: false, forward: true }),
-    ).toBe(10);
+  it('resists at the ends, where nothing can come in', () => {
+    expect(swipeShift(swipe, { x: 160, y: 300 }, { back: true, forward: false })).toBe(-10);
+    expect(swipeShift(swipe, { x: 240, y: 300 }, { back: false, forward: true })).toBe(10);
   });
 
-  it("stays still under a finger sliding down the picture", () => {
+  it('stays still under a finger sliding down the picture', () => {
     expect(swipeShift(swipe, { x: 210, y: 400 }, both)).toBe(0);
   });
 });

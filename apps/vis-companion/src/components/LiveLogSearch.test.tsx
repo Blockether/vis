@@ -6,12 +6,28 @@ import type { LiveLogPage, LiveView } from '../lib/live-view';
 
 afterEach(cleanup);
 const view = (lines = ['ok', 'ERROR [disk]', 'error again'], total = lines.length): LiveView => ({
-  id: 'search-view', title: 'Build', seq: total,
-  nodes: [{ id: 'log', type: 'log', label: 'Build log', lines, total_lines: total,
-    window_lines: 3, default_expanded: true }],
+  id: 'search-view',
+  title: 'Build',
+  seq: total,
+  nodes: [
+    {
+      id: 'log',
+      type: 'log',
+      label: 'Build log',
+      lines,
+      total_lines: total,
+      window_lines: 3,
+      default_expanded: true,
+    },
+  ],
 });
 const page = (lines = ['ERROR [disk]'], from = 0, matched = 1, total = 500): LiveLogPage => ({
-  node_id: 'log', from, lines, matched, total, line_numbers: lines.map((_, i) => from + i + 10),
+  node_id: 'log',
+  from,
+  lines,
+  matched,
+  total,
+  line_numbers: lines.map((_, i) => from + i + 10),
 });
 function search(query: string) {
   const field = screen.getByRole('searchbox', { name: 'Search Build log' });
@@ -41,7 +57,9 @@ describe('log search', () => {
   });
 
   it('searches the durable record and pages by match offset, not source line', async () => {
-    const load = vi.fn().mockResolvedValueOnce(page(['ERROR [disk]'], 0, 201))
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(page(['ERROR [disk]'], 0, 201))
       .mockResolvedValueOnce(page(['error last'], 200, 201));
     render(<LiveViewPanel view={view(['latest'], 500)} load={load} />);
     search('ERROR');
@@ -56,7 +74,14 @@ describe('log search', () => {
 
   it('ignores an older response after a new query and after clearing', async () => {
     let resolveOld!: (value: LiveLogPage) => void;
-    const load = vi.fn().mockImplementationOnce(() => new Promise<LiveLogPage>(resolve => { resolveOld = resolve; }))
+    const load = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<LiveLogPage>((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
       .mockResolvedValueOnce(page(['new match']));
     render(<LiveViewPanel view={view()} load={load} />);
     search('old');
@@ -72,14 +97,19 @@ describe('log search', () => {
     const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(page());
     render(<LiveViewPanel view={view()} load={load} />);
     search('error');
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Could not read log. Try again.');
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Could not read log. Try again.',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Refresh results' }));
     await waitFor(() => expect(output()).toContain('ERROR [disk]'));
     expect(load).toHaveBeenLastCalledWith('log', 0, 200, 'error');
   });
 
   it('keeps a labelled snapshot while new output arrives and refreshes it', async () => {
-    const load = vi.fn().mockResolvedValueOnce(page(['error before'], 0, 1, 3))
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(page(['error before'], 0, 1, 3))
       .mockResolvedValueOnce(page(['error before', 'error after'], 0, 2, 4));
     const rendered = render(<LiveViewPanel view={view()} load={load} />);
     search('error');

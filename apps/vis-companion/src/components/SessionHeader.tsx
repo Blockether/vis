@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
-import gatewayContract from "../../../../packages/vis-contract/resources/vis-contract/gateway.json";
-import type { SessionGoal } from "../lib/types";
-import { useDeskRail } from "../lib/fit-rows";
-import { markSessionId } from "../lib/session-id";
-import { ArtifactsChip } from "./ArtifactsSheet";
-import { BackButton, Button, CopyChip, DialogFrame, Modal, SidebarToggle } from "./ui";
+import { useEffect, useState } from 'react';
+import gatewayContract from '../../../../packages/vis-contract/resources/vis-contract/gateway.json';
+import type { SessionGoal } from '../lib/types';
+import { useDeskRail } from '../lib/fit-rows';
+import { markSessionId } from '../lib/session-id';
+import { ArtifactsChip } from './ArtifactsSheet';
+import { BackButton, Button, CopyChip, DialogFrame, Modal, SidebarToggle } from './ui';
 
 const GOAL_STATUS = gatewayContract.session_goal.status_labels;
 
@@ -12,15 +12,16 @@ const GOAL_STATUS = gatewayContract.session_goal.status_labels;
 function GoalTime({ goal }: { goal: SessionGoal }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (goal.status !== "active") return;
+    if (goal.status !== 'active') return;
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [goal.status]);
-  const elapsed = goal.time_used_ms + (goal.status === "active" ? Math.max(0, now - goal.updated_at) : 0);
+  const elapsed =
+    goal.time_used_ms + (goal.status === 'active' ? Math.max(0, now - goal.updated_at) : 0);
   const seconds = Math.floor(elapsed / 1_000);
   const hours = Math.floor(seconds / 3_600);
   const minutes = Math.floor(seconds / 60) % 60;
-  const duration = `${hours ? `${hours}h ` : ""}${hours || minutes ? `${minutes}m ` : ""}${seconds % 60}s`;
+  const duration = `${hours ? `${hours}h ` : ''}${hours || minutes ? `${minutes}m ` : ''}${seconds % 60}s`;
   return <p className="text-ui text-dialog-hint">Time in goal: {duration}</p>;
 }
 
@@ -78,14 +79,10 @@ export function SessionHeader({
     /* The notch strip stands above the 52px band via box-content. Edge controls
        own horizontal safe-area padding so the header's paper still reaches the glass. */
     <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:min-h-9 mouse:pt-0">
-      {!isDesk && (
-        <BackButton label="Back to sessions" onClick={commands.back} />
-      )}
-      {isDesk && sidebar && (
-        <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />
-      )}
+      {!isDesk && <BackButton label="Back to sessions" onClick={commands.back} />}
+      {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
       <div
-        className={`min-w-0 flex-1 self-center py-1.5 mouse:py-1 ${isDesk && !sidebar ? "pl-4 pr-3" : "px-3"}`}
+        className={`min-w-0 flex-1 self-center py-1.5 mouse:py-1 ${isDesk && !sidebar ? 'pl-4 pr-3' : 'px-3'}`}
       >
         {/* The title is the sentence the screen is about. It stays one step above
             its body by size and weight, while the connection line and id chip
@@ -96,19 +93,24 @@ export function SessionHeader({
         <div className="flex min-w-0 items-center gap-1.5 font-mono text-ui text-dialog-hint mouse:text-meta">
           <span
             className={`size-1.5 shrink-0 ${
-              model.connected
-                ? "bg-ok"
-                : "animate-pulse bg-turn-edge motion-reduce:animate-none"
+              model.connected ? 'bg-ok' : 'animate-pulse bg-turn-edge motion-reduce:animate-none'
             }`}
           />
-          <span className="shrink-0">
-            {model.connected ? "Connected" : "Reconnecting"}
-          </span>
+          <span className="shrink-0">{model.connected ? 'Connected' : 'Reconnecting'}</span>
           {goal && (
-            <Button variant="quiet" density="panel" pressEffect="none" className="min-w-0 max-w-full"
+            <Button
+              variant="quiet"
+              density="panel"
+              pressEffect="none"
+              className="min-w-0 max-w-full"
               aria-label={`Goal: ${GOAL_STATUS[goal.status]} — ${goal.objective}`}
-              aria-haspopup="dialog" onClick={() => setGoalDetails(true)}>
-              <span className="block max-w-full truncate">Goal: {goal.status !== "active" && `${GOAL_STATUS[goal.status]} — `}{goal.objective}</span>
+              aria-haspopup="dialog"
+              onClick={() => setGoalDetails(true)}
+            >
+              <span className="block max-w-full truncate">
+                Goal: {goal.status !== 'active' && `${GOAL_STATUS[goal.status]} — `}
+                {goal.objective}
+              </span>
             </Button>
           )}
         </div>
@@ -123,16 +125,23 @@ export function SessionHeader({
       </div>
       {goal && goalDetails && (
         <Modal onDismiss={() => setGoalDetails(false)} size="fit">
-          <DialogFrame title="Session goal" subtitle={GOAL_STATUS[goal.status]}
-            closeLabel="Close session goal" onClose={() => setGoalDetails(false)}>
+          <DialogFrame
+            title="Session goal"
+            subtitle={GOAL_STATUS[goal.status]}
+            closeLabel="Close session goal"
+            onClose={() => setGoalDetails(false)}
+          >
             <div className="space-y-3 p-4 text-body text-white">
               <p className="whitespace-pre-wrap break-words">{goal.objective}</p>
               <p className="text-ui text-dialog-hint">
-                Iterations: {goal.iterations_used.toLocaleString("en-US")} / {goal.iteration_budget?.toLocaleString("en-US") ?? "unlimited"}
+                Iterations: {goal.iterations_used.toLocaleString('en-US')} /{' '}
+                {goal.iteration_budget?.toLocaleString('en-US') ?? 'unlimited'}
               </p>
               <GoalTime key={goal.id} goal={goal} />
               {goal.reason && <p className="whitespace-pre-wrap break-words">{goal.reason}</p>}
-              <p className="text-ui text-dialog-hint">Use /goal --pause, --resume or --cancel in the composer.</p>
+              <p className="text-ui text-dialog-hint">
+                Use /goal --pause, --resume or --cancel in the composer.
+              </p>
             </div>
           </DialogFrame>
         </Modal>

@@ -62,9 +62,7 @@ import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
 // plus the getUserMedia/canvas plumbing, and it is only ever mounted after an
 // explicit tap on "Scan". Keep it out of the launch chunk and warm it on idle
 // once these controls are up, so the tap still opens the camera immediately.
-const QrScanner = lazy(() =>
-  import('./QrScanner').then((m) => ({ default: m.QrScanner })),
-);
+const QrScanner = lazy(() => import('./QrScanner').then((m) => ({ default: m.QrScanner })));
 
 function prefetchScanner() {
   warm(import('./QrScanner'));
@@ -145,7 +143,8 @@ async function probeOnce(conn: GatewayConn): Promise<{ state: GwState; why?: str
       if (e.status > 0) return { state: 'online', why: e.message };
       return { state: 'offline', why: e.message };
     }
-    if (ctrl.signal.aborted) return { state: 'offline', why: `no answer in ${PROBE_TIMEOUT_MS / 1000}s` };
+    if (ctrl.signal.aborted)
+      return { state: 'offline', why: `no answer in ${PROBE_TIMEOUT_MS / 1000}s` };
     return { state: 'offline', why: (e as Error).message || 'network error' };
   } finally {
     clearTimeout(deadline);
@@ -266,13 +265,45 @@ function healthView(h?: GwHealth): GwHealthView {
   const { ms, why } = fresh ?? {};
   switch (state) {
     case 'online':
-      return { state, Mark: CircleCheckIcon, label: 'Online', ms, why, dotClass: 'text-ok', textClass: 'text-dialog-hint' };
+      return {
+        state,
+        Mark: CircleCheckIcon,
+        label: 'Online',
+        ms,
+        why,
+        dotClass: 'text-ok',
+        textClass: 'text-dialog-hint',
+      };
     case 'offline':
-      return { state, Mark: CircleXIcon, label: 'Offline', ms, why, dotClass: 'text-err', textClass: 'text-err' };
+      return {
+        state,
+        Mark: CircleXIcon,
+        label: 'Offline',
+        ms,
+        why,
+        dotClass: 'text-err',
+        textClass: 'text-err',
+      };
     case 'auth':
-      return { state, Mark: CircleAlertIcon, label: 'Unauthorized', ms, why, dotClass: 'text-warn-strong', textClass: 'text-warn-strong' };
+      return {
+        state,
+        Mark: CircleAlertIcon,
+        label: 'Unauthorized',
+        ms,
+        why,
+        dotClass: 'text-warn-strong',
+        textClass: 'text-warn-strong',
+      };
     default:
-      return { state, Mark: CircleDashedIcon, label: 'Checking…', ms, why, dotClass: 'text-dialog-hint', textClass: 'text-dialog-hint' };
+      return {
+        state,
+        Mark: CircleDashedIcon,
+        label: 'Checking…',
+        ms,
+        why,
+        dotClass: 'text-dialog-hint',
+        textClass: 'text-dialog-hint',
+      };
   }
 }
 
@@ -441,10 +472,7 @@ function AddressMenu({
           hint="Follow the most durable address that answers"
           icon={<SortIcon className="size-4" />}
           onSelect={() =>
-            onSelect(
-              bestAddress(urls.filter((url) => reach[url] === 'online')) ?? conn.url,
-              false,
-            )
+            onSelect(bestAddress(urls.filter((url) => reach[url] === 'online')) ?? conn.url, false)
           }
         />
       )}
@@ -666,7 +694,11 @@ export function MachineRows({
                     else if (!isChecking) void onRetry?.(conn);
                   }}
                   className="min-w-0 gap-3"
-                  aria-label={!isOnline ? `${isChecking ? 'Checking' : 'Retry'} connection to ${name}` : undefined}
+                  aria-label={
+                    !isOnline
+                      ? `${isChecking ? 'Checking' : 'Retry'} connection to ${name}`
+                      : undefined
+                  }
                   aria-disabled={isChecking || (!isOnline && !onRetry) || undefined}
                   aria-busy={isChecking || undefined}
                   aria-expanded={isOnline && renderPanel ? isOpen : undefined}
@@ -701,9 +733,7 @@ export function MachineRows({
                     className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}
                     title={hv.why ?? hv.label}
                   >
-                    {hv.state === 'online'
-                      ? (hv.ms != null ? `${hv.ms}ms` : '')
-                      : hv.label}
+                    {hv.state === 'online' ? (hv.ms != null ? `${hv.ms}ms` : '') : hv.label}
                   </span>
                   {isOnline && actionLabel && (
                     <span
@@ -715,8 +745,10 @@ export function MachineRows({
                   )}
                   {!isOnline ? (
                     <RefreshIcon isBusy={isChecking} className="size-3 shrink-0 text-dialog-hint" />
-                  ) : (renderPanel || actionLabel) && (
-                    <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
+                  ) : (
+                    (renderPanel || actionLabel) && (
+                      <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
+                    )
                   )}
                 </ListRow>
               </div>
@@ -940,8 +972,8 @@ function PairingProgress({
             Pairing with {run.label}
           </span>
           <span className="block font-mono text-chip text-dialog-hint">
-            Trying {run.candidates.length} {plural} · {settled} of{' '}
-            {run.candidates.length} answered · up to {secondsLeft}s left
+            Trying {run.candidates.length} {plural} · {settled} of {run.candidates.length} answered
+            · up to {secondsLeft}s left
           </span>
         </span>
         <Button variant="secondary" onClick={onStop}>
@@ -1136,7 +1168,10 @@ export function AddMachine({
       // run settles whatever was still in flight, so an address that had already
       // answered would otherwise be chosen and paired by the act of giving up.
       if (ctrl.signal.aborted) {
-        setMsg({ kind: 'warn', text: `Stopped pairing with ${hostOf(conn.url)}. Nothing was saved.` });
+        setMsg({
+          kind: 'warn',
+          text: `Stopped pairing with ${hostOf(conn.url)}. Nothing was saved.`,
+        });
         return;
       }
       if (chosen) {
@@ -1188,14 +1223,20 @@ export function AddMachine({
       return;
     }
     if (!address) {
-      setMsg({ kind: 'err', text: `"${payload.trim()}" is not a pairing link or a machine address` });
+      setMsg({
+        kind: 'err',
+        text: `"${payload.trim()}" is not a pairing link or a machine address`,
+      });
       return;
     }
     await tryConn({ url: address, token: token.trim() || undefined, label: hostOf(address) });
   }
 
   const secondsLeft = run
-    ? Math.max(0, Math.ceil((run.startedAt + PROBE_TIMEOUT_MS - Math.max(now, run.startedAt)) / 1000))
+    ? Math.max(
+        0,
+        Math.ceil((run.startedAt + PROBE_TIMEOUT_MS - Math.max(now, run.startedAt)) / 1000),
+      )
     : 0;
 
   // The field and its verb stay one row at every width: a hint standing between them
@@ -1295,8 +1336,8 @@ export function AddMachine({
         <ol className="min-w-0 space-y-5 @3xl:grid @3xl:grid-cols-3 @3xl:gap-x-6 @3xl:space-y-0">
           <PairStep n={1} title="On the machine that runs vis">
             <p className="text-body text-dialog-hint">
-              Start the gateway where this device can reach it. It prints a QR code and a
-              pairing link.
+              Start the gateway where this device can reach it. It prints a QR code and a pairing
+              link.
             </p>
             <PairCommand value="vis-agent gateway start --host 0.0.0.0 --require-token --pair" />
             <p className="text-ui text-dialog-hint">

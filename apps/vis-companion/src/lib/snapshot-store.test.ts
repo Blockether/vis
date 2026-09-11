@@ -4,7 +4,11 @@ import type { SnapshotStores } from './snapshot-store';
 
 const storageKey = 'vis.snapshots.v1';
 const key = (kind: string, id: string) => `http://gateway.example.com\u0000${kind}\u0000${id}`;
-const stores = (): SnapshotStores => ({ snapshots: new Map(), stamps: new Map(), windows: new Map() });
+const stores = (): SnapshotStores => ({
+  snapshots: new Map(),
+  stamps: new Map(),
+  windows: new Map(),
+});
 const persisted = () => JSON.parse(localStorage.getItem(storageKey)!);
 
 beforeEach(() => {
@@ -28,7 +32,14 @@ describe('snapshot persistence during chat', () => {
     const reads = Array.from({ length: 10 }, () => vi.fn(() => 'x'.repeat(220_000)));
     reads.forEach((answer, index) => {
       const id = key('transcript', String(index));
-      cache.snapshots.set(id, [{ id: `turn-${index}`, get answer() { return answer(); } }]);
+      cache.snapshots.set(id, [
+        {
+          id: `turn-${index}`,
+          get answer() {
+            return answer();
+          },
+        },
+      ]);
       cache.stamps.set(id, `stamp-${index}`);
       cache.windows.set(id, { offset: 0, total: 1 });
     });
@@ -50,12 +61,22 @@ describe('snapshot persistence during chat', () => {
     const cache = stores();
     const answer = vi.fn(() => 'Saved tool output '.repeat(20_000));
     const transcript = key('transcript', 'previous');
-    cache.snapshots.set(transcript, [{ get answer() { return answer(); } }]);
+    cache.snapshots.set(transcript, [
+      {
+        get answer() {
+          return answer();
+        },
+      },
+    ]);
     flushSnapshots(cache);
     answer.mockClear();
 
     for (let poll = 0; poll < 3; poll += 1) {
-      cache.snapshots.set(key('session', 'empty'), { id: 'empty', turn_count: 0, server_time_ms: poll });
+      cache.snapshots.set(key('session', 'empty'), {
+        id: 'empty',
+        turn_count: 0,
+        server_time_ms: poll,
+      });
       scheduleSnapshotFlush(cache);
       await vi.advanceTimersByTimeAsync(400);
     }
@@ -69,7 +90,13 @@ describe('snapshot persistence during chat', () => {
     const { flushSnapshots } = await import('./snapshot-store');
     const cache = stores();
     const answer = vi.fn(() => 'x'.repeat(1_000_001));
-    cache.snapshots.set(key('transcript', 'large'), [{ get answer() { return answer(); } }]);
+    cache.snapshots.set(key('transcript', 'large'), [
+      {
+        get answer() {
+          return answer();
+        },
+      },
+    ]);
     cache.snapshots.set(key('session', 'empty'), { id: 'empty' });
     flushSnapshots(cache);
     answer.mockClear();
@@ -91,7 +118,9 @@ describe('snapshot persistence during chat', () => {
     expect(persisted().snapshots[transcript]).toEqual(rows.slice(-8));
     expect(persisted().windows[transcript]).toEqual({ offset: 24, total: 32 });
 
-    const updated = rows.map((row) => row.id === 't11' ? { ...row, answer: 'After \"quoted\" \n żółć' } : row);
+    const updated = rows.map((row) =>
+      row.id === 't11' ? { ...row, answer: 'After \"quoted\" \n żółć' } : row,
+    );
     cache.snapshots.set(transcript, updated);
     cache.stamps.set(transcript, 'second');
     flushSnapshots(cache);
@@ -121,14 +150,18 @@ describe('snapshot persistence during chat', () => {
     flushSnapshots(cache);
     const cold = stores();
     hydrateSnapshots(cold);
-    expect([...cold.snapshots.keys()]).toEqual(['second', 'third'].map((id) => key('transcript', id)));
+    expect([...cold.snapshots.keys()]).toEqual(
+      ['second', 'third'].map((id) => key('transcript', id)),
+    );
 
     const first = key('transcript', 'first');
     const value = cache.snapshots.get(first);
     cache.snapshots.delete(first);
     cache.snapshots.set(first, value);
     flushSnapshots(cache);
-    expect(Object.keys(persisted().snapshots)).toEqual(['third', 'first'].map((id) => key('transcript', id)));
+    expect(Object.keys(persisted().snapshots)).toEqual(
+      ['third', 'first'].map((id) => key('transcript', id)),
+    );
   });
 
   it('coalesces writes and flushes the pending cache on hide', async () => {

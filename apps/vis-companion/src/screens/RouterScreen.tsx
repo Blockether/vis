@@ -176,24 +176,26 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
 
                     {sid && provider.models.length > 0 && (
                       <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {preferredModelFirst(provider.models, provider.default_model).map((model) => {
-                          const active = pref?.provider === provider.id && pref?.model === model;
-                          return (
-                            <li key={model} className="min-w-0">
-                              <ListRow
-                                isFramed
-                                isSelected={active}
-                                disabled={picking === `${provider.id}:${model}`}
-                                onClick={() => void pick(provider, model)}
-                                aria-pressed={active}
-                              >
-                                <span className="min-w-0 flex-1 truncate font-mono text-ui">
-                                  {model}
-                                </span>
-                              </ListRow>
-                            </li>
-                          );
-                        })}
+                        {preferredModelFirst(provider.models, provider.default_model).map(
+                          (model) => {
+                            const active = pref?.provider === provider.id && pref?.model === model;
+                            return (
+                              <li key={model} className="min-w-0">
+                                <ListRow
+                                  isFramed
+                                  isSelected={active}
+                                  disabled={picking === `${provider.id}:${model}`}
+                                  onClick={() => void pick(provider, model)}
+                                  aria-pressed={active}
+                                >
+                                  <span className="min-w-0 flex-1 truncate font-mono text-ui">
+                                    {model}
+                                  </span>
+                                </ListRow>
+                              </li>
+                            );
+                          },
+                        )}
                       </ul>
                     )}
                   </div>
