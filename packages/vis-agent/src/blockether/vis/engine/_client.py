@@ -1785,6 +1785,24 @@ class GatewayClient:
         )
         return response.json()
 
+    def post_machines_order(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/machines/order — register gateway IDs and return their durable order."""
+        response = self._request(
+            "POST",
+            "/v1/machines/order",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def get_settings(
         self, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:

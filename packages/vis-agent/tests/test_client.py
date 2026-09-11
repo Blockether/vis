@@ -439,6 +439,15 @@ def test_dedicated_public_operations_replace_raw_call():
         assert calls[-1][1] == "/v1/providers/example/status"
 
 
+def test_machine_order_preserves_request_and_response():
+    body = {"machine_ids": ["new", "primary"]}
+    reply = {"machine_ids": ["primary", "new"]}
+    with endpoint(lambda *_: (200, reply)) as (url, calls):
+        assert GatewayClient(url).post_machines_order(body=body) == reply
+        assert calls[-1][:2] == ("POST", "/v1/machines/order")
+        assert json.loads(calls[-1][3]) == body
+
+
 def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     import inspect
 
