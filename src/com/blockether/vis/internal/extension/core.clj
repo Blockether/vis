@@ -1971,7 +1971,8 @@
                :activity (:ext.symbol/activity sym-entry)
                :label (tool-start-label args)
                :phrase (tool-start-phrase sym-entry env args)
-               :args args}]
+               :args args
+               :workspace-root (workspace/workspace-root env)}]
 
           (record-tool-event! (activity-event/start-event ctx invocation details))
           (binding [*tool-event-context*

@@ -8,10 +8,12 @@
             [com.blockether.vis.contract.activity :as contract]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]
-           [java.util.concurrent.atomic AtomicLong]))
+           [java.util.concurrent.atomic AtomicLong]
+           [java.util.regex Pattern]))
 
 (def max-event-bytes (get contract/limits "max_event_bytes"))
 
@@ -81,6 +83,62 @@
                     :else i))]
 
         (str (String. head 0 (int end) StandardCharsets/UTF_8) marker)))))
+
+(defn- compact-path-text
+  "Shorten known path prefixes in display text, not embedded URL paths or sibling names.
+   Code, markdown and diff blocks are kept outside this function."
+  [workspace-root text]
+  (if-not (string? text)
+    text
+    (reduce (fn [text [prefix replacement]]
+              (if (str/blank? prefix)
+                text
+                (str/replace
+                  text
+                  (re-pattern
+                    (str "(?<![\\p{L}\\p{N}_./\\\\:~%-])"
+                         (str/join "[/\\\\]"
+                                   (map #(Pattern/quote %) (str/split (paths/unixify prefix) #"/")))
+                         "(?:([/\\\\])(?=[^\\s\"'`),;\\]}])|[/\\\\]?(?=$|[\\s\"'`),;\\]}]))"))
+                  (fn [[_ separator]]
+                    (if separator (if (= replacement ".") "" "~/") replacement)))))
+            text
+            (distinct [[workspace-root "."]
+                       [(when workspace-root (paths/abbreviate-home workspace-root)) "."]
+                       [(System/getProperty "user.home") "~"]]))))
+
+(defn- compact-presentation
+  [workspace-root presentation]
+  (let [field-key
+        (fn [m k]
+          (if (contains? m (keyword k)) (keyword k) k))
+
+        compact
+        #(compact-path-text workspace-root %)
+
+        block
+        (fn [block]
+          (case (some-> (get block (field-key block "type"))
+                        name)
+            ("text" "heading")
+            (update block (field-key block "text") compact)
+
+            "table"
+            (update block
+                    (field-key block "rows")
+                    #(mapv (fn [row]
+                             (mapv compact row))
+                           %))
+
+            block))]
+
+    (cond-> (-> presentation
+                (update (field-key presentation "headline") compact)
+                (update (field-key presentation "summary") compact)
+                (update (field-key presentation "content") #(mapv block %)))
+      (contains? presentation (field-key presentation "sections"))
+      (update (field-key presentation "sections")
+              #(mapv (partial compact-presentation workspace-root) %)))))
 
 (defn redact
   "Remove credential-bearing values recursively before summaries or sizes exist."
@@ -371,11 +429,11 @@
 
 (defn content-event
   "Validate a whole presentation replacement; text and content never author lifecycle."
-  [ctx invocation {:keys [operation presenter activity]} presentation]
+  [ctx invocation {:keys [operation presenter activity workspace-root]} presentation]
   (when-not (contract/valid-presentation? presentation)
     (throw (ex-info "Invalid or oversized Activity presentation"
                     {:type :activity/invalid-content})))
-  (let [public (redact presentation)]
+  (let [public (compact-presentation workspace-root (redact presentation))]
     (when-not (contract/valid-presentation? public)
       (throw (ex-info "Invalid or oversized Activity presentation"
                       {:type :activity/invalid-content})))
@@ -551,7 +609,7 @@
 (defn start-event
   [ctx invocation
    {:keys [operation presenter extension symbol label phrase args classification group-token
-           group-head summary-format]
+           group-head summary-format workspace-root]
     :as details}]
   (let [refs
         (resource-refs details)
@@ -593,16 +651,24 @@
 
         (get-in details [:activity :headline])
         (assoc :presentation
-          {"headline" (bounded-text (util/redact-secret-text (get-in details [:activity :headline]))
+          {"headline" (bounded-text (compact-path-text workspace-root
+                                                       (util/redact-secret-text
+                                                         (get-in details [:activity :headline])))
                                     max-summary-bytes)
-           "summary" (bounded-text (util/redact-secret-text (or label "")) max-summary-bytes)
+           "summary" (bounded-text (compact-path-text workspace-root
+                                                      (util/redact-secret-text (or label "")))
+                                   max-summary-bytes)
            "content" []})
 
         label
-        (assoc :label (bounded-text (util/redact-secret-text label) max-summary-bytes))
+        (assoc :label
+          (bounded-text (compact-path-text workspace-root (util/redact-secret-text label))
+                        max-summary-bytes))
 
         phrase
-        (assoc :phrase (bounded-text (util/redact-secret-text phrase) max-summary-bytes))
+        (assoc :phrase
+          (bounded-text (compact-path-text workspace-root (util/redact-secret-text phrase))
+                        max-summary-bytes))
 
         classification
         (assoc :classification classification)
@@ -630,7 +696,7 @@
 
         full
         (when-let [render (get-in details [:activity :render])]
-          (render details value))
+          (compact-presentation (:workspace-root details) (render details value)))
 
         clip-line
         #(-> (str %)
@@ -690,9 +756,10 @@
         (if (= outcome :succeeded)
           (some-> (displayable-result result)
                   (bounded-summary max-detail-bytes))
-          (bounded-rendered (util/redact-secret-text (or (some-> error*
-                                                                 ex-message)
-                                                         (str error*)))
+          (bounded-rendered (compact-path-text (:workspace-root details)
+                                               (util/redact-secret-text (or (some-> error*
+                                                                                    ex-message)
+                                                                            (str error*))))
                             max-detail-bytes))
 
         presentation

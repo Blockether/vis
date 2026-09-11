@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.editing.core :as editing]
             ;; Registers the shim, exactly as the built-in loader does in production.
             [com.blockether.vis.internal.foundation.shim-ls :as shim-ls]
             [com.blockether.vis.test-python-context :as tpc]
@@ -351,6 +352,40 @@
         (expect (string/includes? (get-in row [:presentation "summary"]) "files"))
         (expect (= "table" (get-in row [:presentation "content" 0 "type"])))
         (expect (some #(= "ls.py" (first %)) (get-in row [:presentation "content" 0 "rows"]))))))
+  (it
+    "compacts absolute single and batched directory paths only in Activity"
+    (let [project
+          (str (System/getProperty "user.home") "/activity-project")
+
+          path
+          (str project "/src")
+
+          other
+          (str (System/getProperty "user.home") "/other-project/src")
+
+          symbol
+          (deref (ns-resolve 'com.blockether.vis.internal.foundation.shim-ls 'listing-symbol))]
+
+      (doseq [paths [[path] [path other]]]
+        (let [events (atom [])
+              rows (mapv #(hash-map "path" % "entries" []) paths)
+              result (with-redefs [editing/list-directories (fn [_ args]
+                                                              (expect (= paths (get args "paths")))
+                                                              rows)]
+                       (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                         (extension/invoke-symbol-wrapper {:ext/name "foundation-shim-ls"}
+                                                          symbol
+                                                          [{"paths" paths}]
+                                                          {:workspace/root project})))
+              view (get-in (activity/presentation (activity/replay @events))
+                           [:rows 0 :presentation])]
+
+          (expect (= rows result))
+          (expect (not (string/includes? (get view "summary") project)))
+          (if (= 1 (count paths))
+            (expect (= "src · 0 directories · 0 files" (get view "summary")))
+            (expect (= ["src" "~/other-project/src"]
+                       (mapv #(get % "headline") (get view "sections")))))))))
   (it "bounds batch content and reports omitted entries without losing nested paths"
       (let [entry
             {"name" "same.txt" "path" "root/nested/same.txt" "type" "file" "size" 42}

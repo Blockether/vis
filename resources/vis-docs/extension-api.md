@@ -151,6 +151,13 @@ proper names such as GitHub and acronyms such as SDK. Keep terminology consisten
 and never use profanity or vulgarity. Do not change the case of filenames, code,
 commands or returned content to match a label.
 
+The host shortens filesystem paths in Activity headlines, summaries, plain text,
+headings and table cells: paths in the session workspace are relative, and other
+paths under the host user's home use `~/…`. Other absolute paths remain unambiguous.
+This applies to built-ins, Python methods, callbacks and published sections before
+TUI or Companion rendering. Tool arguments, return values, resource identities,
+code, Markdown and diff bodies retain their original paths.
+
 `vis.Activity(presenter="tests", label="Run checks", render=render_checks)` selects
 a semantic presenter and a synchronous callback. `presenter` classifies the
 operation; it does **not** generate tool-specific content. The default

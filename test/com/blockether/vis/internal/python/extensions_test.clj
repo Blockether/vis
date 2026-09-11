@@ -387,6 +387,43 @@ vis.register(vis.Extension(
             (expect (activity-contract/valid-projection? projection))))))))
 
 (defdescribe
+  sdk-activity-paths-test
+  (it
+    "compacts Python callback and publication paths without changing the tool result"
+    (let [project
+          (str (str/replace (System/getProperty "user.home") (str (char 92)) "/")
+               "/activity-project")
+
+          path
+          (str project "/src/example.clj")
+
+          source
+          (-> counter-py
+              (str/replace "Check counter" path)
+              (str/replace "Ready" path))]
+
+      (with-loaded
+        {"counter.py" source}
+        (fn [_ _]
+          (let [ext
+                (registered "counter")
+
+                entry
+                (second (get-in ext [:ext/engine :ext.engine/symbols]))
+
+                events
+                (atom [])]
+
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (expect (= {"count" 0 "op" "counter_counter_read"}
+                         (extension/invoke-symbol-wrapper ext entry [] {:workspace/root project}))))
+            (let [views (map :presentation (filter #(= :content (:phase %)) @events))]
+              (expect (= 3 (count views)))
+              (expect (every? #(= "src/example.clj" (get % "summary")) views)))
+            (expect (activity-contract/valid-projection? (activity/presentation (activity/replay
+                                                                                  @events))))))))))
+
+(defdescribe
   sdk-end-only-activity-test
   (it
     "carries SDK visibility through registration, publication, return values and failures"
