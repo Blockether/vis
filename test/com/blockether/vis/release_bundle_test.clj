@@ -2127,28 +2127,29 @@
 
 (defdescribe
   python-release-publication-test
-  (it "publishes automatically after a successful Vis release with manual recovery on main"
-      (let [release-name
-            (second (re-find #"(?m)^name: (.+)$" (slurp ".github/workflows/release.yml")))
+  (it
+    "publishes automatically after a successful Vis release with manual recovery on main"
+    (let [release-name
+          (second (re-find #"(?m)^name: (.+)$" (slurp ".github/workflows/release.yml")))
 
-            publisher
-            (slurp ".github/workflows/python-publish.yml")]
+          publisher
+          (slurp ".github/workflows/python-publish.yml")]
 
-        (doseq [needle [(str "workflow_run:\n    workflows: ['"
-                             release-name
-                             "']\n    types: [completed]") "github.event_name == 'workflow_run'"
-                        "github.event.workflow_run.conclusion == 'success'"
-                        "github.event.workflow_run.event == 'push'"
-                        "github.event.workflow_run.head_repository.full_name == github.repository"
-                        "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
-                        "uses: ./.github/workflows/python-packages.yml"
-                        "ref: ${{ github.event.workflow_run.head_sha || github.sha }}"
-                        "version: ${{ inputs.version }}" "needs: verify" "environment: pypi"
-                        "id-token: write" "uses: pypa/gh-action-pypi-publish@release/v1"]]
-          (expect (str/includes? publisher needle) needle))
-        ;; PyPI trusted publishing does not support reusable workflows.
-        (expect (not (str/includes? publisher "workflow_call:")))
-        (expect (not (str/includes? publisher "continue-on-error:")))))
+      (doseq
+        [needle
+         [(str "workflow_run:\n    workflows: ['" release-name "']\n    types: [completed]")
+          "github.event_name == 'workflow_run'" "github.event.workflow_run.conclusion == 'success'"
+          "github.event.workflow_run.event == 'push'"
+          "github.event.workflow_run.head_repository.full_name == github.repository"
+          "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
+          "uses: ./.github/workflows/python-packages.yml"
+          "ref: ${{ github.event.workflow_run.head_sha || format('refs/tags/v{0}', inputs.version) }}"
+          "version: ${{ inputs.version }}" "needs: verify" "environment: pypi" "id-token: write"
+          "uses: pypa/gh-action-pypi-publish@release/v1"]]
+        (expect (str/includes? publisher needle) needle))
+      ;; PyPI trusted publishing does not support reusable workflows.
+      (expect (not (str/includes? publisher "workflow_call:")))
+      (expect (not (str/includes? publisher "continue-on-error:")))))
   (it
     "builds and tests the released commit and uses its VIS_VERSION for the distribution"
     (let [packages (slurp ".github/workflows/python-packages.yml")]
@@ -2168,6 +2169,78 @@
           "python -m build packages/vis-agent --outdir dist" "name: python-sdk-distributions"
           "needs: distribution"]]
         (expect (str/includes? packages needle) needle)))))
+
+(defdescribe
+  python-existing-publication-test
+  (it
+    "only accepts an identical complete PyPI release or a confirmed missing version"
+    (let [publisher
+          (slurp ".github/workflows/python-publish.yml")
+
+          source
+          (some->> (re-find #"(?s)python - <<'PY'\n(.*?)          PY" publisher)
+                   second
+                   str/split-lines
+                   (map #(str/replace-first % #"^          " ""))
+                   (str/join "\n"))]
+
+      (expect (some? source) "the workflow must check existing distribution hashes")
+      (when source
+        (doseq [scenario ["missing" "matching" "different" "partial" "extra" "duplicate"
+                          "wrong-version" "bad-json" "wrong-shape" "unavailable" "offline"
+                          "extra-local"]]
+          (let
+            [{:keys [exit output]}
+             (run-bash
+               ["python3" "-c"
+                (str/join
+                  "\n"
+                  ["import hashlib, io, json, os, tempfile" "from pathlib import Path"
+                   "from unittest.mock import patch" "from urllib.error import HTTPError, URLError"
+                   "" "case = os.environ['FIXTURE_CASE']" "check = os.environ['PUBLICATION_CHECK']"
+                   "with tempfile.TemporaryDirectory() as directory:" "    os.chdir(directory)"
+                   "    Path('dist').mkdir()"
+                   "    for name in ('vis_agent-9.8.7-py3-none-any.whl', 'vis_agent-9.8.7.tar.gz'):"
+                   "        Path('dist', name).write_bytes(name.encode())"
+                   "    files = [{'filename': path.name, 'digests': {'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}}"
+                   "             for path in sorted(Path('dist').iterdir())]"
+                   "    metadata = {'info': {'version': '9.8.7'}, 'urls': files}"
+                   "    if case == 'different':" "        files[0]['digests']['sha256'] = '0' * 64"
+                   "    elif case == 'partial':" "        files.pop()" "    elif case == 'extra':"
+                   "        files.append({'filename': 'unexpected.whl', 'digests': {'sha256': '0' * 64}})"
+                   "    elif case == 'duplicate':" "        files.append(files[0])"
+                   "    elif case == 'wrong-version':"
+                   "        metadata['info']['version'] = '9.8.6'" "    elif case == 'wrong-shape':"
+                   "        metadata = []" "    elif case == 'extra-local':"
+                   "        Path('dist/unexpected.whl').write_bytes(b'extra')"
+                   "    payload = 'invalid JSON' if case == 'bad-json' else json.dumps(metadata)"
+                   "    error = None" "    if case in ('missing', 'unavailable'):"
+                   "        error = HTTPError('https://pypi.org', 404 if case == 'missing' else 500, 'fixture', {}, None)"
+                   "    elif case == 'offline':"
+                   "        error = URLError('fixture network unavailable')"
+                   "    output = Path('outputs')" "    os.environ['GITHUB_OUTPUT'] = str(output)"
+                   "    failure = None"
+                   "    with patch('urllib.request.urlopen', return_value=io.StringIO(payload), side_effect=error) as request:"
+                   "        try:"
+                   "            exec(compile(check, 'python-publish.yml', 'exec'), {})"
+                   "        except (Exception, SystemExit) as caught:"
+                   "            failure = caught" "        if case == 'extra-local':"
+                   "            request.assert_not_called()" "        else:"
+                   "            request.assert_called_once_with('https://pypi.org/pypi/vis-agent/9.8.7/json', timeout=30)"
+                   "    if case in ('missing', 'matching'):"
+                   "        assert failure is None, repr(failure)"
+                   "        expected = 'true' if case == 'matching' else 'false'"
+                   "        assert output.read_text() == f'published={expected}\\n', output.read_text()"
+                   "    else:"
+                   "        assert failure is not None, f'{case}: unsafe publication was accepted'"
+                   "        assert not output.exists(), f'{case}: failure produced a publication decision'"])]
+               {"PUBLICATION_CHECK" source "FIXTURE_CASE" scenario})]
+            (expect (zero? exit) (str scenario ": " output)))))))
+  (it "skips uploading only after checking hashes without bypassing SDK verification"
+      (let [publisher (slurp ".github/workflows/python-publish.yml")]
+        (expect (str/includes? publisher "id: existing"))
+        (expect (str/includes? publisher "if: steps.existing.outputs.published != 'true'"))
+        (expect (not (str/includes? publisher "skip-existing:"))))))
 
 (defdescribe
   complete-release-gate-test

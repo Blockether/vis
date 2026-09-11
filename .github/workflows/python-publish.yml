@@ -27,7 +27,7 @@ jobs:
     uses: ./.github/workflows/python-packages.yml
     with:
       version: ${{ inputs.version }}
-      ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      ref: ${{ github.event.workflow_run.head_sha || format('refs/tags/v{0}', inputs.version) }}
   publish:
     needs: verify
     runs-on: ubuntu-latest
@@ -39,5 +39,41 @@ jobs:
         with:
           name: python-sdk-distributions
           path: dist
+      - name: Check whether the verified SDK is already published
+        id: existing
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.request import urlopen
+
+          wheel, = Path('dist').glob('vis_agent-*-py3-none-any.whl')
+          version = wheel.name.split('-')[1]
+          files = list(Path('dist').iterdir())
+          if {path.name for path in files} != {wheel.name, f'vis_agent-{version}.tar.gz'}:
+              raise SystemExit('Expected exactly the verified wheel and source distribution')
+          expected = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+          try:
+              with urlopen(f'https://pypi.org/pypi/vis-agent/{version}/json', timeout=30) as response:
+                  metadata = json.load(response)
+          except HTTPError as error:
+              if error.code != 404:
+                  raise
+              published = False
+          else:
+              existing = {item['filename']: item['digests']['sha256'] for item in metadata['urls']}
+              if (metadata['info']['version'] != version or len(metadata['urls']) != len(expected)
+                      or existing != expected):
+                  raise SystemExit('PyPI already contains different or incomplete distributions; refusing publication')
+              published = True
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'published={str(published).lower()}\n')
+          print('Identical verified distributions are already on PyPI' if published else 'Version is not on PyPI yet')
+          PY
       - name: Publish the verified SDK (never overwrite existing versions)
+        if: steps.existing.outputs.published != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
