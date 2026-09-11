@@ -12,7 +12,7 @@
 # Managed source and installation state live under ~/.vis:
 #   install/vis-agent-native   native engine for a checkout-owned launcher
 #   install/src                the development checkout Vis owns
-#   install/ref                that checkout's pinned main commit
+#   install/ref                that checkout's pinned source commit
 #   install/track              installed selection: release, beta or dev
 #
 # Install with `bin/install-vis-agent`: it installs this wrapper and then lets
@@ -53,9 +53,7 @@ vis_home="${VIS_HOME:-$HOME/.vis}"
 vis_install_dir="$vis_home/install"
 vis_repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
 vis_repo_url="${VIS_REPO_URL:-https://github.com/$vis_repo_slug.git}"
-# The branch the source runtime follows. There is no branch to choose: Vis
-# follows main, and release tags are never consulted either — a release is a
-# commit like any other, and this source tracks the newest one.
+# Dev follows main; native updates pin existing source to the artifact build stamp.
 vis_branch="main"
 managed_src="$vis_install_dir/src"
 managed_ref_file="$vis_install_dir/ref"
@@ -198,9 +196,7 @@ run_measured_or_exec() {
 }
 
 # ── Runtime discovery ────────────────────────────────────────────────────────
-# The source the jvm runtime runs: the one checkout Vis owns, pinned to main's
-# newest commit. There is no second source. A checkout of your own is yours —
-# `vis-agent` never runs the tree it was invoked from, whatever directory that is.
+# Prefer the managed source pin, synchronized by update when it already exists.
 find_jvm_source() {
   # The runtime Vis OWNS (installed under ~/.vis) wins when present.
   if [[ -f "$managed_src/deps.edn" ]]; then printf '%s\n' "$managed_src"; return 0; fi
@@ -708,6 +704,14 @@ recover_source() {
   say "source recovered; previous source preserved at $recovery/previous"
 }
 
+require_clean_source() {
+  local changes
+  changes="$(git -C "$managed_src" status --porcelain --untracked-files=all)" || \
+    die "update: cannot inspect source at $managed_src. Repair the checkout and retry."
+  [[ -z "$changes" ]] || die "update: local modifications in $managed_src." \
+    "Commit or stash local changes (including untracked files), then retry; no source files were replaced."
+}
+
 update_source() {
   local ref="${1:-}" target pinned
   require_cmd git "the source runtime"
@@ -722,6 +726,7 @@ update_source() {
     recover_source "$ref"
     return
   fi
+  require_clean_source
   git -C "$managed_src" remote add origin "$vis_repo_url" 2>/dev/null \
     || git -C "$managed_src" remote set-url origin "$vis_repo_url" || exit 1
   # This source is a detached pin, never a branch — so even a hand-run `git fetch`
@@ -736,11 +741,13 @@ update_source() {
   fetch_pinned_ref "$ref" || exit 1
   # A named branch never becomes a local ref here, so check out what was fetched.
   target="$ref"
-  git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 \
-    || target=FETCH_HEAD
+  if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+    git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 \
+      || target=FETCH_HEAD
+  fi
   # The old detached pin is Vis-owned implementation state, not a local commit the
   # reader needs Git's branch-recovery warning for.
-  git -C "$managed_src" checkout --quiet --force --detach "$target" || exit 1
+  git -C "$managed_src" checkout --quiet --detach "$target" || exit 1
   drop_moving_refs
   # The pin recorded is the COMMIT, never the branch that pointed at it: a branch
   # name in there is a moving pin, and no drift check can verify a moving pin.
@@ -793,6 +800,7 @@ update_native() {
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
   local asset api dl json archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack
+  local native_version native_commit _native_metadata
   asset="$(vis_platform_asset)"
   if [[ "$track" == beta ]]; then target="$(vis_beta_tag)" || exit 1; fi
   if [[ "$target" != latest ]]; then
@@ -845,7 +853,26 @@ update_native() {
     die "update: the release bundle is missing its Python runtime"
   fi
   [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
-
+  read -r native_version native_commit _native_metadata < "$unpack/vis-agent-native.build" || \
+    die "update: invalid build stamp; native installation unchanged."
+  say "selected native $native_version revision $native_commit ($track)"
+  if [[ -e "$managed_src" ]]; then
+    [[ "$native_commit" =~ ^[0-9a-f]{40}$ ]] || \
+      die "update: build stamp has no exact source commit; native installation unchanged."
+    # Refresh before replacing native so a dirty tree or failed fetch leaves it intact.
+    # A subshell contains update_source's exit paths and keeps native launcher ownership.
+    if ! (
+      require_cmd git "refreshing existing source"
+      require_clean_source
+      update_source "$native_commit"
+    ); then
+      die "update: source refresh failed for native $native_version revision $native_commit." \
+        "Native installation and selected track unchanged; resolve the source error and retry."
+    fi
+    say "source $(cat "$managed_src/VIS_VERSION" 2>/dev/null || printf unknown) revision $native_commit"
+  else
+    say "no managed source checkout; native-only update"
+  fi
   mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
   mv -f "$unpack/vis-agent-native.build" "$native_dir/vis-agent-native.build"
   mv -f "$tui_unpack/vis-tui" "$native_dir/vis-tui"
@@ -868,7 +895,7 @@ update_native() {
   fi
   rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive"
   trap - EXIT
-  say "installed launcher + native runtime + Python + TUI from the same release"
+  say "installed launcher + native runtime + Python + TUI: $native_version revision $native_commit ($track)"
 }
 
 vis_update_usage() {
@@ -886,6 +913,8 @@ Usage: vis-agent update [vX.Y.Z] [--track release|beta|dev] [--keep-gateway]
          Every update without --track selects release, even after beta or dev.
          A successful update records the selection for subsequent launches.
          Native updates include the matching Python worker and terminal client.
+         Existing managed source is pinned to the native build commit; Git is required.
+         Local source changes must be committed or stashed before updating.
          Dev requires Git and JDK 25+; it never builds or selects a native image.
 EOF
 }

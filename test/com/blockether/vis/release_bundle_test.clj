@@ -221,8 +221,9 @@
       (finally (delete-tree! root)))))
 
 (defn- with-native-install-fixture
-  "Exercise installed commands with local release archives and no Git/JVM access."
-  [{:keys [installer? installed? missing-worker? missing-tui? track previous-track]} f]
+  "Exercise installed commands with local release archives; Git/JVM are denied by default."
+  [{:keys [installer? installed? missing-worker? missing-tui? track previous-track prepare!
+           build-commit extra-env target]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -263,7 +264,10 @@
          "PATH" (str (.getAbsolutePath tools) ":" (.getAbsolutePath bin) ":" (System/getenv "PATH"))
          "VIS_TEST_URLS" (.getAbsolutePath urls)
          "VIS_TEST_ARCHIVE" (.getAbsolutePath archive)
-         "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)}]
+         "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)}
+
+        env
+        (merge env extra-env)]
 
     (try
       (when previous-track
@@ -277,7 +281,7 @@
       (write-executable! (io/file payload "vis-agent-native")
                          "#!/usr/bin/env bash\necho new-runtime\n")
       (spit (io/file payload "vis-agent-native.build")
-            (str "9.9.9 abc123 " (or track "release") " now\n"))
+            (str "9.9.9 " (or build-commit "abc123") " " (or track "release") " now\n"))
       (when-not missing-worker?
         (.mkdirs (io/file payload "vis-agent-python/python"))
         (spit (io/file payload "vis-agent-python/libvispython.so") "runtime"))
@@ -291,6 +295,7 @@
       (doseq [tool ["git" "java" "clojure"]]
         (write-executable! (io/file tools tool)
                            (str "#!/usr/bin/env bash\necho 'unexpected " tool "' >&2\nexit 77\n")))
+      (when prepare! (prepare! env tools))
       (write-executable!
         (io/file tools "uname")
         "#!/usr/bin/env bash\ncase $1 in -s) echo Linux;; -m) echo x86_64;; esac\n")
@@ -331,7 +336,10 @@
             result
             (run-bash (cond-> args
                         track
-                        (into ["--track" track]))
+                        (into ["--track" track])
+
+                        target
+                        (conj target))
                       env)]
 
         (f (assoc result
@@ -342,6 +350,124 @@
              :urls (if (.exists urls) (slurp urls) ""))))
       (finally (delete-tree! root)))))
 
+;; #195: native updates must refresh existing source to the artifact's commit, not main.
+(defn- with-native-source-fixture
+  [options f]
+  (let [remote
+        (.toFile (Files/createTempDirectory "vis-native-source-" (make-array FileAttribute 0)))
+
+        commit!
+        (fn [message]
+          (git! remote "add" ".")
+          (git! remote
+                "-c" "user.name=Vis Test"
+                "-c" "user.email=vis@example.com"
+                "commit" "--quiet"
+                "-m" message)
+          (git! remote "rev-parse" "HEAD"))]
+
+    (try (git! remote "init" "--quiet" "--initial-branch=main")
+         (spit (io/file remote "deps.edn") "{}\n")
+         (spit (io/file remote "VIS_VERSION") "9.9.8\n")
+         (let [old
+               (commit! "old source")
+
+               _
+               (spit (io/file remote "VIS_VERSION") "9.9.9\n")
+
+               selected
+               (commit! "native source")
+
+               _
+               (spit (io/file remote "VIS_VERSION") "10.0.0\n")
+
+               _
+               (commit! "newer main")]
+
+           (with-native-install-fixture
+             (merge
+               {:installed? true
+                :previous-track "beta"
+                :build-commit selected
+                :extra-env {"VIS_REPO_URL" (.getAbsolutePath remote)}
+                :prepare!
+                (fn [env tools]
+                  (io/delete-file (io/file tools "git"))
+                  (let [src (io/file (get env "VIS_HOME") "install" "src")]
+                    (git! remote "clone" "--quiet" (.getAbsolutePath remote) (.getAbsolutePath src))
+                    (git! src "checkout" "--quiet" "--detach" old)
+                    (spit (io/file src ".." "ref") (str old "\n"))
+                    (when-let [dirty (:dirty options)]
+                      (spit (io/file src (if (= dirty :untracked) "local-work" "VIS_VERSION"))
+                            "local work\n")
+                      (when (= dirty :staged) (git! src "add" "VIS_VERSION")))
+                    (when (:fetch-failure? options) (delete-tree! remote))))}
+               (dissoc options :dirty :fetch-failure?))
+             (fn [result]
+               (f (assoc result
+                    :old old
+                    :selected selected
+                    :src (io/file (get-in result [:env "VIS_HOME"]) "install" "src"))))))
+         (finally (delete-tree! remote)))))
+
+(defdescribe
+  native-source-sync-test
+  (it "pins release, explicit older release and beta source without selecting dev"
+      (doseq [options [{:track "release"} {:target "v9.9.9"} {:track "beta"}]]
+        (with-native-source-fixture
+          options
+          (fn [{:keys [exit output selected src launcher env]}]
+            (expect (zero? exit) output)
+            (expect (= selected (git! src "rev-parse" "HEAD")) output)
+            (expect (= selected (str/trim (slurp (io/file src ".." "ref")))))
+            (expect (= (str (or (:track options) "release") "\n")
+                       (slurp (io/file src ".." "track"))))
+            (expect (str/includes? output selected) output)
+            (expect (str/includes? output "9.9.9") output)
+            (expect (str/includes?
+                      (:output (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env))
+                      "new-runtime"))))))
+  (it "refuses dirty source without replacing native or losing local changes"
+      (doseq [dirty [:tracked :staged :untracked]]
+        (with-native-source-fixture
+          {:dirty dirty}
+          (fn [{:keys [exit output old src native]}]
+            (expect (not (zero? exit)) output)
+            (expect (= old (git! src "rev-parse" "HEAD")))
+            (expect (= (str old "\n") (slurp (io/file src ".." "ref"))))
+            (expect (= "beta\n" (slurp (io/file src ".." "track"))))
+            (expect (= "local work\n"
+                       (slurp (io/file src (if (= dirty :untracked) "local-work" "VIS_VERSION")))))
+            (expect (str/includes? (slurp native) "old-runtime"))
+            (expect (str/includes? output "Commit or stash") output)))))
+  (it "reports source fetch failure without claiming synchronization or replacing native"
+      (with-native-source-fixture
+        {:fetch-failure? true}
+        (fn [{:keys [exit output old src native]}]
+          (expect (not (zero? exit)) output)
+          (expect (= old (git! src "rev-parse" "HEAD")))
+          (expect (= (str old "\n") (slurp (io/file src ".." "ref"))))
+          (expect (= "beta\n" (slurp (io/file src ".." "track"))))
+          (expect (str/includes? (slurp native) "old-runtime"))
+          (expect (str/includes? output "source refresh failed") output)
+          (expect (not (str/includes? output "installed the release track")) output))))
+  (it "never substitutes main when the stamped commit is unavailable"
+      (with-native-source-fixture {:build-commit (apply str (repeat 40 "f"))}
+                                  (fn [{:keys [exit output old src native]}]
+                                    (expect (not (zero? exit)) output)
+                                    (expect (= old (git! src "rev-parse" "HEAD")))
+                                    (expect (= (str old "\n") (slurp (io/file src ".." "ref"))))
+                                    (expect (str/includes? (slurp native) "old-runtime"))
+                                    (expect (str/includes? output "source refresh failed")
+                                            output))))
+  (it "rejects an unresolvable build identity before changing either runtime"
+      (with-native-source-fixture {:build-commit "unknown"}
+                                  (fn [{:keys [exit output old src native]}]
+                                    (expect (not (zero? exit)) output)
+                                    (expect (= old (git! src "rev-parse" "HEAD")))
+                                    (expect (str/includes? (slurp native) "old-runtime"))
+                                    (expect (str/includes? output "build stamp") output)))))
+
 (defdescribe
   production-install-test
   (it "installs a stable native engine, Python runtime and matching TUI without Git or Java"
@@ -351,6 +477,7 @@
           (expect (zero? exit) output)
           (expect (not (str/includes? output "unexpected")) output)
           (expect (str/includes? urls "/releases/latest") urls)
+          (expect (not (.exists (io/file (get env "VIS_HOME") "install" "src"))))
           (expect (.isDirectory (io/file bin "vis-agent-python/python")))
           (expect (.canExecute (io/file bin "vis-tui")))
           (let [runtime (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env)]
