@@ -151,7 +151,7 @@ jobs:
             curl --fail --silent --show-error --location "https://www.apple.com/certificateauthority/$certificate.cer" -o "$signing_dir/$certificate.cer"
             security import "$signing_dir/$certificate.cer" -k "$keychain" > /dev/null
           done
-          security list-keychains -d user -s "$keychain"
+          security list-keychains -d user -s "$keychain" "${original_keychains[@]}"
           security find-identity -v -p codesigning "$keychain"
           # Fail before compilation if noninteractive signing is unavailable.
           cp /usr/bin/true "$signing_dir/signing-probe"

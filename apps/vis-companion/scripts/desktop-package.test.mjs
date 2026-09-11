@@ -61,7 +61,8 @@ describe('desktop release signing', () => {
     expect(workflow).toContain('security list-keychains -d user -s "${original_keychains[@]}"');
     expect(workflow).toContain('security delete-keychain "$keychain"');
     // The first signed CI run failed with errSecInternalComponent on the shared Mac.
-    expect(workflow).toContain('security list-keychains -d user -s "$keychain"');
+    // Keep other applications' keychain credentials available while signing.
+    expect(workflow).toContain('security list-keychains -d user -s "$keychain" "${original_keychains[@]}"');
     expect(workflow).toContain('security set-key-partition-list -S apple-tool:,apple:,codesign:');
     expect(workflow).toContain('for certificate in DeveloperIDCA DeveloperIDG2CA');
     expect(workflow).toContain('unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD VIS_ASC_KEY');
