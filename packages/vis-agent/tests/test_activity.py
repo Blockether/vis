@@ -52,6 +52,7 @@ def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
     ids=lambda sample: sample["name"],
 )
 def test_shared_operation_groups(sample):
+    # Regression #201: SDK extension group labels must agree with Companion and TUI.
     from blockether.vis.activity import ActivityProjection
 
     projection = ActivityProjection.from_wire(sample["projection"])

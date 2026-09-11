@@ -102,6 +102,17 @@ def _first_invocation_id(row: ActivityRow) -> str:
     return (row.children[0] if row.operation == "shell" and row.children else row).id
 
 
+def _operation_group_label(operation: str, rows: list[ActivityRow]) -> str:
+    labels = ACTIVITY["operation_groups"]
+    if operation in labels:
+        return labels[operation]
+    for row in rows:
+        headline = (row.presentation or {}).get("headline", "").strip()
+        if headline:
+            return headline
+    return operation
+
+
 @dataclass(frozen=True, slots=True)
 class ActivityArgumentGroup:
     """One operation with identical complete arguments; all invocation evidence is retained."""
@@ -173,7 +184,7 @@ class ActivityProjection:
         return tuple(
             ActivityGroup(
                 _first_invocation_id(rows[0]),
-                ACTIVITY["operation_groups"].get(operation, operation),
+                _operation_group_label(operation, rows),
                 tuple(rows),
             )
             for operation, rows in grouped.items()
