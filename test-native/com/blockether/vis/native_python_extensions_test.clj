@@ -33,7 +33,10 @@
             "source"
             ["python" "--no-env" "--no-network" "-c"
              (str
-               "import hashlib, package_paths\nfrom pathlib import Path\n"
+               "import hashlib, package_paths, re\nfrom pathlib import Path\n"
+               "assert VIS_VERSION == VIS_PYTHON_SDK_VERSION != 'dev'\n"
+               "assert re.fullmatch(r'[0-9a-f]{40}(-dirty)?', VIS_SHA_RELEASE)\n"
+               "assert re.fullmatch(r'\\d+\\.\\d+\\.\\d+', VIS_PYTHON_RUNTIME_VERSION)\n"
                "print(hashlib.sha256(Path(package_paths.__file__).read_bytes()).hexdigest())\n")])]
           (try (expect (.waitFor child 60 TimeUnit/SECONDS) "native source probe timed out")
                (let [output (slurp log)]
@@ -74,7 +77,11 @@
                  "import hashlib, package_paths\nfrom pathlib import Path\n"
                  "assert hashlib.sha256(Path(package_paths.__file__).read_bytes()).hexdigest() == "
                  (pr-str (util/sha256-hex (slurp (io/resource "vis-python/package_paths.py"))))
-                 ", package_paths.__file__\n" "import blockether.vis.extension as vis\n"
+                 ", package_paths.__file__\n"
+                 "import blockether.vis.extension as vis\n"
+                 "assert VIS_VERSION == VIS_PYTHON_SDK_VERSION != 'dev'\n"
+                 "assert len(VIS_SHA_RELEASE) >= 40\n"
+                 "assert VIS_PYTHON_RUNTIME_VERSION != 'dev'\n"
                  "vis.register(vis.Extension(name=" (pr-str name)
                  ", description='Native editable SDK fixture'))\n"
                  "Path(__file__).with_suffix('.loaded').write_text('registered')\n")))

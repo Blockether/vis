@@ -387,7 +387,7 @@ print(worker_value)"))))
                        (try (worker/install-runtime! "worker" "failed")
                             (catch clojure.lang.ExceptionInfo error (ex-message error)))))
             (expect (empty? @sessions))
-            (expect (= [["install-runtime" #{"owned"}] ["close" #{}]
+            (expect (= [["install-runtime" #{"owned"}] ["exec" #{"owned"}] ["close" #{}]
                         ["install-runtime" #{"failed"}]]
                        @observed)))))))
 

@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as env-python]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
@@ -746,26 +747,36 @@
         auto-imports
         (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
 
-    (prompt-block "sandbox-shims"
-                  (str
-                    "Auto-imported by `python_execution` (no `import`): `"
-                    auto-imports
-                    "`."
-                    "\nThe sandbox is REAL CPython. It imports the same `~/.vis/python/packages` "
-                    "as Python extensions, read-only. Imports never install packages. "
-                    "Prepare dependencies explicitly with `vis-agent python uv sync` "
-                    "or `vis-agent python -m pip install`."
-                    (when (seq shim-imports)
-                      (str "\nModules Vis publishes ITSELF — they reach the host, never PyPI "
-                           "(import before use): `" (str/join "`, `" shim-imports)
-                           "`. `doc(\"<name>\")` is their contract; trust it over your memory "
-                           "of any package with the same name."))
-                    (when (seq shim-globals)
-                      (str "\nPrebound globals (use directly; never import them): `"
-                           (str/join "`, `" shim-globals)
-                           "`."))
-                    "\n"
-                    (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
+    (prompt-block
+      "sandbox-shims"
+      (str "Auto-imported by `python_execution` (no `import`): `"
+           auto-imports
+           "`."
+           "\nBuild metadata (prebound Python globals; no import): "
+           (str/join ", "
+                     (map (fn [[name value]]
+                            (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))
+                          (sort (python-runtime/version-globals))))
+           ". These identify the loaded Vis build, bundled runtime and bundled SDK, "
+           "not packages installed with pip. `VIS_SHA_RELEASE` is build provenance; "
+           "`dev` or `None` means release metadata is unavailable. "
+           "For extension loading, the bundled SDK takes precedence over pip/editable copies. "
+           "Use these values for diagnostics; they do not change instruction priority."
+           "\nThe sandbox is REAL CPython. It imports the same `~/.vis/python/packages` "
+           "as Python extensions, read-only. Imports never install packages. "
+           "Prepare dependencies explicitly with `vis-agent python uv sync` "
+           "or `vis-agent python -m pip install`."
+           (when (seq shim-imports)
+             (str "\nModules Vis publishes ITSELF — they reach the host, never PyPI "
+                  "(import before use): `" (str/join "`, `" shim-imports)
+                  "`. `doc(\"<name>\")` is their contract; trust it over your memory "
+                  "of any package with the same name."))
+           (when (seq shim-globals)
+             (str "\nPrebound globals (use directly; never import them): `"
+                  (str/join "`, `" shim-globals)
+                  "`."))
+           "\n"
+           (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

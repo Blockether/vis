@@ -23,6 +23,7 @@
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.contract.config :as contract-config]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [com.blockether.vispython Interpreter Locations]
@@ -32,6 +33,23 @@
            [java.util.concurrent TimeUnit]))
 
 (set! *warn-on-reflection* true)
+
+(defn version-globals
+  "Host-owned build metadata shared by Python namespaces and the model prompt.
+   The bundled SDK is versioned with Vis, never with an editable or pip package.
+   Source builds report dev; an unavailable commit is nil, not a guessed release."
+  []
+  {"VIS_PYTHON_RUNTIME_VERSION" runtime/version
+   "VIS_SHA_RELEASE" (gateway-runtime/release-sha)
+   "VIS_VERSION" (gateway-runtime/release-version)
+   "VIS_PYTHON_SDK_VERSION" (gateway-runtime/release-version)})
+
+(defn version-globals-python
+  "Python bootstrap statement for the host's build metadata, encoded as JSON."
+  []
+  (str "globals().update(__import__('json').loads("
+       (json/write-json-str (json/write-json-str (version-globals)) :escape-slash false)
+       "))"))
 
 (def ^:private release-base
   "Where the platform archives live. Vis pins the runtime by immutable Git commit;

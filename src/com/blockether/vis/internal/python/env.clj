@@ -113,7 +113,9 @@
   [session]
   (if-let [k (worker-of session)]
     (pyext/install-runtime! k session)
-    (runtime/install-runtime! session)))
+    (let [installed (runtime/install-runtime! session)]
+      (runtime/exec! session (python-runtime/version-globals-python))
+      installed)))
 
 (defn- py-install-module!
   [session module]
@@ -471,7 +473,8 @@
 
 (def SYSTEM_VAR_NAMES
   "Host-owned globals refreshed with the standing context and hidden from user live vars."
-  '#{session project_root_path})
+  '#{session project_root_path VIS_PYTHON_RUNTIME_VERSION VIS_SHA_RELEASE VIS_VERSION
+     VIS_PYTHON_SDK_VERSION})
 
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding output, tool, or

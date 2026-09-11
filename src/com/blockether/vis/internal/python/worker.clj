@@ -442,7 +442,11 @@
             (when newly-assigned? (swap! sessions disj session))
             (throw error))))))
 
-(defn install-runtime! [k session] (ask k "install-runtime" session nil))
+(defn install-runtime!
+  [k session]
+  (let [installed (ask k "install-runtime" session nil)]
+    (ask k "exec" session (python-runtime/version-globals-python))
+    installed))
 
 (defn install-sync-tool! [k session tool-name] (ask k "install-sync-tool" session tool-name))
 

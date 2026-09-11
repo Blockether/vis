@@ -12,6 +12,19 @@
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe build-metadata-globals-test
+             (it "exposes the host build in both local and worker namespaces and protects its names"
+                 (doseq [worker? [false true]]
+                   (tpc/with-own
+                     [ctx {} nil {:worker? worker?}]
+                     (doseq [[name value] (python-runtime/version-globals)]
+                       (let [result (ep/run-python-block
+                                      ctx
+                                      (str "print(" name " == " (ep/py-json-literal value) ")"))]
+                         (expect (nil? (:error result)))
+                         (expect (= "True\n" (:stdout result))))
+                       (expect (ep/system-var-sym? (symbol name))))))))
+
 (defdescribe retired-context-entry-test
              ;; Issue #180: retirement is a typed local failure, never an invitation to
              ;; recreate Python while the interrupted turn can still own side effects.
@@ -165,7 +178,9 @@
     "protects system names from helper restoration"
     (tpc/with-own
       [ctx {}]
-      (expect (= '#{session project_root_path} ep/SYSTEM_VAR_NAMES))
+      (expect (= (into '#{session project_root_path}
+                       (map symbol (keys (python-runtime/version-globals))))
+                 ep/SYSTEM_VAR_NAMES))
       (doseq [sym ep/SYSTEM_VAR_NAMES]
         (expect (ep/system-var-sym? sym))
         (expect (tpc/ev ctx (str (pr-str (name sym)) " in __vis_protected_names__"))))

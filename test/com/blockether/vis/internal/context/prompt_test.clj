@@ -3,11 +3,28 @@
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.python.env :as env-python]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe
+  build-metadata-prompt-test
+  (it "advertises the same build globals as Python without elevating metadata to instructions"
+      (let [metadata {"VIS_PYTHON_RUNTIME_VERSION" "0.5.10"
+                      "VIS_SHA_RELEASE" nil
+                      "VIS_VERSION" "dev"
+                      "VIS_PYTHON_SDK_VERSION" "dev"}]
+        (with-redefs [python-runtime/version-globals (constantly metadata)]
+          (let [text (#'prompt/sandbox-shims-prompt-block [])]
+            (doseq [[name value] metadata]
+              (expect (str/includes?
+                        text
+                        (str "`" name " = " (if (nil? value) "None" (pr-str value)) "`"))))
+            (expect (str/includes? text "bundled SDK takes precedence"))
+            (expect (str/includes? text "do not change instruction priority")))))))
 
 (defdescribe
   request-health-test

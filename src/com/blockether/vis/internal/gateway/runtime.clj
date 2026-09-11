@@ -140,20 +140,7 @@
       (when (re-matches #"[0-9a-f]{7,40}" sha)
         (str/join "-" (cons (subs sha 0 (min 12 (count sha))) marks))))))
 
-(defn- checkout-build-id
-  "The identity of a SOURCE run: the short `HEAD` sha of the checkout this process
-   loaded its code from.
-
-   The COMMIT is the whole answer. A worktree edited past its index is still that
-   commit: the alternative - stamping the newest source mtime beside the sha -
-   made one commit look like two builds whenever two runs held different
-   classpaths, and charged every cold start a walk over every file in the
-   checkout to say so."
-  [^java.io.File root]
-  (when-let [gitdir (git-dir root)]
-    (short-commit (head-sha gitdir))))
-
-(def ^:private build-identity
+(def ^:private build-revision
   (delay (try (let [stamped (some-> (io/resource "vis/BUILD")
                                     slurp
                                     str/trim
@@ -161,10 +148,19 @@
                                     (str/split #"\s+")
                                     second
                                     not-empty)]
-                (or (short-commit stamped)
+                (or (when (and stamped (re-matches #"[0-9a-f]{40}(-dirty)?" stamped)) stamped)
                     (some-> (checkout-root)
-                            checkout-build-id)))
+                            git-dir
+                            head-sha)))
               (catch Throwable _ nil))))
+
+(defn release-sha
+  "Full commit of the loaded Vis build, with its build-time dirty suffix, or nil.
+   This is provenance, not a version or a claim that a development build was released."
+  []
+  @build-revision)
+
+(def ^:private build-identity (delay (short-commit (release-sha))))
 
 (defn build-id
   "WHICH CODE this process is running, as an opaque identity - never an order, and

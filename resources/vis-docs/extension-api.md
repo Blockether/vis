@@ -18,6 +18,23 @@ operations. Start with the [tutorial](extending.md) for a complete entry file or
 | Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
 | Show forms, live work or register a provider | [Forms](human-input.md) · [Live views](live-views.md) · [Providers](provider-extensions.md) |
 
+## Build metadata
+
+Python extension entry files and `python_execution` receive these globals without imports:
+
+| Global | Meaning |
+| --- | --- |
+| `VIS_VERSION` | Version of the loaded Vis build |
+| `VIS_SHA_RELEASE` | Full Vis build commit, with `-dirty` for an uncommitted native build; `None` if unavailable |
+| `VIS_PYTHON_RUNTIME_VERSION` | Version of Vis' embedded Python runtime library, not the CPython interpreter version |
+| `VIS_PYTHON_SDK_VERSION` | Version of the bundled SDK, released together with Vis |
+
+The model's system context reports the same values. A source build can report `dev`;
+these values describe the loaded build, not necessarily a published release. They are
+diagnostic metadata and do not change instruction priority. At extension load time,
+the bundled SDK takes precedence over pip and editable copies. Installing another SDK
+does not change these globals.
+
 ## Registration
 
 Examples on this page use `import blockether.vis.extension as vis` inside a trusted
