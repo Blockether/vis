@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Banner, ConfirmRow, LIST_EDGE } from "./ui";
-import { SessionHealth, type SessionHealthSnapshot } from "./SessionHealth";
+import { SessionHealth } from "./SessionHealth";
 import {
   EditableNameField,
   HeaderActions,
@@ -523,36 +523,18 @@ export function SessionStatsPanel({
   session,
   usage,
   phase,
-  health,
 }: {
   session: Session;
   usage: SessionUsage | null;
   phase: "loading" | "ready" | "error";
-  health?: SessionHealthSnapshot;
 }) {
-  const measured = usage?.health;
-  const snapshot = health ?? (measured && {
-    lastRequestTokens: measured.last_request_tokens,
-    budgetTokens: measured.budget_tokens,
-    reminderTokens: measured.reminder_tokens,
-    modelInputLimit: measured.model_input_limit,
-    call: measured.call,
-    stale: measured.stale,
-    countedProjection: measured.counted_projection,
-    breakdown: measured.breakdown,
-    roots: measured.roots?.map((item) => ({
-      path: item.path,
-      guidance: item.guidance,
-    })),
-  });
   const cacheReadShare = usage?.cache_read_share_percent;
   const reuseCoverage = usage?.reusable_prefix_coverage_percent;
   // The coverage number is only as good as the calls it was measured on, so the
   // card prints its sample beside it: a bold percentage over an undisclosed
   // denominator is the trick this pair exists to refuse.
   const reuseSamples = usage?.prompt_cache_sample_count;
-  const reuseIsEstimated =
-    (usage?.prompt_cache_estimated_sample_count ?? 0) > 0;
+  const reuseIsEstimated = usage?.reusable_prefix_estimated;
 
   return (
     <div
@@ -575,7 +557,7 @@ export function SessionStatsPanel({
       )}
       {phase === "ready" && usage && (
         <>
-          <SessionHealth snapshot={snapshot} />
+          <SessionHealth snapshot={usage.health} />
           <h3 className="border-t border-dialog-edge pt-4 text-title font-bold text-white">Session totals</h3>
           <p className="mt-1 text-ui text-dialog-hint">Across all calls, including repeated context.</p>
           <dl className="mt-3 grid grid-cols-4 gap-x-3 gap-y-3">
@@ -595,7 +577,7 @@ export function SessionStatsPanel({
               label="Cached input"
               value={
                 typeof cacheReadShare === "number"
-                  ? `${Math.round(cacheReadShare)}%`
+                  ? `${cacheReadShare}%`
                   : "—"
               }
               explanation="Share of all input served from provider cache"
@@ -604,7 +586,7 @@ export function SessionStatsPanel({
               label="Reuse coverage"
               value={
                 typeof reuseCoverage === "number"
-                  ? `${reuseIsEstimated ? "≈" : ""}${Math.round(reuseCoverage)}%`
+                  ? `${reuseIsEstimated ? "≈" : ""}${reuseCoverage}%`
                   : "—"
               }
               explanation={

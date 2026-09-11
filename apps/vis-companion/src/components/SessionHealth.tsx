@@ -1,36 +1,10 @@
 import { useId, useState } from "react";
 import { humanizeCount } from "../lib/usage";
+import type { SessionHealthData } from "../lib/types";
 import { Disclosure } from "./ui";
 
-/** Presentation data for one persisted request, never the lifetime usage rollup.
- * Optional fields remain unknown for measurements made before they were recorded.
- * Breakdown rows estimate the recorded prepared or logical request, including
- * tool payloads, images, reasoning and framing. They do not partition measured usage.
- * Linked guidance estimates describe disk contents, not model read receipts.
- */
-export interface SessionHealthSnapshot {
-  lastRequestTokens: number;
-  budgetTokens?: number;
-  reminderTokens?: number;
-  modelInputLimit?: number;
-  call: number;
-  stale?: boolean;
-  countedProjection?: "prepared-request" | "logical-request";
-  breakdown?: { label: string; tokens: number; path?: string }[];
-  roots?: {
-    path: string;
-    guidance?:
-      | { status: "available"; path: string; tokens: number }
-      | { status: "missing" | "error" };
-  }[];
-}
-
 /** Context pressure, prompt provenance and filesystem access in session metrics. */
-export function SessionHealth({
-  snapshot,
-}: {
-  snapshot?: SessionHealthSnapshot;
-}) {
+export function SessionHealth({ snapshot }: { snapshot?: SessionHealthData }) {
   const [partsOpen, setPartsOpen] = useState(false);
   const [rootsOpen, setRootsOpen] = useState(false);
   const id = useId();
@@ -48,44 +22,34 @@ export function SessionHealth({
     );
 
   const {
-    lastRequestTokens: input,
-    budgetTokens: budget,
-    reminderTokens: reminder,
-    modelInputLimit: limit,
+    last_request_tokens: input,
+    budget_tokens: budget,
+    reminder_tokens: reminder,
     breakdown,
     roots,
+    estimated_input_tokens: estimatedInput,
+    estimate_difference_tokens: difference,
+    estimate_difference_percent: differencePercent,
+    budget_used_percent: percent,
+    budget_used_ratio: ratio,
+    budget_remaining_tokens: remaining,
+    budget_overage_tokens: overage,
   } = snapshot;
-  const isPrepared = snapshot.countedProjection === "prepared-request";
-  const estimatedInput = breakdown?.length
-    ? breakdown.reduce((total, part) => total + part.tokens, 0)
-    : undefined;
-  const difference =
-    estimatedInput === undefined ? undefined : estimatedInput - input;
-  const differenceSign =
-    difference === undefined || difference === 0
-      ? ""
-      : difference > 0
-        ? "+"
-        : "−";
-  const hasBudget = budget !== undefined && budget > 0;
-  const percent = hasBudget ? Math.round((input / budget) * 100) : undefined;
-  const atLimit = limit !== undefined && input >= limit;
-  const overBudget = hasBudget && input >= budget;
-  const reminded = reminder !== undefined && input >= reminder;
-  const state = !hasBudget
-    ? "Budget not reported"
-    : atLimit
-      ? "Input limit reached"
-      : overBudget
-        ? "Over budget"
-        : reminded
-          ? "Fold reminder"
-          : "Within budget";
-  const ink =
-    atLimit || overBudget ? "text-err" : reminded ? "text-warn" : "text-white";
-  const estimatedRoots = roots?.filter(
-    (item) => item.guidance?.status === "available",
-  ).length;
+  const isPrepared = snapshot.counted_projection === "prepared-request";
+  const hasBudget =
+    percent !== undefined && budget !== undefined && ratio !== undefined;
+  const atLimit = snapshot.budget_state === "input-limit";
+  const overBudget = snapshot.budget_state === "over-budget" || atLimit;
+  const reminded = snapshot.budget_state === "fold-reminder";
+  const state =
+    {
+      "budget-unreported": "Budget not reported",
+      "within-budget": "Within budget",
+      "fold-reminder": "Fold reminder",
+      "over-budget": "Over budget",
+      "input-limit": "Input limit reached",
+    }[snapshot.budget_state] ?? "Budget not reported";
+  const ink = overBudget ? "text-err" : reminded ? "text-warn" : "text-white";
 
   return (
     <section aria-label="Session health" className="mb-4 font-mono">
@@ -121,10 +85,8 @@ export function SessionHealth({
           aria-label="Context budget"
           aria-valuetext={`${input.toLocaleString("en-US")} of ${budget.toLocaleString("en-US")} tokens; ${percent}% of working budget`}
           min={0}
-          max={budget}
-          value={input}
-          low={reminder}
-          high={budget}
+          max={1}
+          value={ratio}
           optimum={0}
           className={`mt-2 block h-2 w-full appearance-none bg-dialog-edge [&::-webkit-meter-bar]:h-2 [&::-webkit-meter-bar]:rounded-none [&::-webkit-meter-bar]:border-0 [&::-webkit-meter-bar]:bg-none [&::-webkit-meter-bar]:bg-dialog-edge [&::-webkit-meter-optimum-value]:bg-none [&::-webkit-meter-suboptimum-value]:bg-none [&::-webkit-meter-even-less-good-value]:bg-none ${overBudget ? "[&::-webkit-meter-optimum-value]:bg-err [&::-webkit-meter-suboptimum-value]:bg-err [&::-webkit-meter-even-less-good-value]:bg-err [&::-moz-meter-bar]:bg-err" : reminded ? "[&::-webkit-meter-optimum-value]:bg-warn [&::-webkit-meter-suboptimum-value]:bg-warn [&::-webkit-meter-even-less-good-value]:bg-warn [&::-moz-meter-bar]:bg-warn" : "[&::-webkit-meter-optimum-value]:bg-accent [&::-webkit-meter-suboptimum-value]:bg-accent [&::-webkit-meter-even-less-good-value]:bg-accent [&::-moz-meter-bar]:bg-accent"}`}
         />
@@ -136,11 +98,11 @@ export function SessionHealth({
             : `Reminder at ${humanizeCount(reminder)}`}
         </span>
         <span>
-          {!hasBudget
-            ? "Working budget was not recorded"
-            : input < budget
-              ? `${humanizeCount(budget - input)} budget left`
-              : `${humanizeCount(input - budget)} over budget`}
+          {remaining !== undefined
+            ? `${humanizeCount(remaining)} budget left`
+            : overage !== undefined
+              ? `${humanizeCount(overage)} over budget`
+              : "Working budget was not recorded"}
         </span>
       </div>
 
@@ -182,10 +144,14 @@ export function SessionHealth({
                     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                       <dt className="text-dialog-hint">Estimate − reported</dt>
                       <dd className="tabular-nums text-white">
-                        {differenceSign}
-                        {Math.abs(difference).toLocaleString("en-US")} tokens
-                        {input > 0 &&
-                          ` (${differenceSign}${(Math.round(Math.abs((difference / input) * 100) * 10) / 10).toFixed(1)}%)`}
+                        {difference
+                          .toLocaleString("en-US", {
+                            signDisplay: "exceptZero",
+                          })
+                          .replace("-", "−")}{" "}
+                        tokens
+                        {differencePercent !== undefined &&
+                          ` (${differencePercent.toLocaleString("en-US", { signDisplay: difference === 0 ? "never" : "always", minimumFractionDigits: 1, maximumFractionDigits: 1 }).replace("-", "−")}%)`}
                       </dd>
                     </div>
                   )}
@@ -237,8 +203,8 @@ export function SessionHealth({
               <span className="min-w-0 py-2.5">
                 <span className="block">Linked filesystems</span>
                 <span className="block text-ui font-normal text-dialog-hint">
-                  {roots.length} available · {estimatedRoots} with guidance
-                  estimates
+                  {snapshot.root_count ?? "—"} available ·{" "}
+                  {snapshot.estimated_root_count ?? "—"} with guidance estimates
                 </span>
               </span>
             </Disclosure>

@@ -40,35 +40,89 @@
                     "prompt_cache_sample_count" 7}
                    (state/session-usage-info "session"))))))
 
+(defdescribe session-usage-estimated-cache-metrics-test
+             ;; #186: the metric owner classifies the sample; clients only render the flag.
+             (it "reports exact, estimated and unrecorded reuse samples"
+                 (doseq [[recorded expected] [[{} {}]
+                                              [{:prompt-cache-estimated-sample-count 0}
+                                               {"reusable_prefix_estimated" false}]
+                                              [{:prompt-cache-estimated-sample-count 2}
+                                               {"reusable_prefix_estimated" true}]]]
+                   (with-redefs [lp/db-info (constantly ::db)
+                                 persistance/db-session-usage-stats (constantly recorded)]
+
+                     (expect (= expected
+                                (select-keys (state/session-usage-info "session")
+                                             ["reusable_prefix_estimated"])))))))
+
 (defdescribe
   session-health-wire-test
-  (it "ships measured request health as snake-case without replacing it with cumulative usage"
-      (with-redefs [lp/db-info
-                    (constantly ::db)
+  (it
+    "ships measured request health as snake-case without replacing it with cumulative usage"
+    (with-redefs [lp/db-info
+                  (constantly ::db)
 
-                    persistance/db-session-usage-stats
-                    (constantly {:input-tokens 900000
-                                 :health {:last-request-tokens 32000
-                                          :budget-tokens 200000
-                                          :counted-projection :prepared-request
-                                          :estimated-input-tokens 33000
-                                          :breakdown [{:label "Conversation and tool results"
-                                                       :tokens 33000}]
-                                          :call 5
-                                          :stale true
-                                          :roots [{:path "/linked"}]}})]
+                  persistance/db-session-usage-stats
+                  (constantly {:input-tokens 900000
+                               :health {:last-request-tokens 32000
+                                        :budget-tokens 200000
+                                        :counted-projection :prepared-request
+                                        :estimated-input-tokens 33000
+                                        :breakdown [{:label "Conversation and tool results"
+                                                     :tokens 33000}]
+                                        :call 5
+                                        :stale true
+                                        :roots [{:path "/linked"}]}})]
 
-        (let [usage (state/session-usage-info "session")]
-          (expect (= 900000 (get usage "input_tokens")))
-          (expect (= {"last_request_tokens" 32000
-                      "budget_tokens" 200000
-                      "counted_projection" "prepared-request"
-                      "estimated_input_tokens" 33000
-                      "breakdown" [{"label" "Conversation and tool results" "tokens" 33000}]
-                      "call" 5
-                      "stale" true
-                      "roots" [{"path" "/linked"}]}
-                     (get usage "health")))))))
+      (let [usage (state/session-usage-info "session")]
+        (expect (= 900000 (get usage "input_tokens")))
+        (expect
+          (= {"last_request_tokens" 32000
+              "budget_tokens" 200000
+              "budget_state" "within-budget"
+              "budget_used_percent" 16
+              "budget_used_ratio" 0.16
+              "budget_remaining_tokens" 168000
+              "estimate_difference_tokens" 1000
+              "estimate_difference_percent" 3.1
+              "root_count" 1
+              "estimated_root_count" 0
+              "counted_projection" "prepared-request"
+              "estimated_input_tokens" 33000
+              "breakdown" [{"label" "Conversation and tool results" "tokens" 33000}]
+              "call" 5
+              "stale" true
+              "roots" [{"path" "/linked"}]}
+             (get usage "health")))))))
+
+(defdescribe session-health-derived-metrics-test
+             ;; #186: both clients consume these gateway responses without deriving metrics.
+             (it "derives the shared client fixture from persisted request facts"
+                 (doseq [{:strs [recorded_health health]}
+                         (get (wire/parse-json
+                                (slurp (io/resource "vis-contract/fixtures/session-health.json")))
+                              "cases")]
+                   (with-redefs [lp/db-info (constantly ::db)
+                                 persistance/db-session-usage-stats
+                                 (constantly (cond-> {:input-tokens 2100000}
+                                               recorded_health
+                                               (assoc :health (wire/->engine recorded_health))))]
+
+                     (expect (= health (get (state/session-usage-info "session") "health"))))))
+             (it "uses the recorded total rather than summing displayed breakdown rows"
+                 (with-redefs [lp/db-info
+                               (constantly ::db)
+
+                               persistance/db-session-usage-stats
+                               (constantly {:health {:last-request-tokens 100
+                                                     :estimated-input-tokens 120
+                                                     :breakdown [{:label "Partial row"
+                                                                  :tokens 1}]}})]
+
+                   (let [health (get (state/session-usage-info "session") "health")]
+                     (expect (= 120 (get health "estimated_input_tokens")))
+                     (expect (= 20 (get health "estimate_difference_tokens")))
+                     (expect (= 20.0 (get health "estimate_difference_percent")))))))
 
 (def ^:private tool-error
   {:message "rg spec has unknown keys: spec."

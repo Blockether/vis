@@ -1172,6 +1172,72 @@
                  (merge (select-keys (drafts/status ws) [:backend :branch :ahead])))))))
        (catch Throwable _ nil)))
 
+(defn- request-health-metrics
+  "Derive session metrics once from the persisted measured request. Clients only
+   render these values: budget state, rounded percent, clamped meter ratio,
+   remaining/overage tokens, estimate deltas and linked-root counts. A recorded
+   estimate is authoritative; older records can sum their stored rows here, never
+   in a client or by rereading instructions. Missing facts remain absent."
+  [{:keys [last-request-tokens budget-tokens reminder-tokens model-input-limit
+           estimated-input-tokens breakdown roots]
+    :as health}]
+  (let [input
+        (long last-request-tokens)
+
+        budget
+        (long (or budget-tokens 0))
+
+        budget?
+        (pos? budget)
+
+        at?
+        (fn [n]
+          (and (number? n) (>= input (long n))))
+
+        estimate
+        (cond (number? estimated-input-tokens) (long estimated-input-tokens)
+              (seq breakdown) (reduce (fn [^long total part]
+                                        (+ total (long (:tokens part))))
+                                      0
+                                      breakdown))
+
+        difference
+        (when (some? estimate) (- (long estimate) input))]
+
+    (cond-> (assoc health
+              :budget-state (cond (not budget?) :budget-unreported
+                                  (at? model-input-limit) :input-limit
+                                  (at? budget) :over-budget
+                                  (at? reminder-tokens) :fold-reminder
+                                  :else :within-budget))
+      budget?
+      (assoc :budget-used-percent
+        (Math/round (* 100.0 (/ (double input) (double budget)))) :budget-used-ratio
+        (max 0.0 (min 1.0 (/ (double input) (double budget)))))
+
+      (and budget? (< input budget))
+      (assoc :budget-remaining-tokens (- budget input))
+
+      (and budget? (>= input budget))
+      (assoc :budget-overage-tokens (- input budget))
+
+      (some? estimate)
+      (assoc :estimated-input-tokens
+        estimate :estimate-difference-tokens
+        difference)
+
+      (and (some? difference) (pos? input))
+      (assoc :estimate-difference-percent
+        (* (if (neg? (long difference)) -1.0 1.0)
+           (/ (double (Math/round (* 10.0
+                                     (Math/abs (* 100.0 (/ (double difference) (double input)))))))
+              10.0)))
+
+      (some? roots)
+      (assoc :root-count
+        (count roots) :estimated-root-count
+        (count (filter #(#{:available "available"} (get-in % [:guidance :status])) roots))))))
+
 (defn- usage-percent
   ^long [part total]
   (if (pos? (long total))
@@ -1190,7 +1256,10 @@
    `prompt_cache_sample_count` says how many calls carried one. Both percentages
    are measured over ONE population: every LLM call the session made, including
    the calls an interrupted turn's rollup never recorded. Their token numerators
-   and denominators ride beside both percentages. Never throws."
+   and denominators ride beside both percentages. `health` is the persisted request
+   enriched by `request-health-metrics`, the single owner of metric calculations
+   for Companion and TUI. Clients format values but never reconstruct them.
+   Never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [u (persistance/db-session-usage-stats db sid)]
@@ -1200,6 +1269,13 @@
                  reused (long (or (:prompt-cache-reused-tokens u) 0))]
 
              (wire/canonical (cond-> u
+                               (:health u)
+                               (update :health request-health-metrics)
+
+                               (contains? u :prompt-cache-estimated-sample-count)
+                               (assoc :reusable-prefix-estimated
+                                 (pos? (long (or (:prompt-cache-estimated-sample-count u) 0))))
+
                                (pos? input)
                                (assoc :cache-read-share-percent (usage-percent cached input))
 

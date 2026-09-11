@@ -8,6 +8,12 @@ import {
   STORY_HEALTH_USAGE,
 } from "../dev/story-data";
 import { SessionStatsPanel } from "./SessionList";
+import healthParity from "../../../../packages/vis-contract/resources/vis-contract/fixtures/session-health.json";
+import type { SessionHealthData } from "../lib/types";
+
+// The same golden /usage health responses are verified by the backend and both clients.
+const preparedHealth = healthParity.cases[0].health as SessionHealthData;
+const logicalHealth = healthParity.cases[1].health as SessionHealthData;
 
 const meta = {
   title: "Session/Navigator stats",
@@ -41,7 +47,7 @@ export const EstimatedReuse: Story = {
 };
 
 export const SessionHealth: Story = {
-  args: { usage: STORY_HEALTH_USAGE, health: STORY_SESSION_HEALTH },
+  args: { usage: { ...STORY_HEALTH_USAGE, health: STORY_SESSION_HEALTH } },
 };
 
 export const HealthInteractions: Story = {
@@ -49,7 +55,7 @@ export const HealthInteractions: Story = {
   play: async ({ canvas }) => {
     await expect(
       canvas.getByRole("meter", { name: "Context budget" }),
-    ).toHaveAttribute("value", "138020");
+    ).toHaveAttribute("value", "0.6901");
     await expect(canvas.getByText("69%")).toBeVisible();
     const parts = canvas.getByRole("button", { name: /Context breakdown/ });
     await userEvent.click(parts);
@@ -75,51 +81,24 @@ export const HealthInteractions: Story = {
 
 /** #186: the local estimate can exceed budget while measured context does not. */
 export const EstimateDrift: Story = {
-  args: {
-    usage: STORY_HEALTH_USAGE,
-    health: {
-      ...STORY_SESSION_HEALTH,
-      lastRequestTokens: 162_177,
-      call: 33,
-      breakdown: [
-        { label: "Conversation and tool results", tokens: 216_546 },
-        { label: "Tool declarations", tokens: 404 },
-      ],
-    },
-  },
+  args: { usage: { ...STORY_HEALTH_USAGE, health: logicalHealth } },
   play: async ({ canvas }) => {
     await userEvent.click(
       canvas.getByRole("button", { name: /Context breakdown/ }),
     );
     await expect(canvas.getByText("+54,773 tokens (+33.8%)")).toBeVisible();
     await expect(canvas.getByText("81%")).toBeVisible();
-    await expect(canvas.getByRole("meter")).toHaveAttribute("value", "162177");
+    await expect(canvas.getByRole("meter")).toHaveAttribute(
+      "value",
+      "0.810885",
+    );
     await expect(canvas.queryByText("Over budget")).not.toBeInTheDocument();
   },
 };
 
-/** #186: synthetic prepared-accounting fixture, passed through the wire-data mapping. */
+/** Synthetic prepared-request /usage fixture; no client-side derivation. */
 export const PreparedRequest: Story = {
-  args: {
-    health: undefined,
-    usage: {
-      ...STORY_HEALTH_USAGE,
-      health: {
-        last_request_tokens: 162_177,
-        budget_tokens: 200_000,
-        reminder_tokens: 150_000,
-        model_input_limit: 272_000,
-        call: 33,
-        counted_projection: "prepared-request",
-        breakdown: [
-          { label: "System instructions", tokens: 5_600 },
-          { label: "Conversation and tool results", tokens: 160_000 },
-          { label: "Tool declarations", tokens: 350 },
-          { label: "Reply framing", tokens: 3 },
-        ],
-      },
-    },
-  },
+  args: { usage: { ...STORY_HEALTH_USAGE, health: preparedHealth } },
   play: async ({ canvas }) => {
     await userEvent.click(
       canvas.getByRole("button", { name: /Context breakdown/ }),
@@ -130,76 +109,78 @@ export const PreparedRequest: Story = {
     await expect(canvas.getByText("165,953 tokens")).toBeVisible();
     await expect(canvas.getByText("+3,776 tokens (+2.3%)")).toBeVisible();
     await expect(canvas.getByText("81%")).toBeVisible();
-    await expect(canvas.getByRole("meter")).toHaveAttribute("value", "162177");
+    await expect(canvas.getByRole("meter")).toHaveAttribute(
+      "value",
+      "0.810885",
+    );
   },
 };
 
 export const FoldReminder: Story = {
-  args: {
-    usage: STORY_HEALTH_USAGE,
-    health: {
-      ...STORY_SESSION_HEALTH,
-      lastRequestTokens: 166_000,
-      breakdown: undefined,
-    },
-  },
+  args: { usage: { ...STORY_HEALTH_USAGE, health: preparedHealth } },
 };
 export const OverBudget: Story = {
   args: {
-    usage: STORY_HEALTH_USAGE,
-    health: {
-      ...STORY_SESSION_HEALTH,
-      lastRequestTokens: 207_000,
-      breakdown: undefined,
+    usage: {
+      ...STORY_HEALTH_USAGE,
+      health: healthParity.cases[10].health as SessionHealthData,
     },
   },
 };
 export const InputLimit: Story = {
   args: {
-    usage: STORY_HEALTH_USAGE,
-    health: {
-      ...STORY_SESSION_HEALTH,
-      lastRequestTokens: 272_000,
-      breakdown: undefined,
+    usage: {
+      ...STORY_HEALTH_USAGE,
+      health: healthParity.cases[11].health as SessionHealthData,
     },
   },
 };
 export const EarlierMeasurement: Story = {
   args: {
-    usage: STORY_HEALTH_USAGE,
-    health: { ...STORY_SESSION_HEALTH, stale: true },
+    usage: {
+      ...STORY_HEALTH_USAGE,
+      health: { ...STORY_SESSION_HEALTH, stale: true },
+    },
   },
 };
 export const PartialMeasurement: Story = {
   args: {
-    usage: STORY_HEALTH_USAGE,
-    health: {
-      ...STORY_SESSION_HEALTH,
-      breakdown: undefined,
-      roots: undefined,
-      modelInputLimit: undefined,
+    usage: {
+      ...STORY_HEALTH_USAGE,
+      health: {
+        last_request_tokens: 138020,
+        call: 23,
+        budget_tokens: 200000,
+        budget_state: "within-budget",
+        budget_used_percent: 69,
+        budget_used_ratio: 0.6901,
+        budget_remaining_tokens: 61980,
+      },
     },
   },
 };
 export const HistoricalMeasurement: Story = {
   args: {
-    usage: STORY_HEALTH_USAGE,
-    health: {
-      ...STORY_SESSION_HEALTH,
-      budgetTokens: undefined,
-      reminderTokens: undefined,
-      modelInputLimit: undefined,
-      breakdown: undefined,
-      roots: undefined,
+    usage: {
+      ...STORY_HEALTH_USAGE,
+      health: {
+        last_request_tokens: 138020,
+        call: 23,
+        budget_state: "budget-unreported",
+      },
     },
   },
 };
 export const UnrecordedReads: Story = {
   args: {
-    usage: STORY_HEALTH_USAGE,
-    health: {
-      ...STORY_SESSION_HEALTH,
-      roots: [{ path: "~/library" }, { path: "~/svar" }],
+    usage: {
+      ...STORY_HEALTH_USAGE,
+      health: {
+        ...STORY_SESSION_HEALTH,
+        roots: [{ path: "~/library" }, { path: "~/svar" }],
+        root_count: 2,
+        estimated_root_count: 0,
+      },
     },
   },
 };

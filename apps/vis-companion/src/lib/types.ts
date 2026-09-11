@@ -138,7 +138,10 @@ export interface BrowseListing {
   entries: BrowseEntry[];
 }
 
-/** A persisted request measurement. Missing optional fields were not recorded. */
+/** One persisted request enriched by gateway session metrics. Clients format only:
+ * they never sum breakdown rows, derive budget pressure, percentages or deltas.
+ * Missing optional facts remain unknown; derived fields are supplied by /usage.
+ */
 export interface SessionHealthData {
   last_request_tokens: number;
   budget_tokens?: number;
@@ -150,6 +153,21 @@ export interface SessionHealthData {
   measured_at?: number;
   stale?: boolean;
   counted_projection?: "prepared-request" | "logical-request";
+  budget_state:
+    | "budget-unreported"
+    | "within-budget"
+    | "fold-reminder"
+    | "over-budget"
+    | "input-limit";
+  budget_used_percent?: number;
+  budget_used_ratio?: number;
+  budget_remaining_tokens?: number;
+  budget_overage_tokens?: number;
+  estimated_input_tokens?: number;
+  estimate_difference_tokens?: number;
+  estimate_difference_percent?: number;
+  root_count?: number;
+  estimated_root_count?: number;
   breakdown?: { label: string; tokens: number; path?: string }[];
   roots?: {
     path: string;
@@ -184,6 +202,7 @@ export interface SessionUsage {
   prompt_cache_reused_tokens?: number;
   /** Reused prefix reads over reusable prior input: the architecture-facing denominator. */
   reusable_prefix_coverage_percent?: number;
+  reusable_prefix_estimated?: boolean;
   /** How many of the session's LLM calls carried a reuse denominator — the sample behind it. */
   prompt_cache_sample_count?: number;
   /** Reuse denominators derived from rewritten or changed fixed prefixes. */

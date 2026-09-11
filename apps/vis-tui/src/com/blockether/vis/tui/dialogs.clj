@@ -1073,34 +1073,26 @@
 
 (defn- metric-count [n] (if (number? n) (str (long n)) "—"))
 
-(defn- metric-percent [n] (if (number? n) (str (Math/round (double n)) "%") "—"))
+(defn- metric-percent [n] (if (number? n) (str n "%") "—"))
 
 (defn- metric-tokens [^long n] (String/format Locale/US "%,d tokens" (object-array [n])))
 
 (defn- metric-token-difference
-  [^long estimate ^long input]
-  (let [difference
-        (- estimate input)
+  [health]
+  (when-let [difference (get health "estimate_difference_tokens")]
+    (let [signed? (not (zero? (long difference)))
+          tokens (String/format Locale/US
+                                (if signed? "%+,d tokens" "%,d tokens")
+                                (object-array [(long difference)]))
+          percent (get health "estimate_difference_percent")]
 
-        sign
-        (cond (pos? difference) "+"
-              (neg? difference) "−"
-              :else "")]
-
-    (str sign
-         (metric-tokens (Math/abs difference))
-         (when (pos? input)
-           (str " ("
-                sign
-                (String/format Locale/US
-                               "%.1f"
-                               (object-array [(/ (double (Math/round (* 10.0
-                                                                        (Math/abs
-                                                                          (* 100.0
-                                                                             (/ (double difference)
-                                                                                (double input)))))))
-                                                 10.0)]))
-                "%)")))))
+      (str/replace (str tokens
+                        (when (number? percent)
+                          (String/format Locale/US
+                                         (if signed? " (%+.1f%%)" " (%.1f%%)")
+                                         (object-array [(double percent)]))))
+                   "-"
+                   "−"))))
 
 (defn- session-metric-rows
   [session {:keys [phase usage parts? roots?]}]
@@ -1137,35 +1129,46 @@
         limit
         (get health "model_input_limit")
 
+        percent
+        (get health "budget_used_percent")
+
         budget?
-        (and (number? budget) (pos? (long budget)))
+        (some? percent)
 
-        at?
-        (fn [n]
-          (and (number? input) (number? n) (>= (long input) (long n))))
+        budget-state
+        (get health "budget_state")
 
-        over?
-        (and budget? (at? budget))
+        tone
+        (case budget-state
+          ("input-limit" "over-budget")
+          :error
 
-        danger?
-        (or (at? limit) over?)
+          "fold-reminder"
+          :warning
+
+          :heading)
 
         pressure
-        (cond (not budget?) "Budget not reported"
-              (at? limit) "Input limit reached"
-              over? "Over budget"
-              (at? reminder) "Fold reminder"
-              :else "Within budget")
+        (case budget-state
+          "input-limit"
+          "Input limit reached"
+
+          "over-budget"
+          "Over budget"
+
+          "fold-reminder"
+          "Fold reminder"
+
+          "within-budget"
+          "Within budget"
+
+          "Budget not reported")
 
         breakdown
         (get health "breakdown")
 
         estimate
-        (when (seq breakdown)
-          (reduce (fn [^long total part]
-                    (+ total (long (get part "tokens"))))
-                  0
-                  breakdown))
+        (get health "estimated_input_tokens")
 
         prepared?
         (= "prepared-request" (get health "counted_projection"))
@@ -1174,7 +1177,7 @@
         (get health "roots")
 
         estimated?
-        (pos? (long (get usage "prompt_cache_estimated_sample_count" 0)))
+        (get usage "reusable_prefix_estimated")
 
         samples
         (get usage "prompt_cache_sample_count")]
@@ -1196,10 +1199,7 @@
               [(hint "Context measurement unavailable")
                (hint "Session totals below do not measure context size.")]
               (concat
-                [{:text pressure
-                  :tone (cond danger? :error
-                              (at? reminder) :warning
-                              :else :heading)}
+                [{:text pressure :tone tone}
                  (hint (str (if (get health "stale") "Earlier measurement" "Last measured call")
                             " · #"
                             (get health "call")))
@@ -1207,24 +1207,20 @@
                        (str (metric-count input)
                             " / "
                             (if budget? (metric-count budget) "Not reported")
-                            (when budget?
-                              (str "  "
-                                   (metric-percent (* 100.0
-                                                      (/ (double input) (double budget))))))))]
-                (when budget?
-                  [{:meter (min 1.0 (/ (double input) (double budget)))
-                    :tone (cond danger? :error
-                                (at? reminder) :warning
-                                :else :heading)}])
+                            (when budget? (str "  " (metric-percent percent)))))]
+                (when-let [ratio (get health "budget_used_ratio")]
+                  [{:meter ratio :tone tone}])
                 [(hint (if reminder
                          (str "Reminder at " (metric-count reminder))
                          "Reminder not reported"))
-                 (hint (if budget?
-                         (str (metric-count (Math/abs (- (long budget) (long input))))
-                              (if over? " over budget" " budget left"))
-                         "Working budget was not recorded"))
+                 (hint
+                   (cond (some? (get health "budget_remaining_tokens"))
+                         (str (metric-count (get health "budget_remaining_tokens")) " budget left")
+                         (some? (get health "budget_overage_tokens"))
+                         (str (metric-count (get health "budget_overage_tokens")) " over budget")
+                         :else "Working budget was not recorded"))
                  (stat "Model input limit" (metric-count limit)) (row "")]
-                (if (seq breakdown)
+                (if (some? estimate)
                   (concat
                     [{:text (str (if parts? "▾" "▸") " Context breakdown [b]")
                       :tone :heading
@@ -1235,7 +1231,7 @@
                       (concat
                         [(stat "Local estimate" (metric-tokens estimate))
                          (stat "Provider-reported input" (metric-tokens input))
-                         (stat "Estimate − reported" (metric-token-difference estimate input))
+                         (stat "Estimate − reported" (or (metric-token-difference health) "—"))
                          (row "")]
                         (mapcat (fn [part]
                                   (cond-> [(stat (get part "label")
@@ -1256,10 +1252,9 @@
                     [{:text (str (if roots? "▾" "▸") " Linked filesystems [f]")
                       :tone :heading
                       :toggle :roots?}
-                     (hint (str (count roots)
+                     (hint (str (metric-count (get health "root_count"))
                                 " available · "
-                                (count (filter #(= "available" (get-in % ["guidance" "status"]))
-                                               roots))
+                                (metric-count (get health "estimated_root_count"))
                                 " with guidance estimates"))]
                     (when roots?
                       (concat
@@ -1323,10 +1318,9 @@
         []))))
 
 (defn session-metrics-component
-  "Companion's usage/health document in a scrollable terminal sheet. Context pressure
-   uses provider-reported input, never summed estimates or lifetime usage. Breakdown
-   rows sum the recorded prepared or logical request, not a new tokenization pass.
-   Geometry, disclosures and keys are deterministic; unknown values never become zero."
+  "Render the gateway session-usage metrics without deriving counts, budget states,
+   percentages or deltas. Only number formatting and terminal geometry are local.
+   Disclosures and keys are deterministic; unknown values never become zero."
   [session snapshot]
   {:init (merge {:scroll 0 :parts? false :roots? false} snapshot)
    :measure

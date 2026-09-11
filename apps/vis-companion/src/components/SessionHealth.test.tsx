@@ -12,21 +12,20 @@ import healthParity from "../../../../packages/vis-contract/resources/vis-contra
 import type { SessionHealthData } from "../lib/types";
 import { SessionStatsPanel } from "./SessionList";
 
-function paint(health = STORY_SESSION_HEALTH) {
+function paint(health: SessionHealthData | undefined = STORY_SESSION_HEALTH) {
   return render(
     <SessionStatsPanel
       session={STORY_SESSION_ROW}
-      usage={STORY_HEALTH_USAGE}
+      usage={{ ...STORY_HEALTH_USAGE, health }}
       phase="ready"
-      health={health}
     />,
   );
 }
 
 describe("session health in metrics", () => {
-  // #186: this same wire fixture drives the production TUI metrics regression.
+  // #186: the gateway verifies these exact responses from persisted request facts.
   it.each(healthParity.cases)(
-    "matches TUI accounting: $name",
+    "renders backend metrics: $name",
     async ({ health, expected }) => {
       render(
         <SessionStatsPanel
@@ -44,11 +43,12 @@ describe("session health in metrics", () => {
         expect(screen.getByText(`${expected.percent}%`)).toBeInTheDocument();
         expect(screen.getByRole("meter")).toHaveAttribute(
           "value",
-          String(health!.last_request_tokens),
+          String(health!.budget_used_ratio),
         );
+        expect(screen.getByRole("meter")).toHaveAttribute("max", "1");
         expect(screen.getByRole("meter")).toHaveAttribute(
-          "max",
-          String(health!.budget_tokens),
+          "aria-valuetext",
+          `${health!.last_request_tokens.toLocaleString("en-US")} of ${health!.budget_tokens!.toLocaleString("en-US")} tokens; ${expected.percent}% of working budget`,
         );
       } else {
         expect(screen.queryByRole("meter")).not.toBeInTheDocument();
@@ -80,27 +80,79 @@ describe("session health in metrics", () => {
       }
       if (health?.stale)
         expect(screen.getByText(/Earlier measurement/)).toBeInTheDocument();
-      expect(
-        screen.queryByText(/four characters per token/),
-      ).not.toBeInTheDocument();
     },
   );
-  it("separates the last measured context, the operating budget and lifetime input", () => {
-    paint();
-    expect(
-      screen.getByRole("meter", { name: "Context budget" }),
-    ).toHaveAttribute("value", "138020");
-    expect(screen.getByRole("meter")).toHaveAttribute("max", "200000");
-    expect(screen.getByText("69%")).toBeInTheDocument();
+
+  it("renders supplied metrics rather than reconstructing them in the client", async () => {
+    // #186: deliberately different rows/raw thresholds detect any client recalculation.
+    paint({
+      ...STORY_SESSION_HEALTH,
+      last_request_tokens: 300000,
+      breakdown: [{ label: "Partial row", tokens: 1 }],
+      estimated_input_tokens: 120,
+      estimate_difference_tokens: 20,
+      estimate_difference_percent: 20,
+      budget_state: "within-budget",
+      budget_used_percent: 17,
+      budget_used_ratio: 0.17,
+      budget_remaining_tokens: 123,
+      root_count: 7,
+      estimated_root_count: 6,
+    });
     expect(screen.getByText("Within budget")).toBeInTheDocument();
-    expect(screen.getByText("Total input")).toBeInTheDocument();
-    expect(screen.getByText("2.1M")).toBeInTheDocument();
-    expect(screen.getByText("Last measured call · #23")).toBeInTheDocument();
-    expect(screen.queryByText(/not live/i)).not.toBeInTheDocument();
+    expect(screen.getByText("17%")).toBeInTheDocument();
+    expect(screen.getByRole("meter")).toHaveAttribute("value", "0.17");
+    expect(screen.getByText("123 budget left")).toBeInTheDocument();
+    expect(
+      screen.getByText("7 available · 6 with guidance estimates"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /Context breakdown/ }),
+    );
+    expect(screen.getByText("120 tokens")).toBeInTheDocument();
+    expect(screen.getByText("+20 tokens (+20.0%)")).toBeInTheDocument();
   });
 
-  it("opens the estimated prompt parts and distinguishes access from loaded guidance", async () => {
+  // #186: sample counts do not override the already classified server metric.
+  it.each([
+    [false, 3, "91%"],
+    [true, 0, "≈91%"],
+  ] as const)(
+    "renders the supplied cache estimate flag %s",
+    (estimated, samples, expected) => {
+      render(
+        <SessionStatsPanel
+          session={STORY_SESSION_ROW}
+          phase="ready"
+          usage={{
+            ...STORY_HEALTH_USAGE,
+            reusable_prefix_coverage_percent: 91,
+            reusable_prefix_estimated: estimated,
+            prompt_cache_estimated_sample_count: samples,
+          }}
+        />,
+      );
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    },
+  );
+  it("does not reconstruct missing derived metrics from raw fields", () => {
+    paint({
+      last_request_tokens: 100,
+      budget_tokens: 200,
+      call: 1,
+      breakdown: [{ label: "Partial row", tokens: 123 }],
+    } as SessionHealthData);
+    expect(screen.queryByRole("meter")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Context breakdown/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Budget not reported")).toBeInTheDocument();
+  });
+
+  it("opens recorded prompt parts and distinguishes filesystem access from loaded guidance", async () => {
     paint();
+    expect(screen.getByText("69%")).toBeInTheDocument();
+    expect(screen.getByText("Last measured call · #23")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: /Context breakdown/ }),
     );
@@ -116,7 +168,7 @@ describe("session health in metrics", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("No AGENTS.md or CLAUDE.md")).toBeInTheDocument();
     expect(screen.getByText(/Could not read guidance/)).toBeInTheDocument();
-    expect(screen.getByRole("meter")).toHaveAttribute("value", "138020");
+    expect(screen.getByRole("meter")).toHaveAttribute("value", "0.6901");
     expect(
       screen.getByText(/Disk estimates do not add to context usage/),
     ).toBeInTheDocument();
@@ -126,154 +178,13 @@ describe("session health in metrics", () => {
     expect(screen.queryByText("Main AGENTS.md")).not.toBeInTheDocument();
   });
 
-  // #186: a large local estimate must not look like measured context pressure.
-  it("compares the logical estimate with the same request, not cumulative input", async () => {
+  it("does not turn an unrecorded guidance read into a negative claim", async () => {
     paint({
       ...STORY_SESSION_HEALTH,
-      lastRequestTokens: 162177,
-      breakdown: [
-        { label: "Conversation and tool results", tokens: 216546 },
-        { label: "Tool declarations", tokens: 404 },
-      ],
+      roots: [{ path: "/linked" }],
+      root_count: 1,
+      estimated_root_count: 0,
     });
-    await userEvent.click(
-      screen.getByRole("button", { name: /Context breakdown/ }),
-    );
-    expect(screen.getByText("216,950 tokens")).toBeInTheDocument();
-    expect(screen.getByText("162,177 tokens")).toBeInTheDocument();
-    expect(screen.getByText("+54,773 tokens (+33.8%)")).toBeInTheDocument();
-    expect(screen.getByText(/before provider adaptation/)).toBeInTheDocument();
-    expect(screen.getByText(/including cached input/)).toBeInTheDocument();
-    expect(screen.getByText("81%")).toBeInTheDocument();
-    expect(screen.getByText("Fold reminder")).toBeInTheDocument();
-    expect(screen.queryByText("Over budget")).not.toBeInTheDocument();
-    expect(screen.getByRole("meter")).toHaveAttribute("value", "162177");
-    expect(
-      screen.queryByText(/four characters per token/),
-    ).not.toBeInTheDocument();
-  });
-
-  it("uses the persisted prepared projection without changing measured utilization", async () => {
-    render(
-      <SessionStatsPanel
-        session={STORY_SESSION_ROW}
-        usage={{
-          ...STORY_HEALTH_USAGE,
-          health: {
-            last_request_tokens: 100,
-            budget_tokens: 200,
-            call: 4,
-            counted_projection: "prepared-request",
-            breakdown: [
-              { label: "Conversation and tool results", tokens: 120 },
-            ],
-          },
-        }}
-        phase="ready"
-      />,
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: /Context breakdown/ }),
-    );
-    expect(
-      screen.getByText("Prepared request · not measured usage"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/full prepared request after provider adaptation/),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/before provider adaptation/),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("120 tokens")).toBeInTheDocument();
-    expect(screen.getByText("+20 tokens (+20.0%)")).toBeInTheDocument();
-    expect(screen.getByRole("meter")).toHaveAttribute("value", "100");
-    expect(screen.getByText("50%")).toBeInTheDocument();
-  });
-
-  it.each([
-    [100, 90, "−10 tokens (−10.0%)"],
-    [100, 100, "0 tokens (0.0%)"],
-    [0, 100, "+100 tokens"],
-  ])(
-    "compares %i measured tokens with an estimate of %i",
-    async (input, estimate, difference) => {
-      paint({
-        ...STORY_SESSION_HEALTH,
-        lastRequestTokens: input,
-        breakdown: [{ label: "System instructions", tokens: estimate }],
-      });
-      await userEvent.click(
-        screen.getByRole("button", { name: /Context breakdown/ }),
-      );
-      expect(screen.getByText(difference)).toBeInTheDocument();
-    },
-  );
-
-  it("does not present an unavailable empty breakdown as a zero estimate", () => {
-    paint({ ...STORY_SESSION_HEALTH, breakdown: [] });
-    expect(
-      screen.getByText("Prompt breakdown unavailable"),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Context breakdown/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  it.each([
-    [150000, "Fold reminder"],
-    [207000, "Over budget"],
-    [272000, "Input limit reached"],
-  ])("shows the state at %i tokens", (lastRequestTokens, state) => {
-    paint({ ...STORY_SESSION_HEALTH, lastRequestTokens });
-    expect(screen.getByText(state)).toBeInTheDocument();
-  });
-
-  it("does not replace missing health telemetry with total input or zero", () => {
-    render(
-      <SessionStatsPanel
-        session={STORY_SESSION_ROW}
-        usage={STORY_HEALTH_USAGE}
-        phase="ready"
-      />,
-    );
-    expect(screen.queryByRole("meter")).not.toBeInTheDocument();
-    expect(
-      screen.getByText("Context measurement unavailable"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("2.1M")).toBeInTheDocument();
-  });
-
-  it("keeps a stale measurement visibly stale and leaves absent detail counts unknown", () => {
-    paint({
-      ...STORY_SESSION_HEALTH,
-      stale: true,
-      breakdown: undefined,
-      roots: undefined,
-    });
-    expect(screen.getByText(/Earlier measurement/)).toBeInTheDocument();
-    expect(
-      screen.getByText("Prompt breakdown unavailable"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Linked filesystem details unavailable"),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Context breakdown/ }),
-    ).not.toBeInTheDocument();
-  });
-  it("shows historical input without inventing a budget or a zero-percent meter", () => {
-    paint({
-      ...STORY_SESSION_HEALTH,
-      budgetTokens: undefined,
-      reminderTokens: undefined,
-    });
-    expect(screen.getByText("138k")).toBeInTheDocument();
-    expect(screen.getByText("Budget not reported")).toBeInTheDocument();
-    expect(screen.queryByRole("meter")).not.toBeInTheDocument();
-  });
-
-  it("does not turn an unrecorded instruction read into a negative claim", async () => {
-    paint({ ...STORY_SESSION_HEALTH, roots: [{ path: "/linked" }] });
     await userEvent.click(
       screen.getByRole("button", { name: /Linked filesystems/ }),
     );

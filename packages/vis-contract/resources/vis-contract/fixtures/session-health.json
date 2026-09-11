@@ -42,7 +42,16 @@
               "tokens": 500000
             }
           }
-        ]
+        ],
+        "budget_used_percent": 81,
+        "budget_used_ratio": 0.810885,
+        "budget_remaining_tokens": 37823,
+        "budget_state": "fold-reminder",
+        "estimated_input_tokens": 165953,
+        "estimate_difference_tokens": 3776,
+        "estimate_difference_percent": 2.3,
+        "root_count": 1,
+        "estimated_root_count": 1
       },
       "expected": {
         "pressure": "Fold reminder",
@@ -52,6 +61,42 @@
         "difference": "+3,776 tokens (+2.3%)",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 5600
+          },
+          {
+            "label": "Conversation and tool results",
+            "tokens": 160000
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 350
+          },
+          {
+            "label": "Reply framing",
+            "tokens": 3
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
       }
     },
     {
@@ -82,7 +127,16 @@
               "tokens": 500000
             }
           }
-        ]
+        ],
+        "budget_used_percent": 81,
+        "budget_used_ratio": 0.810885,
+        "budget_remaining_tokens": 37823,
+        "budget_state": "fold-reminder",
+        "estimated_input_tokens": 216950,
+        "estimate_difference_tokens": 54773,
+        "estimate_difference_percent": 33.8,
+        "root_count": 1,
+        "estimated_root_count": 1
       },
       "expected": {
         "pressure": "Fold reminder",
@@ -92,6 +146,34 @@
         "difference": "+54,773 tokens (+33.8%)",
         "projection": "Logical request",
         "scope": "before provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "logical-request",
+        "breakdown": [
+          {
+            "label": "Conversation and tool results",
+            "tokens": 216546
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 404
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
       }
     },
     {
@@ -106,7 +188,14 @@
             "label": "System instructions",
             "tokens": 90
           }
-        ]
+        ],
+        "budget_used_percent": 50,
+        "budget_used_ratio": 0.5,
+        "budget_remaining_tokens": 100,
+        "budget_state": "within-budget",
+        "estimated_input_tokens": 90,
+        "estimate_difference_tokens": -10,
+        "estimate_difference_percent": -10.0
       },
       "expected": {
         "pressure": "Within budget",
@@ -116,6 +205,18 @@
         "difference": "−10 tokens (−10.0%)",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 100,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 90
+          }
+        ]
       }
     },
     {
@@ -130,7 +231,14 @@
             "label": "System instructions",
             "tokens": 100
           }
-        ]
+        ],
+        "budget_used_percent": 50,
+        "budget_used_ratio": 0.5,
+        "budget_remaining_tokens": 100,
+        "budget_state": "within-budget",
+        "estimated_input_tokens": 100,
+        "estimate_difference_tokens": 0,
+        "estimate_difference_percent": 0.0
       },
       "expected": {
         "pressure": "Within budget",
@@ -140,6 +248,18 @@
         "difference": "0 tokens (0.0%)",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 100,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 100
+          }
+        ]
       }
     },
     {
@@ -154,7 +274,13 @@
             "label": "System instructions",
             "tokens": 100
           }
-        ]
+        ],
+        "budget_used_percent": 0,
+        "budget_used_ratio": 0.0,
+        "budget_remaining_tokens": 200,
+        "budget_state": "within-budget",
+        "estimated_input_tokens": 100,
+        "estimate_difference_tokens": 100
       },
       "expected": {
         "pressure": "Within budget",
@@ -164,6 +290,18 @@
         "difference": "+100 tokens",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 0,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 100
+          }
+        ]
       }
     },
     {
@@ -178,7 +316,14 @@
             "label": "System instructions",
             "tokens": 0
           }
-        ]
+        ],
+        "budget_used_percent": 50,
+        "budget_used_ratio": 0.5,
+        "budget_remaining_tokens": 100,
+        "budget_state": "within-budget",
+        "estimated_input_tokens": 0,
+        "estimate_difference_tokens": -100,
+        "estimate_difference_percent": -100.0
       },
       "expected": {
         "pressure": "Within budget",
@@ -188,6 +333,18 @@
         "difference": "−100 tokens (−100.0%)",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 100,
+        "budget_tokens": 200,
+        "call": 4,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 0
+          }
+        ]
       }
     },
     {
@@ -202,7 +359,14 @@
             "label": "Conversation and tool results",
             "tokens": 2051
           }
-        ]
+        ],
+        "budget_used_percent": 50,
+        "budget_used_ratio": 0.5,
+        "budget_remaining_tokens": 2000,
+        "budget_state": "within-budget",
+        "estimated_input_tokens": 2051,
+        "estimate_difference_tokens": 51,
+        "estimate_difference_percent": 2.6
       },
       "expected": {
         "pressure": "Within budget",
@@ -212,6 +376,18 @@
         "difference": "+51 tokens (+2.6%)",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 2000,
+        "budget_tokens": 4000,
+        "call": 5,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "Conversation and tool results",
+            "tokens": 2051
+          }
+        ]
       }
     },
     {
@@ -233,7 +409,13 @@
               "tokens": 500000
             }
           }
-        ]
+        ],
+        "budget_used_percent": 81,
+        "budget_used_ratio": 0.810885,
+        "budget_remaining_tokens": 37823,
+        "budget_state": "fold-reminder",
+        "root_count": 1,
+        "estimated_root_count": 1
       },
       "expected": {
         "pressure": "Fold reminder",
@@ -243,6 +425,25 @@
         "difference": null,
         "projection": null,
         "scope": null
+      },
+      "recorded_health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
       }
     },
     {
@@ -263,7 +464,13 @@
             }
           }
         ],
-        "stale": true
+        "stale": true,
+        "budget_used_percent": 81,
+        "budget_used_ratio": 0.810885,
+        "budget_remaining_tokens": 37823,
+        "budget_state": "fold-reminder",
+        "root_count": 1,
+        "estimated_root_count": 1
       },
       "expected": {
         "pressure": "Fold reminder",
@@ -273,6 +480,24 @@
         "difference": null,
         "projection": null,
         "scope": null
+      },
+      "recorded_health": {
+        "last_request_tokens": 162177,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ],
+        "stale": true
       }
     },
     {
@@ -285,7 +510,11 @@
             "label": "History",
             "tokens": 120
           }
-        ]
+        ],
+        "budget_state": "budget-unreported",
+        "estimated_input_tokens": 120,
+        "estimate_difference_tokens": 20,
+        "estimate_difference_percent": 20.0
       },
       "expected": {
         "pressure": "Budget not reported",
@@ -295,6 +524,16 @@
         "difference": "+20 tokens (+20.0%)",
         "projection": "Logical request",
         "scope": "before provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 100,
+        "call": 2,
+        "breakdown": [
+          {
+            "label": "History",
+            "tokens": 120
+          }
+        ]
       }
     },
     {
@@ -333,7 +572,16 @@
               "tokens": 500000
             }
           }
-        ]
+        ],
+        "budget_used_percent": 105,
+        "budget_used_ratio": 1.0,
+        "budget_overage_tokens": 10000,
+        "budget_state": "over-budget",
+        "estimated_input_tokens": 165953,
+        "estimate_difference_tokens": -44047,
+        "estimate_difference_percent": -21.0,
+        "root_count": 1,
+        "estimated_root_count": 1
       },
       "expected": {
         "pressure": "Over budget",
@@ -343,6 +591,42 @@
         "difference": "−44,047 tokens (−21.0%)",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 210000,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 5600
+          },
+          {
+            "label": "Conversation and tool results",
+            "tokens": 160000
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 350
+          },
+          {
+            "label": "Reply framing",
+            "tokens": 3
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
       }
     },
     {
@@ -381,7 +665,16 @@
               "tokens": 500000
             }
           }
-        ]
+        ],
+        "budget_used_percent": 136,
+        "budget_used_ratio": 1.0,
+        "budget_overage_tokens": 72000,
+        "budget_state": "input-limit",
+        "estimated_input_tokens": 165953,
+        "estimate_difference_tokens": -106047,
+        "estimate_difference_percent": -39.0,
+        "root_count": 1,
+        "estimated_root_count": 1
       },
       "expected": {
         "pressure": "Input limit reached",
@@ -391,6 +684,42 @@
         "difference": "−106,047 tokens (−39.0%)",
         "projection": "Prepared request",
         "scope": "full prepared request after provider adaptation"
+      },
+      "recorded_health": {
+        "last_request_tokens": 272000,
+        "budget_tokens": 200000,
+        "reminder_tokens": 150000,
+        "model_input_limit": 272000,
+        "call": 33,
+        "counted_projection": "prepared-request",
+        "breakdown": [
+          {
+            "label": "System instructions",
+            "tokens": 5600
+          },
+          {
+            "label": "Conversation and tool results",
+            "tokens": 160000
+          },
+          {
+            "label": "Tool declarations",
+            "tokens": 350
+          },
+          {
+            "label": "Reply framing",
+            "tokens": 3
+          }
+        ],
+        "roots": [
+          {
+            "path": "/workspace/linked",
+            "guidance": {
+              "status": "available",
+              "path": "/workspace/linked/AGENTS.md",
+              "tokens": 500000
+            }
+          }
+        ]
       }
     },
     {
@@ -404,7 +733,8 @@
         "difference": null,
         "projection": null,
         "scope": null
-      }
+      },
+      "recorded_health": null
     }
   ]
 }

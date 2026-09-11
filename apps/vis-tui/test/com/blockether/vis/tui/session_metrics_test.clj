@@ -22,8 +22,9 @@
    "turn_count" 8
    "iteration_count" 24
    "tool_call_count" 61
-   "cache_read_share_percent" 72.3
-   "reusable_prefix_coverage_percent" 91.2
+   "cache_read_share_percent" 72
+   "reusable_prefix_coverage_percent" 91
+   "reusable_prefix_estimated" true
    "prompt_cache_sample_count" 20
    "prompt_cache_estimated_sample_count" 3
    "model" "example-model"
@@ -36,6 +37,15 @@
     "model_input_limit" 200000
     "call" 24
     "stale" false
+    "budget_state" "fold-reminder"
+    "budget_used_percent" 80
+    "budget_used_ratio" 0.8
+    "budget_remaining_tokens" 24000
+    "estimated_input_tokens" 93800
+    "estimate_difference_tokens" -2200
+    "estimate_difference_percent" -2.3
+    "root_count" 4
+    "estimated_root_count" 1
     "breakdown" [{"label" "Instructions" "tokens" 6400 "path" "/workspace/AGENTS.md"}
                  {"label" "Tool definitions" "tokens" 8200} {"label" "History" "tokens" 79200}]
     "roots" [{"path" "/workspace/project"
@@ -84,11 +94,7 @@
       (is (= "2100000" (get values "Total input")) name)
       (if-let [percent (get expected "percent")]
         (do (is (str/ends-with? (get values "Context / working budget") (str percent "%")) name)
-            (is (= (min 1.0
-                        (/ (double (get health "last_request_tokens"))
-                           (double (get health "budget_tokens"))))
-                   (some :meter rows))
-                name))
+            (is (= (get health "budget_used_ratio") (some :meter rows)) name))
         (is (not-any? :meter rows) name))
       (if-let [projection (get expected "projection")]
         (do (is (str/includes? text (str projection " · not measured usage")) name)
@@ -98,6 +104,50 @@
         (is (not-any? #(= :parts? (:toggle %)) rows) name))
       (when (get health "stale") (is (str/includes? text "Earlier measurement") name))
       (is (not (str/includes? text "four characters per token")) name))))
+
+(deftest supplied-metrics-are-not-recalculated
+  ;; #186: inconsistent source rows intentionally expose calculations in clients.
+  (let [health
+        (assoc (get measured-usage "health")
+          "last_request_tokens" 300000
+          "breakdown" [{"label" "Partial row" "tokens" 1}]
+          "estimated_input_tokens" 120
+          "estimate_difference_tokens" 20
+          "estimate_difference_percent" 20.0
+          "budget_state" "within-budget"
+          "budget_used_percent" 17
+          "budget_used_ratio" 0.17
+          "budget_remaining_tokens" 123
+          "root_count" 7
+          "estimated_root_count" 6)
+
+        component
+        (dlg/session-metrics-component {} {:phase :ready :usage {"health" health}})
+
+        state
+        (assoc (:init component) :parts? true)
+
+        rows
+        (:lines ((:measure component) state 160 80))
+
+        text
+        (str/replace (str/join " " (map :text rows)) #"\s+" " ")]
+
+    (doseq [value ["Within budget" "17%" "123 budget left" "7 available · 6 with guidance estimates"
+                   "120 tokens" "+20 tokens (+20.0%)"]]
+      (is (str/includes? text value) value))
+    (is (= 0.17 (some :meter rows)))))
+
+(deftest supplied-cache-metrics-are-not-reclassified
+  ;; #186: deliberately conflicting counts must not override the supplied metric.
+  (doseq [[estimated? samples expected] [[false 3 "91%"] [true 0 "≈91%"]]]
+    (let [usage (assoc measured-usage
+                  "reusable_prefix_estimated" estimated?
+                  "prompt_cache_estimated_sample_count" samples)
+          component (dlg/session-metrics-component {} {:phase :ready :usage usage})
+          rows (:lines ((:measure component) (:init component) 160 80))]
+
+      (is (= expected (:value (first (filter #(= "Reuse coverage" (:label %)) rows))))))))
 
 (deftest metrics-fields-and-disclosures
   (let [component
@@ -159,15 +209,21 @@
                                [{:phase :ready :usage {}} "Context measurement unavailable"]]]
     (let [component (dlg/session-metrics-component {} snapshot)]
       (is (str/includes? (lines component (:init component) 80 40) expected))))
-  (doseq [[health expected] [[{"last_request_tokens" 1} "Budget not reported"]
-                             [{"last_request_tokens" 90 "budget_tokens" 100 "reminder_tokens" 80}
-                              "Fold reminder"]
-                             [{"last_request_tokens" 100 "budget_tokens" 100} "Over budget"]
-                             [{"last_request_tokens" 100 "budget_tokens" 90 "model_input_limit" 100}
-                              "Input limit reached"]
-                             [{"last_request_tokens" 20 "budget_tokens" 100} "Within budget"]]]
-    (let [component (dlg/session-metrics-component {} {:phase :ready :usage {"health" health}})]
-      (is (str/includes? (lines component (:init component) 80 40) expected))))
+  ;; Raw facts alone must not trigger a client-side reconstruction.
+  (let [component
+        (dlg/session-metrics-component {}
+                                       {:phase :ready
+                                        :usage {"health" {"last_request_tokens" 90
+                                                          "budget_tokens" 100
+                                                          "breakdown" [{"label" "Partial"
+                                                                        "tokens" 1}]}}})
+
+        rows
+        (:lines ((:measure component) (:init component) 80 40))]
+
+    (is (str/includes? (lines component (:init component) 80 40) "Budget not reported"))
+    (is (not-any? :meter rows))
+    (is (not-any? #(= :parts? (:toggle %)) rows)))
   (let [component
         (dlg/session-metrics-component {:model "pinned-model"} {:phase :ready :usage {}})
 

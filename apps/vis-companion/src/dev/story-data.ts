@@ -708,18 +708,28 @@ export const STORY_SESSION_USAGE: SessionUsage = {
   prompt_cache_reused_tokens: 79_400,
   prompt_cache_sample_count: 4,
   prompt_cache_estimated_sample_count: 1,
+  reusable_prefix_estimated: true,
   cost_usd: 0.21,
   duration_ms: 47_000,
   provider: 'anthropic-coding-plan',
   model: 'claude-opus-5',
 };
 
-/** Design-only telemetry at the SessionStatsPanel prop boundary, not live gateway data. */
-export const STORY_SESSION_HEALTH: import('../components/SessionHealth').SessionHealthSnapshot = {
-  lastRequestTokens: 138_020,
-  budgetTokens: 200_000,
-  reminderTokens: 150_000,
-  modelInputLimit: 272_000,
+/** Deterministic /usage response fixture, not live gateway data. */
+export const STORY_SESSION_HEALTH: import('../lib/types').SessionHealthData = {
+  last_request_tokens: 138_020,
+  budget_tokens: 200_000,
+  reminder_tokens: 150_000,
+  model_input_limit: 272_000,
+  budget_state: 'within-budget',
+  budget_used_percent: 69,
+  budget_used_ratio: 0.6901,
+  budget_remaining_tokens: 61_980,
+  estimated_input_tokens: 138_020,
+  estimate_difference_tokens: 0,
+  estimate_difference_percent: 0,
+  root_count: 3,
+  estimated_root_count: 1,
   call: 23,
   breakdown: [
     { label: 'System instructions', tokens: 9_400 },
@@ -729,7 +739,14 @@ export const STORY_SESSION_HEALTH: import('../components/SessionHealth').Session
     { label: 'Conversation and tool results', tokens: 116_020 },
   ],
   roots: [
-    { path: '~/library', guidance: { status: 'available', path: '~/library/AGENTS.md', tokens: 1200 } },
+    {
+      path: '~/library',
+      guidance: {
+        status: 'available',
+        path: '~/library/AGENTS.md',
+        tokens: 1200,
+      },
+    },
     { path: '~/svar', guidance: { status: 'missing' } },
     { path: '~/vis-python-runtime', guidance: { status: 'error' } },
   ],
@@ -742,7 +759,7 @@ export const STORY_HEALTH_USAGE: SessionUsage = {
   fold_count: 0,
   input_tokens: 2_089_615,
   output_tokens: 18_420,
-  cache_read_share_percent: 93.2,
+  cache_read_share_percent: 93,
   cost_usd: 21.86,
   duration_ms: 840_000,
   model: 'gpt-6-astra',
