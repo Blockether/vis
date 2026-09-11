@@ -268,8 +268,8 @@ function activityStepDelta(row: ActivityRow): {
  *
  * `truncate` eats the END of a string, which in a monorepo is the only part
  * that differs: eight rows of `src/com/blockether/vis/internal/…` are eight
- * identical rows. The directory is what gives way, so the file being looked for
- * is always whole, and it wears the darker ink because it is the answer.
+ * identical rows. Truncate the directory first; truncate the file name only
+ * when it exceeds the available width. Keep the complete path in the title.
  *
  * And the words are the path RELATIVE TO THE WORKSPACE, because `/Users/ana/vis/`
  * is on every row, is the same on every row, and is exactly the part `truncate`
@@ -287,7 +287,7 @@ function ActivityPath({ id }: { id: string }) {
       {directory && (
         <span className="truncate text-dialog-hint">{directory}</span>
       )}
-      <span className="shrink-0">{name}</span>
+      <span className="max-w-full shrink-0 truncate">{name}</span>
     </span>
   );
 }
@@ -736,7 +736,7 @@ function ActivityStep({
       {object ? " " : null}
       {object && (
         <span
-          className="min-w-0 flex-1 font-normal text-dialog-hint"
+          className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
           title={object}
         >
           {row.operation === "cat" || row.operation === "patch" ? (

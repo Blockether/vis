@@ -8,6 +8,7 @@ import {
   ACTIVITY_RESULTS,
   ACTIVITY_REPL,
   ACTIVITY_LONG_RUNNING,
+  ACTIVITY_LONG_LABELS,
   ACTIVITY_LISTING,
   ACTIVITY_LISTING_BATCH,
   ACTIVITY_RICH,
@@ -52,6 +53,74 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
+
+/** Regression: long test paths must not paint over the duration or disclosure. */
+export const LongLabels: Story = {
+  args: { activity: ACTIVITY_LONG_LABELS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    const rows = canvasElement.querySelectorAll<HTMLElement>(
+      "[data-activity-row]",
+    );
+    await expect(rows).toHaveLength(ACTIVITY_LONG_LABELS.rows.length);
+    for (const row of rows) {
+      const toggle = within(row).getByRole("button");
+      const label = toggle.firstElementChild!;
+      const summary = label.querySelector<HTMLElement>(".flex-1[title]")!;
+      const duration = within(row).getByLabelText(/^Duration /);
+      const chevron = toggle.lastElementChild!;
+      // A row can fit its container while visible text still spills across siblings.
+      await expect(getComputedStyle(summary).overflowX).toBe("hidden");
+      await expect(getComputedStyle(summary).textOverflow).toBe("ellipsis");
+      await expect(getComputedStyle(summary).whiteSpace).toBe("nowrap");
+      await expect(
+        summary.getBoundingClientRect().right + 8,
+      ).toBeLessThanOrEqual(duration.getBoundingClientRect().left + 1);
+      await expect(
+        duration.getBoundingClientRect().right + 6,
+      ).toBeLessThanOrEqual(chevron.getBoundingClientRect().left + 1);
+      await expect(toggle.scrollWidth).toBeLessThanOrEqual(toggle.clientWidth);
+      await expect(toggle.getBoundingClientRect().height).toBe(24);
+      const path = summary.querySelector("[data-path]");
+      for (const part of path ? Array.from(path.children) : [summary]) {
+        await expect(toggle).toHaveAccessibleName(
+          expect.stringContaining(part.textContent!),
+        );
+      }
+      await userEvent.click(toggle);
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      // Both the row label and the revealed file list constrain long basenames.
+      for (const path of row.querySelectorAll<HTMLElement>("[data-path]")) {
+        await expect(path.scrollWidth).toBeLessThanOrEqual(path.clientWidth);
+        if (path.dataset.path?.endsWith("/render.clj")) {
+          const basename = path.lastElementChild!;
+          await expect(basename.scrollWidth).toBe(basename.clientWidth);
+        }
+      }
+      await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+      toggle.focus();
+      await userEvent.keyboard("{Enter}");
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    }
+    await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(
+      canvasElement.clientWidth,
+    );
+  },
+};
+
+export const LongLabelsNarrow: Story = {
+  ...LongLabels,
+  decorators: [
+    (Story) => (
+      <div className="max-w-xs">
+        <Story />
+      </div>
+    ),
+  ],
+};
 
 export const ReplResults: Story = {
   args: { activity: ACTIVITY_REPL },

@@ -1077,7 +1077,7 @@ describe("the axis says a thing once", () => {
     expect(document.querySelector('[data-path="src/index.css"]')).toBeTruthy();
   });
 
-  it("keeps the file name whole and lets the directory be the part that gives way", () => {
+  it("prioritizes the file name and retains the full path", () => {
     paintStep({
       operation: "cat",
       summary: "one file",
@@ -1098,7 +1098,10 @@ describe("the axis says a thing once", () => {
     const name = path?.lastElementChild;
 
     expect(name?.textContent).toBe("render.clj");
-    expect(name?.className ?? "").not.toContain("truncate");
+    expect(name?.className).toContain("shrink-0");
+    expect(path?.getAttribute("title")).toBe(
+      "src/com/blockether/vis/internal/channel/render.clj",
+    );
   });
 });
 

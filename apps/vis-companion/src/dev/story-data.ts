@@ -199,6 +199,58 @@ export const ACTIVITY_SETTLED = projection({
   omitted: { rows: 0, by_classification: {} },
 });
 
+/** Long labels retain their full values while sharing a row with timing and controls. */
+export const ACTIVITY_LONG_LABELS = projection({
+  ...ACTIVITY_SETTLED,
+  counts: { running: 0, succeeded: 5, failed: 0, cancelled: 0 },
+  rows: [
+    {
+      id: 'long-tests',
+      operation: 'run_tests',
+      summary: 'test/com/blockether/vis/release_bundle_test.clj',
+      duration_ms: 51900,
+    },
+    {
+      id: 'long-markdown',
+      operation: 'grep',
+      summary:
+        '`release_bundle_preserves_platform_specific_runtime_dependencies`',
+      summary_format: 'markdown',
+    },
+    {
+      id: 'long-filename',
+      operation: 'patch',
+      summary:
+        'test/release_bundle_preserves_platform_specific_runtime_dependencies_test.clj',
+    },
+    {
+      id: 'long-directory',
+      operation: 'cat',
+      summary: 'test/com/blockether/vis/internal/release/verification/render.clj',
+    },
+    {
+      id: 'long-caption',
+      operation: 'shell',
+      presentation: {
+        headline: 'Ran command',
+        summary:
+          'Verify platform-specific runtime dependencies before packaging the release bundle',
+        content: [{ type: 'text', text: 'Release bundle verified.' }],
+      },
+    },
+  ].map((fields, sequence) => ({
+    ...ACTIVITY_SETTLED.rows[0],
+    resources: [
+      {
+        type: 'file',
+        id: 'reports/release_bundle_platform_specific_runtime_dependency_verification_results.xml',
+      },
+    ],
+    ...fields,
+    sequence: sequence + 1,
+  })),
+});
+
 /**
  * A TURN OF REAL WORK, which is what the axis is FOR: reads that answered a
  * question, a patch the repository REFUSED, the patch that landed, a check that
