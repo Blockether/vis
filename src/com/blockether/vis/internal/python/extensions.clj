@@ -1210,7 +1210,8 @@
           (assoc :presenter (keyword (get activity "presenter")))
 
           (get activity "label")
-          (assoc :ticker-fn
+          (assoc :activity
+            {:headline (get activity "label")} :ticker-fn
             (fn [_env _args]
               (get activity "label"))))]
 

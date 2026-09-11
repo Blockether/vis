@@ -32,6 +32,10 @@ def test_example_snippets_match_the_tested_source(page, source, language):
 def test_example_manifest_registration_and_domain_behavior(monkeypatch):
     monkeypatch.setattr(vis, "_registration", {"spec": None})
     monkeypatch.syspath_prepend(str(EXAMPLE / "src"))
+    updates = []
+    monkeypatch.setattr(
+        vis._host, "activity", lambda value: updates.append(value) or True
+    )
     metadata = extension_package.inspect_source(EXAMPLE)
     assert metadata["name"] == "vis-greeter"
     assert metadata["skills"] == ["skills/greeting"]
@@ -42,6 +46,11 @@ def test_example_manifest_registration_and_domain_behavior(monkeypatch):
     assert tool["contract"]["name"] == "greet.hello"
     assert _contracts.validate("symbol", "callable", tool["contract"])
     assert "Unicode code points" in tool["doc"]
+    assert tool["activity"]["label"] == "Greet person"
+    result = tool["fn"]("Ada")
+    assert result.text == "Hello, Ada!"
+    assert updates[-1]["headline"] == "Greet person"
+    assert updates[-1]["content"] == [{"type": "text", "text": "Hello, Ada!"}]
     domain_tests = runpy.run_path(str(EXAMPLE / "tests/test_greeter.py"))
     for name, test in domain_tests.items():
         if name.startswith("test_"):

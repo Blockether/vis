@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.activity.core-test
   (:require [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.activity :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -430,6 +431,7 @@
                               :succeeded
                               {"id" "build-live" "out" (apply str (repeat 2000 "x"))}
                               {:presenter :shell
+                               :activity (presenter/for-tool :shell)
                                :classification :mutation
                                :args (if (zero? n) ["npm test"] ["build-live"])}))
                 (range 24))
@@ -456,7 +458,8 @@
       (expect (= "running" (:state current)))
       ;; Typed output uses the same receipt budget; any shed body must be explicit.
       (expect (every? #(or (:is-truncated %)
-                           (some (fn [block] (= (apply str (repeat 2000 "x")) (get block "text")))
+                           (some (fn [block]
+                                   (= (apply str (repeat 2000 "x")) (get block "text")))
                                  (get-in % [:presentation "content"])))
                       (:children group)))
       (expect (zero? (get-in projection [:omitted :rows])))

@@ -58,8 +58,9 @@ vis.Symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity
 `name=None` uses a function's name; set `name` explicitly for an object namespace.
 `tag` is `observation` or `mutation`. `is_hidden=True` removes a callable from
 model-facing discovery but does not make it inaccessible or authorize its use.
-Every exported callable needs a nonblank docstring. `activity=None` uses the
-default presentation.
+Every exported callable needs a nonblank docstring and an explicit activity
+presentation. `activity=None` leaves only engine execution evidence; it does not
+create a result view. Do not rely on this omission for a finished extension.
 
 Source functions can use `def` or `async def`. The model calls their proxies with
 `await` in `python_execution`. The trusted worker awaits an asynchronous result
@@ -87,15 +88,47 @@ for one method. Metadata never changes the method's Python signature.
 
 ### Activity presentation
 
-`activity=vis.Activity(presenter="tests", label="Run checks")` describes how a
-running tool is shown in the TUI and the Companion app. Add `render=callback`
-to customize the display. The callback receives `phase` (`start`, `success`
-or `failure`), `args`, `kwargs`, `result` and `error` and returns a
-`vis.ActivityPresentation(headline, summary, blocks)` or `None`. Blocks are
-`heading`, `text`, `markdown`, `code`, `diff`, `table`, `progress`, `image`,
-`video`, `audio` and `file`. `vis.publish_activity(presentation)` replaces the
-presentation while the tool runs. Presentation errors never change a tool's
-result. Supported block types are defined in the
+Declare presentation beside each tool binding:
+`vis.Symbol(fn, activity=vis.Activity(label="Run checks", render=render_checks))`.
+For an object namespace, put `@vis.method(activity=...)` on **each exported
+method**, including nested methods. Namespace-level Activity is rejected.
+
+Use capitalized natural-language labels and headlines: "Run tests", "Search
+files", "Check service health". Do not expose `run_tests`, qualified method
+names, or all-caps sentences as activity labels. Preserve proper names such as
+GitHub and SDK. Use direct, consistent language without profanity or vulgarity.
+
+`vis.Activity(presenter="tests", label="Run checks", render=render_checks)` selects
+a semantic presenter and a synchronous callback. `presenter` classifies the
+operation; it does **not** generate tool-specific content. The default
+`"generic"` is only a classification, not a result renderer. The engine never
+turns an arbitrary result object into an activity view or a generic result-summary
+block. The tool's return value remains independently available to Python.
+
+The callback receives keyword arguments `phase` (`start`, `success`, `failure`),
+`args`, `kwargs`, `result` and `error`. It returns
+`vis.ActivityPresentation(headline, summary, content=(), sections=())` or `None`
+to keep the current presentation. The engine supplies identity, state, timing,
+errors and observed file changes; callbacks must not invent them. Callback errors
+do not change the tool's return value or exception.
+
+Headline and one-line summary stay visible when collapsed; only content waits
+behind disclosure. Show meaningful counts, targets and failure context, not a
+serialized result or a duplicate output preview. Choose typed `ActivityText`,
+`ActivityHeading`, `ActivityMarkdown`, `ActivityCode`, `ActivityDiff`,
+`ActivityTable`, `ActivityProgress`, `ActivityImage`, `ActivityVideo`,
+`ActivityAudio` and `ActivityFile` blocks. Media references existing attachments.
+`ActivitySection(headline, summary, content=())` groups related results without
+nesting sections. `vis.publish_activity(presentation)` replaces the current
+snapshot while a tool runs; empty content clears the body.
+
+Each headline and summary is one line of at most 512 UTF-8 bytes. A presentation
+allows 8 sections, 32 total blocks and 32 KiB. Bound large content deliberately
+and label excerpts. Test start, success, failure, empty results, replacement,
+redaction and disclosure in both clients. The
+[tested greeter entrypoint](extension-design.md#keep-the-entrypoint-small)
+demonstrates the callback beside registration. Exact portable limits and block
+shapes live in the
 [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
 
 ## Prompts and discovery

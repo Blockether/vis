@@ -3,6 +3,7 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
+            [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.context.renderer :as renderer]
@@ -13,6 +14,27 @@
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe registered-tool-activity-test
+             (it
+               "gives every first-party tool an explicit capitalized natural-language presentation"
+               (doseq [ext
+                       [foundation/vis-extension mcp/vis-extension]
+
+                       entry
+                       (get-in ext [:ext/engine :ext.engine/symbols])
+
+                       :when (and (:ext.symbol/fn entry) (not (:ext.symbol/raw? entry)))]
+
+                 (let [declaration
+                       (:ext.symbol/activity entry)
+
+                       headline
+                       (:headline declaration)]
+
+                   (expect (map? declaration) (str (:ext/name ext) "/" (:ext.symbol/symbol entry)))
+                   (expect (and (string? headline) (re-matches #"[A-Z][A-Za-z ]+" headline)))
+                   (expect (fn? (:render declaration)))))))
 
 (defdescribe
   project-path-prompt-runtime-contract-test

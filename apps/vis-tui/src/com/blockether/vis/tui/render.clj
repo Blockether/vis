@@ -5349,17 +5349,11 @@
           (activity-diffs row)))
 
 (defn- activity-row-detail
-  "The one line a settled step leaves under its head: the failure's summary, or the
-   result the engine reported. A running step has no outcome yet, and a failure that
-   quotes the machine's own error says why there instead."
-  [{:keys [error-summary result-summary result-format] :as row} state]
+  "Show a failure reason when no error evidence already carries it. Results belong
+   to the tool's authored presentation, never a generic summary block."
+  [{:keys [error-summary] :as row} _state]
   (let [error (first (filter #(= "error" (activity-evidence-kind %)) (:evidence row)))]
-    (cond (and (= :failed state) error) nil
-          (= :failed state) (not-empty (str/trim (str error-summary)))
-          :else (or (not-empty (str/trim (str error-summary)))
-                    (when-not (= :running state)
-                      (some-> (not-empty (str/trim (str result-summary)))
-                              (activity-inline-text result-format)))))))
+    (when-not error (not-empty (str/trim (str error-summary))))))
 
 (defn- activity-field [m k] (get m k (get m (name k))))
 

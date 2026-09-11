@@ -1594,6 +1594,58 @@ def fetch_checks(pull, repo=None):
     return checks_payload(rows, pull)
 
 
+def _login_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    status = "Signed in" if result.is_authenticated else "Not signed in"
+    return vis.ActivityPresentation(
+        "Sign in to GitHub", f"{result.hostname[:80]} · {status}"
+    )
+
+
+def _runs_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation(
+        "List workflow runs",
+        f"{len(result)} runs · showing {min(len(result), 20)}",
+        (
+            vis.ActivityTable(
+                ("Workflow", "Branch", "Status"),
+                tuple(
+                    (
+                        run.workflow[:80],
+                        run.branch[:80],
+                        (run.conclusion or run.status).replace("_", " ")[:80],
+                    )
+                    for run in result[:20]
+                ),
+            ),
+        ),
+    )
+
+
+def _watch_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation(
+        "Watch workflow",
+        f"{result.ending.replace('_', ' ')} · {len(result.jobs)} jobs",
+        (
+            vis.ActivityTable(
+                ("Job", "Status"),
+                tuple(
+                    (job.name[:80], job.conclusion.replace("_", " ")[:80])
+                    for job in result.jobs[:20]
+                ),
+            ),
+            vis.ActivityText(
+                "Full job details and failed logs remain in the watch result."
+            ),
+        ),
+    )
+
+
 class Gh:
     """GitHub through the `gh` CLI: sign in, list runs, watch one to its end.
 
@@ -1603,7 +1655,10 @@ class Gh:
     only read.
     """
 
-    @vis.method(tag="mutation")
+    @vis.method(
+        tag="mutation",
+        activity=vis.Activity(label="Sign in to GitHub", render=_login_activity),
+    )
     def login(self, hostname: str = "github.com") -> Account:
         """Authenticate GitHub CLI on one host through GitHub's browser device flow.
 
@@ -1615,6 +1670,9 @@ class Gh:
         """
         return _login(hostname)
 
+    @vis.method(
+        activity=vis.Activity(label="List workflow runs", render=_runs_activity)
+    )
     def runs(self, repo: str | None = None, limit: int = 10) -> tuple[RunSummary, ...]:
         """List recent Actions runs, newest first, without watching anything.
 
@@ -1624,6 +1682,7 @@ class Gh:
         """
         return run_list(repo, limit)
 
+    @vis.method(activity=vis.Activity(label="Watch workflow", render=_watch_activity))
     def watch(
         self, run: str | int | None = None, repo: str | None = None, pr=None
     ) -> WatchOutcome:

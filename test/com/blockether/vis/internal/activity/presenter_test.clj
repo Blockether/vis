@@ -49,6 +49,7 @@
                      {:operation operation
                       :label label
                       :args [label]
+                      :activity (presenter/for-tool operation)
                       :presenter (if (= operation :patch) :patch :generic)
                       :classification (if (= operation :patch) :mutation :observation)}]
 
@@ -93,7 +94,7 @@
       (doseq [[operation heading] [[:run_tests "Metric"] [:lint_code "Metric"]
                                    [:council.publish "Message"] [:council.get "Message"]
                                    [:council.read "Thread"] [:council.threads "Thread"]
-                                   [:council.members "Member"] [:custom.lookup "Detail"]]]
+                                   [:council.members "Member"]]]
         (let [content (get (presenter/result-presentation {:operation operation}
                                                           {:total 12 :title "Activity review"})
                            "content")]

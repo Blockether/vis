@@ -21,7 +21,17 @@
           "resources": [],
           "evidence": [],
           "result_summary": "First search: 2 matches",
-          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "presentation": {
+            "headline": "Searched",
+            "summary": "same query",
+            "content": [
+              {
+                "type": "text",
+                "text": "First search: 2 matches"
+              }
+            ]
+          }
         },
         {
           "id": "read-1",
@@ -72,7 +82,12 @@
           "summary": "same query",
           "resources": [],
           "evidence": [],
-          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "presentation": {
+            "headline": "Searching",
+            "summary": "same query",
+            "content": []
+          }
         },
         {
           "id": "unknown-1",

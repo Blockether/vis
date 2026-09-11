@@ -579,6 +579,13 @@
         symbol
         (assoc :symbol symbol)
 
+        (get-in details [:activity :headline])
+        (assoc :presentation
+          {"headline" (bounded-text (util/redact-secret-text (get-in details [:activity :headline]))
+                                    max-summary-bytes)
+           "summary" (bounded-text (util/redact-secret-text (or label "")) max-summary-bytes)
+           "content" []})
+
         label
         (assoc :label (bounded-text (util/redact-secret-text label) max-summary-bytes))
 
@@ -610,7 +617,8 @@
         (bounded-redact-result (:result details) 16384)
 
         full
-        (presenter/result-presentation details value)
+        (when-let [render (get-in details [:activity :render])]
+          (render details value))
 
         clip-line
         #(-> (str %)
@@ -676,7 +684,8 @@
                             max-detail-bytes))
 
         presentation
-        (when (= outcome :succeeded) (try (result-presentation details) (catch Exception _ nil)))
+        (when (and (= outcome :succeeded) (get-in details [:activity :render]))
+          (try (result-presentation details) (catch Exception _ nil)))
 
         diff-evidence
         (when (= outcome :succeeded) (result-diff-evidence details))

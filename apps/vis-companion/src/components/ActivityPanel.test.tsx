@@ -250,6 +250,11 @@ describe("joined Activity operation groups", () => {
                   ...row,
                   state: "succeeded",
                   result_summary: "Last search: 5 matches",
+                  presentation: {
+                    headline: "Searched",
+                    summary: "same query",
+                    content: [{ type: "text", text: "Last search: 5 matches" }],
+                  },
                 }
               : row,
           ),
@@ -853,8 +858,14 @@ describe("a run reads as one thread", () => {
           {
             ...first,
             resources: [{ type: "file", id: "src/components/ui.tsx" }],
-            result_summary:
-              "src/components/ui.tsx:12: matched\nsrc/components/ui.tsx:40: matched",
+            presentation: {
+              headline: "Searched",
+              summary: "src/components/ui.tsx",
+              content: [{
+                type: "code",
+                text: "src/components/ui.tsx:12: matched\nsrc/components/ui.tsx:40: matched",
+              }],
+            },
           },
           ...rest,
         ],
@@ -1102,7 +1113,7 @@ describe("what the axis does while the work is still moving", () => {
     expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
     expect(screen.getByText(/search-6 · running/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Search ×7/ }));
-    const step = screen.getByRole("button", { name: "Searched search-4" });
+    const step = screen.getByRole("button", { name: /Searched.*search-4/ });
     fireEvent.click(step);
     expect(screen.getByText("result-4")).toBeTruthy();
     rerender(
@@ -1243,11 +1254,8 @@ describe("what a code block changed with its own hands", () => {
     const head = document.querySelector('[data-activity-depth="0"]');
     const moved = document.querySelectorAll('[data-activity-depth="1"]')[3];
 
-    // The head's own sentence is markdown BECAUSE the engine declared it so: `patch`
-    // and `shell` are the tools it is telling the reader were not involved.
-    expect(head?.querySelector("code")?.textContent).toBe("patch");
-    expect(head?.textContent).toContain("The code block changed these itself");
-    expect(head?.textContent).not.toContain("`");
+    // Engine-observed changes retain paths and diffs, not a generic summary.
+    expect(head?.textContent).not.toContain("The code block changed these itself");
     // A marked name is code; the row keeps no backtick of its own.
     expect(moved?.querySelector("code")?.textContent).toBe("vis/PLAN.md");
   });
@@ -1363,25 +1371,22 @@ describe("a diff line carries its sign only once", () => {
   });
 });
 
-describe("bounded activity outcomes", () => {
-  it("opens the complete result on demand, not a quoted payload wall", () => {
+describe("tool-authored activity results", () => {
+  it("does not render generic result summaries or offer an empty disclosure", () => {
     const activity = activityProjection();
-    const full = Array.from(
-      { length: 30 },
-      (_, i) => `match ${i}: source detail`,
-    ).join("\n");
-    activity.rows = [{ ...activity.rows[0], result_summary: full }];
+    activity.rows = [
+      {
+        ...activity.rows[0],
+        resources: [],
+        evidence: [],
+        result_summary: "Unrequested result preview",
+      },
+    ];
     paintActivity({ activity });
     openEverySettledStep();
-    expect(screen.queryByText(/match 29/)).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Expand result summary" }),
-    );
-    expect(screen.getByText(/match 29/).textContent).toContain(full);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Collapse result summary" }),
-    );
-    expect(screen.queryByText(/match 29/)).toBeNull();
+    expect(screen.queryByText("Unrequested result preview")).toBeNull();
+    expect(screen.queryByRole("button", { name: /result summary/ })).toBeNull();
+    expect(document.querySelector("[data-activity-row] button")).toBeNull();
   });
 });
 

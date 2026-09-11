@@ -5,6 +5,7 @@
    on the persisted revision; the lifecycle version also rejects stale model work.
    Completion is a model declaration supported by evidence, not an independent judge."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as persistence]
@@ -239,7 +240,8 @@ New user instructions and a user stop always take priority over continuation.")
 (def symbols
   [(extension/symbol
      #'update-goal
-     {:symbol 'update_goal
+     {:activity (presenter/for-tool :update_goal)
+      :symbol 'update_goal
       :inject-env? true
       :tag :mutation
       :call {:pos ["goal_id" "version" "status" "reason"]}

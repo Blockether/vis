@@ -111,6 +111,22 @@ The packaged example connects the implementation to Vis with this entire entrypo
 import blockether.vis.extension as vis
 from vis_greeter import Greeter
 
+
+def greeting_activity(*, phase, result, **_):
+    """Show the greeting and its character count, not the result object's repr."""
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation(
+        "Greet person",
+        f"{result.characters} characters",
+        (vis.ActivityText(result.text[:1000]),),
+    )
+
+
+Greeter.hello = vis.method(
+    activity=vis.Activity(label="Greet person", render=greeting_activity)
+)(Greeter.hello)
+
 vis.register(
     vis.Extension(
         name="vis-greeter",
@@ -126,6 +142,22 @@ comes from `Symbol.name`, not `Extension.alias`. Declare import roots in the
 [package manifest](extension-packages.md#package-manifest), or use an
 [editable project](extension-development.md); do not combine both import strategies
 for the same source.
+
+## Design the activity with the tool
+
+Every registered callable owns its Activity presentation, including every public
+method in an object namespace. Declare it at the binding, not as a later UI task.
+The example decorates `Greeter.hello` in the entrypoint so its ordinary Python
+implementation stays independent of Vis.
+
+Use capitalized natural-language labels and headlines, such as "Greet person" or
+"Run tests", with consistent terminology and no profanity or vulgarity. Show a
+meaningful target, count or status in the summary. Put selected content behind
+disclosure rather than serializing the returned object. The engine supplies
+execution state and errors, but no generic result view. Test empty results,
+running updates, success and failure; verify that presentation errors cannot
+change the tool result. Follow the canonical
+[Activity API](extension-api.md#activity-presentation) for declarations and limits.
 
 ## Give each kind of instruction one owner
 

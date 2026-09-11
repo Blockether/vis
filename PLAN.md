@@ -1735,3 +1735,37 @@ The Activity projection and builtin presenters live under `src/com/blockether/vi
 ## Plan state
 
 Complete. Read/Patch starts remain internal; retained result presentations drive both clients without rereading files or exposing invocation parameters. One disclosure shows read code or a single-file diff. Compact headers retain filenames, including the 40-column TUI frame; embedded document headings and code retain accessible semantics. Listing remains unchanged. Verified: 50 Activity tests, 324 editing/wrapper tests, 279 TUI rendering/grid tests, 448 affected Companion tests, 225 Storybook stories and contrast across 10 themes. Clojure formatting, lint/reflection, Companion lint/build and diff checks passed. Production browser review covered 375/393 px phones, an 834 px touch tablet and a 1280 px desktop; HTML/native terminal grid parity covered 40/80/120 columns. Both self-contained HTML artifacts render offline. No native engine build or physical-device run was performed. Initial checkout was clean on `main` at `81e305c33`; unrelated release commits were preserved.
+
+# Explicit tool activities
+
+Phrase: tools own their presentation; clients do not invent result previews.
+
+## Context
+
+The engine's Activity presenter invents views for unknown tools. Companion and TUI also render generic result summaries. Register first-party presentations explicitly, retain errors and diffs, and keep Python results available independently of the Activity UI. Do not replace custom renderers with name-derived result tables.
+
+## 1. Remove implicit result presentation
+- Rationale: generic previews duplicate tool output.
+- Data: Activity event/presenter/registry, Companion ActivityPanel and TUI render tests.
+- Acceptance criteria: no unknown-tool result view or result-summary block; explicit presentations, failures and diffs remain.
+- Unknowns: registration and replay coverage must verify authored updates win.
+
+## 2. Give first-party tools explicit presentations
+- Rationale: each registered operation needs readable, relevant activity content.
+- Data: built-in bindings, bundled Python extensions and greeter example.
+- Acceptance criteria: coverage checks every first-party tool; labels use capitalized natural language; examples and extension guides agree.
+- Unknowns: optional fields in domain results must not create misleading summaries.
+
+## 3. Verify and publish
+- Rationale: the change crosses registration and both clients.
+- Data: affected suites, formatting/lint/reflection, Storybook/build, browser inspection, documentation/link/diff checks.
+- Acceptance criteria: commit only this task's changes and push to main after required checks.
+- Unknowns: report unavailable platform verification.
+
+## Plan state
+
+Complete locally. Every first-party observed binding and bundled Python tool declares its Activity presentation. Unknown tools no longer receive synthesized result views, and neither client shows generic result-summary disclosures. Extension documentation, examples and AGENTS.md consistently require capitalized natural-language labels and non-vulgar copy.
+
+Verified: 76 Activity/foundation tests, 62 extension registry tests, 135 real Python-host tests, 264 TUI render tests, 123 TUI screen tests, 20 HTML/native terminal parity tests, 112 Companion tests, 230 Storybook stories and contrast across 10 themes. The SDK passed 439 tests (13 optional integration tests skipped); bundled extension suites passed 101 tests. Clojure formatting/lint/reflection, Python formatting/lint, Companion lint/typecheck/build, documentation snippets/links and diff checks passed. All 65 tracked Markdown documents passed the wording scan. Browser review covered 393 px phone, 834 px touch tablet and 1280 px desktop frames; virtual-terminal capture covered the expanded Activity content. No native engine build or physical-device run was performed. Temporary review services were stopped.
+
+Initial checkout was clean on main at 060962680. Commit and push are authorized; concurrent unrelated changes are excluded.

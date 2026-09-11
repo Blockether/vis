@@ -8,6 +8,7 @@
   reports it and `repl_stop` ends one. Live REPLs also surface in the ctx
   `resources` block."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.surface :as contract]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -619,7 +620,8 @@
 (def format-symbol
   (vis/symbol
     #'format-code
-    {:symbol 'format_code
+    {:activity (presenter/for-tool :format_code)
+     :symbol 'format_code
      :result
      (str
        "String-keyed `op` result. Code/file: `changed` plus optional `chars,path,formatter,repaired`; "
@@ -651,7 +653,8 @@
 (def lint-symbol
   (vis/symbol
     #'lint-code
-    {:symbol 'lint_code
+    {:activity (presenter/for-tool :lint_code)
+     :symbol 'lint_code
      :result
      (str
        "String-keyed `op` object: `language`, severity counts, `files,findings,providers`; "
@@ -684,7 +687,8 @@
 (def test-symbol
   (vis/symbol
     #'run-tests
-    {:symbol 'run_tests
+    {:activity (presenter/for-tool :run_tests)
+     :symbol 'run_tests
      :result
      (str
        "String-keyed, stamped with `op`; absent fields mean not applicable; these fields may also be `None`. "
@@ -737,7 +741,8 @@
 (def repl-eval-symbol
   (vis/symbol
     #'repl-eval
-    {:symbol 'repl_eval
+    {:activity (presenter/for-tool :repl_eval)
+     :symbol 'repl_eval
      :result
      (str
        "Pack-defined string-keyed object stamped with `op` and selected `language`; fields may be absent. Clojure: "
@@ -774,7 +779,8 @@
 (def repl-start-symbol
   (vis/symbol
     #'repl-start
-    {:symbol 'repl_start
+    {:activity (presenter/for-tool :repl_start)
+     :symbol 'repl_start
      :result
      (str
        "String-keyed result stamped with `op` — the SAME shape in every language: `result` "
@@ -816,7 +822,8 @@
 (def repl-status-symbol
   (vis/symbol
     #'repl-status
-    {:symbol 'repl_status
+    {:activity (presenter/for-tool :repl_status)
+     :symbol 'repl_status
      :result
      (str
        "String-keyed and stamped with `op`. The project REPL answers the same keys in every "
@@ -844,7 +851,8 @@
 (def connect-repl-symbol
   (vis/symbol
     #'connect-repl
-    {:symbol 'repl_connect
+    {:activity (presenter/for-tool :repl_connect)
+     :symbol 'repl_connect
      :result (str "String-keyed and stamped with `op`: `result,id,cwd,status` plus "
                   "`running,port,host,external,message` when known, and "
                   "`build,target,dialect,runtime` for a shadow-cljs build.")
@@ -871,7 +879,8 @@
 (def repl-stop-symbol
   (vis/symbol
     #'repl-stop
-    {:symbol 'repl_stop
+    {:activity (presenter/for-tool :repl_stop)
+     :symbol 'repl_stop
      :result
      (str "String-keyed `{result, id, cwd, status}` stamped with `op` — `result` is `stopped`, "
           "`not-managed` or `detached`, and an external REPL is only detached.")

@@ -68,6 +68,9 @@
            :evidence (if-let [argument (:argument-summary event)]
                        [{:kind :arguments :text argument}]
                        [])}
+    (:presentation event)
+    (assoc :presentation (:presentation event))
+
     (:argument-key event)
     (assoc :argument-key (:argument-key event))
 
@@ -135,7 +138,7 @@
       (seq (:diff-evidence event))
       (update :evidence into (:diff-evidence event))
 
-      (and (:presentation event) (nil? (:presentation row)))
+      (and (:presentation event) (not (:authored-presentation? row)))
       (assoc :presentation (:presentation event))
 
       (:group-token event)
@@ -196,7 +199,9 @@
               (fn [rows]
                 (mapv (fn [row]
                         (if (and (= (:id row) (:invocation-id event)) (= :running (:state row)))
-                          (assoc row :presentation (:presentation event))
+                          (assoc row
+                            :presentation (:presentation event)
+                            :authored-presentation? true)
                           row))
                       rows)))
 

@@ -9,6 +9,7 @@
    Paths are confined to the session's allowed roots. Host operations also
    consult extension-owned `:fs/access` gates."
   (:require [babashka.fs :as fs]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -3802,7 +3803,8 @@
 (def cat-symbol
   (vis/symbol
     #'cat-tool
-    {:symbol 'cat
+    {:activity (presenter/for-tool :cat)
+     :symbol 'cat
      :result
      (str
        "A plain string: one `<line>:<hash>│ <text>` line per source line, blanks included. "
@@ -3824,7 +3826,8 @@
 (def patch-symbol
   (vis/symbol
     #'patch-tool
-    {:symbol 'patch
+    {:activity (presenter/for-tool :patch)
+     :symbol 'patch
      :result
      (str
        "A plain string: one status line — path, edit count, lines before → after, parse verdict — "
@@ -3853,7 +3856,8 @@
 (def grep-symbol
   (vis/symbol
     #'grep-tool
-    {:symbol 'grep
+    {:activity (presenter/for-tool :grep)
+     :symbol 'grep
      :result
      (str
        "Text, not a map: line 1 summarizes (hits, files, truncation and the exact next call); then "

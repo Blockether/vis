@@ -73,6 +73,14 @@
 
 (defdescribe
   direct-activity-result-test
+  (it "does not render generic result summaries or offer empty disclosures"
+      (let [row {:state "succeeded"
+                 :summary "Search files"
+                 :result-summary "Unrequested result preview"
+                 :resources []
+                 :evidence []}]
+        (expect (nil? (#'render/activity-row-detail row :succeeded)))
+        (expect (false? (#'render/activity-row-openable? row)))))
   (it "does not offer disclosures for technical resource IDs"
       (expect (false? (#'render/activity-row-openable?
                        {:summary "Review"
@@ -224,7 +232,11 @@
               (mapv #(if (= "search-4" (:id %))
                        (assoc %
                          :state "succeeded"
-                         :result-summary "Last search: 5 matches")
+                         :result-summary "Last search: 5 matches"
+                         :presentation {"headline" "Searched"
+                                        "summary" "same query"
+                                        "content" [{"type" "text"
+                                                    "text" "Last search: 5 matches"}]})
                        %)
                     rows)
 
@@ -6337,13 +6349,12 @@ h = 8"
               (line-with open "_shell-wait")
 
               outcome-line
-              (line-with open "\"keys\"")]
+              (line-with open "› git")]
 
           (expect (re-find #"^  _shell-wait.*▾" wait))
-          (expect (= 1 (count (filter #(str/includes? % "\"keys\"") open)))
-                  "one outcome, under the one call that opened")
-          (expect (= (long (.indexOf wait "_shell-wait")) (long (.indexOf outcome-line "{")))
-                  "the outcome starts in the column the call's own words do")
+          (expect (not-any? #(str/includes? % "\"keys\"") open)
+                  "raw result summaries never become Activity content")
+          (expect (some? outcome-line) "observed resources remain available")
           (expect (str/includes? (line-with open "› git") "› git") "with the handle it touched")
           (expect (str/blank? (second open)) "the header stays separated from the operations")))
     (it

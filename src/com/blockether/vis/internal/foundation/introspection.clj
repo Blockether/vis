@@ -18,6 +18,7 @@
    Gated: the extension registered at the bottom of this namespace binds its
    symbols and prompt only while the `introspection` toggle is ON (default OFF)."
   (:require [charred.api :as json]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
@@ -1382,7 +1383,8 @@
 (def read-session-symbol
   (vis/symbol
     #'read-session
-    {:inject-env? true
+    {:activity (presenter/for-tool :read_session)
+     :inject-env? true
      :tag :observation
      :description
      (str
@@ -1406,7 +1408,8 @@
 (def get-session-symbol
   (vis/symbol
     #'get-session
-    {:inject-env? true
+    {:activity (presenter/for-tool :get_session)
+     :inject-env? true
      :tag :observation
      :description
      (str
@@ -1422,7 +1425,8 @@
 (def list-sessions-symbol
   (vis/symbol
     #'list-sessions
-    {:inject-env? true
+    {:activity (presenter/for-tool :list_sessions)
+     :inject-env? true
      :tag :observation
      :description
      (str "The newest-first conversation INDEX — `list_sessions()`, or `list_sessions(search=…)`, "

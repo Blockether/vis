@@ -135,7 +135,8 @@
     (fn [[v name tag params positional]]
       (extension/symbol
         v
-        {:symbol name
+        {:activity (presenter/for-tool (keyword (str name)))
+         :symbol name
          :inject-env? true
          :tag tag
          :active-fn council/enabled?

@@ -192,10 +192,41 @@ def _publish(steps: list[CheckResult], running: str | None = None) -> None:
         blocks.append(vis.ActivityProgress(running))
     vis.publish_activity(
         vis.ActivityPresentation(
-            headline="SDK verification",
+            headline="Check SDK",
             summary=running or f"{len(steps)} gates completed",
             content=blocks,
         )
+    )
+
+
+def _check_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    failed = sum(step.exit_code != 0 for step in result.steps)
+    return vis.ActivityPresentation(
+        "Check SDK",
+        f"{len(result.steps)} gates · {failed} failed",
+        (
+            vis.ActivityTable(
+                ("Gate", "Status"),
+                tuple(
+                    (
+                        step.name[:100],
+                        "Timed out"
+                        if step.is_timed_out
+                        else "Passed"
+                        if step.exit_code == 0
+                        else "Failed",
+                    )
+                    for step in result.steps[:40]
+                ),
+            ),
+            vis.ActivityText(
+                "Engine integration checked"
+                if result.is_engine_checked
+                else "Engine integration not checked"
+            ),
+        ),
     )
 
 
@@ -203,7 +234,10 @@ class SDK:
     """Repository-owned SDK verification, not a second build system or a publisher."""
 
     @vis.method(
-        tag="mutation", activity=vis.Activity(presenter="tests", label="Check SDK")
+        tag="mutation",
+        activity=vis.Activity(
+            presenter="tests", label="Check SDK", render=_check_activity
+        ),
     )
     def check(
         self,

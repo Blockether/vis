@@ -19,6 +19,7 @@
    `cwd` changes between calls, and explicitly by the HOST-ONLY
    `refresh!` — which `/reload` runs and the sandbox cannot call."
   (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.environment.git :as git]
             [com.blockether.vis.internal.foundation.environment.host :as host]
@@ -168,7 +169,8 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
 (def main-agent-instructions-symbol
   (vis/symbol
     #'main-agent-instructions-tool
-    {:symbol 'main-agent-instructions
+    {:activity (presenter/for-tool :main_agent_instructions)
+     :symbol 'main-agent-instructions
      :tag :observation
      :description
      (str "The project's own guidance file — AGENTS.md or CLAUDE.md — WHOLE, with where it was "

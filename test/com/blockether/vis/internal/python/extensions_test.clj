@@ -331,7 +331,7 @@ vis.register(vis.Extension(
     alias=\"counter\",
     symbols=[
         vis.Symbol(counter_bump, tag=\"mutation\"),
-        vis.Symbol(counter_read, tag=\"observation\", activity=vis.Activity(presenter=\"tests\", label=\"checking counter\", render=lambda phase, **_: vis.ActivityPresentation('Counter', 'checking counter', (vis.ActivityText(phase),)))),
+        vis.Symbol(counter_read, tag=\"observation\", activity=vis.Activity(presenter=\"tests\", label=\"Check counter\", render=lambda phase, **_: vis.ActivityPresentation('Counter', 'Check counter', (vis.ActivityText(phase),)))),
         vis.Symbol(counter_boom, tag=\"observation\", is_hidden=True),
     ],
     prompt=\"counter_ surface active.\",
@@ -376,14 +376,14 @@ vis.register(vis.Extension(
                        (mapv #(get-in % [:presentation "content" 0 "text"])
                              (filter #(= :content (:phase %)) @events))))
             (expect (= {"headline" "Counter"
-                        "summary" "checking counter"
+                        "summary" "Check counter"
                         "content" [{"type" "text" "text" "success"}]}
                        (get-in projection [:rows 0 :presentation])))
             (expect (= "failed" (:state projection)))
             (expect (= {:running 0 :succeeded 1 :failed 1 :cancelled 0} (:counts projection)))
             (expect (= "tests" (get-in projection [:rows 0 :presenter])))
             (expect (= "observation" (get-in projection [:rows 0 :signal])))
-            (expect (= "checking counter" (get-in projection [:rows 0 :summary])))
+            (expect (= "Check counter" (get-in projection [:rows 0 :summary])))
             (expect (activity-contract/valid-projection? projection))))))))
 
 ;; Loading + registry

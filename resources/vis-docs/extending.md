@@ -54,19 +54,35 @@ def hello(name: str, *, uppercase: bool = False) -> str:
     return text.upper() if uppercase else text
 
 
+def greeting_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation(
+        "Greet person", f"{len(result)} characters",
+        (vis.ActivityText(result[:1000]),),
+    )
+
+
 vis.register(
     vis.Extension(
         name="greeting",
         description="Generate greetings without sending messages.",
         alias="greeting",
-        symbols=[vis.Symbol(hello)],
+        symbols=[vis.Symbol(
+            hello, activity=vis.Activity(label="Greet person", render=greeting_activity)
+        )],
     )
 )
 ```
 
 The filename identifies the entry file; `name` identifies the extension;
 `Symbol(hello)` exposes the callable as `hello`. `alias` does not add a prefix.
-Keep entry filenames different from the packages they import.
+Keep entry filenames different from the packages they import. Declare an Activity
+beside every tool binding. Use capitalized natural-language labels, not Python
+identifiers; the engine does not invent a generic result view. The callback shows
+the greeting and a useful count while the return value stays available to Python.
+See [Activity presentation](extension-api.md#activity-presentation) for limits,
+object methods, intermediate updates and testing.
 
 ### 2. Load it
 

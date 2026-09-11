@@ -58,6 +58,7 @@
    MODEL's door only: an installed extension keeps its own trusted process boundary
    (`vis.shell`, `subprocess`), which the toggle does not gate."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
@@ -2856,7 +2857,8 @@
 (def shell-symbol
   (vis/symbol
     #'shell
-    {:symbol 'shell
+    {:activity (presenter/for-tool :shell)
+     :symbol 'shell
      ;; A process starts from PYTHON, which can retain the returned handle. Every
      ;; later operation (`wait`, `logs`, `type`, `stop`) is a method on that handle.
      ;; `apropos('shell')` / `doc('shell')` are how the capability is found.
@@ -2907,7 +2909,8 @@
 (def shell-logs-symbol
   (vis/symbol
     #'shell-logs
-    {:symbol '_shell-logs
+    {:activity (presenter/for-tool :_shell-logs)
+     :symbol '_shell-logs
      :name "_shell_logs"
      :result
      (str "The same shell result shape as every other stage (`stage` is \"logs\"): `out` is the "
@@ -2936,7 +2939,8 @@
 (def shell-wait-symbol
   (vis/symbol
     #'shell-wait
-    {:symbol '_shell-wait
+    {:activity (presenter/for-tool :_shell-wait)
+     :symbol '_shell-wait
      :name "_shell_wait"
      :result
      (str "The same shell result shape (`stage` \"wait\"): `out` is everything printed since "
@@ -2955,7 +2959,8 @@
 (def shell-type-symbol
   (vis/symbol
     #'shell-type
-    {:symbol '_shell-type
+    {:activity (presenter/for-tool :_shell-type)
+     :symbol '_shell-type
      :name "_shell_type"
      :result "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label."
      :description
@@ -2969,7 +2974,8 @@
 (def shell-stop-symbol
   (vis/symbol
     #'shell-stop
-    {:symbol '_shell-stop
+    {:activity (presenter/for-tool :_shell-stop)
+     :symbol '_shell-stop
      :name "_shell_stop"
      :result "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`."
      :description

@@ -392,6 +392,11 @@ class ActivityPresentation(ActivitySection):
 class Activity:
     """Symbol presentation; the engine owns identity, timing and outcome.
 
+    Declare Activity on every exported callable, including each object method.
+    Labels and headlines use capitalized natural language ("Run tests"), not
+    identifiers or all-caps sentences. The engine does not generate result views.
+    Use render or publish_activity for task-specific counts, content and sections.
+
     render is an optional synchronous callback receiving phase, args, kwargs,
     result and error as keyword arguments; it returns an ActivityPresentation
     (or None to keep the current presentation). It runs on start, success and failure.

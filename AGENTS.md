@@ -52,9 +52,15 @@ resolves that issue. Keep any other body text to the reason the diff cannot expl
 
 ## Repository decisions
 
-- No profanity or vulgarity in tracked content, including quoted reports, fixtures and commit text;
-  paraphrase reports instead.
+- No profanity or vulgarity in tracked content, including documentation, examples, activity copy,
+  quoted reports, fixtures and commit text. Paraphrase reports instead; do not copy a user's wording
+  into documentation. Keep terminology consistent across extension guides and executable examples.
 - Use direct, literal language in documentation. Avoid metaphors, slogans and rhetorical filler.
+- Every observed tool binding owns an explicit Activity presentation, including each exported Python
+  object method. Use capitalized natural-language labels ("Run tests", "Search files"), not code
+  identifiers or all-caps sentences. Preserve errors, meaningful counts and diffs; never substitute a
+  generic result preview. Follow `resources/vis-docs/extension-api.md#activity-presentation` and cover
+  registration plus running, success, failure and empty states in tests.
 - This repository is public. Private deployment details and credentials belong in `infrastructure`,
   never here. Examples use `127.0.0.1`, `10.0.0.5`, `gateway.example.com` and `visgw`.
 - No compatibility layers or migrations for obsolete APIs: update consumers and remove old paths.

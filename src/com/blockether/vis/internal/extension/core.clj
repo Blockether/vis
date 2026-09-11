@@ -404,6 +404,10 @@
     (optional-field? x :ext.symbol/hidden? boolean?)
     (optional-field? x :ext.symbol/tag #{:observation :mutation})
     (optional-field? x :ext.symbol/presenter keyword?)
+    (optional-field?
+      x
+      :ext.symbol/activity
+      #(and (map? %) (non-blank-string? (:headline %)) (optional-field? % :render fn?)))
     (optional-field? x :ext.symbol/batch-hint pos-int?)
     (every? #(optional-field? x % fn?)
             [:ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/after-fn
@@ -735,6 +739,9 @@
           (:tag opts)
           (assoc :ext.symbol/tag (:tag opts))
 
+          (:activity opts)
+          (assoc :ext.symbol/activity (:activity opts))
+
           (:presenter opts)
           (assoc :ext.symbol/presenter (:presenter opts))
 
@@ -794,10 +801,13 @@
    `:arglists` (read from var metadata - i.e. the underlying defn's
    docstring + arglists). Pass it as `#'my-tool`.
 
-   Observed tools return canonical internal envelope maps. The model-facing
-   surface is the per-iteration trailer (real Python form values); there is
-   no per-symbol render callback — a printed result is painted from the
-   result's own data.
+   Observed tools return canonical internal envelope maps. Declare `:activity`
+   beside every observed binding: `{:headline \"Read file\" :render callback}`.
+   Use capitalized natural language, not identifiers or all-caps sentences. The
+   optional callback receives invocation details and a bounded, redacted public
+   result, and returns a canonical Activity presentation. Tools can instead call
+   `publish-activity!` while running. No generic result presentation is generated;
+   the engine owns identity, state, timing, errors and file-change evidence.
 
    Raw helpers pass `:raw? true` and return plain values directly, with no
    envelope enforcement, channel sink, or tool metadata.
@@ -1953,6 +1963,7 @@
                :classification (:ext.symbol/tag sym-entry)
                :extension (:ext/name ext)
                :symbol sym
+               :activity (:ext.symbol/activity sym-entry)
                :label (tool-start-label args)
                :phrase (tool-start-phrase sym-entry env args)
                :args args}]

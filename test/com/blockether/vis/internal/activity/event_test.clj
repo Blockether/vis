@@ -1,8 +1,26 @@
 (ns com.blockether.vis.internal.activity.event-test
   (:require [com.blockether.vis.internal.activity.event :as event]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
             [clojure.string :as string]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe unregistered-result-presentation-test
+             (it "never invents a result view for a tool without an authored presentation"
+                 (let [ctx
+                       (event/context)
+
+                       terminal
+                       (event/terminal-event ctx
+                                             (event/invocation ctx nil)
+                                             {:operation :custom.lookup
+                                              :presenter :generic
+                                              :started-at-ms (System/currentTimeMillis)
+                                              :outcome :succeeded
+                                              :result {:records [1 2 3]}})]
+
+                   (expect (nil? (:presentation terminal)))
+                   (expect (some? (:result-summary terminal))))))
 
 (defdescribe
   result-presentation-test
@@ -12,6 +30,7 @@
                                            (event/invocation ctx nil)
                                            {:operation operation
                                             :presenter :generic
+                                            :activity (presenter/for-tool operation)
                                             :args ["src/example.clj"]
                                             :label "src/example.clj"
                                             :started-at-ms (System/currentTimeMillis)

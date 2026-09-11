@@ -102,12 +102,6 @@ function activityStepHeadline(row: ActivityRow): string {
     .join(" · ");
 }
 
-/** What a settled step LEFT: the engine's own outcome, never a partial one. */
-function activityStepOutcome(row: ActivityRow): string {
-  if (row.error_summary) return row.error_summary;
-  return row.state === "running" ? "" : (row.result_summary ?? "");
-}
-
 /** One counter in the margin: the words, and the tone that repeats them. */
 export interface ActivityCostPart {
   readonly text: string;
@@ -522,41 +516,6 @@ function ActivityText({
  * touched — is the whole tree either surface will draw, because a fourth is a file
  * tree printed into a chronology and nothing on this axis is worth that.
  */
-/** Keep payload-sized outcomes out of the chronology until the reader asks. */
-function ActivityOutcome({
-  text,
-  format,
-}: {
-  text: string;
-  format?: ActivityTextFormat;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const preview = text.split("\n").slice(0, 2).join("\n").slice(0, 240);
-  const truncated = preview.length < text.length;
-  return (
-    <div className="mt-0.5 min-w-0 break-words font-sans text-meta text-dialog-hint">
-      <div className={!expanded && truncated ? "line-clamp-2" : undefined}>
-        <ActivityText
-          text={expanded || !truncated ? text : `${preview}…`}
-          format={expanded || !truncated ? format : undefined}
-          block
-        />
-      </div>
-      {truncated && (
-        <Disclosure
-          isOpen={expanded}
-          tone="muted"
-          bleed
-          aria-label={`${expanded ? "Collapse" : "Expand"} result summary`}
-          onClick={() => setExpanded((open) => !open)}
-        >
-          {expanded ? "Less result" : "Full result"}
-        </Disclosure>
-      )}
-    </div>
-  );
-}
-
 /** The containing trace resolves only attachments belonging to this transcript. */
 export const ActivityAttachmentContext = createContext<
   ((id: string) => ReactNode) | null
@@ -734,11 +693,7 @@ function ActivityStep({
   // the engine's summary line only when it did not. There is no pill — a framed
   // word beside a filled red mark, under a verb that already says "refused",
   // was the same fact spelled a third time.
-  const outcome = failed
-    ? error
-      ? ""
-      : (row.error_summary ?? "")
-    : activityStepOutcome(row);
+  const outcome = !error ? (row.error_summary ?? "") : "";
   const touched = row.resources.filter(
     (resource) =>
       resource.id !== summary &&
@@ -903,10 +858,9 @@ function ActivityStep({
         </section>
       ))}
       {open && showsOutcome && (
-        <ActivityOutcome
-          text={outcome}
-          format={failed ? undefined : row.result_format}
-        />
+        <p className="whitespace-pre-wrap break-words text-meta text-err-ink">
+          {outcome}
+        </p>
       )}
       {open && row.is_truncated && (
         <p className="mt-1.5 min-w-0 pl-4.5 font-mono text-meta text-dialog-hint">

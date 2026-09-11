@@ -6,6 +6,7 @@
    the boundary the daemon's HTTP routes use too, so an extension hook on
    `:draft/*` sees every surface alike."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -194,7 +195,8 @@
 (def draft-status-symbol
   (vis/symbol
     #'draft-status
-    {:inject-env? true
+    {:activity (presenter/for-tool :draft_status)
+     :inject-env? true
      :tag :observation
      :description
      (str
@@ -210,7 +212,8 @@
 (def draft-create-symbol
   (vis/symbol
     #'draft-create
-    {:inject-env? true
+    {:activity (presenter/for-tool :draft_create)
+     :inject-env? true
      :tag :mutation
      :description
      (str
@@ -231,7 +234,8 @@
 (def draft-approve-symbol
   (vis/symbol
     #'draft-approve
-    {:inject-env? true
+    {:activity (presenter/for-tool :draft_approve)
+     :inject-env? true
      :tag :mutation
      :description
      (str
@@ -254,7 +258,8 @@
 (def draft-discard-symbol
   (vis/symbol
     #'draft-discard
-    {:inject-env? true
+    {:activity (presenter/for-tool :draft_discard)
+     :inject-env? true
      :tag :mutation
      :description
      (str

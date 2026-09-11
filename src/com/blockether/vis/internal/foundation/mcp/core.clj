@@ -35,6 +35,7 @@
    server. That IS the inventory: no listing verb spends a turn re-fetching what
    the session object already carries."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
@@ -1106,7 +1107,8 @@
 (def ^:private mcp-symbols
   [(vis/symbol
      #'mcp-call
-     {:symbol 'call
+     {:activity (presenter/for-tool :mcp__call)
+      :symbol 'call
       :name "mcp__call"
       :result
       "String-keyed `{op,server,tool,content,is_error,input_schema?}`; text at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}]}`."

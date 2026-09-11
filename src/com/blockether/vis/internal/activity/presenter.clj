@@ -250,80 +250,149 @@
                                   error? (section "Error" error-body nil)
                                   :else (section "Result" result language))))}))
 
+(def ^:private tool-headlines
+  {"cat" ["Read file" "Read"]
+   "patch" ["Patch file" "Patched"]
+   "grep" ["Search files" "Searched"]
+   "doc" ["Read documentation" "Read documentation"]
+   "apropos" ["Find symbols" "Found symbols"]
+   "defs" ["Read definitions" "Read definitions"]
+   "run_tests" ["Run tests" "Ran tests"]
+   "lint_code" ["Lint code" "Linted"]
+   "format_code" ["Format code" "Formatted"]
+   "repl_eval" ["Evaluate code" "Evaluated"]
+   "shell" ["Run command" "Started command"]
+   "_shell-logs" ["Read command output" "Read command output"]
+   "_shell-wait" ["Wait for command" "Command finished"]
+   "_shell-type" ["Send command input" "Sent command input"]
+   "_shell-stop" ["Stop command" "Stopped command"]
+   "council.publish" ["Publish message" "Published message"]
+   "council.read" ["Read thread" "Read thread"]
+   "council.get" ["Read message" "Read message"]
+   "council.threads" ["List threads" "Listed threads"]
+   "council.members" ["List members" "Listed members"]
+   "repl_start" ["Start REPL" "Started REPL"]
+   "repl_status" ["Check REPL status" "Checked REPL status"]
+   "repl_connect" ["Connect to REPL" "Connected to REPL"]
+   "repl_stop" ["Stop REPL" "Stopped REPL"]
+   "read_session" ["Read session" "Read session"]
+   "get_session" ["Inspect session" "Inspected session"]
+   "list_sessions" ["Find sessions" "Found sessions"]
+   "draft_status" ["Check draft status" "Checked draft status"]
+   "draft_create" ["Create draft" "Created draft"]
+   "draft_approve" ["Approve draft" "Approved draft"]
+   "draft_discard" ["Discard draft" "Discarded draft"]
+   "main_agent_instructions" ["Read agent instructions" "Read agent instructions"]
+   "update_goal" ["Update goal" "Updated goal"]
+   "mcp__call" ["Call MCP tool" "Called MCP tool"]})
+
+(def ^:private result-fields
+  {"read_session" ["session" "current_turn" "failures" "diagnosis"]
+   "get_session" ["title" "goal" "turn_count" "model" "last_turn"]
+   "list_sessions" ["title" "goal" "turn_count" "request_snippet" "reply_snippet"]
+   "repl_start" ["result" "status" "cwd" "message" "log_tail"]
+   "repl_status" ["result" "status" "cwd" "resources"]
+   "repl_connect" ["result" "status" "cwd" "host" "port" "external" "message"]
+   "repl_stop" ["result" "status" "cwd"]
+   "draft_status" ["in_draft" "label" "branch" "target_branch" "ahead" "pending"]
+   "draft_create" ["label" "root" "branch" "target_branch" "clean"]
+   "draft_approve" ["status" "published" "branch" "target_branch" "files"]
+   "draft_discard" ["status" "label" "root" "approved_ahead"]
+   "update_goal" ["goal" "status"]
+   "mcp__call" ["server" "tool" "content" "is_error" "tools"]})
+
+(defn- select-result
+  [fields value]
+  (cond (map? value) (into {}
+                           (keep (fn [key]
+                                   (when-some [v (field value key)]
+                                     [key v])))
+                           fields)
+        (sequential? value) (mapv #(select-result fields %) value)
+        :else value))
+
 (defn result-presentation
-  "Default result view for an invocation without an authored presentation.
-   Input is public, redacted and node-bounded by the event owner. The owner also
-   bounds and validates the returned blocks before retention. Never reads files."
+  "Result view selected explicitly by a built-in binding. Unknown tools have no
+   default view. Input is public, redacted and bounded by the event owner."
   [{:keys [operation label]} value]
-  (let [op
-        (name operation)
+  (when (contains? tool-headlines (name operation))
+    (let [op
+          (name operation)
 
-        text
-        (when (string? value) value)
+          text
+          (when (string? value) value)
 
-        path
-        (or label "")
+          path
+          (or label "")
 
-        read-lines
-        (when (and (= op "cat") text) (map second (re-seq #"(?m)^(\d+):[0-9a-f]+│" text)))
+          read-lines
+          (when (and (= op "cat") text) (map second (re-seq #"(?m)^(\d+):[0-9a-f]+│" text)))
 
-        headline
-        (get {"cat" "Read"
-              "patch" "Patched"
-              "grep" "Searched"
-              "doc" "Read documentation"
-              "apropos" "Found symbols"
-              "defs" "Read definitions"
-              "run_tests" "Ran tests"
-              "lint_code" "Linted"
-              "format_code" "Formatted"
-              "repl_eval" "Evaluated"
-              "shell" "Started command"
-              "council.publish" "Published message"
-              "council.read" "Read thread"
-              "council.get" "Read message"
-              "council.threads" "Listed threads"
-              "council.members" "Listed members"}
-             op
-             (str/capitalize (str/trim (str/replace op #"[_.-]" " "))))
+          headline
+          (second (get tool-headlines op))
 
-        summary
-        (cond (= op "cat") (str path
-                                (when (seq read-lines)
-                                  (str " · lines " (first read-lines) "–" (last read-lines))))
-              (contains? #{"doc" "defs" "patch" "shell"} op) path
-              (= op "grep") (or (first (str/split-lines (or text ""))) "")
-              (and (= op "run_tests") (number? (field value "total")))
-              (str (or (field value "total") 0) " tests · " (or (field value "fail") 0) " failed")
-              :else (str (or (field value "summary") (field value "title") "")))
+          summary
+          (cond (= op "cat") (str path
+                                  (when (seq read-lines)
+                                    (str " · lines " (first read-lines) "–" (last read-lines))))
+                (contains? #{"doc" "defs" "patch" "shell"} op) path
+                (= op "grep") (or (first (str/split-lines (or text ""))) "")
+                (and (= op "run_tests") (number? (field value "total")))
+                (str (or (field value "total") 0) " tests · " (or (field value "fail") 0) " failed")
+                :else (str (or (field value "summary") (field value "title") "")))
 
-        content
-        (cond (= op "patch") []
-              (and (= op "council.publish") (number? value)) []
-              (and (= op "cat") text)
-              [{"type" "code" "language" (code-language path) "text" (read-content text)}]
-              (and (= op "doc") text) [{"type" "markdown" "text" text}]
-              (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
-              (and (= op "grep") text)
-              [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
-              :else (result-blocks
-                      (visible-result
-                        (if (map? value) (dissoc value :title "title" :summary "summary") value))
-                      (case op
-                        ("run_tests" "lint_code")
-                        "Metric"
+          content
+          (cond (= op "patch") []
+                (and (= op "council.publish") (number? value)) []
+                (and (= op "cat") text)
+                [{"type" "code" "language" (code-language path) "text" (read-content text)}]
+                (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
+                                                                               "text" text}]
+                (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
+                (and (= op "grep") text)
+                [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
+                :else
+                (result-blocks
+                  (visible-result (let [public (if (map? value)
+                                                 (dissoc value :title "title" :summary "summary")
+                                                 value)]
+                                    (if-let [fields (get result-fields op)]
+                                      (select-result fields public)
+                                      public)))
+                  (case op
+                    ("run_tests" "lint_code")
+                    "Metric"
 
-                        ("council.publish" "council.get")
-                        "Message"
+                    ("council.publish" "council.get")
+                    "Message"
 
-                        ("council.read" "council.threads")
-                        "Thread"
+                    ("council.read" "council.threads")
+                    "Thread"
 
-                        "council.members"
-                        "Member"
+                    "council.members"
+                    "Member"
 
-                        "Detail")))]
+                    (cond (contains? #{"read_session" "get_session" "list_sessions"} op) "Session"
+                          (contains? #{"repl_start" "repl_status" "repl_connect" "repl_stop"} op)
+                          "REPL"
+                          (contains? #{"draft_status" "draft_create" "draft_approve"
+                                       "draft_discard"}
+                                     op)
+                          "Draft"
+                          (= "update_goal" op) "Goal"
+                          (= "mcp__call" op) "Tool"
+                          :else "Detail"))))]
 
-    (cond (= op "repl_eval") (repl-presentation value)
-          (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
-          :else {"headline" headline "summary" summary "content" content})))
+      (cond (= op "repl_eval") (repl-presentation value)
+            (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
+            :else {"headline" headline "summary" summary "content" content}))))
+
+(defn for-tool
+  "Declare a built-in's presentation at its binding. Unknown operations are refused."
+  [operation]
+  (let [op (name operation)]
+    (when-not (contains? tool-headlines op)
+      (throw (ex-info "Missing built-in Activity presentation" {:operation operation})))
+    {:headline (first (get tool-headlines op))
+     :render (fn [details value]
+               (result-presentation (assoc details :operation operation) value))}))

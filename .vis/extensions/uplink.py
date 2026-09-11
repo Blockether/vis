@@ -304,6 +304,123 @@ def _to_int(value: object) -> int | None:
         return None
 
 
+def _command_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    status = (
+        "Timed out; remote command may still be running"
+        if result.is_timed_out
+        else f"Exit code {result.exit_code}"
+    )
+    content = [
+        vis.ActivityCode(
+            result.command.encode()[:2000].decode(errors="ignore"), language="bash"
+        )
+    ]
+    for label, text in (("Stdout", result.stdout), ("Stderr", result.stderr)):
+        if text:
+            content.extend(
+                (
+                    vis.ActivityHeading(label),
+                    vis.ActivityCode(text.encode()[:6000].decode(errors="ignore")),
+                )
+            )
+    if (
+        result.is_truncated
+        or len(result.stdout.encode()) > 6000
+        or len(result.stderr.encode()) > 6000
+    ):
+        content.append(
+            vis.ActivityText(
+                "Output excerpt; inspect the tool result for retained output."
+            )
+        )
+    return vis.ActivityPresentation("Run remote command", status, tuple(content))
+
+
+def _service_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation(
+        "Check service",
+        f"{result.unit[:60]} · {result.active_state[:30]} / {result.sub_state[:30]}",
+    )
+
+
+def _health_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    status = (
+        f"HTTP {result.status_code}"
+        if result.status_code is not None
+        else "No HTTP response"
+    )
+    return vis.ActivityPresentation(
+        "Check service health",
+        status,
+        (
+            vis.ActivityText(
+                result.error or result.body_excerpt or "Empty response body"
+            ),
+        ),
+    )
+
+
+def _info_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation(
+        "Inspect server",
+        (result.hostname or "Hostname unavailable")[:100],
+        (
+            vis.ActivityTable(
+                ("System", "Value"),
+                (
+                    ("Kernel", (result.kernel or "Unavailable")[:256]),
+                    (
+                        "Uptime (seconds)",
+                        str(result.uptime_seconds)
+                        if result.uptime_seconds is not None
+                        else "Unavailable",
+                    ),
+                    (
+                        "Available memory (MiB)",
+                        str(result.mem_available_mb)
+                        if result.mem_available_mb is not None
+                        else "Unavailable",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def _transfer_activity(headline, *, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation(
+        headline,
+        f"{result.size_bytes} bytes transferred",
+        (
+            vis.ActivityTable(
+                ("Location", "Path"),
+                (
+                    ("Local", result.local_path[:256]),
+                    ("Remote", result.remote_path[:256]),
+                ),
+            ),
+        ),
+    )
+
+
+def _upload_activity(**kwargs):
+    return _transfer_activity("Upload file", **kwargs)
+
+
+def _download_activity(**kwargs):
+    return _transfer_activity("Download file", **kwargs)
+
+
 class Uplink:
     """The administered server: run, inspect and move files over one ssh door.
 
@@ -313,7 +430,10 @@ class Uplink:
     exactly what their command says, as the configured remote user.
     """
 
-    @vis.method(tag="mutation")
+    @vis.method(
+        tag="mutation",
+        activity=vis.Activity(label="Run remote command", render=_command_activity),
+    )
     def run(self, command: str, timeout_s: int = 60) -> CommandResult:
         """Execute one shell command on the remote server.
 
@@ -324,6 +444,10 @@ class Uplink:
         """
         return _execute(command, timeout_s=timeout_s)
 
+    @vis.method(
+        tag="observation",
+        activity=vis.Activity(label="Check service", render=_service_activity),
+    )
     def service(self, unit: str, timeout_s: int = 30) -> ServiceStatus:
         """Read one systemd unit's state; no systemctl action is taken.
 
@@ -353,6 +477,10 @@ class Uplink:
             main_pid=_to_int(fields.get("MainPID")) or None,
         )
 
+    @vis.method(
+        tag="observation",
+        activity=vis.Activity(label="Check service health", render=_health_activity),
+    )
     def health(
         self,
         port: int = 80,
@@ -391,6 +519,10 @@ class Uplink:
             error=None,
         )
 
+    @vis.method(
+        tag="observation",
+        activity=vis.Activity(label="Inspect server", render=_info_activity),
+    )
     def info(self, timeout_s: int = 30) -> HostInfo:
         """Collect identity, uptime and memory facts in one round trip.
 
@@ -428,7 +560,10 @@ class Uplink:
             mem_available_mb=megabytes("mem_available_kb"),
         )
 
-    @vis.method(tag="mutation")
+    @vis.method(
+        tag="mutation",
+        activity=vis.Activity(label="Upload file", render=_upload_activity),
+    )
     def put(
         self, local_path: str, remote_path: str, timeout_s: int = 120
     ) -> TransferResult:
@@ -461,6 +596,10 @@ class Uplink:
             duration_ms=result.duration_ms,
         )
 
+    @vis.method(
+        tag="observation",
+        activity=vis.Activity(label="Download file", render=_download_activity),
+    )
     def get(
         self, remote_path: str, local_path: str, timeout_s: int = 120
     ) -> TransferResult:
