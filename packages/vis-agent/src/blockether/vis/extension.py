@@ -18,6 +18,7 @@ from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from os import PathLike
 from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
 from typing import (
     Annotated,
@@ -881,7 +882,7 @@ def _contract_ast(node, namespace, seen):
             return {"kind": "union", "name": "union", "arguments": arguments}
         if base is not inspect.Signature.empty and (
             get_origin(base) is not None
-            or base in (list, tuple, dict, set, frozenset, Sequence, Mapping)
+            or base in (list, tuple, dict, set, frozenset, Sequence, Mapping, PathLike)
         ):
             actual = get_origin(base) or base
             if (

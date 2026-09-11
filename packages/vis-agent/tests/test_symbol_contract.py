@@ -262,3 +262,40 @@ def test_incomplete_types_are_visible_in_docs(annotation, rendered):
     document = vis.Symbol(values)._spec()["doc"]
     assert f"- value: {rendered}" in document
     assert f"Returns: {rendered}" in document
+
+
+@pytest.mark.parametrize(
+    "annotation", ["os.PathLike[str]", "PathLike[str]", "str | os.PathLike[str]"]
+)
+@pytest.mark.parametrize("bound", [False, True])
+def test_postponed_pathlike_contract(annotation, bound):
+    # #198: resolve stdlib generics statically, including namespace methods.
+    namespace = {}
+    exec(
+        "from __future__ import annotations\nimport os\nfrom os import PathLike\n"
+        "import blockether.vis.extension as vis\n"
+        f'def describe(path: {annotation}) -> str:\n    """Describe a path."""\n    return str(path)\n'
+        "class Tools:\n    @vis.method()\n"
+        f'    def describe(self, path: {annotation}) -> str:\n        """Describe a path."""\n        return str(path)\n',
+        namespace,
+    )
+    symbol = vis.Symbol(
+        namespace["Tools"]() if bound else namespace["describe"], name="paths"
+    )
+    contract = symbol.contract["members"][0] if bound else symbol.contract
+    actual = contract["parameters"][0]["type"]
+    pathlike = {
+        "kind": "generic",
+        "name": "PathLike",
+        "arguments": [{"kind": "scalar", "name": "str"}],
+    }
+    expected = (
+        {
+            "kind": "union",
+            "name": "union",
+            "arguments": [{"kind": "scalar", "name": "str"}, pathlike],
+        }
+        if annotation.startswith("str |")
+        else pathlike
+    )
+    assert actual == expected
