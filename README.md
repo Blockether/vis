@@ -8,6 +8,7 @@
 <div align="center">
   <h2>
     <a href="https://clojars.org/com.blockether/vis"><img src="https://img.shields.io/clojars/v/com.blockether/vis?color=%23007ec6&label=clojars" alt="Clojars version"></a>
+    <a href="https://pypi.org/project/vis-agent/"><img src="https://img.shields.io/pypi/v/vis-agent?color=%23007ec6&label=PyPI%20SDK" alt="Vis Python SDK version on PyPI"></a>
     <a href="https://github.com/Blockether/vis/blob/main/LICENSE">
       <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License - Apache 2.0">
     </a>
