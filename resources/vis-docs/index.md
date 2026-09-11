@@ -2,7 +2,12 @@ Vis is a coding agent that combines tools into Python programs.
 It can chain operations, run them in parallel, and inspect results before deciding
 what belongs in the conversation.
 
-[Why Vis](#why-vis) · [Install](#install) · [First session](#first-session) · [Configuration](configuration.md)
+<nav class="quick-links" aria-label="Getting started">
+  <a href="#why-vis">Why Vis</a>
+  <a href="#install">Install</a>
+  <a href="#first-session">First session</a>
+  <a href="configuration.md">Configuration</a>
+</nav>
 
 ## Why Vis
 

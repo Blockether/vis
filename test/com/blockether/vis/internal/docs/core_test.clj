@@ -174,7 +174,7 @@
                      (expect (str/includes? css "overflow-wrap:anywhere"))
                      (expect (str/includes? css "table-layout:fixed"))
                      (expect (str/includes? css ".content pre{font-family:inherit"))
-                     (expect (not (str/includes? css "white-space:nowrap")))
+                     (expect (re-find #"\.content th,\.content td\{[^}]*white-space:normal" css))
                      (expect (str/includes? css
                                             ".content th code,.content td code{font-size:inherit"))
                      (expect (str/includes? html "<thead>"))
@@ -223,6 +223,51 @@
                    (expect (= ["index" "configuration"] (subvec slugs 0 2)))
                    (expect (< (.indexOf slugs "queue-and-cancel")
                               (.indexOf slugs "python-sandbox"))))))
+
+;; Regression: quick links inherited paragraph justification and split at separators on mobile.
+(defdescribe
+  getting-started-quick-links-test
+  (it
+    "renders a wrapping navigation group with intact links in static and live docs"
+    (let [{:keys [pages] :as site}
+          (docs/collect)
+
+          home
+          (first (filter #(= "index" (:slug %)) pages))]
+
+      (doseq [mode
+              [:static :live]
+
+              :let [html
+                    (docs/page-html site home mode)
+
+                    css
+                    (rendered-theme html mode)
+
+                    navigation
+                    (second
+                      (re-find
+                        #"(?s)<nav class=\"quick-links\" aria-label=\"Getting started\">(.*?)</nav>"
+                        html))
+
+                    links
+                    (mapv (fn [[_ href label]]
+                            [href label])
+                          (re-seq #"<a href=\"([^\"]+)\">([^<]+)</a>" (or navigation "")))]]
+
+        (expect (= [["#why-vis" "Why Vis"] ["#install" "Install"] ["#first-session" "First session"]
+                    [(if (= mode :static) "configuration.html" "/docs/configuration")
+                     "Configuration"]]
+                   links))
+        (expect (not (str/includes? (or navigation "") "·")))
+        (expect (not (str/includes? html "<p><a href=\"#why-vis\">")))
+        (let [link-css (second (re-find #"(?s)\.quick-links a\{([^}]+)\}" css))]
+          (doseq [fragment ["min-height:2.75rem" "white-space:nowrap"]]
+            (expect (str/includes? (or link-css "") fragment) fragment)))
+        (doseq [fragment [".quick-links{display:flex;flex-wrap:wrap;gap:.5rem"
+                          ".quick-links a:hover" ".quick-links a:focus-visible"
+                          ".quick-links a{flex-basis:calc(50% - .25rem)}"]]
+          (expect (str/includes? css fragment) fragment))))))
 
 (defdescribe
   reading-layout-test
