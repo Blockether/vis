@@ -106,7 +106,8 @@
       (expect (= 3 (header/header-rows (header-db nil))))
       (expect (= 3 (header/header-rows (header-db goal)))))
   (it
-    "renders separate Limits and Goal buttons without objective or token counts"
+    ;; Issue #204: limits are passive text, never a modal entry point.
+    "renders informational Limits beside the Goal button without objective or token counts"
     (doseq [cols
             [40 80 120]
 
@@ -144,12 +145,12 @@
         (expect (str/includes? row "Goal:"))
         (expect (not (str/includes? row "tokens")))
         (expect (not (str/includes? row "12,400")))
-        (expect (some? limits))
+        (expect (nil? limits))
         (expect (some? goal-hit))
-        (expect (< (+ (long (get-in limits [:bounds :col])) (long (get-in limits [:bounds :width])))
-                   (long (get-in goal-hit [:bounds :col])))))))
+        (doseq [col (range 2 (long (get-in goal-hit [:bounds :col])))]
+          (expect (nil? (.lookup interactions/hit-map col 1)))))))
   (it "omits the goal button when no goal exists"
-      (expect (= [:footer-limits] (mapv :kind (#'footer/build-limits-segments (header-db nil) 0)))))
+      (expect (empty? (keep :kind (#'footer/build-limits-segments (header-db nil) 0)))))
   (it
     "keeps the full objective, reason and usage in the existing scrollable viewer"
     (let [blocked

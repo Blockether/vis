@@ -642,25 +642,8 @@
        true
        (into ["" "Use /goal --pause, --resume or --cancel in the composer."])))))
 
-(defn limits-detail-lines
-  "Provider quota summary and reset windows from the current session's cached report."
-  [db now-ms]
-  (let [provider
-        (session-effective-provider db)
-
-        report
-        (report-for-current-provider db provider)]
-
-    (into [(or (when provider (generic-limits-footer-text db provider now-ms))
-               "No limits reported by this provider.")]
-          (for [row
-                (get-in report [:dynamic :limits])
-
-                :when (get-in row [:window :resets-at-ms])]
-
-            (format-generic-limit-rows now-ms [row])))))
-
 (defn- build-limits-segments
+  "Cached quota information is plain text; only the adjacent goal is interactive."
   [db now-ms]
   (let [provider
         (session-effective-provider db)
@@ -670,7 +653,7 @@
 
     (into (cond-> [{:text
                     (if text (str " Limits: " (str/replace text #"^limits: " "") " ") " Limits ")
-                    :kind :footer-limits
+                    :fg t/footer-fg
                     :region :left
                     :priority 1}]
             (get-in db [:session :goal])

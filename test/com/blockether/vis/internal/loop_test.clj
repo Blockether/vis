@@ -7855,6 +7855,198 @@
                      (expect (= AUTH_REFRESH_WINDOW_MAX (count (get @auth-refresh-events :ap))))))
                  (reset! auth-refresh-events {})))
 
+;; Issue #204: a rejected cached token still looked usable after refresh failed,
+;; so managed OAuth never reached interactive login before provider fallback.
+(defdescribe
+  managed-provider-reauth-test
+  (it
+    "authenticates after rejected or ineffective refresh and hydrates the next attempt"
+    (doseq [refresh-outcome [:throws :empty :unchanged :absent]]
+      (let [token (atom "expired")
+            calls (atom [])
+            descriptor (cond-> {:provider/is-managed true
+                                :provider/get-token-fn #(hash-map :token @token)
+                                :provider/auth-fn (fn [_]
+                                                    (swap! calls conj :login)
+                                                    (reset! token "signed-in"))}
+                         (not= :absent refresh-outcome)
+                         (assoc :provider/refresh-token-fn
+                           (fn [rejected]
+                             (swap! calls conj [:refresh rejected])
+                             (case refresh-outcome
+                               :throws
+                               (throw (ex-info "Refresh rejected" {:status 401}))
+
+                               :empty
+                               nil
+
+                               :unchanged
+                               {:token @token}))))
+            environment {:router {:providers [{:id :corp :api-key "expired"}]}}]
+
+        (reset! auth-refresh-events {})
+        (reset! auth-last-refreshed {})
+        (with-redefs [registry/provider-by-id (constantly descriptor)]
+          (expect (true? (auth-refreshable-error? (auth-401) {:provider :corp})))
+          (expect (true? (try-refresh-provider-token! (:router environment) {:provider :corp})))
+          (expect (= (if (= :absent refresh-outcome) [:login] [[:refresh "expired"] :login])
+                     @calls))
+          (expect (= "signed-in"
+                     (get-in (hydrate-environment-router environment :corp)
+                             [:router :providers 0 :api-key])))
+          (expect (true? (refresh-just-failed? (auth-401) {:provider :corp})))))))
+  (it "does not accept the rejected token when interactive login is cancelled"
+      (let [calls (atom 0)]
+        (reset! auth-refresh-events {})
+        (with-redefs [registry/provider-by-id (constantly {:provider/is-managed true
+                                                           :provider/get-token-fn
+                                                           (constantly {:token "expired"})
+                                                           :provider/auth-fn (fn [_]
+                                                                               (swap! calls inc)
+                                                                               false)})]
+          (let [failure (try (try-refresh-provider-token! {:providers [{:id :corp
+                                                                        :api-key "expired"}]}
+                                                          {:provider :corp})
+                             nil
+                             (catch clojure.lang.ExceptionInfo e e))]
+            (expect (= 1 @calls))
+            (expect (= :provider/authentication-failed (:type (ex-data failure)))))))))
+
+(defdescribe
+  managed-provider-reauth-concurrency-test
+  ;; Issue #204: callers rejected on the same old token must share browser login.
+  (it
+    "shares reauthentication and adopts a peer's replacement credential"
+    (let [token
+          (atom "expired")
+
+          logins
+          (atom 0)
+
+          entered
+          (promise)
+
+          release
+          (promise)
+
+          descriptor
+          {:provider/is-managed true
+           :provider/get-token-fn #(hash-map :token @token)
+           :provider/auth-fn (fn [_]
+                               (swap! logins inc)
+                               (deliver entered true)
+                               @release
+                               (reset! token "signed-in"))}
+
+          attempt-router
+          {:providers [{:id :corp :api-key "expired"}]}]
+
+      (with-redefs [registry/provider-by-id (constantly descriptor)]
+        (let [requests (vec (repeatedly 8
+                                        #(future (try-refresh-provider-token! attempt-router
+                                                                              {:provider :corp}))))]
+          (try (expect (= true (deref entered 5000 ::timed-out)))
+               (deliver release true)
+               (expect (every? true? (mapv #(deref % 5000 ::timed-out) requests)))
+               (expect (= 1 @logins))
+               (expect (true? (try-refresh-provider-token! attempt-router {:provider :corp})))
+               (expect (= 1 @logins))
+               (finally (deliver release true)
+                        (doseq [request requests]
+                          (future-cancel request))
+                        (reset! auth-last-refreshed {})
+                        (reset! managed-auth-flights {})))))))
+  (it "does not log in after a successful refresh or for an unmanaged provider"
+      (doseq [managed? [true false]]
+        (let [token (atom "expired")
+              logins (atom 0)
+              descriptor {:provider/is-managed managed?
+                          :provider/get-token-fn #(hash-map :token @token)
+                          :provider/refresh-token-fn (fn [_]
+                                                       (if managed?
+                                                         (reset! token "refreshed")
+                                                         (throw (ex-info "Refresh rejected"
+                                                                         {:status 401}))))
+                          :provider/auth-fn (fn [_]
+                                              (swap! logins inc))}]
+
+          (try (reset! auth-refresh-events {})
+               (with-redefs [registry/provider-by-id (constantly descriptor)]
+                 (expect (= managed?
+                            (try-refresh-provider-token! {:providers [{:id :corp
+                                                                       :api-key "expired"}]}
+                                                         {:provider :corp})))
+                 (expect (zero? @logins)))
+               (finally (reset! auth-refresh-events {}) (reset! auth-last-refreshed {})))))))
+
+(defdescribe
+  managed-provider-reauth-turn-test
+  ;; Issue #204: exercise the request/recovery/fallback ladder, not a direct refresh probe.
+  (it
+    "keeps the explicit provider after refresh rejection and interactive sign-in"
+    (let [token
+          (atom "expired")
+
+          logins
+          (atom 0)
+
+          attempts
+          (atom [])
+
+          descriptor
+          {:provider/is-managed true
+           :provider/get-token-fn #(hash-map :token @token)
+           :provider/refresh-token-fn (fn [_]
+                                        (throw (ex-info "Refresh rejected" {:status 401})))
+           :provider/auth-fn (fn [_]
+                               (swap! logins inc)
+                               (reset! token "signed-in"))}
+
+          router
+          (svar/make-router [{:id :corp
+                              :api-key "expired"
+                              :base-url "http://127.0.0.1:1/v1"
+                              :models [{:name "model"}]}
+                             {:id :peer
+                              :api-key "peer"
+                              :base-url "http://127.0.0.1:1/v1"
+                              :models [{:name "model"}]}])
+
+          environment
+          (lp/create-environment router {:db :memory})]
+
+      (reset! auth-refresh-events {})
+      (reset! auth-last-refreshed {})
+      (try (with-redefs [registry/provider-by-id
+                         #(when (= :corp %) descriptor)
+
+                         svar/ask-code!
+                         (fn [attempt-router opts]
+                           (let [fallback?
+                                 (contains? (get-in opts [:routing :exclude-providers]) :corp)
+
+                                 request-token
+                                 (#'lp/router-provider-token attempt-router :corp)]
+
+                             (swap! attempts conj (if fallback? :peer request-token))
+                             (if (or fallback? (= "signed-in" request-token))
+                               {:stop-reason :end
+                                :content "Done"
+                                :provider (if fallback? :peer :corp)
+                                :model "model"}
+                               (throw (auth-401)))))]
+
+             (let [result (lp/run-turn! environment
+                                        "Reply once"
+                                        {:routing {:provider :corp :model "model"}})]
+               (expect (= "Done" (get-in result [:answer :answer])))
+               (expect (= 1 @logins))
+               (expect (= ["expired" "signed-in"] @attempts))))
+           (finally (lp/dispose-environment! environment)
+                    (reset! auth-refresh-events {})
+                    (reset! auth-last-refreshed {})
+                    (reset! @#'lp/provider-auth-cooldown {}))))))
+
 (def ^:private env-cache (deref #'lp/cache))
 
 (def ^:private new-cache-entry (deref #'lp/new-cache-entry))

@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.footer :as footer]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
@@ -57,7 +58,7 @@
   inline-limits-regression-test
   ;; The goals/footer change hid the quota behind a label-only button.
   (it
-    "paints premium usage and reset time inline while preserving the details target"
+    "paints premium usage and reset time as informational text"
     (let [db {:messages []
               :settings {}
               :provider-limits {:provider-id :github-copilot
@@ -71,7 +72,8 @@
       (with-redefs-fn {#'footer/session-effective-provider (constantly :github-copilot)}
         (fn []
           (let [segment (first (#'footer/build-limits-segments db 0))]
-            (expect (= :footer-limits (:kind segment)))
+            ;; Issue #204: quota information must not register a clickable chip.
+            (expect (nil? (:kind segment)))
             (expect (str/includes? (:text segment) "51730/100000"))
             (expect (str/includes? (:text segment) "↺1h0m")))
           (doseq [cols [40 80 120]
@@ -96,6 +98,39 @@
               (when (>= cols 80)
                 (expect (str/includes? row "51730/100000"))
                 (expect (str/includes? row "↺1h0m"))))))))))
+
+(defdescribe
+  passive-limits-test
+  ;; Issue #204: paint cached quota states without callback IO, hover or click targets.
+  (it "keeps every cached limits state passive at narrow and wide terminal sizes"
+      (doseq [cols
+              [40 80 120]
+
+              status
+              [nil :ok :loading :error :unauthenticated :unsupported]]
+
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (with-redefs [vis/gateway-provider-limits
+                        (fn [& _]
+                          (throw (ex-info "Painting must not query provider limits" {})))]
+            (let [db {:messages []
+                      :settings {}
+                      :session-model-pref {:provider "corp"}
+                      :provider-limits {:provider-id :corp :report (when status {:status status})}}
+                  frame (cap/capture! {:cols cols
+                                       :rows 3
+                                       :paint! (fn [{:keys [g]}]
+                                                 (.beginFrame interactions/hit-map)
+                                                 (footer/draw-footer! g db 0 cols 0)
+                                                 (.commitFrame interactions/hit-map))})
+                  cells (get-in frame [:frames 0 1])]
+
+              (expect (nil? (:error frame)))
+              (expect (str/includes? (cap/frame-text frame) "Limits"))
+              (expect (= (:bg (first cells)) (:bg (nth cells 3))))
+              (expect (not (:bold (nth cells 3))))
+              (doseq [col (range cols)]
+                (expect (nil? (.lookup interactions/hit-map col 1))))))))))
 
 (defdescribe
   ir->footer-text-test
@@ -207,9 +242,9 @@
             (expect (not-any? #(= "cancelling..." (:text %))
                               (build-segments {:messages [] :settings {} :cancelling? true} 0)))))))
   (it
-    "shows Codex dynamic quota windows in the limits details"
-    (let [limits-detail-lines
-          @#'footer/limits-detail-lines
+    "shows Codex dynamic quota windows in the limits row"
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
           now-ms
           1000000000000
@@ -228,12 +263,13 @@
       (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                     {:name "gpt-5.5" :provider :openai-codex})}
         (fn []
-          (let [text (->> (limits-detail-lines {:messages []
-                                                :settings {}
-                                                :provider-limits {:provider-id :openai-codex
-                                                                  :report report}}
-                                               now-ms)
-                          first)]
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :openai-codex
+                                                                    :report report}}
+                                                 now-ms)
+                          first
+                          :text)]
             (expect (re-find #"Codex 5h 76% ↺1h55m@.* / 7d 85%" text))
             (expect (not (str/includes? text "Codex 7d")))
             ;; ONE reset stamp, on the leading window: a stamp per cell is what
@@ -242,42 +278,44 @@
             ;; the absolute half keeps its "EEE h:mm a" shape
             (expect (re-find #"↺1h55m@[A-Z][a-z]{2} [0-9]{1,2}:[0-9]{2} [AP]M" text))
             (expect (not (re-find #"[0-9]:[0-5][0-9][ap]" text))))))))
-  (it "keeps a visible Codex 5h window even when the provider omits its data"
-      (let [limits-detail-lines
-            @#'footer/limits-detail-lines
+  (it
+    "keeps a visible Codex 5h window even when the provider omits its data"
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
-            now-ms
-            1000000000000
+          now-ms
+          1000000000000
 
-            ;; Codex omitted the 5h window: a placeholder row with no usage
-            ;; signal (no :remaining / :resets-at-ms). It must still render
-            ;; beside the data-bearing 7d row, not be filtered away.
-            report
-            {:dynamic {:limits [{:id :codex-5h
-                                 :label "Codex 5h quota (%)"
-                                 :precision :unknown
-                                 :window {:kind :rolling :unit :hour :size 5}}
-                                {:id :codex-7d
-                                 :label "Codex 7d quota (%)"
-                                 :remaining 81.0
-                                 :limit 100.0
-                                 :window {:resets-at-ms (+ now-ms
-                                                           (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
+          ;; Codex omitted the 5h window: a placeholder row with no usage
+          ;; signal (no :remaining / :resets-at-ms). It must still render
+          ;; beside the data-bearing 7d row, not be filtered away.
+          report
+          {:dynamic {:limits [{:id :codex-5h
+                               :label "Codex 5h quota (%)"
+                               :precision :unknown
+                               :window {:kind :rolling :unit :hour :size 5}}
+                              {:id :codex-7d
+                               :label "Codex 7d quota (%)"
+                               :remaining 81.0
+                               :limit 100.0
+                               :window {:resets-at-ms (+ now-ms
+                                                         (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
 
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-5.5" :provider :openai-codex})}
-          (fn []
-            (let [text (->> (limits-detail-lines {:messages []
+      (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                    {:name "gpt-5.5" :provider :openai-codex})}
+        (fn []
+          (let [text (->> (build-limits-segments {:messages []
                                                   :settings {}
                                                   :provider-limits {:provider-id :openai-codex
                                                                     :report report}}
                                                  now-ms)
-                            first)]
-              (expect (re-find #"Codex 5h / 7d 81%" text)))))))
+                          first
+                          :text)]
+            (expect (re-find #"Codex 5h / 7d 81%" text)))))))
   (it
     "shares the Claude provider label across 5h and 7d windows"
-    (let [limits-detail-lines
-          @#'footer/limits-detail-lines
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
           now-ms
           1000000000000
@@ -301,12 +339,13 @@
                                                     {:name "claude-opus-4-6"
                                                      :provider :anthropic-coding-plan})}
         (fn []
-          (let [text (->> (limits-detail-lines
+          (let [text (->> (build-limits-segments
                             {:messages []
                              :settings {}
                              :provider-limits {:provider-id :anthropic-coding-plan :report report}}
                             now-ms)
-                          first)]
+                          first
+                          :text)]
             (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75%" text))
             ;; the 7d window's own stamp is noise beside the window being spent
             (expect (not (str/includes? text "↺6d0h")))
@@ -316,8 +355,8 @@
   ;; one and the line read "Claude 7d 12% … / 5h 90%". The short window leads.
   (it
     "keeps the Claude 5h window first even when the 7d window is tighter"
-    (let [limits-detail-lines
-          @#'footer/limits-detail-lines
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
           now-ms
           1000000000000
@@ -341,17 +380,18 @@
                                                     {:name "claude-opus-4-6"
                                                      :provider :anthropic-coding-plan})}
         (fn []
-          (let [text (->> (limits-detail-lines
+          (let [text (->> (build-limits-segments
                             {:messages []
                              :settings {}
                              :provider-limits {:provider-id :anthropic-coding-plan :report report}}
                             now-ms)
-                          first)]
+                          first
+                          :text)]
             (expect (re-find #"Claude 5h 90% .* / 7d 12%" text)))))))
   (it
-    "shows Z.ai coding plan quota windows as percentages in the limits details"
-    (let [limits-detail-lines
-          @#'footer/limits-detail-lines
+    "shows Z.ai coding plan quota windows as percentages in the limits row"
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
           now-ms
           1000000000000
@@ -378,18 +418,19 @@
       (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                     {:name "glm-5.1" :provider :zai-coding-plan})}
         (fn []
-          (let [text (->> (limits-detail-lines {:messages []
-                                                :settings {}
-                                                :provider-limits {:provider-id :zai-coding-plan
-                                                                  :report report}}
-                                               now-ms)
-                          first)]
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :zai-coding-plan
+                                                                    :report report}}
+                                                 now-ms)
+                          first
+                          :text)]
             (expect (re-find #"Z\.ai 5h 75% ↺1h30m.* / 7d 50%" text))
             (expect (not (str/includes? text "Z.ai 7d"))))))))
   (it
-    "shows GitHub Copilot premium interaction utilization in the limits details"
-    (let [limits-detail-lines
-          @#'footer/limits-detail-lines
+    "shows GitHub Copilot premium interaction utilization in the limits row"
+    (let [build-limits-segments
+          @#'footer/build-limits-segments
 
           now-ms
           1000000000000
@@ -417,12 +458,13 @@
                                                     {:name "claude-opus-4-6"
                                                      :provider :github-copilot})}
         (fn []
-          (let [text (->> (limits-detail-lines {:messages []
-                                                :settings {}
-                                                :provider-limits {:provider-id :github-copilot
-                                                                  :report report}}
-                                               now-ms)
-                          first)]
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :github-copilot
+                                                                    :report report}}
+                                                 now-ms)
+                          first
+                          :text)]
             (expect (re-find #"Premium 60/300 \(240\) ↺2d0h" text)))))))
   (it "renders the gateway :git fact for the active workspace"
       ;; Git status is a GATEWAY SESSION FACT — resolved server-side by

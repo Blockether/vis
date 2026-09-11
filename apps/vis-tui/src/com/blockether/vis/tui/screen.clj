@@ -3298,7 +3298,7 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :workspace-entry :header-help :footer-goal :footer-limits :header-tasks :header-search
+  #{:copy-id :workspace-entry :header-help :footer-goal :header-tasks :header-search
     :header-new-session})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
@@ -6418,13 +6418,6 @@
                                                               (get-in @state/app-db
                                                                       [:session :goal])))
 
-                                     :footer-limits
-                                     (dlg/text-view-dialog! screen
-                                                            "Limits"
-                                                            (footer/limits-detail-lines
-                                                              @state/app-db
-                                                              (System/currentTimeMillis)))
-
                                      :header-help
                                      (state/dispatch [:toggle-help])
 
@@ -6710,13 +6703,6 @@
                                                         (footer/goal-detail-lines
                                                           (get-in @state/app-db [:session :goal])))
 
-                                 :footer-limits
-                                 (dlg/text-view-dialog! screen
-                                                        "Limits"
-                                                        (footer/limits-detail-lines
-                                                          @state/app-db
-                                                          (System/currentTimeMillis)))
-
                                  :header-help
                                  (state/dispatch [:toggle-help])
 
@@ -6858,13 +6844,6 @@
                                                         "Session goal"
                                                         (footer/goal-detail-lines
                                                           (get-in @state/app-db [:session :goal])))
-
-                                 :footer-limits
-                                 (dlg/text-view-dialog! screen
-                                                        "Limits"
-                                                        (footer/limits-detail-lines
-                                                          @state/app-db
-                                                          (System/currentTimeMillis)))
 
                                  :header-help
                                  (state/dispatch [:toggle-help])

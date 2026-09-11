@@ -6801,6 +6801,12 @@
           "Session model repointed: the pinned provider's credentials were rejected")
         move))))
 
+(defn- managed-provider-auth?
+  [provider]
+  (boolean (and (:provider/is-managed provider)
+                (:provider/auth-fn provider)
+                (:provider/get-token-fn provider))))
+
 (defn- auth-refreshable-error?
   "True when Svar classified `e` as authentication and Vis can produce a new
    credential for the failing provider.
@@ -6812,6 +6818,7 @@
     (boolean (and (= :auth (:category (perr/svar-classification e)))
                   (or (some-> (registry/provider-by-id pid)
                               :provider/refresh-token-fn)
+                      (managed-provider-auth? (registry/provider-by-id pid))
                       (config/command-backed? pid))))))
 
 (defonce ^:private managed-auth-flights
@@ -6819,7 +6826,9 @@
   ;; contains live attempts; the leader removes its own promise after delivery.
   (atom {}))
 
-(defn- usable-token-envelope? [envelope] (util/non-blank-string? (:token envelope)))
+(defn- usable-token-envelope?
+  [envelope rejected]
+  (and (util/non-blank-string? (:token envelope)) (not= rejected (:token envelope))))
 
 (defn- managed-auth-failure
   [pid message cause]
@@ -6828,10 +6837,10 @@
            cause))
 
 (defn- run-managed-auth-flight!
-  "Run at most one interactive first-use authentication for `pid`; concurrent turns
-   await that same result. The provider is re-read inside the elected flight so a
-   credential installed between the caller's probe and election skips OAuth."
-  [pid provider]
+  "Run at most one interactive authentication for `pid`; concurrent turns await the
+   same result. Re-read storage inside the flight to adopt a peer credential, but
+   never accept the token rejected by the request that triggered recovery."
+  [pid provider rejected]
   (let [candidate
         (promise)
 
@@ -6858,11 +6867,11 @@
                        (try (get-token-fn) (catch Throwable _ nil))
 
                        envelope
-                       (if (usable-token-envelope? before)
+                       (if (usable-token-envelope? before rejected)
                          before
                          (do (auth-fn (constantly nil)) (get-token-fn)))]
 
-                   (if (usable-token-envelope? envelope)
+                   (if (usable-token-envelope? envelope rejected)
                      {:value envelope}
                      {:error (managed-auth-failure
                                pid
@@ -6895,9 +6904,11 @@
         get-token-fn
         (:provider/get-token-fn provider)]
 
-    (when (and (:provider/is-managed provider) (:provider/auth-fn provider) get-token-fn)
+    (when (managed-provider-auth? provider)
       (let [envelope (try (get-token-fn) (catch Throwable _ nil))]
-        (if (usable-token-envelope? envelope) envelope (run-managed-auth-flight! pid provider))))))
+        (if (usable-token-envelope? envelope nil)
+          envelope
+          (run-managed-auth-flight! pid provider nil))))))
 
 (defn- hydrate-router-credentials
   "Return an attempt-local copy of `router` with every provider's current
@@ -7060,69 +7071,85 @@
         (try (some-> get-token-fn
                      (apply [])
                      :token)
-             (catch Throwable _ nil))]
+             (catch Throwable _ nil))
 
-    (boolean
-      (cond (and (not f) (config/command-backed? pid))
-            (if (auth-refresh-allowed? pid)
-              (do (config/invalidate-credential-command! pid)
-                  ;; Mark the attempt like an OAuth refresh so a SECOND 401 takes
-                  ;; the propagation backoff instead of re-forking the helper.
-                  (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
-                  (tel/log! {:level :warn :id ::credential-command-refreshed :data {:provider pid}}
-                            (str "Auth 401 for " pid
-                                 " — re-running its credential command; retrying with"
-                                 " request-bound credential hydration"))
+        managed-auth?
+        (managed-provider-auth? provider)
+
+        refreshed?
+        (cond (and (not f) (config/command-backed? pid))
+              (if (auth-refresh-allowed? pid)
+                (do (config/invalidate-credential-command! pid)
+                    ;; Mark the attempt like an OAuth refresh so a SECOND 401 takes
+                    ;; the propagation backoff instead of re-forking the helper.
+                    (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
+                    (tel/log!
+                      {:level :warn :id ::credential-command-refreshed :data {:provider pid}}
+                      (str "Auth 401 for " pid
+                           " — re-running its credential command; retrying with"
+                           " request-bound credential hydration"))
+                    true)
+                (do (tel/log! {:level :error
+                               :id ::auth-refresh-circuit-open
+                               :data {:provider pid
+                                      :window-ms AUTH_REFRESH_WINDOW_MS
+                                      :max AUTH_REFRESH_WINDOW_MAX}}
+                              (str "Auth 401 — credential-command refresh circuit OPEN for "
+                                   pid
+                                   "; NOT re-running the helper — surfacing provider error"))
+                    false))
+              (not f) false
+              ;; A concurrent request/process already won the rotation. Do not
+              ;; touch either the breaker or token endpoint; retry hydration will
+              ;; pick this value up at the request boundary.
+              (and (util/non-blank-string? current) (not= current rejected))
+              (do (tel/log! {:level :warn :id ::auth-peer-token-adopted :data {:provider pid}}
+                            (str "Auth 401 for "
+                                 pid
+                                 " used a stale request credential; adopting the peer token"))
                   true)
+              (not (auth-refresh-allowed? pid))
               (do (tel/log! {:level :error
                              :id ::auth-refresh-circuit-open
                              :data {:provider pid
                                     :window-ms AUTH_REFRESH_WINDOW_MS
                                     :max AUTH_REFRESH_WINDOW_MAX}}
-                            (str "Auth 401 — credential-command refresh circuit OPEN for "
-                                 pid
-                                 "; NOT re-running the helper — surfacing provider error"))
-                  false))
-            (not f) false
-            ;; A concurrent request/process already won the rotation. Do not
-            ;; touch either the breaker or token endpoint; retry hydration will
-            ;; pick this value up at the request boundary.
-            (and (some? current) (not= current rejected))
-            (do (tel/log! {:level :warn :id ::auth-peer-token-adopted :data {:provider pid}}
-                          (str "Auth 401 for "
-                               pid
-                               " used a stale request credential; adopting the peer token"))
-                true)
-            (not (auth-refresh-allowed? pid))
-            (do (tel/log! {:level :error
-                           :id ::auth-refresh-circuit-open
-                           :data {:provider pid
-                                  :window-ms AUTH_REFRESH_WINDOW_MS
-                                  :max AUTH_REFRESH_WINDOW_MAX}}
-                          (str "Auth 401 — OAuth refresh circuit OPEN for " pid
-                               " (" AUTH_REFRESH_WINDOW_MAX
-                               " refreshes in " (quot (long AUTH_REFRESH_WINDOW_MS) 1000)
-                               "s); NOT refreshing — surfacing provider error,"
-                               " re-authenticate this provider"))
-                false)
-            :else (try
-                    ;; Pass exactly what this attempt sent. Older/third-party hooks
-                    ;; may still expose only a zero-arity implementation.
-                    (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-                    (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
-                    (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
-                              (str "Auth 401 — force-refreshed OAuth token for "
-                                   pid
-                                   "; retrying with request-bound credential hydration"))
-                    true
-                    (catch Throwable t
-                      (tel/log! {:level :error
-                                 :id ::auth-token-refresh-failed
-                                 :data {:provider pid :error (ex-message t)}}
-                                (str "Auth 401 — OAuth token refresh FAILED for "
+                            (str "Auth 401 — OAuth refresh circuit OPEN for " pid
+                                 " (" AUTH_REFRESH_WINDOW_MAX
+                                 " refreshes in " (quot (long AUTH_REFRESH_WINDOW_MS) 1000)
+                                 "s); NOT refreshing — surfacing provider error,"
+                                 " re-authenticate this provider"))
+                  false)
+              :else (try
+                      ;; Pass exactly what this attempt sent. Older/third-party hooks
+                      ;; may still expose only a zero-arity implementation.
+                      (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+                      (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
+                      (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
+                                (str "Auth 401 — force-refreshed OAuth token for "
                                      pid
-                                     "; surfacing provider error"))
-                      false))))))
+                                     "; retrying with request-bound credential hydration"))
+                      true
+                      (catch Throwable t
+                        (tel/log! {:level :error
+                                   :id ::auth-token-refresh-failed
+                                   :data {:provider pid :error (ex-message t)}}
+                                  (str "Auth 401 — OAuth token refresh FAILED for "
+                                       pid
+                                       "; surfacing provider error"))
+                        false)))]
+
+    (boolean (or (and refreshed?
+                      (or (not managed-auth?)
+                          (usable-token-envelope? (try (get-token-fn) (catch Throwable _ nil))
+                                                  rejected)))
+                 (when managed-auth?
+                   ;; A failed refresh does not revoke the extension's interactive login contract.
+                   ;; The rejected nonblank token is not a usable credential (issue #204).
+                   (swap! auth-last-refreshed dissoc pid)
+                   (run-managed-auth-flight! pid provider rejected)
+                   (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
+                   true)))))
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
