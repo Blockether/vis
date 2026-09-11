@@ -4338,6 +4338,62 @@ vis.register(vis.Extension(
             (finally (ep/dispose-python-context! ctx))))))))
 
 (defdescribe
+  typed-catalog-recipe-test
+  ;; Issue #203: registration-only tests missed the typed catalog/host boundary.
+  (it
+    "runs the documented catalog and tools through the trusted worker and sandbox"
+    (let [document
+          (slurp "resources/vis-docs/extension-design.md")
+
+          source
+          (second (re-find #"(?s)```python\n# counter.py\n(.*?)\n```" document))]
+
+      (expect (string? source))
+      (with-fresh-loaded
+        {"catalog_recipe.py" source}
+        (fn [loaded {:keys [ext-dir]}]
+          (expect (= 1 (:loaded loaded)))
+          (let [ctx
+                (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+                env
+                {:python-context ctx :extensions (atom []) :active-extensions (atom [])}
+
+                ext
+                (registered "counter-example")]
+
+            (try
+              (reset! (:extensions env) [ext])
+              (lp/sync-active-extension-symbols! env [ext])
+              (let
+                [answer
+                 (ep/run-python-block
+                   ctx
+                   (str
+                     "names = sorted(row.name for row in apropos(r'^counter\\.'))\n"
+                     "assert names == ['counter.read', 'counter.write'], names\n"
+                     "namespace, = await doctor.spec()\n"
+                     "assert [tool.name for tool in namespace.members] == names\n"
+                     "spec = await doctor.spec('counter.write')\n" "assert spec.tag == 'mutation'\n"
+                     "assert spec.parameters[1].kind == 'keyword_only'\n"
+                     "assert spec.returns.fields[0].type.description == 'Number of completed items.'\n"
+                     "help_doc = await doctor.help('counter.write')\n"
+                     "assert help_doc.tool == 'counter.write'\n"
+                     "assert 'Effect: mutation' in help_doc.text and 'Effect: mutation' in doc('counter.write')\n"
+                     "assert counter.write.contract['signature'] == spec.signature\n"
+                     "path = " (pr-str (str (io/file ext-dir "count.txt")))
+                     "\n" "assert (await counter.read(path)).value == 0\n"
+                     "assert (await counter.write(path, value=3)).value == 3\n"
+                     "assert (await counter.read(path)).value == 3\n"
+                     "try:\n    spec.parameters[0].name = 'changed'\n"
+                     "except AttributeError:\n    pass\n"
+                     "else:\n    raise AssertionError('mutable catalog result')\n"
+                     "print('catalog-host-ok')"))]
+                (expect (nil? (:error answer)) (pr-str answer))
+                (expect (str/includes? (or (:stdout answer) "") "catalog-host-ok")))
+              (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
   package-owned-skills-test
   ;; Issue #176: package procedures follow the same successful reload as code.
   (it

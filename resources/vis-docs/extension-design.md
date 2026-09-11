@@ -227,6 +227,136 @@ removal. Your integration also needs a representative call against its own
 required dependencies. For tests in Vis's shared environment, use
 `vis-agent python -m pytest`, not `vis-agent python pytest`.
 
+## Typed catalog and generated help
+
+`vis.Catalog(symbols)` is an immutable-data adapter over the same `Symbol` contracts
+used for registration. It is not a second registry. `spec()` returns typed top-level
+entries; `spec("counter.write")` returns a `ToolSpec`; `help("counter.write")` returns
+`HelpDocument(tool, text)`. A namespace's `members` retain full public names, including
+nested capabilities. Hidden tools are excluded. A wrong name type raises `TypeError`;
+an unknown or hidden name raises `ValueError`. Discovery does not validate configuration,
+authenticate, create files or call the described tools.
+
+This complete, tested entrypoint includes a read and a mutation. Both ordinary Python
+callers and Vis invoke the same methods. An optional CLI should call those methods too,
+not parse generated help. No CLI framework or inheritance is required.
+
+```python
+# counter.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Annotated
+
+import blockether.vis.extension as vis
+
+
+@dataclass(frozen=True, slots=True)
+class Count:
+    """The nonnegative count stored in a caller-owned file."""
+
+    value: Annotated[int, "Number of completed items."]
+
+
+class CounterError(RuntimeError):
+    """The file could not be read or written; no success result is returned."""
+
+
+def present_count(*, phase, result=None, error=None, **_):
+    if phase == "failure":
+        return vis.ActivityPresentation("Counter", str(error))
+    if phase == "start":
+        return vis.ActivityPresentation("Counter", "Accessing the count file")
+    return vis.ActivityPresentation("Counter", f"{result.value} completed items")
+
+
+class Counter:
+    @vis.method(activity=vis.Activity(label="Read counter", show_start=False, render=present_count))
+    def read(self, path: Annotated[str, "Caller-owned UTF-8 count file."]) -> Count:
+        """Read a count; a missing file means zero. Does not create files.
+
+        Raises TypeError for a non-string path, ValueError for a blank path,
+        and CounterError for unreadable or invalid stored data.
+        """
+        self._validate_path(path)
+        try:
+            value = int(Path(path).read_text(encoding="utf-8"))
+            if value < 0:
+                raise ValueError("Stored count must be nonnegative")
+            return Count(value)
+        except FileNotFoundError:
+            return Count(0)
+        except (OSError, ValueError) as error:
+            raise CounterError("Cannot read count") from error
+
+    @vis.method(tag="mutation", activity=vis.Activity(label="Write counter", show_start=False, render=present_count))
+    def write(self, path: str, *, value: Annotated[int, "Nonnegative completed-item count."]) -> Count:
+        """Replace the caller-owned file's count; its parent directory must exist.
+
+        Validate before IO: wrong types raise TypeError; blank paths and negative
+        counts raise ValueError. Write failures raise CounterError. No retries.
+        """
+        self._validate_path(path)
+        if type(value) is not int:
+            raise TypeError("value must be an integer")
+        if value < 0:
+            raise ValueError("value must be nonnegative")
+        try:
+            Path(path).write_text(str(value) + "\n", encoding="utf-8")
+        except OSError as error:
+            raise CounterError("Cannot write count") from error
+        return Count(value)
+
+    def _validate_path(self, path):
+        if not isinstance(path, str):
+            raise TypeError("path must be a string")
+        if not path.strip():
+            raise ValueError("path must not be blank")
+
+
+symbols = (vis.Symbol(Counter(), name="counter"),)
+catalog = vis.Catalog(symbols)
+vis.register(vis.Extension(
+    name="counter-example", description="A counter with generated tool help.",
+    alias="counter", symbols=(*symbols, vis.Symbol(catalog, name="doctor")),
+))
+```
+
+The same callable metadata supplies structured values, generated help and Vis `doc()`.
+`ParameterSpec` preserves parameter kind, requiredness, `has_default` and
+`default_is_none`; it never contains the actual default value. `TypeSpec` recursively
+describes result fields, containers, literals and `Annotated` meaning. Records and
+nested collections returned by the catalog are frozen dataclasses and tuples. Rebuild
+a catalog when declarations change; lookup does not inspect mutable runtime state.
+
+In Vis, inspect `await doctor.spec("counter.write")` and
+`await doctor.help("counter.write")`, then compare `doc("counter.write")`. The catalog
+covers the `symbols` passed to it; the separate `doctor` discovery adapter is not itself
+in that snapshot. Test the same scope against the actual registered public names:
+
+```python
+vis.testing.assert_catalog(
+    catalog,
+    names=["counter.read", "counter.write"],
+    mutations=["counter.write"],
+)
+```
+
+`assert_catalog` checks name and mutation parity, generated help and unresolved types,
+including decorated methods and nested result fields. It allows explicitly opaque or
+`Any` data; it is not a runtime type checker. Pass names obtained from registration or
+`apropos()` in integration tests, rather than treating successful construction as proof.
+Also invoke registered tools, test keyword-only binding, invalid input before IO,
+operational exceptions and result immutability. The SDK suite executes the code above
+and the real host verifies `spec`, `help`, `doc`, discovery and invocation together.
+
+For long-running observations, use the [synchronous monitoring recipe](live-views.md#monitor-a-fixed-build-set)
+and its cancellation tests. Catalog inspection must not start its readers. The catalog
+regression also invokes that registered observation, cancels it and checks reader cleanup;
+cancellation is never converted into a successful observation. Activity is the human
+presentation, not a replacement for typed result data. Serialize only at a transport edge.
+
 ## See also
 
 - [Extension API](extension-api.md) — exact declarations, contracts and callback rules.

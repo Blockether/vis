@@ -947,6 +947,8 @@ def _contract_type_text(spec):
     arguments = spec.get("arguments", [])
     if spec["kind"] in ("unresolved", "opaque"):
         return f"{spec['name']} ({spec['kind']})"
+    if spec["kind"] == "literal":
+        return "Literal[" + ", ".join(repr(value) for value in spec["values"]) + "]"
     if spec["kind"] == "union":
         return " | ".join(_contract_type_text(a) for a in arguments)
     if arguments:
@@ -972,17 +974,26 @@ def _contract_field_docs(spec, prefix=""):
 
 
 def _contract_doc(contract):
-    lines = (
-        [contract["description"], "", "Parameters:"]
-        if contract["parameters"]
-        else [contract["description"]]
-    )
+    lines = [contract["description"], "", "Effect: " + contract["tag"]]
+    if contract["parameters"]:
+        lines.extend(["", "Parameters:"])
     for item in contract["parameters"]:
         typ = item["type"]
         note = typ.get("description", "")
         lines.append(
             f"- {item['name']}: {_contract_type_text(typ)}"
             + (f" — {note}" if note else "")
+            + f" ({item['kind']}; "
+            + (
+                "required"
+                if item["required"]
+                else "default None"
+                if item["default_is_none"]
+                else "default omitted"
+                if item["has_default"]
+                else "variadic"
+            )
+            + ")"
         )
         lines.extend(_contract_field_docs(typ, item["name"] + "."))
     result = contract["returns"]
@@ -1195,6 +1206,231 @@ class Symbol:
                 "vis.Symbol(object, ...) requires at least one public method"
             )
         return {"marker": "namespace", "name": self.name, "methods": methods}
+
+
+@dataclass(frozen=True, slots=True)
+class TypeSpec:
+    """An inert Python type description; references bound recursive records."""
+
+    kind: Literal[
+        "any",
+        "null",
+        "scalar",
+        "opaque",
+        "unresolved",
+        "union",
+        "literal",
+        "generic",
+        "record",
+        "reference",
+    ]
+    name: str
+    description: str = ""
+    arguments: tuple[TypeSpec, ...] = ()
+    fields: tuple[FieldSpec, ...] = ()
+    values: tuple[str | int | bool | None, ...] = ()
+    variadic: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSpec:
+    """A dataclass field; default values and factories are never exported or run."""
+
+    name: str
+    type: TypeSpec
+    required: bool
+    has_default: bool
+    default_is_none: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ParameterSpec(FieldSpec):
+    """A callable parameter, preserving Python binding and safe default metadata."""
+
+    kind: Literal[
+        "positional_only",
+        "positional_or_keyword",
+        "var_positional",
+        "keyword_only",
+        "var_keyword",
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSpec:
+    """Typed view of one public callable's authoritative Symbol contract."""
+
+    version: int
+    name: str
+    tag: Literal["observation", "mutation"]
+    description: str
+    signature: str
+    parameters: tuple[ParameterSpec, ...]
+    returns: TypeSpec
+
+
+@dataclass(frozen=True, slots=True)
+class NamespaceSpec:
+    """A public namespace and its callable descendants, with full dotted names."""
+
+    name: str
+    members: tuple[ToolSpec, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class HelpDocument:
+    """Generated reference text, not captured CLI output or an operation result."""
+
+    tool: str
+    text: str
+
+
+def _catalog_type(contract):
+    return TypeSpec(
+        kind=contract["kind"],
+        name=contract["name"],
+        description=contract.get("description", ""),
+        arguments=tuple(_catalog_type(item) for item in contract.get("arguments", ())),
+        fields=tuple(
+            FieldSpec(**(item | {"type": _catalog_type(item["type"])}))
+            for item in contract.get("fields", ())
+        ),
+        values=tuple(contract.get("values", ())),
+        variadic=contract.get("variadic", False),
+    )
+
+
+def _catalog_presentation(*, phase, result=None, error=None, **_):
+    if phase == "failure":
+        return ActivityPresentation("Tool reference", str(error))
+    if phase == "start":
+        return ActivityPresentation("Tool reference", "Reading declared tool metadata")
+    if isinstance(result, HelpDocument):
+        text = result.text.encode("utf-8")
+        excerpt = text[:16000].decode("utf-8", errors="ignore")
+        if len(text) > 16000:
+            excerpt += (
+                "\nReference excerpt; the complete document is returned to the caller."
+            )
+        return ActivityPresentation(
+            "Tool reference", result.tool, (ActivityMarkdown(excerpt),)
+        )
+    specs = result if isinstance(result, tuple) else (result,)
+    tools = tuple(
+        tool
+        for spec in specs
+        for tool in (spec.members if isinstance(spec, NamespaceSpec) else (spec,))
+    )
+    return ActivityPresentation(
+        "Tool catalog",
+        f"{len(tools)} tools",
+        (ActivityText("\n".join(tool.name for tool in tools)),) if tools else (),
+    )
+
+
+class Catalog:
+    """Read-only snapshot of public Symbols; construction and lookup perform no IO.
+
+    Pass the same symbols to Catalog and Extension. Rebuild after changing declarations.
+    This is an adapter, not a registry, dispatcher or runtime type validator.
+    """
+
+    def __init__(self, symbols: Sequence[Symbol]):
+        if (
+            not isinstance(symbols, Sequence)
+            or isinstance(symbols, (str, bytes))
+            or any(not isinstance(symbol, Symbol) for symbol in symbols)
+        ):
+            raise TypeError("Catalog requires a sequence of Symbol declarations")
+        tools = {}
+        documents = {}
+        declared = set()
+        for symbol in symbols:
+            spec = symbol._spec()
+            if spec["name"] in declared:
+                raise ValueError(f"Duplicate catalog name: {spec['name']}")
+            declared.add(spec["name"])
+            for member in spec.get("methods", (spec,)):
+                if member["hidden"]:
+                    continue
+                contract = member["contract"]
+                name = contract["name"]
+                tools[name] = ToolSpec(
+                    **(
+                        contract
+                        | {
+                            "parameters": tuple(
+                                ParameterSpec(
+                                    **(item | {"type": _catalog_type(item["type"])})
+                                )
+                                for item in contract["parameters"]
+                            ),
+                            "returns": _catalog_type(contract["returns"]),
+                        }
+                    )
+                )
+                documents[name] = f"{name}({contract['signature']})\n\n{member['doc']}"
+        entries = dict(tools)
+        for name in tools:
+            parts = name.split(".")
+            for length in range(1, len(parts)):
+                prefix = ".".join(parts[:length])
+                entries[prefix] = NamespaceSpec(
+                    prefix,
+                    tuple(
+                        tools[key]
+                        for key in sorted(tools)
+                        if key.startswith(prefix + ".")
+                    ),
+                )
+        self._entries = MappingProxyType(entries)
+        self._documents = MappingProxyType(documents)
+        self._roots = tuple(
+            entries[name] for name in sorted(entries) if "." not in name
+        )
+
+    @method(
+        activity=Activity(
+            label="Inspect tool catalog", show_start=False, render=_catalog_presentation
+        )
+    )
+    def spec(
+        self,
+        name: Annotated[
+            str | None, "Full public name; None lists top-level tools and namespaces."
+        ] = None,
+    ) -> ToolSpec | NamespaceSpec | tuple[ToolSpec | NamespaceSpec, ...]:
+        """Inspect declared tools without invoking them. Unknown or hidden names raise ValueError."""
+        if name is None:
+            return self._roots
+        if not isinstance(name, str):
+            raise TypeError("Catalog name must be a string or None")
+        if name not in self._entries:
+            raise ValueError(f"Unknown catalog name: {name!r}")
+        return self._entries[name]
+
+    @method(
+        activity=Activity(
+            label="Read tool reference", show_start=False, render=_catalog_presentation
+        )
+    )
+    def help(
+        self, name: Annotated[str, "Full public tool or namespace name."]
+    ) -> HelpDocument:
+        """Render the same metadata as doc(). No configuration, authentication or operation runs.
+
+        Raises TypeError for a non-string name; ValueError for unknown or hidden names.
+        """
+        if not isinstance(name, str):
+            raise TypeError("Catalog name must be a string")
+        spec = self.spec(name)
+        if isinstance(spec, NamespaceSpec):
+            text = f"{name}\n\n" + "\n\n".join(
+                self._documents[tool.name] for tool in spec.members
+            )
+        else:
+            text = self._documents[name]
+        return HelpDocument(name, text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3399,11 +3635,59 @@ def _assert_tree(actual, expected, path="view"):
         assert (path, expected) == (path, actual)
 
 
+def _assert_catalog(
+    catalog: Catalog, *, names: Sequence[str], mutations: Sequence[str] = ()
+) -> None:
+    """Assert discovery parity and resolved types; never invoke operations.
+
+    Supply public callable names from actual registration/discovery and expected
+    mutation names. Test invocation, validation, IO and cancellation separately.
+    Any and opaque types are allowed; unresolved annotations fail with their path.
+    """
+    tools = tuple(
+        tool
+        for spec in catalog.spec()
+        for tool in (spec.members if isinstance(spec, NamespaceSpec) else (spec,))
+    )
+    actual_names = [tool.name for tool in tools]
+    assert sorted(actual_names) == sorted(names), (
+        "catalog names",
+        actual_names,
+        list(names),
+    )
+    actual_mutations = [tool.name for tool in tools if tool.tag == "mutation"]
+    assert sorted(actual_mutations) == sorted(mutations), (
+        "catalog mutations",
+        actual_mutations,
+        list(mutations),
+    )
+
+    def check_type(spec, path):
+        assert spec.kind != "unresolved", (path, "unresolved", spec.name)
+        for argument in spec.arguments:
+            check_type(argument, path + "[]")
+        for item in spec.fields:
+            check_type(item.type, path + "." + item.name)
+
+    for tool in tools:
+        document = catalog.help(tool.name)
+        assert document.tool == tool.name, (tool.name, "help name")
+        assert f"{tool.name}({tool.signature})" in document.text, (
+            tool.name,
+            "help signature",
+        )
+        assert tool.description in document.text, (tool.name, "help description")
+        for parameter in tool.parameters:
+            check_type(parameter.type, tool.name + "." + parameter.name)
+        check_type(tool.returns, tool.name + ".returns")
+
+
 class _Testing:
     """Reusable helpers for extension tests; no fixture reaches the real live host."""
 
     LiveRecorder = _LiveRecorder
     assert_tree = staticmethod(_assert_tree)
+    assert_catalog = staticmethod(_assert_catalog)
 
 
 testing = _Testing()

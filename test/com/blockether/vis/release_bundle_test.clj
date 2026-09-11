@@ -2232,29 +2232,28 @@
 
 (defdescribe
   python-release-publication-test
-  (it
-    "publishes automatically after a successful Vis release with manual recovery on main"
-    (let [release-name
-          (second (re-find #"(?m)^name: (.+)$" (slurp ".github/workflows/release.yml")))
+  (it "publishes after a Vis release or a verified SDK-only main commit (#203)"
+      (let [release-name
+            (second (re-find #"(?m)^name: (.+)$" (slurp ".github/workflows/release.yml")))
 
-          publisher
-          (slurp ".github/workflows/python-publish.yml")]
+            publisher
+            (slurp ".github/workflows/python-publish.yml")]
 
-      (doseq
-        [needle
-         [(str "workflow_run:\n    workflows: ['" release-name "']\n    types: [completed]")
-          "github.event_name == 'workflow_run'" "github.event.workflow_run.conclusion == 'success'"
-          "github.event.workflow_run.event == 'push'"
-          "github.event.workflow_run.head_repository.full_name == github.repository"
-          "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
-          "uses: ./.github/workflows/python-packages.yml"
-          "ref: ${{ github.event.workflow_run.head_sha || format('refs/tags/v{0}', inputs.version) }}"
-          "version: ${{ inputs.version }}" "needs: verify" "environment: pypi" "id-token: write"
-          "uses: pypa/gh-action-pypi-publish@release/v1"]]
-        (expect (str/includes? publisher needle) needle))
-      ;; PyPI trusted publishing does not support reusable workflows.
-      (expect (not (str/includes? publisher "workflow_call:")))
-      (expect (not (str/includes? publisher "continue-on-error:")))))
+        (doseq [needle [(str "workflow_run:\n    workflows: ['"
+                             release-name
+                             "']\n    types: [completed]") "github.event_name == 'workflow_run'"
+                        "github.event.workflow_run.conclusion == 'success'"
+                        "github.event.workflow_run.event == 'push'"
+                        "github.event.workflow_run.head_repository.full_name == github.repository"
+                        "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
+                        "uses: ./.github/workflows/python-packages.yml"
+                        "ref: ${{ github.event.workflow_run.head_sha || github.sha }}"
+                        "version: ${{ inputs.version }}" "needs: verify" "environment: pypi"
+                        "id-token: write" "uses: pypa/gh-action-pypi-publish@release/v1"]]
+          (expect (str/includes? publisher needle) needle))
+        ;; PyPI trusted publishing does not support reusable workflows.
+        (expect (not (str/includes? publisher "workflow_call:")))
+        (expect (not (str/includes? publisher "continue-on-error:")))))
   (it
     "builds and tests the released commit and uses its VIS_VERSION for the distribution"
     (let [packages (slurp ".github/workflows/python-packages.yml")]

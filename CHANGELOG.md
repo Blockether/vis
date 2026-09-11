@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- SDK 0.1.69: typed, immutable extension catalogs and generated help derived from existing Symbol contracts; reusable contract assertions and a tested read/mutation recipe (#203).
+- Verify and publish an SDK-only main commit through the protected Python publishing workflow without triggering a product release.
+
 ## [v0.1.61] - 2026-09-10
 
 ### Fixed

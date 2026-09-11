@@ -130,7 +130,33 @@ def test_success_polls_the_entire_fixed_set_with_only_two_readers(recipe):
     assert recipe.counts["peak"] == 2
 
 
-def test_stop_during_host_wait_joins_readers_and_preserves_note(recipe):
+# #203: the catalog stays inert; the registered observation still owns cancellation.
+@pytest.mark.parametrize("registered", [False, True])
+def test_stop_during_host_wait_joins_readers_and_preserves_note(
+    recipe, monkeypatch, registered
+):
+    if registered:
+        symbol = vis.Symbol(
+            recipe.module.watch_builds,
+            name="watch_builds",
+            activity=vis.Activity(label="Watch builds"),
+        )
+        catalog = vis.Catalog([symbol])
+        vis.testing.assert_catalog(catalog, names=["watch_builds"])
+        assert "watch_builds" in catalog.help("watch_builds").text
+        assert not recipe.counts
+        monkeypatch.setattr(vis, "_registration", {"spec": None})
+        vis.register(
+            vis.Extension(
+                name="catalog-monitor",
+                description="Monitor catalog test.",
+                alias="monitor",
+                symbols=[symbol],
+            )
+        )
+        monkeypatch.setattr(
+            recipe.module, "watch_builds", vis._registration["spec"]["symbols"][0]["fn"]
+        )
     started = Event()
 
     def read(build, *, deadline, stop):

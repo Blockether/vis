@@ -87,6 +87,38 @@ that invocation. Arguments and completed results remain Python values. Exception
 are ordinary tool failures. The [execution boundary](#filesystem-and-processes)
 determines which values can cross to the sandbox.
 
+### Typed catalog
+
+`vis.Catalog(symbols)` accepts a sequence of the same `Symbol` declarations used by
+`Extension`. Construction snapshots public callable contracts without registration or
+IO. Duplicate declaration names are rejected. Hidden tools are not discoverable through
+the catalog; visibility is not access control. Rebuild the snapshot after declaration changes.
+
+| API | Result |
+| --- | --- |
+| `catalog.spec()` | Tuple of top-level `ToolSpec` or `NamespaceSpec` values |
+| `catalog.spec("store.items.read")` | One callable's `ToolSpec` |
+| `catalog.spec("store.items")` | `NamespaceSpec` with fully named callable descendants |
+| `catalog.help("store.items.read")` | `HelpDocument(tool, text)` generated from the registered documentation |
+| `catalog.help("store")` | Generated reference for all public descendants |
+
+`ToolSpec` carries `version`, `name`, `tag`, `description`, `signature`, `parameters`
+and `returns`. Each `ParameterSpec` has `name`, `kind`, `type`, `required`, `has_default`
+and `default_is_none`. `TypeSpec` has `kind`, `name`, `description`, `arguments`, `fields`,
+`values` and `variadic`; result fields use `FieldSpec`. These are frozen, slotted records;
+all nested collections produced by the adapter are tuples. No default value or callable
+is retained in public result data. The portable `.contract` format remains unchanged.
+
+`spec(None)` lists roots. Other non-string names raise `TypeError`; unknown or hidden
+names raise `ValueError`. `help` requires a string. No lookup configures, authenticates,
+dispatches or executes the described operation. Public `Catalog.spec` and `Catalog.help`
+methods own explicit end-only Activities, so a catalog can itself be an object namespace.
+
+`vis.testing.assert_catalog(catalog, names=..., mutations=...)` checks the catalog against
+public registered callable names and expected mutation names, including help/signature
+parity and unresolved nested types. It does not invoke tools, validate arbitrary argument
+values or prove cancellation. See the [tested recipe and boundary checks](extension-design.md#typed-catalog-and-generated-help).
+
 ### Return typed objects
 
 A dict is sufficient for simple results. Use frozen dataclasses with annotated

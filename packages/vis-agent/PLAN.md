@@ -297,3 +297,18 @@ A manual protected PyPI publishing workflow consumes distribution CI's
 verified artifacts. Workflow lint passed, but the remote matrix has not run. PyPI project
 ownership/trusted publishers, SDK publication and a Vis deployment remain external requirements;
 none is implicitly authorized by this plan. No second runtime release is needed.
+
+## 11. Typed catalog, generated help and Spel adoption (#203)
+
+- Rationale: expose immutable discovery values derived from Symbol contracts, not another declaration registry.
+- Data: canonical extension.py, SDK tests and extension-design/API guides; Spel extensions/vis-spel; the verified Python publishing workflow.
+- Acceptance criteria: preserve Python calling conventions and safe default metadata; public catalog/help/doc parity; reusable contract assertions, validation-before-IO and cancellation coverage; registered host calls and installed-wheel verification; Spel uses the same interfaces; publish SDK 0.1.69 without a product release.
+- Unknowns: protected PyPI publication approval and remote CI results.
+
+Plan state: implementation and local SDK acceptance complete; publication and installed Spel dependency verification pending.
+
+- Before implementation: 42 existing SDK cases passed (one Python-version skip); all 15 new catalog cases failed because Catalog was absent. Spel's two new cases failed for missing spec/help and entrypoint-only mutation metadata.
+- SDK verifier: all 11 gates pass, including 547 source tests and 560 installed-wheel tests with actual isolated JVM HTTP/stdio engines (14 opt-in/source skips; one installed Python-version skip). Direct/sdist wheel contents and canonical contracts agree; strict distribution checks pass.
+- Affected Clojure suites: 223 cases pass; formatting, lint and reflection checks pass. The documented catalog crosses registration, the trusted worker and sandbox with immutable nested results.
+- Spel: 60 Python cases pass (two opt-in native/browser cases skipped); make lint passes. Local make test is unsafe because existing test-cli.sh globally kills Spel daemons; do not disrupt other sessions. Isolated remote CI remains required.
+- Python publishing now verifies the exact main commit and VIS_VERSION for an SDK-only dispatch, preserving protected PyPI approval and artifact checks. No product tag, deployment or service restart is involved.

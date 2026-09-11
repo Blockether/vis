@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact VIS_VERSION to publish; the vis-agent PyPI trusted publisher must exist
+        description: Exact VIS_VERSION on main to verify and publish (SDK-only or release recovery)
         required: true
         type: string
 
@@ -27,7 +27,7 @@ jobs:
     uses: ./.github/workflows/python-packages.yml
     with:
       version: ${{ inputs.version }}
-      ref: ${{ github.event.workflow_run.head_sha || format('refs/tags/v{0}', inputs.version) }}
+      ref: ${{ github.event.workflow_run.head_sha || github.sha }}
   publish:
     needs: verify
     runs-on: ubuntu-latest
