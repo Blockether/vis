@@ -779,6 +779,12 @@
         sent-text
         (promise)
 
+        input-db
+        (promise)
+
+        read-input!
+        @#'screen/read-chat-input!
+
         runner-error
         (atom nil)
 
@@ -803,7 +809,21 @@
 
         bindings
         (merge
-          {#'screen/create-terminal! (fn [_]
+          {#'screen/read-chat-input! (fn [screen coalescer]
+                                       (let [key (read-input! screen coalescer)]
+                                         ;; A render can publish hit targets while input polling waits.
+                                         ;; Model that publication at the read boundary, without a sleep.
+                                         (when (= \h
+                                                  (some-> ^KeyStroke key
+                                                          .getCharacter))
+                                           (swap! state/app-db assoc ::published-during-input true))
+                                         key))
+           #'screen/begin-input-timing! (fn [_ key db]
+                                          (when (= \h
+                                                   (some-> ^KeyStroke key
+                                                           .getCharacter))
+                                            (deliver input-db db)))
+           #'screen/create-terminal! (fn [_]
                                        terminal)
            #'screen/configure-terminal-input! (fn [_ _]
                                                 nil)
@@ -880,6 +900,8 @@
       (expect (= true (deref gateway-entered 5000 ::timeout)))
       (.addInput terminal (term/keystroke \h))
       (expect (true? (await-pred #(= ["h"] (get-in @state/app-db [:input :lines])) 2000)))
+      (expect (true? (::published-during-input (deref input-db 2000 {})))
+              "Input handlers must use state published during the input read")
       ;; Enter before the session exists is durable intent: it leaves the editor,
       ;; appears in the local queue, and cannot reach the model yet.
       (.addInput terminal (KeyStroke. KeyType/Enter))

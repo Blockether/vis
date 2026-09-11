@@ -6109,13 +6109,15 @@
                ;; then, scroll handlers fall back to safe defaults and act as a no-op. Pure
                ;; poll - no rendering on this thread anymore. The
                ;; render thread handles all screen output.
-               (let [db @state/app-db
+               (let [raw-key (read-chat-input! screen input-coalescer)
+                     ;; The renderer may publish new hit targets while input waits.
+                     ;; Handle the event against that state, not the preceding frame.
+                     db @state/app-db
                      {:keys [cols total-h inner-h messages-top]} (:layout db)
                      cols (or cols 0)
                      total-h (or total-h 0)
                      inner-h (or inner-h 0)
                      messages-top (or messages-top 0)
-                     raw-key (read-chat-input! screen input-coalescer)
                      ;; C-g is Emacs `keyboard-quit`, and it is Esc EVERYWHERE: rewriting it
                      ;; once here hands canonical Lanterna input to every app mode.
                      physical-key (input/normalize-abort-key raw-key)
