@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import worker from './worker.js';
 import { runtimeFixture } from './test-support.js';
 import { moderationStatements } from './moderate.mjs';
@@ -132,6 +133,31 @@ test('live discovery includes only approved listings and shares the cached catal
   expect(api.headers.get('x-robots-tag')).toBe('noindex');
   const missing=await fixture.runtime.dispatchFetch('https://center.example.com/extensions/'+'f'.repeat(24));
   expect(missing.status).toBe(404);expect(missing.headers.get('x-robots-tag')).toBe('noindex');
+});
+test('every approved extension has a crawlable, server-rendered detail page',async()=>{
+  const items=JSON.parse(readFileSync('web/catalog.fixture.json','utf8'));
+  for(const item of items) await fixture.db.prepare('INSERT INTO extensions VALUES (?, ?, ?)').bind(item.id,JSON.stringify(item),item.added_at).run();
+  const index=await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/sitemap.xml')).text();
+  const catalog=new JSDOM(await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/')).text());
+  try {
+    for(const item of items) {
+      const path='/extensions/'+item.id, canonical='https://vis.blockether.com'+path;
+      expect(index).toContain('<loc>'+canonical+'</loc>');
+      expect(catalog.window.document.querySelector('.card-main[href="'+path+'"]').textContent).toContain(item.name);
+      const response=await fixture.runtime.dispatchFetch('https://center.example.com'+path+'?view=list');
+      expect(response.status).toBe(200);expect(response.headers.get('x-robots-tag')).toBeNull();
+      const detail=new JSDOM(await response.text());
+      try {
+        const d=detail.window.document;
+        expect(d.querySelector('#detail h1').textContent).toBe(item.name);
+        expect(d.querySelector('#install-command').textContent).toContain(item.revision);
+        expect(d.querySelector('link[rel="canonical"]').href).toBe(canonical);
+        expect(d.querySelector('meta[name="robots"]').content).toMatch(/^index, follow/);
+        expect(d.querySelector('meta[name="description"]').content).toBe(item.description);
+        expect(JSON.parse(d.querySelector('script[type="application/ld+json"]').textContent).mainEntity.codeRepository).toBe(item.repository_url);
+      } finally {detail.window.close();}
+    }
+  } finally {catalog.window.close();}
 });
 test('discovery fails explicitly rather than publishing an empty catalog when D1 is unavailable',async()=>{
   for(const path of ['/extensions/sitemap.xml','/extensions/llms.txt']) {

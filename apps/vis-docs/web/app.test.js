@@ -59,7 +59,7 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect($('#catalog-page').hidden).toBe(true);
   expect($('#detail-page').hidden).toBe(false);
   expect($('link[rel="canonical"]').href).toBe('https://vis.blockether.com/extensions/'+item.id);
-  expect($('meta[property="og:title"]').content).toBe(item.name+' · Vis');
+  expect($('meta[property="og:title"]').content).toBe(item.name+' by '+item.owner+' · Vis · Blockether');
   expect($('meta[name="description"]').content).toBe(item.description);
   expect($('#install-command').textContent).toBe(installCommand(item));
   expect(installCommand(item)).toContain("--subdirectory 'extensions/greeting'");
@@ -75,7 +75,7 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect($('#catalog-page').hidden).toBe(false);
   expect($('link[rel="canonical"]').href).toBe('https://vis.blockether.com/extensions/');
   expect(document.querySelectorAll('link[rel="canonical"]')).toHaveLength(1);
-  expect($('meta[property="og:title"]').content).toBe('Extension Center · Vis');
+  expect($('meta[property="og:title"]').content).toBe('Extension Center · Vis · Blockether');
   expect(names()).toHaveLength(6);
 });
 
@@ -95,7 +95,10 @@ test('loading, failure, retry and empty catalog have recovery actions', async ()
   expect(document.body.textContent).toContain('Could not load');
   fail=false; $('#retry').click(); await tick();
   expect($('#results').textContent).toContain('No repositories yet');
-  expect($('#empty-add')).not.toBeNull();
+  expect($('#empty-add')).toBeNull();
+  expect([...document.querySelectorAll('#catalog-page button')].filter(button=>button.textContent==='Add a repository')).toHaveLength(1);
+  $('#submit-open').click();
+  expect($('#submit-dialog').open).toBe(true);
 });
 
 test('submission previews a GitHub link and pins the reviewed revision when adding', async () => {

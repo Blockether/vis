@@ -24,6 +24,25 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
     } finally {dom.window.close();}
   }
 });
+test('docs shortcuts and catalog buttons use one shared control and font contract',()=>{
+  const dom=new JSDOM('<style>'+readFileSync('dist/assets/theme.css','utf8')+'</style><style>'+readFileSync('dist/assets/catalog.css','utf8')+'</style>');
+  try {
+    const rules=[...dom.window.document.styleSheets[0].cssRules];
+    const control=rules.find(rule=>rule.selectorText?.split(',').map(s=>s.trim()).includes('button')&&rule.selectorText.includes('.quick-links a'));
+    expect(control).toBeDefined();
+    expect(control.style.getPropertyValue('font-size')).toBe('var(--text-small)');
+    expect(control.style.getPropertyValue('font-weight')).toBe('500');
+    expect(control.style.getPropertyValue('background')).toBe('var(--bg-soft)');
+    const primary=rules.find(rule=>rule.selectorText?.includes('button.primary')&&rule.selectorText.includes('.store-links a'));
+    expect(primary.style.getPropertyValue('background')).toBe('var(--fg)');
+    expect(readFileSync('dist/assets/fonts/jetbrains-mono.woff2')).toEqual(readFileSync('../../resources/vis-docs/assets/fonts/jetbrains-mono.woff2'));
+    expect(readFileSync('dist/assets/catalog.css','utf8')).not.toMatch(/font-family|@font-face|button\.primary/);
+    const touch=rules.find(rule=>/pointer:\s*coarse/.test(rule.conditionText));
+    expect([...touch.cssRules].find(rule=>rule.selectorText.includes('input')).style.getPropertyValue('min-height')).toBe('2.75rem');
+    const input=[...dom.window.document.styleSheets[1].cssRules].find(rule=>rule.selectorText?.startsWith('input:not'));
+    expect(input.style.getPropertyValue('min-height')).toBe('');
+  } finally {dom.window.close();}
+});
 test('the static upload contains only public output and the same security policy',()=>{
   const output=readdirSync('dist',{recursive:true});
   expect(output.some(file=>/(^|\/)(?:[^/]*fixture[^/]*|schema\.sql|wrangler[^/]*|\.?deployment[^/]*|package(?:-lock)?\.json|node_modules|\.env[^/]*|\.vars[^/]*)$/.test(file))).toBe(false);
@@ -47,7 +66,7 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
   const site=createTestHarness({workers:[{configPath:'./wrangler.jsonc'}]});
   try {
     await site.listen();
-    for(const path of ['/','/index.html','/extending.html','/assets/theme.css','/assets/docs.js','/assets/prism.min.js','/favicon.ico','/favicon-32.png','/apple-touch-icon.png','/site.webmanifest','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/llms.txt','/llms-full.txt','/extending.md']) {
+    for(const path of ['/','/index.html','/extending.html','/assets/theme.css','/assets/docs.js','/assets/prism.min.js','/assets/fonts/jetbrains-mono.woff2','/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png','/site.webmanifest','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/llms.txt','/llms-full.txt','/extending.md']) {
       const response=await site.fetch(path,{redirect:'manual'});
       expect(response.status,path).toBe(200);
       expect(response.headers.get('Content-Security-Policy'),path).toBe(security['Content-Security-Policy']);

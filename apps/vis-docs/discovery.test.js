@@ -24,12 +24,17 @@ test('every generated document has canonical metadata, an accessible icon and a 
       expect(d.querySelector('link[rel="canonical"]').href).toBe(canonical);
       expect(locations).toContain(canonical);
       const description=d.querySelector('meta[name="description"]').content;
-      expect(description.length).toBeGreaterThan(10);descriptions.add(description);
+      expect(description.length).toBeGreaterThanOrEqual(80);expect(description.length).toBeLessThanOrEqual(170);descriptions.add(description);
+      expect(d.title).toMatch(/ · Vis · Blockether$/);
+      expect(d.querySelector('link[rel="icon"][sizes="48x48"]').getAttribute('href')).toBe('/favicon-48.png');
+      expect(d.querySelector('link[rel="icon"][type="image/x-icon"]').getAttribute('href')).toBe('/favicon.ico');
+      expect(d.querySelector('a[href="https://blockether.com"]')).not.toBeNull();
       expect(d.querySelector('meta[property="og:url"]').content).toBe(canonical);
       expect(d.querySelector('meta[property="og:title"]').content).toBe(d.title);
       expect(d.querySelector('meta[name="twitter:description"]').content).toBe(description);
       const schema=JSON.parse(d.querySelector('script[type="application/ld+json"]').textContent);
       expect(schema.url).toBe(canonical);expect(schema['@type']).toBe('TechArticle');
+      expect(schema.publisher).toEqual({'@type':'Organization',name:'Blockether',url:'https://blockether.com/'});
       const md=file.replace('.html','.md');
       expect(d.querySelector('link[type="text/markdown"]').getAttribute('href')).toBe('/'+md);
       expect(read('llms.txt')).toContain(origin+'/'+md);
@@ -49,7 +54,7 @@ test('every generated document has canonical metadata, an accessible icon and a 
   expect(readdirSync('dist')).not.toContain('source.json');
 });
 test('shared favicons have the declared dimensions and a valid ICO directory',async()=>{
-  for(const [name,size] of [['favicon-16.png',16],['favicon-32.png',32],['apple-touch-icon.png',180],['icon-192.png',192],['icon-512.png',512]]) {
+  for(const [name,size] of [['favicon-16.png',16],['favicon-32.png',32],['favicon-48.png',48],['apple-touch-icon.png',180],['icon-192.png',192],['icon-512.png',512]]) {
     const meta=await sharp('dist/'+name).metadata();expect(meta.width).toBe(size);expect(meta.height).toBe(size);
   }
   const ico=readFileSync('dist/favicon.ico');expect(ico.readUInt16LE(2)).toBe(1);expect(ico.readUInt32LE(18)).toBe(22);
@@ -64,9 +69,13 @@ test('catalog SSR supplies item-specific metadata and never turns metadata into 
     const d=dom.window.document;
     expect(d.querySelector('meta[name="description"]').content).toBe(item.description);
     expect(d.querySelector('link[rel="canonical"]').href).toBe(origin+'/extensions/'+item.id);
-    expect(JSON.parse(d.querySelector('script[type="application/ld+json"]').textContent).description).toBe(item.description);
+    const schema=JSON.parse(d.querySelector('script[type="application/ld+json"]').textContent);
+    expect(schema.description).toBe(item.description);
+    expect(schema.publisher.url).toBe('https://blockether.com/');
+    expect(schema.mainEntity).toMatchObject({'@type':'SoftwareSourceCode',name:item.name,codeRepository:item.repository_url,version:item.version,programmingLanguage:'Python'});
+    expect(d.title).toBe(item.name+' by '+item.owner+' · Vis · Blockether');
     expect(d.querySelectorAll('head script')).toHaveLength(1);
-    expect(d.querySelector('link[rel="icon"]').getAttribute('href')).toBe('/favicon-32.png');
+    expect(d.querySelector('link[rel="icon"][sizes="48x48"]').getAttribute('href')).toBe('/favicon-48.png');
   } finally {dom.window.close();}
   expect(catalogMetadata({error:'Unavailable'})).toContain('noindex, follow');
   expect(catalogMetadata({detailError:true})).toContain('noindex, follow');

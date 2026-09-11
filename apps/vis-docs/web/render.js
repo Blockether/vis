@@ -31,7 +31,7 @@ export function categoriesHTML(items,state) {
 }
 export function cardsHTML(items,state) {
   const visible=visibleItems(items,state);
-  if(!visible.length) return `<div class="empty"><h2>${items.length?'No matching extensions':'No repositories yet'}</h2><p>${items.length?'Try a different search or browse all categories.':'Share a public GitHub repository for moderation.'}</p>${items.length?'<a id="clear-filters" href="/extensions/">Clear filters</a>':'<button id="empty-add" type="button">Add a repository</button>'}</div>`;
+  if(!visible.length) return `<div class="empty"><h2>${items.length?'No matching extensions':'No repositories yet'}</h2><p>${items.length?'Try a different search or browse all categories.':'Use “Add a repository” above to submit a public GitHub project for moderation.'}</p>${items.length?'<a id="clear-filters" href="/extensions/">Clear filters</a>':''}</div>`;
   return visible.map(item=>`<article class="extension-card" data-name="${escapeHTML(item.name)}"><a class="card-main" href="/extensions/${escapeHTML(item.id)}${filterURL(state).slice('/extensions/'.length)}"><div class="card-top"><span class="tag">${escapeHTML(categories[item.category])}</span><span class="version">v${escapeHTML(item.version)}</span></div><h3>${escapeHTML(item.name)}</h3><p class="card-description">${escapeHTML(item.description)}</p></a>${link(item.repository,item.repository_url,'repository-link')}<div class="card-meta"><span>${escapeHTML(new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(item.stars))} stars</span><span>Updated ${dateLabel(item.updated_at)}</span></div></article>`).join('');
 }
 const fact=(label,value)=>`<dt>${label}</dt><dd>${escapeHTML(value)}</dd>`;

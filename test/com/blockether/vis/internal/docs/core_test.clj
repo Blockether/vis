@@ -261,11 +261,11 @@
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
         (expect (not (str/includes? html "<p><a href=\"#why-vis\">")))
-        (let [link-css (second (re-find #"(?s)\.quick-links a\{([^}]+)\}" css))]
+        (let [link-css (second (re-find #"(?s)(?:^|\n)\.quick-links a\{([^}]+)\}" css))]
           (doseq [fragment ["min-height:2.75rem" "white-space:nowrap"]]
             (expect (str/includes? (or link-css "") fragment) fragment)))
         (doseq [fragment [".quick-links{display:flex;flex-wrap:wrap;gap:.5rem"
-                          ".quick-links a:hover" ".quick-links a:focus-visible"
+                          ".quick-links a:hover" "a:focus-visible"
                           ".quick-links a{flex-basis:calc(50% - .25rem)}"]]
           (expect (str/includes? css fragment) fragment))))))
 
@@ -290,8 +290,7 @@
                         "class=\"store-links\"" "https://testflight.apple.com/join/4anYT4Wk"
                         "https://play.google.com/apps/testing/com.blockether.viscompanion"
                         "TestFlight" "Google Play beta" "hyphens:none" "list-style-position:outside"
-                        ".store-links a:focus-visible" "class=\"store-apple\""
-                        "class=\"store-android\""]]
+                        "a:focus-visible" "class=\"store-apple\"" "class=\"store-android\""]]
           (expect (or (str/includes? html needle) (str/includes? (rendered-theme html mode) needle))
                   needle))
         (let [command (second (re-find #"(?s)<pre><code class=\"language-bash\">(.*?)</code></pre>"

@@ -1,14 +1,7 @@
 /* Shared typography, page shell and prose styles come from the docs theme. */
 :root { color-scheme: light; }
 [hidden] { display: none !important; }
-button, input, select { font: inherit; color: inherit; }
-button { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-width: 2rem; min-height: 2rem; padding: .375rem .75rem; border: 1px solid var(--faint); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font-size: var(--text-small); line-height: 1.5; cursor: pointer; }
-button:hover { background: var(--panel); }
-button.primary { background: var(--primary); border-color: var(--primary); color: var(--bg); }
-button.primary:hover { background: var(--primary-press); border-color: var(--primary-press); }
-button:disabled { cursor: progress; opacity: .6; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
-input:not([type=checkbox]), select { min-width: 0; width: 100%; min-height: 2rem; padding: .5rem .625rem; border: 1px solid var(--faint); border-radius: var(--r-sm); background: var(--bg); font-size: var(--text-small); line-height: 1.5; }
+input:not([type=checkbox]), select { min-width: 0; width: 100%; padding: .5rem .625rem; border: 1px solid var(--faint); border-radius: var(--r-sm); background: var(--bg); font-size: var(--text-small); line-height: 1.5; }
 input::placeholder { color: var(--dim); opacity: 1; }
 label { font-size: var(--text-small); }
 label input { display: block; margin-top: .5rem; }
@@ -77,8 +70,7 @@ dialog form label { display: block; margin-top: 1.25rem; }
 .skip:focus { top: .5rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (pointer: coarse) {
-  button, input:not([type=checkbox]), select, .repository-link, .actions a { min-height: 2.75rem; }
-  button { min-width: 2.75rem; }
+  .repository-link, .actions a { min-height: 2.75rem; }
   input:not([type=checkbox]), select { font-size: 1rem; }
   .actions a { display: inline-flex; align-items: center; }
   kbd { display: none; }

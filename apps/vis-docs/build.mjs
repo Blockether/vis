@@ -19,7 +19,7 @@ for (const page of pages) {
   const document = dom.window.document;
   document.querySelector('title').remove();
   document.querySelector('meta[name="description"]').remove();
-  document.head.insertAdjacentHTML('beforeend', metadataHead({title:page.title+' · '+site.title,
+  document.head.insertAdjacentHTML('beforeend', metadataHead({title:page.title+' · '+site.title+' · Blockether',
     description:page.blurb, path:page.slug==='index'?'/':'/'+page.slug+'.html',
     type:'TechArticle', markdown:'/'+page.slug+'.md'}));
   const link=document.querySelector('.center-link');
@@ -35,7 +35,7 @@ await writeFile(new URL('llms.txt', dist), `# Vis\n\n> ${site.tagline}\n\n## Doc
   pages.map(page=>`- [${page.title}](${origin}/${page.slug}.md): ${page.blurb}\n`).join('')+
   `\n## Extension Center\n\n- [Public extensions](${origin}/extensions/llms.txt): Live catalog index.\n- [Catalog API](${origin}/api/extensions): Approved listings as JSON.\n\n## Optional\n\n- [Full documentation](${origin}/llms-full.txt)\n`);
 await writeFile(new URL('llms-full.txt', dist), '# Vis documentation\n\n'+pages.map(page=>`Source: ${origin}/${page.slug}.md\n\n${page.md}`).join('\n\n---\n\n')+`\n\nLive extension catalog: ${origin}/extensions/llms.txt\n`);
-for (const [name,size] of [['favicon-16.png',16],['favicon-32.png',32],['apple-touch-icon.png',180],['icon-192.png',192],['icon-512.png',512]]) {
+for (const [name,size] of [['favicon-16.png',16],['favicon-32.png',32],['favicon-48.png',48],['apple-touch-icon.png',180],['icon-192.png',192],['icon-512.png',512]]) {
   await sharp(fileURLToPath(new URL('assets/logo.png', dist))).resize(size,size,{fit:'contain',background:'#ffffff'}).png().toFile(fileURLToPath(new URL(name,dist)));
 }
 const favicon=await readFile(new URL('favicon-32.png',dist));

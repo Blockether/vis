@@ -99,7 +99,7 @@ export function mount(container,request=fetch,initial) {
     const node=event.target.closest('a,button');if(!node||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey) return;
     if(node.matches('[data-category]')) {event.preventDefault();state.category=node.dataset.category;renderList();saveFilters();route();closeNavigation();if(mobile.matches) $('#search').focus({preventScroll:true});}
     else if(node.matches('.card-main,#back-to-catalog')) {event.preventDefault();closeNavigation();navigate(node.href);if(node.id==='back-to-catalog') $('#search').focus({preventScroll:true});}
-    else if(node.matches('#submit-open,#empty-add')) openSubmission();
+    else if(node.id==='submit-open') openSubmission();
     else if(node.id==='clear-filters') {event.preventDefault();clearFilters();}
     else if(node.id==='retry') {event.preventDefault();load();}
     else if(node.id==='retry-detail') route(true);

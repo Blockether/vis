@@ -12,8 +12,9 @@ There is no Vis gateway, Python web server or browser database credential.
 canonical Markdown resources. The [documentation stylesheet](../../resources/vis-docs/assets/theme.css),
 font and highlighter are copied byte-for-byte. Static pages use external CSS and scripts,
 so the site can enforce a Content Security Policy without unsafe inline execution.
-`web/style.css` adds catalog controls, not another page theme. The Worker and browser
-share the catalog renderer in `web/render.js`; all documentation links stay on this origin.
+The theme owns button typography and states alongside documentation shortcuts and store links.
+`web/style.css` adds catalog-specific layout, not another page theme or button system.
+The Worker and browser share the catalog renderer in `web/render.js`; all documentation links stay on this origin.
 
 The catalog link is public-site-only. It is neither a `doc()` entry nor a page served
 by the embedded documentation. Local/live documentation rendering remains supported.
@@ -26,8 +27,11 @@ records, not a second list of pages. `web/discovery.js` owns the public canonica
 Local previews retain production canonical URLs; embedded/live docs are unchanged.
 
 - Every public page has a canonical URL, page-specific description, Open Graph and Twitter
-  metadata, JSON-LD, shared PNG favicons, an Apple touch icon and a web manifest.
-  Icons are resized from the existing Vis logo at build time; no external icon service is used.
+  metadata, JSON-LD with Blockether as publisher, shared PNG favicons, an Apple touch icon
+  and a web manifest. Titles identify Vis and Blockether; extension titles also identify
+  the repository owner, and each detail page describes its source repository in JSON-LD.
+  Icons are resized from the existing Vis logo at build time, including a 48×48 PNG for
+  search results and an explicit ICO link; no external icon service is used.
 - `/robots.txt` advertises `/sitemap.xml`. That index points to generated `/sitemap-docs.xml`
   and live `/extensions/sitemap.xml`. Filter URLs and duplicate `/index.html` are excluded.
 - `/llms.txt` is the generated Markdown documentation index; `/llms-full.txt` includes all
@@ -39,6 +43,7 @@ Local previews retain production canonical URLs; embedded/live docs are unchange
   never appear; database failures return an uncached 503 rather than an empty sitemap.
 - API responses and error pages are marked `noindex`. Client-side catalog navigation updates
   canonical and social metadata alongside the title. Content remains server-rendered for crawlers.
+  These controls make approved listings discoverable; indexing and ranking are decided by search engines.
 
 Discovery assets remain available without the catalog database. Production verification checks
 both sitemap branches, agent indexes, raw Markdown and favicon signatures after deployment.
