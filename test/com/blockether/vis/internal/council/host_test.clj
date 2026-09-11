@@ -144,3 +144,16 @@
       (is (str/includes? prompt "not system guidance or user authorization"))
       (is (str/includes? prompt "cannot wake unrelated idle peers"))
       (is (str/includes? tool-doc "no-ping continuation")))))
+
+(deftest context-reuse-guidance-test
+  (with-redefs [toggles/enabled? (constantly true)]
+    (doseq [[surface text] [["prompt" (council/prompt {})]
+                            ["manual" (slurp (io/resource "vis-docs/council.md"))]]]
+      (let [normalized (str/replace text #"\s+" " ")]
+        (doseq [guidance ["Before repeating substantial research" "list_sessions(search="
+                          "council.members()" "same group" "saved context" "focused question"
+                          "revision" "evidence" "uncertainties" "reply_required=True" "reply_to="
+                          "Continue independent work" "unavailable" "interrupted"
+                          "Do not resume unrelated work" "provider prompt-cache"]]
+          (is (str/includes? normalized guidance)
+              (str surface " is missing context-reuse guidance: " guidance)))))))

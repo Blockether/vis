@@ -26,6 +26,18 @@ expression, and reads their documentation with `doc(name)`. Documentation
 pages and skills are available the same way. Search matches names only and
 returns results in manifest order.
 
+## Reuse another session's findings
+
+Before repeating an investigation, use [Council](council.md#reuse-existing-session-context)
+to find a session that already knows the topic and ask a focused question. An
+eligible idle session can answer from its saved context, and a correlated reply
+returns findings to the requesting session without copying whole transcripts.
+Verify that the evidence still applies to the current task and revision.
+
+This can reduce repeated discovery, but does not guarantee a provider prompt-cache
+hit or lower total cost: waking a session can make new model calls. Use targeted
+consultation when existing knowledge is likely to help, not for every local edit.
+
 ## Addresses, not copies
 
 `grep` and `cat` return text with a `line:hash` address for each line. Pass those
