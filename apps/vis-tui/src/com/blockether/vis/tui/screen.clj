@@ -6140,9 +6140,13 @@
                ;; poll - no rendering on this thread anymore. The
                ;; render thread handles all screen output.
                (let [raw-key (read-chat-input! screen input-coalescer)
-                     ;; The renderer may publish new hit targets while input waits.
-                     ;; Handle the event against that state, not the preceding frame.
-                     db @state/app-db
+                     ;; A click may arrive after refresh but before layout publication.
+                     ;; Wait for that paint only for mouse geometry, never while polling
+                     ;; or handling ordinary typing.
+                     db (if (instance? MouseAction raw-key)
+                          (do (.lock ^ReentrantLock draw-lock)
+                              (try @state/app-db (finally (.unlock ^ReentrantLock draw-lock))))
+                          @state/app-db)
                      {:keys [cols total-h inner-h messages-top]} (:layout db)
                      cols (or cols 0)
                      total-h (or total-h 0)

@@ -28,9 +28,10 @@
             [com.blockether.vis.tui.external-opener :as opener]
             [taoensso.telemere :as tel]
             [lazytest.core :refer [defdescribe it expect]])
-  (:import [com.googlecode.lanterna TerminalSize]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [java.util.concurrent.locks ReentrantLock]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
@@ -782,6 +783,15 @@
         input-db
         (promise)
 
+        mouse-input-db
+        (promise)
+
+        mouse-reader
+        (promise)
+
+        ^ReentrantLock draw-lock
+        @#'screen/draw-lock
+
         read-input!
         @#'screen/read-chat-input!
 
@@ -817,12 +827,16 @@
                                                   (some-> ^KeyStroke key
                                                           .getCharacter))
                                            (swap! state/app-db assoc ::published-during-input true))
+                                         (when (instance? MouseAction key)
+                                           (deliver mouse-reader (Thread/currentThread)))
                                          key))
            #'screen/begin-input-timing! (fn [_ key db]
                                           (when (= \h
                                                    (some-> ^KeyStroke key
                                                            .getCharacter))
-                                            (deliver input-db db)))
+                                            (deliver input-db db))
+                                          (when (instance? MouseAction key)
+                                            (deliver mouse-input-db db)))
            #'screen/create-terminal! (fn [_]
                                        terminal)
            #'screen/configure-terminal-input! (fn [_ _]
@@ -898,10 +912,24 @@
       (expect (true? (await-pred #(some? (:layout @state/app-db)) 5000)))
       (expect (= 1 (count (:tabs @state/app-db))))
       (expect (= true (deref gateway-entered 5000 ::timeout)))
-      (.addInput terminal (term/keystroke \h))
-      (expect (true? (await-pred #(= ["h"] (get-in @state/app-db [:input :lines])) 2000)))
-      (expect (true? (::published-during-input (deref input-db 2000 {})))
-              "Input handlers must use state published during the input read")
+      ;; A mouse event can arrive after terminal refresh but before layout publication.
+      ;; Hold the same lock as the painter; ordinary typing must remain independent.
+      (.lock draw-lock)
+      (try (.addInput terminal (term/keystroke \h))
+           (expect (true? (await-pred #(= ["h"] (get-in @state/app-db [:input :lines])) 2000)))
+           (expect (true? (::published-during-input (deref input-db 2000 {})))
+                   "Input handlers must use state published during the input read")
+           (.addInput terminal (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. 2 27)))
+           (let [^Thread reader (deref mouse-reader 2000 nil)]
+             (expect (some? reader) "Polling must not hold the drawing lock")
+             (expect (true? (await-pred #(or (realized? mouse-input-db)
+                                             (.hasQueuedThread draw-lock reader))
+                                        2000)))
+             (expect (not (realized? mouse-input-db))
+                     "Mouse geometry must wait for the painter to publish its layout")
+             (swap! state/app-db assoc ::published-before-mouse true))
+           (finally (.unlock draw-lock)))
+      (expect (true? (::published-before-mouse (deref mouse-input-db 2000 {}))))
       ;; Enter before the session exists is durable intent: it leaves the editor,
       ;; appears in the local queue, and cannot reach the model yet.
       (.addInput terminal (KeyStroke. KeyType/Enter))
