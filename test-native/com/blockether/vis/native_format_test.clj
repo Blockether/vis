@@ -5,7 +5,8 @@
             [clojure.java.shell :as sh]
             [charred.api :as json]
             [com.blockether.vis.native-binary-test :as native]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [defdescribe expect it]]
+            [nrepl.server :as nrepl-server])
   (:import (java.io File)
            (java.util.concurrent TimeUnit)))
 
@@ -21,6 +22,7 @@
          ^File bin (#'native/require-binary)
          source "(defn f [x]\n(+ x 1))"
          calls (atom 0)
+         repl-server (nrepl-server/start-server :port 0 :bind "127.0.0.1")
          code
          (str
            ;; #197: typed namespace kwargs must survive the native agent/worker boundary.
@@ -66,8 +68,10 @@
               "print('NATIVE_PYTHON_TESTS_RESTART_READY')" ""])
            "print(format_code('clojure', {'path': 'default.clj'}))\n"
            "print(format_code('clojure', {'path': 'configured/example.clj'}))\n"
-           "try:\n" "    result = run_tests('clojure', {'path': 'missing_test.clj'})\n"
-           "except Exception as error:\n" "    result = str(error)\n"
+           "try:\n"
+           "    result = run_tests('clojure', {'path': 'missing_test.clj'})\n"
+           "except Exception as error:\n"
+           "    result = str(error)\n"
            "assert 'no such path' in str(result), str(result)\n"
            "print('NATIVE_TEST_HANDLER_READY')\n"
            ;; #207: execute the new owned-process/capture boundary in the image.
@@ -75,9 +79,24 @@
            "assert cli['is_pass'] and cli['total'] == 1 and cli['mode'] == 'cli', str(cli)\n"
            "assert 'native runner stderr' in cli['output'], str(cli)\n"
            "print('NATIVE_TEST_SUBPROCESS_READY')\n"
-           "child = await shell('sleep 30')\n" "stopped = await child.stop()\n"
+           "child = await shell('sleep 30')\n"
+           "stopped = await child.stop()\n"
            "assert stopped['status'] == 'stopped', str(stopped)\n"
            "print('NATIVE_PROCESS_CLEANUP_READY')\n"
+           ;; #207: exercise the deadline transport and timed lock in the image.
+           "clj_repl = {'host': '127.0.0.1', 'port': "
+           (:port repl-server)
+           "}\n"
+           "warm = repl_eval('clojure', dict(clj_repl, code='(+ 1 2)'))\n"
+           "assert warm['value'] == '3', str(warm)\n"
+           "started = time.monotonic()\n"
+           "expired = repl_eval('clojure', dict(clj_repl, timeout_ms=1500, code='(do (Thread/sleep 900) (println :partial) (flush) (Thread/sleep 5000))'))\n"
+           "elapsed = time.monotonic() - started\n"
+           "assert expired['timed_out'] and ':partial' in expired['out'], str(expired)\n"
+           "assert elapsed < 2.3, str(elapsed)\n"
+           "alive = repl_eval('clojure', dict(clj_repl, code='(+ 2 3)'))\n"
+           "assert alive['value'] == '5', str(alive)\n"
+           "print('NATIVE_CLOJURE_REPL_DEADLINE_READY')\n"
            "from pathlib import Path\n" "assert 'default.clj' in ls(Path('.'), depth=2)\n"
            "file_hit = grep({'query': ['defn f'], 'paths': [Path('default.clj')], 'context': 1})\n"
            "dir_hit = grep({'query': ['defn.*f'], 'paths': [Path('configured')], 'is_regex': True, 'context': 1})\n"
@@ -223,7 +242,8 @@
                                           "NATIVE_PYTHON_TESTS_COLD_READY"
                                           "NATIVE_PYTHON_TESTS_RESTART_READY"
                                           "NATIVE_TEST_SUBPROCESS_READY"
-                                          "NATIVE_PROCESS_CLEANUP_READY"]]
+                                          "NATIVE_PROCESS_CLEANUP_READY"
+                                          "NATIVE_CLOJURE_REPL_DEADLINE_READY"]]
                             (expect (str/includes? (pr-str tool-results) marker) output))
                           (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                           (expect (every? #(= model
@@ -238,4 +258,4 @@
                                   output))
                         (finally (when (.isAlive process) (#'native/kill-tree! process))))))
                   (finally (.stop ^com.sun.net.httpserver.HttpServer server 0))))))
-          (finally (#'native/delete-tree! dir)))))))
+          (finally (nrepl-server/stop-server repl-server) (#'native/delete-tree! dir)))))))

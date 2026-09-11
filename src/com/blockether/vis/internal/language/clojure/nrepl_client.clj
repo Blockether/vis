@@ -39,7 +39,8 @@
             [nrepl.core :as nrepl]
             [nrepl.transport :as transport])
   (:import (java.io IOException)
-           (java.net InetSocketAddress Socket)))
+           (java.net InetSocketAddress Socket)
+           (java.util.concurrent.locks ReentrantLock)))
 
 ;; Connection cache
 
@@ -52,18 +53,51 @@
 (defonce ^:private conn-locks (atom {}))
 
 (defn- conn-lock
-  "Per-`[host port]` monitor that SERIALIZES all transport I/O on that socket.
+  "Per-`[host port]` reentrant lock that serializes all transport I/O on that socket.
    nREPL's bencode transport is a single ordered byte stream with NO per-message
    demux: two `nrepl/client` readers racing on one socket steal each other's
    replies — an `eval!` receives another op's value, or waits forever for a
    `done` a concurrent reader (a per-turn health probe, a `gather`ed eval)
    already consumed, then spuriously times out and evicts the connection. Every
    op that drives this connection's transport takes the lock so reads never
-   interleave. A JVM monitor is REENTRANT, so nested drives on one thread
-   (probe! -> server-cwd -> eval!) never self-deadlock."
+   interleave. Lock acquisition consumes the request budget too. Reentrancy lets
+   nested drives (probe! -> server-cwd -> eval!) share the same connection."
   [host port]
   (let [k (key-of host port)]
-    (or (get @conn-locks k) (get (swap! conn-locks update k #(or % (Object.))) k))))
+    (or (get @conn-locks k) (get (swap! conn-locks update k #(or % (ReentrantLock.))) k))))
+
+(defn- remaining-ms ^long [deadline] (max 0 (- (long deadline) (util/now-ms))))
+
+(defn- require-budget!
+  [deadline]
+  (let [remaining (remaining-ms deadline)]
+    (when (zero? remaining)
+      (throw (ex-info "nREPL request deadline expired" {:type :clj/nrepl-timeout})))
+    remaining))
+
+(defmacro ^:private with-conn-lock
+  [[host port deadline] & body]
+  `(let [^java.util.concurrent.locks.ReentrantLock lock# (conn-lock ~host ~port)]
+     (when-not (.tryLock lock#
+                         (long (require-budget! ~deadline))
+                         java.util.concurrent.TimeUnit/MILLISECONDS)
+       (throw (ex-info "nREPL connection is busy past the request deadline"
+                       {:type :clj/nrepl-timeout})))
+     (try ~@body (finally (.unlock lock#)))))
+
+(defn- deadline-client
+  "Bound every transport read and send by the SAME absolute request deadline.
+   nREPL's response timeout alone restarts the full wait after each message."
+  [conn deadline]
+  (nrepl/client
+    (reify
+      transport/Transport
+        (recv [this] (transport/recv this Long/MAX_VALUE))
+        (recv [_ timeout]
+          (let [wait-ms (min (long timeout) (remaining-ms deadline))]
+            (when (pos? wait-ms) (transport/recv conn wait-ms))))
+        (send [this message] (require-budget! deadline) (transport/send conn message) this))
+    (remaining-ms deadline)))
 
 (defn- open!
   "Open a fresh nREPL connection with a BOUNDED connect phase.
@@ -75,8 +109,8 @@
    (tens of seconds), blowing every deadline above. So we open the socket
    ourselves with an explicit `.connect` timeout and hand it to the bencode
    transport — exactly what `nrepl.core/connect` does internally, minus the
-   unbounded dial. Read timeouts are enforced per-response by `nrepl/client`;
-   eval deadlines separately via combined-response-fn.
+   unbounded dial. `deadline-client` bounds subsequent transport reads by the
+   remaining request budget, including cloning and waiting for the I/O lock.
 
    Wraps failures into a structured ex-info so callers can present a clean
    message."
@@ -723,7 +757,7 @@
   "Evaluate `code` in the nREPL at `host:port`. Opts:
      :host        defaults to \"localhost\"
      :ns          starting namespace, e.g. \"user\"
-     :timeout-ms  default 30000
+     :timeout-ms  total request budget, default 30000; includes lock/dial/clone
      :pretty?     when true, ask nREPL's print middleware to pretty-print the
                   value(s) SERVER-SIDE via `nrepl.util.print/pprint` — so the
                   live object is formatted where it lives (handles unreadable
@@ -748,92 +782,101 @@
         (+ start (long timeout-ms))]
 
     (letfn
-      [(attempt []
-         #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-         (locking (conn-lock host port)
-           (let [conn
-                 (connection-for host port timeout-ms)
+      [(timed-out []
+         (assoc (combine [] 0)
+           "ms" (- (util/now-ms) start)
+           "port" (int port)
+           "host" host))
+       (attempt []
+         (with-conn-lock
+           [host port deadline]
+           (try
+             (let [conn
+                   (connection-for host port (require-budget! deadline))
 
-                 client
-                 (nrepl/client conn timeout-ms)
+                   client
+                   (deadline-client conn deadline)
 
-                 session
-                 (nrepl/client-session client :session (session-id-for client host port))
+                   sid
+                   (session-id-for client host port)
 
-                 req
-                 (cond-> {:op "eval" :code code}
-                   (string? ns)
-                   (assoc :ns ns)
+                   session
+                   (nrepl/client-session client :session sid)
 
-                   pretty?
-                   (assoc :nrepl.middleware.print/print
-                     "nrepl.util.print/pprint" :nrepl.middleware.print/options
-                     {:right-margin print-margin}))
+                   req
+                   (cond-> {:op "eval" :code code}
+                     (string? ns)
+                     (assoc :ns ns)
 
-                 responses
-                 (session req)
+                     pretty?
+                     (assoc :nrepl.middleware.print/print
+                       "nrepl.util.print/pprint" :nrepl.middleware.print/options
+                       {:right-margin print-margin}))
 
-                 combined
-                 (combine responses deadline)
+                   responses
+                   (session req)
 
-                 combined
-                 (if (eval-error? combined)
-                   (let [raw-enriched
-                         (merge combined (fetch-stacktrace! session responses))
+                   combined
+                   (combine responses deadline)
 
-                         ;; Resolve source Context before hiding generated eval frames:
-                         ;; their NO_SOURCE_FILE position can identify the submitted form.
+                   combined
+                   (if (eval-error? combined)
+                     (let [raw-enriched
+                           (merge combined (fetch-stacktrace! session responses))
+
+                           ;; Resolve Context before hiding generated eval frames.
+                           ctx
+                           (error-context raw-enriched code)
+
+                           enriched
+                           (update raw-enriched "trace" visible-trace)]
+
+                       (cond-> enriched
                          ctx
-                         (error-context raw-enriched code)
+                         (assoc "context" ctx)))
+                     combined)]
 
-                         enriched
-                         (update raw-enriched "trace" visible-trace)]
-
-                     (cond-> enriched
-                       ctx
-                       (assoc "context" ctx)))
-                   combined)
-
-                 elapsed
-                 (- (util/now-ms) start)
-
-                 res
-                 (assoc combined
-                   "ms" elapsed
-                   "port" (int port)
-                   "host" host)]
-
-             ;; A timed-out eval leaves a possibly-desynced keep-alive socket
-             ;; (background reader parked, late messages pending). Evict it so the
-             ;; NEXT eval reconnects + re-clones fresh instead of inheriting the
-             ;; wedge — the cascade that historically stalled run_tests past its
-             ;; budget. Interrupt the abandoned server-side eval first (frees the
-             ;; compile/RT lock so the NEXT eval can't wedge on it), then CLOSE its
-             ;; session — a socket close does NOT reap an nREPL session, so a dropped
-             ;; one would otherwise linger as a parked thread until the server stops.
-             (when (get res "timed_out")
-               (interrupt! session)
-               (close-session! session)
-               (evict! host port))
-             res)))]
+               (when (get combined "timed_out")
+                 ;; Cleanup has a small, separate budget, never another eval-sized
+                 ;; read wait. Send control ops only to this session; leave the
+                 ;; external REPL process and its other sessions running.
+                 (try (interrupt! (nrepl/client-session (deadline-client conn
+                                                                         (+ (util/now-ms) 1000))
+                                                        :session
+                                                        sid))
+                      (close-session! (nrepl/client-session (deadline-client conn
+                                                                             (+ (util/now-ms) 2000))
+                                                            :session
+                                                            sid))
+                      (finally (evict! host port))))
+               (assoc combined
+                 "ms" (- (util/now-ms) start)
+                 "port" (int port)
+                 "host" host))
+             (catch Throwable t
+               ;; A clone may time out before it yields a session id. Evict only
+               ;; while holding OUR lock, never a concurrent caller's connection.
+               (if (or (= :clj/nrepl-timeout (:type (ex-data t))) (zero? (remaining-ms deadline)))
+                 (do (evict! host port) (timed-out))
+                 (throw t))))))]
       (try (try (attempt)
-                (catch IOException _ioe
-                  ;; A cached keep-alive socket the server has since reaped fails the FIRST
-                  ;; write with an IOException. Drop the dead entry and reconnect ONCE with a
-                  ;; fresh connection so a transient eviction self-heals here — instead of
-                  ;; bubbling a "retry." error the caller has to notice and re-issue by hand
-                  ;; (which stalled run_tests / repl_eval).
+                (catch IOException _
+                  ;; Reconnect once, using only the original request's remaining time.
                   (evict! host port)
                   (attempt)))
            (catch IOException ioe
-             ;; The reconnect also failed on I/O — the socket is genuinely down.
              (evict! host port)
              (throw (ex-info
                       (str "nREPL socket error on " host ":" port " — connection evicted, retry.")
                       {:type :clj/nrepl-io :host host :port port :cause (.getMessage ioe)})))
            (catch Throwable t
-             (if (= :clj/nrepl-connect-failed (:type (ex-data t)))
+             (case (:type (ex-data t))
+               :clj/nrepl-timeout
+               (timed-out)
+
+               :clj/nrepl-connect-failed
                (throw t)
+
                (throw (ex-info (str "nREPL eval failed: " (.getMessage t))
                                {:type :clj/nrepl-eval-failed
                                 :host host
@@ -920,75 +963,48 @@
    Both are best-effort and only present when `:up`.
 
    Never throws. Reuses the cached connection (warming the same pool
-   `eval!` uses). The short `:timeout-ms` (default 100) is passed to
-   `nrepl/client`, which bounds each response read regardless of the
-   cached connection's transport timeout."
+   `eval!` uses). The short `:timeout-ms` (default 100) bounds lock acquisition,
+   connection setup and all response reads together, including the cwd eval."
   [{:keys [host port timeout-ms] :or {host "localhost" timeout-ms 100}}]
   (if-not (pos? (long (or port 0)))
     {:status :down}
-    (try #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-         (locking (conn-lock host port)
-           (let [conn
-                 (connection-for host port timeout-ms)
+    (try (let [deadline (+ (util/now-ms) (long timeout-ms))]
+           (with-conn-lock
+             [host port deadline]
+             (let [conn (connection-for host port (require-budget! deadline))
+                   client (deadline-client conn deadline)
+                   responses (nrepl/message client {:op "describe"})
+                   up (fn [versions ops]
+                        (cond-> {:status :up
+                                 :versions (or versions {})
+                                 :dialect (detect-dialect (or versions {}) ops)}
+                          true
+                          (as-> m (if-let [cwd (server-cwd host port (remaining-ms deadline))]
+                                    (assoc m :cwd cwd)
+                                    m))))]
 
-                 client
-                 (nrepl/client conn timeout-ms)
+               (loop [rs responses
+                      versions nil
+                      ops nil
+                      done? false]
 
-                 deadline
-                 (+ (util/now-ms) (long timeout-ms))
+                 (cond done? (up versions ops)
+                       (empty? rs) (if versions (up versions ops) {:status :unresponsive})
+                       (> (util/now-ms) deadline)
+                       (if versions (up versions ops) {:status :unresponsive})
+                       :else
+                       (let [msg (first rs)
+                             mg (fn [k]
+                                  (or (get msg k) (get msg (keyword k))))
+                             v (describe-versions (mg "versions"))
+                             o (mg "ops")
+                             s (mg "status")
+                             st (cond (nil? s) #{}
+                                      (string? s) #{s}
+                                      (coll? s) (set (map str s))
+                                      :else #{(str s)})]
 
-                 responses
-                 (nrepl/message client {:op "describe"})
-
-                 up
-                 (fn [versions ops]
-                   (cond-> {:status :up
-                            :versions (or versions {})
-                            :dialect (detect-dialect (or versions {}) ops)}
-                     true
-                     (as-> m (if-let [cwd (server-cwd host port timeout-ms)]
-                               (assoc m :cwd cwd)
-                               m))))]
-
-             (loop [rs
-                    responses
-
-                    versions
-                    nil
-
-                    ops
-                    nil
-
-                    done?
-                    false]
-
-               (cond done? (up versions ops)
-                     (empty? rs) (if versions (up versions ops) {:status :unresponsive})
-                     (> (util/now-ms) deadline)
-                     (if versions (up versions ops) {:status :unresponsive})
-                     :else (let [msg
-                                 (first rs)
-
-                                 mg
-                                 (fn [k]
-                                   (or (get msg k) (get msg (keyword k))))
-
-                                 v
-                                 (describe-versions (mg "versions"))
-
-                                 o
-                                 (mg "ops")
-
-                                 s
-                                 (mg "status")
-
-                                 st
-                                 (cond (nil? s) #{}
-                                       (string? s) #{s}
-                                       (coll? s) (set (map str s))
-                                       :else #{(str s)})]
-
-                             (recur (next rs) (or v versions) (or o ops) (contains? st "done")))))))
+                         (recur (next rs) (or v versions) (or o ops) (contains? st "done"))))))))
          (catch clojure.lang.ExceptionInfo e
            (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
              {:status :down}
@@ -1029,13 +1045,13 @@
           (+ start (long timeout-ms))]
 
       (try
-        #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-        (locking (conn-lock host port)
+        (with-conn-lock
+          [host port deadline]
           (let [conn
-                (connection-for host port timeout-ms)
+                (connection-for host port (require-budget! deadline))
 
                 client
-                (nrepl/client conn timeout-ms)
+                (deadline-client conn deadline)
 
                 session
                 (nrepl/client-session client :session (health-session-id-for client host port))

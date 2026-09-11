@@ -8,10 +8,12 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nc]
             [com.blockether.vis.internal.activity.presenter-test :as activity-fixture]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]
             [nrepl.core :as nrepl]
             [nrepl.middleware.session :as mw-session]
-            [nrepl.server :as server]))
+            [nrepl.server :as server]
+            [nrepl.transport :as transport]))
 
 (defn- with-server
   "Start an nREPL on an ephemeral port, run `f port`, stop the server.
@@ -25,6 +27,118 @@
         (:port srv)]
 
     (try (f port) (finally (nc/close-all!) (server/stop-server srv)))))
+
+(defdescribe
+  eval-deadline-test
+  ;; #207: output near the deadline must not renew the full test-run budget.
+  (it "bounds a live eval by the whole budget, not each response"
+      (with-server
+        (fn [port]
+          (nc/eval! {:port port :code "nil"})
+          (let [start
+                (System/nanoTime)
+
+                r
+                (nc/eval!
+                  {:port port
+                   :timeout-ms 1500
+                   :code "(do (Thread/sleep 900) (println :partial) (flush) (Thread/sleep 5000))"})
+
+                elapsed-ms
+                (/ (- (System/nanoTime) start) 1000000.0)]
+
+            (expect (true? (get r "timed_out")))
+            (expect (str/includes? (get r "out") ":partial"))
+            (expect (< elapsed-ms 2100))
+            (expect (= "3" (get (nc/eval! {:port port :code "(+ 1 2)"}) "value"))))))))
+
+(defdescribe
+  transport-deadline-test
+  ;; #207: nREPL's per-response timeout must not restart the total budget.
+  (it "shrinks receive waits and stops reading or sending at the deadline"
+      (let [clock
+            (atom 1000)
+
+            waits
+            (atom [])
+
+            sends
+            (atom [])
+
+            conn
+            (reify
+              transport/Transport
+                (recv [_] (throw (ex-info "Unbounded receive" {})))
+                (recv [_ timeout]
+                  (swap! waits conj timeout)
+                  (swap! clock + (min 600 timeout))
+                  {:out "progress"})
+                (send [this message] (swap! sends conj message) this))]
+
+        (with-redefs [util/now-ms (fn ^long []
+                                    (long @clock))]
+          (let [client (#'nc/deadline-client conn 2000)]
+            (expect (= 2 (count (doall (client {:op "eval"})))))
+            (expect (= [1000 400] @waits))
+            (expect (= :clj/nrepl-timeout
+                       (try (client {:op "eval"})
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            (expect (= 1 (count @sends)))))))
+  (it "returns a timeout when cloning exhausts the original budget"
+      (with-server
+        (fn [port]
+          (let [clock
+                (atom 1000)
+
+                result
+                (with-redefs [util/now-ms
+                              (fn ^long []
+                                (long @clock))
+
+                              nrepl/new-session
+                              (fn [& _]
+                                (reset! clock 1100)
+                                (throw (ex-info "Clone received no session" {})))]
+
+                  (nc/eval! {:port port :code "42" :timeout-ms 100}))]
+
+            (expect (true? (get result "timed_out")))
+            (expect (= 100 (get result "ms")))
+            (expect (nil? (nc/session-token "localhost" port)))
+            (expect (= "3" (get (nc/eval! {:port port :code "(+ 1 2)"}) "value")))))))
+  (it
+    "bounds eval and preflight lock waits without evicting the active connection"
+    (with-server
+      (fn [port]
+        (nc/eval! {:port port :code "(+ 7 8)"})
+        (let [token
+              (nc/session-token "localhost" port)
+
+              ^java.util.concurrent.locks.ReentrantLock lock
+              (#'nc/conn-lock "localhost" port)
+
+              locked
+              (promise)
+
+              release
+              (promise)
+
+              holder
+              (future (.lock lock) (try (deliver locked true) @release (finally (.unlock lock))))]
+
+          (try (expect (true? (deref locked 2000 false)))
+               (doseq [run [nc/eval! nc/probe! nc/health-check!]]
+                 (let [start (System/nanoTime)
+                       result (run {:port port :code "42" :timeout-ms 50})
+                       elapsed-ms (/ (- (System/nanoTime) start) 1000000.0)]
+
+                   (expect (or (true? (get result "timed_out")) (= :unresponsive (:status result))))
+                   (expect (< elapsed-ms 1000))
+                   (expect (= token (nc/session-token "localhost" port)))))
+               (finally (deliver release true)
+                        (expect (not= :stuck (deref holder 2000 :stuck)))
+                        (future-cancel holder)))
+          (expect (= "15" (get (nc/eval! {:port port :code "*1"}) "value"))))))))
 
 (defdescribe
   repl-activity-test
