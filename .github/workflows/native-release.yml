@@ -176,6 +176,7 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+          bb: latest
       - uses: actions/cache@v6
         with:
           path: |
@@ -375,6 +376,7 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+          bb: latest
       # Piper uses espeak-ng's phoneme tables. A clean macOS image does not
       # preinstall them, so make the native suite dependency explicit; brew is a
       # no-op on a runner that already has it.

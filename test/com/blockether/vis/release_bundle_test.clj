@@ -2049,6 +2049,24 @@
                                "bin/verify-linux-abi target/vis target/vis-agent-python")))))
 
 (defdescribe
+  native-test-tools-test
+  ;; Release 34630933135 failed on both Linux runners because the test command uses bb.
+  (it
+    "installs Babashka explicitly before native tests on every build host"
+    (let
+      [workflow
+       (slurp ".github/workflows/native-release.yml")
+
+       setups
+       (re-seq
+         #"(?m)^      - uses: DeLaGuardo/setup-clojure@[^\n]+\n        with:\n((?:          [^\n]*\n)+)"
+         workflow)]
+
+      (expect (= 2 (count setups)))
+      (doseq [[_ inputs] setups]
+        (expect (str/includes? inputs "bb: latest") inputs)))))
+
+(defdescribe
   native-linux-isolation-test
   (it "provisions and exercises user namespaces before native tests"
       (let [workflow (slurp ".github/workflows/native-release.yml")]
