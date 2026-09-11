@@ -789,6 +789,9 @@
         mouse-reader
         (promise)
 
+        selection-copied
+        (promise)
+
         ^ReentrantLock draw-lock
         @#'screen/draw-lock
 
@@ -837,6 +840,10 @@
                                             (deliver input-db db))
                                           (when (instance? MouseAction key)
                                             (deliver mouse-input-db db)))
+           #'screen/copy-selection! (fn [text & _]
+                                      (deliver selection-copied text))
+           #'screen/copy-bubble! (fn [_]
+                                   nil)
            #'screen/create-terminal! (fn [_]
                                        terminal)
            #'screen/configure-terminal-input! (fn [_ _]
@@ -930,6 +937,28 @@
              (swap! state/app-db assoc ::published-before-mouse true))
            (finally (.unlock draw-lock)))
       (expect (true? (::published-before-mouse (deref mouse-input-db 2000 {}))))
+      ;; Selecting visible text must not pause follow or move a transcript that fits.
+      (swap! state/app-db #(-> %
+                               (assoc :messages [{:role :user :text "Copy: visible text"}])
+                               (assoc-in [:settings :mouse-selection-copy] true)))
+      (state/dispatch [:bump-render-version])
+      (expect (true? (await-pred #(seq (get-in @state/app-db
+                                               [:layout :transcript-selectable-ranges]))
+                                 2000)))
+      (let [{:keys [total-h inner-h transcript-selectable-ranges]}
+            (:layout @state/app-db)
+
+            {:keys [row col]}
+            (first transcript-selectable-ranges)]
+
+        (expect (< total-h inner-h))
+        (doseq [[action x] [[MouseActionType/CLICK_DOWN col] [MouseActionType/DRAG (+ col 3)]
+                            [MouseActionType/CLICK_RELEASE (+ col 3)]]]
+          (.addInput terminal (MouseAction. action 1 (TerminalPosition. (int x) (int row))))))
+      (let [copied (deref selection-copied 2000 ::timeout)]
+        (expect (= :follow (get-in @state/app-db [:scroll :mode]))
+                "A drag must not auto-scroll when the entire transcript is visible")
+        (expect (= "Copy" copied)))
       ;; Enter before the session exists is durable intent: it leaves the editor,
       ;; appears in the local queue, and cannot reach the model yet.
       (.addInput terminal (KeyStroke. KeyType/Enter))

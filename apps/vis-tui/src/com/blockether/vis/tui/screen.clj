@@ -6562,7 +6562,9 @@
                          (state/dispatch
                            [:set-mouse-selection
                             {:anchor @mouse-selection-anchor :focus doc-focus :source source}])
-                         (when-not (= source :input)
+                         ;; A fitting transcript cannot scroll. Pausing follow here would
+                         ;; add the jump bar and move the selected row before release.
+                         (when (and (not= source :input) (> (long total-h) (long inner-h)))
                            (when-let [{:keys [direction amount]} (selection/auto-scroll-step
                                                                    screen-focus
                                                                    {:top bar-top
