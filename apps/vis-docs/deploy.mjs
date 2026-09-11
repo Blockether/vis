@@ -41,7 +41,7 @@ export async function verifyDeployment(hostname) {
         const content = await response.text();
         if (!response.ok || !content.includes(marker) || (path === '/' && content.includes('id="catalog-data"'))) throw new Error('Public site is not ready');
       }
-      for (const path of ['/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png']) {
+      for (const path of ['/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png','/assets/social-preview.png']) {
         const response=await fetch(new URL(path,origin),{signal:AbortSignal.timeout(20000),redirect:'error'});
         const bytes=new Uint8Array(await response.arrayBuffer());
         const signature=path.endsWith('.ico')?[0,0,1,0]:[137,80,78,71,13,10,26,10];

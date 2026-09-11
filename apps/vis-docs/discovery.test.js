@@ -56,11 +56,38 @@ test('every generated document has canonical metadata, an accessible icon and a 
 test('shared favicons have the declared dimensions and a valid ICO directory',async()=>{
   for(const [name,size] of [['favicon-16.png',16],['favicon-32.png',32],['favicon-48.png',48],['apple-touch-icon.png',180],['icon-192.png',192],['icon-512.png',512]]) {
     const meta=await sharp('dist/'+name).metadata();expect(meta.width).toBe(size);expect(meta.height).toBe(size);
+    // Link-preview clients must not fill transparent artwork with their own accent color.
+    expect((await sharp('dist/'+name).stats()).isOpaque,name).toBe(true);
+    const corner=await sharp('dist/'+name).extract({left:0,top:0,width:1,height:1}).removeAlpha().raw().toBuffer();
+    expect([...corner],name).toEqual([255,255,255]);
   }
   const ico=readFileSync('dist/favicon.ico');expect(ico.readUInt16LE(2)).toBe(1);expect(ico.readUInt32LE(18)).toBe(22);
   expect(ico.subarray(22)).toEqual(readFileSync('dist/favicon-32.png'));
+  expect(ico.readUInt16LE(12)).toBe((await sharp(ico.subarray(22)).metadata()).channels*8);
   const manifest=JSON.parse(read('site.webmanifest'));expect(manifest.icons).toHaveLength(2);
   for(const icon of manifest.icons) expect(readFileSync('dist'+icon.src).length).toBeGreaterThan(0);
+});
+test('docs and catalog previews use a separate opaque social image with room around the logo',async()=>{
+  for(const html of [read('index.html'),renderPage({items}),renderPage({items,item:items[0]})]) {
+    const dom=new JSDOM(html);
+    try {
+      const d=dom.window.document;
+      expect(d.querySelector('meta[property="og:image"]').content).toBe(origin+'/assets/social-preview.png');
+      expect(d.querySelector('meta[property="og:image:type"]').content).toBe('image/png');
+      expect(d.querySelector('meta[property="og:image:width"]').content).toBe('1200');
+      expect(d.querySelector('meta[property="og:image:height"]').content).toBe('630');
+      expect(d.querySelector('meta[name="twitter:image"]').content).toBe(origin+'/assets/social-preview.png');
+      expect(d.querySelector('meta[name="twitter:card"]').content).toBe('summary_large_image');
+    } finally {dom.window.close();}
+  }
+  const image=sharp('dist/assets/social-preview.png');
+  expect(await image.metadata()).toMatchObject({width:1200,height:630});
+  expect((await image.stats()).isOpaque).toBe(true);
+  const corner=await image.clone().extract({left:0,top:0,width:1,height:1}).removeAlpha().raw().toBuffer();
+  expect([...corner]).toEqual([255,255,255]);
+  const {info}=await image.clone().trim().toBuffer({resolveWithObject:true});
+  expect(info.width).toBeGreaterThan(300);expect(info.width).toBeLessThanOrEqual(480);
+  expect(info.height).toBeGreaterThan(300);expect(info.height).toBeLessThanOrEqual(480);
 });
 test('catalog SSR supplies item-specific metadata and never turns metadata into executable markup',()=>{
   const item={...items[0],name:'Quoted "name"',description:'Text <tag> & punctuation'};

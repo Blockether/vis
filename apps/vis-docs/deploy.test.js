@@ -18,7 +18,7 @@ test('deployment fails closed for missing configuration and testing keys',()=>{
   expect(()=>deploymentConfig(base,{...env,DOCS_D1_DATABASE_ID:base.d1_databases[0].database_id})).toThrow();
   expect(()=>deploymentConfig(base,{...env,DOCS_TURNSTILE_SITE_KEY:'1x00000000000000000000AA'})).toThrow();
 });
-const paths=['/','/extending.html','/extensions/','/assets/theme.css','/assets/prism.min.js','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/extensions/sitemap.xml','/llms.txt','/llms-full.txt','/extensions/llms.txt','/extending.md','/site.webmanifest','/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png','/api/extensions'];
+const paths=['/','/extending.html','/extensions/','/assets/theme.css','/assets/prism.min.js','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/extensions/sitemap.xml','/llms.txt','/llms-full.txt','/extensions/llms.txt','/extending.md','/site.webmanifest','/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png','/assets/social-preview.png','/api/extensions'];
 const redirectPaths=['/','/extensions/','/assets/theme.css','/api/extensions','/extensions/a%2Fb?check=1&value=x%2Fy'];
 function verificationResponse(value) {
   const url=new URL(value);

@@ -30,8 +30,10 @@ Local previews retain production canonical URLs; embedded/live docs are unchange
   metadata, JSON-LD with Blockether as publisher, shared PNG favicons, an Apple touch icon
   and a web manifest. Titles identify Vis and Blockether; extension titles also identify
   the repository owner, and each detail page describes its source repository in JSON-LD.
-  Icons are resized from the existing Vis logo at build time, including a 48×48 PNG for
-  search results and an explicit ICO link; no external icon service is used.
+  Icons are resized from the full-resolution repository `logo.png` and flattened onto white,
+  including a 48×48 PNG for search results and an explicit ICO link. Link previews use a
+  separate opaque 1200×630 PNG with margins and declared dimensions, not the small transparent
+  header logo. No external icon service is used.
 - `/robots.txt` advertises `/sitemap.xml`. That index points to generated `/sitemap-docs.xml`
   and live `/extensions/sitemap.xml`. Filter URLs and duplicate `/index.html` are excluded.
 - `/llms.txt` is the generated Markdown documentation index; `/llms-full.txt` includes all

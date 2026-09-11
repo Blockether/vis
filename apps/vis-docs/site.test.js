@@ -81,7 +81,7 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
   onTestFailed(()=>site.debug());
   try {
     await site.listen();
-    for(const path of ['/','/index.html','/extending.html','/assets/theme.css','/assets/docs.js','/assets/prism.min.js','/assets/fonts/jetbrains-mono.woff2','/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png','/site.webmanifest','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/llms.txt','/llms-full.txt','/extending.md']) {
+    for(const path of ['/','/index.html','/extending.html','/assets/theme.css','/assets/docs.js','/assets/prism.min.js','/assets/fonts/jetbrains-mono.woff2','/assets/social-preview.png','/favicon.ico','/favicon-32.png','/favicon-48.png','/apple-touch-icon.png','/site.webmanifest','/robots.txt','/sitemap.xml','/sitemap-docs.xml','/llms.txt','/llms-full.txt','/extending.md']) {
       const response=await site.fetch(path,{redirect:'manual'});
       expect(response.status,path).toBe(200);
       expect(response.headers.get('Content-Security-Policy'),path).toBe(security['Content-Security-Policy']);

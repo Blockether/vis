@@ -5,7 +5,7 @@ const json = value => JSON.stringify(value).replace(/</g, '\\u003c');
 // Lucide grid-2x2; the sidebar retains the full navigation label.
 export const extensionIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18M12 3v18"/></svg>';
 export function metadataHead({title, description, path, type='WebPage', noindex=false, markdown, mainEntity}) {
-  const url=origin+path, image=origin+'/assets/logo.png';
+  const url=origin+path, image=origin+'/assets/social-preview.png';
   const meta=(name,value,property=false)=>`<meta data-discovery ${property?'property':'name'}="${name}" content="${escape(value)}">`;
   return `<title data-discovery>${escape(title)}</title>`+
     meta('description',description)+meta('robots',noindex?'noindex, follow':'index, follow, max-image-preview:large')+
@@ -22,7 +22,8 @@ export function metadataHead({title, description, path, type='WebPage', noindex=
     meta('og:type',type==='TechArticle'?'article':'website',true)+meta('og:site_name','Vis by Blockether',true)+
     meta('og:title',title,true)+meta('og:description',description,true)+meta('og:url',url,true)+
     meta('og:image',image,true)+meta('og:image:alt','Vis logo',true)+
-    meta('twitter:card','summary')+meta('twitter:title',title)+meta('twitter:description',description)+
+    meta('og:image:type','image/png',true)+meta('og:image:width','1200',true)+meta('og:image:height','630',true)+
+    meta('twitter:card','summary_large_image')+meta('twitter:title',title)+meta('twitter:description',description)+
     meta('twitter:image',image)+meta('twitter:image:alt','Vis logo')+
     `<script data-discovery type="application/ld+json">${json({'@context':'https://schema.org','@type':type,name:title,description,url,inLanguage:'en',publisher:{'@type':'Organization',name:'Blockether',url:'https://blockether.com/'},isPartOf:{'@type':'WebSite',name:'Vis',url:origin+'/'},...(mainEntity?{mainEntity}:{})})}</script>`;
 }

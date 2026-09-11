@@ -35,11 +35,17 @@ await writeFile(new URL('llms.txt', dist), `# Vis\n\n> ${site.tagline}\n\n## Doc
   pages.map(page=>`- [${page.title}](${origin}/${page.slug}.md): ${page.blurb}\n`).join('')+
   `\n## Extension Center\n\n- [Public extensions](${origin}/extensions/llms.txt): Live catalog index.\n- [Catalog API](${origin}/api/extensions): Approved listings as JSON.\n\n## Optional\n\n- [Full documentation](${origin}/llms-full.txt)\n`);
 await writeFile(new URL('llms-full.txt', dist), '# Vis documentation\n\n'+pages.map(page=>`Source: ${origin}/${page.slug}.md\n\n${page.md}`).join('\n\n---\n\n')+`\n\nLive extension catalog: ${origin}/extensions/llms.txt\n`);
+// The header logo is only 287×256 and transparent; generate discovery images from the master.
+const logo=await sharp(fileURLToPath(new URL('../../logo.png',import.meta.url))).trim().png().toBuffer();
 for (const [name,size] of [['favicon-16.png',16],['favicon-32.png',32],['favicon-48.png',48],['apple-touch-icon.png',180],['icon-192.png',192],['icon-512.png',512]]) {
-  await sharp(fileURLToPath(new URL('assets/logo.png', dist))).resize(size,size,{fit:'contain',background:'#ffffff'}).png().toFile(fileURLToPath(new URL(name,dist)));
+  await sharp(logo).resize(size,size,{fit:'contain',background:'#ffffff'}).flatten({background:'#ffffff'}).png().toFile(fileURLToPath(new URL(name,dist)));
 }
+// Opaque pixels and explicit margins keep link previews legible on client-selected backgrounds.
+await sharp(logo).resize(480,480,{fit:'contain',background:'#ffffff'}).flatten({background:'#ffffff'})
+  .extend({left:360,right:360,top:75,bottom:75,background:'#ffffff'}).png()
+  .toFile(fileURLToPath(new URL('assets/social-preview.png',dist)));
 const favicon=await readFile(new URL('favicon-32.png',dist));
-const ico=Buffer.alloc(22);ico.writeUInt16LE(1,2);ico.writeUInt16LE(1,4);ico[6]=32;ico[7]=32;ico.writeUInt16LE(1,10);ico.writeUInt16LE(32,12);ico.writeUInt32LE(favicon.length,14);ico.writeUInt32LE(22,18);
+const ico=Buffer.alloc(22);ico.writeUInt16LE(1,2);ico.writeUInt16LE(1,4);ico[6]=32;ico[7]=32;ico.writeUInt16LE(1,10);ico.writeUInt16LE(24,12);ico.writeUInt32LE(favicon.length,14);ico.writeUInt32LE(22,18);
 await writeFile(new URL('favicon.ico',dist),Buffer.concat([ico,favicon]));
 await writeFile(new URL('site.webmanifest',dist),JSON.stringify({name:'Vis documentation and extensions',short_name:'Vis',start_url:'/',display:'browser',icons:[192,512].map(size=>({src:`/icon-${size}.png`,sizes:`${size}x${size}`,type:'image/png'}))}));
 await cp(new URL('./web/style.css', import.meta.url), new URL('assets/catalog.css', dist));
