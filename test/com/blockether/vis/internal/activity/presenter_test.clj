@@ -193,18 +193,33 @@
           (expect (= ["Program" "Result"]
                      (mapv #(get % "text")
                            (filter #(= "heading" (get % "type")) (get view "content"))))))))
-  (it "omits nil results without losing the program or streams"
-      (doseq [[language result] [["clojure" {}] ["clojure" {"value" nil}]
-                                 ["clojure" {"value" "nil"}] ["clojure" {"values" ["nil"]}]
-                                 ["python" {}] ["python" {"value" nil}]
-                                 ["python" {"value" "None"}]]]
-        (let [view (presenter/result-presentation
-                     {:operation :repl_eval}
-                     (merge {"language" language "code" "source" "out" "hello\n" "err" "warning\n"}
-                            result))]
-          (expect (= ["Program" "Stdout" "Stderr"]
-                     (mapv #(get % "text")
-                           (filter #(= "heading" (get % "type")) (get view "content"))))))))
+  (it "omits nil results and absent or blank streams independently"
+      (doseq [[language result]
+              [["clojure" {}] ["clojure" {"value" nil}] ["clojure" {"value" "nil"}]
+               ["clojure" {"values" ["nil"]}] ["python" {}] ["python" {"value" nil}]
+               ["python" {"value" "None"}]]
+
+              out
+              [{} {"out" nil} {"out" ""} {"out" " \n\t"} {"out" "hello\n"}]
+
+              err
+              [{} {"err" nil} {"err" ""} {"err" " \n\t"} {"err" "warning\n"}]]
+
+        (let [view
+              (presenter/result-presentation
+                {:operation :repl_eval}
+                (merge {"language" language "code" "source"} result out err))
+
+              expected
+              (cond-> [{"type" "heading" "text" "Program"}
+                       {"type" "code" "text" "source" "language" language}]
+                (= "hello\n" (get out "out"))
+                (into [{"type" "heading" "text" "Stdout"} {"type" "code" "text" "hello\n"}])
+
+                (= "warning\n" (get err "err"))
+                (into [{"type" "heading" "text" "Stderr"} {"type" "code" "text" "warning\n"}]))]
+
+          (expect (= expected (get view "content"))))))
   (it "keeps partial streams with errors and timeouts, not a successful result"
       (doseq [[failure title] [[{"ok" false "exc" "ValueError: invalid"} "Error"]
                                [{"ex" "ArithmeticException" "status" ["eval-error"]} "Error"]
