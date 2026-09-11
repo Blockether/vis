@@ -652,7 +652,7 @@
 
     ;; `render` and `screen` only create child clips from grid-owned graphics.
     ;; Every terminal-screen root and section clip is centralized in `frame`.
-    (is (= {"frame.clj" 4 "render.clj" 1 "screen.clj" 1} calls-by-file))))
+    (is (= {"frame.clj" 5 "render.clj" 1 "screen.clj" 1} calls-by-file))))
 
 (deftest full-screen-surfaces-use-one-lanterna-grid-test
   (let [{:keys [panel sections]}

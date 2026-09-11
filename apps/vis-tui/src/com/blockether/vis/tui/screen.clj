@@ -1171,7 +1171,7 @@
   [^TerminalScreen screen cols rows]
   (vec (for [row (range rows)]
          (vec (for [col (range cols)]
-                (let [tc (.getBackCharacter screen (int col) (int row))]
+                (let [tc (frame/back-character screen col row)]
                   (or (some-> tc
                               .getCharacterString)
                       " ")))))))
@@ -1184,8 +1184,8 @@
             (selection/selected-ranges screen-selection cols rows selectable-ranges)
             x (range col (+ (long col) (long width)))]
 
-      (when-let [tc (.getBackCharacter screen (int x) (int row))]
-        (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
+      (when-let [tc (frame/back-character screen x row)]
+        (frame/set-character! screen x row (.withModifier tc SGR/REVERSE))))))
 
 (def ^:private search-hits-cache
   "Memoizes `paint-search-hits!`'s per-row match scan.
@@ -1254,7 +1254,7 @@
                                   acc
                                   (let [sb (StringBuilder.)
                                         _ (dotimes [c cols]
-                                            (let [tc (.getBackCharacter screen (int c) (int row))
+                                            (let [tc (frame/back-character screen c row)
                                                   s (or (some-> tc
                                                                 .getCharacterString)
                                                         " ")]
@@ -1285,15 +1285,15 @@
         (doseq [{:keys [row start current?]} spans
                 x (range start (+ (long start) n-len))]
 
-          (when-let [tc (.getBackCharacter screen (int x) (int row))]
-            (.setCharacter screen
-                           (int x)
-                           (int row)
-                           (if current?
-                             (-> tc
-                                 (.withBackgroundColor t/header-active-tab-accent)
-                                 (.withForegroundColor t/dialog-bg))
-                             (.withModifier tc SGR/REVERSE)))))))))
+          (when-let [tc (frame/back-character screen x row)]
+            (frame/set-character! screen
+                                  x
+                                  row
+                                  (if current?
+                                    (-> tc
+                                        (.withBackgroundColor t/header-active-tab-accent)
+                                        (.withForegroundColor t/dialog-bg))
+                                    (.withModifier tc SGR/REVERSE)))))))))
 
 (def ^:private bubble-content-h-pad
   "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
@@ -2538,8 +2538,8 @@
                                               cols
                                               slash-command-index))
     (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
-      (.setCursorPosition screen nil)
-      (.setCursorPosition screen (TerminalPosition. cx cy)))))
+      (frame/set-cursor! screen nil)
+      (frame/set-cursor! screen (TerminalPosition. cx cy)))))
 
 (defn- tab-content-loading?
   "True when the ACTIVE tab is still hydrating/building with an EMPTY transcript
@@ -2579,7 +2579,7 @@
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/put-str! g 0 row (p/center-text label (long cols)))))
 
-(defn- render-frame!
+(defn- render-frame-content!
   "Draw one frame: background, messages area (bubbles), input box,
    echo-area row, and two footer rows.
 
@@ -2598,7 +2598,7 @@
         (long cols)
 
         cols
-        (long (projects/chat-cols db cols))
+        (long (if (overlay-locked? db) cols (projects/chat-cols db cols)))
 
         rows
         (long rows)
@@ -2850,8 +2850,8 @@
 
           _
           (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
-            (.setCursorPosition screen nil)
-            (.setCursorPosition screen ^TerminalPosition @cursor-position))
+            (frame/set-cursor! screen nil)
+            (frame/set-cursor! screen @cursor-position))
 
           ;; Publish chrome regions atomically. Capture screen cells only during selection;
           ;; mouse events force a fresh frame before those cells are consumed.
@@ -2922,7 +2922,7 @@
       ;; is untouched while searching, so closing the bar restores the cursor
       ;; to exactly where it sat in the input box.
       (when-let [[sx sy] (paint-search-bar! g cols text-top db)]
-        (when-not (overlay-locked? db) (.setCursorPosition screen (TerminalPosition. sx sy))))
+        (when-not (overlay-locked? db) (frame/set-cursor! screen (TerminalPosition. sx sy))))
       ;; "↓ latest" jump-to-bottom chip — only when the user PARKED above the
       ;; live bottom AND content actually sits below (jump-chip-visible?): a
       ;; FOLLOW ease trailing a growing stream must not flash it.
@@ -2940,8 +2940,8 @@
       ;; answering. It paints last and owns the text cursor while it is open.
       (when-let [human-form (:human-input db)]
         (if-let [pos (hi/paint! g cols rows human-form messages-top composer-h)]
-          (.setCursorPosition screen ^TerminalPosition pos)
-          (.setCursorPosition screen nil)))
+          (frame/set-cursor! screen pos)
+          (frame/set-cursor! screen nil)))
       ;; A live view paints in the SAME band and YIELDS it to a form: an
       ;; unanswered question has stopped the run, so it outranks a report about
       ;; one still going. What the frame measured goes back to state, which is
@@ -2957,11 +2957,15 @@
                                    composer-h
                                    (System/currentTimeMillis))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])))
+      (binding [frame/*column-offset* 0]
+        (projects/paint! (frame/surface-graphics screen screen-cols rows)
+                         (if (overlay-locked? db) (assoc-in db [:project-sidebar :open?] false) db)
+                         screen-cols
+                         rows))
       (when-not (overlay-locked? db)
-        (when-let [{:keys [left]} (projects/geometry db screen-cols rows)]
-          (projects/paint! (frame/surface-graphics screen screen-cols rows) db screen-cols rows)
+        (when-let [{:keys [width]} (projects/geometry db screen-cols rows)]
           (when-let [^TerminalPosition cursor (.getCursorPosition screen)]
-            (when (or (get-in db [:project-sidebar :focused?]) (>= (.getColumn cursor) (long left)))
+            (when (or (get-in db [:project-sidebar :focused?]) (< (.getColumn cursor) (long width)))
               (.setCursorPosition screen nil)))))
       (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
@@ -3008,9 +3012,15 @@
           ;; graphics-layer images so they don't paint over the overlay.
           (drop-terminal-images!)
           (paint-terminal-images!
-            (fitting-image-placements @image-sink messages-top messages-bottom))))
+            (let [rail-width (long (or (:width (projects/geometry db screen-cols rows)) 0))]
+              (->> (fitting-image-placements @image-sink messages-top messages-bottom)
+                   (map #(update % :col frame/screen-column))
+                   ;; Native image layers cannot clip behind a narrow overlay rail.
+                   (filter #(>= (long (:col %)) rail-width))
+                   vec)))))
       {:cols cols
        :screen-cols screen-cols
+       :chat-left (long frame/*column-offset*)
        ;; The prompt box's LIVE height: an in-session band (a transient, the C-x
        ;; hydra, a human-input form) is anchored directly above it, so it has to
        ;; know how tall the editor grew.
@@ -3034,6 +3044,13 @@
        :transcript-disclosure-copy-regions transcript-disclosure-copy-regions
        :input-selectable-ranges input-selectable-ranges
        :overlay-selectable-ranges overlay-selectable-ranges})))
+
+(defn- render-frame!
+  "Paint the chat in its local surface and the project rail in screen coordinates."
+  [screen cols rows db now-ms]
+  (binding [frame/*column-offset*
+            (if (overlay-locked? db) 0 (long (or (:chat-left (projects/geometry db cols rows)) 0)))]
+    (render-frame-content! screen cols rows db now-ms)))
 
 (defn- repaint-chat-frame!
   "Repaint the full chat frame (background, transcript, working-area outline,
@@ -3604,10 +3621,10 @@
       (if-let [[sx sy] (components/find-bar-cursor cols text-top (:search db))]
         ;; Active find bar owns the keyboard — cursor sits in its query field
         ;; (see the full-frame path / `find-bar-cursor` for the why).
-        (.setCursorPosition screen (TerminalPosition. sx sy))
+        (frame/set-cursor! screen (TerminalPosition. sx sy))
         (if (scroll/scrolled-up? (:scroll db))
-          (.setCursorPosition screen nil)
-          (.setCursorPosition screen (TerminalPosition. cx cy)))))
+          (frame/set-cursor! screen nil)
+          (frame/set-cursor! screen (TerminalPosition. cx cy)))))
     ;; Outer chat scrollbar FIRST, then the suggestion popup on top — the
     ;; SAME order as the full-frame path (`draw-messages-area!` scrollbar →
     ;; `draw-bottom-chrome!` suggestions). The popup sits just above the input
@@ -4066,7 +4083,9 @@
             [(render-scroll-frame! screen cols rows db now-ms last-layout) true]
 
             :input
-            (do (render-input-frame! screen cols rows db now-ms) [last-layout false])
+            (do (binding [frame/*column-offset* (long (or (:chat-left last-layout) 0))]
+                  (render-input-frame! screen cols rows db now-ms))
+                [last-layout false])
 
             :full
             [(render-frame! screen cols rows db now-ms) true]))
@@ -6099,7 +6118,8 @@
                      raw-key (read-chat-input! screen input-coalescer)
                      ;; C-g is Emacs `keyboard-quit`, and it is Esc EVERYWHERE: rewriting it
                      ;; once here hands canonical Lanterna input to every app mode.
-                     key (input/normalize-abort-key raw-key)
+                     physical-key (input/normalize-abort-key raw-key)
+                     key (projects/chat-key physical-key (long (or (:chat-left (:layout db)) 0)))
                      wheel-delta (some-> (ScrollBar/wheelStep ^KeyStroke key)
                                          long)
                      drag-events (when (instance? MouseAction key)
@@ -6108,7 +6128,8 @@
                  (when-not @paste-buffer (begin-input-timing! input-timing key db))
                  (cond
                    (:shutdown? db) nil
-                   (and (not @paste-buffer) (not (overlay-locked? db)) (sidebar-key! key)) (recur)
+                   (and (not @paste-buffer) (not (overlay-locked? db)) (sidebar-key! physical-key))
+                   (recur)
                    ;; An open human-input dialog owns the remaining keyboard.
                    ;; stroke belongs to the form until it is answered.
                    (and (some? key) (:human-input db)) (do (human-input-key! db key) (recur))

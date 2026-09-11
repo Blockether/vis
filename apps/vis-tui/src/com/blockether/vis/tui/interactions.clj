@@ -9,13 +9,17 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-(defonce ^HitRegionMap hit-map
+(defn create-hit-map
+  "Create an independent pointer surface with application region values."
+  ^HitRegionMap []
   (HitRegionMap.
     (reify
       Function
         (apply [_ region]
           (let [{:keys [row col width height]} (:bounds region)]
             (TerminalRectangle. (int col) (int row) (int width) (int (or height 1))))))))
+
+(defonce ^:dynamic ^HitRegionMap hit-map (create-hit-map))
 
 (def label-alphabet
   "Single-character jump labels for the vim-style disclosure overlay, home row

@@ -14,6 +14,30 @@
             TextGUIGraphics]
            [com.googlecode.lanterna.screen Screen]))
 
+(def ^:dynamic *column-offset*
+  "Physical origin of the current paint surface; layout and selection stay local."
+  0)
+
+(defn screen-column ^long [col] (+ (long col) (long *column-offset*)))
+
+(defn back-character
+  "Read a cell in surface-local coordinates."
+  ^com.googlecode.lanterna.TextCharacter [^Screen screen col row]
+  (.getBackCharacter screen (int (screen-column col)) (int row)))
+
+(defn set-character!
+  "Write a cell in surface-local coordinates."
+  [^Screen screen col row ^com.googlecode.lanterna.TextCharacter cell]
+  (.setCharacter screen (int (screen-column col)) (int row) cell))
+
+(defn set-cursor!
+  "Place the physical cursor from a surface-local position, or hide it."
+  [^Screen screen ^TerminalPosition position]
+  (.setCursorPosition screen
+                      (when position
+                        (TerminalPosition. (int (screen-column (.getColumn position)))
+                                           (.getRow position)))))
+
 (def section-order
   "Stable paint/layout order for the complete application frame."
   [:header :header-gap :transcript :echo :attachments :composer :footer])
@@ -191,7 +215,11 @@
 (defn surface-graphics
   "Create a terminal-screen surface scoped by one full-size GridLayout component."
   ^TextGraphics [^Screen screen cols rows]
-  (view-graphics (.newTextGraphics screen) cols rows))
+  (view-graphics (.newTextGraphics (.newTextGraphics screen)
+                                   (TerminalPosition. (int *column-offset*) 0)
+                                   (TerminalSize. (int cols) (int rows)))
+                 cols
+                 rows))
 
 (defn bounds
   "Return a laid-out component's integer cell rectangle."

@@ -5,6 +5,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.header-model :as model]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.projects :as projects]
@@ -226,16 +227,21 @@
 
 (deftest project-sidebar-width-test
   ;; Keep the sidebar bounded without squeezing the conversation below 60 columns.
-  (doseq [[cols width chat-cols] [[24 24 24] [26 26 26] [40 26 40] [72 26 72] [80 26 80] [85 26 85]
-                                  [86 26 60] [96 26 70] [120 30 90] [144 36 108] [240 36 204]]]
+  (doseq [[cols width chat-cols] [[24 24 24] [40 40 40] [80 40 80] [99 40 99] [100 40 60]
+                                  [120 40 80] [144 48 96] [168 56 112] [240 56 184]]]
     (let [db (fixture-db)]
-      (is (= {:left (- cols width) :width width :rows 24 :chat-cols chat-cols}
+      (is (= {:left 0
+              :width width
+              :rows 24
+              :chat-cols chat-cols
+              :chat-left (if (= cols chat-cols) 0 width)}
              (projects/geometry db cols 24)))
       (is (= cols (projects/chat-cols (assoc-in db [:project-sidebar :open?] false) cols)))))
   (doseq [cols (range 24 241)]
-    (let [{:keys [left width chat-cols]} (projects/geometry (fixture-db) cols 24)]
-      (is (<= (min cols 26) width 36))
-      (is (= cols (+ left width)))
+    (let [{:keys [left width chat-left chat-cols]} (projects/geometry (fixture-db) cols 24)]
+      (is (<= (min cols 40) width 56))
+      (is (zero? left))
+      (is (= cols (+ chat-left chat-cols)))
       (is (or (= cols chat-cols) (>= chat-cols 60))))))
 
 (deftest project-sidebar-grid-test
@@ -244,35 +250,35 @@
           capture (cap/capture! {:cols cols
                                  :rows 18
                                  :paint! (fn [{:keys [screen]}]
-                                           (.beginFrame interactions/hit-map)
-                                           (projects/paint! (.newTextGraphics screen) db cols 18)
-                                           (.commitFrame interactions/hit-map))})
+                                           (projects/paint! (.newTextGraphics screen) db cols 18))})
           text (cap/frame-text capture)
-          left (:left (projects/geometry db cols 18))]
+          width (:width (projects/geometry db cols 18))]
 
       (is (nil? (:error capture)))
       (is (str/includes? text "Projects"))
-      (is (str/includes? text "Companion"))
-      (is (str/includes? text "1 running"))
+      (when (>= cols 40)
+        (is (str/includes? text "Companion"))
+        (is (re-find #"Companion +1 tab · 1 running" text)))
+      (when (>= cols 26) (is (str/includes? text "1 running")))
       (when (>= cols 26) (is (str/includes? text "↑↓ select · Enter open")))
       (is (str/includes? text "C-x w hide · Esc chat"))
-      (is (= :project-add (:kind (.lookup interactions/hit-map (- cols 7) 0))))
-      (is (= :project-hide (:kind (.lookup interactions/hit-map (- cols 3) 0))))
+      (is (= :project-add (:kind (.lookup projects/hit-map (- width 7) 0))))
+      (is (= :project-hide (:kind (.lookup projects/hit-map (- width 3) 0))))
       (is (= [:select project-b]
-             (projects/key-action db
-                                  (MouseAction. MouseActionType/CLICK_DOWN
-                                                1
-                                                (TerminalPosition. (+ (int left) 4) 4))))))))
+             (projects/key-action
+               db
+               (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 4 3))))))))
 
 (deftest project-sidebar-label-width-test
-  (doseq [[cols label fits?] [[26 "vis-python-runtime" true] [26 "tree-sitter-language-pack" false]
-                              [144 "tree-sitter-language-pack" true]]]
-    (let [db (assoc-in (fixture-db) [:project-sidebar :items 0 "name"] label)
+  (doseq [[cols index label fits?] [[40 0 "vis-python-runtime" true]
+                                    [40 1 "tree-sitter-language-pack" false]
+                                    [168 1 "tree-sitter-language-pack" true]]]
+    (let [db (assoc-in (fixture-db) [:project-sidebar :items index "name"] label)
           capture (cap/capture! {:cols cols
                                  :rows 18
                                  :paint! (fn [{:keys [screen]}]
                                            (projects/paint! (.newTextGraphics screen) db cols 18))})
-          row (nth (str/split-lines (cap/frame-text capture)) 2)]
+          row (nth (str/split-lines (cap/frame-text capture)) (+ 2 index))]
 
       (is (nil? (:error capture)))
       (is (= fits? (str/includes? row label)))
@@ -285,7 +291,7 @@
         visible
         (projects/visible-projects sidebar 16)]
 
-    (is (= 5 (count visible)))
+    (is (= 11 (count visible)))
     (is (= 50 (first (last visible))))))
 
 (defn review-terminal
@@ -306,15 +312,15 @@
                 (constantly nil)]
 
     (doseq [cols [40 80 85 86 96 120 144]]
-      (let [capture (cap/capture! {:cols cols
-                                   :rows 24
-                                   :paint!
-                                   (fn [{:keys [screen]}]
-                                     (let [db (fixture-db)
-                                           layout (#'screen/render-frame! screen cols 24 db 1000)]
+      (let [capture (cap/capture!
+                      {:cols cols
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (let [db (assoc-in (fixture-db) [:project-sidebar :focused?] false)
+                                       layout (#'screen/render-frame! screen cols 24 db 1000)]
 
-                                       (#'screen/paint-frame! screen :input cols 24 db 1000 layout)
-                                       layout))})
+                                   (#'screen/paint-frame! screen :input cols 24 db 1000 layout)
+                                   layout))})
             hidden (cap/capture! {:cols cols
                                   :rows 24
                                   :paint! (fn [{:keys [screen]}]
@@ -333,7 +339,7 @@
         (is (nil? (:error hidden)))
         (is (= cols (get-in hidden [:ret :cols])))
         (is (not (str/includes? (cap/frame-text hidden) "Projects")))
-        (is (not-any? #(= :project-select (:kind %)) (.current interactions/hit-map)))))))
+        (is (not-any? #(= :project-select (:kind %)) (.current projects/hit-map)))))))
 
 (deftest project-screen-backend-parity-test
   (with-redefs [timg/images-protocol
@@ -425,3 +431,95 @@
                                      (.getCursorPosition screen))})]
         (is (nil? (:error capture)))
         (is (= (or focused? (= cols 40)) (nil? (:ret capture))))))))
+
+(deftest project-chat-pointer-surface-test
+  (with-redefs [timg/images-protocol
+                (constantly nil)
+
+                vis/get-router
+                (constantly nil)]
+
+    (let [capture (cap/capture!
+                    {:cols 144
+                     :rows 24
+                     :paint!
+                     (fn [{:keys [screen]}]
+                       (#'screen/render-frame! screen 144 24 (fixture-db) 1000)
+                       (let [hit (first (filter #(= :workspace-entry (:kind %))
+                                                (.current interactions/hit-map)))
+                             {:keys [col row]} (:bounds hit)
+                             mouse (MouseAction. MouseActionType/CLICK_DOWN
+                                                 1
+                                                 (TerminalPosition. (+ 48 (int col)) (int row)))
+                             local ^MouseAction (projects/chat-key mouse 48)]
+
+                         (is (some? hit))
+                         (is (= hit
+                                (.lookup interactions/hit-map
+                                         (.getColumn (.getPosition local))
+                                         (.getRow (.getPosition local)))))
+                         (is (not= :select (first (projects/key-action (fixture-db) mouse))))))})]
+      (is (nil? (:error capture)))))
+  (let [mouse
+        (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 70 8) 7)
+
+        local
+        ^MouseAction (projects/chat-key mouse 40)]
+
+    (is (= (TerminalPosition. 30 8) (.getPosition local)))
+    (is (= 7 (.getCount local)))
+    (is (= (.getScrollDelta mouse) (.getScrollDelta local)))
+    (is (identical? mouse (projects/chat-key mouse 0))))
+  (is (= (cap/key-stroke \a) (projects/chat-key (cap/key-stroke \a) 40))))
+
+(deftest project-surface-cells-and-cursor-test
+  (let [capture (cap/capture!
+                  {:cols 30
+                   :rows 6
+                   :paint! (fn [{:keys [^TerminalScreen screen]}]
+                             (binding [frame/*column-offset* 10]
+                               (.putString (frame/surface-graphics screen 20 6) 0 1 "界 hello")
+                               (is (= "界" (.getCharacterString (frame/back-character screen 0 1))))
+                               (frame/set-character! screen 5 2 (frame/back-character screen 3 1))
+                               (frame/set-cursor! screen (TerminalPosition. 5 2))
+                               (is (= (TerminalPosition. 15 2) (.getCursorPosition screen)))
+                               (is (= "h" (.getCharacterString (.getBackCharacter screen 15 2))))
+                               (frame/set-cursor! screen nil)
+                               (is (nil? (.getCursorPosition screen)))))})]
+    (is (nil? (:error capture)))
+    (is (= "界" (get-in capture [:frames 0 1 10 :ch])))
+    (is (= "h" (get-in capture [:frames 0 1 13 :ch])))))
+
+(deftest project-overlay-and-media-origin-test
+  (with-redefs [timg/images-protocol
+                (constantly nil)
+
+                vis/get-router
+                (constantly nil)]
+
+    (doseq [cols [80 144]]
+      (let [placed (atom nil)
+            capture (cap/capture!
+                      {:cols cols
+                       :rows 24
+                       :paint! (fn [{:keys [screen]}]
+                                 (with-redefs [screen/fitting-image-placements
+                                               (fn [& _]
+                                                 [{:col 2 :row 5 :img {:id "fixture"}}])
+                                               screen/paint-terminal-images! #(reset! placed %)]
+
+                                   (#'screen/render-frame! screen cols 24 (fixture-db) 1000)))})]
+
+        (is (nil? (:error capture)))
+        (is (= (if (= cols 80) [] [{:col 50 :row 5 :img {:id "fixture"}}]) @placed))))
+    (let [capture
+          (cap/capture!
+            {:cols 144
+             :rows 24
+             :paint!
+             (fn [{:keys [screen]}]
+               (#'screen/render-frame! screen 144 24 (assoc (fixture-db) :help-open? true) 1000))})]
+      (is (nil? (:error capture)))
+      (is (= 144 (get-in capture [:ret :cols])))
+      (is (zero? (get-in capture [:ret :chat-left])))
+      (is (empty? (.current projects/hit-map))))))
