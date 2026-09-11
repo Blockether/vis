@@ -12,6 +12,10 @@ on:
         description: Exact VIS_VERSION on main to verify and publish (SDK-only or release recovery)
         required: true
         type: string
+      release_tag:
+        description: Existing product tag to publish after release recovery (empty uses main)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -27,7 +31,7 @@ jobs:
     uses: ./.github/workflows/python-packages.yml
     with:
       version: ${{ inputs.version }}
-      ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      ref: ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.sha }}
   publish:
     needs: verify
     runs-on: ubuntu-latest

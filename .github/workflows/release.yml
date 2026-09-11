@@ -3,12 +3,26 @@ name: Release & Deploy to Clojars
 on:
   push:
     tags: ['v[0-9]*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing unpublished vX.Y.Z tag to recover without moving it
+        type: string
+        required: true
+      source_run:
+        description: Original release run with green source, macOS, mobile and desktop checks
+        type: string
+        required: true
+      native_run:
+        description: Successful Linux recovery run from native-release.yml for the same tag
+        type: string
+        required: true
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -20,6 +34,7 @@ jobs:
 
   prepare:
     # Validate main before slow CI; artifact jobs still require all source checks.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,19 +91,64 @@ jobs:
       tag: ${{ github.ref_name }}
     secrets: inherit
 
-  publish:
-    name: Verify complete assets, deploy libraries and publish stable
-    needs: [prepare, native, mobile, desktop]
+  recover:
+    name: Verify original product gates and repaired Linux checks
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_RUN: ${{ inputs.source_run }}
+      NATIVE_RUN: ${{ inputs.native_run }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/require-draft-release
         id: release
         with:
-          tag: ${{ github.ref_name }}
+          tag: ${{ inputs.tag }}
+      - name: Verify recovery without moving the tag or resubmitting mobile builds
+        id: verify
+        env:
+          RELEASE_METADATA: ${{ steps.release.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          sha=$(git rev-parse "$RELEASE_TAG^{commit}")
+          git merge-base --is-ancestor "$sha" HEAD
+          test "$RELEASE_TAG" = "v$(git show "$sha:VIS_VERSION" | tr -d '[:space:]')"
+          python3 bin/verify-release-assets.py "$RELEASE_METADATA" "$RELEASE_TAG" \
+            --source-run "$SOURCE_RUN" --native-run "$NATIVE_RUN" --sha "$sha"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Verify complete assets, deploy libraries and publish stable
+    needs: [prepare, native, mobile, desktop, recover]
+    if: >-
+      !cancelled() &&
+      ((github.event_name == 'push' && needs.prepare.result == 'success' &&
+        needs.native.result == 'success' && needs.mobile.result == 'success' &&
+        needs.desktop.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && needs.recover.result == 'success'))
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.recover.outputs.sha || github.sha }}
+      - uses: ./.github/actions/require-draft-release
+        id: release
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
       - name: Require every verified product artifact
         env:
           RELEASE_METADATA: ${{ steps.release.outputs.metadata }}

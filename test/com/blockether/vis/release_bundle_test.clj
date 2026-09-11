@@ -2257,17 +2257,18 @@
             publisher
             (slurp ".github/workflows/python-publish.yml")]
 
-        (doseq [needle [(str "workflow_run:\n    workflows: ['"
-                             release-name
-                             "']\n    types: [completed]") "github.event_name == 'workflow_run'"
-                        "github.event.workflow_run.conclusion == 'success'"
-                        "github.event.workflow_run.event == 'push'"
-                        "github.event.workflow_run.head_repository.full_name == github.repository"
-                        "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
-                        "uses: ./.github/workflows/python-packages.yml"
-                        "ref: ${{ github.event.workflow_run.head_sha || github.sha }}"
-                        "version: ${{ inputs.version }}" "needs: verify" "environment: pypi"
-                        "id-token: write" "uses: pypa/gh-action-pypi-publish@release/v1"]]
+        (doseq
+          [needle
+           [(str "workflow_run:\n    workflows: ['" release-name "']\n    types: [completed]")
+            "github.event_name == 'workflow_run'"
+            "github.event.workflow_run.conclusion == 'success'"
+            "github.event.workflow_run.event == 'push'"
+            "github.event.workflow_run.head_repository.full_name == github.repository"
+            "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
+            "uses: ./.github/workflows/python-packages.yml"
+            "ref: ${{ inputs.release_tag || github.event.workflow_run.head_sha || github.sha }}"
+            "version: ${{ inputs.version }}" "needs: verify" "environment: pypi" "id-token: write"
+            "uses: pypa/gh-action-pypi-publish@release/v1"]]
           (expect (str/includes? publisher needle) needle))
         ;; PyPI trusted publishing does not support reusable workflows.
         (expect (not (str/includes? publisher "workflow_call:")))
@@ -2377,12 +2378,12 @@
           mobile
           (slurp ".github/workflows/mobile-release.yml")]
 
-      (doseq [needle ["uses: ./.github/workflows/ci.yml"
-                      "uses: ./.github/workflows/native-release.yml"
-                      "needs: [prepare, native, mobile, desktop]" "bin/verify-release-assets.py"
-                      "--draft" "--draft=false --latest" "require_complete: true"]]
+      (doseq [needle
+              ["uses: ./.github/workflows/ci.yml" "uses: ./.github/workflows/native-release.yml"
+               "needs: [prepare, native, mobile, desktop, recover]" "bin/verify-release-assets.py"
+               "--draft" "--draft=false --latest" "require_complete: true"]]
         (expect (str/includes? release needle) needle))
-      (expect (= 2 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
+      (expect (= 3 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
       (expect (not (str/includes? release "/releases/tags/")))
       (expect (str/includes? release "RELEASE_METADATA: ${{ steps.release.outputs.metadata }}"))
       (expect (str/includes? native "workflow_call:"))
@@ -2474,5 +2475,101 @@
             "for candidate in bad:\n" "    try: m['verify_release'](candidate, tag)\n"
             "    except ValueError: pass\n"
             "    else: raise AssertionError('accepted incomplete or immutable release')\n")]
+         {})]
+      (expect (zero? exit) output))))
+
+(defdescribe
+  release-recovery-test
+  (it "resumes only an existing draft through verified original and repaired jobs"
+      (let [workflow (slurp ".github/workflows/release.yml")]
+        (doseq [needle ["workflow_dispatch:" "source_run:" "native_run:"
+                        "github.ref == 'refs/heads/main'" "--source-run" "--native-run"
+                        "git merge-base --is-ancestor" "needs.recover.outputs.sha"
+                        "needs.recover.result == 'success'" "needs.prepare.result == 'success'"
+                        "needs.native.result == 'success'" "needs.mobile.result == 'success'"
+                        "needs.desktop.result == 'success'"]]
+          (expect (str/includes? workflow needle) needle))
+        (expect (not (str/includes? workflow "continue-on-error:")))
+        (expect (not (str/includes? workflow "git tag -f")))))
+  (it
+    "refuses failed, partial, foreign and different-source recovery evidence"
+    (let
+      [{:keys [exit output]}
+       (run-bash
+         ["python3" "-c"
+          (str/join
+            "\n"
+            ["import copy, json, runpy" "from unittest.mock import patch"
+             "m = runpy.run_path('bin/verify-release-assets.py')"
+             "repo, tag, sha = 'example/project', 'v9.8.7', 'a' * 40"
+             "names = m['required_recovery_checks']()" "assert len(names) == 30, names"
+             "replaced = {f'native / native / vis-agent-linux-{arch}.tar.gz' for arch in ('x64', 'arm64')}"
+             "publisher = 'Verify complete assets, deploy libraries and publish stable'"
+             "base = {'repository': {'full_name': repo}, 'head_repository': {'full_name': repo}, 'status': 'completed'}"
+             "source = dict(base, path='.github/workflows/release.yml', event='push', head_branch=tag, head_sha=sha, conclusion='failure', jobs=[])"
+             "for name in names:"
+             "    source['jobs'].append({'name': name, 'status': 'completed', 'conclusion': 'failure' if name in replaced else 'skipped' if name == publisher else 'success'})"
+             "steps = [{'name': name, 'conclusion': 'success'} for name in ('Test the native binaries', 'Run ./.github/actions/test-native-python-sdk')]"
+             "native = dict(base, path='.github/workflows/native-release.yml', event='workflow_dispatch', conclusion='success', jobs=[{'id': i, 'name': f'native / vis-agent-linux-{arch}.tar.gz', 'status': 'completed', 'conclusion': 'success', 'steps': steps, 'checkout_shas': [sha]} for i, arch in enumerate(('x64', 'arm64'), 1)])"
+             "def check(s=source, n=native, t=tag, commit=sha):"
+             "    m['verify_recovery'](repo, t, commit, s, n)" "check()" "cases = []"
+             "for name in names:" "    changed = copy.deepcopy(source)"
+             "    changed['jobs'] = [job for job in changed['jobs'] if job['name'] != name]"
+             "    cases.append((changed, native))" "for name in names - replaced - {publisher}:"
+             "    changed = copy.deepcopy(source)"
+             "    next(job for job in changed['jobs'] if job['name'] == name)['conclusion'] = 'failure'"
+             "    cases.append((changed, native))"
+             "for target, key, value in [('source', 'head_sha', 'b' * 40), ('source', 'head_branch', 'main'), ('source', 'event', 'pull_request'), ('source', 'conclusion', 'cancelled'), ('native', 'conclusion', 'failure'), ('native', 'event', 'push')]:"
+             "    s, n = copy.deepcopy(source), copy.deepcopy(native)"
+             "    (s if target == 'source' else n)[key] = value" "    cases.append((s, n))"
+             "for target in ('source', 'native'):"
+             "    for key, value in [('repository', {'full_name': 'other/project'}), ('head_repository', {'full_name': 'other/project'}), ('path', '.github/workflows/other.yml'), ('status', 'in_progress')]:"
+             "        s, n = copy.deepcopy(source), copy.deepcopy(native)"
+             "        (s if target == 'source' else n)[key] = value" "        cases.append((s, n))"
+             "    s, n = copy.deepcopy(source), copy.deepcopy(native)"
+             "    changed = s if target == 'source' else n"
+             "    changed['jobs'].append(copy.deepcopy(changed['jobs'][0]))"
+             "    cases.append((s, n))" "for index in range(2):"
+             "    for key, value in [('checkout_shas', []), ('checkout_shas', ['b' * 40]), ('checkout_shas', [sha, 'b' * 40]), ('conclusion', 'skipped'), ('steps', []), ('steps', [dict(step, conclusion='skipped') for step in steps])]:"
+             "        changed = copy.deepcopy(native)" "        changed['jobs'][index][key] = value"
+             "        cases.append((source, changed))" "    changed = copy.deepcopy(native)"
+             "    del changed['jobs'][index]" "    cases.append((source, changed))"
+             "for s, n in cases:" "    try: check(s, n)" "    except ValueError: pass"
+             "    else: raise AssertionError('accepted unverified or mismatched recovery')"
+             "for t, commit in [('main', sha), (tag, 'bad')]:" "    try: check(t=t, commit=commit)"
+             "    except ValueError: pass"
+             "    else: raise AssertionError('accepted invalid release identity')"
+             "log = '2026-01-01T00:00:00Z [command]/usr/bin/git log -1 --format=%H\\n2026-01-01T00:00:00Z ' + sha + '\\n'"
+             "run = {key: value for key, value in native.items() if key != 'jobs'}"
+             "pages = [{'jobs': [dict(job)]} for job in native['jobs']]" "for page in pages:"
+             "    page['jobs'][0].pop('checkout_shas')"
+             "with patch('subprocess.check_output', side_effect=[json.dumps(run), json.dumps(pages), log, log]) as request:"
+             "    loaded = m['load_recovery_run'](repo, 42, native=True)" "    check(n=loaded)"
+             "    assert request.call_count == 4"
+             "    assert '--paginate' in request.call_args_list[1].args[0]"
+             "    assert '--slurp' in request.call_args_list[1].args[0]"
+             "print(f'{len(cases) + 2} unsafe recovery cases refused; matching source and repaired native checks accepted')"])]
+         {})]
+      (expect (zero? exit) output))))
+
+(defdescribe
+  release-recovery-options-test
+  (it
+    "rejects zero, empty and partial recovery options before reading remote evidence"
+    (let
+      [{:keys [exit output]}
+       (run-bash
+         ["python3" "-c"
+          (str/join
+            "\n"
+            ["import contextlib, io, json, runpy" "from unittest.mock import patch"
+             "m = runpy.run_path('bin/verify-release-assets.py')" "tag = 'v9.8.7'"
+             "release = {'tag_name': tag, 'draft': True, 'prerelease': False, 'assets': [{'name': name, 'size': 42, 'state': 'uploaded'} for name in m['required_assets'](tag)]}"
+             "cases = [['--source-run', '0'], ['--native-run', '0'], ['--sha', ''], ['--source-run', '-1', '--native-run', '2', '--sha', 'a' * 40], ['--source-run', '1', '--native-run', '2', '--sha', 'a' * 40, '--published']]"
+             "for flags in cases:"
+             "    with patch('sys.argv', ['verify-release-assets.py', 'fixture.json', tag, *flags]), patch('pathlib.Path.open', return_value=io.StringIO(json.dumps(release))), patch('subprocess.check_output') as request, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):"
+             "        try: m['main']()" "        except SystemExit as error: assert error.code != 0"
+             "        else: raise AssertionError(f'ignored explicit recovery options: {flags}')"
+             "        request.assert_not_called()"])]
          {})]
       (expect (zero? exit) output))))
