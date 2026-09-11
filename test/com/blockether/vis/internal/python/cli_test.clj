@@ -122,6 +122,18 @@
     (it "a network-enabled context builds without error"
         (expect (some? (python-cli-context {:network? true}))))))
 
+(defdescribe python-cli-reexecution-test
+             ;; #199: exercise the same subprocess cases as the built native CLI.
+             (it "re-executes bundled CPython with ordinary child import semantics"
+                 (let [ctx
+                       (python-cli-context {:network? false})
+
+                       {:keys [exit out]}
+                       (run-src ctx (slurp "test/resources/python_reexecution.py"))]
+
+                   (expect (= 0 exit) out)
+                   (expect (re-find #"python-reexecution-ok" out) out))))
+
 (def ^:private parse-python-cli-args #'com.blockether.vis.internal.main/parse-python-cli-args)
 
 (def ^:private python-cli-env-overrides->map

@@ -205,6 +205,14 @@ This uses the project's editable install. `--with pytest` supplies pytest for th
 command without changing the project's dependencies or lockfile; `--no-sync` keeps
 the prepared environment unchanged. No `PYTHONPATH` or extra `source_paths` is needed.
 
+`vis-agent python` itself runs embedded CPython. Its `sys.executable` and
+`sys._base_executable` identify the bundled CPython launcher, so subprocesses can
+use ordinary `-c` and `-m` arguments. These children are standalone Python: they
+use the working directory and inherited `PYTHONPATH`, but do not automatically
+inherit Vis bindings, shared package paths or other in-memory `sys.path` changes.
+Use the project-environment command above when child processes need project dependencies.
+The agent sandbox's subprocess restrictions are unchanged.
+
 Then make a representative call in Vis. An import or registration does not prove
 the trusted session worker can use the dependencies. For native libraries, test the
 actual calculation through the tool; trusted workers support `ctypes`, but the

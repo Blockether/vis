@@ -11,6 +11,29 @@
            [java.util.concurrent TimeUnit]))
 
 (defdescribe
+  native-python-reexecution-test
+  ;; #199: JVM coverage cannot prove the native worker's executable identity.
+  (it "re-executes bundled CPython from the built native CLI"
+      (let [home
+            (#'native/temp-dir "vis-native-reexecution-")
+
+            binary
+            (#'native/require-binary)]
+
+        (try (let [[^Process child log] (#'startup/start-native!
+                                         home
+                                         binary
+                                         "reexecution"
+                                         ["python" "--no-env" "--no-network" "-c"
+                                          (slurp "test/resources/python_reexecution.py")])]
+               (try (expect (.waitFor child 60 TimeUnit/SECONDS) "native re-execution timed out")
+                    (let [output (slurp log)]
+                      (expect (= 0 (.exitValue child)) output)
+                      (expect (str/includes? output "python-reexecution-ok") output))
+                    (finally (when (.isAlive child) (#'native/kill-tree! child)))))
+             (finally (#'native/delete-tree! home))))))
+
+(defdescribe
   native-runtime-source-selection-test
   ;; #194: the prebuilt worker must not override the host's pinned guest sources.
   (it
