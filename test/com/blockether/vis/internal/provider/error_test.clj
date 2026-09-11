@@ -425,11 +425,40 @@
       (let [err {:message "Stream idle timeout (180000ms with no bytes)."
                  :data {:type :svar.core/stream-idle-timeout :idle-timeout-ms 180000}}]
         (expect (= :stream-timeout (perr/provider-error-kind err)))
-        (expect (re-find #"180s" (perr/provider-error-explanation err)))))
+        (expect (re-find #"180s" (perr/provider-error-explanation err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "Vis stopped waiting"))
+        (expect (not (str/includes? (perr/provider-error-explanation err) "connection ended")))))
   (it "a real generic failure is untouched"
       (let [err {:message "Provider unavailable" :data {}}]
         (expect (= :generic (perr/provider-error-kind err)))
         (expect (= "Provider unavailable" (perr/provider-error-title err))))))
+
+(defdescribe
+  stream-truncated-presentation-test
+  (doseq [[label recovery expected]
+          [["exhausted" {:attempts 2 :declined :retry-budget-exhausted} "after 2 retries"]
+           ["output" {:attempts 0 :declined :output-started} "answer text or tool input"]
+           ["unverified" {:attempts 0 :declined :not-reasoning-only}
+            "not a verified reasoning-only"]]]
+    (doseq [throwable? [false true]]
+      (it (str label " / throwable=" throwable?)
+          (let [data {:type :svar.core/stream-truncated
+                      :reasoning-acc-len 10013
+                      :content-acc-len 0
+                      :stream-recovery recovery}
+                err (if throwable?
+                      (ex-info "Stream ended before terminal marker." data)
+                      {:message "Stream ended before terminal marker." :data data})
+                explanation (perr/provider-error-explanation err)]
+
+            (expect (= :stream-interrupted (perr/provider-error-kind err)))
+            (expect (= "Provider connection ended early" (perr/provider-error-title err)))
+            (expect (str/includes? explanation
+                                   "connection ended before the provider's completion marker"))
+            (expect (str/includes? explanation "Vis did not stop this request for a timeout"))
+            (expect (str/includes? explanation expected))
+            (expect (str/includes? (perr/provider-error-next-step err) "Continue"))
+            (expect (not (str/includes? (perr/provider-error-next-step err) "timeout-ms"))))))))
 
 (defdescribe
   context-overflow-presentation-test

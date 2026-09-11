@@ -6190,7 +6190,7 @@
         @#'lp/pre-output-stream-retryable?
 
         backoff
-        @#'lp/pre-output-stream-backoff-ms
+        @#'lp/stream-recovery-backoff-ms
 
         next-counters
         @#'lp/next-retry-counters
@@ -6221,7 +6221,7 @@
         (expect (= 3000 (backoff 1)))
         (expect (= 3000 (backoff 7)))
         (expect (= [1 1]
-                   (next-counters :com.blockether.vis.internal.loop/retry-pre-output-stream
+                   (next-counters :com.blockether.vis.internal.loop/retry-stream-recovery
                                   {:attempt 0 :max-tokens-attempt 1}))))
     (it "still fails the turn once the pre-output budget is spent"
         (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error
@@ -6342,7 +6342,7 @@
                   {#'lp/provider-network-policy
                    (fn [_ _]
                      {:ttft-timeout-ms 30 :idle-timeout-ms 30 :semantic-timeout-ms 30})
-                   #'lp/PRE_OUTPUT_STREAM_RETRY_DELAYS_MS [0 0]
+                   #'lp/STREAM_RECOVERY_RETRY_DELAYS_MS [0 0]
                    #'svar/ask-code!
                    (fn [_ opts]
                      (let [call (swap! calls inc)]
@@ -6410,6 +6410,163 @@
                          1)
                        (count retries)))
             (when (= :exhaust mode) (expect (= "error" (get (first (:answer result)) "type")))))
+          (finally (lp/dispose-environment! environment)))))))
+
+(defdescribe
+  reasoning-only-stream-boundary-test
+  (doseq [[label reasoning? data expected]
+          [["observed reasoning" true {} :reasoning]
+           ["unobserved reasoning" false {:reasoning-acc-len 10} :none]
+           ["accumulated content" true {:content-acc-len 1} :content]
+           ["partial content" true {:partial-content "partial code"} :content]
+           ["tool calls" true {:tool-calls [{:name "python_execution"}]} :content]]]
+    (it label
+        (let [error (with-redefs-fn {#'lp/ask-code-with-session!
+                                     (fn [_ _ opts]
+                                       (when reasoning? ((:on-chunk opts) {:reasoning "thinking"}))
+                                       (throw (ex-info "HTTP wrapper"
+                                                       {}
+                                                       (ex-info
+                                                         "Stream ended before terminal marker."
+                                                         (assoc data
+                                                           :type :svar.core/stream-truncated)))))}
+                      #(try (#'lp/ask-code-with-first-output-timeout! {} {} {} 1000)
+                            (catch Exception e e)))]
+          (expect (= expected (:stream-output (ex-data error))))
+          (expect (= (= :reasoning expected) (#'lp/reasoning-only-stream-retryable? error 0)))
+          (expect (false? (#'lp/reasoning-only-stream-retryable? error 2))))))
+  (it "does not reinterpret cancellation, incomplete responses or watchdogs as EOF"
+      (doseq [error-type [:svar.core/stream-cancelled :svar.core/stream-incomplete
+                          :svar.core/stream-semantic-timeout]]
+        (let [error (ex-info "Stopped" {:type error-type :stream-output :reasoning})]
+          (expect (false? (#'lp/reasoning-only-stream-retryable? error 0)))))))
+
+(defdescribe
+  reasoning-only-stream-no-replay-test
+  (doseq [phase [:form-start :tool-start :form-result :content :assistant-prose]]
+    (it (str "does not replay after " (name phase))
+        (let [environment (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+              tid (persistance/db-store-session-turn! (:db-info environment)
+                                                      {:parent-session-id (:session-id environment)
+                                                       :user-request "do not replay"})
+              calls (atom 0)
+              chunks (atom [])]
+
+          (try (let [result
+                     (with-redefs-fn {#'lp/run-iteration
+                                      (fn [_ _ opts]
+                                        (swap! calls inc)
+                                        ((:on-chunk opts)
+                                          {:phase phase :iteration 1 :delta "started"})
+                                        (throw (ex-info "Stream ended before terminal marker."
+                                                        {:type :svar.core/stream-truncated
+                                                         :stream-output :reasoning})))}
+                       #(lp/iteration-loop environment
+                                           "do not replay"
+                                           {:session-turn-id tid
+                                            :hooks {:on-chunk (fn [chunk]
+                                                                (swap! chunks conj chunk))}}))]
+                 (expect (= :error (:status result)))
+                 (expect (= 1 @calls))
+                 (expect (empty? (filter #(= :provider-retry-reset (:phase %)) @chunks))))
+               (finally (lp/dispose-environment! environment)))))))
+
+;; Regression: session e05334de-291b-4457-aab5-7206d0cb7e5e stopped after
+;; reasoning-only EOF, although the preceding tool results were complete.
+(defdescribe
+  reasoning-only-stream-recovery-test
+  (doseq [[mode expected-status expected-calls expected-retries]
+          [[:recover :success 3 1] [:exhaust :error 4 2] [:content :error 2 0]
+           [:tool-input :error 2 0] [:tool-call-preview :error 2 0] [:tool-calls :error 2 0]
+           [:stop :cancelled 2 0] [:stop-retry :cancelled 2 1]]]
+    (it
+      (name mode)
+      (let
+        [cancelled (atom false)
+         environment (assoc (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+                       :cancel-atom cancelled)
+         db (:db-info environment)
+         tid (persistance/db-store-session-turn! db
+                                                 {:parent-session-id (:session-id environment)
+                                                  :user-request "stream recovery"})
+         requests (atom [])
+         chunks (atom [])
+         code
+         "stream_retry_runs = globals().get('stream_retry_runs', 0) + 1\nprint(stream_retry_runs)"
+         partial-code "print('must not execute')"]
+
+        (try
+          (let [result
+                (with-redefs-fn
+                  {#'lp/STREAM_RECOVERY_RETRY_DELAYS_MS [0 0]
+                   #'svar/ask-code!
+                   (fn [_ opts]
+                     (let [call (count (swap! requests conj (:messages opts)))]
+                       (cond
+                         (= 1 call) {:stop-reason :tool-calls
+                                     :tool-calls
+                                     [{:id "once" :name "python_execution" :input {:code code}}]}
+                         (and (= :recover mode) (= 3 call))
+                         (do ((:on-chunk opts) {:reasoning "replacement reasoning"})
+                             {:stop-reason :end :content "Recovered without repeating the tool."})
+                         :else
+                         (do ((:on-chunk opts) {:reasoning "interrupted reasoning"})
+                             (when (#{:content :tool-input :tool-call-preview :tool-calls} mode)
+                               ((:on-chunk opts)
+                                 {mode (case mode
+                                         :tool-call-preview
+                                         {:name "python_execution"}
+
+                                         :tool-calls
+                                         [{:name "python_execution" :input {:code partial-code}}]
+
+                                         partial-code)})
+                               ;; Later empty frames or reasoning must not erase earlier tool input.
+                               ((:on-chunk opts)
+                                 {:content "" :tool-input "" :reasoning "later reasoning"}))
+                             (when (= :stop mode) (reset! cancelled true))
+                             (throw (ex-info "Stream ended before terminal marker."
+                                             {:type :svar.core/stream-truncated
+                                              :reasoning-acc-len 21
+                                              :content-acc-len
+                                              (if (= :content mode) (count partial-code) 0)
+                                              :stream-finalization {:terminal? false
+                                                                    :last-event-type "ping"}}))))))}
+                  #(lp/iteration-loop environment
+                                      "stream recovery"
+                                      {:session-turn-id tid
+                                       :cancel-atom cancelled
+                                       :hooks {:on-chunk (fn [chunk]
+                                                           (swap! chunks conj chunk)
+                                                           (when (and (= :stop-retry mode)
+                                                                      (= :provider-retry-reset
+                                                                         (:phase chunk)))
+                                                             (reset! cancelled true)))}}))
+                iterations (persistance/db-list-session-turn-iterations db tid)
+                forms (mapcat :forms iterations)
+                retries (filter #(= :provider-retry-reset (:phase %)) @chunks)]
+
+            (expect (= expected-status (or (:status result) :success)))
+            (expect (= expected-calls (count @requests)))
+            (expect (= expected-retries (count retries)))
+            (expect (= [code] (mapv :src forms)))
+            (expect (= "1" (str/trim (:stdout (first forms)))))
+            (doseq [retry retries]
+              (expect (= 2 (:iteration retry)))
+              (expect (= :stream-truncated-reasoning (get-in retry [:event :reason]))))
+            (when (= :recover mode)
+              (expect (= (second @requests) (nth @requests 2)))
+              (expect (= ["interrupted reasoning" "replacement reasoning"]
+                         (vec (keep :delta
+                                    (filter #(and (= :reasoning (:phase %)) (seq (:delta %)))
+                                            @chunks)))))
+              (expect (str/includes? (str (:answer result)) "Recovered without repeating")))
+            (when (= :error expected-status)
+              (let [message (get (first (:answer result)) "message")]
+                (expect (str/includes? message "connection ended"))
+                (expect (str/includes?
+                          message
+                          (if (= :exhaust mode) "after 2 retries" "answer text or tool input"))))))
           (finally (lp/dispose-environment! environment)))))))
 
 (defdescribe

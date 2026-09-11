@@ -340,6 +340,12 @@
   (contains? #{:svar.core/stream-semantic-timeout :svar.core/stream-idle-timeout}
              (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn stream-truncated-error?
+  "True when the upstream stream ended without its completion marker, not when
+   Vis deliberately stopped waiting. Uses Svar's typed outcome, never message text."
+  [err]
+  (= :svar.core/stream-truncated (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
 (defn pre-output-stream-abort?
   "True when one of svar's TYPED stream watchdogs fired: `ttft` (no response
    header), `idle` (no bytes) or `semantic` (no model progress) —
@@ -506,6 +512,22 @@
 
 (declare provider-error-kind)
 
+(defn- stream-recovery-explanation
+  [err]
+  (let [{:keys [attempts declined]} (:stream-recovery (or (:data err) (ex-data err) err))]
+    (case declined
+      :retry-budget-exhausted
+      (str " Automatic recovery stopped after " attempts " retries.")
+
+      :output-started
+      (str " Automatic recovery was skipped because answer text or tool input had already "
+           "streamed, or tool execution had started. Replay could duplicate output or actions.")
+
+      :not-reasoning-only
+      " Automatic recovery was skipped because this was not a verified reasoning-only interruption."
+
+      "")))
+
 (defn provider-error-explanation
   "The `WHAT HAPPENED:` prose line — the single canonical human sentence for this
    failure, shared by every surface. The actionable step lives in
@@ -563,6 +585,10 @@
            "checked. Either the pinned provider/model is not in this session's routing "
            "config, or every candidate was already out of rotation: dropped earlier in "
            "this turn, or still cooling down after repeated failures.")
+      (stream-truncated-error? err)
+      (str "WHAT HAPPENED: the upstream connection ended before the provider's completion marker. "
+           "Vis did not stop this request for a timeout. Your completed tool results are intact."
+           (stream-recovery-explanation err))
       (stream-timeout-error? err)
       (let [data
             (or (:data err) (ex-data err))
@@ -574,11 +600,12 @@
             (= :svar.core/stream-semantic-timeout
                (or (:type (:data err)) (:type err) (:type (ex-data err))))]
 
-        (str "WHAT HAPPENED: the stream stalled — "
+        (str "WHAT HAPPENED: the stream went quiet and Vis stopped waiting — "
              (if semantic? "no model progress" "no bytes")
              (when budget-ms (str " for " (long (/ (long budget-ms) 1000)) "s"))
              ". The model was likely still reasoning. Nothing was rejected; your "
-             "transcript and tool results are intact."))
+             "transcript and tool results are intact."
+             (stream-recovery-explanation err)))
       (refusal-error? err) (let [details
                                  (refusal-stop-details err)
 
@@ -745,7 +772,9 @@
       "Provider gateway unavailable"
 
       :stream-interrupted
-      "Provider stream interrupted"
+      (if (stream-truncated-error? err)
+        "Provider connection ended early"
+        "Provider stream interrupted")
 
       :upstream-timeout
       "Provider request timed out"
@@ -788,6 +817,9 @@
            "its premium models out of rotation for the whole cooldown). Then pick a model "
            "this account can still use, or fix the provider/model pin; an unchanged retry "
            "can only help once the cooldown ends.")
+
+      :stream-interrupted
+      "NEXT STEP: review the last output, then Continue. If it repeats, switch provider/model."
 
       :stream-timeout
       (if (= :svar.core/stream-semantic-timeout (:type data))
