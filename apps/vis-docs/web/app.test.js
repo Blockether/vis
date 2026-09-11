@@ -99,7 +99,23 @@ test('release controls retain pointer and touch targets without replacing native
   for(const [selector,property,value] of [['.version-picker select','height','2.75rem'],['.release-history a','min-height','1.75rem'],['.install-section summary','min-height','1.75rem']]) expect(rules.find(rule=>rule.selectorText===selector).style.getPropertyValue(property)).toBe(value);
   for(const selector of ['.release-history a','.install-section summary']) expect(touch.find(rule=>rule.selectorText===selector).style.getPropertyValue('min-height')).toBe('2.75rem');
 });
-
+test('extension detail spacing overrides prose margins without changing README typography', () => {
+  document.body.innerHTML=shellHTML({item:{...item,releases:[item],latest_version:item.version}});
+  const style=document.createElement('style');
+  style.textContent=readFileSync('../../resources/vis-docs/assets/theme.css','utf8')+'\n'+readFileSync('web/style.css','utf8');
+  document.body.append(style);
+  const css=selector=>window.getComputedStyle($(selector));
+  expect(css('.back-button').display).toBe('inline-flex');
+  expect(css('.detail-heading h1').marginBottom).toBe('1rem');
+  expect(css('.install-section').gap).toBe('1rem');
+  expect(css('.install-section > h2').marginTop).toBe('0px');
+  expect(css('#version-help').marginTop).toBe('0px');
+  expect(css('#install-command').marginTop).toBe('0px');
+  expect(css('.detail-heading p').textAlign).toBe('start');
+  expect(css('#version-help').textAlign).toBe('start');
+  expect(css('.release-history ol').marginTop).toBe('0.5rem');
+  expect(css('.package-readme p').textAlign).toBe('justify');
+});
 test('repository anti-spam check is separated from the review button', () => {
   const style=document.createElement('style');
   style.textContent=readFileSync('web/style.css','utf8');

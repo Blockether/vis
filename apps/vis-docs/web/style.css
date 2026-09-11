@@ -40,7 +40,14 @@ kbd { position: absolute; right: .625rem; top: 50%; transform: translateY(-50%);
 .empty { grid-column: 1 / -1; }
 .content .empty h2 { border: 0; padding: 0; margin: 1rem 0; }
 .back-button, button.quiet { border-color: transparent; background: transparent; color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
-.back-button { margin: 0 0 1.5rem; padding-left: 0; }
+.back-button { display: inline-flex; align-items: center; min-height: 2.75rem; margin: 0 0 1rem; padding-left: 0; }
+.content .detail-heading h1 { margin-bottom: 1rem; }
+.content .detail-heading p { margin: 0 0 1rem; }
+.content :is(#catalog-page, .detail-heading, .install-section, .project-details, .community) p { text-align: start; hyphens: none; }
+.install-section { display: grid; gap: 1rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line-soft); }
+.content .install-section > * { margin: 0; }
+.content .install-section > h2 { padding: 0; border: 0; }
+.install-section > button { justify-self: start; }
 .detail-heading h1:focus { outline: none; }
 .detail-heading > .tag { margin-right: 1rem; }
 .facts { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,3fr); margin: 1.4rem 0; border: 1px solid var(--line); font-size: var(--text-small); line-height: 1.5; }
@@ -52,7 +59,7 @@ kbd { position: absolute; right: .625rem; top: 50%; transform: translateY(-50%);
 .topics { margin-top: 1.4rem; }
 .dependencies { font-size: var(--text-small); }
 .help { font-size: var(--text-small); color: var(--dim); }
-.content .security-note { margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid var(--primary); font-size: var(--text-small); color: var(--dim); text-align: start; }
+.content .security-note { padding-left: 1rem; border-left: 2px solid var(--primary); font-size: var(--text-small); color: var(--dim); text-align: start; }
 .notice:empty { display: none; }
 .notice { color: var(--dim); font-size: var(--text-small); }
 dialog.content { --dialog-padding: 1.5rem; position: fixed; inset: 0; width: min(38rem,calc(100% - 3rem)); max-width: none; max-height: calc(100dvh - 3rem); padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); overflow: hidden; }
@@ -72,8 +79,9 @@ dialog form label { display: block; margin-top: 1.25rem; }
 .version-picker { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
 .version-picker select { flex: 1; min-width: 0; max-width: 100%; width: 16rem; height: 2.75rem; padding: 0 .5rem; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); }
 .release-history { margin: 1rem 0; }
-.release-history ol { padding-left: 1.5rem; }
-.release-history li { margin: 1rem 0; overflow-wrap: anywhere; }
+.content .release-history ol { margin: .5rem 0 0; padding-left: 1.5rem; }
+.content .release-history li { margin: 0; overflow-wrap: anywhere; }
+.content .release-history li + li { margin-top: 1rem; }
 .release-history li > * { margin-right: .75rem; }
 .release-history .help { display: block; }
 .release-history a { display: inline-flex; align-items: center; min-width: 1.75rem; min-height: 1.75rem; }
@@ -106,6 +114,9 @@ dialog form label { display: block; margin-top: 1.25rem; }
   .navtoggle:not(:checked) ~ .shell .side { visibility: hidden; }
   .toolbar { grid-template-columns: minmax(0,1fr); gap: .5rem; }
   .search-field input { padding-right: .625rem; }
+  .version-picker { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: .5rem .75rem; }
+  .version-picker label { grid-column: 1 / -1; }
+  .version-picker select { width: 100%; }
   kbd { display: none; }
 }
 @media (max-width: 820px), (pointer: coarse) and (max-height: 560px) {
