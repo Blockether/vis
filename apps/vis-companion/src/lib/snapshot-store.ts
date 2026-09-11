@@ -116,42 +116,65 @@ export function hydrateSnapshots(stores: SnapshotStores): void {
   }
 }
 
+// Gateway reconciliation replaces changed transcript arrays instead of mutating
+// them. Reuse their encoded tail when a small session poll triggers another flush.
+// Weak keys release evicted history; oversized tails retain only a rejection marker.
+const encodedTranscripts = new WeakMap<unknown[], string | null>();
+
+function encodeTranscript(turns: unknown[]): string | null {
+  const cached = encodedTranscripts.get(turns);
+  if (cached !== undefined) return cached;
+  const encoded = JSON.stringify(turns.slice(-MAX_TURNS_PER_SESSION));
+  const bounded = encoded.length <= MAX_BYTES ? encoded : null;
+  encodedTranscripts.set(turns, bounded);
+  return bounded;
+}
+
 function serialize(stores: SnapshotStores): string {
-  const snapshots: Record<string, unknown> = {};
-  const stamps: Record<string, string> = {};
-  const windows: Record<string, HeldWindow> = {};
-  // Map iteration order IS the LRU order in gateway.ts: oldest first, so the
-  // budget loop below sheds the least recently used session first.
+  const small: Record<string, unknown> = {};
   const transcriptKeys: string[] = [];
   for (const [key, value] of stores.snapshots) {
     const kind = kindOf(key);
     if (!DURABLE_KINDS.has(kind)) continue;
-    if (kind !== 'transcript') {
-      snapshots[key] = value;
-      continue;
-    }
-    const turns = Array.isArray(value) ? (value as unknown[]) : [];
-    const kept = turns.slice(-MAX_TURNS_PER_SESSION);
-    const dropped = turns.length - kept.length;
-    snapshots[key] = kept;
-    transcriptKeys.push(key);
-    const held = stores.windows.get(key);
-    // The window counts rows that exist BEFORE the ones we hold, so trimming the
-    // head has to be added back — otherwise "load earlier" would skip them.
-    if (held) windows[key] = { offset: held.offset + dropped, total: held.total };
-    const stamp = stores.stamps.get(key);
-    if (stamp) stamps[key] = stamp;
+    if (kind === 'transcript') transcriptKeys.push(key);
+    else small[key] = value;
   }
 
-  let payload = JSON.stringify({ v: 1, snapshots, stamps, windows } satisfies PersistedShape);
-  for (const key of transcriptKeys) {
-    if (payload.length <= MAX_BYTES) break;
-    delete snapshots[key];
-    delete stamps[key];
-    delete windows[key];
-    payload = JSON.stringify({ v: 1, snapshots, stamps, windows } satisfies PersistedShape);
+  const smallJson = JSON.stringify(small).slice(1, -1);
+  const snapshots: string[] = [];
+  const stamps: string[] = [];
+  const windows: string[] = [];
+  let length = `{"v":1,"snapshots":{${smallJson}},"stamps":{},"windows":{}}`.length;
+  // Admit the newest suffix within budget, rather than encoding the entire cache
+  // again after each eviction. Once one entry cannot fit, no older entry survives.
+  for (const key of transcriptKeys.reverse()) {
+    if (length >= MAX_BYTES) break;
+    const value = stores.snapshots.get(key);
+    const turns = Array.isArray(value) ? (value as unknown[]) : [];
+    const encoded = encodeTranscript(turns);
+    if (encoded === null) break;
+    const name = JSON.stringify(key);
+    const snapshot = `${name}:${encoded}`;
+    const stamp = stores.stamps.get(key);
+    const stampJson = stamp ? `${name}:${JSON.stringify(stamp)}` : '';
+    const held = stores.windows.get(key);
+    // Trimming the head moves the persisted window's start, not its total.
+    const dropped = Math.max(0, turns.length - MAX_TURNS_PER_SESSION);
+    const windowJson = held
+      ? `${name}:${JSON.stringify({ offset: held.offset + dropped, total: held.total })}`
+      : '';
+    const added = snapshot.length + (smallJson || snapshots.length ? 1 : 0)
+      + stampJson.length + (stampJson && stamps.length ? 1 : 0)
+      + windowJson.length + (windowJson && windows.length ? 1 : 0);
+    if (length + added > MAX_BYTES) break;
+    length += added;
+    snapshots.push(snapshot);
+    if (stampJson) stamps.push(stampJson);
+    if (windowJson) windows.push(windowJson);
   }
-  return payload;
+  // Restore oldest-first insertion order so hydration preserves the gateway LRU.
+  const snapshotJson = [smallJson, ...snapshots.reverse()].filter(Boolean).join(',');
+  return `{"v":1,"snapshots":{${snapshotJson}},"stamps":{${stamps.reverse().join(',')}},"windows":{${windows.reverse().join(',')}}}`;
 }
 
 let timer: ReturnType<typeof setTimeout> | null = null;
