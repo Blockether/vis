@@ -57,18 +57,59 @@ print(session["council"]["default_group_id"])
 ```python
 root = await council.publish(
     "Does this response format affect your work?",
+    kind="coordination",
     title="Response format",
     ping=[other_session_id],
 )
-print(root["id"], root["thread_id"])
+print(root["entry_id"], root["thread_id"])
 
 page = await council.threads(limit=20)
-print(page)  # entries: thread_id, title, author_session_id, created_at
+print(page)  # entries: thread_id, kind, title, author_session_id, created_at
 
 thread_id = root["thread_id"]
 messages = await council.read(thread_id=thread_id, limit=20)
-await council.publish("The format works for my change.", thread_id=thread_id)
+await council.publish("The format works for my change.", kind="informational", thread_id=thread_id)
 ```
+
+## Identifier domains
+
+| Field | Meaning |
+| --- | --- |
+| `entry_id` | Positive, monotonically increasing integer in one Council store. Returned by publish, get, read, previews and publication references. |
+| `thread_id` | The root message's `entry_id`, not an independently generated identity. |
+| `reply_to`, `reply_entry_id` | References to entry IDs, not session IDs or pagination positions. |
+| `after` | Exclusive entry-ID cursor; `0` starts pagination. Use the returned cursor with the same group and thread filter. |
+| `session_id`, `author_session_id`, `ping` targets | Session identities, represented as opaque strings. Use IDs returned by session discovery; explicit ping targets also accept the marked session form. |
+| `group_id` | Opaque string resolved from the persisted project or repository. It can be a project UUID or `workspace:<hash>`; do not parse it or invent a replacement UUID. |
+| `activation_id` | Internal, temporary runtime identity pinned by an SDK handle, not a session or entry ID. |
+
+Entry IDs are store-local, not portable between independent engines. The public entry
+field is `entry_id`, not `id`. SQL's internal primary-key name does not change a
+stored entry's identity. A future backlog can reference an entry; Council does not
+allocate backlog issue IDs.
+
+## Information kinds
+
+Every publication, including a reply, requires one `kind`:
+
+| Kind | Use |
+| --- | --- |
+| `potential_issue` | An unverified concern worth investigating. Include the observation, available evidence and uncertainty; do not present it as a confirmed defect. |
+| `coordination` | Work ownership, questions, dependencies and requests for cooperation. |
+| `informational` | Findings, results, factual updates and decisions. |
+
+Kind belongs to a **message**, not a thread. A thread can contain all three kinds;
+`threads()` reports its root message's kind, not a classification of every reply.
+Missing, null and unknown kinds are rejected. Existing messages predating this field
+are informational; new publications must classify themselves explicitly.
+
+Kind never selects recipients, requests a reply or changes wake behavior. A
+`potential_issue` is persisted in the Council log, but does not create a tracker
+issue, an actionable backlog item or an authorization to fix it. There is no issue
+status, priority, assignee or separate backlog lifecycle yet. Questions are coordination;
+answers and decisions are usually informational. Do not add a type just to request a reply.
+
+## Thread structure
 
 Omitting `thread_id` creates a root; its entry ID is also its thread ID.
 Passing it appends a flat continuation. It must identify a root in the selected
@@ -95,7 +136,7 @@ A continuation with `thread_id` and no ping, including `ping=[]`, automatically
 answers the latest entry in that thread addressed to the publishing session, if it
 is an unanswered request. The request may be optional or required. The returned
 entry has `reply_to` and notifies only that request's author, not the thread root
-author or all participants. An explicit ping selector or `reply_required=True`
+author or all participants. A nonempty ping selector or `reply_required=True`
 starts a separate notification or request instead of inferring a reply.
 
 Each recipient can answer a request once. If the latest addressed entry is itself a
@@ -142,6 +183,7 @@ The returned `ping` list records intent, not proof of a response.
 ```python
 request = await council.publish(
     "Do you have evidence for this issue?",
+    kind="coordination",
     title="Issue evidence",
     ping=[other_session_id],
     reply_required=True,
@@ -149,7 +191,7 @@ request = await council.publish(
 print(request["replies"])
 
 # Recipient: reply_to chooses the thread and notifies the requester.
-reply = await council.publish("I do not have that context.", reply_to=request["id"])
+reply = await council.publish("I do not have that context.", kind="informational", reply_to=request["entry_id"])
 ```
 
 `reply_required=True` requires at least one recipient. The first invocation that
@@ -196,12 +238,12 @@ a synchronous, typed handle:
 ```python
 conversation = sdk_session.council()  # optional group_id=...
 participants = conversation.members()
-entry = conversation.publish("Checking the change", title="Checks", idempotency_key="check-1")
+entry = conversation.publish("Checking the change", kind="coordination", title="Checks", idempotency_key="check-1")
 page = conversation.threads()
 thread_id = page.entries[0].thread_id
 messages = conversation.read(thread_id=thread_id)
-conversation.publish("Tests passed", thread_id=thread_id)
-full = conversation.get(entry.id)
+conversation.publish("Tests passed", kind="informational", thread_id=thread_id)
+full = conversation.get(entry.entry_id)
 ```
 
 Acquire a publishing handle while the session is active. The handle pins its group
@@ -213,7 +255,7 @@ notifications can submit turns; reads, ordinary unpinged publications and broadc
 For a retriable publication, supply an `idempotency_key` (at most 256 UTF-8 bytes).
 Retry the identical request through the same handle. The original entry ID and frozen
 recipient snapshot are returned even after participants become inactive; required reply
-states reflect their current values. Changing content, title, thread, group, activation,
+states reflect their current values. Changing kind, content, title, thread, group, activation,
 ping selector, `reply_required` or `reply_to` returns `idempotency-conflict`. Keys are
 author-scoped; a replay does not append another entry or notify recipients again.
 

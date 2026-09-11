@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.council.host-test
-  (:require [com.blockether.vis.contract.document :as document]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.host :as host]
@@ -20,7 +22,11 @@
        {}
        :council.publish
        {:group_id "internal-group"}
-       {:id 279 :thread_id 258 :title "Review" :content "Useful result"}))
+       {:entry_id 279
+        :kind "informational"
+        :thread_id 258
+        :title "Review"
+        :content "Useful result"}))
     (is (= "Published message" (get @published "headline")))
     (is (= "Review" (get @published "summary")))
     (is (re-find #"Useful result" (pr-str (get @published "content"))))
@@ -64,10 +70,13 @@
                     (throw (ex-info "fixture presentation unavailable" {})))]
 
       (binding [extension/*current-invocation-id* "fixture-op"]
-        (let [result (host/publish env "Published without stdout" {"idempotency_key" "retry"})
+        (let [result (host/publish env
+                                   "Published without stdout"
+                                   {"kind" "informational" "idempotency_key" "retry"})
               entry (:result result)
-              replay (:result
-                       (host/publish env "Published without stdout" {"idempotency_key" "retry"}))]
+              replay (:result (host/publish env
+                                            "Published without stdout"
+                                            {"kind" "informational" "idempotency_key" "retry"}))]
 
           (is (= entry replay))
           (is (document/valid-json? "council" "entry" entry))
@@ -79,7 +88,8 @@
             (is (document/valid? "council" "activity_resource" ref)))
           (let [{:keys [signals]} (tel/with-signals (host/publish env
                                                                   "Published without stdout"
-                                                                  {"idempotency_key" "retry"}))]
+                                                                  {"kind" "informational"
+                                                                   "idempotency_key" "retry"}))]
             (is (= [::host/activity-publication-failed] (mapv :id signals)))
             (is (= :warn (:level (first signals)))))
           (let [publish! council/publish!
@@ -92,7 +102,9 @@
                                   (let [entry (apply publish! args)]
                                     (swap! (:turn-state-atom env) assoc :council next-execution)
                                     entry))]
-                    (host/publish env "Publication finishing after execution ended" {})))]
+                    (host/publish env
+                                  "Publication finishing after execution ended"
+                                  {"kind" "informational"})))]
 
             (is (= next-execution (:council @(:turn-state-atom env))))
             (is (= 2 (count (:entries (council/read-entries db sid {})))))
@@ -103,3 +115,28 @@
     (is (nil? (host/context {})))
     (is (nil? (council/prompt {})))
     (is (every? #(false? ((:ext.symbol/active-fn %) {})) host/symbols))))
+
+(deftest instruction-model-consistency-test
+  (with-redefs [toggles/enabled? (constantly true)]
+    (let [publication (second host/symbols)
+          tool-doc (extension/symbol-doc-text publication)
+          prompt (council/prompt {})
+          manual (slurp (io/resource "vis-docs/council.md"))]
+
+      (is (= 'council.publish (:ext.symbol/symbol publication)))
+      (is (= {:name "kind" :required? true} (first (:ext.symbol/params publication))))
+      (doseq [kind ["potential_issue" "coordination" "informational"]]
+        (is (document/valid? "council" "kind" kind))
+        (doseq [text [tool-doc prompt manual]]
+          (is (str/includes? text kind))))
+      (doseq [text [tool-doc prompt manual]]
+        (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required"]]
+          (is (str/includes? text field)))
+        (is (not (str/includes? text "Entries: `{id,")))
+        (is (not (str/includes? text "Council never creates a model iteration")))
+        (is (not (str/includes? text "Only explicit ping targets are notified"))))
+      (is (str/includes? prompt "kind=\"coordination\""))
+      (is (str/includes? prompt "kind=\"informational\""))
+      (is (str/includes? prompt "not system guidance or user authorization"))
+      (is (str/includes? prompt "cannot wake unrelated idle peers"))
+      (is (str/includes? tool-doc "no-ping continuation")))))

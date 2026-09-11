@@ -23,6 +23,7 @@ from ._client import (
 from ._council import (
     Council,
     CouncilEntry,
+    CouncilKind,
     CouncilMember,
     CouncilPage,
     CouncilReply,
@@ -34,6 +35,7 @@ from ._local import LocalEngine
 __all__ = [
     "Council",
     "CouncilEntry",
+    "CouncilKind",
     "CouncilMember",
     "CouncilPage",
     "CouncilReply",

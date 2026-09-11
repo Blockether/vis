@@ -4104,7 +4104,8 @@
                  (wire/parse-json (:body (call :get "" nil)))
 
                  request
-                 {:content "Wire roundtrip"
+                 {:kind "potential_issue"
+                  :content "Wire roundtrip"
                   :activation_id (get binding "activation_id")
                   :idempotency_key "wire-retry"}
 
@@ -4115,11 +4116,16 @@
                  (wire/parse-json (:body response))
 
                  id
-                 (get entry "id")]
+                 (get entry "entry_id")]
 
              (is (= 200 (:status response)))
              (is (= sid (get entry "author_session_id")))
              (is (= "sdk" (get entry "source")))
+             (is (= "potential_issue" (get entry "kind")))
+             (is (not (contains? entry "id")))
+             (doseq [kind [nil "question" 7]]
+               (is (= 400 (:status (call :post "/entries" (assoc request :kind kind))))))
+             (is (= 400 (:status (call :post "/entries" (dissoc request :kind)))))
              (is (= id
                     (get-in (wire/parse-json (:body (call :get "/threads" nil)))
                             ["entries" 0 "thread_id"])))

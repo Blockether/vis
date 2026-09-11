@@ -1823,3 +1823,61 @@ exclude concurrent documentation/CSS work. A coordinated engine/SDK release is n
 distribute the new declaration. Release handoff was requested on council thread 311; the docs
 session declined because it needs direct user authorization in its own conversation. Release
 remains pending; this task does not tag or publish distributions.
+
+# Council information model and instruction consistency
+
+Phrase: explicit entry identities and per-message information kinds.
+
+## Context
+
+Council spans `internal/council`, SQLite persistence, the canonical Council schema,
+Python SDK and `resources/vis-docs/council.md`. Public entries currently use `id`
+while getters and reply obligations use `entry_id`; messages have no information
+kind. Installed prompts can predate checkout behavior. Preserve current reply and
+wake semantics, stored identities and unrelated TUI work. Do not add a backlog,
+UUID/cursor pair, extra message kinds or compatibility aliases.
+
+## 1. Define and test the model
+- Rationale: make identity domains and information classification explicit.
+- Data: active-agent consultation; 48 existing Council tests pass before changes.
+- Acceptance criteria: public `entry_id`, root-derived `thread_id`, required per-message `kind` with potential_issue, coordination and informational; invalid requests rejected.
+- Unknowns: existing-store schema reconciliation must preserve history.
+
+## 2. Update all Council boundaries and instructions
+- Rationale: schema, storage, SDK, tools, notifications and prompts must agree.
+- Data: canonical JSON/schema, host registration, gateway wake text, SDK and served docs.
+- Acceptance criteria: type survives persistence, pages, previews and retries; all examples use current identifiers and classification; prompt regressions enforce the contract.
+- Unknowns: running installations will need the updated build, not a live restart in this task.
+
+## 3. Verify and finish
+- Rationale: public model changes need real boundary coverage.
+- Data: affected JVM and SDK tests, formatting/lint/reflection, documentation/link/diff checks.
+- Acceptance criteria: verified scoped commit/push where project authorization applies; preserve other sessions' changes.
+- Unknowns: report unavailable native integration checks without claiming a deployed runtime.
+
+## Plan state
+
+Implementation and cross-validation complete. Public Council entries, previews and publication references use
+`entry_id`; the root entry remains the thread identity. New publications require a
+per-message `kind`: potential_issue, coordination or informational. SQL, canonical
+schema, SDK types, host bindings, notifications, completion/wake prompts and docs agree.
+Existing history remains readable with informational classification. No backlog,
+compatibility alias, UUID conversion or reply/wake policy change was added.
+
+Verification: 50 Council tests passed, including required-reply Python/loop boundaries,
+invalid identity/type validation and existing-store preservation. Final cross-validation
+passed all 1049 affected JVM tests after regenerating the Activity fixture from the
+production presenter. The Activity/docs checks are included in that passing run. The shared
+fixture passed 284 TUI render/HTML parity tests. SDK source tests passed 454 with 13
+optional skips on standalone Python; the affected real HTTP/stdio Council suite then
+passed all 8 tests against this checkout's JVM engine. Formatting, lint/reflection and
+diff checks passed. A full embedded-Python SDK run crashed during an existing HTTP
+fixture shutdown; the targeted 67 SDK/API tests passed there, and the complete source
+suite passed on standalone Python. No native image or distributed SDK build was made.
+
+Checkout started on main at 6bb7321b4. Active peers were consulted on Council thread 339;
+two supported explicit entry IDs and per-message classification. Existing and concurrent
+TUI, Companion and documentation-app work remains outside scope. The user explicitly
+authorized the scoped commit and push after cross-validation.
+No live gateway restart or release was requested or performed; running installations
+need a matching engine/SDK update before using the new publication contract.

@@ -72,8 +72,7 @@
           "minLength": 1
         },
         "thread_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "activation_id": {
           "type": [
@@ -86,12 +85,15 @@
           "type": "boolean"
         },
         "reply_to": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
         }
       },
       "required": [
-        "content"
+        "content",
+        "kind"
       ],
       "additionalProperties": false
     },
@@ -103,12 +105,10 @@
           "minLength": 1
         },
         "thread_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "after": {
-          "type": "integer",
-          "minimum": 0
+          "$ref": "#/$defs/cursor"
         },
         "limit": {
           "type": "integer",
@@ -123,8 +123,7 @@
       "type": "object",
       "properties": {
         "entry_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "group_id": {
           "type": "string",
@@ -247,13 +246,8 @@
     "entry": {
       "type": "object",
       "properties": {
-        "id": {
-          "type": "integer",
-          "minimum": 1
-        },
         "thread_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "group_id": {
           "type": "string",
@@ -297,8 +291,7 @@
           "type": "boolean"
         },
         "reply_to": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "replies": {
           "type": "array",
@@ -306,17 +299,24 @@
           "items": {
             "$ref": "#/$defs/reply_state"
           }
+        },
+        "entry_id": {
+          "$ref": "#/$defs/entry_id"
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
         }
       },
       "required": [
-        "id",
+        "entry_id",
         "thread_id",
         "group_id",
         "content",
         "author_session_id",
         "created_at",
         "source",
-        "ping"
+        "ping",
+        "kind"
       ],
       "additionalProperties": false
     },
@@ -324,8 +324,7 @@
       "type": "object",
       "properties": {
         "thread_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "title": {
           "type": "string",
@@ -338,26 +337,25 @@
         "created_at": {
           "type": "integer",
           "minimum": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
         }
       },
       "required": [
         "thread_id",
         "title",
         "author_session_id",
-        "created_at"
+        "created_at",
+        "kind"
       ],
       "additionalProperties": false
     },
     "preview": {
       "type": "object",
       "properties": {
-        "id": {
-          "type": "integer",
-          "minimum": 1
-        },
         "thread_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "group_id": {
           "type": "string",
@@ -382,31 +380,32 @@
           "type": "boolean"
         },
         "reply_to": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/entry_id"
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
         }
       },
       "required": [
-        "id",
+        "entry_id",
         "thread_id",
         "group_id",
         "content",
         "author_session_id",
         "created_at",
-        "truncated"
+        "truncated",
+        "kind"
       ],
       "additionalProperties": false
     },
     "publication_ref": {
       "type": "object",
       "properties": {
-        "id": {
-          "type": "integer",
-          "minimum": 1
-        },
         "thread_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "group_id": {
           "type": "string",
@@ -414,12 +413,19 @@
         },
         "source_ref": {
           "$ref": "#/$defs/source_ref"
+        },
+        "entry_id": {
+          "$ref": "#/$defs/entry_id"
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
         }
       },
       "required": [
-        "id",
+        "entry_id",
         "thread_id",
-        "group_id"
+        "group_id",
+        "kind"
       ],
       "additionalProperties": false
     },
@@ -455,8 +461,7 @@
           }
         },
         "after": {
-          "type": "integer",
-          "minimum": 0
+          "$ref": "#/$defs/cursor"
         },
         "has_more": {
           "type": "boolean"
@@ -480,8 +485,7 @@
           }
         },
         "after": {
-          "type": "integer",
-          "minimum": 0
+          "$ref": "#/$defs/cursor"
         },
         "has_more": {
           "type": "boolean"
@@ -505,8 +509,7 @@
           }
         },
         "after": {
-          "type": "integer",
-          "minimum": 0
+          "$ref": "#/$defs/cursor"
         },
         "has_more": {
           "type": "boolean"
@@ -543,8 +546,7 @@
           ]
         },
         "reply_entry_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         }
       },
       "required": [
@@ -557,12 +559,10 @@
       "type": "object",
       "properties": {
         "entry_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "thread_id": {
-          "type": "integer",
-          "minimum": 1
+          "$ref": "#/$defs/entry_id"
         },
         "author_session_id": {
           "type": "string",
@@ -580,6 +580,24 @@
         "due_iteration"
       ],
       "additionalProperties": false
+    },
+    "entry_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic entry identity within one Council store; not a session or group ID."
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Exclusive entry-ID cursor; zero starts a page. Keep the same group and filters."
+    },
+    "kind": {
+      "enum": [
+        "potential_issue",
+        "coordination",
+        "informational"
+      ],
+      "description": "Per-entry information classification, independent of recipients and reply obligations."
     }
   }
 }

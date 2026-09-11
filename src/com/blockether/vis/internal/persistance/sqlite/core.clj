@@ -4855,7 +4855,8 @@
                                    :where [:in :entry_id (mapv :id rows)]
                                    :order-by [:entry_id :recipient_sid]})))]
     (mapv (fn [row]
-            (cond-> {:id (:id row)
+            (cond-> {:entry_id (:id row)
+                     :kind (:kind row)
                      :thread_id (or (:thread_id row) (:id row))
                      :group_id (:group_id row)
                      :author_session_id (:author_sid row)
@@ -4989,7 +4990,7 @@
         rows
         (into (if root [root] [])
               (query! db
-                      {:select (if roots? [:id :title :author_sid :created_at] [:*])
+                      {:select (if roots? [:id :kind :title :author_sid :created_at] [:*])
                        :from [:council_entry]
                        :where (cond-> [:and [:= :group_id gid] [:> :id after]]
                                 roots?
@@ -5004,6 +5005,7 @@
       (mapv (fn [r]
               {:thread_id (:id r)
                :title (:title r)
+               :kind (:kind r)
                :author_session_id (:author_sid r)
                :created_at (:created_at r)})
             rows)
@@ -5020,9 +5022,9 @@
             (:reply_to row)
             (assoc :reply_to (:reply_to row))))
         (query! db
-                {:select [:e.id [[:coalesce :e.thread_id :e.id] :thread_id] :e.group_id
-                          [:e.author_sid :author_session_id] :e.created_at :e.reply_required
-                          :e.reply_to [[:substr :e.content 1 1025] :content]
+                {:select [[:e.id :entry_id] :e.kind [[:coalesce :e.thread_id :e.id] :thread_id]
+                          :e.group_id [:e.author_sid :author_session_id] :e.created_at
+                          :e.reply_required :e.reply_to [[:substr :e.content 1 1025] :content]
                           [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
                  :from [[:council_ping :p]]
                  :join [[:council_entry :e] [:= :e.id :p.entry_id]]

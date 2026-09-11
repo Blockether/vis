@@ -71,7 +71,8 @@
                   db
                   #(council/runtime db)
                   {:session-id aid :activation-id (:activation-id active) :source "sdk"}
-                  {:content "Do you have evidence for the reported issue?"
+                  {:kind "coordination"
+                   :content "Do you have evidence for the reported issue?"
                    :ping [bid]
                    :reply_required true})
 
@@ -84,13 +85,13 @@
                 (str "pending = session['council']['pending_replies']\n"
                      "assert len(pending) == 1\n"
                      "assert pending[0]['entry_id'] == "
-                     (:id request)
+                     (:entry_id request)
                      "\n"
                      "assert pending[0]['due_iteration'] == 1\n"
-                     "await council.publish('I do not have evidence.', "
+                     "await council.publish('I do not have evidence.', kind='informational', "
                      reply-mode
                      "="
-                     (:id request)
+                     (:entry_id request)
                      ")\n")
 
                 result
@@ -116,7 +117,7 @@
                 (ps/db-list-session-turn-iterations db tid)
 
                 request-now
-                (council/get-entry db aid {:entry_id (:id request)})
+                (council/get-entry db aid {:entry_id (:entry_id request)})
 
                 reply-id
                 (get-in request-now [:replies 0 :reply_entry_id])]
@@ -126,7 +127,7 @@
             (is (= 3 @calls)
                 "Neither premature final prose nor an unrelated tool block is accepted")
             (is (str/includes? (pr-str (:forms (first iterations))) "Council reply required"))
-            (is (= [(:id request)]
+            (is (= [(:entry_id request)]
                    (mapv :entry_id (:pending_replies (:council-input (first iterations))))))
             (is (str/includes? (pr-str (first @prompts)) "pending_replies"))
             (is (= "replied" (get-in request-now [:replies 0 :state])))
@@ -147,7 +148,7 @@
                                           ["sender" 0]
                                           8192)]
 
-              (is (= [reply-id] (mapv :id (:entries notification)))))))
+              (is (= [reply-id] (mapv :entry_id (:entries notification)))))))
         (finally (#'state/drop-session! aid)
                  (#'state/drop-session! bid)
                  (lp/dispose-environment! b)

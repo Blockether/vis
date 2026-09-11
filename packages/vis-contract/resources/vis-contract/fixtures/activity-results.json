@@ -159,7 +159,7 @@
       "resources": []
     },
     {
-      "result_summary": "{:title \"Activity review\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}",
+      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}",
       "id": "result-4",
       "summary": "Activity review",
       "signal": "observation",
@@ -169,6 +169,19 @@
         "headline": "Published message",
         "summary": "Activity review",
         "content": [
+          {
+            "type": "table",
+            "columns": [
+              "Message",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Kind",
+                "informational"
+              ]
+            ]
+          },
           {
             "type": "heading",
             "text": "Content"
@@ -197,7 +210,7 @@
         },
         {
           "kind": "result",
-          "text": "{:title \"Activity review\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}"
+          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}"
         }
       ],
       "resources": []

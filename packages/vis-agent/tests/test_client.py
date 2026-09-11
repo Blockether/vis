@@ -481,7 +481,8 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
             seen.add((words[0], words[1]))
     # Council intentionally lives on a session-bound handle rather than raw client mutations.
     entry = {
-        "id": 1,
+        "entry_id": 1,
+        "kind": "informational",
         "thread_id": 1,
         "group_id": "G",
         "content": "Entry",
@@ -507,7 +508,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.threads()
         council.read()
         council.get(1)
-        council.publish("Entry")
+        council.publish("Entry", kind="informational")
         seen.update(
             (
                 method,

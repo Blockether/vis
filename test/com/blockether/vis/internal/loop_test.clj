@@ -2568,8 +2568,10 @@
         (with-redefs [env/run-python-block (fn [context code & args]
                                              (swap! entered conj code)
                                              (apply run-block context code args))]
-          (doseq [code ["print(await council.publish('after timeout', title='Timeout regression'))"
-                        "print(42)"]]
+          (doseq
+            [code
+             ["print(await council.publish('after timeout', kind='coordination', title='Timeout regression'))"
+              "print(42)"]]
             (with-redefs [svar/ask-code! (fn [_ _]
                                            {:stop-reason :tool-calls
                                             :tool-calls [{:id "follow_up"
@@ -2604,23 +2606,24 @@
   (doseq [same-response? [false true]]
     (it
       (str "stops after the native timeout; Council shares response=" same-response?)
-      (let [environment (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
-            db (:db-info environment)
-            tid (persistance/db-store-session-turn! db
-                                                    {:parent-session-id (:session-id environment)
-                                                     :user-request "timeout regression"})
-            timeout-code "import time\nprint('before native wait')\ntime.sleep(10)"
-            publish-code "print(await council.publish('after timeout', title='Timeout regression'))"
-            calls (atom 0)
-            chunks (atom [])
-            response (fn [codes]
-                       {:stop-reason :tool-calls
-                        :tool-calls (mapv (fn [idx code]
-                                            {:id (str "call_" idx)
-                                             :name "python_execution"
-                                             :input {:code code}})
-                                          (range)
-                                          codes)})]
+      (let
+        [environment (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+         db (:db-info environment)
+         tid (persistance/db-store-session-turn! db
+                                                 {:parent-session-id (:session-id environment)
+                                                  :user-request "timeout regression"})
+         timeout-code "import time\nprint('before native wait')\ntime.sleep(10)"
+         publish-code
+         "print(await council.publish('after timeout', kind='coordination', title='Timeout regression'))"
+         calls (atom 0)
+         chunks (atom [])
+         response (fn [codes]
+                    {:stop-reason :tool-calls
+                     :tool-calls
+                     (mapv (fn [idx code]
+                             {:id (str "call_" idx) :name "python_execution" :input {:code code}})
+                           (range)
+                           codes)})]
 
         (try (expect (nil? (:error (#'lp/execute-code environment "print('ready')"))))
              (let [result (binding [rt/*eval-timeout-ms* 3000]
@@ -10192,43 +10195,44 @@
     "Projectless sessions: real Python publication reaches the next model input and history"
     (if-not (clojure.java.io/resource "com/blockether/vis/internal/council/core.clj")
       (expect false "Council has not been implemented")
-      (let [router
-            (helper-router :lmstudio nil)
+      (let
+        [router
+         (helper-router :lmstudio nil)
 
-            a
-            (lp/create-environment router {:db :memory})
+         a
+         (lp/create-environment router {:db :memory})
 
-            db
-            (:db-info a)
+         db
+         (:db-info a)
 
-            b
-            (lp/create-environment router {:db db})
+         b
+         (lp/create-environment router {:db db})
 
-            aid
-            (str (:session-id a))
+         aid
+         (str (:session-id a))
 
-            bid
-            (str (:session-id b))
+         bid
+         (str (:session-id b))
 
-            update!
-            (requiring-resolve 'com.blockether.vis.internal.gateway.state/update-session!)
+         update!
+         (requiring-resolve 'com.blockether.vis.internal.gateway.state/update-session!)
 
-            drop!
-            (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+         drop!
+         (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
 
-            requests
-            (atom [])
+         requests
+         (atom [])
 
-            source
-            (str
-              "assert session['id'] == '"
-              aid
-              "'\n"
-              "assert set(session['council']) == {'default_group_id', 'pending_replies'}\n"
-              "session['council']['default_group_id'] = 'tampered'\n"
-              "await council.publish(content='Boundary message ' + 'é' * 2000, title='API', ping=['"
-              bid
-              "'])\n" "await council.members()")]
+         source
+         (str
+           "assert session['id'] == '"
+           aid
+           "'\n"
+           "assert set(session['council']) == {'default_group_id', 'pending_replies'}\n"
+           "session['council']['default_group_id'] = 'tampered'\n"
+           "await council.publish(kind='coordination', content='Boundary message ' + 'é' * 2000, title='API', ping=['"
+           bid
+           "'])\n" "await council.members()")]
 
         (try
           (doseq [sid [aid bid]]
@@ -10251,7 +10255,7 @@
                [[a "publish" [source]]
                 [b "receive"
                  [:retry :error :empty
-                  "page = await council.threads()\nentries = await council.read(thread_id=page['entries'][0]['thread_id'], limit=1)\nentry = await council.get(entry_id=entries['entries'][0]['id'])\nprint(len(entry['content']))"
+                  "page = await council.threads()\nentries = await council.read(thread_id=page['entries'][0]['thread_id'], limit=1)\nentry = await council.get(entry_id=entries['entries'][0]['entry_id'])\nprint(len(entry['content']))"
                   "before = await read_session()\nping = before['transcript']['turns'][0]['iterations'][0]['council_input']\nfold_session('-t1/i1', 'Council reviewed')\nafter = await read_session()\nassert ping == after['transcript']['turns'][0]['iterations'][0]['council_input']"]]]]
               (let [idx (atom -1)
                     loop-result (atom nil)
@@ -10387,7 +10391,7 @@
              :turn-state-atom (ctx-loop/make-turn-state-atom)}
 
             publication
-            {:id 7 :thread_id 7}
+            {:entry_id 7 :thread_id 7 :group_id "group" :kind "informational"}
 
             result
             (#'lp/with-council-execution

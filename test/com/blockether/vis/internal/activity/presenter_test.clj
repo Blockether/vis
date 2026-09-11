@@ -31,6 +31,8 @@
        nil]
       [:council.publish "Activity review"
        {:title "Activity review"
+        :entry_id 42
+        :kind "informational"
         :thread_id 42
         :ping ["reviewer"]
         :content "Read and Patch now show their **results** after one disclosure."} nil]
@@ -119,7 +121,7 @@
             (presenter/result-presentation {:operation :council.publish}
                                            {:title "Review"
                                             :thread_id 258
-                                            :id "secret-handle"
+                                            :entry_id "secret-handle"
                                             :content "Useful result"
                                             :nested {:session_id "uuid" :name "Reviewer"}})
 

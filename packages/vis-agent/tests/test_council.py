@@ -25,10 +25,11 @@ def test_council_session_handle_and_thread_workflow():
             assert request["idempotency_key"]
             assert "author_session_id" not in request
             return 200, {
-                "id": 142,
+                "entry_id": 142,
                 "thread_id": 142,
                 "group_id": "project-1",
                 "content": request["content"],
+                "kind": request["kind"],
                 "author_session_id": "A",
                 "created_at": 1,
                 "source": "sdk",
@@ -40,6 +41,7 @@ def test_council_session_handle_and_thread_workflow():
                     {
                         "thread_id": 142,
                         "title": "API",
+                        "kind": "coordination",
                         "author_session_id": "A",
                         "created_at": 1,
                     }
@@ -52,14 +54,22 @@ def test_council_session_handle_and_thread_workflow():
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         assert hasattr(client.session("A"), "council"), "Session.council is missing"
         council = client.session("A").council()
-        root = council.publish("API change", title="API\n")
-        assert root.id == root.thread_id == 142
+        root = council.publish("API change", kind="coordination", title="API\n")
+        assert root.entry_id == root.thread_id == 142
         assert council.threads().entries[0].thread_id == root.thread_id
         assert council.read(thread_id=root.thread_id).entries == ()
         council.publish(
-            "Works", thread_id=root.thread_id, ping=[], idempotency_key="retry"
+            "Works",
+            kind="coordination",
+            thread_id=root.thread_id,
+            ping=[],
+            idempotency_key="retry",
         )
-        common = {"group_id": "project-1", "activation_id": "active-1"}
+        common = {
+            "kind": "coordination",
+            "group_id": "project-1",
+            "activation_id": "active-1",
+        }
         assert publications == [
             {
                 **common,
@@ -76,7 +86,7 @@ def test_council_session_handle_and_thread_workflow():
             },
         ]
         with pytest.raises(TypeError):
-            council.publish("Wrong", parent_id=142)
+            council.publish("Wrong", kind="coordination", parent_id=142)
         assert sum(path == "/v1/sessions/A/council" for _, path, _, _ in calls) == 1
         assert not any("/turns" in path for _, path, _, _ in calls)
 
@@ -123,7 +133,13 @@ def test_entry_decoder_does_not_invent_missing_authorship():
 
     with pytest.raises(ValueError):
         CouncilEntry.from_wire(
-            {"id": 1, "thread_id": 1, "group_id": "G", "content": "x"}
+            {
+                "kind": "coordination",
+                "entry_id": 1,
+                "thread_id": 1,
+                "group_id": "G",
+                "content": "x",
+            }
         )
 
 
@@ -139,10 +155,11 @@ def test_required_reply_and_automatic_return_notification():
         publications.append(request)
         validate("council", "publish", request)
         entry = {
-            "id": len(publications),
+            "entry_id": len(publications),
             "thread_id": 1,
             "group_id": "G",
             "content": request["content"],
+            "kind": request["kind"],
             "author_session_id": "A",
             "created_at": 1,
             "source": "sdk",
@@ -158,12 +175,75 @@ def test_required_reply_and_automatic_return_notification():
 
     with endpoint(respond) as (url, _), GatewayClient(url) as client:
         council = client.session("A").council()
-        request = council.publish("Evidence?", ping=["B"], reply_required=True)
+        request = council.publish(
+            "Evidence?", kind="coordination", ping=["B"], reply_required=True
+        )
         assert request.reply_required
         assert request.replies[0].state == "pending"
-        reply = council.publish("Unknown", reply_to=request.id)
-        assert reply.reply_to == request.id
+        reply = council.publish(
+            "Unknown", kind="informational", reply_to=request.entry_id
+        )
+        assert reply.kind == "informational"
+        assert request.kind == "coordination"
+        assert reply.reply_to == request.entry_id
         assert "ping" not in publications[1]
         assert "thread_id" not in publications[1]
         with pytest.raises(ValueError):
-            council.publish("Wrong", reply_required="true")
+            council.publish("Wrong", kind="coordination", reply_required="true")
+
+
+@pytest.mark.parametrize("kind", ["potential_issue", "coordination", "informational"])
+def test_explicit_message_kind_and_identifier_domains(kind):
+    from typing import get_args
+
+    from blockether.vis.engine import Council, CouncilEntry, CouncilKind
+
+    class Session:
+        def _call(self, method, path, **kwargs):
+            assert (method, path) == ("POST", "/council/entries")
+            request = kwargs["body"]
+            assert request["kind"] == kind
+            return {
+                "entry_id": 4,
+                "thread_id": 4,
+                "kind": request["kind"],
+                "group_id": "workspace:opaque",
+                "content": request["content"],
+                "author_session_id": "session",
+                "created_at": 1,
+                "source": "sdk",
+                "ping": [],
+            }
+
+    council = Council(Session(), "workspace:opaque", "active")
+    entry = council.publish("Evidence and uncertainty", kind=kind)
+    assert entry.entry_id == entry.thread_id == 4
+    assert entry.kind == kind
+    assert not hasattr(entry, "id")
+    assert set(get_args(CouncilKind)) == {
+        "potential_issue",
+        "coordination",
+        "informational",
+    }
+    with pytest.raises(TypeError):
+        council.publish("Missing kind")
+    for invalid in (None, "question", 1):
+        with pytest.raises(ValueError):
+            council.publish("Invalid kind", kind=invalid)
+    for invalid in (None, 0, -1, True, 1.5, "4"):
+        with pytest.raises(ValueError):
+            council.get(invalid)
+    with pytest.raises(ValueError):
+        CouncilEntry.from_wire(
+            {
+                "id": 4,
+                "thread_id": 4,
+                "kind": kind,
+                "group_id": "workspace:opaque",
+                "content": "Old name",
+                "author_session_id": "session",
+                "created_at": 1,
+                "source": "sdk",
+                "ping": [],
+            }
+        )

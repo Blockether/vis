@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from blockether.vis._contracts import validate
+
+CouncilKind = Literal["potential_issue", "coordination", "informational"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +40,8 @@ class CouncilReply:
 
 @dataclass(frozen=True, slots=True)
 class CouncilEntry:
-    id: int
+    entry_id: int
+    kind: CouncilKind
     thread_id: int
     group_id: str
     content: str
@@ -79,6 +82,7 @@ class CouncilMember:
 @dataclass(frozen=True, slots=True)
 class CouncilThread:
     thread_id: int
+    kind: CouncilKind
     title: str
     author_session_id: str
     created_at: int
@@ -122,6 +126,7 @@ class Council:
         self,
         content: str,
         *,
+        kind: CouncilKind,
         thread_id: int | None = None,
         title: str | None = None,
         ping: list[str] | str | None = None,
@@ -129,7 +134,10 @@ class Council:
         reply_required: bool = False,
         reply_to: int | None = None,
     ) -> CouncilEntry:
-        """Publish a message, optionally requiring a reply in the receiving iteration.
+        """Publish with an explicit per-message kind, independently of ping/reply policy.
+
+        potential_issue records an unverified concern, coordination covers work/questions,
+        and informational records findings/decisions. No kind creates a backlog issue.
 
         A no-ping thread continuation answers the latest addressed entry only if it
         is an unanswered request, notifying its author. reply_to selects a request
@@ -140,6 +148,7 @@ class Council:
         """
         body = {
             "content": content,
+            "kind": kind,
             "group_id": self.group_id,
             "activation_id": self._activation_id,
             "idempotency_key": str(uuid4())
@@ -165,7 +174,7 @@ class Council:
         return CouncilEntry.from_wire(self._call("POST", "/entries", body=body))
 
     def threads(self, *, after: int = 0, limit: int = 50) -> CouncilPage:
-        """List titled roots in ascending id order. Continuations do not reorder roots."""
+        """List roots and their kind in entry-ID order; replies do not reorder roots."""
         query = {"after": after, "limit": limit}
         validate("council", "page_request", query)
         return CouncilPage.from_wire(

@@ -18,15 +18,15 @@
             (council/default-group (:db-info env) (:session-id env)))
 
         entries
-        (if (:id value) [value] (:entries value))
+        (if (:entry_id value) [value] (:entries value))
 
         refs
-        (vec (distinct (concat [{:type "council-group" :id gid}]
-                               (keep #(when-let [id (:thread_id %)] {:type "council-thread"
-                                                                     :id (str id)})
-                                     entries)
-                               (keep #(when-let [id (:id %)] {:type "council-entry" :id (str id)})
-                                     entries))))]
+        (vec (distinct (concat
+                         [{:type "council-group" :id gid}]
+                         (keep #(when-let [id (:thread_id %)] {:type "council-thread" :id (str id)})
+                               entries)
+                         (keep #(when-let [id (:entry_id %)] {:type "council-entry" :id (str id)})
+                               entries))))]
 
     (try (extension/publish-activity! (presenter/result-presentation {:operation op}
                                                                      (wire/->wire value)))
@@ -35,7 +35,7 @@
                       :id ::activity-publication-failed
                       :data {:session-id (str (:session-id env))
                              :op op
-                             :entry-id (:id value)
+                             :entry-id (:entry_id value)
                              :error-class (.getName (class e))}})))
     (extension/success {:op op :result (wire/->wire value) :metadata {:activity/resources refs}})))
 
@@ -53,7 +53,7 @@
                               opts)))))
 
 (defn publish
-  "Publish a thread entry. A no-ping continuation answers the latest entry addressed to this session if it is an unanswered request, and notifies its author; reply_to selects a request explicitly. reply_required=True requires an answer in the receiving iteration. Explicit ping IDs can wake idle peers; all selects active peers only."
+  "Publish an entry with required kind: potential_issue, coordination or informational. Kind classifies this message, never its delivery. A no-ping continuation answers the latest entry addressed to this session if it is an unanswered request, and notifies its author; reply_to selects a request explicitly. reply_required=True requires an answer in the receiving iteration. Explicit ping IDs can wake idle peers; all selects active peers only."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db
@@ -83,7 +83,7 @@
          (council/publish! db #(council/runtime db) actor opts)
 
          ref
-         (select-keys entry [:id :thread_id :group_id :source_ref])]
+         (select-keys entry [:entry_id :thread_id :group_id :kind :source_ref])]
 
      (let [[before after] (swap-vals!
                             (:turn-state-atom env)
@@ -97,11 +97,11 @@
        (when (identical? before after)
          (tel/log! {:level :warn
                     :id ::publication-execution-ended
-                    :data {:session-id sid :entry-id (:id entry)}})))
+                    :data {:session-id sid :entry-id (:entry_id entry)}})))
      (result env :council.publish opts entry))))
 
 (defn threads
-  "List titled thread roots, ascending by thread_id. Returns entries, after and has_more; no content."
+  "List thread roots with their root message kind, ascending by thread_id. Returns entries, after and has_more; no content."
   ([env] (threads env {}))
   ([env opts]
    (let [opts (walk/keywordize-keys opts)]
@@ -142,14 +142,16 @@
          :active-fn council/enabled?
          :call {:pos (or positional []) :rest :always}
          :params (mapv (fn [p]
-                         {:name p})
+                         (cond-> {:name p}
+                           (= p "kind")
+                           (assoc :required? true)))
                        params)
          :description (:doc (meta v))
          :result
-         "Members: `{session_id, title, state}`. Entries: `{id, thread_id, group_id, content, author_session_id, created_at, source, ping}` plus root `title`, host `source_ref`, and optional `reply_required`, `replies` or `reply_to`. Replies report `{session_id, state, reply_entry_id?}`. Pages: `{entries, after, has_more}`."}))
+         "Members: `{session_id, title, state}`. Entries: `{entry_id, thread_id, group_id, kind, content, author_session_id, created_at, source, ping}` plus root `title`, host `source_ref`, and optional `reply_required`, `replies` or `reply_to`. Replies report `{session_id, state, reply_entry_id?}`. Pages: `{entries, after, has_more}`; thread summaries: `{thread_id, kind, title, author_session_id, created_at}`."}))
     [[#'members 'council.members :observation ["group_id"]]
      [#'publish 'council.publish :mutation
-      ["group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"]
+      ["kind" "group_id" "thread_id" "title" "ping" "idempotency_key" "reply_required" "reply_to"]
       ["content"]] [#'threads 'council.threads :observation ["group_id" "after" "limit"]]
      [#'read 'council.read :observation ["group_id" "thread_id" "after" "limit"]]
      [#'get 'council.get :observation ["group_id"] ["entry_id"]]]))

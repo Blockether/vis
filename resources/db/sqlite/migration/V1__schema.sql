@@ -845,6 +845,7 @@ CREATE TABLE council_entry (
   author_sid TEXT NOT NULL,
   activation_id TEXT NOT NULL,
   source TEXT NOT NULL CHECK (source IN ('host', 'sdk')),
+  kind TEXT NOT NULL DEFAULT 'informational' CHECK (kind IN ('potential_issue', 'coordination', 'informational')),
   source_ref BLOB,
   thread_id INTEGER REFERENCES council_entry(id),
   reply_required INTEGER NOT NULL DEFAULT 0 CHECK (reply_required IN (0, 1)),

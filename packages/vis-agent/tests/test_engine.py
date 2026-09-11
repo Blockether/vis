@@ -479,8 +479,8 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
         council=True,
         tool_code=(
             "threads = await council.threads()\n"
-            "entry = await council.publish('Host continuation', thread_id=threads['entries'][0]['thread_id'])\n"
-            "assert (await council.get(entry['id']))['source'] == 'host'\n"
+            "entry = await council.publish('Host continuation', kind='coordination', thread_id=threads['entries'][0]['thread_id'])\n"
+            "assert (await council.get(entry['entry_id']))['source'] == 'host'\n"
             "print(session['council'])"
         ),
         before_reply=before_reply,
@@ -505,7 +505,9 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     session.id
                 ]
                 with pytest.raises(GatewayError) as inactive:
-                    readonly.publish("Must not bind an idle handle")
+                    readonly.publish(
+                        "Must not bind an idle handle", kind="coordination"
+                    )
                 assert inactive.value.status == 409
                 for invalid in (
                     {"content": " "},
@@ -513,12 +515,13 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     {"content": "Valid", "title": "two\nlines"},
                 ):
                     with pytest.raises(GatewayError) as invalid_request:
-                        active.publish(**invalid)
+                        active.publish(kind="coordination", **invalid)
                     assert invalid_request.value.status == 400
                 if generation == 0:
                     bound = active
                     entry = bound.publish(
                         "SDK conversation",
+                        kind="coordination",
                         title="SDK\n",
                         ping="all",
                         idempotency_key="sdk-retry",
@@ -532,28 +535,33 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
                     thread_id = bound.threads().entries[0].thread_id
                     assert thread_id == entry.thread_id
                     continuation = bound.publish(
-                        "SDK continuation", thread_id=thread_id
+                        "SDK continuation", kind="coordination", thread_id=thread_id
                     )
                     first_page = bound.read(thread_id=thread_id, limit=1)
                     assert first_page.entries == (entry,) and first_page.has_more
                     assert bound.read(
                         thread_id=thread_id, after=first_page.after
                     ).entries == (continuation,)
-                    assert bound.get(entry.id) == entry
+                    assert bound.get(entry.entry_id) == entry
                 else:
                     with pytest.raises(GatewayError) as stale:
-                        bound.publish("Must not rebind")
+                        bound.publish("Must not rebind", kind="coordination")
                     assert stale.value.status == 409
                     assert (
                         bound.publish(
                             "SDK conversation",
+                            kind="coordination",
                             title="SDK",
                             ping="all",
                             idempotency_key="sdk-retry",
                         )
                         == entry
                     )
-                    active.publish("New active generation", thread_id=entry.thread_id)
+                    active.publish(
+                        "New active generation",
+                        kind="coordination",
+                        thread_id=entry.thread_id,
+                    )
             finally:
                 release.set()
             operations = {}
@@ -577,6 +585,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
             assert (
                 bound.publish(
                     "SDK conversation",
+                    kind="coordination",
                     title="SDK",
                     ping="all",
                     idempotency_key="sdk-retry",
@@ -604,7 +613,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
         assert len(host_entries) == 2
         assert all(row.source_ref.session_id == session.id for row in host_entries)
         assert all(
-            str(row.id) in str(transcript)
+            str(row.entry_id) in str(transcript)
             and row.source_ref.operation_id in str(transcript)
             for row in host_entries
         )
@@ -639,10 +648,16 @@ def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
         try:
             assert ready.wait(30), "author model request was not observed"
             conversation = author.council()
-            assert conversation.publish("Active peers only", ping="all").ping == ()
+            assert (
+                conversation.publish(
+                    "Active peers only", kind="coordination", ping="all"
+                ).ping
+                == ()
+            )
             assert peer.turns() == []
             entry = conversation.publish(
                 "What did you learn about the parser?",
+                kind="coordination",
                 ping=[peer.id, f"vis_session_id#{peer.id}"],
                 idempotency_key="wake-once",
             )
@@ -658,7 +673,10 @@ def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
             assert "Council wake" in turns[0]["request"]
             assert (
                 conversation.publish(
-                    entry.content, ping=[peer.id], idempotency_key="wake-once"
+                    entry.content,
+                    kind="coordination",
+                    ping=[peer.id],
+                    idempotency_key="wake-once",
                 )
                 == entry
             )
@@ -716,9 +734,9 @@ def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transpo
         tool_code=(
             "thread = (await council.threads())['entries'][0]\n"
             "if session['id'] != thread['author_session_id']:\n"
-            "    reply = await council.publish('Research findings', thread_id=thread['thread_id'], "
+            "    reply = await council.publish('Research findings', kind='coordination', thread_id=thread['thread_id'], "
             "ping=[thread['author_session_id']], idempotency_key='findings')\n"
-            "    assert (await council.publish('No active peers', ping='all', idempotency_key='broadcast'))['ping'] == []\n"
+            "    assert (await council.publish('No active peers', kind='coordination', ping='all', idempotency_key='broadcast'))['ping'] == []\n"
             "    print(reply)\n"
         ),
         before_reply=before_reply,
@@ -733,11 +751,16 @@ def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transpo
         try:
             assert author_ready.wait(30), "author did not start"
             conversation = author.council()
-            entry = conversation.publish("Research question", ping=[peer.id])
+            entry = conversation.publish(
+                "Research question", kind="coordination", ping=[peer.id]
+            )
             wait_peer(peer, 1)
             # A second explicit ping starts the peer's next activation, held at its model call.
             conversation.publish(
-                "Please give details", thread_id=entry.id, ping=[peer.id]
+                "Please give details",
+                kind="coordination",
+                thread_id=entry.entry_id,
+                ping=[peer.id],
             )
             assert peer_ready.wait(30), "peer did not wake"
             release_author.set()
@@ -747,7 +770,7 @@ def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transpo
             wait_peer(peer, 2)
             replies = [
                 row
-                for row in conversation.read(thread_id=entry.id).entries
+                for row in conversation.read(thread_id=entry.entry_id).entries
                 if row.content == "Research findings"
             ]
             assert len(replies) == 1
