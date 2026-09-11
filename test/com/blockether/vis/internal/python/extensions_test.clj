@@ -801,6 +801,69 @@ raise RuntimeError(' | '.join(errors))
                             (ep/run-python-block ctx "print('glms_jenkins' in globals())"))))
                (finally (ep/dispose-python-context! ctx))))))))
 
+(defdescribe
+  bundled-gh-interruption-test
+  ;; Regression, session 9599187b-698c-4724-a8d5-286215fdc63f: Stop must cross
+  ;; the trusted worker while a CLI request is pending, not after its full wait.
+  (it
+    "returns a typed human interruption and stops the owned CLI through the host"
+    (with-fresh-loaded
+      {"gh.py"
+       (str
+         (slurp (io/file ".vis/extensions/gh.py"))
+         "
+FAST_TICK_S = 0.0
+require_gh = lambda: None
+newer_run = lambda *args: None
+_fetches = 0
+def fetch_run(run_id, repo=None):
+    global _fetches
+    _fetches += 1
+    if _fetches > 2:
+        _shell('gh run view 42')
+    return {'status': 'queued', 'jobs': [], 'databaseId': 42,
+            'workflowName': 'CI', 'headBranch': 'main',
+            'url': 'https://github.com/example/repo/actions/runs/42'}
+")}
+      (fn [loaded {:keys [store ext-dir]}]
+        (expect (zero? (:failed loaded)))
+        (let [operations
+              (atom [])
+
+              sid
+              (str "gh-stop-test-" (random-uuid))
+
+              stop-view!
+              (fn []
+                (when-let [view (first (filter #(= sid (:session-id %)) (human-input/live-views)))]
+                  (human-input/interrupt-live! (:id view) "Stop CI monitoring")))]
+
+          (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                           (constantly (io/file ext-dir "views"))
+                           #'shell/trusted-extension-shell
+                           (fn [_ opts]
+                             (let [op (get opts "op")]
+                               (swap! operations conj op)
+                               (when (#{"logs" "wait"} op) (stop-view!))
+                               (extension/success {:result {"id" "gh-stop-test"
+                                                            "status"
+                                                            (if (= "stop" op) "stopped" "running")
+                                                            "exit" (when (= "stop" op) 143)}})))}
+            (fn []
+              (try (let [answer (binding [extension/*current-environment* {:session-id sid
+                                                                           :db-info store}]
+                                  ((symbol-fn (registered "gh") 'gh.watch) 42))]
+                     (expect (true? (:success? answer)) (pr-str answer))
+                     (expect (= "WatchOutcome" (get-in answer [:result "__vis_object__"])))
+                     (expect (= "interrupted" (get-in answer [:result "__vis_attrs__" "ending"])))
+                     (expect (true? (get-in answer
+                                            [:result "__vis_attrs__" "is_stopped_by_human"])))
+                     (expect (= "Stop CI monitoring"
+                                (get-in answer [:result "__vis_attrs__" "human_note"])))
+                     (expect (= ["background" "logs" "stop"] @operations))
+                     (expect (not-any? #(= sid (:session-id %)) (human-input/live-views))))
+                   (finally (stop-view!))))))))))
+
 (def ^:private trusted-process-py
   "import ctypes
 import os

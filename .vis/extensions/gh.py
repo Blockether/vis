@@ -46,6 +46,8 @@ import shlex
 import tempfile
 import time
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 import blockether.vis.extension as vis
@@ -72,6 +74,9 @@ LOG_TAIL_LINES = 120
 FAILED_TAIL_LINES = 40
 
 _RUNNING_STATES = ("queued", "in_progress", "waiting", "requested", "pending")
+
+# CLI calls belong to the invoking watch, never to another concurrent caller.
+_watch_view = ContextVar("gh_watch_view", default=None)
 
 
 class GhMissing(RuntimeError):
@@ -749,8 +754,21 @@ def push_changes(view, before, after):
 # -- gh, and nothing but gh ------------------------------------------------------------
 
 
+@contextmanager
+def _watch_commands(view):
+    """Keep CLI cancellation local to this watch and restore it on every exit."""
+    token = _watch_view.set(view)
+    try:
+        yield
+    finally:
+        _watch_view.reset(token)
+
+
 def _shell(command, seconds=120):
-    """One command through the sandbox shell verb, waited out, answered as its result map."""
+    """Wait for a terminal CLI result, stopping the owned process on timeout or Stop."""
+    view = _watch_view.get()
+    if view is not None and view.is_interrupted:
+        raise vis.Interrupted(view.view_id, reason=view.reason, note=view.note)
     handle = vis.shell(
         {
             "op": "background",
@@ -758,7 +776,33 @@ def _shell(command, seconds=120):
             "command": command,
         }
     )
-    return handle.wait(int(seconds))
+    finished = False
+    try:
+        if view is None:
+            done = handle.wait(int(seconds))
+        else:
+            deadline = time.monotonic() + seconds
+            while True:
+                if view.is_interrupted:
+                    raise vis.Interrupted(
+                        view.view_id, reason=view.reason, note=view.note
+                    )
+                done = handle.logs(-1)
+                if done.get("status") != "running":
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                view.sleep(min(0.2, remaining))
+        if done.get("status") == "running":
+            raise TimeoutError(f"GitHub CLI command timed out after {seconds:g}s")
+        if done.get("exit") is None:
+            raise RuntimeError("GitHub CLI command ended without an exit status")
+        finished = True
+        return done
+    finally:
+        if not finished:
+            handle.stop()
 
 
 def _capture(command, seconds=120):
@@ -770,9 +814,12 @@ def _capture(command, seconds=120):
     handle, path = tempfile.mkstemp(prefix="vis-gh-", suffix=".out")
     os.close(handle)
     try:
-        done = _shell(f"{command} > {path} 2>&1", seconds)
+        try:
+            done = _shell(f"{command} > {shlex.quote(path)} 2>&1", seconds)
+        except TimeoutError as failure:
+            return 124, str(failure)
         with open(path, encoding="utf-8", errors="replace") as f:
-            return int(done.get("exit") or 0), f.read()
+            return int(done["exit"]), f.read()
     finally:
         os.unlink(path)
 
@@ -1103,18 +1150,23 @@ def superseded_shape(shape):
     return settled
 
 
-def _watch_outcome(payload, log_of, cache, superseded=None, failure=None, view=None):
-    """One typed CI verdict: each fact once, every job with its steps, failed logs' tails."""
+def _watch_outcome(payload, cache, superseded=None, failure=None, view=None):
+    """One typed CI verdict using retained logs only; closing never starts more IO."""
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     failed = []
     for index, job in enumerate(jobs):
         if tone_of(job.get("status"), job.get("conclusion")) != "error":
             continue
-        tail = _job_log_tail(_job_id(job, index), LOG_TAIL_LINES, log_of, cache)
+        job_id = _job_id(job, index)
+        tail = cache.get((job_id, LOG_TAIL_LINES)) or cache.get(
+            (job_id, FAILED_TAIL_LINES)
+        )
         if tail:
             failed.append(FailedLog(job_id=_job_id(job, index), lines=tuple(tail)))
     ending = (
-        "superseded"
+        "interrupted"
+        if view is not None and view.reason == "interrupted"
+        else "superseded"
         if superseded
         else "poll_failure"
         if failure
@@ -1273,6 +1325,8 @@ def _archive_selection_snapshots(view, payload, log_of, cache):
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     snapshots = []
     for index, job in enumerate(jobs):
+        if view.is_interrupted:
+            raise vis.Interrupted(view.view_id, reason=view.reason, note=view.note)
         job_id = _job_id(job, index)
         shape = run_shape(payload, selected_ids=[job_id], now=_wall_time())
         picture = json.loads(json.dumps(base))
@@ -1370,7 +1424,11 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     superseded = None
     unavailable_attempts = 0
     terminal_failure = None
-    with vis.live(title, declared_nodes(shape), description=description) as view:
+    selection_snapshots = []
+    with (
+        vis.live(title, declared_nodes(shape), description=description) as view,
+        _watch_commands(view),
+    ):
         try:
             _show_selection_logs(view, shape, log_of, log_cache, FAILED_TAIL_LINES)
             shown_selection = _selection_signature(shape)
@@ -1389,6 +1447,8 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                         log_cache,
                         shown_selection,
                     )
+                    if view.is_interrupted:
+                        break
                     # Selection is local shared state, not provider data. Apply it BEFORE a
                     # network call so a slow or unavailable GitHub cannot freeze the details.
                     shape, manual_selection, shown_selection = _sync_surface_selection(
@@ -1464,15 +1524,13 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 published = payload
             if shape["is_over"]:
                 _show_selection_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
+                selection_snapshots = _archive_selection_snapshots(
+                    view, published, log_of, log_cache
+                )
         except vis.Interrupted:
             # The human stopped watching. The view already holds its verdict, `close` answers
             # it, and `shape` is the last poll that reached them.
             pass
-        selection_snapshots = (
-            _archive_selection_snapshots(view, payload, log_of, log_cache)
-            if shape["is_over"]
-            else []
-        )
         if terminal_failure:
             view.close(
                 reason="failed",
@@ -1486,9 +1544,7 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
             )
         else:
             view.close(selection_snapshots=selection_snapshots)
-        return _watch_outcome(
-            published, log_of, log_cache, superseded, terminal_failure, view
-        )
+        return _watch_outcome(published, log_cache, superseded, terminal_failure, view)
 
 
 def _watch_run(run=None, repo=None, pr=None):
@@ -1730,15 +1786,18 @@ class Gh:
 
         Opens a live view a person can watch (and stop), easing polls from three seconds to eight
         after five minutes. Job rows are controls: all jobs running in parallel are selected
-        initially; tap one to replace the steps and output below with that job, answered within a
-        fifth of a second whatever the poll cadence. The returned WatchOutcome carries run
-        metadata, every job with id, outcome, start/end times and nested steps, and one bounded
-        log tail for each failed job — it never repeats the artifact tree. `run` is a run id or
+        initially; tap one to replace the steps and output below with that job between CLI
+        requests. Stop remains responsive during requests and stops only the local watcher,
+        never the GitHub run. Each request has a deadline; timeouts are retried as failures.
+        The returned WatchOutcome carries run metadata, every job with id, outcome, start/end
+        times, nested steps, and one bounded log tail for each failed job — it never repeats
+        the artifact tree. `run` is a run id or
         URL; without `run` or `pr`, the newest run on the current branch is selected. `pr` is a
         pull-request number, branch, URL, or `"current"`; it watches that PR's aggregate checks
         through the same view. `run` and `pr` are mutually exclusive. Any running run yields when
         a newer run starts the same workflow, branch and event. `repo` is `owner/name` for
-        another repository.
+        another repository. Stopping returns the last published run facts and cached failed
+        logs without fetching more logs after Stop.
         """
         return _watch_run(run, repo, pr)
 

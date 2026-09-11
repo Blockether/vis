@@ -4,8 +4,8 @@
 by `gh run view --json`, trimmed to six jobs and otherwise untouched — real ids, real timestamps,
 one job that fails and two that are still running when the first poll lands.
 
-`fixtures/ops.json` is what those two polls made this extension SAY to the engine, `view.json` the
-picture the human was left with. `test/com/blockether/vis/internal/human_input/gh_live_test.clj`
+`fixtures/ops.json` records the updates sent to the engine; `view.json` is the final picture.
+`test/com/blockether/vis/internal/view/gh_view_test.clj`
 replays that same `ops.json` through the engine's own live dispatch, so an op this extension emits
 that the engine would refuse turns a Clojure test red rather than failing in front of a human.
 """
@@ -931,6 +931,186 @@ def test_an_explicit_running_run_still_yields_to_its_replacement(monkeypatch):
 
     assert gh.gh.watch(32146686161) == "watched"
     assert received["superseded_by"]() == replacement
+
+
+def test_capture_does_not_accept_partial_output_from_a_timed_out_process(monkeypatch):
+    # Regression, session 9599187b-698c-4724-a8d5-286215fdc63f: a wait timeout
+    # is not a successful CLI exit, and the owned process must not survive it.
+    operations = []
+    output_paths = []
+
+    def start(options):
+        path = pathlib.Path(gh.shlex.split(options["command"])[-2])
+        path.write_text('{"status": "completed"}')
+        output_paths.append(path)
+
+        def operation(options):
+            operations.append(options["op"])
+            if options["op"] == "stop":
+                return {"status": "stopped", "exit": 143}
+            return {"status": "running", "exit": None, "timed_out": True}
+
+        return vis.Shell({"id": "slow-gh", "status": "running"}, operation)
+
+    monkeypatch.setattr(vis, "shell", start)
+    exit_code, text = gh._capture("gh run view 42 --json status", seconds=1)
+
+    assert exit_code != 0
+    assert "timed out" in text
+    assert operations == ["wait", "stop"]
+    assert all(not path.exists() for path in output_paths)
+
+
+def test_stop_during_a_cli_request_releases_the_process_without_more_io(
+    recorder, monkeypatch
+):
+    operations = []
+    requested_logs = []
+    waits = []
+    original_live = recorder.live
+
+    def live(envelope_json):
+        envelope = json.loads(envelope_json)
+        if envelope.get("timeout_ms"):
+            waits.append(envelope["timeout_ms"])
+            recorder.close(reason="interrupted", note="Stop watching")
+        return original_live(envelope_json)
+
+    def operation(options):
+        operations.append(options["op"])
+        if options["op"] == "stop":
+            return {"status": "stopped", "exit": 143}
+        if options["op"] == "wait":
+            recorder.close(reason="interrupted", note="Stop watching")
+        return {"status": "running", "exit": None, "timed_out": True}
+
+    monkeypatch.setattr(recorder, "live", live)
+    monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "slow-gh"}, operation))
+    polls = []
+
+    def poll():
+        polls.append(True)
+        if len(polls) > 1:
+            gh._shell("gh run view 42 --json status")
+        return fixture("run-mid.json")
+
+    outcome = gh.watch(
+        TITLE,
+        DESCRIPTION,
+        poll,
+        lambda job_id, _lines: requested_logs.append(job_id) or ["log"],
+    )
+
+    assert outcome.ending == "interrupted"
+    assert outcome.human_note == "Stop watching"
+    assert operations == ["logs", "stop"]
+    assert waits and max(waits) <= 200
+    assert requested_logs == []
+    assert len(polls) == 2
+
+
+def test_stop_while_archiving_a_completed_run_returns_the_last_picture(recorder):
+    requested = []
+
+    def log_of(job_id, _lines):
+        requested.append(job_id)
+        if len(requested) == 3:
+            recorder.close(reason="interrupted", note="No more logs")
+            raise vis.Interrupted(
+                recorder.view_id, reason="interrupted", note="No more logs"
+            )
+        return [f"log for {job_id}"]
+
+    outcome = gh.watch(TITLE, DESCRIPTION, lambda: fixture("run-final.json"), log_of)
+
+    assert outcome.ending == "interrupted"
+    assert outcome.status == "completed"
+    assert outcome.human_note == "No more logs"
+    assert len(requested) == 3
+    assert outcome.failed_logs
+
+
+def test_stop_during_an_empty_run_nap_does_not_start_another_request(
+    recorder, monkeypatch
+):
+    monkeypatch.setattr(gh, "FAST_TICK_S", 3.0)
+    original_live = recorder.live
+    calls = []
+
+    def live(envelope_json):
+        if json.loads(envelope_json).get("timeout_ms"):
+            recorder.close(reason="interrupted")
+        return original_live(envelope_json)
+
+    monkeypatch.setattr(recorder, "live", live)
+
+    def poll():
+        calls.append("poll")
+        return {"status": "queued", "jobs": []}
+
+    outcome = gh.watch(
+        TITLE,
+        DESCRIPTION,
+        poll,
+        superseded_by=lambda: calls.append("replacement"),
+    )
+
+    assert outcome.ending == "interrupted"
+    assert calls == ["poll"]
+    assert gh._watch_view.get() is None
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+@pytest.mark.parametrize("watching", [False, True])
+def test_cli_terminal_results_keep_the_exit_status(
+    recorder, monkeypatch, exit_code, watching
+):
+    operations = []
+
+    def operation(options):
+        operations.append(options["op"])
+        return {"status": "exited", "exit": exit_code}
+
+    monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "gh"}, operation))
+    if watching:
+        with vis.live("CLI test", [vis.status("state", "Running")]) as view:
+            with gh._watch_commands(view):
+                result = gh._shell("gh run view 42")
+    else:
+        result = gh._shell("gh run view 42")
+    assert result["exit"] == exit_code
+    assert operations == (["logs"] if watching else ["wait"])
+    assert gh._watch_view.get() is None
+
+
+def test_cli_deadline_is_not_extended_by_view_events(recorder, monkeypatch):
+    now = [0.0]
+    operations = []
+    original_live = recorder.live
+
+    def live(envelope_json):
+        envelope = json.loads(envelope_json)
+        if envelope.get("timeout_ms"):
+            now[0] += 0.1
+            # Frequent surface events wake the wait but cannot renew the CLI deadline.
+            return json.dumps({"view_id": recorder.view_id, "is_open": True})
+        return original_live(envelope_json)
+
+    def operation(options):
+        operations.append(options["op"])
+        return {"status": "running", "exit": None}
+
+    monkeypatch.setattr(gh.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(recorder, "live", live)
+    monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "gh"}, operation))
+    with vis.live("CLI test", [vis.status("state", "Running")]) as view:
+        with gh._watch_commands(view):
+            exit_code, text = gh._capture("gh run view 42", seconds=0.3)
+    assert exit_code == 124
+    assert "timed out" in text
+    assert now[0] == pytest.approx(0.3)
+    assert operations == ["logs"] * 4 + ["stop"]
+    assert gh._watch_view.get() is None
 
 
 class _LoginProcess(dict):
