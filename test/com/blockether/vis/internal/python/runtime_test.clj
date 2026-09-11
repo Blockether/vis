@@ -228,8 +228,35 @@
              (is (= 2 (count @calls)) "uv decides whether the environment needs updating")
              (doseq [args @calls]
                (is (.isAbsolute (io/file (first args))))
-               (is (= ["sync" "--python" (com.blockether.vispython.Interpreter/pythonExecutable)]
+               (is (= ["sync" "--check" "--offline" "--python"
+                       (com.blockether.vispython.Interpreter/pythonExecutable)]
                       (vec (rest args)))))
+             (is (= "cached"
+                    (:stage (first (filter #(= (.getName project) (:name %))
+                                           (python-runtime/preparation-status))))))))
+         (finally (doseq [file (reverse (file-seq project))]
+                    (io/delete-file file true))))))
+
+(deftest automatic-project-preparation-falls-back-after-an-offline-miss
+  (python-runtime/ensure-library!)
+  (let [project
+        (temp-dir "vis-cold-project")
+
+        calls
+        (atom [])]
+
+    (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                     (swap! calls conj (vec (rest args)))
+                                                     (when (= 1 (count @calls))
+                                                       (throw (ex-info "Environment needs sync"
+                                                                       {}))))
+                          #'python-runtime/project-packages (constantly project)}
+           (fn []
+             (is (= project (python-runtime/ensure-project! project)))
+             (is (= [["sync" "--check" "--offline" "--python"
+                      (com.blockether.vispython.Interpreter/pythonExecutable)]
+                     ["sync" "--python" (com.blockether.vispython.Interpreter/pythonExecutable)]]
+                    @calls))
              (is (= "ready"
                     (:stage (first (filter #(= (.getName project) (:name %))
                                            (python-runtime/preparation-status))))))))

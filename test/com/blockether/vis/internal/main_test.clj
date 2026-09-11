@@ -80,8 +80,9 @@
 ;; synchronously initialized CPython before dispatch, then its gateway did it again.
 (defdescribe
   dispatch-extension-initialization-test
-  (it "defers Python initialization for the gateway daemon"
-      (doseq [args [["gateway" "start"]]]
+  (it "defers Python initialization for the gateway and declarative sync"
+      (doseq [args [["gateway" "start"] ["extension" "sync" "--dry-run"]
+                    ["extension" "sync" "--trust"]]]
         (let [calls (atom [])]
           (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
                         python-extensions/load-python-extensions! #(swap! calls conj :python)]
@@ -269,6 +270,29 @@
                         :version "1.2.0"
                         :directory (str (System/getProperty "user.dir") "/.vis/extensions")}]]
                      @calls))))))
+
+(defdescribe
+  extension-sync-command-test
+  (it "preserves explicit trust, scope, cache refresh and removal intent"
+      (let [calls (atom [])]
+        (with-redefs [python-extensions/sync-packages! (fn [options]
+                                                         (swap! calls conj options)
+                                                         [])]
+          (with-out-str (commandline/dispatch! (#'main/root-command)
+                                               ["vis-agent" "extension" "sync" "--trust" "--project"
+                                                "--refresh" "--prune" "--dry-run"])))
+        (expect (= [{:trust true :project true :global nil :refresh true :prune true :dry-run true}]
+                   @calls))))
+  (it "does not report a partially failed sync as success"
+      (with-redefs [python-extensions/sync-packages! (constantly [{"scope" "project"
+                                                                   "name" "fixture"
+                                                                   "status" "failed"
+                                                                   "error" "Fixture failure"}])]
+        (expect (try (with-out-str (commandline/dispatch! (#'main/root-command)
+                                                          ["vis-agent" "extension" "sync"
+                                                           "--trust"]))
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true))))))
 
 (defdescribe
   gateway-command-help-test

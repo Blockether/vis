@@ -1121,6 +1121,54 @@
         "$ref": "#/$defs/environmentSource"
       }
     },
+    "extensionPackage": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "subdirectory": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*)?$"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "not": {
+        "required": [
+          "version",
+          "revision"
+        ]
+      },
+      "additionalProperties": false,
+      "description": "Explicit extension sync declaration. Review source and run extension sync --trust; config loading never installs code. Omitted selector chooses the latest approved stable release once, retained until --refresh."
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": {
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        "maxLength": 128
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/extensionPackage"
+      },
+      "description": "Packages keyed by normalized manifest name. Later tiers replace the entire same-named declaration. Global and project installations remain separate; project entries win at load time."
+    },
     "config": {
       "type": "object",
       "properties": {
@@ -1194,6 +1242,9 @@
         },
         "mcp": {
           "$ref": "#/$defs/mcp"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
         },
         "python": {
           "$ref": "#/$defs/python"

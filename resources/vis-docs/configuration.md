@@ -46,7 +46,10 @@ The settings list exposes a `string` row in the Agent group. Invalid names retur
 
 Files are read in this order. Later files override earlier ones; nested maps
 merge, scalars and lists are replaced. The gateway-wide `agent_name` saved in
-`state.yml` is an exception: it overrides the project tiers.
+`state.yml` is an exception: it overrides the project tiers. `extensions` merges
+by package name, replacing each complete declaration rather than mixing source
+and version fields from different files. See [declarative extension packages](extension-packages.md#declare-packages-in-configuration)
+for global/project installation scopes and `vis-agent extension sync --trust`.
 
 | File | Purpose |
 | --- | --- |

@@ -32,10 +32,65 @@ Test files (`test_*.py` and `*_test.py`) are not extension entries.
 not the model's jail. Review project extensions before starting Vis in an unfamiliar
 checkout. `--trust` acknowledges this execution; validation is not a security review.
 
+## Declare packages in configuration
+
+Use the same `extensions` map in project `vis.yml` and global `~/.vis/config.yml`
+(or `~/.vis/vis.yml`). Keys are normalized package names from `pyproject.toml`:
+
+```yaml
+extensions:
+  vis-spel:
+    source: https://github.com/Blockether/spel
+    subdirectory: extensions/vis-spel
+    version: "0.1.0"
+  vis-greeter:
+    source: ./tools/greeter
+```
+
+Replace the example version with a reviewed, approved release. A declaration accepts
+`source`, optional `subdirectory`, and either `version` or a full lowercase Git
+`revision`. Selectors apply only to GitHub sources. Local paths are relative to the
+YAML file declaring them, not the shell's working directory.
+
+```bash
+vis-agent extension sync --dry-run
+vis-agent extension sync --trust
+vis-agent extension sync --project --trust
+vis-agent extension sync --global --trust
+vis-agent extension sync --refresh --trust
+```
+
+By default, sync manages both scopes: global declarations go to `~/.vis/extensions/`,
+project declarations to `<project>/.vis/extensions/`. Local project overrides in
+`.vis/config.yml` replace complete declarations by name, not individual fields.
+The project registration wins when both scopes use the same extension name.
+Reading configuration never installs packages; sync requires explicit `--trust`.
+
+Sync installs missing packages, reconciles changed declarations and prepares their
+`uv` environments without importing entrypoints or reloading a running gateway.
+It reports `installed`, `updated`, `cached`, `orphaned` or `failed` per package;
+a failure exits nonzero. Start Vis or use `/reload` to activate prepared code.
+
+Without a selector, the first sync pins the latest approved stable release. An
+unchanged declaration reuses that SHA without fetching Git or the catalog; only
+`--refresh` checks for a newer approved release. Explicit versions stay fixed,
+including when refresh is requested. Changing a version can intentionally downgrade.
+Dependencies use `uv sync --check --offline` first, falling back to normal `uv sync`
+only when preparation is needed. `uv` owns its lockfile, environment and download cache.
+
+Removing a declaration retains its installation as `orphaned`. Preview removals with
+`sync --dry-run --prune`, then explicitly use `sync --trust --prune` to unlink them.
+Only links still owned by sync can be removed. Source checkouts and previous Git
+snapshots are retained. Manually installed or externally changed links are never
+adopted or replaced: preserve them and resolve the conflict before syncing.
+Do not edit the private `.sync.json` receipt or run manual update/rollback on
+sync-owned packages; change their declarations instead. Dry-run writes nothing
+and does not fetch sources, install dependencies or run extension code.
+
 ## Install a package
 
-**Prerequisites:** Vis installed, reviewed source and dependencies, and `uv` on the
-gateway's `PATH`. GitHub installs also need Git on `PATH`.
+**Prerequisites:** Vis installed and reviewed source and dependencies. Vis supplies
+`uv`; GitHub installs also need Git on `PATH`.
 
 1. In the target project, link the local [greeter example](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
    after copying its complete directory to `greeter/`:

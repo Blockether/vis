@@ -791,7 +791,7 @@
    facts. Their keys stay exact — a provider id or a model name is data, never a
    contract key to be adapted."
   #{"environment" "env" "headers" "llm_headers" "extra_body" "toggles" "pricing" "context_limits"
-    "vision_memory"})
+    "vision_memory" "extensions"})
 
 (def ^:private keyword-valued-keys
   "Known scalar fields whose internal runtime representation is a keyword."
@@ -1131,7 +1131,10 @@
                   (nil? b) a
                   (and (map? a) (map? b)) (merge-with merge* a b)
                   :else b))]
-    (reduce merge* nil maps)))
+    (let [merged (reduce merge* nil maps)]
+      (if (some #(contains? % "extensions") maps)
+        (assoc merged "extensions" (apply merge (map #(get % "extensions") maps)))
+        merged))))
 
 (defn load-global-config-raw
   "Load the machine-written global store as a config map (or nil): `~/.vis/state.yml`,
@@ -1235,6 +1238,50 @@
           (when-let [raw (read-yaml-config-map-lenient path)]
             (without-user-only-keys! path raw)))
         (project-root-yaml-paths)))
+
+(defn extension-package-scopes
+  "Read validated declarations without installing. Relative local sources belong to
+   the declaring YAML directory. Global/state and project/overlay merge by package
+   name, replacing complete declarations; they install into separate scopes."
+  []
+  (letfn
+    [(read-tier [paths]
+       (some (fn [path]
+               (when-let [raw (read-yaml-config-map path)]
+                 (into {}
+                       (map (fn [[name spec]]
+                              (let [source (get spec "source")
+                                    file (io/file source)]
+
+                                [name
+                                 (if (or (str/includes? source "://")
+                                         (str/starts-with? source "~")
+                                         (.isAbsolute file))
+                                   spec
+                                   (assoc spec
+                                     "source" (.getCanonicalPath (io/file (.getParentFile (io/file
+                                                                                            path))
+                                                                          source))))])))
+                       (get raw "extensions"))))
+             paths))]
+    (let [global
+          (merge (read-tier (global-config-yaml-paths)) (read-tier [(state-path)]))
+
+          same?
+          (= (.getCanonicalPath (io/file (workspace/cwd) ".vis"))
+             (.getCanonicalPath (io/file (config-dir))))
+
+          project
+          (merge (read-tier (project-root-yaml-paths))
+                 (when-not same? (read-tier (project-config-yaml-paths))))]
+
+      (cond-> [{:scope "global"
+                :directory (str (io/file (config-dir) "extensions"))
+                :packages (if same? (merge global project) (or global {}))}]
+        (not same?)
+        (conj {:scope "project"
+               :directory (str (io/file (workspace/cwd) ".vis" "extensions"))
+               :packages (or project {})})))))
 
 (defn- config-source-paths
   "Every YAML path that can contribute to `load-config-raw`, existing or not."

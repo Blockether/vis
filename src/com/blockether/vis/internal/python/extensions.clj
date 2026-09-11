@@ -1849,6 +1849,41 @@
                       :version version
                       :vis_version (package-version)}))
 
+(defn sync-packages!
+  "Explicitly reconcile YAML package scopes and prepare their uv environments.
+   Never imports package entrypoints or reloads a live gateway. Dry-run is inert."
+  [{:keys [trust refresh prune dry-run project global]}]
+  (when (and project global) (throw (ex-info "Choose --project or --global, not both" {})))
+  (let [scopes (cond->> (config/extension-package-scopes)
+                 project
+                 (filter #(= "project" (:scope %)))
+
+                 global
+                 (filter #(= "global" (:scope %))))]
+    (vec
+      (mapcat (fn [{:keys [scope directory packages]}]
+                (mapv (fn [result]
+                        (let [result (assoc result "scope" scope)]
+                          (if (and (not dry-run)
+                                   (contains? #{"installed" "updated" "cached"}
+                                              (get result "status")))
+                            (try (python-runtime/ensure-project! (io/file (get result "path")))
+                                 (assoc result "prepared" true)
+                                 (catch Exception error
+                                   (assoc result
+                                     "status" "failed"
+                                     "error" (.getMessage error))))
+                            result)))
+                      (package-operation "sync"
+                                         {:configured packages
+                                          :directory directory
+                                          :trust (boolean trust)
+                                          :refresh (boolean refresh)
+                                          :prune (boolean prune)
+                                          :dry_run (boolean dry-run)
+                                          :vis_version (package-version)})))
+              scopes))))
+
 (defn- extension-plan
   [^File f]
   (let [source

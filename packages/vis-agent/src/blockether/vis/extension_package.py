@@ -426,6 +426,8 @@ def _admit(
     release=None,
     replacing=None,
     expected=None,
+    expected_name=None,
+    expected_target=None,
 ):
     path = Path(source).expanduser()
     if path.is_file() and path.name == "pyproject.toml":
@@ -451,6 +453,8 @@ def _admit(
         if not selected.is_relative_to(path.resolve()):
             raise ValueError("Selected folder must stay inside the repository")
         metadata = inspect_source(selected, vis_version, python_version)
+        if expected_name is not None and metadata["name"] != expected_name:
+            raise ValueError("Configured name does not match the package manifest")
         if release and (
             metadata["version"] != str(Version(release["version"]))
             or metadata["name"] != release["name"]
@@ -464,7 +468,15 @@ def _admit(
         os.close(fd)
         try:
             previous = None
-            if replacing:
+            if expected_target is not None:
+                if (
+                    not destination.is_symlink()
+                    or str(destination.resolve()) != expected_target
+                ):
+                    raise ValueError(
+                        "Installation changed during preparation; retry the operation"
+                    )
+            elif replacing:
                 active, _ = _managed(directory, replacing)
                 if active.name != expected:
                     raise ValueError(
@@ -502,7 +514,12 @@ def _admit(
                     shutil.rmtree(snapshot)
                     raise
             else:
-                destination.symlink_to(selected, target_is_directory=True)
+                if expected_target is not None:
+                    pointer = stage / "active"
+                    pointer.symlink_to(selected, target_is_directory=True)
+                    os.replace(pointer, destination)
+                else:
+                    destination.symlink_to(selected, target_is_directory=True)
         finally:
             lock.unlink()
     return {
@@ -632,3 +649,223 @@ def rollback(name, directory, trust=False, version=None, vis_version=None):
         name,
         active.name,
     )
+
+
+def _sync_spec(spec):
+    if not isinstance(spec, dict) or set(spec) - {
+        "source",
+        "subdirectory",
+        "version",
+        "revision",
+    }:
+        raise ValueError("Invalid extension declaration")
+    source = spec.get("source")
+    if not isinstance(source, str) or not source or any(ord(c) < 32 for c in source):
+        raise ValueError("Extension source must be a nonempty path or GitHub URL")
+    remote = "://" in source
+    source = (
+        github_repository(source)
+        if remote
+        else str(Path(source).expanduser().resolve())
+    )
+    folder = project_subdirectory(spec.get("subdirectory", ""))
+    version, revision = spec.get("version"), spec.get("revision")
+    if version is not None:
+        if not isinstance(version, str):
+            raise ValueError("version must be a string")
+        version = str(Version(version))
+    if revision is not None and (
+        not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)
+    ):
+        raise ValueError("revision must be a full, lowercase Git commit SHA")
+    if version is not None and revision is not None:
+        raise ValueError("Choose version or revision, not both")
+    if not remote and (version is not None or revision is not None):
+        raise ValueError("version and revision apply only to GitHub repositories")
+    return {
+        "source": source,
+        "subdirectory": folder,
+        "version": version,
+        "revision": revision,
+    }
+
+
+def _sync_records(directory):
+    path = directory / ".sync.json"
+    if not path.exists():
+        return {}
+    if path.is_symlink() or path.stat().st_size > 1024 * 1024:
+        raise ValueError("Invalid extension sync receipt")
+    records = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(records, dict) or len(records) > 128:
+        raise ValueError("Invalid extension sync receipt")
+    for name, record in records.items():
+        _name(name)
+        if (
+            not isinstance(record, dict)
+            or not isinstance(record.get("target"), str)
+            or not isinstance(record.get("result"), dict)
+            or not isinstance(record.get("spec"), dict)
+        ):
+            raise ValueError("Invalid extension sync receipt")
+    return records
+
+
+def _save_sync_records(directory, records):
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=directory, prefix=".sync-", delete=False
+    ) as output:
+        temporary = Path(output.name)
+        json.dump(records, output, sort_keys=True)
+    try:
+        os.replace(temporary, directory / ".sync.json")
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _sync_owned(destination, record):
+    return (
+        record is not None
+        and destination.is_symlink()
+        and str(destination.resolve()) == record["target"]
+    )
+
+
+def _sync_one(name, spec, directory, current, refresh, vis_version):
+    destination = directory / name
+    exists = os.path.lexists(destination)
+    if exists and not _sync_owned(destination, current):
+        raise ValueError(
+            "Existing extension is not owned by sync or was changed externally; no files replaced"
+        )
+    if exists and current["spec"] == spec and not refresh:
+        metadata = inspect_source(
+            destination, vis_version, ".".join(map(str, sys.version_info[:3]))
+        )
+        if metadata["name"] != name:
+            raise ValueError("Configured name does not match the package manifest")
+        return {**current["result"], "version": metadata["version"], "status": "cached"}
+    source, folder = spec["source"], spec["subdirectory"]
+    remote = source.startswith("https://")
+    release, revision = None, spec["revision"]
+    active = None
+    if remote:
+        if revision is None:
+            release = _select(_releases(source, folder), spec["version"])
+            revision = release["revision"]
+        if exists and current["result"]["mode"] == "github":
+            active, receipt = _managed(directory, name)
+            if (
+                receipt["repository_url"].lower() == source.lower()
+                and receipt["subdirectory"] == folder
+                and receipt["revision"] == revision
+            ):
+                metadata = inspect_source(
+                    destination, vis_version, ".".join(map(str, sys.version_info[:3]))
+                )
+                if (
+                    metadata["name"] != name
+                    or release
+                    and metadata["version"] != release["version"]
+                ):
+                    raise ValueError(
+                        "Installed source no longer matches the selected release"
+                    )
+                return {**current["result"], "status": "cached"}
+    result = _admit(
+        source,
+        directory,
+        folder,
+        revision,
+        vis_version,
+        release,
+        name if active else None,
+        active.name if active else None,
+        expected_name=name,
+        expected_target=current["target"] if exists and active is None else None,
+    )
+    return {**result, "status": "updated" if exists else "installed"}
+
+
+def sync(
+    configured,
+    directory,
+    trust=False,
+    refresh=False,
+    prune=False,
+    dry_run=False,
+    vis_version=None,
+):
+    """Reconcile one YAML scope; reuse pins until refresh and prune only owned links.
+
+    Receipts and pointers are atomic. Old Git snapshots and local source are retained.
+    A failed package is reported without removing its previous source or other packages.
+    Dry-run performs no writes, imports or network calls. Dependencies are prepared by
+    the host after source admission, using upstream uv's own readiness/cache checks.
+    """
+    if not dry_run:
+        _trust(trust)
+    if not isinstance(configured, dict) or len(configured) > 128:
+        raise ValueError("extensions must be a map of at most 128 named packages")
+    specs = {_name(name): _sync_spec(spec) for name, spec in configured.items()}
+    directory = Path(directory).expanduser().resolve()
+    if not directory.exists() and not specs:
+        return []
+    if not dry_run:
+        directory.mkdir(parents=True, exist_ok=True)
+    lock = directory / ".sync-lock"
+    if not dry_run:
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+    try:
+        records = _sync_records(directory)
+        results = []
+        for name in sorted(set(specs) | set(records)):
+            spec, current = specs.get(name), records.get(name)
+            destination = directory / name
+            try:
+                if spec is None:
+                    result = {"name": name, "status": "orphaned"}
+                    if prune:
+                        if os.path.lexists(destination) and not _sync_owned(
+                            destination, current
+                        ):
+                            raise ValueError(
+                                "Extension changed externally; refusing to prune it"
+                            )
+                        result["status"] = "would-remove" if dry_run else "removed"
+                        if not dry_run:
+                            destination.unlink(missing_ok=True)
+                            del records[name]
+                            _save_sync_records(directory, records)
+                elif dry_run:
+                    unchanged = (
+                        _sync_owned(destination, current)
+                        and current["spec"] == spec
+                        and not refresh
+                    )
+                    result = {
+                        "name": name,
+                        "status": "cached" if unchanged else "would-sync",
+                    }
+                else:
+                    result = _sync_one(
+                        name, spec, directory, current, refresh, vis_version
+                    )
+                    record = {
+                        "spec": spec,
+                        "target": str(destination.resolve()),
+                        "result": {k: v for k, v in result.items() if k != "status"},
+                    }
+                    if records.get(name) != record:
+                        records[name] = record
+                        _save_sync_records(directory, records)
+                results.append(result)
+            except (ValueError, OSError) as error:
+                results.append(
+                    {"name": name, "status": "failed", "error": str(error)[:1024]}
+                )
+        return results
+    finally:
+        if not dry_run:
+            lock.unlink()

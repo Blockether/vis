@@ -3377,7 +3377,7 @@
      :cmd/run-fn cli-doctor!} speech-cli/command
     {:cmd/name "extension"
      :cmd/doc "Inspect or run an extension-contributed CLI command."
-     :cmd/usage "vis-agent extension <list|...> [args...]"
+     :cmd/usage "vis-agent extension <list|install|sync|versions|update|rollback|...> [args...]"
      :cmd/subcommands #(registry/registered-under ["extension"])}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
@@ -3887,6 +3887,68 @@
                                           :directory (package-directory project)})))})
 
 (registry/register-cmd!
+  {:cmd/name "sync"
+   :cmd/parent ["extension"]
+   :cmd/internal? true
+   :cmd/doc
+   "Reconcile global and project YAML packages; reuse pinned sources and ready environments."
+   :cmd/usage
+   "vis-agent extension sync --trust [--project | --global] [--refresh] [--prune] [--dry-run]"
+   :cmd/args
+   [{:name "trust"
+     :kind :flag
+     :type :boolean
+     :doc "Allow reviewed packages and their build backends to run."}
+    {:name "project" :kind :flag :type :boolean :doc "Sync only this project's declarations."}
+    {:name "global" :kind :flag :type :boolean :doc "Sync only global declarations."}
+    {:name "refresh"
+     :kind :flag
+     :type :boolean
+     :doc "Recheck approved releases for unpinned declarations."}
+    {:name "prune"
+     :kind :flag
+     :type :boolean
+     :doc "Remove only sync-owned links absent from configuration; retain all source."}
+    {:name "dry-run"
+     :kind :flag
+     :type :boolean
+     :doc "Show source actions without network, writes or dependency preparation."}]
+   :cmd/run-fn
+   (fn [{:strs [trust project global refresh prune dry-run]} _]
+     (let [started
+           (System/nanoTime)
+
+           results
+           (python-extensions/sync-packages! {:trust trust
+                                              :project project
+                                              :global global
+                                              :refresh refresh
+                                              :prune prune
+                                              :dry-run dry-run})
+
+           failed
+           (count (filter #(= "failed" (get % "status")) results))]
+
+       (doseq [result results]
+         (stdout! (str (get result "scope")
+                       "  "
+                       (get result "name")
+                       "  "
+                       (get result "status")
+                       (when-let [version (get result "version")]
+                         (str "  " version))
+                       (when-let [error (get result "error")]
+                         (str " — " error)))))
+       (stdout! (str "Synced " (count results)
+                     " package(s) in " (quot (- (System/nanoTime) started) 1000000)
+                     " ms; " failed
+                     " failed." (when-not dry-run
+                                  " Run /reload to use prepared extensions in existing sessions.")))
+       (when (pos? failed)
+         (throw (ex-info "Extension sync did not complete for every package" {:failed failed})))
+       results))})
+
+(registry/register-cmd!
   {:cmd/name "versions"
    :cmd/parent ["extension"]
    :cmd/internal? true
@@ -4022,10 +4084,11 @@
   nil)
 
 (defn- deferred-python-dispatch?
-  "True for long-lived processes that load Python only at the gateway execution boundary."
+  "Defer gateway Python loading and keep declarative sync free of entrypoint imports."
   [args]
   (or (= "sdk-stdio" (first args))
-      (contains? #{["gateway" "start"] ["gateway" "tui"]} (vec (take 2 args)))))
+      (contains? #{["gateway" "start"] ["gateway" "tui"] ["extension" "sync"]}
+                 (vec (take 2 args)))))
 
 ;; Root command
 ;;

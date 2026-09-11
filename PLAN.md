@@ -1993,3 +1993,56 @@ and lint/reflection pass. Publication is limited to the captured Git scope below
 Initial Git scope: `audit/README.md`, `deps.edn`, and
 `test-native/com/blockether/vis/native_python_extensions_test.clj`, plus this task's changes.
 Later unrelated edits are excluded. No release or service restart is authorized.
+
+# Declarative extension synchronization and catalog verification
+
+Phrase: install declared packages once and reuse verified preparation.
+
+## Context
+
+`internal/config`, `internal/python/extensions.clj`, the SDK's `extension_package.py`,
+and `vis-contract/schema/config.json` own configuration, admission and preparation.
+`apps/vis-docs` owns approved releases and repository metadata. Existing install/update
+commands do not reconcile YAML declarations. GitHub stars currently freeze at review.
+Keep manual source links and other sessions' changes intact; do not restart the gateway.
+
+## 1. Declare and reconcile packages
+- Rationale: global and project declarations need predictable locations and precedence.
+- Data: keyed `extensions` maps, explicit trust, sync-owned receipts, existing source snapshots.
+- Acceptance criteria: closed canonical schema; project overrides do not modify global source;
+  unchanged sync avoids Git/catalog/install work; changed pins reconcile; pruning is explicit
+  and removes owned links only; dependencies use existing readiness checks.
+- Unknowns: resolved; runtime 0.5.10 assets are published and verified locally.
+
+## 2. Refresh repository facts and publish Spel
+- Rationale: GitHub stars must be repository facts, independent of reviewed source versions.
+- Data: bounded cached GitHub metadata, approved release catalog, Spel's published source.
+- Acceptance criteria: detail/list/version views agree; outages retain last known values;
+  reviewed Spel release is publicly installable without bypassing public moderation controls.
+- Unknowns: operator credentials may require the existing authenticated deployment workflow.
+
+## 3. Cross-validate, verify Linux installation and publish
+- Rationale: unit tests alone cannot prove CLI, native worker and remote installation behavior.
+- Data: schema/merge/installer tests, host and native integration, cache measurements, remote CLI.
+- Acceptance criteria: affected format/lint/reflection pass; isolated remote sync/tool smoke test;
+  no live service restart; task-only commit/push and required CI verified.
+- Unknowns: the remote installed CLI predates sync; a checked new Linux binary is required.
+
+## Plan state
+
+Implemented declarative scope merging, canonical schema validation and explicit sync with
+pinned source receipts, guarded pruning and uv's offline readiness check. Python package
+suite: 61 passed; SDK contract suite: 25 passed. Host/config/main integration: 99 passed;
+a second 97-case host/main run passes with the published runtime and no local override.
+Docs/config verification: 77 passed. Formatting, Python lint and Clojure reflection checks
+pass. Native testing exposed eager entrypoint loading before sync; startup now defers it.
+The rebuilt CE 25.3.4.1 image passes all three affected native tests, including no-import
+markers, both configuration scopes, warm sync and guarded pruning. Warm sync: 539 ms.
+
+Repository star refresh and authenticated operator publication are committed in 83eef4c0e;
+the production Docs workflow passed. Marketplace: 141 tests passed, lint and Wrangler
+dry-run passed; workflow actionlint passed. Spel 0.1.0 at
+f0f8d51cb65b51475251d095f845945a9cdf66d4 is installed in an isolated Linux project,
+with verified native Spel 0.9.33 and browsers; both native browser/CDP tests passed.
+No live gateway restart or global extension mutation. Remaining: sync commit/push,
+authenticated public catalog publication (workflow running) and remote new-CLI sync.

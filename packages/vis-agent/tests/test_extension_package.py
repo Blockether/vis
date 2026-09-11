@@ -551,3 +551,196 @@ def test_prerelease_only_needs_explicit_selection_and_update_never_downgrades(re
     result = package.update("vis-greeter", target, trust=True)
     assert result["revision"] == installed["revision"]
     assert "no changes" in result["next"]
+
+
+# Declarative sync owns its receipt and link, never a development checkout.
+def test_sync_local_install_cache_and_explicit_prune(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    configured = {"vis-greeter": {"source": str(source)}}
+    with pytest.raises(ValueError, match="trust"):
+        package.sync(configured, target)
+    assert not target.exists()
+    first = package.sync(configured, target, trust=True)
+    assert first[0]["status"] == "installed"
+    second = package.sync(configured, target, trust=True)
+    assert second[0]["status"] == "cached"
+    assert package.sync({}, target, trust=True)[0]["status"] == "orphaned"
+    assert (target / "vis-greeter").is_symlink()
+    assert package.sync({}, target, trust=True, prune=True)[0]["status"] == "removed"
+    assert source.is_dir()
+    assert not (target / "vis-greeter").exists()
+
+
+def test_sync_github_warm_path_does_not_fetch_or_check_catalog(releases, monkeypatch):
+    _, target, commands = releases
+    configured = {
+        "vis-greeter": {
+            "source": REPOSITORY,
+            "subdirectory": "plugins/greeting",
+            "version": "1.0.0",
+        }
+    }
+    assert package.sync(configured, target, trust=True)[0]["status"] == "installed"
+    fetched = list(commands)
+    monkeypatch.setattr(
+        package, "_catalog", lambda *_: pytest.fail("warm sync consulted catalog")
+    )
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+    assert commands == fetched
+
+
+def test_sync_pins_updates_refresh_and_rollback(releases):
+    metadata, target, commands = releases
+    spec = {
+        "source": REPOSITORY,
+        "subdirectory": "plugins/greeting",
+        "version": "1.0.0",
+    }
+    first = package.sync({"vis-greeter": spec}, target, trust=True)[0]
+    old_source = (target / "vis-greeter").resolve()
+    (old_source / "note.txt").write_text("keep edits")
+    assert (
+        package.sync({"vis-greeter": {**spec, "version": "1.1.0"}}, target, trust=True)[
+            0
+        ]["status"]
+        == "updated"
+    )
+    assert (
+        package.sync({"vis-greeter": spec}, target, trust=True)[0]["revision"]
+        == first["revision"]
+    )
+    assert (old_source / "note.txt").read_text() == "keep edits"
+    newer = metadata.pop(1)
+    latest = {"vis-greeter": {k: v for k, v in spec.items() if k != "version"}}
+    package.sync(latest, target, trust=True)
+    fetched = len(commands)
+    assert (
+        package.sync(latest, target, trust=True, refresh=True)[0]["status"] == "cached"
+    )
+    assert len(commands) == fetched
+    metadata.append(newer)
+    assert package.sync(latest, target, trust=True)[0]["version"] == "1.0.0"
+    assert (
+        package.sync(latest, target, trust=True, refresh=True)[0]["version"] == "1.1.0"
+    )
+
+
+def test_sync_dry_run_and_invalid_inputs_are_inert(tmp_path, monkeypatch):
+    target = tmp_path / "extensions"
+    monkeypatch.setattr(
+        package, "_catalog", lambda *_: pytest.fail("dry run used network")
+    )
+    assert (
+        package.sync({"vis-greeter": {"source": REPOSITORY}}, target, dry_run=True)[0][
+            "status"
+        ]
+        == "would-sync"
+    )
+    assert not target.exists()
+    for config in (
+        {"../escape": {"source": REPOSITORY}},
+        {"ok": {"source": REPOSITORY, "trust": True}},
+        {"ok": {"source": REPOSITORY, "revision": "main"}},
+        {"ok": {"source": "https://user:secret@github.com/a/b"}},
+    ):
+        with pytest.raises(ValueError):
+            package.sync(config, target, trust=True)
+        assert not target.exists()
+
+
+def test_sync_does_not_claim_manual_or_replaced_links(tmp_path):
+    target = tmp_path / "extensions"
+    original = project(tmp_path / "original")
+    alternate = project(tmp_path / "alternate")
+    package.install(str(original), target, trust=True)
+    configured = {"vis-greeter": {"source": str(original)}}
+    assert package.sync(configured, target, trust=True)[0]["status"] == "failed"
+    assert package.sync({}, target, trust=True, prune=True) == []
+    (target / "vis-greeter").unlink()
+    package.sync(configured, target, trust=True)
+    (target / "vis-greeter").unlink()
+    (target / "vis-greeter").symlink_to(alternate, target_is_directory=True)
+    assert package.sync({}, target, trust=True, prune=True)[0]["status"] == "failed"
+    assert (target / "vis-greeter").resolve() == alternate
+    assert original.exists()
+
+
+def test_sync_changed_local_and_remote_sources_preserve_source(releases, tmp_path):
+    _, target, _ = releases
+    local = project(tmp_path / "local")
+    remote = {
+        "source": REPOSITORY,
+        "subdirectory": "plugins/greeting",
+        "version": "1.0.0",
+    }
+    assert (
+        package.sync({"vis-greeter": {"source": str(local)}}, target, trust=True)[0][
+            "status"
+        ]
+        == "installed"
+    )
+    assert (
+        package.sync({"vis-greeter": remote}, target, trust=True)[0]["status"]
+        == "updated"
+    )
+    snapshot = (target / "vis-greeter").resolve()
+    assert (
+        package.sync({"vis-greeter": {"source": str(local)}}, target, trust=True)[0][
+            "status"
+        ]
+        == "updated"
+    )
+    assert snapshot.exists() and local.exists()
+    assert (target / "vis-greeter").resolve() == local
+
+
+def test_sync_failure_keeps_last_source_and_name_mismatch_installs_nothing(
+    releases, monkeypatch
+):
+    _, target, _ = releases
+    spec = {
+        "source": REPOSITORY,
+        "subdirectory": "plugins/greeting",
+        "version": "1.0.0",
+    }
+    package.sync({"vis-greeter": spec}, target, trust=True)
+    previous = (target / "vis-greeter").resolve()
+    receipt = (target / ".sync.json").read_bytes()
+
+    def fail(*_):
+        raise ValueError("catalog unavailable")
+
+    monkeypatch.setattr(package, "_catalog", fail)
+    assert (
+        package.sync({"vis-greeter": {**spec, "version": "1.1.0"}}, target, trust=True)[
+            0
+        ]["status"]
+        == "failed"
+    )
+    assert (target / "vis-greeter").resolve() == previous
+    assert (target / ".sync.json").read_bytes() == receipt
+    local = project(target.parent / "mismatch")
+    assert (
+        package.sync({"wrong-name": {"source": str(local)}}, target, trust=True)[1][
+            "status"
+        ]
+        == "failed"
+    )
+    assert not (target / "wrong-name").exists()
+
+
+def test_sync_lock_and_corrupt_receipts_fail_without_touching_source(tmp_path):
+    target = tmp_path / "extensions"
+    target.mkdir()
+    source = project(tmp_path / "source")
+    config = {"vis-greeter": {"source": str(source)}}
+    (target / ".sync-lock").write_text("")
+    with pytest.raises(FileExistsError):
+        package.sync(config, target, trust=True)
+    (target / ".sync-lock").unlink()
+    (target / ".sync.json").write_text('{"vis-greeter": {}}')
+    with pytest.raises(ValueError):
+        package.sync(config, target, trust=True)
+    assert not (target / "vis-greeter").exists()
+    assert not (target / ".sync-lock").exists()

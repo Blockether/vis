@@ -287,3 +287,24 @@ def test_op_answers_one_entry_or_nothing():
     assert _contracts.op("shell")["name"] == "shell"
     assert _contracts.op("detonate") is None
     assert _contracts.refusal("shell") is None
+
+
+def test_extension_declarations_use_the_canonical_config_contract():
+    declaration = {
+        "extensions": {
+            "vis-spel": {
+                "source": "https://github.com/Blockether/spel",
+                "subdirectory": "extensions/vis-spel",
+                "version": "0.1.0",
+            }
+        }
+    }
+    assert _contracts.validate("config", "config", declaration) is declaration
+    for spec in (
+        {},
+        {"source": "./tools", "trust": True},
+        {"source": "./tools", "revision": "main"},
+        {"source": "./tools", "version": "1.0.0", "revision": "a" * 40},
+    ):
+        with pytest.raises(ValueError):
+            _contracts.validate("config", "config", {"extensions": {"vis-spel": spec}})

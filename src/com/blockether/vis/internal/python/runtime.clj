@@ -373,15 +373,22 @@
     (.flush config/original-stderr)))
 
 (defn ensure-project!
-  "Prepare an extension with upstream uv sync and the worker's embedded Python.
-   uv owns lock updates, dependency groups and the project environment."
+  "Prepare an extension with bundled uv and the worker's embedded Python.
+   An offline check reuses a ready environment without resolution or installation;
+   otherwise uv owns lock updates, dependency groups and its package cache."
   [^File project]
   (locking preparation-lock
-    (try (preparation-stage! project "installing")
-         (run-uv! project [(bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)])
-         (let [packages (project-packages project)]
-           (preparation-stage! project "ready")
-           packages)
+    (try (let [ready? (try (run-uv! project
+                                    [(bundled-uv!) "sync" "--check" "--offline" "--python"
+                                     (Interpreter/pythonExecutable)])
+                           true
+                           (catch clojure.lang.ExceptionInfo _ false))]
+           (when-not ready?
+             (preparation-stage! project "installing")
+             (run-uv! project [(bundled-uv!) "sync" "--python" (Interpreter/pythonExecutable)]))
+           (let [packages (project-packages project)]
+             (preparation-stage! project (if ready? "cached" "ready"))
+             packages))
          (catch Throwable t
            (preparation-stage! project "failed")
            (let [data
