@@ -209,6 +209,9 @@ def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
     assert polled_at == [0.0, 5.0]
     assert len(waits) == 2
     assert result["summary"] == "Run result: success"
+    opened = recorder.said[0]["view"]
+    assert opened["title"] == "CI · run 1 · 1 jobs"
+    assert not opened.get("description")
     assert recorder.node("jobs")["rows"][0]["cells"] == ["Tests", "success"]
     assert recorder.node("progress")["done"] == 1
 

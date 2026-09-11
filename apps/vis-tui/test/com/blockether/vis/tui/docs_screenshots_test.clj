@@ -15,7 +15,7 @@
 (defn- running-pane
   []
   (-> (fixture/view
-        {:title "CI · run 42" :description "3 jobs"}
+        {:title "CI · run 42 · 3 jobs"}
         (fixture/status "run" "Watching" {:tone :running})
         (fixture/progress "progress" {:done 1 :total 3})
         (fixture/table "jobs"
@@ -108,4 +108,20 @@
         (expect (nil? (:error capture)))
         (doseq [label labels]
           (expect (str/includes? text label) (str kind ": " label)))
-        (expect (not (str/includes? text "example-only"))))))
+        (expect (not (str/includes? text "example-only")))))
+  (it "keeps the job count in the header instead of a separate description row"
+      (doseq [kind
+              [:live-running :live-stop]
+
+              :let [capture
+                    (capture-pane kind)
+
+                    lines
+                    (str/split-lines (cap/frame-text (last (:frames capture))))
+
+                    header
+                    (first (filter #(str/includes? % "CI · run 42") lines))]]
+
+        (expect (nil? (:error capture)))
+        (expect (str/includes? (or header "") "CI · run 42 · 3 jobs · 12s"))
+        (expect (not-any? #(= "3 jobs" (str/trim (str/replace % "│" ""))) lines)))))

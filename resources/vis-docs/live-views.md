@@ -53,7 +53,7 @@ def watch_run(run_id: int) -> dict:
     """Watch a GitHub Actions run; stopping the view does not cancel the run."""
     run = poll(run_id)
     with vis.live(
-        f"CI · run {run_id}",
+        f"CI · run {run_id} · {len(run['jobs'])} jobs",
         [
             vis.status("run", "Watching", tone="running"),
             vis.progress("progress"),
@@ -61,7 +61,6 @@ def watch_run(run_id: int) -> dict:
                                        vis.table_column("state", "Status")]),
             vis.link("links", links=[{"id": "run", "label": "This run", "target": run["url"]}]),
         ],
-        description=f"{len(run['jobs'])} jobs",
     ) as view:
         seen = {}
         counts = None
