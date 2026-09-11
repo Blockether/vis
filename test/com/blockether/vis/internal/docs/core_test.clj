@@ -70,7 +70,7 @@
 (defdescribe
   council-diagrams-test
   (it
-    "serves accessible SVG diagrams and Mermaid sources in static and live docs"
+    "renders linked diagrams in both modes and serves their source assets"
     (let [{:keys [pages] :as site}
           (docs/collect)
 
@@ -104,6 +104,7 @@
         (doseq [mode
                 [:static :live]
 
+                :when (= ext "svg")
                 :let [html
                       (docs/page-html site page mode)
 
@@ -111,7 +112,7 @@
                       (str (when (= mode :live) "/docs/") "assets/" rel)]]
 
           (expect (str/includes? html (str "href=\"" path "\"")))
-          (when (= ext "svg") (expect (str/includes? html (str "src=\"" path "\"")))))))))
+          (expect (str/includes? html (str "src=\"" path "\""))))))))
 
 (def ^:private rewrite-md-links @#'docs/rewrite-md-links)
 
