@@ -1852,3 +1852,17 @@ export const STORY_GOAL = {
   status: "active" as const, iteration_budget: 30, iterations_used: 12, tokens_used: 12400, time_used_ms: 32000,
   revision: 3, version: 1, reason: null, created_at: 1780000000000, updated_at: 1780000032000,
 };
+
+/** Settings transport: two reachable machines, one unavailable, and empty machine configuration. */
+export function storySettingsFetch(): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (new URL(href).origin === new URL(STORY_GATEWAYS[2].url).origin) {
+      throw new TypeError('The latest probe timed out');
+    }
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+}

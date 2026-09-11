@@ -15,6 +15,8 @@ export const DEFAULT_THEME: ThemeChoice = { id: 'blockether-light', label: 'Bloc
 export const THEMES: readonly ThemeChoice[] = [
   DEFAULT_THEME,
   { id: 'blockether-dark', label: 'Blockether Dark', mode: 'dark', chrome: '#0f1117' },
+  { id: 'high-contrast-dark', label: 'High Contrast Dark', mode: 'dark', chrome: '#000000' },
+  { id: 'paper', label: 'Paper', mode: 'light', chrome: '#ffffff' },
   { id: 'solarized-dark', label: 'Solarized Dark', mode: 'dark', chrome: '#002b36' },
   { id: 'solarized-light', label: 'Solarized Light', mode: 'light', chrome: '#fdf6e3' },
   { id: 'tokyonight-day', label: 'Tokyo Day', mode: 'light', chrome: '#e1e2e7' },

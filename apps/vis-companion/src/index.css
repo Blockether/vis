@@ -29,7 +29,15 @@
   (&:where([data-theme='blockether-light'], [data-theme='blockether-light'] *));
 @custom-variant blockether-dark
   (&:where([data-theme='blockether-dark'], [data-theme='blockether-dark'] *));
-
+/* Monochrome pages change in place. This removes CSS motion, not streamed DOM
+   updates or hardware ghosting; those need a separate reader/display policy. */
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) *,
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) *::before,
+:where([data-theme='paper'], [data-theme='high-contrast-dark']) *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
 /* Every palette the app ships lives in the generated stylesheet imported above:
    `[data-theme='<id>']` blocks rendered from `theme.clj`, with the default theme
    doubling as `:root`. Painting one is setting that attribute — nothing is fetched. */
@@ -144,7 +152,7 @@
      surface is that same hue lightened to the amber badge's weight, which
      desaturates it in the process: light #8bca96, dark #a3edb5, both taking the
      shared dark badge ink at 8.6:1 and 13.7:1. Green text keeps --color-ok. */
-  --color-ok-surface: color-mix(in oklab, var(--ok) 58%, white);
+  --color-ok-surface: var(--ok-surface, color-mix(in oklab, var(--ok) 58%, white));
   /* Ink for a FILLED green block (the live badge): the SAME ink the amber badge
      next to it uses, so the pair reads as one component in two colours. Every
      shipped theme carries it (light #261e00, dark #0f1117). */
@@ -168,8 +176,8 @@
      own paper, an EDGE that separates the two answers, and --color-err kept as
      the INK on top of it. Full-strength --err is then spent only on press,
      where the destructive commit actually happens. */
-  --color-err-surface: color-mix(in oklab, var(--err) 14%, var(--surface));
-  --color-err-edge: color-mix(in oklab, var(--err) 42%, var(--surface));
+  --color-err-surface: var(--err-surface, color-mix(in oklab, var(--err) 14%, var(--surface)));
+  --color-err-edge: var(--err-edge, color-mix(in oklab, var(--err) 42%, var(--surface)));
   /* --err is a BADGE fill, not ink: #dc2626 on that 14% surface measures
      3.68:1, under the 4.5 a 10px bold label owes. Bent toward the theme's own
      ink it stays unmistakably red and reads: light 5.9:1, dark on the dark
@@ -242,8 +250,8 @@
      into its own paper. That flips direction on its own — a light theme darkens, a
      dark theme lightens — so every gateway palette gets the same three legible steps
      with nothing to override and no per-theme fork. */
-  --color-level-machine: color-mix(in oklab, var(--fg) 9%, var(--surface));
-  --color-level-project: color-mix(in oklab, var(--fg) 4%, var(--surface));
+  --color-level-machine: var(--level-machine, color-mix(in oklab, var(--fg) 9%, var(--surface)));
+  --color-level-project: var(--level-project, color-mix(in oklab, var(--fg) 4%, var(--surface)));
   /* THE PAGE UNDER THE SHEETS, derived the same way and for the same reason. A desk
      window stands one sheet per project, and a sheet is only an object while the
      paper behind it is a different paper — but `--bg` and `--surface` are the SAME
@@ -251,7 +259,7 @@
      more than the two header levels above could be. Mixing the page's own ink into
      its own ground puts it one step UNDER the sheet in both directions: #f3ece4
      behind a #faf3eb sheet in light, #14161c behind a #161820 one in dark. */
-  --color-page: color-mix(in oklab, var(--fg) 3%, var(--bg));
+  --color-page: var(--page, color-mix(in oklab, var(--fg) 3%, var(--bg)));
   --font-sans: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
   --font-mono: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
 }

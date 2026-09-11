@@ -53,6 +53,13 @@ const STATUS_COLUMN = {
   CircleAlertIcon: <CircleAlertIcon />,
 };
 
+// Monochrome review: passing undefined erased Lucide's fill="none", hiding every status glyph.
+it("keeps status rings unfilled so their symbols survive without colour", () => {
+  for (const icon of Object.values(STATUS_COLUMN)) {
+    expect(renderToStaticMarkup(icon)).toContain('fill="none"');
+  }
+});
+
 const ICONS = {
   AlertIcon: <AlertIcon />,
   ArrowDownIcon: <ArrowDownIcon />,

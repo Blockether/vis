@@ -1019,3 +1019,24 @@ export const CustomAgentName: Story = {
     await expect(canvas.getByRole("status")).toHaveTextContent("Ada is");
   },
 };
+
+/** A monochrome review must preserve symbols, disclosure and a still page. */
+const monochromePlay: Story["play"] = async ({ canvas, canvasElement }) => {
+  const trace = canvas.getAllByRole("button", { name: "Expand Activity" })[0];
+  await userEvent.click(trace);
+  await expect(canvas.getByRole("button", { name: "Collapse Activity" })).toHaveAttribute("aria-expanded", "true");
+  await expect(canvas.getByRole("list", { name: "Operation groups" })).toBeVisible();
+  const icons = canvasElement.querySelectorAll("[data-execution-activity] svg");
+  await expect(icons.length).toBeGreaterThan(0);
+  for (const icon of icons) {
+    await expect(getComputedStyle(icon).fill).toBe("none");
+  }
+  await expect(canvasElement.getAnimations({ subtree: true })).toHaveLength(0);
+};
+
+export const Paper: Story = { ...Exchange, globals: { theme: "paper" }, play: monochromePlay };
+export const HighContrastDark: Story = {
+  ...Exchange,
+  globals: { theme: "high-contrast-dark" },
+  play: monochromePlay,
+};

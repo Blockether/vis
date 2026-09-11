@@ -915,11 +915,41 @@
   "tokyonight.nvim Storm theme."
   (make-theme "tokyonight-storm" "Tokyo Storm" :dark tokyonight-storm-palette))
 
+(defn- monochrome-palette
+  "Two inks, with explicit inverse selections. No hue carries a state.
+   This is a palette, not a display refresh policy: channels own update cadence."
+  [paper ink]
+  (merge (into {}
+               (map (fn [k]
+                      [k (if (str/ends-with? (name k) "-bg") paper ink)]))
+               (keys light-palette))
+         {:header-active-tab-bg ink
+          :header-active-tab-fg paper
+          :header-tab-number-fg paper
+          :dialog-title-bg paper
+          :dialog-title-fg ink
+          :dialog-shadow paper}))
+
+(def paper
+  "Black ink on white paper, for high contrast and e-ink palette exploration."
+  (assoc-in (make-theme "paper" "Paper" :light (monochrome-palette [255 255 255] [0 0 0]))
+    [:settings "HIGH_CONTRAST"]
+    true))
+
+(def high-contrast-dark
+  "White ink on black; the inverse accessibility choice, not an e-ink default."
+  (assoc-in (make-theme "high-contrast-dark" "High Contrast Dark"
+                        :dark (monochrome-palette [0 0 0] [255 255 255]))
+    [:settings "HIGH_CONTRAST"]
+    true))
+
 (def default-theme blockether-light)
 
 (def built-in-themes
   {"blockether-light" blockether-light
    "blockether-dark" blockether-dark
+   "paper" paper
+   "high-contrast-dark" high-contrast-dark
    "vis-light" vis-light
    "vis-dark" vis-dark
    "solarized-light" solarized-light
@@ -1261,7 +1291,7 @@
   "CSS custom-property map (\"--bg\" -> \"#rrggbb\") for a theme map -
    the palette-named tokens, the derived bg/fg mixes, and the
    luminance-delta-normalized border hairlines."
-  [{:keys [palette]}]
+  [{:keys [palette settings]}]
   (let [bg
         (:terminal-bg palette)
 
@@ -1282,7 +1312,17 @@
            (into (sorted-map)
                  (map (fn [[css-var delta]]
                         [css-var (rgb->css (mix-to-luminance-delta bg border delta))]))
-                 web-css-border-tokens))))
+                 web-css-border-tokens)
+           (when (get settings "HIGH_CONTRAST")
+             {"--line" (rgb->css fg)
+              "--line2" (rgb->css fg)
+              "--hover" (rgb->css bg)
+              "--ok-surface" (rgb->css (:header-active-tab-bg palette))
+              "--err-surface" (rgb->css bg)
+              "--err-edge" (rgb->css fg)
+              "--level-machine" (rgb->css bg)
+              "--level-project" (rgb->css bg)
+              "--page" (rgb->css bg)}))))
 
 (defn web-css-root
   "A `:root{...}` CSS block for a theme id (or theme map): every shared

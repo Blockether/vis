@@ -191,3 +191,8 @@ export const DeleteProject: Story = {
     await expect(page.getByRole('region', { name: 'reviewer sessions' })).toBeVisible();
   },
 };
+
+/** The complete navigator takes the review frame, not a fixed phone-width wrapper. */
+export const ResponsiveFleet: Story = {
+  play: Fleet.play,
+};

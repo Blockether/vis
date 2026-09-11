@@ -84,7 +84,7 @@ function Mark({
         !NAMES_A_SIZE.test(className ?? "") && "size-3.5",
         className,
       )}
-      fill={fill}
+      fill={fill ?? "none"}
       aria-hidden="true"
     />
   );
