@@ -17,6 +17,10 @@ target/
 node_modules/
 .expo/
 
+# Private signing material
+*.p12
+*.pfx
+*.p8
 
 # IDE
 .idea/

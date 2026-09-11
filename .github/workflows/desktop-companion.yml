@@ -103,8 +103,46 @@ jobs:
       - name: Build web bundle
         run: npm run build
 
-      - name: Package with Pake
+      - name: Package Linux with Pake
+        if: runner.os == 'Linux'
         run: npm run package:desktop
+
+      # Tauri imports APPLE_CERTIFICATE into a temporary signing keychain.
+      # Its notarization step signs, submits to Apple, and staples the app.
+      - name: Sign and notarize macOS with Pake
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.VIS_DESKTOP_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.VIS_DESKTOP_P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: 'Developer ID Application: BLOCKETHER SP. Z O.O. (JSZTFUBUBB)'
+          APPLE_API_KEY: ${{ secrets.VIS_ASC_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.VIS_ASC_ISSUER_ID }}
+          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY APPLE_API_ISSUER VIS_ASC_KEY; do
+            test -n "${!name}" || { echo "Missing required signing credential: $name" >&2; exit 1; }
+          done
+          umask 077
+          APPLE_API_KEY_PATH="$(mktemp "$RUNNER_TEMP/vis-desktop-key.XXXXXX")"
+          export APPLE_API_KEY_PATH
+          trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
+          printf '%s\n' "$VIS_ASC_KEY" > "$APPLE_API_KEY_PATH"
+          npm run package:desktop
+
+      - name: Verify macOS signature and notarization
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          mount="$(mktemp -d "$RUNNER_TEMP/vis-desktop-mount.XXXXXX")"
+          trap 'hdiutil detach "$mount"; rmdir "$mount"' EXIT
+          images=(build/desktop/*-macos-universal.dmg)
+          test "${#images[@]}" -eq 1
+          hdiutil attach "${images[0]}" -readonly -nobrowse -mountpoint "$mount"
+          codesign --verify --deep --strict --verbose=2 "$mount/Vis.app"
+          codesign --verify -R='anchor apple generic and certificate leaf[subject.OU] = "JSZTFUBUBB" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$mount/Vis.app"
+          xcrun stapler validate "$mount/Vis.app"
+          spctl --assess --type execute --verbose=2 "$mount/Vis.app"
 
       - name: List installers
         run: ls -la build/desktop

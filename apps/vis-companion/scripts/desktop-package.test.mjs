@@ -49,6 +49,24 @@ describe('desktop package', () => {
 // v0.1.43 ran before checkout on fresh Linux runners and had no ARM64 package job.
 const workflow = readFileSync(new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url), 'utf8');
 
+describe('desktop release signing', () => {
+  it('requires macOS signing credentials and notarization before uploading', () => {
+    for (const name of ['VIS_DESKTOP_P12', 'VIS_DESKTOP_P12_PASSWORD', 'VIS_ASC_KEY_ID', 'VIS_ASC_ISSUER_ID', 'VIS_ASC_KEY']) {
+      expect(workflow).toContain(`secrets.${name}`);
+    }
+    expect(workflow).toContain('Missing required signing credential: $name');
+    expect(workflow).toContain("APPLE_SIGNING_IDENTITY: 'Developer ID Application:");
+    expect(workflow).toContain('export APPLE_API_KEY_PATH');
+    expect(workflow).toContain(`trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT`);
+    for (const check of ['codesign --verify --deep --strict', 'xcrun stapler validate', 'spctl --assess --type execute']) {
+      expect(workflow.indexOf(check)).toBeGreaterThan(workflow.indexOf('name: Sign and notarize macOS'));
+      expect(workflow.indexOf(check)).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
+    }
+    expect(workflow).toContain('name: Package Linux with Pake');
+    expect(workflow).toContain("if: runner.os == 'Linux'");
+  });
+});
+
 describe('desktop release platforms', () => {
   beforeEach(() => {
     vi.clearAllMocks();
