@@ -49,7 +49,11 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
     assert len(calls) == 1
     wire = vis._registration["spec"]
     assert wire["symbols"][0]["marker"] == "symbol"
-    assert wire["symbols"][0]["fn"]("Ada", {"loud": True}) == "ADA"
+    # #197: the bridge preserves real keywords, not a trailing positional map.
+    assert wire["symbols"][0]["fn"]("Ada", loud=True) == "ADA"
+    assert wire["symbols"][0]["fn"]("Ada") == "Ada"
+    with pytest.raises(TypeError):
+        wire["symbols"][0]["fn"]("Ada", {"loud": True})
     assert wire["providers"][0]["marker"] == "provider"
     assert wire["slash_commands"][0]["marker"] == "slash"
     assert wire["op_hooks"][0]["ops"] == ["shell"]
