@@ -1255,6 +1255,12 @@
         "vision_memory": {
           "$ref": "#/$defs/visionMemory"
         },
+        "machine_order": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_-]+$" },
+          "description": "Stable gateway ids in the primary gateway's durable Companion order."
+        },
         "agent_name": {
           "type": "string",
           "minLength": 1,

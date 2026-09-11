@@ -92,7 +92,7 @@ describe("the machine scope always has one active machine", () => {
     expect(listHue("beta")).toBeNull();
   });
 
-  it("puts machines that are not answering after every active machine", async () => {
+  it("keeps unavailable machines in their assigned positions", async () => {
     const view = renderSessionsScreen({
       machines: [
         { label: "sleeping-one", down: true },
@@ -108,10 +108,10 @@ describe("the machine scope always has one active machine", () => {
       .getAllByRole("button")
       .map((button) => button.getAttribute("aria-label") ?? button.textContent);
     expect(labels).toEqual([
-      "alpha",
-      "beta",
       "Reconnect to sleeping-one",
+      "alpha",
       "Reconnect to sleeping-two",
+      "beta",
     ]);
   });
 

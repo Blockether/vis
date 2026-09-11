@@ -40,6 +40,8 @@ export function renderApp({
   unreachable = [] as string[],
   /** The machine saved as both primary and current, by fixture index. */
   primary = 0,
+  /** Durable order returned by the primary, by fixture index. */
+  machineOrder = null as number[] | null,
 } = {}) {
   const conns: GatewayConn[] = machines.map((machine, index) => {
     const id = `app-gateway-${++origins}`;
@@ -95,6 +97,8 @@ export function renderApp({
     const machine = entry.machine;
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
+    if (url.pathname === "/v1/machines/order")
+      return answer({ machine_ids: (machineOrder ?? [primary, ...conns.map((_, index) => index).filter(index => index !== primary)]).map(index => conns[index]!.id) });
     if (url.pathname === "/v1/sessions")
       return answer(sessionsWindow(machine.sessions ?? [], url));
     if (url.pathname === "/v1/sessions/actions/search")

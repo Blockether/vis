@@ -207,6 +207,16 @@
     {
       "audience": "sdk",
       "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/machines/order"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "get": {
           "request": "none",
           "response": "json"

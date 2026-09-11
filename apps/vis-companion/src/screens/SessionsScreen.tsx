@@ -1246,16 +1246,14 @@ export function SessionsScreen({
     () => assignMachineColors(machines.map((machine) => machineKey(machine.conn))),
     [machines],
   );
-  // Pairing order still owns sections, hues and every persisted identity. The switch is
-  // only a destination list: the answering primary leads, every other answering machine
-  // keeps pairing order, and destinations that no longer answer follow all of them.
+  // Connectivity never changes positions. The app supplies the server's cached order.
   const switcherMachines = useMemo(() => {
-    const answering = machines.filter((machine) => !machine.error);
+    const ordered = [...machines];
     const primaryIndex = primaryKey
-      ? answering.findIndex((machine) => machineKey(machine.conn) === primaryKey)
+      ? ordered.findIndex((machine) => machineKey(machine.conn) === primaryKey)
       : -1;
-    if (primaryIndex > 0) answering.unshift(...answering.splice(primaryIndex, 1));
-    return [...answering, ...machines.filter((machine) => Boolean(machine.error))];
+    if (primaryIndex > 0) ordered.unshift(...ordered.splice(primaryIndex, 1));
+    return ordered;
   }, [machines, primaryKey]);
 
   const selectScope = useCallback((next: string | null) => setScopePick(next), []);

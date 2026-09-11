@@ -29,13 +29,31 @@ function localGet(key: string): string | null {
   }
 }
 
+/** Apply only the selected primary's cached server order; unknown machines stay last. */
+function orderedConnections(conns: GatewayConn[]): GatewayConn[] {
+  const primary = conns.find(conn => conn.url === localGet(PRIMARY_KEY));
+  if (!primary?.id) return conns;
+  try {
+    const ids: unknown = JSON.parse(localGet(`vis.machineOrder.${primary.id}`) ?? "null");
+    if (!Array.isArray(ids)) return conns;
+    const rank = new Map(ids.map((id, index) => [id, index]));
+    return conns.map((conn, index) => ({ conn, index }))
+      .sort((a, b) => (rank.get(a.conn.id) ?? ids.length) - (rank.get(b.conn.id) ?? ids.length) || a.index - b.index)
+      .map(row => row.conn);
+  } catch { return conns; }
+}
+
+export async function saveMachineOrder(primaryId: string, ids: string[]): Promise<void> {
+  await setRaw(`vis.machineOrder.${primaryId}`, JSON.stringify(ids));
+}
+
 /** Read the mirrored web storage without waiting for the native Preferences bridge. */
 export function loadConnectionsSync(): GatewayConn[] {
   const raw = localGet(CONNS_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as GatewayConn[]) : [];
+    return Array.isArray(parsed) ? orderedConnections(parsed as GatewayConn[]) : [];
   } catch {
     return [];
   }
@@ -78,7 +96,11 @@ export async function loadConnections(): Promise<GatewayConn[]> {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as GatewayConn[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    const primaryUrl = await getRaw(PRIMARY_KEY);
+    const primary = (parsed as GatewayConn[]).find(conn => conn.url === primaryUrl);
+    if (primary?.id) await getRaw(`vis.machineOrder.${primary.id}`);
+    return orderedConnections(parsed as GatewayConn[]);
   } catch {
     return [];
   }

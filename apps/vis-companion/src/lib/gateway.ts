@@ -1937,6 +1937,16 @@ export class GatewayClient {
     return readSnapshot<SettingsResponse>(this.snapshotKey("settings"));
   }
 
+  /** Register paired identities with the primary; its durable order is authoritative. */
+  async machineOrder(ids: string[], signal?: AbortSignal): Promise<string[]> {
+    const response = await this.request<{ machine_ids: string[] }>(
+      "POST", "/v1/machines/order", { machine_ids: ids }, signal,
+    );
+    if (!Array.isArray(response.machine_ids) || response.machine_ids.some(id => typeof id !== "string"))
+      throw new Error("Invalid machine order response");
+    return response.machine_ids;
+  }
+
   async settings(signal?: AbortSignal): Promise<SettingsResponse> {
     const response = await this.request<SettingsResponse>(
       "GET",

@@ -1799,6 +1799,29 @@
              (error-response 400 :invalid-setting-value (ex-message e) :id "agent_name")
              (throw e))))))
 
+(defn- machine-order-handler
+  "POST /v1/machines/order {machine_ids: [...]} — register stable gateway ids and
+   return their durable order. This gateway leads; new ids append in lexical order.
+   Subset requests never delete or move existing ids. Clients send no credentials
+   or addresses and retain this answer when the primary gateway is unavailable."
+  [request]
+  (let [ids (get (try (body-json request) (catch Throwable _ nil)) "machine_ids")]
+    (if-not (and (vector? ids)
+                 (<= (count ids) 256)
+                 (every? #(and (string? %) (<= 1 (count %) 200) (re-matches #"[A-Za-z0-9_-]+" %))
+                         ids))
+      (error-response 400 :invalid-machine-ids "machine_ids must contain at most 256 gateway ids.")
+      (let [{:keys [db host port]} @server-state
+            own-id (gateway-instance-id db host port)
+            saved (config/update-machine-config!
+                    (fn [raw]
+                      (let [known (vec (distinct (cons own-id (get raw "machine_order" []))))
+                            added (sort (remove (set known) (distinct ids)))]
+
+                        (assoc raw "machine_order" (into known added)))))]
+
+        (json-response {:machine-ids (get saved "machine_order")})))))
+
 (defn- list-settings-handler
   "GET /v1/settings[?channel=web|all] — the gateway identity and feature toggles
    rendered by every channel (web dialog, TUI pane, mobile app) as grouped JSON.
@@ -4278,6 +4301,7 @@
         ["/devices" {:get list-devices-handler :post register-device-handler}]
         ["/devices/actions/test" {:post test-device-handler}]
         ["/devices/:token" {:delete delete-device-handler}]
+        ["/machines/order" {:post machine-order-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
         ["/mcp/servers" {:get mcp-servers-handler :post save-mcp-server-handler}]
         ["/mcp/servers/actions/test" {:post test-mcp-server-handler}]

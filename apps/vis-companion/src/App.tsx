@@ -26,6 +26,7 @@ import {
   getPrimaryConnection,
   loadConnections,
   loadConnectionsSync,
+  saveMachineOrder,
   loadOpenSession,
   loadSubscribedSessions,
   rememberOpenSession,
@@ -996,6 +997,43 @@ export function App() {
     if (outcome.action === "open")
       openGatewaySession(outcome.conn, outcome.sid);
   }, [pushIntent, routeApplied, conns, active, openGatewaySession]);
+
+  // Primary owns the fleet order. Failures keep the last durable answer, and retries
+  // never derive positions from health or response timing.
+  useEffect(() => {
+    const owner = conns.find(conn => conn.url === primary?.url);
+    if (!owner?.id) return;
+    const primaryId = owner.id;
+    const ctrl = new AbortController();
+    let busy = false;
+    const sync = async () => {
+      if (busy || ctrl.signal.aborted) return;
+      busy = true;
+      try {
+        const ids = await new GatewayClient(owner).machineOrder(
+          conns.flatMap(conn => conn.id ? [conn.id] : []), ctrl.signal,
+        );
+        if (ctrl.signal.aborted) return;
+        await saveMachineOrder(primaryId, ids);
+        const next = await loadConnections();
+        if (!ctrl.signal.aborted && next.some((conn, index) => conn.url !== conns[index]?.url))
+          setConns(next);
+      } catch {
+        // The cached server order remains usable offline; retry on wake or reconnect.
+      } finally { busy = false; }
+    };
+    void sync();
+    const timer = window.setInterval(() => void sync(), 30_000);
+    const retry = () => void sync();
+    window.addEventListener("online", retry);
+    const unwatch = onWake(retry);
+    return () => {
+      ctrl.abort();
+      window.clearInterval(timer);
+      window.removeEventListener("online", retry);
+      unwatch();
+    };
+  }, [conns, primary?.url]);
 
   // Backfill each paired gateway's stable id (from /healthz) so a shareable link
   // can name its gateway by id instead of leaking the gateway URL. Cheap: it
