@@ -69,7 +69,12 @@
         (count listings)]
 
     (if (= n 1)
-      (update (first sections) "headline" #(str "Listed " %))
+      (let [section (first sections)]
+        (assoc section
+          "headline" "Listed directory"
+          "summary" (activity-event/bounded-text
+                      (str (get section "headline") " · " (get section "summary"))
+                      512)))
       {"headline" (str "Listed " n " directories")
        "summary" (str (reduce + 0 (map #(count (get % "entries")) listings))
                       " entries"
@@ -81,13 +86,10 @@
   {:ext.symbol/symbol 'ls
    :ext.symbol/tag :observation
    :ext.symbol/presenter :observation
+   :ext.symbol/activity {:headline "List directories" :show-start false}
    :ext.symbol/inject-env? true
    :ext.symbol/on-error-fn (editing/tool-failure-on-error :ls :dir)
    :ext.symbol/fn (fn [env args]
-                    (extension/publish-activity! {"headline" "Listing directories"
-                                                  "summary" ""
-                                                  "content" [{"type" "progress"
-                                                              "label" "Listing directories"}]})
                     (let [rows (editing/list-directories env args)]
                       (extension/publish-activity! (listing-presentation rows))
                       (extension/success {:result rows})))})

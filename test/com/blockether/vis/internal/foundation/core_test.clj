@@ -15,27 +15,45 @@
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe registered-tool-activity-test
-             (it
-               "gives every first-party tool an explicit capitalized natural-language presentation"
-               (doseq [ext
-                       [foundation/vis-extension mcp/vis-extension]
+(defdescribe
+  registered-tool-activity-test
+  (it
+    "gives every first-party tool readable copy and an explicit visibility policy"
+    (let [entries
+          (for [ext
+                [foundation/vis-extension mcp/vis-extension]
 
-                       entry
-                       (get-in ext [:ext/engine :ext.engine/symbols])
+                entry
+                (get-in ext [:ext/engine :ext.engine/symbols])
 
-                       :when (and (:ext.symbol/fn entry) (not (:ext.symbol/raw? entry)))]
+                :when (and (:ext.symbol/fn entry) (not (:ext.symbol/raw? entry)))]
 
-                 (let [declaration
-                       (:ext.symbol/activity entry)
+            entry)
 
-                       headline
-                       (:headline declaration)]
+          end-only
+          '#{cat patch _shell-logs _shell-type council.read council.get council.threads
+             council.members repl_status draft-status main-agent-instructions update_goal}]
 
-                   (expect (map? declaration) (str (:ext/name ext) "/" (:ext.symbol/symbol entry)))
-                   (expect (and (string? headline) (re-matches #"[A-Z][A-Za-z ]+" headline)))
-                   (expect (boolean? (:show-start declaration)))
-                   (expect (fn? (:render declaration)))))))
+      (expect (= end-only
+                 (set (keep #(when (false? (get-in % [:ext.symbol/activity :show-start]))
+                               (:ext.symbol/symbol %))
+                            entries))))
+      (doseq [entry
+              entries
+
+              :let [declaration
+                    (:ext.symbol/activity entry)
+
+                    headline
+                    (:headline declaration)
+
+                    symbol
+                    (:ext.symbol/symbol entry)]]
+
+        (expect (map? declaration) (str symbol))
+        (expect (and (string? headline) (re-matches #"[A-Z][A-Za-z ]+" headline)))
+        (expect (= (not (contains? end-only symbol)) (:show-start declaration)) (str symbol))
+        (expect (fn? (:render declaration)))))))
 
 (defdescribe
   project-path-prompt-runtime-contract-test

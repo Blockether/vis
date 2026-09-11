@@ -274,32 +274,44 @@
 (defdescribe
   ls-symbol-content-test
   "Symbol-owned listing presentation."
-  (it "publishes listing content on the real shim invocation without changing its returned tree"
-      (let [ctx
-            (sandbox)
+  (it
+    "shows only the final listing on the real shim invocation and preserves the returned tree"
+    (let [ctx
+          (sandbox)
 
-            events
-            (atom [])]
+          events
+          (atom [])
 
-        (binding [extension/*tool-event-sink* #(swap! events conj %)]
-          (expect (string/includes? (out ctx "print(ls('resources/vis-shims'))") "ls.py")))
-        (let [projection
-              (-> @events
-                  activity/replay
-                  activity/presentation)
+          state
+          (atom activity/empty-state)
 
-              row
-              (first (:rows projection))]
+          visible-counts
+          (atom [])]
 
-          (expect (= 1 (count (:rows projection))))
-          (expect (= "ls" (:operation row)))
-          (expect (= "succeeded" (:state row)))
-          (expect (= ["Listing directories" "Listed resources/vis-shims"]
-                     (mapv #(get-in % [:presentation "headline"])
-                           (filter #(= :content (:phase %)) @events))))
-          (expect (string/includes? (get-in row [:presentation "summary"]) "files"))
-          (expect (= "table" (get-in row [:presentation "content" 0 "type"])))
-          (expect (some #(= "ls.py" (first %)) (get-in row [:presentation "content" 0 "rows"]))))))
+      (binding [extension/*tool-event-sink* (fn [event]
+                                              (swap! events conj event)
+                                              (swap! state activity/reduce-event event)
+                                              (swap! visible-counts conj
+                                                (count (:rows (activity/presentation @state)))))]
+        (expect (string/includes? (out ctx "print(ls('resources/vis-shims'))") "ls.py")))
+      (let [projection
+            (activity/presentation @state)
+
+            row
+            (first (:rows projection))]
+
+        (expect (= :observation (:classification (first @events))))
+        (expect (= "ls" (:operation row)))
+        (expect (= "succeeded" (:state row)))
+        (expect (= [0 0 1] @visible-counts))
+        (expect (= [:start :content :terminal] (mapv :phase @events)))
+        (expect (false? (:show-start (first @events))))
+        (expect (= "Listed directory" (get-in row [:presentation "headline"])))
+        (expect (string/includes? (get-in row [:presentation "summary"]) "resources/vis-shims"))
+        (expect (= @state (activity/replay @events)))
+        (expect (string/includes? (get-in row [:presentation "summary"]) "files"))
+        (expect (= "table" (get-in row [:presentation "content" 0 "type"])))
+        (expect (some #(= "ls.py" (first %)) (get-in row [:presentation "content" 0 "rows"]))))))
   (it "bounds batch content and reports omitted entries without losing nested paths"
       (let [entry
             {"name" "same.txt" "path" "root/nested/same.txt" "type" "file" "size" 42}
@@ -327,6 +339,11 @@
         (expect (string/includes? (get-in content ["sections" 0 "summary"]) "12 of 40"))
         (expect (string/includes? (get content "summary") "showing 4 of 5 directories"))
         (expect (< (alength (.getBytes ^String (json/write-json-str bounded) "UTF-8")) 32768))))
+  (it "makes an empty directory understandable without any preceding start"
+      (let [view (#'shim-ls/listing-presentation [{"path" "empty" "entries" []}])]
+        (expect (= "Listed directory" (get view "headline")))
+        (expect (= "empty · 0 directories · 0 files" (get view "summary")))
+        (expect (= [] (get-in view ["content" 0 "rows"])))))
   (it "keeps failure truthful and catchable when Activity is enabled"
       (let [ctx
             (sandbox)
@@ -340,6 +357,9 @@
         (let [projection (-> @events
                              activity/replay
                              activity/presentation)]
+          (expect (false? (:show-start (first @events))))
+          (expect (= [:start :terminal] (mapv :phase @events)))
+          (expect (= "List directories" (get-in projection [:rows 0 :presentation "headline"])))
           (expect (= "failed" (:state projection)))
           (expect (= 1 (get-in projection [:counts :failed])))
           (expect (= 1 (count (:rows projection))))))))

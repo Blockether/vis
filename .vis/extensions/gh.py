@@ -1628,21 +1628,53 @@ def _runs_activity(*, phase, result, **_):
 def _watch_activity(*, phase, result, **_):
     if phase != "success":
         return None
-    return vis.ActivityPresentation(
-        "Watch workflow",
-        f"{result.ending.replace('_', ' ')} · {len(result.jobs)} jobs",
-        (
+    verdict = {
+        "superseded": "Newer run took over",
+        "poll_failure": "Could not refresh workflow",
+        "interrupted": "Stopped watching",
+    }.get(result.ending)
+    if verdict is None:
+        verdict = {"success": "Succeeded", "failure": "Failed"}.get(
+            result.conclusion,
+            result.conclusion.replace("_", " ").capitalize()
+            or "Conclusion unavailable",
+        )
+    workflow = " ".join(result.workflow.split())[:60] or "Workflow"
+    content = []
+    if result.jobs:
+        content.append(
             vis.ActivityTable(
                 ("Job", "Status"),
                 tuple(
                     (job.name[:80], job.conclusion.replace("_", " ")[:80])
                     for job in result.jobs[:20]
                 ),
-            ),
+            )
+        )
+        if len(result.jobs) > 20:
+            content.append(vis.ActivityText(f"Showing 20 of {len(result.jobs)} jobs."))
+        content.append(
             vis.ActivityText(
                 "Full job details and failed logs remain in the watch result."
-            ),
-        ),
+            )
+        )
+    else:
+        content.append(vis.ActivityText("No jobs reported."))
+    if result.error:
+        content.extend(
+            (
+                vis.ActivityHeading(
+                    "Watch error excerpt"
+                    if len(result.error.encode()) > 2000
+                    else "Watch error"
+                ),
+                vis.ActivityText(result.error.encode()[:2000].decode(errors="ignore")),
+            )
+        )
+    return vis.ActivityPresentation(
+        "Watch workflow",
+        f"{workflow} · {verdict} · {len(result.jobs)} jobs",
+        tuple(content),
     )
 
 

@@ -126,6 +126,14 @@ is retained internally and becomes visible only when the call settles, including
 failure or cancellation. Returning `None` from a start callback alone does not
 hide the engine's running row; use `show_start=False`.
 
+The final presentation must make sense without any earlier progress: name the
+operation and target, state the outcome, and retain useful counts, errors or
+changes. An empty result should say what was absent, such as "No jobs reported".
+A successful tool return does not imply a successful external operation: a
+workflow watcher can return normally with a failed workflow. Show that failure
+in the final summary rather than saying only "Completed". Label partial lists
+and excerpts so they cannot be mistaken for complete results.
+
 Keep the default `show_start=True` for work a person waits for: tests, builds,
 network requests, file transfers or user input. Publish intermediate updates only
 when they communicate a meaningful change. Choose the policy at each binding,

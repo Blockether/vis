@@ -403,6 +403,10 @@ class Activity:
     people wait for, such as tests, network requests or transfers. Internal start/end
     tracking still preserves ordering, timing, errors and cancellation. Published
     content is retained but stays hidden until an end-only invocation settles.
+    The final presentation must stand alone: name the target and outcome, including
+    empty results or failures reported as return values. A normally returned failed
+    workflow is still a failed workflow; "Completed" alone is not enough. Label
+    partial lists and excerpts, and retain useful counts, errors and changes.
 
     render is an optional synchronous callback receiving phase, args, kwargs,
     result and error as keyword arguments; it returns an ActivityPresentation
