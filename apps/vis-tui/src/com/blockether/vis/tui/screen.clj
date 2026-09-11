@@ -6678,6 +6678,11 @@
                                  :attachment-inspect
                                  (inspect-attachment! (:attachment hit))
 
+                                 :fork-at-turn
+                                 (fork-session! (:session-id hit)
+                                                (:turn-id hit)
+                                                "Forked session at turn")
+
                                  :copy-id
                                  (copy-session-id! (:text hit))
 
@@ -6827,6 +6832,11 @@
 
                                  :attachment-inspect
                                  (inspect-attachment! (:attachment hit))
+
+                                 :fork-at-turn
+                                 (fork-session! (:session-id hit)
+                                                (:turn-id hit)
+                                                "Forked session at turn")
 
                                  :copy-id
                                  (copy-session-id! (:text hit))

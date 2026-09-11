@@ -773,7 +773,10 @@
   ([message ^long bubble-w settings] (project-message message bubble-w settings nil))
   ([message ^long bubble-w settings
     {:keys [session-id detail-expansions tail-lines window-start window-num window-total-h]}]
-   (let [show-timestamps?
+   (let [message
+         (assoc message :session-id session-id)
+
+         show-timestamps?
          (boolean (get settings :show-timestamps false))
 
          strip-ts

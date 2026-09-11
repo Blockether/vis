@@ -1766,10 +1766,14 @@
 
    Layout (no outer border, no horizontal rule under the label,
    both roles left-anchored):
-     [role-label]                              [timestamp]
+     [role-label]                  [Fork at this turn] | [timestamp]
      [content lines, each with role bg fill]
      [meta line, dimmed, when present]
      [blank gap]
+
+   Persisted assistant turns offer a fork action before the optional timestamp.
+   Narrow headers shorten it to `Fork`; headers too small for both keep the date.
+   Pointer regions carry the persisted turn and source session, never the client id.
 
    User content rows get a subtle blue-gray background block
    (`user-bubble-bg`) to visually separate user input from the rest of
@@ -1931,25 +1935,77 @@
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-border t/terminal-bg)
       (p/put-str! g bx start-row (p/horiz-line bubble-w)))
-    (let [label-row (+ (long start-row) (long top-sep-h))]
+    (let [label-row
+          (+ (long start-row) (long top-sep-h))
+
+          time-w
+          (if time-str (p/display-width time-str) 0)
+
+          time-x
+          (+ (long bx) (long bubble-w) (- time-w))
+
+          turn-id
+          (:session-turn-id message)
+
+          session-id
+          (:session-id message)
+
+          forkable?
+          (and (= :assistant role)
+               session-id
+               turn-id
+               (not (:pending? message))
+               (not (#{:running :queued} status)))
+
+          separator-w
+          (if time-str 3 0)
+
+          action-space
+          (- (long bubble-w) time-w separator-w (min 8 (p/display-width label)) 1)
+
+          fork-label
+          (when forkable?
+            (cond (>= action-space 19) " Fork at this turn "
+                  (>= action-space 6) " Fork "))
+
+          fork-w
+          (if fork-label (p/display-width fork-label) 0)
+
+          fork-x
+          (- time-x (if fork-label (+ fork-w separator-w) 0))
+
+          label-w
+          (max 0 (- (if fork-label fork-x time-x) (long bx) (if (or fork-label time-str) 1 0)))]
+
       (p/clear-styles! g)
       (p/set-colors! g role-fg t/terminal-bg)
-      (p/styled g
-                [p/BOLD]
-                (p/put-str!
-                  g
-                  bx
-                  label-row
-                  (p/ellipsize
-                    label
-                    (max 0 (- (long bubble-w) (if time-str (+ 1 (p/display-width time-str)) 0))))))
+      (p/styled g [p/BOLD] (p/put-str! g bx label-row (p/ellipsize label label-w)))
       (when time-str
-        (let [right-edge (+ (long bx) (long bubble-w))
-              time-w (p/display-width time-str)
-              time-x (- (long right-edge) time-w)]
-
+        (p/set-colors! g t/dialog-hint t/terminal-bg)
+        (p/put-str! g time-x label-row time-str))
+      (when fork-label
+        (when time-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/put-str! g time-x label-row time-str))))
+          (p/put-str! g (+ fork-x fork-w) label-row " | "))
+        (let [hovered
+              (.hovered interactions/hit-map)
+
+              hovered?
+              (and (= :fork-at-turn (:kind hovered))
+                   (= session-id (:session-id hovered))
+                   (= turn-id (:turn-id hovered)))]
+
+          (p/set-colors! g t/button-fg t/button-bg)
+          (p/styled g
+                    (if hovered? [p/BOLD p/UNDERLINE] [])
+                    (p/put-str! g fork-x label-row fork-label)))
+        (when (< -1 label-row (long viewport-h))
+          (.register interactions/hit-map
+                     {:bounds {:row (+ (long viewport-top) label-row) :col fork-x :width fork-w}
+                      :kind :fork-at-turn
+                      :session-id session-id
+                      :turn-id turn-id
+                      :enabled? true}))))
     ;; User and error cards keep one row of vertical breathing room. Assistant
     ;; content starts below its role banner. Keep `bubble-height*` in sync.
     (let [top-pad
