@@ -115,7 +115,14 @@ version retains its commit permanently, including rejected versions. A moved tag
 cannot replace that identity: publish a new version instead. Approval preserves the
 original listing date and keeps the newest approved stable version as the default,
 including when an older backport is approved later. Prereleases remain explicitly selectable.
-GitHub stars, license and dates are checked snapshots.
+GitHub stars are repository-wide counts, separate from Extension Center votes.
+The scheduled handler refreshes up to five oldest repositories per tick, deduplicating
+monorepo packages and checking each no more than once an hour. Catalog and version
+responses overlay the latest successful count and `stars_checked_at` timestamp without
+changing reviewed version metadata. Zero is a valid count. GitHub errors retain the
+previous snapshot and delay retries; refresh latency also depends on catalog size.
+List responses may keep their previous snapshot for another 60 seconds. License and
+source dates remain snapshots from release inspection.
 
 `GET /api/extensions/ID` returns the default version, `latest_version` and approved
 `releases` summaries. `?version=1.2.0` returns the full metadata for that approved
@@ -141,6 +148,20 @@ or rejecting. Append `--remote` only when intentionally moderating the deployed 
 Approval saves the immutable release before updating the public listing and deleting
 its pending entry. An interruption can be retried without replacing a reviewed commit.
 Catalog cache may show the previous snapshot for up to 60 seconds.
+
+Repository maintainers can also use the **Publish reviewed extension** Actions workflow
+on `main`, under the existing `docs` environment's approval and Cloudflare credentials.
+Provide the repository URL, project folder, published release tag and reviewed full SHA.
+The operator command rechecks public GitHub metadata and the tag/SHA match, then uses
+the same version identity and moderation writes. It is not an anonymous submission API
+and does not weaken Turnstile. To run it with an already authenticated local Wrangler:
+
+```sh
+npm run moderate -- publish https://github.com/example/extensions tools/greeting v1.2.0 FULL_SHA --remote --config .deployment.json
+```
+
+Review the source and dependencies first. The workflow validates metadata, never executes
+repository code, and cannot substitute a different commit for an already reviewed version.
 
 The `*/5 * * * *` scheduled handler checks one registered listing and one page of up
 to 20 GitHub Releases per tick, inspecting at most five new candidates. Its private

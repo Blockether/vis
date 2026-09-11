@@ -31,7 +31,14 @@ CREATE TABLE IF NOT EXISTS release_sync (
   checked_at TEXT NOT NULL,
   error TEXT
 );
-
+-- Repository statistics are mutable. Reviewed package versions are not.
+CREATE TABLE IF NOT EXISTS repository_stats (
+  repository_url TEXT PRIMARY KEY,
+  stars INTEGER CHECK(stars >= 0),
+  checked_at TEXT,
+  attempted_at TEXT NOT NULL,
+  error TEXT
+);
 -- Only moderated comments are public. Voter is a private HMAC, never a raw IP.
 CREATE TABLE IF NOT EXISTS comments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

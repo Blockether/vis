@@ -1,0 +1,71 @@
+name: Publish reviewed extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository_url:
+        description: Public GitHub repository whose source has been reviewed
+        required: true
+        type: string
+      subdirectory:
+        description: Extension project folder (empty for repository root)
+        default: ''
+        type: string
+      release_tag:
+        description: Published GitHub Release tag
+        required: true
+        type: string
+      revision:
+        description: Full lowercase SHA reviewed for this release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: docs
+    concurrency:
+      group: docs-production
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: apps/vis-docs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - run: clojure -X:deps prep
+        working-directory: .
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-docs/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: Configure the approved catalog database
+        env:
+          DOCS_D1_DATABASE_ID: ${{ vars.DOCS_D1_DATABASE_ID }}
+          DOCS_TURNSTILE_SITE_KEY: ${{ vars.DOCS_TURNSTILE_SITE_KEY }}
+          DOCS_RATE_LIMIT_NAMESPACE: ${{ vars.DOCS_RATE_LIMIT_NAMESPACE }}
+          DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
+        run: node deploy.mjs
+      - name: Recheck the reviewed release and publish through authenticated moderation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY_URL: ${{ inputs.repository_url }}
+          SUBDIRECTORY: ${{ inputs.subdirectory }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REVISION: ${{ inputs.revision }}
+        run: node moderate.mjs publish "$REPOSITORY_URL" "$SUBDIRECTORY" "$RELEASE_TAG" "$REVISION" --remote --config .deployment.json

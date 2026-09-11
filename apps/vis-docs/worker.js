@@ -2,7 +2,7 @@ import { renderPage } from './web/render.js';
 import { security } from './headers.js';
 import { sitemap, catalogText } from './web/discovery.js';
 import { inspectRepository, RequestError } from './github.js';
-import { discoverReleases, extensionDetail, queueRelease } from './releases.js';
+import { discoverReleases, extensionDetail, queueRelease, refreshRepositoryStats, withRepositoryStats } from './releases.js';
 import { protectedBody } from './antispam.js';
 import { readCommunity, writeCommunity } from './community.js';
 
@@ -12,8 +12,8 @@ async function catalog(env,origin,ctx) {
   // Cache one canonical snapshot, not a new D1 scan for every filter/search URL.
   const cache=globalThis.caches?.default, key=new Request(origin+'/api/extensions');
   const saved=await cache?.match(key); if(saved) return saved.json();
-  const {results}=await env.DB.prepare("SELECT id, json_remove(metadata, '$.readme') AS metadata, added_at FROM extensions ORDER BY id").all();
-  const data={extensions:results.map(row=>({...JSON.parse(row.metadata),added_at:row.added_at}))};
+  const {results}=await env.DB.prepare("SELECT e.id,json_remove(e.metadata,'$.readme') AS metadata,e.added_at,s.stars,s.checked_at FROM extensions e LEFT JOIN repository_stats s ON s.repository_url=lower(json_extract(e.metadata,'$.repository_url')) ORDER BY e.id").all();
+  const data={extensions:results.map(row=>({...withRepositoryStats(JSON.parse(row.metadata),row),added_at:row.added_at}))};
   if(cache) ctx.waitUntil(cache.put(key,reply(data,200,false,'public, max-age=60')));
   return data;
 }
@@ -78,5 +78,5 @@ export default {
     }
     return request.method==='HEAD'?new Response(null,response):response;
   },
-  async scheduled(_controller,env,ctx) {ctx.waitUntil(discoverReleases(env));},
+  async scheduled(_controller,env,ctx) {ctx.waitUntil(Promise.all([discoverReleases(env),refreshRepositoryStats(env)]));},
 };

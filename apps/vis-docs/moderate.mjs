@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import { identity, inspectRepository } from './github.js';
 
 export function moderationStatements(action,id) {
   if(action==='list-comments') return ["SELECT id, extension_id, name, body, created_at FROM comments WHERE status='pending' ORDER BY id"];
@@ -16,8 +18,25 @@ export function moderationStatements(action,id) {
   const publish=`INSERT INTO extensions (id,metadata,added_at) SELECT r.extension_id,r.metadata,r.reviewed_at FROM releases r WHERE r.extension_id=(SELECT extension_id FROM submissions WHERE id='${id}') AND r.status='approved' ORDER BY COALESCE(json_extract(r.metadata,'$.prerelease'),0),json_extract(r.metadata,'$.version_key') DESC,r.reviewed_at DESC LIMIT 1 ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata`;
   return [save,publish,remove];
 }
+export async function publicationStatements(metadata) {
+  // Called only by the authenticated operator CLI after GitHub inspection.
+  if(!/^[0-9a-f]{24}$/.test(metadata.id)||!/^[0-9a-f]{40}$/.test(metadata.revision)) throw new Error('Inspect a pinned release before publication.');
+  const id=await identity(metadata.id+'\n'+metadata.revision),quote=value=>"'"+String(value).replaceAll("'","''")+"'";
+  const now=new Date().toISOString(),body=JSON.stringify({...metadata,checked_at:now});
+  const insert=`INSERT INTO submissions (id,extension_id,revision,metadata,submitted_at) VALUES (${quote(id)},${quote(metadata.id)},CASE WHEN EXISTS(SELECT 1 FROM extensions WHERE id=${quote(metadata.id)} AND json_extract(metadata,'$.name')!=${quote(metadata.name)}) THEN NULL ELSE ${quote(metadata.revision)} END,${quote(body)},${quote(now)}) ON CONFLICT(extension_id,revision) DO UPDATE SET metadata=excluded.metadata`;
+  return [insert,...moderationStatements('approve',id)];
+}
+
 if(process.argv[1]===fileURLToPath(import.meta.url)) {
-  const args=process.argv.slice(2),remote=args.includes('--remote');
-  const [action,id]=args.filter(arg=>arg!=='--remote');
-  for(const sql of moderationStatements(action,id)) execFileSync(process.execPath,['node_modules/wrangler/bin/wrangler.js','d1','execute','vis-extension-center',remote?'--remote':'--local','--command',sql],{stdio:'inherit'});
+  const {values,positionals}=parseArgs({options:{remote:{type:'boolean'},config:{type:'string'}},allowPositionals:true});
+  const [action,...args]=positionals;
+  let statements;
+  if(action==='publish') {
+    const [repository_url,subdirectory,release_tag,revision]=args;
+    if(args.length!==4||!/^[0-9a-f]{40}$/.test(revision)) throw new Error('Use publish REPOSITORY FOLDER RELEASE_TAG FULL_SHA after reviewing that source.');
+    const metadata=await inspectRepository({repository_url,subdirectory,release_tag,revision},process.env);
+    statements=await publicationStatements(metadata);
+    console.log('Publishing reviewed release:',metadata.name,metadata.version,metadata.revision);
+  } else statements=moderationStatements(action,args[0]);
+  for(const sql of statements) execFileSync(process.execPath,['node_modules/wrangler/bin/wrangler.js','d1','execute','vis-extension-center',values.remote?'--remote':'--local',...(values.config?['--config',values.config]:[]),'--command',sql],{stdio:'inherit'});
 }

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { security } from './headers.js';
 export async function runtimeFixture({port=0,hostname='center.example.com',seed=false}={}) {
-  const controls={github:'ok',verification:'ok',requests:[],tokens:new Set(),contents:new Map(),manifest:readFileSync('examples/vis-greeter/pyproject.toml','utf8')}, revision='a'.repeat(40);
+  const controls={github:'ok',stars:12,verification:'ok',requests:[],tokens:new Set(),contents:new Map(),manifest:readFileSync('examples/vis-greeter/pyproject.toml','utf8')}, revision='a'.repeat(40);
   controls.releases=[{id:1,tag_name:'v1.0.0',draft:false,prerelease:false,published_at:'2026-02-10T12:00:00Z',sha:revision}];
   controls.refs=new Map();controls.manifests=new Map();
   const result=await build({entryPoints:['worker.js'],bundle:true,format:'esm',platform:'browser',write:false});
@@ -48,7 +48,7 @@ export async function runtimeFixture({port=0,hostname='center.example.com',seed=
         if(path.endsWith('README.md')) {const text='# Fixture README\n\n[Source](extension.py)';return json({type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});}
         return json(controls.github==='missing'?[]:[{name:'pyproject.toml',type:'file'},{name:'extension.py',type:'file'},{name:'README.md',type:'file'}]);
       }
-      return json({private:controls.github==='private',default_branch:'main',stargazers_count:12,topics:['example'],license:{spdx_id:'MIT'}});
+      return json({private:controls.github==='private',default_branch:'main',stargazers_count:controls.stars,topics:['example'],license:{spdx_id:'MIT'}});
     }}},
   }]});
   try {

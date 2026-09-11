@@ -16,15 +16,19 @@ export async function queueRelease(env,metadata) {
   return {id,status:'pending'};
 }
 
+export function withRepositoryStats(metadata,stats) {
+  return {...metadata,stars:stats.stars??metadata.stars,stars_checked_at:stats.checked_at??null};
+}
+
 export async function extensionDetail(env,id,version=null) {
-  const row=await env.DB.prepare('SELECT metadata,added_at FROM extensions WHERE id=?').bind(id).first();
+  const row=await env.DB.prepare("SELECT e.metadata,e.added_at,s.stars,s.checked_at FROM extensions e LEFT JOIN repository_stats s ON s.repository_url=lower(json_extract(e.metadata,'$.repository_url')) WHERE e.id=?").bind(id).first();
   if(!row) return null;
   const {results}=await env.DB.prepare("SELECT json_remove(metadata,'$.readme','$.dependencies','$.source_paths','$.skills','$.topics') AS metadata,reviewed_at FROM releases WHERE extension_id=? AND status='approved' ORDER BY COALESCE(json_extract(metadata,'$.prerelease'),0),json_extract(metadata,'$.version_key') DESC,reviewed_at DESC").bind(id).all();
-  const releases=results.map(release=>({...JSON.parse(release.metadata),approved_at:release.reviewed_at}));
+  const releases=results.map(release=>({...withRepositoryStats(JSON.parse(release.metadata),row),approved_at:release.reviewed_at}));
   const latest=JSON.parse(row.metadata);
   const selected=version===null?row:await env.DB.prepare("SELECT metadata FROM releases WHERE extension_id=? AND version=? AND status='approved'").bind(id,version).first();
   if(!selected) return null;
-  return {...JSON.parse(selected.metadata),added_at:row.added_at,latest_version:latest.version,releases};
+  return {...withRepositoryStats(JSON.parse(selected.metadata),row),added_at:row.added_at,latest_version:latest.version,releases};
 }
 
 export async function discoverReleases(env) {
@@ -54,4 +58,23 @@ export async function discoverReleases(env) {
   } catch(cause) {failed++;error=cause instanceof RequestError?cause.message:'GitHub release discovery failed.';}
   await env.DB.prepare('INSERT INTO release_sync (extension_id,page,position,checked_at,error) VALUES (?,?,?,?,?) ON CONFLICT(extension_id) DO UPDATE SET page=excluded.page,position=excluded.position,checked_at=excluded.checked_at,error=excluded.error').bind(row.id,page,position,now,error).run();
   return {checked:1,queued,failed};
+}
+
+export async function refreshRepositoryStats(env) {
+  // Deduplicate monorepo listings; check at most five oldest repositories per tick.
+  // Failed attempts also wait an hour, preserving the last successful count.
+  const now=new Date().toISOString(),due=new Date(Date.now()-60*60*1000).toISOString();
+  const {results}=await env.DB.prepare("SELECT DISTINCT lower(json_extract(e.metadata,'$.repository_url')) AS repository_url,s.attempted_at FROM extensions e LEFT JOIN repository_stats s ON s.repository_url=lower(json_extract(e.metadata,'$.repository_url')) WHERE s.attempted_at IS NULL OR s.attempted_at<=? ORDER BY s.attempted_at,repository_url LIMIT 5").bind(due).all();
+  let failed=0;
+  for(const row of results) {
+    let stars=null,error=null;
+    try {
+      const repository=repositoryURL(row.repository_url).slice('https://github.com/'.length);
+      const repo=await githubClient(env)('/repos/'+repository);
+      if(repo.private!==false||!Number.isSafeInteger(repo.stargazers_count)||repo.stargazers_count<0) throw new RequestError('GitHub returned invalid public repository statistics.');
+      stars=repo.stargazers_count;
+    } catch(cause) {failed++;error=cause instanceof RequestError?cause.message:'GitHub repository statistics unavailable.';}
+    await env.DB.prepare('INSERT INTO repository_stats (repository_url,stars,checked_at,attempted_at,error) VALUES (?,?,?,?,?) ON CONFLICT(repository_url) DO UPDATE SET stars=COALESCE(excluded.stars,repository_stats.stars),checked_at=COALESCE(excluded.checked_at,repository_stats.checked_at),attempted_at=excluded.attempted_at,error=excluded.error').bind(row.repository_url,stars,stars===null?null:now,now,error).run();
+  }
+  return {checked:results.length,failed};
 }

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { runtimeFixture } from './test-support.js';
-import { moderationStatements } from './moderate.mjs';
+import { moderationStatements, publicationStatements } from './moderate.mjs';
 import { identity, releaseVersion } from './github.js';
 
 let fixture,serial=0,id;
@@ -160,4 +160,21 @@ test('canonical release versions sort like their Python version selectors',()=>{
   const ordered=['0.9.0','1.0.0a1','1.0.0b1','1.0.0rc1','1.0.0','1.9.0','1.10.0'];
   expect([...ordered].reverse().sort((a,b)=>releaseVersion(a).version_key.localeCompare(releaseVersion(b).version_key))).toEqual(ordered);
   for(const version of ['1.0','01.0.0','v1.0.0','1.0.0-rc.1','not-a-version']) expect(()=>releaseVersion(version)).toThrow();
+});
+
+test('authenticated publication uses reviewed identities, handles quotes and remains idempotent',async()=>{
+  const preview=await post('/api/preview',{release_tag:'v1.0.0'});
+  const metadata=await preview.json();expect(preview.status).toBe(200);
+  metadata.readme="# Author's README";
+  const statements=await publicationStatements(metadata);
+  await fixture.db.batch(statements.map(sql=>fixture.db.prepare(sql)));
+  expect((await detail()).data.readme).toBe(metadata.readme);
+  await fixture.db.batch(statements.map(sql=>fixture.db.prepare(sql)));
+  expect((await detail()).data.releases).toHaveLength(1);
+  expect((await fixture.db.prepare('SELECT COUNT(*) AS n FROM submissions').first()).n).toBe(0);
+  for(const change of [{revision:'b'.repeat(40)},{name:'other-name',version:'1.1.0',revision:'c'.repeat(40)}]) {
+    const conflicting=await publicationStatements({...metadata,...change});
+    await expect(fixture.db.batch(conflicting.map(sql=>fixture.db.prepare(sql)))).rejects.toThrow();
+    expect((await detail()).data.revision).toBe('a'.repeat(40));
+  }
 });
