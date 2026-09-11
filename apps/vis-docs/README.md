@@ -167,19 +167,42 @@ Approval saves the immutable release before updating the public listing and dele
 its pending entry. An interruption can be retried without replacing a reviewed commit.
 Catalog cache may show the previous snapshot for up to 60 seconds.
 
-Repository maintainers can also use the **Publish reviewed extension** Actions workflow
+Vis catalog maintainers can use the
+[Publish reviewed extension](../../.github/workflows/extension-publish.yml) Actions workflow
 on `main`, under the existing `docs` environment's approval and Cloudflare credentials.
-Provide the repository URL, project folder, published release tag and reviewed full SHA.
+This is a maintainer operation, not a `vis-agent extension publish` command or an
+anonymous submission API. It does not weaken Turnstile.
+
+Review the source and dependencies first. The package version, matching tag and published
+GitHub Release must already exist. The workflow does not bump package versions, create
+releases, install extensions or reload running sessions. Provide the repository URL,
+project folder, published release tag and reviewed full lowercase commit SHA:
+
+```sh
+gh workflow run extension-publish.yml --repo Blockether/vis --ref main \
+  -f repository_url=https://github.com/example/extensions \
+  -f subdirectory=tools/greeting \
+  -f release_tag=v1.2.0 \
+  -f revision=FULL_SHA
+```
+
+Replace the example repository, folder, tag and `FULL_SHA` with the reviewed release;
+use an empty folder for a repository-root package. Follow the returned run URL and require
+a successful conclusion. Then verify that the public catalog lists the expected version
+and SHA, allowing for the cache delay above:
+
+```sh
+vis-agent extension versions https://github.com/example/extensions --subdirectory tools/greeting
+```
+
 The operator command rechecks public GitHub metadata and the tag/SHA match, then uses
-the same version identity and moderation writes. It is not an anonymous submission API
-and does not weaken Turnstile. To run it with an already authenticated local Wrangler:
+the same version identity and moderation writes. It validates metadata without executing
+repository code and cannot substitute a different commit for an already reviewed version.
+To run it directly with an already authenticated local Wrangler:
 
 ```sh
 npm run moderate -- publish https://github.com/example/extensions tools/greeting v1.2.0 FULL_SHA --remote --config .deployment.json
 ```
-
-Review the source and dependencies first. The workflow validates metadata, never executes
-repository code, and cannot substitute a different commit for an already reviewed version.
 
 The `*/5 * * * *` scheduled handler checks one registered listing and one page of up
 to 20 GitHub Releases per tick, inspecting at most five new candidates. Its private

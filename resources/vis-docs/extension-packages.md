@@ -173,7 +173,12 @@ unmanaged directories are never replaced by `update` or `rollback`; use their so
 workflow instead. A pre-existing unmanaged GitHub copy must be preserved and removed
 explicitly before installing it as a managed package.
 
+## Publish a package
+
 ### Publish and maintain releases
+
+There is no `vis-agent extension publish` command. Publication uses GitHub Releases
+and catalog moderation; local installation and activation are separate steps.
 
 Extension Center displays each extension as lowercase `owner/repository`, using
 GitHub's repository owner rather than a package author or submitter-provided name.
@@ -181,10 +186,12 @@ The project folder distinguishes packages in a monorepo. This catalog name is
 separate from `project.name`: keep the Python package name for installation,
 `versions`, `update`, `rollback` and package-prefixed release tags.
 
-1. Keep `pyproject.toml`, `extension.py`, required source and optional skills together.
-   Use a static `project.version`, and commit `uv.lock` for reproducible dependencies.
-2. Test the package with the supported Vis and Python versions. Bump the manifest version
-   for each new release; update the lockfile when needed.
+1. Commit `pyproject.toml`, `extension.py`, required source and optional skills together
+   in a public GitHub repository. Use a static `project.version`, and commit `uv.lock`
+   for reproducible dependencies. Keep credentials and private deployment details out of it.
+2. Test the package with the supported Vis and Python versions, including a
+   [registered tool call](extension-design.md#test-both-boundaries). Bump the manifest
+   version for each new release; update the lockfile when needed.
 3. Tag that commit and **publish a GitHub Release**, not only a Git tag or a draft.
    Use `v1.2.0`, or `PACKAGE-NAME/v1.2.0` for an independently versioned monorepo package.
    For example, an `extensions/vis-greeting` package can use `vis-greeting/v1.2.0`.
@@ -195,6 +202,8 @@ separate from `project.name`: keep the Python package name for installation,
 5. After approval, publish subsequent GitHub Releases in the same repository and folder.
    Scheduled discovery validates them and queues new versions for moderation without
    another submission form. The current approved version stays available during review.
+6. After approval, use `vis-agent extension versions` with the repository URL and optional
+   `--subdirectory` to confirm the available version and its reviewed commit SHA.
 
 Catalog releases use canonical `MAJOR.MINOR.PATCH`, optionally followed by `aN`, `bN`
 or `rcN`, for example `1.3.0rc1`. Mark prereleases on GitHub too. Local package validation
@@ -210,6 +219,20 @@ versions are public. Rejection is retained, so the same release is not repeatedl
 queued. A version's commit cannot be replaced: fix a rejected or moved-tag release by
 publishing a **new version**, never by retagging an approved version. Listing checks
 metadata and required files; it is not a code audit or an endorsement.
+
+Vis catalog maintainers can use the
+[Publish reviewed extension workflow](https://github.com/Blockether/vis/actions/workflows/extension-publish.yml)
+after reviewing the source and dependencies. It requires access to the Vis repository
+and its `docs` environment; it is not an automatic approval path for publishers.
+The [operator guide](https://github.com/Blockether/vis/blob/main/apps/vis-docs/README.md)
+documents its inputs, authenticated moderation and verification.
+
+Publishing or approving a release does not install it or update installed copies.
+Users must explicitly install or update a managed package, or reconcile its
+[configuration declaration](#declare-packages-in-configuration), then start Vis or use
+`/reload`. Reload activates installed source; it does not fetch a newer release.
+Use [the update and rollback commands](#check-for-updates-and-roll-back) for an existing
+managed installation. Local source links follow their development workflow instead.
 
 ## Reload, update or remove
 
@@ -394,22 +417,6 @@ installs dependencies, then evaluates the entry and registers its tools.
 Both embedded workers import shared installed dependencies; a tool call does not
 install them again. Each process has its own module cache. After package changes,
 reload to rebuild session workers; an already running call may keep its old imports.
-
-## Publish a package
-
-1. Verify the package tests and a registered tool call as described in
-   [Extension design](extension-design.md#test-both-boundaries).
-2. Commit the implementation, manifest, lockfile and any declared skills to a public
-   GitHub repository. Keep credentials and private deployment details out of it.
-3. In the Extension Center, choose **Add a repository** and enter its HTTPS URL.
-   Leave **Project folder** empty for repository root, or provide the directory
-   containing both `pyproject.toml` and `extension.py`.
-4. Review the resolved commit and submit it for moderation.
-
-The catalog reads metadata without executing project code. New entries and updates
-stay private until approved; resubmission does not replace a published listing.
-Different folders can have separate entries. Publishing is separate from local
-installation and should only be done when requested.
 
 ## See also
 
