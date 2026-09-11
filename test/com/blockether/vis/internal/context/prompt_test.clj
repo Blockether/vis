@@ -234,6 +234,40 @@
         (expect (not (str/includes? text "## 7. Style and finish"))))))
 
 (defdescribe
+  core-prompt-scoped-discovery-test
+  ;; Regression, user report: agents guessed paths and repeated broad searches after finding owners.
+  ;; These assertions pin the instructions, not model compliance.
+  (it
+    "confirms filesystem paths before locating unknown code"
+    (let [text
+          (var-get #'prompt/CORE_SYSTEM_PROMPT)
+
+          steps
+          (mapv #(str/index-of text %)
+                ["`ls` the nearest confirmed parent"
+                 "`grep` locates unknown code in confirmed paths"])]
+
+      (expect (every? some? steps))
+      (when (every? some? steps) (expect (apply < steps)))
+      (expect (str/includes? text "initially `project_root_path`"))
+      (expect
+        (str/includes?
+          text
+          "Confirm paths via listings, hits or explicit project/user references, not namespace/package names"))
+      (expect (not (str/includes? text "`grep(...)` FIRST")))))
+  (it "reads known regions directly instead of rediscovering them"
+      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+        (expect (str/includes? text "read known regions directly, without rediscovery"))))
+  (it
+    "limits further reads to unresolved questions and scopes searches to the owner"
+    (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+      (doseq
+        [rule
+         ["identify the unresolved question affecting the next step" "if none, stop reading"
+          "Search the known owner; broaden only for an unresolved caller, dependency or contract"]]
+        (expect (str/includes? text rule) rule)))))
+
+(defdescribe
   prompt-core-test
   ;; With one tool there is no schema to be authoritative: a capability's OWN
   ;; document is the contract, and the core prompt has to say where it lives or
@@ -327,7 +361,8 @@
       ;; 6.8k → 7.4k for the read/decision boundary, exact hashline endpoints and parse retries.
       ;; 7.4k → 7.7k for the ls signature, batching and hidden alias contract.
       ;; 7.7k → 8.2k for project-style correctness (#188); scope and verification stay single-owned.
-      (expect (< (count text) 8200))
+      ;; 8.2k → 8.3k for confirmed paths, direct reads and question-driven discovery.
+      (expect (< (count text) 8300))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -345,8 +380,7 @@
           text
           "When the user asks a question, answer the question. Do not start coding. Use tools or scripts only when you need more information for the answer."))
       (expect (< (str/index-of text "When the user asks a question")
-                 (str/index-of text "`grep(...)` FIRST")))
-      (expect (str/includes? text "`grep(...)` FIRST"))
+                 (str/index-of text "## 3. Inspect")))
       ;; A helper the model wrote is the only document it can author mid-session, so the rule that
       ;; orders one has to name what its docstring BECOMES — a gist, a page, and a way to be found.
       (expect (str/includes? text "One docstring line is its `defs()` gist"))
@@ -357,7 +391,6 @@
       ;; Session introspection is toggle-gated in foundation-core's dynamic fragment,
       ;; never copied into the static engine prompt.
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
-      (expect (str/includes? text "scoped to real paths"))
       (expect (str/includes? text "locates unknown code"))
       (expect (str/includes? text "**Filesystem work is Python**"))
       ;; Regression, issue #126: list a known parent rather than inventing source roots.
@@ -374,8 +407,6 @@
       ;; Shell is a Python call, so the core must say WHERE it lives.
       (expect (str/includes? text "`shell(...)` runs programs"))
       (expect (str/includes? text "No shell TOOL"))
-      (expect (< (str/index-of text "`grep(...)` FIRST")
-                 (str/index-of text "`apropos(pattern)` filters SYMBOL names")))
       (doseq [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces"
                        "## 3. Inspect" "## 4. Edit + verify" "## 5. Act autonomously"
                        "## 6. Manage context" "## 7. Response and finish"]]
@@ -402,7 +433,6 @@
                "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
                "rerun after the fix" "Cover changed behavior with tests"
                "Write only files the task asked" "Commit and push" "Treat context as a budget"
-               "Stop discovery once"
                ;; Regression, user report: cross-validating §6 against the runtime. The
                ;; utilization line named no field, and the two fields a model reads first
                ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
@@ -417,7 +447,7 @@
                "WebSocket delta continuation is separate transport telemetry"
                ;; `session_drop` is gone: omitting the gist IS the discard, and a model
                ;; that does not know that writes a useless gist instead of dropping.
-               "the gist discards outright" "concrete uncertainty that affects the next step"
+               "the gist discards outright"
                ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
                ;; but named no callable, so `fold_session` had to be remembered or
                ;; rediscovered through `doc()` — every other verb in the core is named.
