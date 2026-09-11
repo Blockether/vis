@@ -1,6 +1,6 @@
 Vis is a coding agent that combines tools into Python programs.
-It can chain operations, run them in parallel, and inspect results before deciding
-what belongs in the conversation.
+It can search your project, make changes and run tests, checking the results
+as it goes.
 
 <nav class="quick-links" aria-label="Getting started">
   <a href="#why-vis">Why Vis</a>
@@ -11,56 +11,50 @@ what belongs in the conversation.
 
 ## Why Vis
 
-Models already use Python to orchestrate tasks. Vis builds the agent around that
-capability, so tools, context and execution can be managed in the same program.
+You know how your project should be built, tested and checked. Vis lets you
+put that knowledge into functions the agent can use, so repeatable work
+doesn't depend only on written instructions.
 
-### Compose work in Python
+### Put your expertise into code
 
-Instead of many model-facing tools, Vis exposes one: `python_execution`. Host
-functions are bound into its Python environment. The model discovers names with
-`apropos()`, reads their contracts with `doc()`, and uses Python introspection
-such as `inspect.signature()` where applicable. It can chain calls, run independent
-work in parallel, filter results and print only what belongs in the conversation.
-The [Python SDK](https://pypi.org/project/vis-agent/) also exposes the engine so you
-can run and inspect sessions programmatically.
+For example, you can give the agent a function that selects the right test
+suite, checks its inputs and reports failures. It can use that function
+instead of working out a shell command each time.
 
-### Let the model manage its context
+Start with the built-in tools, then add [Python extensions](extending.md)
+for work you repeat. Refine them as you use the agent. Keep `AGENTS.md` and
+skills for guidance; enforce an operation's rules in code. This makes
+individual operations more predictable, not the model's decisions.
 
-Before every block, Vis refreshes the host-owned `session` dictionary with
-workspace facts, filesystem and network permissions, context usage and
-extension-provided context. The model can inspect its execution environment and
-use `fold_session()` to replace settled history with a summary in future model
-requests. History and fold summaries remain stored with the session; context
-management does not depend on keeping every result in the prompt.
+Once your functions cover a workflow, you can [disable shell access](jail.md)
+with `toggles.shell: false`. Extensions run as trusted host code with full
+CPython access, while the model's Python environment is
+[sandboxed](python-sandbox.md). Only install extensions you trust.
 
-Vis encourages the model to define reusable Python helpers rather than rewrite
-the same orchestration. Their definitions persist across turns and are restored
-when you return to the same session after a gateway restart or extension reload.
-`defs()` lists them, `defs(name)` retrieves their source, and `doc(name)` reads
-their docstrings on demand. This preserves helper source, not every live Python
-object. See [How Vis manages context](token-optimization.md).
+### Combine steps in Python
 
-### Turn your expertise into reliable operations
+Models already use Python to get things done. Vis makes that the way the
+agent uses tools: through one tool called `python_execution`, with the
+available operations exposed as Python functions. The agent finds them with
+`apropos()` and reads how to use them with `doc()`.
 
-You know how your system works: which tests matter, what inputs are valid and
-which operations should be allowed. Put that knowledge into small, tested,
-composable [Python extensions](extending.md). Give each function a clear contract,
-validate its inputs and return useful results. This makes routine operations more
-deterministic and gives you better insight into what the agent is doing. Refine
-those functions as you learn where the agent needs more focused support.
+It can search several files, check the matches and summarize what matters
+in one program. It can run independent work in parallel and inspect results
+in Python rather than send every result back to the conversation. You can
+also run and inspect sessions from your own code with the
+[Python SDK](https://pypi.org/project/vis-agent/).
 
-For repeatable daily work, we encourage replacing broad shell access with these
-focused functions. Once they cover your workflow, disable `shell` with
-`toggles.shell: false`; see [Process jail and network policy](jail.md).
-Keep `AGENTS.md` and skills lean and use them to explain intent. Enforce concrete
-constraints in code rather than relying only on the model to follow behavioral
-instructions. This makes operations more predictable; it does not make the
-model's decisions deterministic.
+### Keep useful work when you return
 
-Extensions have access to full CPython and run as trusted host code. The
-model-facing `python_execution` environment is separately sandboxed; installing
-an extension does not automatically confine its implementation. Review extensions
-as executable code. See [Python sandbox](python-sandbox.md) for the boundary.
+The agent can define Python helpers for repeated work and reuse them later
+in the same session. Their definitions survive restarting Vis and reloading
+extensions. This preserves their source, not every live Python object.
+
+The `session` dictionary shows the agent its workspace, permissions and how
+much context it is using. As the conversation grows, it can summarize
+completed work to make room for what's next. The full history stays stored,
+even when it is no longer sent to the model. See
+[How Vis manages context](token-optimization.md).
 
 ## Install
 

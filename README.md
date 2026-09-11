@@ -18,30 +18,35 @@
 
 # Vis
 
-Vis is a coding agent that combines tools into Python programs. It can chain operations, run them in parallel, and inspect results before deciding what belongs in the conversation.
+Vis is a coding agent that combines tools into Python programs.
+It can search your project, make changes and run tests, checking the results
+as it goes.
 
 ## Why Vis
 
-Models already use Python to orchestrate tasks. Vis makes Python the agent's
-primary interface: one model-facing tool, `python_execution`, with host functions
-discovered through `apropos()` and inspected through `doc()`. The model composes
-operations as code instead of coordinating a growing catalog of separate tools.
+You know how your project should be built, tested and checked. Vis lets you
+put that knowledge into functions the agent can use, so repeatable work
+doesn't depend only on written instructions.
 
-That program can inspect workspace facts, permissions and context usage through
-`session`, fold settled history, and reuse persistent Python helpers. Helper
-definitions survive returning to the same session, gateway restarts and extension
-reloads. The engine is also accessible through the [Python SDK](https://pypi.org/project/vis-agent/).
+- **Put your expertise into code.** Give the agent small, tested
+  [Python extensions](resources/vis-docs/extending.md), such as a function that
+  runs the right test suite and reports failures. Keep `AGENTS.md` and skills
+  for guidance; enforce an operation's rules in code.
+- **Combine steps in Python.** Models already use Python to get things done.
+  Vis gives the agent one tool, `python_execution`, where it can discover and
+  combine functions, inspect intermediate results and print a useful summary.
+- **Keep useful work when you return.** The agent can reuse Python helpers in
+  the same session, even if you restart Vis or reload extensions. It can
+  inspect workspace facts, permissions and context usage, and summarize
+  completed work without deleting the stored history.
 
-You know how your system should work. Encode that knowledge in small, tested,
-composable [Python extensions](resources/vis-docs/extending.md). Make routine
-operations deterministic and inspectable, and improve the agent's daily workflow
-over time. Extensions run as trusted code with full CPython; the model-facing
-execution environment is sandboxed.
+Once your functions cover a workflow, you can disable shell access. Extensions
+run as trusted CPython code; the model's Python environment is sandboxed.
+These functions make individual operations more predictable, not the model's
+decisions.
 
-For repeatable workflows, we encourage replacing broad shell access with focused
-functions, then disabling `shell`. Keep `AGENTS.md` and skills lean: use them for
-guidance, not as a substitute for checks your functions can enforce.
-Read more in [Getting started](resources/vis-docs/index.md#why-vis).
+Read more in [Getting started](resources/vis-docs/index.md#why-vis), or use the
+[Python SDK](https://pypi.org/project/vis-agent/) to run sessions from your own code.
 
 ## Install
 
