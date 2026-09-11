@@ -109,6 +109,39 @@ processes. Allow dependency cache directories through `workspace.filesystem`.
 Use `"runner": "vispython"` for the sandbox runner. The default is configurable
 through `python.runner`; see [Configuration](configuration.md#python-import-roots).
 
+### Select the package directory in a monorepo
+
+`cwd` selects the Python project for both REPLs and the project test runner.
+It defaults to the workspace root, **not the parent of a selected test file**.
+Pytest can discover a nested `pyproject.toml` after launch; that does not change
+which interpreter Vis already launched. A `.venv` in a nested package is not
+selected when `cwd` still names the monorepo root.
+
+For example, in the Vis checkout:
+
+```python
+print(await run_tests({
+    "language": "python", "runner": "project", "cwd": "packages/vis-agent",
+    "path": "tests/test_contracts.py",
+}))
+print(await repl_start({"language": "python", "cwd": "packages/vis-agent"}))
+print(await repl_eval({
+    "language": "python", "cwd": "packages/vis-agent",
+    "code": "import sys, jsonschema; print(sys.executable, sys.prefix, jsonschema.__file__)",
+}))
+```
+
+Check the returned `command`/`cmd` and `cwd` before changing dependencies. A
+missing `jsonschema` under system Python does not mean it is missing from the
+package's `.venv`. If absent there too, prepare that project's declared dependencies;
+do not merge unrelated environments by appending shared packages to `PYTHONPATH`.
+
+`repl_start(..., env={...})` supplies variables when creating that process;
+`repl_eval` cannot change its startup environment. An existing REPL is reused,
+not rebuilt after installing dependencies or changing configuration. Stop it by
+its returned id and start it again when its startup environment must change.
+The project test runner launches a separate process; it does not reuse a REPL's
+per-start `env` delta. Stop REPLs you started for temporary verification.
 ## Runtime locations
 
 | Runtime | Location |

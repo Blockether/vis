@@ -4,6 +4,8 @@
    boundary marshalling are tested exhaustively by vis-python-runtime."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.test-python-context :as tpc]
@@ -360,3 +362,53 @@
   (it "a clean eval carries no error and no excerpt"
       (let [r (ep/run-python-block (py-ctx) "print(1 + 2)")]
         (expect (nil? (:error r))))))
+
+(defdescribe
+  python-repl-language-and-directory-test
+  ;; #202 follow-up: dependency diagnosis must exercise the Python-facing dispatch,
+  ;; not only Clojure calls that bypass folded kwargs and symbol invocation.
+  (it
+    "preserves explicit Python, project cwd and environment across the host boundary"
+    (let [handler
+          (fn [language]
+            {:language language
+             :start-repl-fn (fn [_ op opts]
+                              (extension/success
+                                {:result {"language" language
+                                          "operation" op
+                                          "cwd" (get opts "cwd")
+                                          "setting" (get-in opts ["env" "MONITOR_MODE"])}}))})
+
+          env
+          {:session-id (str (random-uuid))
+           :extensions (atom [{:ext/name "repl-probe"
+                               :ext/language-tools [(handler "clojure") (handler "python")]}])}
+
+          bindings
+          (into {}
+                (map (fn [entry]
+                       [(:ext.symbol/symbol entry)
+                        (fn [& args]
+                          (extension/invoke-symbol-wrapper {:ext/name "repl-probe"}
+                                                           entry
+                                                           (vec args)
+                                                           env))]))
+                [language-surface/repl-start-symbol language-surface/repl-status-symbol])]
+
+      (with-redefs [vis/prepare-session-jail! (fn [_]
+                                                nil)]
+        (tpc/with-own
+          [ctx bindings]
+          (doseq [[tool operation] [["repl_start" "start"] ["repl_status" "status"]]
+                  args
+                  ["{'language': 'python', 'cwd': 'packages/sdk', 'env': {'MONITOR_MODE': 'test'}}"
+                   "'python', {'cwd': 'packages/sdk', 'env': {'MONITOR_MODE': 'test'}}"
+                   "language='python', cwd='packages/sdk', env={'MONITOR_MODE': 'test'}"]]
+
+            (let [r (ep/run-python-block
+                      ctx
+                      (str "r = await " tool
+                           "(" args
+                           ")\n" "print(r['language'], r['operation'], r['cwd'], r['setting'])"))]
+              (expect (nil? (:error r)) (pr-str (:error r)))
+              (expect (= (str "python " operation " packages/sdk test") (out r))))))))))

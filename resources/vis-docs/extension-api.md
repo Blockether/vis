@@ -392,7 +392,9 @@ toast in the active channel.
 `vis.ask(title, fields)` pauses the extension and shows a typed form in the TUI
 or the Companion app. `vis.live(title, nodes)` opens a view that the extension
 updates while a job runs. Both are documented on their own pages:
-[Asking the human](human-input.md) and [Live views](live-views.md).
+[Asking the human](human-input.md) and [Live views](live-views.md). For concurrent
+read-only polling with fail-fast, Stop and owned cleanup, use the
+[fixed-build monitoring recipe](live-views.md#monitor-a-fixed-build-set).
 
 ## Environment
 

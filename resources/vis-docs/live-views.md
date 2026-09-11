@@ -97,6 +97,190 @@ GitHub may return a run before publishing its jobs. Declare progress without a
 keeps the last known counts across later empty polls.
 
 
+## Monitor a fixed build set
+
+Use one synchronous tool and one live view to observe several **already selected**
+builds. The coordinator below runs at most two read-only requests concurrently,
+consumes completed reads without waiting for a slower peer, and retains each
+build's last observation. It does not launch deployments, schedule dependencies,
+or cancel remote jobs. General model shell access is not needed.
+
+Supply a domain adapter `read_once(build, *, deadline, stop)` that returns
+`"running"`, `"succeeded"` or `"failed"` for that exact environment and build ID.
+This adapter is your CI client's code, **not a Vis API**. It must:
+
+- Use pinned identities, not a moving alias such as “latest”.
+- Enforce the absolute `time.monotonic()` deadline across connection, reads,
+  retries and pagination, and cooperate with the `threading.Event` named `stop`.
+- Close responses, sockets and any per-request client in `finally` or `with`.
+- Perform reads only. Keep authentication in the trusted extension's configuration;
+  do not return credentials or raw exception messages.
+- Avoid Vis host calls from the reader threads. Only the invoking thread owns
+  and updates the view.
+
+A socket read timeout alone is not a total request deadline. Python cannot forcibly
+stop a running thread; use a client with bounded operations and test its cleanup.
+The example deliberately accepts this adapter rather than claiming a generic HTTP
+`timeout=` guarantees it.
+
+```python
+# monitor.py
+import math
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
+from threading import Event
+
+import blockether.vis.extension as vis
+
+
+@dataclass(frozen=True)
+class Build:
+    environment: str
+    build_id: str
+
+
+def watch_builds(builds, read_once, *, timeout_s=600.0, poll_s=5.0):
+    """Observe a fixed set; return after all locally owned readers have stopped."""
+    builds = tuple(builds)
+    if not builds or len(set(builds)) != len(builds):
+        raise ValueError("Choose a nonempty set of distinct environment/build pairs")
+    if any(not b.environment.strip() or not b.build_id.strip() for b in builds):
+        raise ValueError("Environment and build ID must be explicit")
+    if any(not math.isfinite(n) or n <= 0 for n in (timeout_s, poll_s)):
+        raise ValueError("Timeout and poll interval must be finite and positive")
+    last = [{**asdict(b), "state": "unobserved", "read_error": None} for b in builds]
+    due = [0.0] * len(builds)
+    pending = {}
+    stop = Event()
+    deadline = time.monotonic() + timeout_s
+    outcome = "completed"
+    with vis.live("Watch builds", [
+        vis.status("status", "Watching pinned builds", tone="running"),
+        vis.table("builds", columns=[vis.table_column("environment", "Environment"),
+                                    vis.table_column("build", "Build"),
+                                    vis.table_column("state", "Last observation")]),
+    ]) as view:
+        pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ci-reader")
+        try:
+            for i, row in enumerate(last):
+                view["builds"].upsert(str(i), [row["environment"], row["build_id"],
+                                              row["state"]])
+            while True:
+                if view.is_interrupted:
+                    outcome = "interrupted"
+                    break
+                # Never call result() on an unfinished future or use ordered map().
+                for future in [f for f in pending if f.done()]:
+                    i = pending.pop(future)
+                    try:
+                        state = future.result()
+                        if state not in {"running", "succeeded", "failed"}:
+                            raise ValueError("Unknown build state")
+                        last[i]["state"] = state
+                    except Exception as error:
+                        # A read error is not a failed CI build or a successful read.
+                        last[i]["read_error"] = type(error).__name__
+                    due[i] = time.monotonic() + poll_s
+                    row = last[i]
+                    view["builds"].upsert(str(i), [row["environment"], row["build_id"],
+                                                  row["read_error"] or row["state"]])
+                if any(row["state"] == "failed" for row in last):
+                    outcome = "failed"
+                    break
+                if any(row["read_error"] for row in last):
+                    outcome = "observation_error"
+                    break
+                if all(row["state"] == "succeeded" for row in last):
+                    break
+                now = time.monotonic()
+                if now >= deadline:
+                    outcome = "timeout"
+                    break
+                for i, build in enumerate(builds):
+                    if len(pending) == 2:
+                        break
+                    if (i not in pending.values() and due[i] <= now
+                            and last[i]["state"] != "succeeded"):
+                        pending[pool.submit(read_once, build,
+                                            deadline=min(deadline, now + 5.0),
+                                            stop=stop)] = i
+                # Futures do not wake the view. Check them within 100 ms; Stop
+                # wakes this host wait immediately. UI events do not reset due[].
+                view.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+        except vis.Interrupted:
+            # Stop can race with any view update, not just the explicit flag read.
+            outcome = "interrupted"
+        except BaseException:
+            outcome = "failed"
+            raise
+        finally:
+            stop.set()
+            try:
+                reason = "failed" if outcome == "observation_error" else outcome
+                receipt = view.close(reason=reason, summary=f"Monitor: {outcome}")
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)
+        if receipt["reason"] == "interrupted":
+            outcome = "interrupted"  # a concurrent human Stop takes precedence
+    return {"outcome": outcome, "observations": last, "view": receipt}
+```
+
+Register only the typed wrapper, not the callback-taking coordinator. For example,
+with `monitor.py` and your domain client installed in the extension's
+[project environment](extension-development.md#prepare-the-project-environment):
+
+```python
+# .vis/extensions/ci_monitor.py
+import blockether.vis.extension as vis
+from monitor import Build, watch_builds
+from my_ci import read_build  # your bounded, read-only adapter described above
+
+
+def watch(builds: list[Build], timeout_s: float = 600.0) -> dict:
+    """Watch these exact builds together. Stop watching never cancels remote jobs."""
+    return watch_builds(builds, read_build, timeout_s=timeout_s)
+
+
+def present(*, phase, args, kwargs, result, error):
+    if phase == "start":
+        summary = "Watching the selected build set"
+    elif phase == "failure":
+        summary = f"Monitoring could not finish: {type(error).__name__}"
+    else:
+        summary = f"{result['outcome']}: {len(result['observations'])} builds"
+    return vis.ActivityPresentation("Watch builds", summary)
+
+
+vis.register(vis.Extension(
+    name="ci-monitor", alias="ci", description="Read-only monitoring of pinned CI builds.",
+    symbols=[vis.Symbol(watch, name="watch_builds",
+                        activity=vis.Activity(label="Watch builds", render=present))],
+))
+```
+
+**Fail-fast and cleanup are separate.** Once a completed read reports failure,
+no new work is scheduled and the view closes before joining slower readers.
+The caller returns only after those readers finish their bounded cleanup;
+`Future.cancel()` cannot kill an in-flight request. Do not replace this with
+`shutdown(wait=False)` and silently leave work running after return. Snapshots
+are the last observations consumed before stopping; `unobserved` does not mean
+running or successful, and late results during cleanup do not overwrite them.
+
+**This is not durable background execution.** The open live view suspends the
+invoking block's ordinary wall-time limit, not network deadlines or the recipe's
+explicit overall timeout. A synchronous call still occupies its caller: the
+model cannot call a second “stop” tool on that same blocked call. Use the UI or
+an independent SDK client. There is no monitoring after return and no recovery
+across a worker or gateway restart.
+
+Before shipping your adapter, test a fast failure beside a slow read, successful
+completion, Stop during waiting and updating, request errors, the overall timeout,
+and release of every locally owned thread and response. The repository's
+[recipe tests](https://github.com/Blockether/vis/blob/main/packages/vis-agent/tests/test_monitor_recipe.py)
+execute these code blocks with controlled readers and `LiveRecorder`; they do not
+verify your CI service or credentials.
+
 ## Nodes
 
 A view declares its nodes once, each with an id, and addresses them by id.
@@ -226,8 +410,9 @@ has its own Markdown output.
 - The first update is sent immediately. Further updates within `flush_ms`
   (100 ms by default) are batched. Set the interval with
   `vis.live(..., flush_ms=…)`. Reads and `view.close(...)` flush pending updates.
-- Live views and the blocks displaying them have no timeout. Close the view
-  when the job completes, the process exits or the user stops watching.
+- An open live view suspends the invoking block's ordinary wall-time limit.
+  Set explicit deadlines for external requests and for monitoring as a whole,
+  and close the view when work ends. This is not a durable worker lifetime.
 
 ## Interruption
 
@@ -242,6 +427,12 @@ button opens the same input.
   their note or `None`.
 - Updating an ended view raises `vis.Interrupted` with the note, even if the
   loop does not check the flag.
+- From the producer, `view.close(reason="interrupted", summary="Stopped monitoring")`
+  closes the owned view; it does not kill threads or remote jobs.
+- From an independent SDK client, list `sdk_session.live_views()` and call
+  `sdk_session.view_action(view_id, "interrupt", note="Stop monitoring")`. The
+  action is `interrupt`, not `cancel`. The producer must still handle
+  `view.is_interrupted` or `vis.Interrupted` and clean up its resources.
 
 ## Closing
 
