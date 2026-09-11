@@ -20,6 +20,29 @@
 
 Vis is a coding agent that combines tools into Python programs. It can chain operations, run them in parallel, and inspect results before deciding what belongs in the conversation.
 
+## Why Vis
+
+Models already use Python to orchestrate tasks. Vis makes Python the agent's
+primary interface: one model-facing tool, `python_execution`, with host functions
+discovered through `apropos()` and inspected through `doc()`. The model composes
+operations as code instead of coordinating a growing catalog of separate tools.
+
+That program can inspect workspace facts, permissions and context usage through
+`session`, fold settled history, and reuse persistent Python helpers. Helper
+definitions survive returning to the same session, gateway restarts and extension
+reloads. The engine is also accessible through the [Python SDK](https://pypi.org/project/vis-agent/).
+
+You know how your system should work. Encode that knowledge in small, tested,
+composable [Python extensions](resources/vis-docs/extending.md). Make routine
+operations deterministic and inspectable, and improve the agent's daily workflow
+over time. Extensions run as trusted code with full CPython; the model-facing
+execution environment is sandboxed.
+
+For repeatable workflows, we encourage replacing broad shell access with focused
+functions, then disabling `shell`. Keep `AGENTS.md` and skills lean: use them for
+guidance, not as a substitute for checks your functions can enforce.
+Read more in [Getting started](resources/vis-docs/index.md#why-vis).
+
 ## Install
 
 Install the `vis-agent` command:
