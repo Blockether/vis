@@ -22,6 +22,123 @@ specific workflow. Activities show what happened along the way, and the
 terminal, desktop and phone let you follow the same work. Read
 [Why I built Vis](motivation.md) for the thinking behind these choices.
 
+## See Vis in action
+
+Explore each gallery with the arrow buttons, your keyboard, or a swipe. Select an
+image to open it at full size. These screenshots use a fictional Fieldnotes project
+in a fresh gateway and database, with new sessions and example tasks—not personal work.
+
+### iOS gallery
+
+Follow the same work from your phone. Captured in the native iOS app on an iPhone simulator.
+
+<section class="screenshot-gallery screenshot-gallery--ios" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="iOS screenshots">
+  <div class="screenshot-gallery__track" id="ios-slides" tabindex="0" aria-label="iOS screenshots; use Left and Right arrow keys to browse">
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="1 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/ios-conversation.png" aria-label="Open full-size iOS screenshot: Follow a conversation">
+      <img src="assets/screenshots/ios-conversation.png" alt="Vis on iOS showing a completed search task, its goal, and a table of example checks." width="1206" height="2622" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Follow a conversation</strong>Read the answer, review checks, and keep the goal in view.</figcaption>
+  </figure>
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="2 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/ios-sessions.png" aria-label="Open full-size iOS screenshot: Keep projects together">
+      <img src="assets/screenshots/ios-sessions.png" alt="Vis on iOS listing three fictional Fieldnotes sessions, with the search task starred." width="1206" height="2622" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Keep projects together</strong>Find your sessions in a project and pick up where you left off.</figcaption>
+  </figure>
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="3 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/ios-project.png" aria-label="Open full-size iOS screenshot: Explore a project">
+      <img src="assets/screenshots/ios-project.png" alt="Vis on iOS showing a tour of the fictional Fieldnotes project." width="1206" height="2622" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Explore a project</strong>Read formatted explanations and tables without leaving the conversation.</figcaption>
+  </figure>
+
+  </div>
+
+  <div class="screenshot-gallery__controls" hidden>
+    <button type="button" data-previous aria-controls="ios-slides" aria-label="Previous iOS screenshot">← Previous</button>
+    <span role="status" aria-live="polite" aria-atomic="true">1 / 3</span>
+    <button type="button" data-next aria-controls="ios-slides" aria-label="Next iOS screenshot">Next →</button>
+  </div>
+</section>
+
+### Desktop gallery
+
+Keep your project list beside the conversation. Captured in the desktop-sized Companion web app.
+
+<section class="screenshot-gallery screenshot-gallery--desktop" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="Desktop screenshots">
+  <div class="screenshot-gallery__track" id="desktop-slides" tabindex="0" aria-label="Desktop screenshots; use Left and Right arrow keys to browse">
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="1 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/desktop-conversation.png" aria-label="Open full-size Desktop screenshot: See the whole task">
+      <img src="assets/screenshots/desktop-conversation.png" alt="Desktop Vis with the Fieldnotes project sidebar and a completed search task." width="1280" height="800" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>See the whole task</strong>Follow the conversation and its goal beside your project sessions.</figcaption>
+  </figure>
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="2 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/desktop-project.png" aria-label="Open full-size Desktop screenshot: Find your way around">
+      <img src="assets/screenshots/desktop-project.png" alt="Desktop Vis showing a project tour and a table of fictional source directories." width="1280" height="800" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Find your way around</strong>Review a project tour with source paths and a clear next step.</figcaption>
+  </figure>
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="3 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/desktop-release.png" aria-label="Open full-size Desktop screenshot: Plan the next step">
+      <img src="assets/screenshots/desktop-release.png" alt="Desktop Vis showing a fictional release checklist with verify, review, and publish steps." width="1280" height="800" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Plan the next step</strong>Switch sessions to turn a release into a focused checklist.</figcaption>
+  </figure>
+
+  </div>
+
+  <div class="screenshot-gallery__controls" hidden>
+    <button type="button" data-previous aria-controls="desktop-slides" aria-label="Previous Desktop screenshot">← Previous</button>
+    <span role="status" aria-live="polite" aria-atomic="true">1 / 3</span>
+    <button type="button" data-next aria-controls="desktop-slides" aria-label="Next Desktop screenshot">Next →</button>
+  </div>
+</section>
+
+### TUI gallery
+
+Stay in your terminal, with keyboard navigation and the same session history. Captured from the production terminal renderer.
+
+<section class="screenshot-gallery screenshot-gallery--tui" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="TUI screenshots">
+  <div class="screenshot-gallery__track" id="tui-slides" tabindex="0" aria-label="TUI screenshots; use Left and Right arrow keys to browse">
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="1 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/tui-conversation.png" aria-label="Open full-size TUI screenshot: Work from the terminal">
+      <img src="assets/screenshots/tui-conversation.png" alt="Vis TUI showing the search task, example check results, and a completed goal." width="1255" height="756" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Work from the terminal</strong>Read the answer, check results, and track the completed goal.</figcaption>
+  </figure>
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="2 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/tui-sessions.png" aria-label="Open full-size TUI screenshot: Switch with the keyboard">
+      <img src="assets/screenshots/tui-sessions.png" alt="Vis TUI session navigator listing only the three fictional Fieldnotes sessions." width="1255" height="756" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Switch with the keyboard</strong>Use the session navigator to find work across your projects.</figcaption>
+  </figure>
+
+  <figure class="screenshot-gallery__slide" role="group" aria-roledescription="slide" aria-label="3 of 3">
+    <a class="screenshot-gallery__image" href="assets/screenshots/tui-project.png" aria-label="Open full-size TUI screenshot: Keep context in tabs">
+      <img src="assets/screenshots/tui-project.png" alt="Vis TUI with two session tabs and the fictional Fieldnotes project tour." width="1255" height="756" loading="lazy" decoding="async">
+    </a>
+    <figcaption><strong>Keep context in tabs</strong>Open another session without losing your place.</figcaption>
+  </figure>
+
+  </div>
+
+  <div class="screenshot-gallery__controls" hidden>
+    <button type="button" data-previous aria-controls="tui-slides" aria-label="Previous TUI screenshot">← Previous</button>
+    <span role="status" aria-live="polite" aria-atomic="true">1 / 3</span>
+    <button type="button" data-next aria-controls="tui-slides" aria-label="Next TUI screenshot">Next →</button>
+  </div>
+</section>
+
 ## Install
 
 ### Install Vis where your work runs

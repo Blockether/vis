@@ -48,6 +48,38 @@ commands. Switch devices to follow the same work, rather than start again.
 Read [Why I built Vis](resources/vis-docs/motivation.md) for the full motivation,
 or [Getting started](resources/vis-docs/index.md) to try it.
 
+## Screenshot galleries
+
+One fictional project, three ways to work. All captures use a fresh demo gateway,
+database and sessions—no personal work. The linked galleries support buttons,
+keyboard navigation and swiping; GitHub shows the previews below.
+
+### iOS
+
+<p>
+  <a href="https://vis.blockether.com/#ios-gallery"><img src="resources/vis-docs/assets/screenshots/ios-conversation.png" width="220" alt="Vis on iOS showing a completed search task, its goal, and a table of example checks."></a>
+  <a href="https://vis.blockether.com/#ios-gallery"><img src="resources/vis-docs/assets/screenshots/ios-sessions.png" width="220" alt="Vis on iOS listing three fictional Fieldnotes sessions, with the search task starred."></a>
+  <a href="https://vis.blockether.com/#ios-gallery"><img src="resources/vis-docs/assets/screenshots/ios-project.png" width="220" alt="Vis on iOS showing a tour of the fictional Fieldnotes project."></a>
+</p>
+
+[Browse the iOS carousel →](https://vis.blockether.com/#ios-gallery)
+
+### Desktop
+
+[![Desktop Vis with the Fieldnotes project sidebar and a completed search task.](resources/vis-docs/assets/screenshots/desktop-conversation.png)](https://vis.blockether.com/#desktop-gallery)
+
+[Browse the desktop carousel →](https://vis.blockether.com/#desktop-gallery) ·
+[Project tour](resources/vis-docs/assets/screenshots/desktop-project.png) ·
+[Release checklist](resources/vis-docs/assets/screenshots/desktop-release.png)
+
+### TUI
+
+[![Vis TUI showing a search task, example check results, and a completed goal.](resources/vis-docs/assets/screenshots/tui-conversation.png)](https://vis.blockether.com/#tui-gallery)
+
+[Browse the TUI carousel →](https://vis.blockether.com/#tui-gallery) ·
+[Session navigator](resources/vis-docs/assets/screenshots/tui-sessions.png) ·
+[Project tour](resources/vis-docs/assets/screenshots/tui-project.png)
+
 ## Install
 
 Install Vis on the computer where your projects live. The default release

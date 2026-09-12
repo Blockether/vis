@@ -41,7 +41,11 @@
     (let [{:keys [pages] :as site} (docs/collect)]
       (doseq [[slug image] [["human-input" "ask"] ["live-views" "live-running"]
                             ["live-views" "live-stop"] ["extension-design" "nesting-finding"]
-                            ["extension-design" "nesting-clear"]]
+                            ["extension-design" "nesting-clear"] ["index" "ios-conversation"]
+                            ["index" "ios-sessions"] ["index" "ios-project"]
+                            ["index" "desktop-conversation"] ["index" "desktop-project"]
+                            ["index" "desktop-release"] ["index" "tui-conversation"]
+                            ["index" "tui-sessions"] ["index" "tui-project"]]
               mode [:static :live]
               :let [page (first (filter #(= slug (:slug %)) pages))
                     html (docs/page-html site page mode)
@@ -50,23 +54,25 @@
         (expect (str/includes? html (str "src=\"" path "\"")))
         (expect (str/includes? html (str "href=\"" path "\"")))))))
 
-(defdescribe screenshot-assets-test
-             (it "serves every screenshot as a PNG and includes it in static assets"
-                 (doseq [name
-                         ["ask" "live-running" "live-stop" "nesting-finding" "nesting-clear"]
+(defdescribe
+  screenshot-assets-test
+  (it "serves every screenshot as a PNG and includes it in static assets"
+      (doseq [name
+              ["ask" "live-running" "live-stop" "nesting-finding" "nesting-clear" "ios-conversation"
+               "ios-sessions" "ios-project" "desktop-conversation" "desktop-project"
+               "desktop-release" "tui-conversation" "tui-sessions" "tui-project"]
 
-                         :let [rel
-                               (str "screenshots/" name ".png")
+              :let [rel
+                    (str "screenshots/" name ".png")
 
-                               response
-                               (docs/handle {:uri (str "/docs/assets/" rel)})]]
+                    response
+                    (docs/handle {:uri (str "/docs/assets/" rel)})]]
 
-                   (expect (= (str "assets/" rel)
-                              (get @#'docs/asset-files (str "vis-docs/assets/" rel))))
-                   (expect (= 200 (:status response)))
-                   (expect (= "image/png" (get-in response [:headers "content-type"])))
-                   (with-open [body ^java.io.InputStream (:body response)]
-                     (expect (= [137 80 78 71 13 10 26 10] (vec (repeatedly 8 #(.read body)))))))))
+        (expect (= (str "assets/" rel) (get @#'docs/asset-files (str "vis-docs/assets/" rel))))
+        (expect (= 200 (:status response)))
+        (expect (= "image/png" (get-in response [:headers "content-type"])))
+        (with-open [body ^java.io.InputStream (:body response)]
+          (expect (= [137 80 78 71 13 10 26 10] (vec (repeatedly 8 #(.read body)))))))))
 
 (defdescribe
   council-diagrams-test
