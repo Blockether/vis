@@ -1,7 +1,9 @@
 # Python sandbox
 
-The model runs Python code in a CPython sandbox. This page describes its
-permissions, package installation and differences from your project's Python.
+Vis uses a CPython sandbox to run the agent's tool calls and calculations. It is
+separate from your project's Python environment: installing a package in one
+does not necessarily make it available in the other. This page explains which
+environment to use, how to install packages and what the sandbox can access.
 
 ## Running Python
 
@@ -12,8 +14,10 @@ Python functions. `apropos` and `doc` inspect the available API synchronously.
 
 ## Reading tool results
 
-Python receives complete tool data. Only printed text enters the model's next
-request. Keep results in variables and print the fields needed for a decision:
+A tool returns its complete result to Python, but only printed text reaches the
+model's next request. The agent can keep a large result in a variable and inspect
+just the fields it needs. For example, these calls show progressively more of a
+test result:
 
 ```python
 r = await run_tests({"language": "python"})
@@ -22,19 +26,19 @@ print(r["failures"])     # every recorded fault
 print(r["output"])       # full returned runner output
 ```
 
-Shell results remain dictionary-like handles with `wait`, `logs`, `type` and
-`stop`. Their short view preserves status, exit and timeout information. If text
-is omitted, the view names the field or log cursor to read next. `dict(r)` exposes
-the mapping; `json.dumps(r)` serializes every field without the compact view.
-Do not routinely print either for large results.
+Shell results are dictionary-like handles with `wait`, `logs`, `type` and `stop`
+methods. Their short view includes status, exit and timeout information. When it
+omits text, it names the field or log cursor that holds the rest. `dict(r)` exposes
+the full mapping and `json.dumps(r)` serializes every field; both can produce much
+more output than the model needs.
 
 `apropos(pattern)` remains a list of `(type, name, body)` records. Printing it
 shows one compact row per symbol; attributes, indexing and `doc(row)` still work.
 
-`read_session()` returns structured history; its printed view is a summary.
-Read `transcript["turns"]`, then `iterations`, then `blocks` for `code`, `stdout`
-and optional `error`, including folded history. Use `list_sessions()` to find
-another session.
+`read_session()` also returns more data than its printed summary. The full history,
+including folded steps, is under `transcript["turns"]`, then `iterations`, then
+`blocks`. Each block holds `code`, `stdout` and any `error`. `list_sessions()`
+finds other saved sessions.
 
 ## What the sandbox may do
 
@@ -92,8 +96,8 @@ filename or id. Saving another file with the same name creates a new version.
 
 ## Sandbox versus project Python
 
-An independently selected project interpreter has its own environment, unlike the
-two embedded Vis workers that share the package directory above:
+Use a project interpreter when code needs your project's dependencies. It has
+its own environment, separate from the agent's sandbox:
 
 | Code | Where it runs |
 | --- | --- |
@@ -140,8 +144,10 @@ do not merge unrelated environments by appending shared packages to `PYTHONPATH`
 `repl_eval` cannot change its startup environment. An existing REPL is reused,
 not rebuilt after installing dependencies or changing configuration. Stop it by
 its returned id and start it again when its startup environment must change.
-The project test runner launches a separate process; it does not reuse a REPL's
-per-start `env` delta. Stop REPLs you started for temporary verification.
+The project test runner launches a separate process; it does not inherit a REPL's
+per-start environment overrides. Temporary verification REPLs should be stopped
+when the checks are finished.
+
 ## Runtime locations
 
 | Runtime | Location |

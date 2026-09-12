@@ -1,8 +1,9 @@
 # How Vis manages context
 
-Files, tool output and history consume the model's input tokens. Vis reduces
-repeated input by storing data in the runtime, returning selected results and
-replacing earlier steps with summaries.
+The model can read only a limited amount of information at once. That working
+context includes your instructions, conversation history, file contents and tool
+results. Vis keeps it smaller by filtering tool output, reusing earlier findings
+and summarizing completed work. Your full session history remains saved.
 
 ## One tool, many functions
 
@@ -28,37 +29,38 @@ returns results in manifest order.
 
 ## Reuse another session's findings
 
-Before repeating an investigation, use [Council](council.md#reuse-existing-session-context)
-to find a session that already knows the topic and ask a focused question. An
-eligible idle session can answer from its saved context, and a correlated reply
-returns findings to the requesting session without copying whole transcripts.
-Verify that the evidence still applies to the current task and revision.
+If you have already investigated a problem in another session, ask Vis to
+[consult that session](council.md#ask-vis-to-consult-another-session) rather than
+start from scratch. The other agent can answer from its saved context, so the
+current conversation needs only the relevant findings, not the whole transcript.
+Vis still needs to check that those findings apply to the current code.
 
-This can reduce repeated discovery, but does not guarantee a provider prompt-cache
-hit or lower total cost: waking a session can make new model calls. Use targeted
-consultation when existing knowledge is likely to help, not for every local edit.
+A consultation can avoid repeated research, but waking a session may make new
+model calls. Reusing findings does not guarantee a prompt-cache hit or lower
+cost; it is most useful when the other session knows something relevant.
 
 ## Addresses, not copies
 
-`grep` and `cat` return text with a `line:hash` address for each line. Pass those
-addresses to `patch` to identify the lines to change without repeating their
-old text. Include all edits for one file in a single `patch` call. The write is
-atomic; a stale address or syntax error rejects the whole batch.
+When the agent reads code with `grep` or `cat`, each line comes with a `line:hash`
+address. An edit can refer to those addresses instead of repeating the old text.
+All edits for one file go in a single `patch` call. A stale address or syntax
+error rejects the whole batch, rather than applying part of the change.
 
-`Path.read_text()` is available for reading data that will not be edited.
+For data that will not be edited, the agent can also use `Path.read_text()`.
 
 ## Folding settled work
 
-`fold_session(key, gist)` removes earlier steps from future model requests
-without deleting them from the database. A key selects turns or iterations:
-`"t2"` selects a whole turn, `"t2/i4-i5"` a range, and `"-t3/i9"` everything
-through an iteration. Comma-separated keys select multiple ranges. The
-current iteration cannot be folded.
+As a conversation grows, the agent can replace completed steps in its working
+context with a summary. Vis calls this **folding**. The summary keeps the
+conclusions, open questions, relevant files and the state of edits and tests.
+Folding does not delete the original steps from the database. With the
+`introspection` toggle enabled, the agent can retrieve them using `read_session()`;
+without it, the model has only the summary.
 
-The gist replaces the selected content in model requests. Include conclusions,
-open questions, exact paths and symbols, and the state of edits and tests.
-With the `introspection` toggle enabled, `read_session()` can retrieve folded
-content. Without it, the model has only the gist.
+The API is `fold_session(key, gist)`, where `gist` is that summary and `key`
+selects the history: `"t2"` for a whole turn, `"t2/i4-i5"` for a range, or
+`"-t3/i9"` for everything through an iteration. Comma-separated keys select
+multiple ranges. The current iteration cannot be folded.
 
 The model monitors `session["utilization"]`. `last_request_tokens` is compared
 with `auto_compress_above`, normally 200k tokens and reduced for smaller input
@@ -83,10 +85,10 @@ as `fold_measurement` for session introspection.
 
 ## Example editing workflow
 
-Locate code with `grep`, read the relevant region with `cat`, apply a `patch`,
-and run the affected tests. This avoids returning whole files and repeating
-old text in edits. Reusable helpers can become extensions; see
-[Extending Vis](extending.md).
+For a code change, the agent can locate a function with `grep`, read the relevant
+lines with `cat`, apply a `patch` and run the affected tests. It does not need to
+load whole files or repeat the old code in the edit. Helpers that prove useful
+across sessions can become [extensions](extending.md).
 
 ## See also
 

@@ -1,7 +1,8 @@
 # Runtime distributions
 
-`vis-agent` starts the engine, gateway, workers and embedded Python. `vis-tui`
-is the terminal client, installed alongside it and connected over HTTP.
+For everyday use, install the prebuilt native release; it does not need Java.
+The `dev` track runs from source on the JVM. Both install `vis-agent`, which runs
+the engine and gateway, and `vis-tui`, the terminal client that connects to it.
 
 ## Installing
 
@@ -9,7 +10,7 @@ is the terminal client, installed alongside it and connected over HTTP.
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
-By default the installer acquires the latest complete stable native release. It
+By default the installer downloads the latest complete stable native release. It
 puts the engine, bundled Python worker and matching TUI in `~/.local/bin` and adds
 that directory to the shell profile if needed. Use `--install-dir PATH` to change it.
 Native installation requires `curl` and `tar`, not Java or Git. Missing or incomplete

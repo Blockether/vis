@@ -1,15 +1,17 @@
 # Using an existing Python project
 
-Connect an existing uv project to Vis without copying its implementation into an
-extension. The package stays editable in your checkout; a small entry file registers
-its tools. This is an advanced alternative to the [one-file tutorial](extending.md)
-and [automatically prepared packages](extension-packages.md#package-manifest).
+If you already have a Python project managed by uv, you can expose its functions
+to Vis without copying the code. Your package stays editable in its checkout;
+a small extension file registers the tools. This guide covers that setup. For
+a new extension, the [one-file tutorial](extending.md) or
+[automatically prepared package](extension-packages.md#package-manifest) needs
+less setup.
 
 ## Before you start
 
-You need Vis and a reviewed Python project. Vis bundles upstream uv; no separate
-uv installation or `PATH` entry is required. `vis-agent python uv` passes every
-following argument directly to that executable, with inherited environment and stdio.
+You need Vis and a Python project you trust. Vis includes uv, so there is no
+separate installation to find on `PATH`. Run uv commands as `vis-agent python uv`;
+the arguments, environment and terminal input/output pass through to uv.
 
 `uv sync` and `vis-agent python uv sync` both prepare the project's environment,
 normally `.venv`. Vis loads project dependencies from that environment in a separate
@@ -17,9 +19,9 @@ trusted extension worker. Build backends run with your OS user's permissions.
 
 ## Declare the editable project
 
-Keep ordinary Python packaging metadata and business logic in the package, and put
-a thin entry under the workspace's `.vis/extensions/`. This complete example uses
-setuptools with an editable `src/` layout:
+Keep your implementation and packaging metadata in the existing package. Add
+a small entry file under the workspace's `.vis/extensions/` to register it with
+Vis. This example uses setuptools with an editable `src/` layout:
 
 ```text
 project/

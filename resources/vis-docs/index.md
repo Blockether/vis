@@ -185,10 +185,10 @@ or `vis-agent update --track dev` for the other tracks. See
 - [Project instructions](context-and-prompts.md) — tell the agent how your codebase works.
 - [Skills](skills.md) — reusable task instructions.
 - [Controlling a session](queue-and-cancel.md) — send follow-ups, cancel a task and exit.
-- [Drafts](drafts.md) — let the agent work in an isolated copy and land its changes on a branch.
+- [Drafts](drafts.md) — try a change in an isolated working copy and review it before approval.
 - [Exporting sessions](exporting-sessions.md) — save or share a session.
 - [Remote access and the Companion app](gateway.md) — use Vis from your phone or another machine.
-- [Council](council.md) — share knowledge, delegate authorized work and review results through asynchronous messages.
+- [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
 ### Extensions
@@ -199,14 +199,14 @@ or `vis-agent update --track dev` for the other tracks. See
 - [Using an existing Python project](extension-development.md) — prepare editable uv packages for Vis.
 - [Extension API](extension-api.md) — declarations, tool contracts and host operations.
 - [Extension troubleshooting](extension-troubleshooting.md) — diagnose loading and call errors.
-- [Asking the human](human-input.md) — show a typed form and read the answer.
+- [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
 - [Python SDK](https://pypi.org/project/vis-agent/) — develop and test extensions outside Vis.
 
 ### Concepts
 
-- [How Vis manages context](token-optimization.md) — why the agent writes programs and folds history.
+- [How Vis manages context](token-optimization.md) — how filtering and summaries keep conversations manageable.
 - [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
 
 ### Reference

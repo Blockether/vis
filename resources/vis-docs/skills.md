@@ -1,8 +1,9 @@
 # Skills
 
-A skill is a folder with a `SKILL.md` file that tells Vis how to do a specific
-kind of task. Vis lists every skill it finds in the system prompt and reads the
-full instructions only when a task needs them.
+A skill gives Vis reusable instructions for a task, such as reviewing a change
+or preparing a release. It is a folder containing a `SKILL.md` file, with any
+scripts or templates the task needs. Vis lists available skills in its prompt
+and reads the full instructions when a task needs one.
 
 Skills written for Claude Code, pi, opencode or the
 [agent skills standard](https://agentskills.io) work without changes.
@@ -57,10 +58,10 @@ later matches are ignored.
 | Registered extension packages | Qualified `package/skill` names |
 
 Project locations are also searched in parent directories up to the Git root.
-Local file changes are loaded without restarting Vis. Package skills come from
-the admitted snapshot: `/reload` updates them with their extension, and a failed
-reload keeps the last working version. An ordinary skill with the exact qualified
-name overrides a package skill without affecting its tools.
+Changes to local skills are loaded without restarting Vis. Skills bundled with
+an extension update when you run `/reload`; if reload fails, Vis keeps the last
+working version. A local skill with the same qualified name overrides the
+package skill without changing the package's tools.
 
 See [bundled skills](extension-packages.md#bundled-skills) to ship a procedure and
 its resources with an extension. Installing a package or reading `doc(name)` does

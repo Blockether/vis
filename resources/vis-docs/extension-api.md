@@ -142,14 +142,13 @@ Declare presentation beside each tool binding:
 For an object namespace, put `@vis.method(activity=...)` on **each exported
 method**, including nested methods. Namespace-level Activity is rejected.
 
-Activities are meant for human consumption, not as a second machine protocol.
-Write understandable English: an action in the headline, its target or outcome
-in the summary, and selected evidence in the content. Use sentence case: "Read
-file", "Run tests", "Check service health". Do not expose `run_tests`, qualified
-method names, object representations or all-caps sentences as labels. Preserve
-proper names such as GitHub and acronyms such as SDK. Keep terminology consistent
-and never use profanity or vulgarity. Do not change the case of filenames, code,
-commands or returned content to match a label.
+An Activity explains a tool call to the person following the session. Put the
+action in the headline, the target or outcome in the summary, and useful evidence
+in the content. Use sentence-case labels such as "Read file", "Run tests" or
+"Check service health", rather than `run_tests`, qualified method names, object
+representations or all-caps sentences. Keep proper names such as GitHub and
+acronyms such as SDK. Use consistent terminology and no profanity or vulgarity.
+Leave the case of filenames, code, commands and returned content unchanged.
 
 The host shortens filesystem paths in Activity headlines, summaries, plain text,
 headings and table cells: paths in the session workspace are relative, and other
@@ -174,13 +173,12 @@ activity = vis.Activity(
 )
 ```
 
-This is **end-only presentation**, not missing lifecycle tracking. The engine
-still records paired start/end evidence for order, duration, errors and
-cancellation. It does not publish a running row or start progress for that call.
-The callback skips `start` and runs on `success` or `failure`. Published content
-is retained internally and becomes visible only when the call settles, including
-failure or cancellation. Returning `None` from a start callback alone does not
-hide the engine's running row; use `show_start=False`.
+With **end-only presentation**, the person sees the result without an earlier
+running row. Vis still records start/end order, duration, errors and cancellation.
+The callback skips `start` and runs on `success` or `failure`. Content published
+during the call is saved internally and shown when the call ends, including on
+failure or cancellation. Returning `None` from a start callback does not hide the
+running row; that requires `show_start=False`.
 
 The final presentation must make sense without any earlier progress: name the
 operation and target, state the outcome, and retain useful counts, errors or
@@ -431,7 +429,7 @@ toast in the active channel.
 `vis.ask(title, fields)` pauses the extension and shows a typed form in the TUI
 or the Companion app. `vis.live(title, nodes)` opens a view that the extension
 updates while a job runs. Both are documented on their own pages:
-[Asking the human](human-input.md) and [Live views](live-views.md). For concurrent
+[Forms and user input](human-input.md) and [Live views](live-views.md). For concurrent
 read-only polling with fail-fast, Stop and owned cleanup, use the
 [fixed-build monitoring recipe](live-views.md#monitor-a-fixed-build-set).
 

@@ -1,16 +1,19 @@
 # Extension design
 
-Design tools around tasks the agent needs to complete, then test their Python
-behavior and their Vis integration. Start with the [one-file tutorial](extending.md);
-use the [tested greeter package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
-when the implementation grows beyond a small entry file.
+A useful extension gives Vis a clear way to do a job your project needs: run the
+right tests, inspect a service or check a result. This guide covers choosing an
+operation, explaining its inputs and testing it. Start with the
+[one-file tutorial](extending.md), or use the
+[tested greeter package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
+when you need a larger example.
 
 ## Choose a useful tool boundary
 
-Prefer one operation with a clear result over a sequence the agent must assemble
-for every call. Return Python values, not printed CLI output or JSON text that
-callers must parse. Use a scalar for a scalar result; use a frozen dataclass when
-several fields have distinct meanings. Do not introduce a class just to wrap one string.
+Choose an operation with a clear result, so the agent does not have to rebuild
+the same sequence for every call. Return Python values that callers can use
+directly, rather than CLI output or JSON text they have to parse. A string is
+enough for a text result; a frozen dataclass helps when several fields have
+different meanings.
 
 Keep reads separate from mutations. Mark state-changing tools with
 `tag="mutation"`, or `@vis.method(tag="mutation")` on a namespace method. The tag
@@ -30,7 +33,7 @@ A useful tool description answers:
 - When should I call this, and what must already be true?
 - What does each input mean, including units, limits and omitted values?
 - What does the result contain, and what do empty or missing values mean?
-- Does the call change anything, ask the human, or access an external service?
+- Does the call change anything, request user input or access an external service?
 - What failures should the caller handle?
 
 Use `Annotated[T, "meaning"]` for parameter and result-field descriptions. Keep
@@ -152,8 +155,8 @@ method in an object namespace. Declare it at the binding, not as a later UI task
 The example decorates `Greeter.hello` in the entrypoint so its ordinary Python
 implementation stays independent of Vis.
 
-Activities are meant for human consumption. A person should understand what
-happened without knowing a Python method name or result type. Use sentence-case
+Someone reading an Activity should understand what happened without knowing
+Python method names or result types. Use sentence-case
 English labels such as "Greet person" or "Run tests", preserve proper names and
 acronyms, and use consistent terminology without profanity or vulgarity. Show a
 meaningful target, count or outcome in the summary. Put selected evidence behind

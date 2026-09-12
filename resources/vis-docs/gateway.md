@@ -1,8 +1,9 @@
 # Remote access and the Companion app
 
-The terminal UI, Companion app and CLI connect to a **gateway**: a local HTTP
-service that manages sessions, turns and the live event stream. Multiple clients
-can connect to the same gateway and access the same sessions.
+You can use the same Vis sessions from your terminal, phone or another computer.
+Each client connects to a **gateway**, the service that runs your sessions and
+sends live updates. The Companion app is a client, not a separate copy of the
+agent; it connects to the gateway on the machine where your work runs.
 
 ## Starting the gateway
 

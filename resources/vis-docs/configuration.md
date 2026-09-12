@@ -21,26 +21,25 @@ Set `agent_name` in the project's `vis.yml`:
 agent_name: Ada
 ```
 
-The default is `Vis`. Names must contain non-whitespace text, be at most 80
-characters long and contain no control characters. Surrounding spaces are trimmed.
-In Companion, open Settings, expand the gateway, then Agent. In the TUI, open
-Settings and select Agent → Agent name. Save writes `agent_name` to the gateway's
-`~/.vis/state.yml`, not the client's disk. This gateway-wide choice overrides
-project names; remove the key from `state.yml` to use YAML defaults again.
+The default name is `Vis`. You can also change it in **Settings → Agent → Agent
+name** in the TUI, or **Settings → your gateway → Agent** in Companion. Saving in
+Settings writes to the gateway's `~/.vis/state.yml`, not the client's disk. This
+gateway-wide name overrides project names; remove the key from `state.yml` to
+use project defaults again.
 
-The gateway resolves the name from each session's workspace and returns
-`agent_name` on `GET /v1/sessions/:sid` and inside the workspace response.
-The TUI and Companion use that value, including remote clients. Changes made in
-Settings update open sessions immediately, and reconnecting clients receive the
-current name. After manually editing YAML, reopen the session to refresh it.
-The JVM uses the name when assembling the next default system prompt; a full
-custom system-prompt replacement retains its own identity. Product branding and
-session titles do not change.
+Names can contain up to 80 characters, with no control characters, and cannot be
+blank. Vis trims surrounding spaces. A change in Settings updates open sessions
+immediately, including remote clients. After editing YAML manually, reopen the
+session to refresh the name. Product branding and session titles do not change.
+The next default system prompt uses the name; a full custom prompt keeps its own
+identity.
 
-The shared API is `GET /v1/settings/agent_name` and
-`POST /v1/settings` with `{"id":"agent_name","action":"value","value":"Ada"}`.
-The settings list exposes a `string` row in the Agent group. Invalid names return
-400 without changing the saved name.
+For client integrations, `GET /v1/settings/agent_name` reads the setting and
+`POST /v1/settings` with `{"id":"agent_name","action":"value","value":"Ada"}`
+saves it. Invalid names return 400 without changing the saved value. The settings
+list exposes a `string` row in the Agent group. Session detail
+(`GET /v1/sessions/:sid`) and workspace responses include the resolved `agent_name`,
+so reconnecting clients receive the current value.
 
 ## Configuration files
 

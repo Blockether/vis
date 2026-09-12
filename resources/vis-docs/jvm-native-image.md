@@ -1,9 +1,9 @@
 # Building the native binary
 
-The Vis engine runs Clojure on the JVM. `clojure -T:build native` compiles it
-with GraalVM into `vis-agent-native`. This page covers build prerequisites,
-reachability metadata and TLS proxies. To install Vis without building it,
-see [Runtime distributions](distributions.md).
+Build the native binary when you want to run your own Vis changes without
+starting a JVM each time. `clojure -T:build native` uses GraalVM to compile the
+Clojure engine into `vis-agent-native`. If you just want to use Vis, install a
+[prebuilt release](distributions.md) instead.
 
 ## Prerequisites
 

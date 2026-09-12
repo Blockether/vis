@@ -1,6 +1,7 @@
 # Exporting sessions
 
-Every session is stored locally and can be exported as Markdown or HTML.
+Export a saved session to share a conversation, review its tool calls or keep a
+readable copy. Vis stores sessions locally and can export them as Markdown or HTML.
 
 ```bash
 vis-agent sessions list
@@ -19,8 +20,8 @@ vis-agent sessions export 3a7b2c1d > session.md
 
 ## HTML
 
-Writes a self-contained, styled page to the given path. Missing directories are
-created, and `.html` is added if the path has no extension:
+Use `--html` for a self-contained page you can open in a browser. Vis creates
+missing directories and adds `.html` if the output path has no extension:
 
 ```bash
 vis-agent sessions export 3a7b2c1d --html report.html

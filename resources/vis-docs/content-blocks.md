@@ -1,8 +1,9 @@
 # Content-block protocol
 
-A Vis message has a role and an ordered array of typed content blocks.
-Persistence, gateway responses, SSE replay and clients use the same JSON
-format. This reference is for gateway client and renderer authors.
+If you are building a gateway client or message renderer, this is the JSON
+format you will receive. Each Vis message has a role and an ordered array of
+typed content blocks. Stored messages, gateway responses, SSE replay and clients
+all use this format.
 
 Markdown is stored in a `prose` block. Parsed renderer data is temporary and
 is not sent or stored as message content.
@@ -31,7 +32,7 @@ a keyword value and the nested keys are keywords:
 {"llm_actual" {:provider :openai-codex :model "gpt-5.6"}}
 ```
 
-The canonical value is:
+Use string keys and values instead:
 
 ```json
 {"llm_actual":{"provider":"openai-codex","model":"gpt-5.6"}}

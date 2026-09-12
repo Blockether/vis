@@ -1,8 +1,9 @@
 # Live views
 
-A live view displays text, headings, code, activity indicators, buttons, progress, tables and logs while an extension runs.
-`vis.live(...)` opens the view and returns a handle for updates. The user can
-watch it in the terminal or Companion app and stop it at any time.
+A live view lets someone follow a long-running operation, such as a build,
+without reading a new chat message for every update. Your extension opens it with
+`vis.live(...)` and updates its progress, tables, logs or controls as work proceeds.
+The view appears in the terminal or Companion app and can be stopped at any time.
 
 ## Before you start
 
@@ -475,5 +476,5 @@ output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
 ## See also
 
 - [Extending Vis](extending.md) — the extension that opens a view.
-- [Asking the human](human-input.md) — the same layout builders, used for questions.
+- [Forms and user input](human-input.md) — the same layout builders, used for questions.
 - [Content-block protocol](content-blocks.md) — how a finished view reaches a transcript.

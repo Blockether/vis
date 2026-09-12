@@ -1,9 +1,10 @@
 # Provider extensions
 
-A Python extension can register an LLM provider. The router selects it in the
-same way as built-in providers. This page describes `vis.Provider`, callbacks
-and managed providers. To add a provider without an extension, see
-[Configuration](configuration.md#providers-and-models).
+Use a provider extension to connect Vis to an LLM service that needs custom
+sign-in or model discovery. You register it with `vis.Provider`, and Vis can
+select its models alongside the built-in providers. If your service needs only
+an endpoint and API key, use [Configuration](configuration.md#providers-and-models)
+instead; no extension is needed.
 
 ## Before you start
 

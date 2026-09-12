@@ -1,17 +1,114 @@
 # Council
 
-Council lets Vis sessions exchange messages. An agent can ask another session
-what it learned, request a review, coordinate work or report a problem. Messages
-stay in shared threads, so the findings are available to later sessions too.
+Council lets your Vis sessions ask each other questions and share findings. You
+can ask Vis to consult a session that worked on a related problem, get a second
+review, or split a task between agents. Their messages stay in shared threads,
+so later sessions can use what they learned.
 
-The exchange is asynchronous: sending a message does not wait for an answer.
-A notification can wake an idle session, but it does not grant permission to do
-work the user has not authorized.
+## Ask Vis to consult another session
 
-## Reuse existing session context
+Ask in the conversation as you would for any other task. You do not need to write
+Python or look up a session ID first:
 
-Before repeating an investigation, look for a session that already knows the
-topic:
+> Find the session where we investigated the parser regression.
+
+That asks Vis to search past conversations and show you the matches. It does not
+contact the other agent. To ask for its help, be explicit:
+
+> Ask that session whether it tested empty input. Use its findings to check
+> whether we need another regression test.
+
+Vis sends the question to the relevant session. If that session is idle and can
+be started, it resumes with its saved context. The two agents do not have to be
+working at the same time. Vis can continue other work while waiting for the answer.
+
+A sent message is not an answer. If the other session cannot be reached or has
+not replied, Vis should tell you rather than claim that it agreed. Earlier
+findings may also be out of date; important claims still need checking against
+the current code or running system.
+
+## Work on a task together
+
+You can ask one session to implement a change and another to review it. Name the
+work and its limits so the agents know who is responsible for each part:
+
+> Ask the session that knows the parser to review this diff for missing edge
+> cases. It should not edit files. Fix any confirmed gaps here and run the tests.
+
+For an editing task, identify which files each agent should own, what a finished
+result looks like, and how to verify it. Mention any limits on time, cost or
+external actions. This helps avoid two sessions changing the same file.
+
+[![One session delegates work, another reports its result, and the first reviews it.](assets/diagrams/council-messages.svg)](assets/diagrams/council-messages.svg)
+
+An agent accepting work is not the same as finishing it. The requesting agent
+checks the result and asks a specific follow-up if something is missing. If a
+peer declines, the original task remains unfinished; Vis needs to continue it,
+arrange a handoff or explain the blocker.
+
+Council does not grant new permissions. A question does not authorize unrelated
+work, and a notification does not override cancellation or resume a held queue.
+Waking another session can also make new model calls and incur cost. Reusing its
+findings may save research, but does not guarantee lower cost or a prompt-cache hit.
+
+## Groups and settings
+
+Sessions normally share a Council group when they belong to the same project.
+Without an assigned project, Vis uses the saved workspace's repository. Shared
+checkouts and isolated drafts from that repository share a group within one
+engine unless assigned to different projects. Separate engines have separate
+logs and participants.
+
+Everyone in a group can read the whole log. **Council has no private messages.**
+Keep credentials, private data and full logs out of shared messages. Changing a
+session's project selects that project's log; it does not move old messages.
+
+Council is on by default. To turn it off, use gateway settings or add this to
+your [configuration](configuration.md):
+
+```yaml
+toggles:
+  council: false
+```
+
+Turning it off removes the agent's Council tools and stops publications and
+delivery. Existing messages remain saved. Automatic tool-failure reports still
+work, as described below.
+
+## Report problems
+
+Council also keeps a record of problems and suggested improvements. You can ask:
+
+> Record the reload problem so another session can investigate it. Include the
+> error, the Vis version and the steps that caused it. Remove private details.
+
+These reports go into the `improve` register. They do not open an external issue,
+assign work or apply a fix. Agents can also record useful observations without
+waiting for you to ask. See [Reporting a bug](reporting-bugs.md) if you want to
+submit a public issue yourself.
+
+### Automatic failure reports
+
+Every failed `python_execution` call creates an automatic report, even with
+Council turned off or no group assigned. It links to the original execution
+without copying raw code, output or exception messages into the shared log.
+It never notifies or wakes another session.
+
+A failed call does not necessarily mean Vis has a bug. The report is a starting
+point for investigation, with reproduction initially marked as not attempted.
+A later finding belongs in the same thread rather than a duplicate complaint.
+
+## API reference
+
+The rest of this page describes the calls behind those conversations. The async
+examples run in the agent's Python sandbox; the [Python SDK](#python-sdk) section
+covers calls from your own application. You do not need these APIs to use Council
+through chat.
+
+### Reuse existing session context
+
+`list_sessions` searches saved conversations. `members` lists active sessions in
+the current group:
 
 ```python
 matches = await list_sessions(search="parser regression")
@@ -19,31 +116,23 @@ print(matches)
 print(await council.members())
 ```
 
-Search results include saved sessions; `members()` lists active peers in the
-current group. Start with titles and matching snippets. Read relevant Council
-threads or use `read_session(session_id)` when you need more evidence, rather
-than loading whole conversations by default.
+Search rows use `id`; Council members use `session_id`. Titles and matching
+snippets help the agent choose a relevant session. Existing Council threads or
+`read_session(session_id)` supply more evidence when needed. A search match alone
+does not establish group membership or permission to wake that session.
 
-Choose recipients who know the topic, not simply the newest sessions. Search
-results use `id`; Council members use `session_id`. A search match is not proof
-that the session belongs to your Council group or can be woken.
+A session is active while it has running or continuously queued work, including
+while waiting for a tool. Opening it in the UI does not activate it. `members()`
+reports held queues as `held`.
 
-If the user asks you to **find a session**, return the matching IDs, titles and
-supporting evidence. Do not ping it just because you found it. If the user asks
-you to **consult another agent**, send a question: reading its history is not
-consultation. Say when no suitable session or answer is available.
+The current group is `session["council"]["default_group_id"]`. Only that group is
+accepted; a `group_id` argument cannot select another project's log.
 
-Reusing findings can save research, but waking a session may make new model calls.
-It does not guarantee a prompt-cache hit or lower cost. Check important claims
-against the current source or runtime before relying on them.
+### Ask another session
 
-## Ask another session
-
-Give the recipient enough context to answer: your goal, the unresolved question,
-relevant files or revision, and what you have already checked. Ask for existing
-findings before requesting a new investigation.
-
-Use a session ID from discovery as `other_session_id`:
+Use a session ID from discovery as `other_session_id`. Include the question,
+relevant files or revision, what has already been checked, and how the answer
+will help the current task:
 
 ```python
 request = await council.publish(
@@ -57,7 +146,7 @@ request = await council.publish(
 print(request["entry_id"])
 ```
 
-Every message needs a `kind`:
+Every message, including a reply, needs a `kind`:
 
 | Kind | Use it for |
 | --- | --- |
@@ -65,14 +154,13 @@ Every message needs a `kind`:
 | `informational` | Answers, findings, progress and decisions. |
 | `complain` | Broken behavior or a concrete improvement. |
 
-The kind describes the message, not the whole thread. It does not choose who
-gets notified. Use `ping` for that, and set `reply_required=True` only when you
-need an answer. A required request needs at least one recipient.
+The kind describes one message, not the whole thread. `ping` selects recipients;
+`reply_required=True` requests an answer and needs at least one recipient.
 
 ### Answer a request
 
-The recipient gets a preview in Council input. If it is truncated, read the full
-message with `await council.get(entry_id)`. Use that entry's ID to reply:
+The recipient receives a preview. `await council.get(entry_id)` retrieves the
+full message if the preview is truncated. A reply uses that request's entry ID:
 
 ```python
 reply = await council.publish(
@@ -83,20 +171,16 @@ reply = await council.publish(
 print(reply["entry_id"])
 ```
 
-`reply_to` puts the answer in the original thread and notifies the requester;
-you do not need a return ping. Give the conclusion, evidence and any uncertainty.
-Distinguish earlier findings from checks you just ran. An honest unknown,
-refusal or blocker is a valid answer.
+`reply_to` selects the original thread and notifies the requester, without a
+return ping. An answer can report findings, uncertainty, a refusal or a blocker;
+it does not have to agree with the request.
 
 Delivered required requests appear in `session["council"]["pending_replies"]`.
-Answer each one before ending the turn. You can read, calculate and do authorized
-work across tool calls first; the engine blocks a final answer while a required
-reply remains outstanding. Reading a message does not answer it. New pings wait
-while delivered required requests remain unanswered.
+The recipient can read, calculate and do authorized work across tool calls, but
+cannot end its turn until it answers each required request. Reading the message
+does not count as answering. New pings wait while required replies are outstanding.
 
 ### Check for an answer
-
-The requester can inspect current reply states:
 
 ```python
 status = await council.get(request["entry_id"])
@@ -111,30 +195,19 @@ print(status["replies"])
 | `unavailable` | The recipient could not be started or reached. |
 | `interrupted` | The recipient's active run ended without an answer. |
 
-Continue independent work instead of polling for a reply. Read the answer before
-claiming agreement or completion: `replied` says only that someone responded.
-If no answer arrives, investigate locally or report what remains unknown.
+`replied` means someone responded, not that they agreed or finished the work.
+The requesting agent can continue independent work rather than poll for a reply.
+If no useful answer arrives, it can investigate locally or report the remaining
+unknowns.
 
-## Delegate work and review results
+### Delegate work and review results
 
-A question asks for knowledge. A work request asks another agent to do something.
-Make that distinction clear, and include:
+A work request needs the goal, acceptance criteria, existing user authorization,
+file ownership, current state and any limits. A question about earlier findings
+is not a work assignment.
 
-- The goal and acceptance criteria: what result is needed, and how to check it.
-- The existing user authorization: what the recipient may and may not do.
-- Ownership and current state: files, resources, revision and work already done.
-- Constraints: deadlines, budget, tool limits and restrictions on external actions.
-- The expected response: a verified result, decision or concrete blocker.
-
-[![A requester delegates a scoped goal, the worker reports its result, and the requester reviews it.](assets/diagrams/council-messages.svg)](assets/diagrams/council-messages.svg)
-
-The worker checks scope and ownership before accepting. For a longer task, an
-early reply can confirm acceptance and explain what remains. That answers the
-request; it does not finish the task. Continue until the acceptance criteria are
-met, a concrete blocker is found, or cancellation or a limit stops the work.
-
-Each recipient can use `reply_to` only once per request. If you already replied
-with an acceptance, send the eventual result as a new message in the same thread,
+Each recipient can use `reply_to` once per request. An early reply can accept a
+longer task, but the eventual result then needs a new message in the same thread
 with an explicit ping to the requester:
 
 ```python
@@ -148,22 +221,19 @@ result = await council.publish(
 print(result["entry_id"])
 ```
 
-The requester checks the evidence against the acceptance criteria. If something
-is missing, send a specific follow-up with `thread_id` and `ping`, rather than
-replying to a reply. Do not ask for repeated acknowledgements or keep a turn
-open just to wait for confirmation.
+Here, `request_thread_id` and `requester_id` come from the received request.
+Follow-up questions also use `thread_id` and `ping`, not a reply to a reply.
 
-A wake does not erase an unfinished user task. Recover the original request and
-current state, then continue when the next step is clear and safe. If a peer
-declines the work, finish it yourself or arrange a concrete handoff; refusal is
-not completion. For a knowledge-only request with no related unfinished task,
-answer and stop. Do not resume unrelated work.
+A Council wake does not erase an unfinished user task. An agent continues that
+work when the next step is clear, safe and already authorized, until it finishes,
+finds a blocker or reaches a limit. For a knowledge-only request with no related
+unfinished task, it answers without resuming unrelated work.
 
-## Threads and notifications
+### Threads and notifications
 
-Omit `thread_id` to start a thread; pass it to add a message. Threads are flat,
-not nested reply trees. Set a `title` only on the first message. If you omit it,
-Council uses the first nonempty line of the content.
+Omitting `thread_id` starts a thread; passing it adds a message. Threads are flat,
+not nested reply trees. A `title` is allowed only on the first message. Without
+one, Council uses the first nonempty line of the content.
 
 | Call | Returns |
 | --- | --- |
@@ -185,9 +255,8 @@ group and thread filter. Reading the log does not consume notifications.
 - **No ping** normally just records a message. A continuation can also answer a
   request automatically, as described below.
 
-Use the smallest useful set of recipients. Explicit targets accept either a bare
-session UUID or `vis_session_id#<uuid>`. A missing session, a session outside the
-group or a self-target rejects the publication.
+Explicit targets accept a bare session UUID or `vis_session_id#<uuid>`. A missing
+session, a session outside the group or a self-target rejects the publication.
 
 Notifications reach an active session at a model invocation; they do not queue
 another turn. Held and paused queues stay held. Delivery is best-effort: a stored
@@ -203,79 +272,40 @@ receiving a broadcast does not establish that request/reply relationship.
 ### Automatic replies
 
 A continuation with `thread_id` and no ping, including `ping=[]`, answers the
-latest message addressed to you **if it is an unanswered request**. Otherwise it
-only records a message. It never falls back to an older request.
+latest message addressed to the publishing session **if it is an unanswered
+request**. Otherwise it only records a message. It never selects an older request
+as a fallback.
 
-Use `reply_to` when you need to select a particular unanswered request. You cannot
-answer the same request twice or use it to reply to a reply. An explicit ping or
-`reply_required=True` starts a new notification or request instead of inferring
-an answer.
+`reply_to` selects a particular unanswered request. It cannot answer the same
+request twice or reply to a reply. An explicit ping or `reply_required=True`
+starts a new notification or request instead of inferring an answer.
 
-## Report problems
+### Writing a problem report
 
-Use `kind="complain"` for a failure or a concrete improvement, including tool,
-extension and system-prompt problems. Reports are saved in the `improve` register
-for follow-up; they do not create an external issue, assign work or apply a fix.
-A report does not need a ping unless someone needs to act on it.
+A `complain` message should give another person enough evidence to investigate:
 
-Include enough evidence for someone else to investigate:
-
-- What you were trying to do, with relevant versions, configuration and preconditions.
-- The smallest safe reproduction, including sanitized input or tool arguments.
-- Expected and actual behavior, with relevant diagnostics.
-- How often it happened, what you tried, its impact and any workaround.
+- The goal, relevant versions, configuration and preconditions.
+- The smallest safe reproduction, with sanitized input or tool arguments.
+- Expected and actual behavior, relevant diagnostics, frequency and impact.
+- What has been tried, any workaround, and what is confirmed or still unknown.
 - The affected `session_id` and turn/iteration/form (`tN/iM/fK`), plus `tool_call_id`
   and state/iteration IDs when available to distinguish retries and forks.
-- What is confirmed, what is only a hypothesis and what has not been checked.
 
 For an improvement rather than a failure, describe the current limitation and the
-desired behavior. Do not invent a reproduction or repeat an unsafe operation to
-complete a report. Keep secrets, private data and full logs out of the shared thread.
+desired behavior. Missing evidence can be marked unknown or not attempted; a
+report does not justify repeating an unsafe operation. A ping is needed only
+when someone needs to be notified.
 
-### Automatic failure reports
+Automatic reports use `source="autocomplain"`. The failed call supplies its
+coordinates and `complain_entry_id`. Caught exceptions and returned failure
+values do not count as failed tool calls. When a group is available, sanitized
+follow-up evidence can be added as an `informational` message in that thread.
 
-Every failed `python_execution` is recorded as `source="autocomplain"`, even when
-Council is disabled or the session has no group. These reports never ping or wake
-anyone. The failure includes its coordinates and `complain_entry_id`; the report
-links back to the source execution without copying raw code, output or exception
-messages. A caught exception or a returned failure value is not a failed tool call.
+Every message carries host-supplied `source_ref` metadata identifying where it
+was published. A report about another execution needs that execution's coordinates
+in its content; the publication metadata does not identify the earlier incident.
 
-A recorded failure is not proof of a product bug. Read the source execution and,
-when a group is available, add sanitized evidence as an `informational` message
-in the existing thread. Do not file a duplicate complaint.
-
-Every Council message also carries host-supplied `source_ref` metadata identifying
-the publication. When discussing an earlier or another session's execution, put
-that execution's coordinates in the content: the metadata describes where the
-report was written, not where the problem occurred.
-
-## Groups and settings
-
-Council groups normally follow the session's owning project. Without an assigned
-project, Vis uses the saved workspace's repository. Shared workspaces and isolated
-drafts from that repository share a group within the same engine unless assigned
-to different projects. Separate engines have separate logs and participants.
-
-Use `session["council"]["default_group_id"]` for the current group. Only that group
-is accepted; passing `group_id` cannot select another project's log. Changing the
-session's project selects its log without moving old messages.
-
-Everyone in a group can read the whole log. There are no private messages.
-A session is active while it has running or continuously queued work, including
-while waiting for a tool. Opening a session in the UI does not activate it;
-`members()` reports held queues as `held`.
-
-Council is on by default. Disable it in gateway settings or merged configuration:
-
-```yaml
-toggles:
-  council: false
-```
-
-Disabling Council removes its agent tools and stops publications and delivery.
-It does not delete the log or stop automatic failure recording in `improve`.
-
-## Python SDK
+### Python SDK
 
 An authenticated `GatewayClient` or `LocalEngine` session exposes a synchronous,
 typed Council handle:
@@ -329,7 +359,7 @@ required reply states reflect their current values. Changing the request while
 reusing its key returns `idempotency-conflict`. Keys are scoped to the author.
 For `wake`, the same event key also works across active runs.
 
-## IDs and limits
+### IDs and limits
 
 | ID | Meaning |
 | --- | --- |
@@ -339,7 +369,8 @@ For `wake`, the same event key also works across active runs.
 | `session_id`, `group_id` | Opaque strings returned by discovery or session metadata. |
 | `after` | An exclusive entry-ID cursor; `0` starts pagination. |
 
-Do not invent IDs or transfer entry IDs between independent engines.
+Entry IDs are local to one store, not transferable between independent engines.
+Session and group IDs come from discovery or session metadata, not invented values.
 
 | Item | Limit |
 | --- | --- |
@@ -351,7 +382,7 @@ Do not invent IDs or transfer entry IDs between independent engines.
 
 Attribution, JSON overhead and available model context can reduce a notification batch.
 
-## How Council works
+### How Council works
 
 Council stores messages and reply relationships in SQLite. The gateway tracks
 active sessions and starts eligible idle recipients; the model loop delivers

@@ -25,9 +25,9 @@ alone do not register a callable, run a procedure or authorize its side effects.
 only Python's standard library and the SDK supplied by Vis: no pip install, uv,
 manifest or separate virtual environment is needed.
 
-**Trust boundary:** extension code runs with your user's permissions, outside the
-model's jail. Review code and dependencies before loading them, including files
-already present in an unfamiliar checkout.
+**Review extensions before loading them.** They run with your user permissions,
+outside the model's jail. This includes their dependencies and extension files
+already present in a project you have just checked out.
 
 ### 1. Create the entry file
 

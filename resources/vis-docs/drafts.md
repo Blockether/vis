@@ -1,11 +1,25 @@
 # Drafts
 
-A draft is an isolated working copy of the current repository. The session
-works inside it. `draft_approve()` commits the work, fast-forwards the default
-branch, restores local work and pushes to origin when configured.
+A draft gives a session its own working copy of your repository, separate from
+your current checkout. Ask Vis to use one when you want to review a change before
+bringing it back to the default branch.
 
-Only the agent manages drafts. There is no draft slash command, picker or menu
-in the TUI or Companion app.
+## Ask Vis to work in a draft
+
+> Create a draft for the parser fix. Make the change and run the tests, then show
+> me the diff before approving it.
+
+Only the agent manages drafts; there is no draft menu or slash command in the
+TUI or Companion app. You control the workflow through the conversation.
+
+**Approval commits and may push.** `draft_approve()` commits the draft's changes,
+fast-forwards the default branch, restores unrelated local work and pushes to
+`origin` when configured. Ask to review first if you do not want those actions yet.
+Approval leaves the draft open for further work.
+
+Discarding a draft removes its unapproved changes and returns the session to the
+original checkout. Work already approved stays on the default branch. Ask Vis to
+confirm what will be lost before discarding.
 
 ## Sandbox tools
 

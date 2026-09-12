@@ -1,111 +1,108 @@
 {:nav
  [{:pages
    [{:blurb
-     "Install Vis, choose a model provider and start your first coding session with an agent that combines tools into Python programs."
+     "Install Vis, choose a model and start a coding session that can edit your files and run tests."
      :page "index"
      :title "Getting started"}]
    :section nil}
   {:pages
    [{:blurb
-     "Configure Vis providers, models and project settings, and understand how configuration files combine across environments."
+     "Choose providers and models, and save settings for yourself, a project or every gateway client."
      :page "configuration"
      :title "Configuration"}
     {:blurb
-     "Give Vis project instructions that explain your codebase, define task boundaries and keep the agent aligned with repository rules."
+     "Tell Vis how your project works, write reusable prompts and set a goal for a longer task."
      :page "context-and-prompts"
      :title "Project instructions"}
     {:blurb
-     "Add reusable task instructions to Vis with skills, and make established workflows available to the agent when they are needed."
+     "Give Vis reusable instructions for reviews, releases and other tasks, with scripts and templates."
      :page "skills"
      :title "Skills"}
     {:blurb
-     "Control a running Vis session: send follow-up instructions, queue work, cancel an active task and exit when you are finished."
+     "Send follow-up messages while Vis works, edit queued requests, cancel a task or quit the session."
      :page "queue-and-cancel"
      :title "Controlling a session"}
     {:blurb
-     "Coordinate sessions through asynchronous messages, delegate authorized work, review results and record improvement opportunities."
+     "Ask another session for help, get a second review or divide a task between agents without repeating research."
      :page "council"
      :title "Council"}
     {:blurb
-     "Save and share Vis sessions with export options that preserve the conversation for review, collaboration and later reference."
+     "Save a conversation as Markdown or a self-contained HTML page, and check it before sharing."
      :page "exporting-sessions"
      :title "Exporting sessions"}
     {:blurb
-     "Use Vis drafts to work in an isolated checkout, review the changes and land the completed work on the intended Git branch."
+     "Try a change in an isolated working copy, review the diff and decide whether to approve it."
      :page "drafts"
      :title "Drafts"}
     {:blurb
-     "Connect to Vis from your phone or another computer using the gateway and Companion app, with authenticated access to your sessions."
+     "Connect your phone or another computer to your Vis gateway and continue working in the same sessions."
      :page "gateway"
      :title "Remote access and the Companion app"}
-    {:blurb
-     "Report a Vis problem with useful diagnostic details while keeping credentials, private project data and personal information out."
+    {:blurb "Report a problem with useful evidence, without sharing credentials or private code."
      :page "reporting-bugs"
      :title "Reporting a bug"}]
    :section "Guides"}
   {:pages
    [{:blurb
-     "Build your first Vis extension in Python, choose the capability it provides and register tools that the agent can discover and call."
+     "Write a Python tool, register it with Vis and try it in a session, starting with one file."
      :page "extending"
      :title "Extending Vis"}
     {:blurb
-     "Design useful Python tools for Vis with clear declarations, readable activity labels, documented contracts and focused tests."
+     "Choose useful operations, explain their inputs and results, and test both Python code and Vis integration."
      :page "extension-design"
      :title "Extension design"}
     {:blurb
-     "Install, reload and share Vis extensions from local projects or reviewed GitHub source, including projects in a monorepo."
+     "Install an extension for one project or all your projects, reload edits or package it to share."
      :page "extension-packages"
      :title "Installing and sharing extensions"}
     {:blurb
-     "Connect an existing Python project to Vis with uv, editable dependencies and a development workflow for testing extension changes."
+     "Connect an existing uv project to Vis while keeping its implementation editable in your checkout."
      :page "extension-development"
      :title "Using an existing Python project"}
     {:blurb
-     "Reference the Vis extension API for declarations, tool contracts, host operations and the Python interfaces used to register capabilities."
+     "Look up Python declarations, callbacks, tool contracts and host operations for Vis extensions."
      :page "extension-api"
      :title "Extension API"}
     {:blurb
-     "Troubleshoot Vis extensions by diagnosing Python imports, dependency setup, tool registration and changes that fail to reload."
+     "Find out why your extension will not load, a tool is missing or old code still runs after an edit."
      :page "extension-troubleshooting"
      :title "Extension troubleshooting"}
     {:blurb
-     "Ask the human for structured input from a Vis extension, present a typed form and read the answer before continuing the task."
+     "Build a form that asks for a choice, credential or confirmation, and handle the answer."
      :page "human-input"
-     :title "Asking the human"}
-    {:blurb
-     "Create live views in Vis extensions to show ongoing progress, present updates and let the human watch or stop an operation."
+     :title "Forms and user input"}
+    {:blurb "Show progress and controls while an extension watches a build or other ongoing work."
      :page "live-views"
      :title "Live views"}
     {:blurb
-     "Register an LLM provider from a Vis extension and connect its models to the agent through the supported provider interfaces."
+     "Connect an LLM service to Vis with custom sign-in, model discovery and credential management."
      :page "provider-extensions"
      :title "Provider extensions"}]
    :section "Extensions"}
   {:pages
    [{:blurb
-     "Understand how Vis manages model context by combining tool calls into Python programs and folding completed work from conversation history."
+     "See how Vis filters tool output, reuses findings and summarizes long conversations to manage context."
      :page "token-optimization"
      :title "How Vis manages context"}
-    {:blurb
-     "Understand the Vis Python sandbox, including execution, available packages, project environments and permissions for host operations."
+    {:blurb "Understand where the agent runs Python, which packages it uses and what it can access."
      :page "python-sandbox"
      :title "Python sandbox"}]
    :section "Concepts"}
   {:pages
    [{:blurb
-     "Reference the Vis process jail and its filesystem, environment and network rules for commands and child processes started by the agent."
+     "Limit file access, environment variables and network connections for commands Vis runs."
      :page "jail"
      :title "Process jail and network policy"}
     {:blurb
-     "Reference the Vis content-block protocol for structured messages, streamed updates and the formats shared between the engine and clients."
+     "Read the message and streaming formats you need when building a Vis gateway client or renderer."
      :page "content-blocks"
      :title "Content-block protocol"}
     {:blurb
-     "Choose a Vis runtime distribution, install the required components and understand how to update the engine for your environment."
+     "Install or update Vis, choose a release track and compare native releases with JVM source builds."
      :page "distributions"
      :title "Runtime distributions"}
     {:blurb
-     "Build the Vis native binary with GraalVM, configure reachability metadata and handle TLS proxies in the native-image build workflow."
+     "Build your own native Vis binary with GraalVM, check its metadata and configure a TLS proxy."
      :page "jvm-native-image"
      :title "Building the native binary"}]
    :section "Reference"}]

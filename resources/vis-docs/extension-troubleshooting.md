@@ -1,9 +1,9 @@
 # Extension troubleshooting
 
-Find the failing stage before changing code: loading, discovery, invocation or
-reload. Run `vis-agent doctor` in the target project's terminal and read the
-extension's load message. Fix the reported cause rather than masking registration
-errors or changing global import ordering.
+If your extension does not load, a tool is missing or an edit has not taken
+effect, start with `vis-agent doctor` in your project's terminal. Its load message
+usually identifies which stage failed. The sections below explain what to check
+for each symptom.
 
 ## Tool missing or not chosen
 

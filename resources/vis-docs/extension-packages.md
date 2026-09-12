@@ -1,9 +1,9 @@
 # Installing and sharing extensions
 
-Install an extension for one project or every project, reload changes, and package
-code with optional skills for sharing. To write your first tool, start with
-[Extending Vis](extending.md). Connecting an existing uv package has its own
-[development workflow](extension-development.md).
+You can keep an extension in one project, install it for all your projects or
+share it with other people. This guide covers those choices and how to reload
+changes. For your first tool, start with [Extending Vis](extending.md). If you
+already have a uv package, follow [Using an existing Python project](extension-development.md).
 
 ## Choose a layout
 
@@ -28,9 +28,10 @@ A project extension with the same registered name overrides the global extension
 Single `.py` files are entries; a package directory loads only `extension.py`.
 Test files (`test_*.py` and `*_test.py`) are not extension entries.
 
-**Trust boundary:** entrypoints and dependencies run with your user permissions,
-not the model's jail. Review project extensions before starting Vis in an unfamiliar
-checkout. `--trust` acknowledges this execution; validation is not a security review.
+**Review extensions before loading them.** Their entry files and dependencies
+run with your user permissions, outside the model's jail. Check project
+extensions before starting Vis in an unfamiliar checkout. `--trust` confirms
+that you accept running the code; validation is not a security review.
 
 ## Declare packages in configuration
 

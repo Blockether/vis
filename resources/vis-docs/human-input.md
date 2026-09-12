@@ -1,15 +1,16 @@
-# Asking the human
+# Forms and user input
 
-`vis.ask` pauses a Python extension, displays a form in the terminal or
-Companion app, and returns the answer. This page describes fields, layout,
-validation and results.
+Use a form when your extension needs someone to choose an option, enter a
+credential or confirm a step. `vis.ask` displays the form in the terminal or
+Companion app, waits for an answer and returns it to your Python code.
 
 ## Before you start
 
-Use `vis.ask` inside a registered tool, user command or session-bound hook. In Vis,
-it needs the calling session and an available TUI or Companion client. Do not ask
-during registration or from a passive provider callback. Outside Vis, the SDK uses
-terminal input; see [testing outside Vis](extension-design.md#test-the-python-implementation).
+Call `vis.ask` from a registered tool, user command or session-bound hook. It
+needs a calling session and an available TUI or Companion client, so it cannot
+run during registration or from a passive provider callback. When you test the
+SDK outside Vis, it uses terminal input instead; see
+[testing outside Vis](extension-design.md#test-the-python-implementation).
 
 ## Ask and handle cancellation
 

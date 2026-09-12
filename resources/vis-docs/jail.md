@@ -1,9 +1,9 @@
 # Process jail and network policy
 
-When enabled, the process jail limits filesystem access, filters environment
-variables and applies network policy to processes Vis starts for a session.
-The Python sandbox also applies its own permission checks; see
-[Python sandbox](python-sandbox.md).
+The process jail lets you limit which files, environment variables and network
+connections are available to commands that Vis runs. It is optional and disabled
+by default. These limits apply to managed processes, not trusted extension code.
+The [Python sandbox](python-sandbox.md) also has its own permission checks.
 
 ## Enable the jail
 
@@ -14,9 +14,9 @@ jail:
   enabled: true
 ```
 
-Run `/reload` after changing security configuration. The next message in each active
-session rebuilds that session's immutable policy snapshot. `session["access"]` shows
-the effective snapshot, including `is_jailed`, filesystem modes, network policy, and
+After changing security settings, run `/reload`. Each active session uses the
+new policy on its next message. The agent can inspect the effective policy in
+`session["access"]`, including `is_jailed`, filesystem modes, network rules and
 `changes_require`.
 
 Shell availability is separate. `toggles.shell: false` removes `shell(...)`; it does
