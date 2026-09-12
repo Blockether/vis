@@ -143,12 +143,16 @@ export const ProjectHeader: Story = {
   },
   play: async ({ canvas, canvasElement }) => {
     const create = canvas.getByRole('button', { name: `New session on ${STORY_SESSION.machine}` });
-    const second = canvas.getByRole('button', { name: 'Page 2' });
     const track = create.closest<HTMLElement>('[data-swipe-track]')!;
     const doc = canvasElement.ownerDocument;
     const win = doc.defaultView!;
+    const second = canvas.getByRole('button', {
+      name: win.matchMedia('(min-width: 640px)').matches ? 'Page 2' : 'Next page',
+    });
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       await expect(track.scrollWidth).toBeGreaterThan(track.clientWidth);
+      await userEvent.click(second);
+      await expect(onPage).toHaveBeenCalledWith(2);
       return;
     }
     const trigger = canvas.getByRole('button', { name: `Actions for ${STORY_SESSION.project}` });

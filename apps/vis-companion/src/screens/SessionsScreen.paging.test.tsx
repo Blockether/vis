@@ -36,7 +36,9 @@ afterEach(() => {
 // page is the gateway's own window now (`GatewayClient.listProjectPage`), asked for at
 // the size this screen measured, so the header's count and the pager's arithmetic are
 // one number and no page needs the fleet downloaded first.
-describe('a project is paged by the gateway that counts it', () => {
+describe.each(['numbers', 'arrows'])('gateway-backed project pages using %s', (navigation) => {
+  const pageLabel = (page: number) => (navigation === 'arrows' ? 'Next page' : `Page ${page}`);
+
   it('asks once for the page on screen, and reads the pages after it ahead', async () => {
     window.innerHeight = 844;
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
@@ -59,13 +61,13 @@ describe('a project is paged by the gateway that counts it', () => {
       // THE TURN COSTS NO ROUND TRIP: the page the reader steps onto is already
       // held, so it paints in the frame of the tap. It used to stand on the page
       // before it until the gateway answered.
-      fireEvent.click(view.getByLabelText('Page 2'));
+      fireEvent.click(view.getByLabelText(pageLabel(2)));
       expect(shown(view)[0]).toBe('alpha 15');
       await settle();
 
       // The last page, tapped from page two, paints the ten rows the header's
       // forty leaves, with no second paint under the thumb.
-      fireEvent.click(view.getByLabelText('Page 3'));
+      fireEvent.click(view.getByLabelText(pageLabel(3)));
       await waitFor(() => expect(shown(view)).toHaveLength(10));
       await settle();
       expect(shown(view)).toEqual([
@@ -101,7 +103,7 @@ describe('a project is paged by the gateway that counts it', () => {
       expect(shown(view)[0]).toBe('alpha 00');
       await waitFor(() => expect(pageReads(view)).toHaveLength(2));
 
-      fireEvent.click(view.getByLabelText('Page 2'));
+      fireEvent.click(view.getByLabelText(pageLabel(2)));
 
       // Until the slow answer lands, both halves keep saying page one. It used to
       // announce page two over page one's rows for the whole network round trip.

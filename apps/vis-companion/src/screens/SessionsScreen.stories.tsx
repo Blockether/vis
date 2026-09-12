@@ -125,8 +125,14 @@ export const Fleet: Story = {
       await expect(within(doc.body).queryByRole('dialog')).not.toBeInTheDocument();
     }
     const pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
-    for (const n of [1, 2, 3, 4, 5]) {
-      await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
+    if (win.matchMedia('(min-width: 640px)').matches) {
+      for (const n of [1, 2, 3, 4, 5]) {
+        await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
+      }
+      expect(within(pager).queryByRole('button', { name: 'Next page' })).toBeNull();
+    } else {
+      await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeVisible();
+      expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
     }
     await expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(
       canvasElement.getBoundingClientRect().right,

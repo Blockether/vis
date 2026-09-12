@@ -4,20 +4,41 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Pager, pageWindow } from './SessionNavigator';
 
-// Regression: narrow desktop rails hid every page number and offered only arrows.
-describe('numbered project pages', () => {
-  it('offers the first five pages directly instead of previous/next arrows', () => {
+// Regression: desktop rails need page numbers, but phones keep compact previous/next steps.
+describe('project pages', () => {
+  it('offers the first five pages as direct jumps on desktop', () => {
     const onPage = vi.fn();
     render(<Pager page={1} pageCount={80} label="vis sessions" onPage={onPage} />);
     for (const page of [1, 2, 3, 4, 5, 80]) {
       expect(screen.getByRole('button', { name: `Page ${page}` })).toBeInTheDocument();
     }
-    expect(
-      screen.queryByRole('button', { name: /Previous page|Next page/ }),
-    ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
     fireEvent.click(screen.getByRole('button', { name: 'Page 5' }));
     expect(onPage).toHaveBeenCalledExactlyOnceWith(5);
+  });
+
+  it.each([1, 40, 80])('keeps mobile steps in range on page %s', (page) => {
+    const onPage = vi.fn();
+    render(<Pager page={page} pageCount={80} label="vis sessions" onPage={onPage} />);
+    for (const [label, target] of [
+      ['Previous page', page - 1],
+      ['Next page', page + 1],
+    ] as const) {
+      const button = screen.getByLabelText(label);
+      if (target < 1 || target > 80) {
+        expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
+        expect(button).toBeDisabled();
+        expect(button).toHaveAttribute('aria-hidden', 'true');
+        expect(button).toHaveAttribute('tabindex', '-1');
+        fireEvent.click(button);
+        expect(onPage).not.toHaveBeenCalled();
+      } else {
+        fireEvent.click(button);
+        expect(onPage).toHaveBeenCalledExactlyOnceWith(target);
+        onPage.mockClear();
+      }
+    }
+    expect(screen.getByText(`Page ${page} of 80`)).toHaveAttribute('aria-live', 'polite');
   });
 
   it('keeps a bounded window with both ends and no gap hiding just one page', () => {

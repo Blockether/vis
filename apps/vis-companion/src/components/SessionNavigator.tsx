@@ -350,11 +350,8 @@ export function ProjectCrumb({
  * The page numbers a pager PAINTS: always the first, the last, and a window
  * around the current one, with a gap marker (`null`) wherever the run breaks.
  *
- * A pair of steps can only ever walk: reaching page 5 of 73 cost four taps and
- * page 40 was unreachable in practice. Numbers make the jump one tap — but 73 of
- * them do not fit on a 390px phone, so the strip is windowed, and both ends stay
- * pinned because "back to the start" and "the oldest sessions" are the two jumps
- * a reader actually asks for.
+ * Desktop page numbers allow direct jumps without filling a narrow sidebar.
+ * Both ends stay reachable alongside the pages nearest the current one.
  */
 export function pageWindow(page: number, pageCount: number): (number | null)[] {
   if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
@@ -366,9 +363,9 @@ export function pageWindow(page: number, pageCount: number): (number | null)[] {
 }
 
 /**
- * Gateway-backed project pages, visible at every list width. The project band
- * gives them their own line so numbers never take width from the project name.
- * Both ends stay reachable; at most seven entries keep large histories compact.
+ * Gateway-backed project pages: compact steps on phones, numbered jumps on larger
+ * viewports, including narrow desktop sidebars. The project band gives navigation
+ * its own line so it never takes width from the project name.
  */
 export function Pager({
   page,
@@ -384,33 +381,60 @@ export function Pager({
   label: string;
 }) {
   if (pageCount <= 1) return null;
+  const step = (target: number, isBack: boolean) => {
+    const available = target >= 1 && target <= pageCount;
+    return (
+      <Button
+        variant="quiet"
+        density="page"
+        pressEffect="none"
+        aria-label={isBack ? 'Previous page' : 'Next page'}
+        onClick={() => onPage(target)}
+        disabled={!available}
+        className={available ? '' : 'invisible'}
+        aria-hidden={available ? undefined : true}
+        tabIndex={available ? undefined : -1}
+      >
+        <ChevronIcon back={isBack} className="mx-auto size-3" />
+      </Button>
+    );
+  };
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className="flex min-w-0 flex-wrap items-center justify-end gap-2"
+      className="flex min-w-0 items-center justify-end"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
-      {pageWindow(page, pageCount).map((entry, index) =>
-        entry === null ? (
-          <span key={`gap-${index}`} aria-hidden className="font-mono text-ui text-dialog-hint">
-            &#8230;
-          </span>
-        ) : (
-          <Button
-            key={entry}
-            variant={entry === page ? 'secondary' : 'quiet'}
-            density="page"
-            pressEffect="none"
-            aria-label={`Page ${entry}`}
-            aria-current={entry === page ? 'page' : undefined}
-            onClick={() => onPage(entry)}
-          >
-            {entry}
-          </Button>
-        ),
-      )}
+      <div className="flex items-center gap-2 sm:hidden">
+        {step(page - 1, true)}
+        <span aria-hidden="true" className="font-mono text-ui text-dialog-hint tabular-nums">
+          {page} / {pageCount}
+        </span>
+        {step(page + 1, false)}
+      </div>
+      <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
+        {pageWindow(page, pageCount).map((entry, index) =>
+          entry === null ? (
+            <span key={`gap-${index}`} aria-hidden className="font-mono text-ui text-dialog-hint">
+              &#8230;
+            </span>
+          ) : (
+            <Button
+              key={entry}
+              variant={entry === page ? 'secondary' : 'quiet'}
+              density="page"
+              pressEffect="none"
+              aria-label={`Page ${entry}`}
+              aria-current={entry === page ? 'page' : undefined}
+              onClick={() => onPage(entry)}
+            >
+              {entry}
+            </Button>
+          ),
+        )}
+      </div>
     </nav>
   );
 }

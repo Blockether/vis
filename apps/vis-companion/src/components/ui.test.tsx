@@ -654,15 +654,15 @@ describe('Pager', () => {
     ).toBe('');
   });
 
-  // Regression: the desktop sidebar hid the numeric controls behind arrow-only paging.
-  it('prints page numbers at every width and announces the position once', () => {
+  // Regression: desktop rails need numbers without replacing the phone's compact steps.
+  it('offers both responsive forms and announces the position once', () => {
     const html = renderToStaticMarkup(
       <Pager page={1} pageCount={80} onPage={() => {}} label="vis sessions" />,
     );
     expect(html).toContain('aria-label="Pages of vis sessions"');
     expect(html.match(/Page 1 of 80/g)).toHaveLength(1);
-    expect(html).not.toContain('Next page');
-    expect(html).not.toContain('Previous page');
+    expect(html).toContain('Next page');
+    expect(html).toContain('Previous page');
     expect(html).not.toMatch(/@[^" ]*:hidden/);
     for (const n of [1, 2, 3, 4, 5, 80]) {
       expect(html).toContain(`aria-label="Page ${n}"`);

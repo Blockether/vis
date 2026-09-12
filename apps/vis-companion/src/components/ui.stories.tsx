@@ -650,9 +650,63 @@ function HeaderRenameDemo() {
 }
 
 function PagerDemo() {
-  const [page, setPage] = useState(2);
-  return <Pager page={page} pageCount={7} onPage={setPage} label="vis sessions" />;
+  const [page, setPage] = useState(1);
+  return <Pager page={page} pageCount={80} onPage={setPage} label="vis sessions" />;
 }
+
+// Regression: fixing narrow desktop rails must not replace the phone's arrow controls.
+export const ProjectPages: Story = {
+  render: () => (
+    <Sheet>
+      <PagerDemo />
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    const desktop = matchMedia('(min-width: 640px)').matches;
+    if (desktop) {
+      expect(canvas.queryByRole('button', { name: 'Next page' })).toBeNull();
+      for (const page of [1, 2, 3, 4, 5, 80]) {
+        await expect(canvas.getByRole('button', { name: `Page ${page}` })).toBeVisible();
+      }
+      await userEvent.click(canvas.getByRole('button', { name: 'Page 5' }));
+      await expect(canvas.getByRole('button', { name: 'Page 5' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      await userEvent.click(canvas.getByRole('button', { name: 'Page 80' }));
+      await expect(canvas.getByRole('button', { name: 'Page 80' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      await userEvent.click(canvas.getByRole('button', { name: 'Page 1' }));
+    } else {
+      expect(canvas.queryByRole('button', { name: /^Page \d/ })).toBeNull();
+      expect(canvas.queryByRole('button', { name: 'Previous page' })).toBeNull();
+      await userEvent.click(canvas.getByRole('button', { name: 'Next page' }));
+      await expect(canvas.getByText('2 / 80')).toBeVisible();
+      await expect(canvas.getByText('Page 2 of 80')).toHaveAttribute('aria-live', 'polite');
+      await userEvent.click(canvas.getByRole('button', { name: 'Previous page' }));
+      await expect(canvas.getByText('1 / 80')).toBeVisible();
+      expect(canvas.queryByRole('button', { name: 'Previous page' })).toBeNull();
+    }
+  },
+};
+
+export const ProjectPagesDesktop: Story = {
+  ...ProjectPages,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+export const ProjectPagesNarrowRail: Story = {
+  ...ProjectPagesDesktop,
+  decorators: [
+    (Story) => (
+      <div className="w-80">
+        <Story />
+      </div>
+    ),
+  ],
+};
 
 /**
  * WHAT A BAND SAYS ABOUT WHAT IS UNDER IT. Every one of these is INK on the band's
