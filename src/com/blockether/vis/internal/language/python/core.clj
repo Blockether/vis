@@ -168,45 +168,6 @@
 
 ;; run_tests
 
-(def ^:private output-char-cap
-  "Chars of the pytest transcript carried back in `output`. A long run prints
-   megabytes; what the cut drops is recoverable, because every fault also comes
-   back structured in `failures`."
-  8000)
-
-(defn- clamp-output
-  "`s` capped at `n` chars, cut in the MIDDLE behind a marker that NAMES how much
-   went missing.
-
-   Regression, issue #136: the cut was a tail slice behind a bare `…`, so a run
-   with many failures came back with its summary line and no evidence at all —
-   the whole `=== FAILURES ===` section was gone, and nothing said so. Both ends
-   are load bearing: a collection error prints at the TOP, the verdict and the
-   `short test summary info` at the BOTTOM."
-  [^String s n]
-  (let [len
-        (count s)
-
-        n
-        (long n)]
-
-    (if (<= len n)
-      s
-      ;; The marker itself is charged against the cap, so the result still fits.
-      (let [kept
-            (max 0 (- n 96))
-
-            head-n
-            (quot kept 3)
-
-            tail-n
-            (- kept head-n)]
-
-        (str (subs s 0 head-n)
-             "\n\n… " (- len kept)
-             " characters omitted; every fault is listed in `failures` …\n\n"
-             (subs s (- len tail-n)))))))
-
 (defn- fault-headline
   "One-line headline for a fault body: the assertion line pytest marks with `E `
    when the body has one, else its first non-blank line. Capped — the full
@@ -538,7 +499,7 @@
                            "cwd" dir
                            "exit" (when done? (.exitValue p))
                            "timed_out" (not done?)
-                           "output" (clamp-output s output-char-cap)}
+                           "output" s}
                           counts)
              (seq (:failures report))
              (assoc "failures" (:failures report))))
@@ -584,8 +545,8 @@
    BOTH backends name their faults: every failing/erroring test comes back in
    ONE `failures` list as `{ns test type message file line}`, `type` telling a
    thrown `\"error\"` from a false-assertion `\"fail\"` (the project backend
-   reads pytest's own `--junitxml` report), and `output` carries the transcript
-   capped in the middle behind a marker that says how much it dropped.
+   reads pytest's own `--junitxml` report), and `output` carries the complete
+   transcript. Only the display preview is bounded; result data is not truncated.
    `python.runner` in merged config chooses the DEFAULT backend; an explicit
    `runner` argument still wins."
   [env arg]

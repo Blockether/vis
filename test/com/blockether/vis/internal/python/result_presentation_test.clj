@@ -106,6 +106,29 @@
                               "assert r['output'] == 'runner boilerplate'\nprint(r)")]
         (expect (str/starts-with? out "run_tests: PASS; 48 tests; 0 failures; 2 skipped; 2.1s"))
         (expect (not (str/includes? out "runner boilerplate")))))
+  (it
+    "bounds long runner output only in the preview and preserves read-back"
+    (doseq [passed? [false true]]
+      (let
+        [output (str "report-start\n"
+                     (apply str (repeat 12000 "a"))
+                     "\nmiddle diagnostic\n"
+                     (apply str (repeat 12000 "b"))
+                     "\nreport-end")
+         out
+         (check-result
+           {"op" "run_tests" "is_pass" passed? "total" 1 "fail" (if passed? 0 1) "output" output}
+           (str
+             "expected = 'report-start\\n' + 'a' * 12000 + '\\nmiddle diagnostic\\n' + 'b' * 12000 + '\\nreport-end'\n"
+             "assert r['output'] == expected\n" "assert dict(r)['output'] == expected\n"
+             "assert json.loads(json.dumps(r))['output'] == expected\n" "print(r)"))]
+
+        (expect (< (count out) 2500))
+        (expect (str/includes? out "r['output']"))
+        (expect (not (str/includes? out "middle diagnostic")))
+        (when-not passed?
+          (expect (str/includes? out "report-start"))
+          (expect (str/includes? out "report-end"))))))
   (it "prints faults and diagnostics even when counts or the verdict are incomplete"
       (let [out (check-result {"op" "run_tests"
                                "is_pass" false

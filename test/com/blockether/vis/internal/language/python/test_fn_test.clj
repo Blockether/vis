@@ -502,42 +502,59 @@
                  (expect (nil? (pytest-counts "")))
                  (expect (nil? (pytest-counts "ERROR: file or directory not found: nope.py")))))
 
-;; ── issue #136: counts with no node ids, and an output cut that said nothing ──
-(def ^:private clamp-output @#'core/clamp-output)
+(defdescribe
+  project-output-retention-test
+  ;; Council 954: a capped transcript plus short JUnit headlines lost diagnostics.
+  (it
+    "keeps the complete pytest transcript and named faults beyond the old cap"
+    (when (has-python?)
+      (let [root
+            (tmp-dir)
+
+            session-id
+            (str "python-output-retention-" (random-uuid))
+
+            transcript
+            (str "captured-start\n"
+                 (apply str (repeat 12000 "a"))
+                 "\nmiddle diagnostic\n"
+                 (apply str (repeat 12000 "b"))
+                 "\ncaptured-end")]
+
+        (try
+          (process-jail/register-session-jail! session-id
+                                               (constantly {:roots-fn (constantly [(.getPath root)])
+                                                            :net-enabled? false
+                                                            :disabled? true}))
+          (spit
+            (io/file root "test_diagnostic.py")
+            (str
+              "def test_diagnostic():\n"
+              "    print('captured-start\\n' + 'a' * 12000 + '\\nmiddle diagnostic\\n' + 'b' * 12000 + '\\ncaptured-end')\n"
+              "    assert False, 'failure details ' + 'q' * 2000\n"))
+          (let [res
+                (:result (core/py-test-fn {:workspace/root (.getPath root) :session-id session-id}
+                                          {"runner" "project"}))
+
+                output
+                (get res "output")
+
+                fault
+                (first (get res "failures"))]
+
+            (expect (= 1 (get res "exit")))
+            (expect (= 1 (get res "fail")))
+            (expect (= "test_diagnostic" (get fault "test")))
+            (expect (> (count output) 24000))
+            (expect (true? (str/includes? output transcript)))
+            (expect (true? (str/includes? output
+                                          (str "failure details " (apply str (repeat 2000 "q"))))))
+            (expect (<= (count (get fault "message")) 401)))
+          (finally (process-jail/unregister-session-jail! session-id) (cleanup root)))))))
 
 (def ^:private junit-report @#'core/junit-report)
 
-(def ^:private output-char-cap @#'core/output-char-cap)
-
-;; Regression, issue #136: `run_tests("python", {"runner" "project"})`
-;; reported `fail: 1` with `failures: []` / `errors: []` — counts and not one
-;; node id, file or message — and its `output` was a tail slice behind a bare
-;; `…`, so a run with many failures came back with the summary line and no
-;; `=== FAILURES ===` section at all, with nothing to say it had been dropped.
-(defdescribe
-  output-clamp-test
-  "The transcript cap keeps BOTH ends and names what it dropped."
-  (it "leaves an output that fits untouched" (expect (= "short" (clamp-output "short" 8000))))
-  (it "keeps the head and the tail, and says how much went missing"
-      (let
-        [s
-         (str
-           "=== test session starts ===\n" (apply str (repeat 20000 "x"))
-           "\n=================================== FAILURES ===================================\n"
-           (apply str (repeat 20000 "y"))
-           "\n=== short test summary info ===\nFAILED tests/test_x.py::test_bad - assert 1 == 2\n"
-           "=== 40 failed in 1.23s ===")
-
-         out
-         (clamp-output s 8000)]
-
-        (expect (<= (count out) 8000))
-        (expect (str/starts-with? out "=== test session starts ==="))
-        (expect (str/ends-with? out "=== 40 failed in 1.23s ==="))
-        (expect (str/includes? out "characters omitted"))
-        (expect (str/includes? out (str (- (count s) (- 8000 96)))))))
-  (it "caps at output-char-cap chars" (expect (= 8000 output-char-cap))))
-
+;; Regression, issue #136: counts alone left failing tests without names or locations.
 (defdescribe
   junit-report-test
   "pytest's --junitxml report is what turns `1 failed` into a named test."
