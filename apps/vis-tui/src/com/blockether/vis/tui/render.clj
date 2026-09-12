@@ -1826,6 +1826,7 @@
 
         label
         (cond queued? "Queued"
+              (and user? (str/starts-with? (or text "") "Council wake — ")) "Council"
               user? "You"
               :else agent-name)
 

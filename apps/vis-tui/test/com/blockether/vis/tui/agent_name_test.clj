@@ -50,6 +50,33 @@
     (is (str/includes? (cap/frame-text captured) "You"))
     (is (not (str/includes? (cap/frame-text captured) "Ada")))))
 
+(deftest council-wakes-have-their-own-speaker-label
+  ;; Council wake prompts use the request rail, but are not written by the user.
+  (doseq [cols
+          [40 100]
+
+          [message label]
+          [[{:role :user :text "Council wake — a peer has asked for your knowledge."} "Council"]
+           [{:role :user :text "Council wake — a peer replied to your request."} "Council"]
+           [{:role :user :text "Council wake — an extension or SDK event notified this session."}
+            "Council"] [{:role :user :text "Hello"} "You"]
+           [{:role :user :text "Explain Council wake — messages."} "You"]
+           [{:role :user :text ""} "You"] [{:role :user :text "Hello" :status :queued} "Queued"]
+           [{:role :assistant :text "Council wake — quoted in an answer."} "Ada"]]]
+
+    (let [captured
+          (cap/capture! {:cols cols
+                         :rows 12
+                         :paint!
+                         (fn [{:keys [g]}]
+                           (render/draw-chat-bubble! g message 0 0 cols {:agent-name "Ada"}))})
+
+          heading
+          (str/trim (first (str/split-lines (cap/frame-text captured))))]
+
+      (is (nil? (:error captured)))
+      (is (= label heading) (pr-str [cols message])))))
+
 (deftest progress-uses-the-same-gateway-name
   (doseq [progress [{:iterations []} {:iterations [{:thinking "Working"}]}]]
     (let [text (:text (render/progress->lines-data

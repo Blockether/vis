@@ -458,6 +458,28 @@ export const Forking: Story = {
   },
 };
 
+/** Council wakes share the request rail without attributing the prompt to the user. */
+export const CouncilWake: Story = {
+  args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
+  render: (args) => (
+    <>
+      <UserMessage>
+        {'Council wake — a peer session has asked for your knowledge. Read the attributed Council input.'}
+      </UserMessage>
+      <AssistantMessage
+        turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
+        whole={args.whole}
+      />
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText('Council', { exact: true })).toBeVisible();
+    await expect(canvas.queryByText('You', { exact: true })).toBeNull();
+    await expect(canvas.getByText('Vis', { exact: true })).toBeVisible();
+  },
+};
+
 /** Role spacing does not depend on an answer's content or lifecycle state. */
 export const MessageSpacing: Story = {
   render: () => (

@@ -461,6 +461,23 @@ describe('compact diff blocks', () => {
   });
 });
 
+describe('request speaker labels', () => {
+  // Council wake prompts use the request rail, but are not written by the user.
+  it.each([
+    ['Council wake — a peer session has asked for your knowledge.', 'Council'],
+    ['Council wake — a peer replied to your request.', 'Council'],
+    ['Council wake — an extension or SDK event notified this session.', 'Council'],
+    ['Hello', 'You'],
+    ['Explain Council wake — messages.', 'You'],
+    ['', 'You'],
+  ])('labels %j as %s without changing the request', (request, label) => {
+    const view = render(<UserMessage>{request}</UserMessage>);
+    const article = view.container.querySelector('article')!;
+    expect(article.firstElementChild).toHaveTextContent(new RegExp(`^${label}$`));
+    expect(article.children[1].textContent).toBe(request);
+  });
+});
+
 // Regression, iOS scroll jump: a pasted picture used to be laid out at whatever
 // its own decoded pixels measured (`max-h-[min(28rem,60dvh)] w-auto`), so the
 // bubble reserved NOTHING for it until the decode landed — which, with

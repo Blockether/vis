@@ -3646,7 +3646,9 @@ export const UserMessage = memo(function UserMessage({
   // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
   return (
     <article className="mt-4 w-full">
-      <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
+      <div className="mb-1 font-mono text-meta font-bold text-you-role">
+        {children.startsWith('Council wake — ') ? 'Council' : 'You'}
+      </div>
       <div
         className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}
       >
