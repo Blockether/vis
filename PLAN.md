@@ -189,7 +189,7 @@ one keyboard/touch carousel on the documentation site. Preserve concurrent work.
 
 # Full release end-to-end verification
 
-Verify the current sources and public artifacts before publishing the next complete release.
+Publish a complete release from verified sources, then test its public artifacts.
 
 ## Context
 
@@ -197,7 +197,7 @@ Published v0.2.2 contains the fixes for #210, #211 and #212. The user requests
 all test suites, isolated Linux host validation, green CI and a full release.
 Use the existing source, native, installed-SDK and editing end-to-end suites.
 Do not restart the live gateway, weaken tests, move tags or publish partial assets.
-Keep unrelated concurrent documentation work separate from verification repairs.
+Keep unreleased client-callback development and local-only runtime work outside this release.
 
 ## 1. Verify source suites
 
@@ -235,15 +235,30 @@ Keep unrelated concurrent documentation work separate from verification repairs.
    and root/non-root service smokes, with no live service changes.
    Editing E2E passes all 19 scenarios after one unchanged targeted retry for a
    model lookup error; the strict no-error gate remains intact.
-2. Baseline complete: public v0.2.2 passes all 38 tag-matching Linux native cases,
-   installed SDK checks and macOS history/ANSI cases. A fresh macOS engine with
-   runtime 0.5.14 passes all 42 native cases and 62 embedded pytest client tests.
-   Repeat with final published engine and TUI bundles.
-3. In progress: runtime 0.5.14 publishes the Path/Counter and embedded pytest signal
+2. Complete: public v0.2.3 engine and TUI bundles match release commit 6b9887854.
+   Both macOS and Linux pass all 42 tag-matching native cases; Linux also passes
+   17 focused issue regressions. Neither native suite reports reflection or boxed
+   math warnings. The public PyPI wheel and sdist pass checksum verification;
+   all 13 installed Python modules match the tag. The full macOS installed SDK
+   suite passes 661 tests with five explicit skips: four paid-provider opt-ins
+   and one Python 3.14-only case on Python 3.13. Linux passes 151 SDK integration
+   and guide tests with four paid-provider skips. Public embedded pytest passes
+   all 62 client tests. Fresh Maven Java/Clojure recipes both pass; the resolved
+   Vis and vis-contract 0.2.3 JARs/POMs match public Clojars checksums. All temporary
+   test processes are stopped; no live gateway changes were issued.
+3. Complete: runtime 0.5.14 publishes the Path/Counter and embedded pytest signal
    fixes; four-platform CI and all release jobs pass. The final Vis pin passes 146
    consumer tests. Package closure repair 0ea20403a passes both strict candidate
    Maven Java/Clojure recipes; all 100 bundle tests pass after the 0.2.3 version sync.
-   The public v0.2.2 library remains incomplete. Remaining: matching version/tag,
-   complete product publication, fresh public Maven/PyPI/native proof and
-   released-client docs updates. New client-callback development is outside this cut.
-   Preserve and exclude the unrelated, explicitly local-only runtime gather fix.
+   Tag v0.2.3 and version mirrors match release commit 6b9887854. Release workflow
+   34711372067, source CI 34711370200 and SDK publication 34715267284 are green,
+   including every native, mobile and desktop gate. All 15 GitHub assets and the
+   Clojars/PyPI packages are public. Released-client docs now use PyPI and a
+   dependency-only JVM project rather than the incomplete v0.2.2 workaround.
+   Both Java/Clojure recipes also pass from that documented project; a reproduced
+   missing-JitPack failure is covered by a passing repository-declaration regression.
+   The docs follow-up passes 62 Clojure tests, 161 site tests, 37 SDK guide/README
+   tests with four paid-provider skips, formatting and lint/reflection checks.
+   Issues #210, #211 and #212 remain closed; #212 has the v0.2.3 verification update.
+   New client-callback development and the explicitly local-only runtime gather
+   fix remain excluded from this release.

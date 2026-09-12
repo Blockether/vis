@@ -6,14 +6,13 @@ Use `Agent()` to run tasks in your current project without a gateway, or pass
 
 ## Install the SDK
 
-You need Python 3.11 or newer. `Agent` is new on `main`; PyPI version `0.2.2`
-contains `GatewayClient` and `LocalEngine`, but not `Agent`. To use every example
-on this page, install the SDK from source:
+You need Python 3.11 or newer. The `Agent` API is available in PyPI version
+`0.2.3` and newer. Install the released SDK:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install "git+https://github.com/Blockether/vis.git#subdirectory=packages/vis-agent"
+python -m pip install --upgrade "vis-agent>=0.2.3"
 ```
 
 The Python package does **not** install the engine. For local use on Linux or

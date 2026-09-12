@@ -45,6 +45,25 @@
                (is (not (:private (meta v))) function-name))))
          (finally (fs/delete-tree directory)))))
 
+(deftest jvm-sdk-guide-published-dependencies-test
+  (let [document
+        (slurp (io/resource "vis-docs/jvm-sdk.md"))
+
+        source
+        (second (re-find #"(?s)```edn\n(.*?)\n```" document))
+
+        dependencies
+        (when source (edn/read-string source))
+
+        library
+        (get-in dependencies [:deps 'com.blockether/vis])]
+
+    (is (some? source) "The guide must keep its runnable deps.edn example")
+    (is (= #{:mvn/version} (set (keys library))))
+    (is (not (str/blank? (:mvn/version library))))
+    (is (= (:mvn/repos (edn/read-string (slurp "deps.edn"))) (:mvn/repos dependencies))
+        "tools.deps does not inherit Maven repositories from dependencies")))
+
 (deftest sdk-guides-task-order-test
   (doseq [[page headings] [["python-sdk"
                             ["## Install the SDK" "## Let your program own a private agent"

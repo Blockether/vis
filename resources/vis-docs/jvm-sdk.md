@@ -6,28 +6,28 @@ files; your JVM application acts as its client.
 
 ## Prepare the JVM classpath
 
-Use a Vis source checkout, the Clojure CLI and the repository's pinned JDK.
-Java calls the public `com.blockether.vis.core` namespace through
-`clojure.java.api.Clojure`; there is no standalone Java-only SDK.
+Use JDK 25 and the Clojure CLI. The published Vis library includes its runtime
+dependencies; you do not need a Vis source checkout. Java calls the public
+`com.blockether.vis.core` namespace through `clojure.java.api.Clojure`; there is
+no standalone Java-only SDK.
 
-**Published artifact limitation:** `com.blockether:vis:0.2.2` does not provide a
-complete Maven runtime classpath. Loading the API fails with a missing
-`com.blockether.vis-python-runtime` namespace because that dependency is supplied
-through Git in the source build. Use the prepared checkout below rather than
-adding only the published Vis JAR to your application.
+Add the published library to your application's `deps.edn`:
 
-From the Vis repository root, select its toolchain and prepare Git dependencies:
+```edn
+{:mvn/repos {"jitpack" {:url "https://jitpack.io"}}
+ :deps {com.blockether/vis {:mvn/version "0.2.3"}}}
+```
+
+Keep the JitPack entry: the Clojure CLI does not inherit repositories from a
+dependency's POM. From the directory containing `deps.edn`, resolve the
+dependencies and prepare the classpath:
 
 ```bash
-eval "$(bin/require-graalvm --export)"
-clojure -X:deps prep
 export VIS_CLASSPATH="$(clojure -Spath)"
 ```
 
-Keep this working directory while running the examples: the classpath includes
-relative source and resource paths. The client loads the engine's JVM libraries
-even though the gateway performs the actual tasks. For a separately installable
-client package, use the [Python SDK](python-sdk.md).
+The client loads the engine's JVM libraries even though the gateway performs
+the actual tasks. For a Python client, use the [Python SDK](python-sdk.md).
 
 ## Connect from Java
 
@@ -112,7 +112,7 @@ The options use Clojure **keyword** keys; gateway records returned here use
 is not equivalent to passing `:root`. Do not use `Clojure.read` to parse untrusted
 requests; this example reads only a fixed namespace symbol.
 
-Save `VisExample.java` in that checkout, then compile and run it on macOS or Linux:
+Save `VisExample.java` beside `deps.edn`, then compile and run it on macOS or Linux:
 
 ```bash
 javac -cp "$VIS_CLASSPATH" VisExample.java
@@ -134,8 +134,8 @@ application is finished with it, not while other requests are using it.
 
 ## Call the same API from Clojure
 
-With the same prepared checkout and connection environment, save this as
-`task.clj` in the repository root and run `clojure -M task.clj`:
+With the same `deps.edn` and connection environment, save this as `task.clj` in
+that directory and run `clojure -M task.clj`:
 
 ```clojure
 (require '[com.blockether.vis.core :as vis])
