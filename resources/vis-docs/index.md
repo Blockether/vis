@@ -13,13 +13,10 @@ as it goes.
 
 You know how your project should be built, tested and checked. Vis lets you
 put that knowledge into functions the agent can use, so repeatable work
-doesn't depend only on written instructions.
+doesn't depend only on written instructions. For the personal story behind
+these choices, read [Why I built Vis](motivation.md).
 
 ### Put your expertise into code
-
-For example, you can give the agent a function that selects the right test
-suite, checks its inputs and reports failures. It can use that function
-instead of working out a shell command each time.
 
 Start with the built-in tools, then add [Python extensions](extending.md)
 for work you repeat. Give those functions domain meaning: select affected tests,
@@ -29,15 +26,10 @@ shell command. You choose the inputs, checks and useful results.
 Keep `AGENTS.md` and skills for explanations and procedures. Put rules that must
 actually be checked in the functions or in [operation hooks](extension-api.md#op-hooks).
 A hook can inspect a call before it runs and refuse it, or inspect its result
-afterward and supply findings for the next step. This makes individual operations
-more predictable; it does not make the model's decisions deterministic.
-
-For example, the [complexity-check recipe](extension-design.md#check-code-complexity-after-edits)
-measures Python control-flow nesting after `patch` **and** after a completed
-Python block. It catches code written with `Path.write_text()` or `open()` too,
-then supplies file-and-line findings through the SDK's context contribution.
-The check runs because it is registered, not because the agent remembered a
-skill. It reports after the edit; it does not undo it.
+afterward. For example, the [complexity-check recipe](extension-design.md#check-code-complexity-after-edits)
+reports Python control-flow nesting after `patch` and Python blocks, including
+`Path.write_text()` and `open()` writes. It supplies findings to the agent; it
+does not undo the edit or make the model's decisions deterministic.
 
 Once your functions cover a workflow, you can [disable shell access](jail.md)
 with `toggles.shell: false`. Extensions run as trusted host code with full
@@ -46,37 +38,41 @@ CPython access, while the model's Python environment is
 
 ### Combine steps in Python
 
-Models already use Python to get things done. Vis makes that the way the
-agent uses tools: through one tool called `python_execution`, with the
-available operations exposed as Python functions. The agent finds them with
-`apropos()` and reads how to use them with `doc()`.
+The agent uses tools through `python_execution`, with operations exposed as
+Python functions. It finds them with `apropos()` and reads their contracts with
+`doc()`. It can search files, check matches and summarize what matters in one
+program, without sending every intermediate result back to the conversation.
 
-It can search several files, check the matches and summarize what matters
-in one program, without sending every intermediate result back to the
-conversation. Sequential calls run one after another; `await gather(...)` lets
-independent async operations overlap when the underlying tools support it.
-Blocking calls do not become parallel just because they appear in one block,
-and calls into one Python extension instance are serialized.
+Sequential calls run one after another; `await gather(...)` lets independent
+async operations overlap when the tools support it. Blocking calls do not become
+parallel just because they appear in one block, and calls into one Python
+extension instance are serialized.
 
-Some systems describe workflows as graphs of agent steps; others emphasize the
-agent's model/tool loop. Vis still has that loop. Its approach is to put
-repeatable work, conditions and concurrency in code you can inspect and test,
-rather than require another agent step or graph node for every operation.
-Concurrent tool calls are not the same thing as multiple agents coordinating.
-You can also run and inspect sessions from your own code with the
-[Python SDK](https://pypi.org/project/vis-agent/).
+Vis still has a model/tool loop. Repeatable procedures, conditions and concurrency
+can live in ordinary Python rather than a graph of agent steps. Concurrent calls
+are not the same as multiple agents coordinating. You can also run and inspect
+sessions from your own code with the [Python SDK](https://pypi.org/project/vis-agent/).
+
+### Follow the work on every screen
+
+Activities show what an operation did, including useful counts, results and
+failures. You can [customize the presentation](extension-design.md#show-a-ci-report-without-hiding-failures)
+in your extension without changing the data returned to the agent.
+
+The terminal, desktop app and phone connect to the [same gateway](gateway.md)
+and sessions. You can check progress away from your desk without starting a
+separate agent or copying the conversation.
 
 ### Keep useful work when you return
 
-The agent can define Python helpers for repeated work and reuse them later
-in the same session. Their definitions survive restarting Vis and reloading
-extensions. This preserves their source, not every live Python object.
+The agent can define Python helpers and reuse them later in the same session.
+Their definitions survive restarting Vis and reloading extensions. This preserves
+their source, not every live Python object.
 
-The `session` dictionary shows the agent its workspace, permissions and how
-much context it is using. As the conversation grows, it can summarize
-completed work to make room for what's next. The full history stays stored,
-even when it is no longer sent to the model. See
-[How Vis manages context](token-optimization.md).
+The `session` dictionary exposes workspace facts, permissions and context usage.
+As a conversation grows, the agent can summarize completed work to make room for
+what comes next. The full history stays stored even when it is no longer sent to
+the model. See [How Vis manages context](token-optimization.md).
 
 ## Install
 

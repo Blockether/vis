@@ -481,11 +481,12 @@
         (doseq [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted"
                         "flush_ms" "view.is_from_human" "view.note"]]
           (expect (str/includes? md needle) (str "live-views.md never mentions " needle)))))
-  ;; Authors need the layout, text formatting, and interruption rules.
+  ;; #209: document visible terminal-control escapes, not unsafe verbatim output.
   (it "documents layout, text formatting, and interruption"
       (let [md (page-md "live-views")]
         (doseq [needle ["vis.row(" "vis.column(" "inline Markdown" "wraps and is justified"
-                        "remain verbatim" "`Escape` or `Enter` confirms"]]
+                        "Log terminal controls display as visible escapes"
+                        "other text stays literal" "`Escape` or `Enter` confirms"]]
           (expect (str/includes? md needle) (str "live-views.md never mentions " needle))))))
 
 ;;; ── The page contract ───────────────────────────────────────────────────────

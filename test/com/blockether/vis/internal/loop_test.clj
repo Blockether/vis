@@ -3971,9 +3971,12 @@
 
       (with-redefs [persistance/db-store-session-turn!
                     (fn [_db opts]
-                      (expect (=
-                                {:parent-session-id "s1" :user-request "follow up" :status :running}
-                                opts))
+                      (expect (= {:parent-session-id "s1"
+                                  :user-request "follow up"
+                                  :request-kind :user
+                                  :council-entry-id nil
+                                  :status :running}
+                                 opts))
                       "turn-3")
 
                     persistance/db-update-session-turn!

@@ -81,6 +81,10 @@
    :section "Extensions"}
   {:pages
    [{:blurb
+     "Read the motivation for domain-specific tools, visible work and one session across devices."
+     :page "motivation"
+     :title "Why I built Vis"}
+    {:blurb
      "See how Vis filters tool output, reuses findings and summarizes long conversations to manage context."
      :page "token-optimization"
      :title "How Vis manages context"}

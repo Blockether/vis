@@ -175,6 +175,135 @@ verify that presentation errors cannot change the tool result. The engine suppli
 execution state and errors, but no generic result view. Follow the canonical
 [Activity API](extension-api.md#activity-presentation) for declarations and limits.
 
+### Show a CI report without hiding failures
+
+Use a custom Activity when a raw return value would leave the reader to work out
+what happened. This example reads an existing local test summary. It does not
+run tests, contact a CI service or check whether the report is current.
+
+Prepare a UTF-8 JSON file with this shape; adapt your CI job's output to it if
+needed. Counts must be nonnegative integers, not booleans. Extra fields are
+ignored.
+
+```json
+{"passed": 42, "failed": 1}
+```
+
+Save the following as `.vis/extensions/ci_report.py`, then
+[reload extensions](extending.md#2-load-it). Only load code you trust:
+extensions run in host CPython, not in the agent's sandbox.
+
+```python
+# ci_report.py
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Annotated
+
+import blockether.vis.extension as vis
+
+
+@dataclass(frozen=True)
+class CIReport:
+    """Counts from a local report, not evidence of a new test run."""
+
+    path: Annotated[str, "Absolute path of the report that was read."]
+    passed: Annotated[int, "Number of passing tests in the report."]
+    failed: Annotated[int, "Number of failing tests in the report."]
+
+
+def read_ci_report(
+    path: Annotated[str, "Absolute path to a UTF-8 JSON test summary."],
+) -> CIReport:
+    """Read a local CI summary without running tests or contacting a service.
+
+    The file must contain a JSON object with nonnegative integer passed and
+    failed counts. Zero counts mean no tests were reported, not a passing suite.
+    Extra fields are ignored. Relative paths and invalid counts raise ValueError;
+    file, encoding and JSON errors propagate. Does not modify the file.
+    """
+    file = Path(path)
+    if not file.is_absolute():
+        raise ValueError("path must be absolute")
+    data = json.loads(file.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("report must be a JSON object")
+    for name in ("passed", "failed"):
+        value = data.get(name)
+        if type(value) is not int or value < 0:
+            raise ValueError(f"{name} must be a nonnegative integer")
+    return CIReport(str(file), data["passed"], data["failed"])
+
+
+def present_report(*, phase, result=None, error=None, **_):
+    if phase == "start":
+        return vis.ActivityPresentation(
+            headline="Read CI report", summary="Reading local test results"
+        )
+    if phase == "failure":
+        detail = f"{type(error).__name__}: {error}"
+        if len(detail) > 1000:
+            detail = detail[:1000] + "\n[Error excerpt]"
+        return vis.ActivityPresentation(
+            headline="Read CI report",
+            summary="Could not read test results",
+            content=(vis.ActivityText(detail),),
+        )
+    summary = (
+        f"{result.passed} passed · {result.failed} failed"
+        if result.passed or result.failed
+        else "No tests reported"
+    )
+    return vis.ActivityPresentation(
+        headline="Read CI report",
+        summary=summary,
+        content=(vis.ActivityText(f"Source: {result.path}"),),
+    )
+
+
+vis.register(
+    vis.Extension(
+        name="ci-report-example",
+        description="Read local CI summaries with a human-readable Activity.",
+        alias="ci",
+        symbols=[
+            vis.Symbol(
+                read_ci_report,
+                activity=vis.Activity(
+                    label="Read CI report", show_start=False, render=present_report
+                ),
+            )
+        ],
+    )
+)
+```
+
+Ask Vis to read the report, providing its absolute path. The agent can discover
+`read_ci_report` and call it directly. For a file at `/workspace/ci-report.json`,
+the call is:
+
+```python
+report = read_ci_report("/workspace/ci-report.json")
+print(report)
+```
+
+The Activity says **Read CI report**, summarizes **42 passed · 1 failed** and
+includes the source path as expandable evidence. The agent still receives a
+frozen `CIReport` with all three fields. Reading a report with failing tests is a
+successful *read*, not a claim that the tests passed.
+
+With both counts at zero, the summary is **No tests reported**. Missing files,
+invalid JSON and invalid counts fail the call; the Activity retains the error
+type and message, with a labeled excerpt for long messages. The engine owns the
+operation's state, timing and error, independently of this presentation.
+
+This quick local read uses `show_start=False`, so it does not display a running
+row. The callback handles `start` too: if you adapt the tool to perform slow
+work, use `show_start=True` so people can see it begin. Test the adapted tool's
+running, success, failure and empty states before publishing it.
+
 ## Give each kind of instruction one owner
 
 | Information | Owner |

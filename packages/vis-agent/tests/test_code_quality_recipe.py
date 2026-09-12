@@ -42,7 +42,7 @@ def test_recipe_registers_both_edit_boundaries_and_supplies_context(recipe):
     }
     readme = Path(__file__).parents[3] / "README.md"
     assert (
-        'vis.OpHook(["patch", "python_execution"], after_edit, phase="after")'
+        "resources/vis-docs/extension-design.md#check-code-complexity-after-edits"
         in readme.read_text()
     )
 

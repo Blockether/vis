@@ -1720,6 +1720,76 @@ vis.register(vis.Extension(
                    (pyx/reload-python-extensions! {:dirs []})
                    (ps/db-dispose-connection! store)))))))
 
+(defdescribe
+  ci-report-activity-recipe-test
+  (it
+    "runs the documented SDK reader with end-only counts, empty results and errors"
+    (let [source (second (re-find #"(?s)```python\n# ci_report.py\n(.*?)\n```"
+                                  (slurp "resources/vis-docs/extension-design.md")))]
+      (expect (string? source))
+      (with-fresh-loaded
+        {"ci_report.py" source}
+        (fn [loaded {:keys [ext-dir store]}]
+          (expect (= 1 (:loaded loaded)))
+          (let [ext (registered "ci-report-example")
+                extensions [foundation/vis-extension ext]
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                file (io/file ext-dir "ci-report.json")
+                snapshots (atom [])
+                env {:python-context ctx
+                     :db-info store
+                     :cwd (str ext-dir)
+                     :session-id (str "ci-report-recipe-" (random-uuid))
+                     :extensions (atom extensions)
+                     :active-extensions (atom [])
+                     :activity/on-snapshot #(swap! snapshots conj %)}
+                run-report (fn []
+                             (reset! snapshots [])
+                             (#'lp/run-python-code
+                              ctx
+                              (str "report = read_ci_report("
+                                   (json/generate-string (str file))
+                                   ")\nprint(report.passed, report.failed)\nprint(report.path)")
+                              :env
+                              env))]
+
+            (try (lp/sync-active-extension-symbols! env extensions)
+                 (let [help (#'lp/run-python-code ctx "print(doc('read_ci_report'))" :env env)]
+                   (expect (nil? (:error help)) (pr-str help))
+                   (expect (str/includes? (:stdout help) "Read a local CI summary")))
+                 (doseq [[passed failed summary] [[42 1 "42 passed · 1 failed"]
+                                                  [42 0 "42 passed · 0 failed"]
+                                                  [0 0 "No tests reported"]]]
+                   (spit file (json/generate-string {:passed passed :failed failed}))
+                   (let [result (run-report)
+                         rows (get-in result [:activity :rows])
+                         row (first rows)]
+
+                     (expect (nil? (:error result)) (pr-str result))
+                     (expect (= (str passed " " failed "\n" file "\n") (:stdout result)))
+                     (expect (= 1 (count rows)))
+                     (expect (= "succeeded" (:state row)))
+                     (expect (= "Read CI report" (get-in row [:presentation "headline"])))
+                     (expect (= summary (get-in row [:presentation "summary"])))
+                     (expect (str/includes? (pr-str (get-in row [:presentation "content"]))
+                                            "ci-report.json"))
+                     (expect (every? #(not= "running" (:state %)) (mapcat :rows @snapshots)))))
+                 (doseq [[contents error-type] [["not JSON" "JSONDecodeError"]
+                                                ["{\"passed\": 1, \"failed\": true}" "ValueError"]
+                                                [nil "FileNotFoundError"]]]
+                   (if contents (spit file contents) (io/delete-file file))
+                   (let [result (run-report)
+                         row (first (get-in result [:activity :rows]))]
+
+                     (expect (some? (:error result)))
+                     (expect (= "failed" (:state row)))
+                     (expect (= "Could not read test results"
+                                (get-in row [:presentation "summary"])))
+                     (expect (str/includes? (pr-str (get-in row [:presentation "content"]))
+                                            error-type))
+                     (expect (every? #(not= "running" (:state %)) (mapcat :rows @snapshots)))))
+                 (finally (ep/dispose-python-context! ctx)))))))))
+
 ;; Gate hooks — a Python extension guards the FILESYSTEM, not a tool's arguments
 
 (def ^:private fs-gate-py

@@ -29,44 +29,32 @@ You know how your project should be built, tested and checked. Vis lets you
 put that knowledge into functions the agent can use, so repeatable work
 doesn't depend only on written instructions.
 
-- **Put your expertise into code.** Give the agent small, tested
-  [Python extensions](resources/vis-docs/extending.md) that describe your domain:
-  which tests to run, what a valid change needs and how to report a failure.
-  Keep `AGENTS.md` and skills for guidance. Put checks that must actually run
-  in those functions and in hooks before or after operations.
-- **Combine steps in Python.** Vis gives the agent one tool,
-  `python_execution`, where it can combine functions, inspect results and print
-  a useful summary. Independent async calls can overlap with `await gather(...)`;
-  sequential calls still run one after another. This is concurrency within a
-  program, not extra agents running behind each call.
-- **Keep useful work when you return.** The agent can reuse Python helpers in
-  the same session, even if you restart Vis or reload extensions. It can
-  inspect workspace facts, permissions and context usage, and summarize
-  completed work without deleting the stored history.
+- **Put your expertise into code.** Give the agent tested
+  [Python extensions](resources/vis-docs/extending.md) for your environment:
+  selecting tests, validating a change or reporting a build. Keep explanations in
+  `AGENTS.md` and skills; put checks that must run in functions and operation hooks.
+- **Combine steps in Python.** The agent uses one tool, `python_execution`, to
+  call functions, inspect results and print what matters. Independent async calls
+  can overlap with `await gather(...)` when the tools support it. Sequential calls
+  stay sequential; concurrency does not require an extra agent for each step.
+- **See what happened, on any screen.** Activities show meaningful actions,
+  results and failures instead of leaving you to interpret shell commands. Your
+  extensions choose the presentation. Connect the terminal, desktop app or phone
+  to the same gateway to follow the same sessions.
+- **Keep useful work when you return.** Reuse Python helper definitions in the
+  same session across restarts. Inspect workspace facts and permissions, and
+  summarize completed work without deleting the stored history.
 
-You do not need to express each workflow as a graph of agent steps. Vis still
-has a model/tool loop, but repeatable procedures, branching and concurrency can
-live in ordinary Python. You choose the rules; the model works with operations
-that apply them. That is the more deterministic part of this approach, not a
-promise that the model itself becomes deterministic.
-
-For example, a [tested complexity-check hook](resources/vis-docs/extension-design.md#check-code-complexity-after-edits)
-measures control-flow nesting after `patch` and after a Python block, so it also
-covers `Path.write_text()` and `open()` writes. Its SDK registration is:
-
-```python
-vis.OpHook(["patch", "python_execution"], after_edit, phase="after")
-```
-
-The complete example defines `after_edit`, scans your source files and sends
-file-and-line findings to the agent on its next turn. This is an automatic
-check, not a reminder in a skill. An after hook reports what happened; a
-`before` hook or validation inside a domain function can refuse an operation.
+You choose the operations and their checks; the model decides how to use them.
+That makes repeatable work more predictable, not the model itself deterministic.
+See the working [code-check hook](resources/vis-docs/extension-design.md#check-code-complexity-after-edits)
+and [Activity example](resources/vis-docs/extension-design.md#show-a-ci-report-without-hiding-failures).
 
 Once your functions cover a workflow, you can disable shell access. Extensions
 run as trusted CPython code; the model's Python environment is sandboxed.
 
-Read more in [Getting started](resources/vis-docs/index.md#why-vis), or use the
+Read [Why I built Vis](resources/vis-docs/motivation.md) for the motivation, follow
+[Getting started](resources/vis-docs/index.md), or use the
 [Python SDK](https://pypi.org/project/vis-agent/) to run sessions from your own code.
 
 ## Install
