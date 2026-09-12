@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
-import { BandLabel, Button, CopyChip, Disclosure, Input, LoadMore } from './ui';
+import { BandLabel, CopyChip, Disclosure, LoadMore } from './ui';
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
@@ -931,7 +931,6 @@ export interface ActivityHistorySource {
     query: string,
     signal: AbortSignal,
   ) => Promise<ActivityProjection>;
-  export: (activities: readonly ActivityProjection[], signal: AbortSignal) => Promise<string>;
 }
 
 /** SessionScreen owns authenticated retrieval; stories replace only this boundary. */
@@ -945,239 +944,97 @@ function operationCount(activity: ActivityProjection): number {
   );
 }
 
-/** One bounded page per source, with shared grouping, search, copy and navigation. */
+/** One bounded page per source; continuation belongs at the list's edges, not in a toolbar. */
 function ActivityHistoryWindow({ activities }: { activities: ActivityProjection[] }) {
   const source = useContext(ActivityHistoryContext);
   const [loaded, setLoaded] = useState<Array<ActivityProjection | undefined>>([]);
   const [later, setLater] = useState(false);
-  const [query, setQuery] = useState('');
-  const [search, setSearch] = useState('');
-  const [busy, setBusy] = useState('');
-  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef<AbortController | null>(null);
   useEffect(() => () => pending.current?.abort(), []);
   const pages = activities.map((activity, index) => {
     if (activity.history) return loaded[index] ?? activity;
-    if (!later && !search) return activity;
-    return {
-      ...activity,
-      rows: later
-        ? []
-        : activity.rows.filter((row) =>
-            activityCopyText({
-              ...activity,
-              rows: [row],
-              omitted: { rows: 0, by_classification: {} },
-            })
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-          ),
-      omitted: { rows: 0, by_classification: {} },
-    };
+    return later ? { ...activity, rows: [], omitted: { rows: 0, by_classification: {} } } : activity;
   });
   const page = mergeActivity(pages);
   const hasMore = pages.some((page) => page.history?.next_after != null);
-  const total = activities.reduce((sum, activity) => sum + operationCount(activity), 0);
-  const run = async (label: string, action: (signal: AbortSignal) => Promise<void>) => {
+  const load = async (next: boolean) => {
+    if (!source) return;
     pending.current?.abort();
     const controller = new AbortController();
     pending.current = controller;
-    setBusy(label);
+    setBusy(true);
     setError('');
-    setNotice('');
     try {
-      await action(controller.signal);
-    } catch (cause) {
-      if (!controller.signal.aborted)
-        setError(
-          cause instanceof Error ? cause.message : 'Activity could not be loaded. Try again.',
-        );
-    } finally {
-      if (pending.current === controller) {
-        pending.current = null;
-        setBusy('');
-      }
-    }
-  };
-  const load = (next: boolean, q = search) =>
-    void run('Loading operations…', async (signal) => {
-      if (!source) throw new Error('Reconnect to load retained operations.');
       const results = await Promise.all(
         pages.map(async (page) => {
           const history = page.history;
           if (!history) return undefined;
           const after = next ? history.next_after : 0;
           if (after === null) return { ...page, rows: [] };
-          const result = await source.load(history.id, after, q, signal);
+          const result = await source.load(history.id, after, '', controller.signal);
           if (
             result.history?.id !== history.id ||
             result.history.after !== after ||
-            (after > 0 && result.history.revision !== history.revision)
+            (after > 0 && result.history.revision !== history.revision) ||
+            (result.history.next_after !== null && result.history.next_after <= after)
           ) {
-            throw new Error('Activity changed. Choose First to load its latest revision.');
+            throw new Error('Activity changed. Reload operations to view its latest history.');
           }
           return result;
         }),
       );
-      if (signal.aborted) return;
+      if (controller.signal.aborted) return;
       setLoaded(results);
       setLater(next);
-      setSearch(q);
-    });
-  const copy = () =>
-    void run('Copying all operations…', async (signal) => {
-      if (!source) throw new Error('Reconnect to copy the complete Activity history.');
-      // Clipboard APIs require a complete string. This explicit operation allocates it;
-      // ordinary navigation retains just one page and never accumulates detail bodies.
-      const chunks: string[] = [];
-      for (const activity of activities) {
-        const history = activity.history;
-        if (!history) {
-          chunks.push(activityCopyText(activity));
-          continue;
-        }
-        let after = 0;
-        let revision: number | undefined;
-        while (true) {
-          const result = await source.load(history.id, after, '', signal);
-          if (signal.aborted) return;
-          const next = result.history;
-          if (
-            !next ||
-            next.id !== history.id ||
-            next.after !== after ||
-            (revision !== undefined && next.revision !== revision)
-          ) {
-            throw new Error(
-              'Activity changed while copying. Try Copy all again. Nothing was copied.',
-            );
-          }
-          revision = next.revision;
-          chunks.push(activityCopyText(result));
-          if (next.next_after === null) break;
-          if (next.next_after <= after)
-            throw new Error('Activity cursor did not advance. Nothing was copied.');
-          after = next.next_after;
-        }
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setError(cause instanceof Error ? cause.message : 'Activity could not be loaded.');
+    } finally {
+      if (pending.current === controller) {
+        pending.current = null;
+        setBusy(false);
       }
-      if (signal.aborted) return;
-      await navigator.clipboard.writeText(chunks.join('\n\n'));
-      if (!signal.aborted) setNotice('All operations copied.');
-    });
+    }
+  };
   return (
-    <div className="min-w-0">
-      <form
-        className="flex min-w-0 items-center gap-4 py-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          load(false, query);
-        }}
-      >
-        <Input
-          type="search"
-          aria-label="Search all operations"
-          placeholder="Search all operations"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              setQuery('');
-              load(false, '');
-            }
-          }}
-        />
-        <Button
-          variant="quiet"
-          density="compact"
-          type="submit"
-          disabled={!!busy || !source}
-          aria-label="Search activity"
-        >
-          Search
-        </Button>
-      </form>
-      <div className="flex flex-wrap items-center gap-4 pb-3">
-        <Button
-          variant="quiet"
-          density="compact"
-          disabled={!!busy || !source}
-          onClick={() => load(false)}
-          aria-label="First operations"
-        >
-          First
-        </Button>
-        <Button
-          variant="quiet"
-          density="compact"
-          disabled={!!busy || !source || !hasMore}
-          onClick={() => load(true)}
-          aria-label="Next operations"
-        >
-          Next
-        </Button>
-        <Button
-          variant="quiet"
-          density="compact"
-          disabled={!!busy || !source}
-          onClick={copy}
-          aria-label="Copy all activity"
-        >
-          Copy all
-        </Button>
-        <Button
-          variant="quiet"
-          density="compact"
-          disabled={!!busy || !source}
-          onClick={() =>
-            void run('Exporting all operations…', async (signal) => {
-              const message = await source!.export(activities, signal);
-              if (!signal.aborted) setNotice(message);
-            })
-          }
-          aria-label="Export all activity"
-        >
-          Export
-        </Button>
-        {busy && (
-          <Button
-            variant="quiet"
-            density="compact"
-            onClick={() => {
-              pending.current?.abort();
-              pending.current = null;
-              setBusy('');
-              setNotice('Cancelled.');
-            }}
-          >
-            Cancel
-          </Button>
-        )}
-      </div>
-      <p className="pb-2 text-ui text-dialog-hint" role="status">
-        {busy ||
-          notice ||
-          `${page.rows.length} ${page.rows.length === 1 ? 'row' : 'rows'} shown · ${total} operations retained${hasMore ? ' · More available' : ' · End of results'}`}
-      </p>
-      {!source && (
-        <p className="pb-2 text-ui text-dialog-hint">
-          Reconnect to search, copy or load all retained operations.
+    <div className="min-w-0" aria-busy={busy}>
+      {later && source && !error && (
+        <LoadMore label="Show earlier operations" disabled={busy} onClick={() => void load(false)}>
+          Show earlier operations
+        </LoadMore>
+      )}
+      <ActivityThread
+        key={pages.map((page) => page.history?.after ?? 0).join(':')}
+        activity={page}
+      />
+      {page.rows.length === 0 && (
+        <p className="pb-2 text-ui text-dialog-hint">No operations available.</p>
+      )}
+      {busy && (
+        <p role="status" className="pb-2 text-ui text-dialog-hint">
+          Loading operations…
         </p>
       )}
       {error && (
-        <p role="alert" className="pb-2 text-ui text-err-ink">
-          {error} Retry using the controls above.
-        </p>
+        <>
+          <p role="alert" className="pb-2 text-ui text-err-ink">
+            {error}
+          </p>
+          <LoadMore label="Reload operations" onClick={() => void load(false)}>
+            Reload operations
+          </LoadMore>
+        </>
       )}
-      {page.rows.length === 0 && (
-        <p className="pb-2 text-ui text-dialog-hint">
-          No matching operations. Change or clear your search.
-        </p>
-      )}
-      <ActivityThread
-        key={`${pages.map((page) => page.history?.after ?? 0).join(':')}:${search}`}
-        activity={page}
-      />
+      {hasMore &&
+        (source ? (
+          <LoadMore label="Show more operations" disabled={busy} onClick={() => void load(true)}>
+            Show more operations
+          </LoadMore>
+        ) : (
+          <p className="pb-2 text-ui text-dialog-hint">Reconnect to load more operations.</p>
+        ))}
     </div>
   );
 }

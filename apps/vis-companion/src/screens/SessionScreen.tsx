@@ -26,9 +26,7 @@ import {
   ComposerResponseControls,
   type ComposerResponseControlsModel,
 } from '../components/ComposerResponseControls';
-import { shareArtifact } from '../lib/artifact-share';
 import { ActivityHistoryContext } from '../components/ActivityPanel';
-import { activityCopyText, type ActivityProjection } from '../lib/activity';
 import { ComposerSuggestions, composerSuggestionListId } from '../components/ComposerSuggestions';
 import {
   SessionHeader,
@@ -573,26 +571,6 @@ export function SessionScreen({
     () => ({
       load: (id: string, after: number, query: string, signal: AbortSignal) =>
         client.activityPage(sid, id, after, query, signal),
-      export: async (activities: readonly ActivityProjection[], signal: AbortSignal) => {
-        const parts = await Promise.all(
-          activities.map((activity) =>
-            activity.history
-              ? client.activityExport(sid, activity.history.id, signal)
-              : new Blob([activityCopyText(activity)], { type: 'text/plain' }),
-          ),
-        );
-        const blob = new Blob(
-          parts.flatMap((part, index) => (index ? ['\n\n', part] : [part])),
-          {
-            type: 'text/plain',
-          },
-        );
-        if (signal.aborted) return '';
-        return shareArtifact(blob, 'activity.txt', 'text/plain', {
-          title: 'Activity history',
-          noun: 'Activity',
-        });
-      },
     }),
     [client, sid],
   );

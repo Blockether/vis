@@ -573,7 +573,6 @@ export const GroupedActivityHistories: Story = {
       <ActivityHistoryContext.Provider
         value={{
           load: async (id, after, query) => groupedActivityHistoryPage(id, after, query),
-          export: async () => 'Saved fixture activity.',
         }}
       >
         <Story />
@@ -589,10 +588,10 @@ export const GroupedActivityHistories: Story = {
     await expect(canvas.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
     await userEvent.click(canvas.getByRole('button', { name: /Read ×6/ }));
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(6);
-    await userEvent.click(canvas.getByRole('button', { name: 'Next operations' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Show more operations' }));
     await expect(await canvas.findByText('review-3-3.clj')).toBeVisible();
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(1);
-    await userEvent.click(canvas.getByRole('button', { name: 'First operations' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Show earlier operations' }));
     await canvas.findByRole('button', { name: /Read ×6/ });
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');

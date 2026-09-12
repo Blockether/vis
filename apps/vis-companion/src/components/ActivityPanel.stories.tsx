@@ -547,7 +547,6 @@ export const RetainedHistory: Story = {
       <ActivityHistoryContext.Provider
         value={{
           load: async (_id, after, query) => activityHistoryPage(after, query),
-          export: async () => 'All operations exported (fixture).',
         }}
       >
         <Story />
@@ -557,13 +556,57 @@ export const RetainedHistory: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Next operations' }));
-    await expect(await canvas.findByText('Operation 64')).toBeVisible();
+    await expect(canvas.queryByRole('searchbox')).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Copy all activity' })).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Export all activity' })).toBeNull();
+    for (let i = 0; i < 4; i++) {
+      await userEvent.click(canvas.getByRole('button', { name: 'Show more operations' }));
+      await expect(await canvas.findByText(`Operation ${(i + 2) * 32}`)).toBeVisible();
+    }
     await expect(canvas.queryByText('Operation 1')).toBeNull();
-    await userEvent.type(canvas.getByRole('searchbox'), 'operation 159');
-    await userEvent.click(canvas.getByRole('button', { name: 'Search activity' }));
-    await expect(await canvas.findByText('Operation 159')).toBeVisible();
-    await expect(canvas.queryByText('Operation 64')).toBeNull();
-    await expect(canvas.getByRole('button', { name: 'Next operations' })).toBeDisabled();
+    await expect(canvas.getByText('Operation 159')).toBeVisible();
+    await expect(canvas.queryByRole('button', { name: 'Show more operations' })).toBeNull();
+    const earlier = canvas.getByRole('button', { name: 'Show earlier operations' });
+    earlier.focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(await canvas.findByText('Operation 1')).toBeVisible();
+    await expect(canvas.queryByText('Operation 160')).toBeNull();
+  },
+};
+
+export const RetainedHistoryOffline: Story = {
+  args: { activity: activityHistoryPage() },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await expect(canvas.getByText('Operation 1')).toBeVisible();
+    await expect(canvas.getByText('Reconnect to load more operations.')).toBeVisible();
+    await expect(canvas.queryByRole('searchbox')).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Show more operations' })).toBeNull();
+  },
+};
+
+export const RetainedHistoryUnavailable: Story = {
+  args: { activity: activityHistoryPage() },
+  decorators: [
+    (Story) => (
+      <ActivityHistoryContext.Provider
+        value={{
+          load: async () => {
+            throw new Error('Operations could not be loaded. Reconnect and try again.');
+          },
+        }}
+      >
+        <Story />
+      </ActivityHistoryContext.Provider>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Show more operations' }));
+    await expect(await canvas.findByRole('alert')).toHaveTextContent('Operations could not be loaded');
+    await expect(canvas.getByText('Operation 1')).toBeVisible();
+    await expect(canvas.getByRole('button', { name: 'Reload operations' })).toBeVisible();
   },
 };

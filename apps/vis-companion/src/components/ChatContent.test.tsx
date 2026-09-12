@@ -1871,7 +1871,7 @@ it('keeps independently paged Activity sources addressable in a combined executi
     ],
   } as TranscriptTurn;
   const view = render(
-    <ActivityHistoryContext.Provider value={{ load, export: vi.fn() }}>
+    <ActivityHistoryContext.Provider value={{ load }}>
       <AssistantMessage turn={turn} />
     </ActivityHistoryContext.Provider>,
   );
@@ -1879,7 +1879,7 @@ it('keeps independently paged Activity sources addressable in a combined executi
   expect(expands).toHaveLength(1);
   expect(expands[0]).toHaveTextContent('320 operations');
   fireEvent.click(expands[0]);
-  fireEvent.click(view.getByRole('button', { name: 'Next operations' }));
+  fireEvent.click(view.getByRole('button', { name: 'Show more operations' }));
   await waitFor(() => {
     expect(load).toHaveBeenCalledWith(first.history!.id, 32, '', expect.any(AbortSignal));
     expect(load).toHaveBeenCalledWith(second.history!.id, 32, '', expect.any(AbortSignal));
