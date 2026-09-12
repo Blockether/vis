@@ -126,6 +126,14 @@ jobs:
         with:
           version: "0.9.2"
           enable-cache: false
+      # The project-runner regression shells real pytest, not embedded Python.
+      # Use a disposable environment rather than the runner's global packages.
+      - name: Provision pytest for project-runner tests
+        run: |
+          uv venv "$RUNNER_TEMP/vis-project-pytest" --python python3
+          uv pip install --python "$RUNNER_TEMP/vis-project-pytest/bin/python" pytest
+          "$RUNNER_TEMP/vis-project-pytest/bin/python" -m pytest --version
+          echo "$RUNNER_TEMP/vis-project-pytest/bin" >> "$GITHUB_PATH"
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must

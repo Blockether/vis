@@ -196,3 +196,58 @@
                       (finally (vis/db-dispose-connection! store)))))
                 (finally (.stop ^HttpServer server 0))))))
         (finally (#'binary/delete-tree! dir))))))
+
+(defdescribe
+  native-shell-log-window-test
+  ;; Linux release CI exposed split ANSI controls; exercise the native host call
+  ;; and filesystem-attribute interop, not just its JVM implementation.
+  (it
+    "reads coloured shell logs one byte at a time through the linked Python host"
+    (let [^File dir
+          (#'binary/temp-dir "vis-native-shell-pages-")
+
+          original-stream
+          @#'binary/stream-body
+
+          original-whole
+          @#'binary/whole-body
+
+          calls
+          (atom 0)]
+
+      (try
+        (with-redefs-fn
+          {#'python-code
+           "sh = await shell(r\"printf '\\033[32mgreen\\033[m\\n\\033]0;title\\007body [m\\n'\")\nassert sh.wait(20)['exit'] == 0\nparts = []\noffset = 0\nfor _ in range(100):\n    page = sh.logs(offset, limit=1)\n    assert page['offset'] == offset, repr(page)\n    assert page['next_offset'] - page['offset'] <= 1, repr(page)\n    parts.append(page['out'])\n    if page['is_eof']:\n        break\n    assert page['next_offset'] > offset\n    offset = page['next_offset']\nelse:\n    raise AssertionError('Shell log cursor did not finish')\nassert ''.join(parts) == 'green\\nbody [m\\n', repr(''.join(parts))\nprint('native-shell-pages-done')"
+           #'binary/stream-body
+           (fn [reply]
+             (if (= 1 (swap! calls inc)) (tool-reply true) (original-stream reply)))
+           #'binary/whole-body
+           (fn [reply]
+             (if (= 1 (swap! calls inc)) (tool-reply false) (original-whole reply)))}
+          (fn []
+            (let [{:keys [server asked port]} (#'binary/start-stub-provider!
+                                               "Native shell complete")]
+              (try (#'binary/overlay! dir port)
+                   (let [^File bin (#'binary/require-binary)
+                         {:keys [finished? exit output]}
+                         (#'binary/run-binary
+                          dir
+                          [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))
+                           "--raw" "Run the supplied Python fixture and finish."]
+                          90)
+                         messages (mapcat #(get (json/read-json (:body %)) "messages") @asked)
+                         results (filter #(= "tool" (get % "role")) messages)]
+
+                     (expect finished?)
+                     (expect (= 0 exit) output)
+                     (expect (seq results))
+                     (doseq [result results]
+                       (expect (not (str/includes? (str (get result "content"))
+                                                   "python_execution failed"))
+                               (str (get result "content")))
+                       (expect (str/includes? (str (get result "content"))
+                                              "native-shell-pages-done")
+                               (str (get result "content")))))
+                   (finally (.stop ^HttpServer server 0))))))
+        (finally (#'binary/delete-tree! dir))))))

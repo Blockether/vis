@@ -120,6 +120,12 @@ and reconstructing completed history solely from the live event ring.
    stdio. Both native images build with the pinned GraalVM CE; all 37 native
    cases pass, including Activity history and isolated speech round trips. SDK
    artifact parity, metadata, docs, formatting and lint/reflection checks pass.
-   The separate README-link regression is fixed in `a239d6eaa`. Local acceptance
-   is complete; v0.2.1 is prepared for the authorized commit, push and release
-   workflow. No live service was restarted.
+   The separate README-link regression is fixed in `a239d6eaa`. The original
+   fixes were committed and pushed. The v0.2.1 draft release was blocked by Linux
+   CI: an ANSI escape split between log pages and a missing project-runner pytest
+   dependency. Both are reproduced and repaired. Follow-up checks pass: 146
+   shell/raw-log cases, 40 Python-runner cases, all 38 native cases on fresh engine
+   and TUI images, 621 SDK source cases (13 opt-in skips) and all 634 installed SDK
+   cases, including HTTP and stdio integration. Formatting, lint/reflection,
+   actionlint and diff review pass. Main CI and the v0.2.2 release workflow remain
+   to be verified. No live service was restarted.

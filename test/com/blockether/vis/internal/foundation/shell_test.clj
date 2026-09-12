@@ -336,6 +336,160 @@
                          (expect (str/includes? (slurp (get logged "log_path")) "\u001b[")))))))
                (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
 
+(defdescribe
+  shell-logs-split-controls-test
+  ;; Regression: Linux v0.2.1 release CI split ESC from the following [m in a
+  ;; coloured diff. Each reader owns a raw byte cursor, including tiny windows.
+  (it
+    "strips terminal controls across every bounded log page without altering raw bytes"
+    (binding [workspace/*workspace-root* (workspace/trunk-root)]
+      (let
+        [sid "shell-logs-split-controls"
+         env {:session-id sid}
+         id "split"
+         command
+         "printf '\033[32mgreen\033[0m\n\033]0;title\007body\n\033]8;;url\033\\link\033]8;;\033\\\n\033=key\033> [m literal\n'"
+         plain "green\nbody\nlink\nkey [m literal\n"]
+
+        (try (shell-bg* env id command)
+             (expect (= 0 (get (wait* env id) "exit")))
+             (let [raw (slurp (shell-log/log-file sid id))]
+               (expect (str/includes? raw "\u001b["))
+               (doseq [limit [1 2 3 4 5 7 11]]
+                 (let [out (loop [offset 0
+                                  out ""]
+
+                             (let [page (:result (shell-logs* env id {:offset offset :limit limit}))
+                                   next-offset (get page "next_offset")
+                                   out (str out (get page "out"))]
+
+                               (expect (= offset (get page "offset")))
+                               (expect (<= (- next-offset offset) limit))
+                               (if (get page "is_eof")
+                                 out
+                                 (do (expect (> next-offset offset))
+                                     (if (> next-offset offset) (recur next-offset out) out)))))]
+                   (expect (= plain out))))
+               (expect (= raw (slurp (shell-log/log-file sid id)))))
+             (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
+
+(defdescribe
+  shell-logs-terminal-context-test
+  (it
+    "replays independent cold cursors and keeps literal text and Unicode intact"
+    (let [file
+          (java.io.File/createTempFile "vis-shell-context-" ".log")
+
+          raw
+          "\u001b[32mgreen\u001b[m\n\u001b]0;title\u0007body [m literal\n"
+
+          cache
+          (java.util.LinkedHashMap.)]
+
+      (try (spit file raw :encoding "UTF-8")
+           (with-redefs-fn {#'shell/terminal-checkpoints cache}
+             (fn []
+               (let [visible (set (concat (range 5 10) [13] (range 24 (count raw))))]
+                 (doseq [offset (concat (reverse (range (count raw))) (range (count raw)))]
+                   (.clear cache)
+                   (let [chunk (shell-log/read-chunk "cold" file {:offset offset :limit 1})
+                         out (@#'shell/terminal-log-text "cold" file nil chunk)]
+
+                     (expect (= (if (contains? visible offset) (subs raw offset (inc offset)) "")
+                                out)))))
+               (spit file "ż\u009b32m猫\u001b[m🙂 [m\n" :encoding "UTF-8")
+               (let [out
+                     (loop [offset 0
+                            out ""]
+
+                       (let [chunk (shell-log/read-chunk "unicode" file {:offset offset :limit 5})
+                             out (str out (@#'shell/terminal-log-text "unicode" file nil chunk))]
+
+                         (if (:is-eof chunk)
+                           out
+                           (do (expect (> (:next-offset chunk) offset))
+                               (if (> (:next-offset chunk) offset)
+                                 (recur (:next-offset chunk) out)
+                                 out)))))]
+                 (expect (= "ż猫🙂 [m\n" out)))))
+           (finally (.delete file)))))
+  (it
+    "strips a long OSC incrementally and bounds only the derived checkpoint cache"
+    (let [file
+          (java.io.File/createTempFile "vis-shell-osc-" ".log")
+
+          raw
+          (str "\u001b]0;" (apply str (repeat 270000 "x")) "\u001b\\done\n")
+
+          cache
+          (java.util.LinkedHashMap.)
+
+          reads
+          (atom 0)
+
+          read-chunk
+          shell-log/read-chunk]
+
+      (try (spit file raw :encoding "UTF-8")
+           (with-redefs-fn {#'shell/terminal-checkpoints cache
+                            #'shell-log/read-chunk (fn [& args]
+                                                     (swap! reads inc)
+                                                     (apply read-chunk args))}
+             (fn []
+               (let [{:keys [out pages]}
+                     (loop [offset 0
+                            out ""
+                            pages 0]
+
+                       (let [chunk (shell-log/read-chunk "osc" file {:offset offset :limit 511})
+                             out (str out (@#'shell/terminal-log-text "osc" file nil chunk))]
+
+                         (if (:is-eof chunk)
+                           {:out out :pages (inc pages)}
+                           (recur (:next-offset chunk) out (inc pages)))))]
+                 (expect (= "done\n" out))
+                 (expect (= pages @reads) "Sequential readers must not rescan the log prefix")
+                 (expect (= 256 (.size cache)))
+                 (expect (every? keyword? (.values cache)))
+                 ;; Offset 1 was evicted: replay restores the OSC mode without leaking its title.
+                 (let [chunk (shell-log/read-chunk "osc" file {:offset 1 :limit 8})]
+                   (expect (= "" (@#'shell/terminal-log-text "osc" file nil chunk))))
+                 (expect (> @reads (inc pages)))
+                 (expect (= raw (slurp file :encoding "UTF-8"))))))
+           (finally (.delete file)))))
+  (it "carries incomplete controls across append but not a replacement shell or retired file"
+      (let [file
+            (java.io.File/createTempFile "vis-shell-generation-" ".log")
+
+            entry
+            {:exit (atom nil)}
+
+            read-page
+            (fn [generation offset]
+              (@#'shell/terminal-log-text
+               "generation"
+               file
+               generation
+               (shell-log/read-chunk "generation" file {:offset offset})))
+
+            cache
+            (java.util.LinkedHashMap.)]
+
+        (try (with-redefs-fn {#'shell/terminal-checkpoints cache}
+               (fn []
+                 (spit file "a\u001b[" :encoding "UTF-8")
+                 (expect (= "a" (read-page entry 0)))
+                 (spit file "32mgreen" :encoding "UTF-8" :append true)
+                 (expect (= "green" (read-page entry 3)))
+                 (expect (= "green" (read-page nil 3)))
+                 (spit file "123[m literal" :encoding "UTF-8")
+                 (expect (= "[m literal" (read-page {:exit (atom nil)} 3)))
+                 (expect (= "[m literal" (read-page nil 3)))
+                 (.delete file)
+                 (spit file "123replacement" :encoding "UTF-8")
+                 (expect (= "replacement" (read-page nil 3)))))
+             (finally (.delete file))))))
+
 ;; Regression: parsing log_path skipped coloured +++ headers and raised KeyError.
 ;; Every programmatic shell read must expose the same plain diff while the file
 ;; retains the terminal bytes; callers need no colour-disabling flags.

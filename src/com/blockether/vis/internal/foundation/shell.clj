@@ -77,6 +77,9 @@
             [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
+           (java.nio.file Files LinkOption)
+           (java.nio.file.attribute BasicFileAttributes)
+           (java.util LinkedHashMap)
            (java.lang ProcessHandle)
            (java.util.concurrent TimeUnit)))
 
@@ -392,6 +395,143 @@
         ;; frame, and leaving it in would make an empty segment look like one.
         (str/replace non-printing-control-re "")
         (lf))))
+
+(defn- terminal-mode
+  "Finite ANSI/VT state; :visible emits this character and returns to plain text."
+  [mode ^long c]
+  (case mode
+    :osc
+    (case c
+      7
+      :plain
+
+      27
+      :osc-escape
+
+      :osc)
+
+    :osc-escape
+    (case c
+      92
+      :plain
+
+      7
+      :plain
+
+      27
+      :osc-escape
+
+      :osc)
+
+    :escape
+    (cond (= c 91) :csi
+          (= c 93) :osc
+          (<= 0x20 c 0x2f) :escape-intermediate
+          (<= 0x30 c 0x7e) :plain
+          :else (terminal-mode :plain c))
+
+    :escape-intermediate
+    (cond (<= 0x20 c 0x2f) :escape-intermediate
+          (<= 0x30 c 0x7e) :plain
+          :else (terminal-mode :plain c))
+
+    :csi
+    (cond (<= 0x30 c 0x3f) :csi
+          (<= 0x20 c 0x2f) :csi-intermediate
+          (<= 0x40 c 0x7e) :plain
+          :else (terminal-mode :plain c))
+
+    :csi-intermediate
+    (cond (<= 0x20 c 0x2f) :csi-intermediate
+          (<= 0x40 c 0x7e) :plain
+          :else (terminal-mode :plain c))
+
+    (case c
+      27
+      :escape
+
+      155
+      :csi
+
+      :visible)))
+
+(defn- terminal-chunk
+  "Strip escapes without retaining an OSC payload, even across byte windows."
+  [mode ^String text emit?]
+  (let [out (when emit? (StringBuilder.))]
+    (loop [i 0
+           mode mode]
+
+      (if (= i (.length text))
+        {:mode mode :text (when out (.toString out))}
+        (let [c (.charAt text i)
+              next-mode (terminal-mode mode (long (int c)))
+              visible? (= :visible next-mode)]
+
+          (when (and out visible?) (.append out c))
+          (recur (inc i) (if visible? :plain next-mode)))))))
+
+(defonce ^:private ^LinkedHashMap terminal-checkpoints (LinkedHashMap. 256 (float 0.75) true))
+
+(defn- terminal-log-text
+  "Normalize a raw log window without sharing a reader cursor. The bounded cache
+   holds only parser modes, never output. A cold/random read replays its prefix
+   in bounded chunks; following next_offset reuses the preceding checkpoint.
+   Active logs use the spawn's exit atom as a generation token. Retired files
+   use filesystem identity and revision, so replacement cannot reuse old state."
+  [id ^File file entry {:keys [offset next-offset text]}]
+  (if (empty? text)
+    ""
+    (let [^"[Ljava.nio.file.LinkOption;" options
+          (make-array LinkOption 0)
+
+          ^BasicFileAttributes attrs
+          (Files/readAttributes (.toPath file) BasicFileAttributes options)
+
+          ^LinkedHashMap checkpoints
+          terminal-checkpoints
+
+          generation
+          [(.getPath file) (.fileKey attrs) (.creationTime attrs)
+           (or (:exit entry) [(.size attrs) (.lastModifiedTime attrs)])]
+
+          key
+          [generation offset]
+
+          mode
+          (or (locking checkpoints (.get checkpoints key))
+              (loop [at
+                     0
+
+                     mode
+                     :plain]
+
+                (if (>= at offset)
+                  mode
+                  (let [chunk
+                        (shell-log/read-chunk id
+                                              file
+                                              {:offset at
+                                               :limit (min shell-log/default-chunk-bytes
+                                                           (- offset at))})
+
+                        next-at
+                        (:next-offset chunk)]
+
+                    (when (<= next-at at)
+                      (throw (ex-info "Shell log changed while reading terminal context."
+                                      {:id id :offset offset :at at})))
+                    (recur next-at (:mode (terminal-chunk mode (:text chunk) false)))))))
+
+          result
+          (terminal-chunk mode text true)]
+
+      (locking checkpoints
+        (.put checkpoints key mode)
+        (.put checkpoints [generation next-offset] (:mode result))
+        (while (> (.size checkpoints) 256)
+          (.remove checkpoints (.next (.iterator (.keySet checkpoints))))))
+      (normalize-terminal-output (:text result)))))
 
 (defn- bash-command
   "Bash executable to run commands with — bash on EVERY platform, so the model
@@ -2016,9 +2156,8 @@
                     ;; sent because isatty() was true. The model reads TEXT, so this window
                     ;; is the terminal's own reading of those bytes — the raw stream stays
                     ;; whole on disk at `log_path` for anyone who wants it.
-                    "out" (cond-> (:text chunk)
-                            (not (::raw-output? opts))
-                            normalize-terminal-output)
+                    "out"
+                    (if (::raw-output? opts) (:text chunk) (terminal-log-text id file entry chunk))
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk))
