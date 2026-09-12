@@ -123,7 +123,7 @@ test('scheduled GitHub releases remain private until approved, and every approve
   expect(previous.latest_version).toBe('1.1.0');
   expect(previous.manifest_url).toContain('/blob/' + 'a'.repeat(40) + '/');
   const page = await fixture.runtime.dispatchFetch(
-    'https://center.example.com/extensions/' + id + '?version=1.0.0',
+    'https://center.example.com/extensions/example/extensions/plugins/greeting?version=1.0.0',
   );
   const html = await page.text();
   expect(page.status).toBe(200);

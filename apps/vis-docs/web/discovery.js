@@ -2,6 +2,15 @@
 export const origin = 'https://vis.blockether.com';
 /** Catalog identity is the GitHub namespace, not the Python distribution name. */
 export const extensionName = (item) => item.repository.toLowerCase();
+/** Keep repository owners and case-sensitive project folders distinct in public URLs. */
+export const extensionPath = (item) =>
+  '/extensions/' +
+  [extensionName(item), item.subdirectory]
+    .filter(Boolean)
+    .join('/')
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/');
 const escape = (value) =>
   String(value ?? '').replace(
     /[&<>"']/g,
@@ -64,7 +73,7 @@ export function catalogMetadata({ item, error, detailError } = {}) {
     description:
       item?.description ||
       'Browse public GitHub extensions for Vis by Blockether. Find tools, model providers and workflows, review the source and install a specific commit.',
-    path: item ? '/extensions/' + item.id : '/extensions/',
+    path: item ? extensionPath(item) : '/extensions/',
     type: item ? 'WebPage' : 'CollectionPage',
     mainEntity: item
       ? {
@@ -94,7 +103,7 @@ export function catalogText(items) {
     items
       .map(
         (item) =>
-          `- [${extensionName(item).replace(/[\r\n[\]\\]/g, ' ')}](${origin}/extensions/${item.id})\n`,
+          `- [${extensionName(item).replace(/[\r\n[\]\\]/g, ' ')}](${origin}${extensionPath(item)})\n`,
       )
       .join('')
   );

@@ -232,7 +232,12 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   await tick();
   expect($('#catalog-page').hidden).toBe(true);
   expect($('#detail-page').hidden).toBe(false);
-  expect($('link[rel="canonical"]').href).toBe('https://vis.blockether.com/extensions/' + item.id);
+  expect(window.location.pathname).toBe(
+    '/extensions/example/extension-examples/extensions/greeting',
+  );
+  expect($('link[rel="canonical"]').href).toBe(
+    'https://vis.blockether.com/extensions/example/extension-examples/extensions/greeting',
+  );
   expect($('meta[property="og:title"]').content).toBe(
     item.repository.toLowerCase() + ' · Vis · Blockether',
   );
@@ -585,16 +590,64 @@ test('version selection changes the pinned detail, is linkable, and survives bac
   $('#version-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await tick();
   expect(window.location.search).toBe('?version=1.0.0');
+  expect(window.location.pathname).toBe(
+    '/extensions/example/extension-examples/extensions/greeting',
+  );
+  expect($('[data-release]').getAttribute('href')).toBe(
+    '/extensions/example/extension-examples/extensions/greeting?version=1.2.0',
+  );
   expect(request).toHaveBeenCalledWith('/api/extensions/' + item.id + '?version=1.0.0', undefined);
   expect($('#install-command').textContent).toContain("--version '1.0.0'");
   expect($('#release-version').value).toBe('1.0.0');
   expect($('#source-link').href).toBe(older.source_url);
   expect($('#version-help').textContent).toContain('different version');
   expect($('.release-history').textContent).toContain('Approved releases (2)');
-  window.history.replaceState(null, '', '/extensions/' + item.id);
+  window.history.replaceState(
+    null,
+    '',
+    '/extensions/example/extension-examples/extensions/greeting',
+  );
   window.dispatchEvent(new window.PopStateEvent('popstate'));
   await tick();
   expect($('#release-version').value).toBe('1.2.0');
+});
+
+test('slug deep links resolve the listing after catalog loading and preserve the version', async () => {
+  const path = '/extensions/example/extension-examples/extensions/Greeting%20%26%20tools';
+  const listing = { ...item, subdirectory: 'extensions/Greeting & tools' };
+  window.history.replaceState(null, '', path + '?version=1.0.0');
+  let resolveCatalog;
+  const catalog = new Promise((resolve) => {
+    resolveCatalog = resolve;
+  });
+  const request = setup(
+    vi.fn(async (url) => ({
+      ok: true,
+      json: async () => (url === '/api/extensions' ? catalog : listing),
+    })),
+  );
+  await tick();
+  expect(request).toHaveBeenCalledTimes(1);
+  resolveCatalog({ extensions: [listing] });
+  await tick();
+  expect($('#catalog-page').hidden).toBe(true);
+  expect($('#detail-page').hidden).toBe(false);
+  expect($('#detail h1').textContent).toBe(listing.repository);
+  expect(request).toHaveBeenCalledWith('/api/extensions/' + item.id + '?version=1.0.0', undefined);
+  expect(window.location.pathname + window.location.search).toBe(path + '?version=1.0.0');
+  expect($('link[rel="canonical"]').href).toBe('https://vis.blockether.com' + path);
+  expect($('#install-command').textContent).toContain("--version '1.0.0'");
+});
+
+test('unknown slug navigation shows a detail error rather than the catalog', async () => {
+  window.history.replaceState(null, '', '/extensions/example/not-listed');
+  const request = setup();
+  await tick();
+  expect(request).toHaveBeenCalledTimes(1);
+  expect($('#catalog-page').hidden).toBe(true);
+  expect($('#detail h1').textContent).toBe('Could not load this extension');
+  expect($('#detail p').textContent).toBe('Repository not listed.');
+  expect($('meta[name="robots"]').content).toBe('noindex, follow');
 });
 
 test('repository confirmation pins the selected release tag as well as its SHA', async () => {

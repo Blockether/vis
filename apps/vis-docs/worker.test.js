@@ -165,7 +165,11 @@ test('pending submissions and their refreshes cannot publish or replace a public
   ).toEqual([]);
   const id = await identity('https://github.com/example/extensions\nplugins/greeting');
   expect(
-    (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/' + id)).status,
+    (
+      await fixture.runtime.dispatchFetch(
+        'https://center.example.com/extensions/example/extensions/plugins/greeting',
+      )
+    ).status,
   ).toBe(404);
   for (const sql of moderationStatements('approve', pending.id))
     await fixture.db.prepare(sql).run();
@@ -181,7 +185,9 @@ test('pending submissions and their refreshes cannot publish or replace a public
     added,
   );
   const html = await (
-    await fixture.runtime.dispatchFetch('https://center.example.com/extensions/' + id)
+    await fixture.runtime.dispatchFetch(
+      'https://center.example.com/extensions/example/extensions/plugins/greeting',
+    )
   ).text();
   expect(html).toContain('vis-greeter');
   expect(html).toContain('id="install-command"');
@@ -209,7 +215,9 @@ test('SSR supports search, categories, sort, views and executable-free metadata'
     .run();
   await fixture.runtime.purgeCache();
   const detail = await (
-    await fixture.runtime.dispatchFetch('https://center.example.com/extensions/' + malicious.id)
+    await fixture.runtime.dispatchFetch(
+      'https://center.example.com/extensions/' + malicious.repository,
+    )
   ).text();
   expect(detail).not.toContain(malicious.description);
   expect(detail).toContain('&lt;/script&gt;');
@@ -406,8 +414,9 @@ test('live discovery includes only approved listings and shares the cached catal
     );
     expect(response.headers.get('cache-control')).toBe('public, max-age=60');
     const text = await response.text();
-    expect(text).toContain('/extensions/' + item.id);
-    expect(text).not.toContain(items[1].id);
+    expect(text).toContain('/extensions/' + item.repository);
+    expect(text).not.toContain(item.id);
+    expect(text).not.toContain('/extensions/' + items[1].repository);
     const head = await fixture.runtime.dispatchFetch('https://center.example.com' + path, {
       method: 'HEAD',
     });
@@ -422,6 +431,97 @@ test('live discovery includes only approved listings and shares the cached catal
   expect(missing.status).toBe(404);
   expect(missing.headers.get('x-robots-tag')).toBe('noindex');
 });
+test('extension links use readable repository slugs, including distinct project folders', async () => {
+  const base = JSON.parse(readFileSync('web/catalog.fixture.json', 'utf8'))[0];
+  const items = [
+    { ...base, repository: 'Example/GitHub-Tools' },
+    { ...base, id: 'b'.repeat(24), repository: 'another/github-tools' },
+    { ...base, id: 'c'.repeat(24), subdirectory: 'plugins/Greeting & tools' },
+    { ...base, id: 'd'.repeat(24), subdirectory: 'plugins/greeting & tools' },
+  ];
+  const paths = [
+    '/extensions/example/github-tools',
+    '/extensions/another/github-tools',
+    '/extensions/example/github-tools/plugins/Greeting%20%26%20tools',
+    '/extensions/example/github-tools/plugins/greeting%20%26%20tools',
+  ];
+  for (const item of items)
+    await fixture.db
+      .prepare('INSERT INTO extensions VALUES (?, ?, ?)')
+      .bind(item.id, JSON.stringify(item), item.added_at)
+      .run();
+  const catalog = new JSDOM(
+    await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/')).text(),
+  );
+  try {
+    expect(
+      [...catalog.window.document.querySelectorAll('.card-main')]
+        .map((link) => link.getAttribute('href'))
+        .sort(),
+    ).toEqual([...paths].sort());
+  } finally {
+    catalog.window.close();
+  }
+  for (const [index, path] of paths.entries()) {
+    const response = await fixture.runtime.dispatchFetch('https://center.example.com' + path);
+    expect(response.status).toBe(200);
+    const detail = new JSDOM(await response.text());
+    try {
+      const data = JSON.parse(detail.window.document.querySelector('#catalog-data').textContent);
+      expect(data.item.id).toBe(items[index].id);
+      expect(detail.window.document.querySelector('link[rel="canonical"]').href).toBe(
+        'https://vis.blockether.com' + path,
+      );
+    } finally {
+      detail.window.close();
+    }
+  }
+});
+
+test('published hash links redirect to the repository slug and preserve the selected version', async () => {
+  const pending = await (await post('/api/submissions', { revision: fixture.revision })).json();
+  for (const sql of moderationStatements('approve', pending.id))
+    await fixture.db.prepare(sql).run();
+  const id = await identity('https://github.com/example/extensions\nplugins/greeting');
+  const query = '?version=1.0.0&category=tools&q=greeting';
+  const path = '/extensions/example/extensions/plugins/greeting';
+  for (const method of ['GET', 'HEAD']) {
+    const redirect = await fixture.runtime.dispatchFetch(
+      'https://center.example.com/extensions/' + id + query,
+      { method, redirect: 'manual' },
+    );
+    expect(redirect.status).toBe(308);
+    expect(redirect.headers.get('location')).toBe(path + query);
+    expect(await redirect.text()).toBe('');
+    const response = await fixture.runtime.dispatchFetch(
+      'https://center.example.com' + path + query,
+      {
+        method,
+      },
+    );
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    if (method === 'HEAD') expect(html).toBe('');
+    else {
+      expect(html).toContain('action="' + path + '"');
+      expect(html).toContain('href="' + path + '?version=1.0.0"');
+      expect(html).toContain('--version &#39;1.0.0&#39;');
+    }
+  }
+  for (const suffix of ['?version=9.9.9', '/missing']) {
+    const missing = await fixture.runtime.dispatchFetch(
+      'https://center.example.com' + path + suffix,
+    );
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get('x-robots-tag')).toBe('noindex');
+  }
+  const api = await fixture.runtime.dispatchFetch(
+    'https://center.example.com/api/extensions/' + id,
+  );
+  expect(api.status).toBe(200);
+  expect((await api.json()).id).toBe(id);
+});
+
 test('every approved extension has a crawlable, server-rendered detail page', async () => {
   const items = JSON.parse(readFileSync('web/catalog.fixture.json', 'utf8'));
   for (const item of items)
@@ -437,7 +537,8 @@ test('every approved extension has a crawlable, server-rendered detail page', as
   );
   try {
     for (const item of items) {
-      const path = '/extensions/' + item.id,
+      const path =
+          '/extensions/' + item.repository + (item.subdirectory ? '/' + item.subdirectory : ''),
         canonical = 'https://vis.blockether.com' + path;
       expect(index).toContain('<loc>' + canonical + '</loc>');
       expect(

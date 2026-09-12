@@ -11,7 +11,7 @@ import {
   visibleItems,
 } from './render.js';
 export { installCommand } from './render.js';
-import { catalogMetadata } from './discovery.js';
+import { catalogMetadata, extensionPath } from './discovery.js';
 import { mountCommunity } from './community.js';
 import { loadTurnstile } from './turnstile.js';
 function updateMetadata(data = {}) {
@@ -98,22 +98,25 @@ export function mount(container, request = fetch, initial) {
   async function route(focus = false) {
     cleanupCommunity?.();
     cleanupCommunity = null;
-    const identity = window.location.pathname.match(/^\/extensions\/([0-9a-f]{24})$/)?.[1],
+    const path = window.location.pathname,
+      detail = path.startsWith('/extensions/') && path !== '/extensions/',
       revision = ++routeRevision;
-    $('#catalog-page').hidden = !!identity;
-    $('#detail-page').hidden = !identity;
-    $('.toc').innerHTML = tocHTML(!!identity);
+    $('#catalog-page').hidden = detail;
+    $('#detail-page').hidden = !detail;
+    $('.toc').innerHTML = tocHTML(detail);
     $('#back-to-catalog').href = filterURL(state);
-    if (!identity) {
+    if (!detail) {
       updateMetadata();
       return;
     }
     $('#detail').innerHTML = '<p>Loading extension…</p>';
     try {
+      const listing = items.find((item) => extensionPath(item) === path);
+      if (!listing) throw new Error('Repository not listed.');
       const version = new URLSearchParams(window.location.search).get('version');
       const item = await api(
         '/api/extensions/' +
-          identity +
+          listing.id +
           (version === null ? '' : '?version=' + encodeURIComponent(version)),
       );
       if (disposed || revision !== routeRevision) return;
@@ -407,8 +410,9 @@ export function mount(container, request = fetch, initial) {
   };
   document.addEventListener('keydown', keys);
   if (!initial) {
-    load();
-    route();
+    load().then(() => {
+      if (!disposed) route();
+    });
   } else if (initial.item) feedback(initial.item);
   return () => {
     disposed = true;

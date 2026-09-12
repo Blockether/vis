@@ -49,7 +49,9 @@ test('approved README is pinned and rendered on details, not duplicated through 
   expect(detail.readme).toContain('# Fixture README');
   expect(detail.readme_url).toContain(fixture.revision);
   const html = await (
-    await fixture.runtime.dispatchFetch('https://center.example.com/extensions/' + id)
+    await fixture.runtime.dispatchFetch(
+      'https://center.example.com/extensions/example/repository/plugins/greeting',
+    )
   ).text();
   expect(html).toContain('<h3>Fixture README</h3>');
   expect(html).toContain('id="feedback"');

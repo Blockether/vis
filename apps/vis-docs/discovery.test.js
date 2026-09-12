@@ -155,7 +155,9 @@ test('catalog SSR supplies item-specific metadata and never turns metadata into 
   try {
     const d = dom.window.document;
     expect(d.querySelector('meta[name="description"]').content).toBe(item.description);
-    expect(d.querySelector('link[rel="canonical"]').href).toBe(origin + '/extensions/' + item.id);
+    expect(d.querySelector('link[rel="canonical"]').href).toBe(
+      origin + '/extensions/example/github-tools',
+    );
     const schema = JSON.parse(d.querySelector('script[type="application/ld+json"]').textContent);
     expect(schema.description).toBe(item.description);
     expect(schema.publisher.url).toBe('https://blockether.com/');

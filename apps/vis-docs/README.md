@@ -2,7 +2,8 @@
 
 One Cloudflare Worker serves the public documentation and Extension Center on the same
 origin. `/` and `/*.html` are generated documentation assets; `/extensions/` and
-`/extensions/<id>` are Worker-rendered catalog pages, and `/api/*` is its API.
+`/extensions/<owner>/<repository>[/<project-folder>]` are Worker-rendered catalog pages,
+and `/api/*` is its API.
 JavaScript enhances filtering, navigation, copying commands and repository submission.
 There is no Vis gateway, Python web server or browser database credential.
 
@@ -125,6 +126,14 @@ review headings, search ordering and discovery metadata use that same namespace.
 Project folders distinguish multiple packages in a monorepo. The API's `name`
 remains the Python package identifier used by installation and release tags;
 `repository` and `owner` carry the inspected GitHub identity.
+
+Public detail URLs use the lowercase owner and repository, such as
+`/extensions/example/github-tools`. Monorepo listings append the project folder,
+for example `/extensions/example/extensions/plugins/greeting`. Folder names keep
+their case and each path segment is URL-encoded. Cards, release links and discovery
+indexes share these URLs. Previously shared hash URLs redirect to the readable
+address, preserving query parameters such as `?version=1.2.0`. Internal listing IDs
+and ID-based API routes remain unchanged.
 
 Only approved listings, releases and comments are public. Pending entries live in
 `submissions`, without an anonymous read API. A repository/folder pair identifies a

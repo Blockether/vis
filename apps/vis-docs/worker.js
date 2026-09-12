@@ -1,6 +1,6 @@
 import { renderPage } from './web/render.js';
 import { security } from './headers.js';
-import { sitemap, catalogText } from './web/discovery.js';
+import { sitemap, catalogText, extensionPath } from './web/discovery.js';
 import { inspectRepository, RequestError } from './github.js';
 import {
   discoverReleases,
@@ -55,7 +55,7 @@ async function protectedSource(request, env, path) {
 async function handle(request, env, ctx) {
   const url = new URL(request.url),
     path = url.pathname;
-  const page = path === '/extensions/' || /^\/extensions\/[0-9a-f]{24}$/.test(path);
+  const page = path.startsWith('/extensions/');
   if (['GET', 'HEAD'].includes(request.method)) {
     if (path === '/extensions')
       return new Response(null, {
@@ -66,9 +66,7 @@ async function handle(request, env, ctx) {
       const items = (await catalog(env, url.origin, ctx)).extensions;
       const xml = path.endsWith('.xml');
       return new Response(
-        xml
-          ? sitemap(['/extensions/', ...items.map((item) => '/extensions/' + item.id)])
-          : catalogText(items),
+        xml ? sitemap(['/extensions/', ...items.map(extensionPath)]) : catalogText(items),
         {
           headers: {
             ...security,
@@ -84,11 +82,16 @@ async function handle(request, env, ctx) {
       try {
         data.items = (await catalog(env, url.origin, ctx)).extensions;
         if (path !== '/extensions/') {
-          data.item = await extensionDetail(
-            env,
-            path.split('/').at(-1),
-            url.searchParams.get('version'),
+          const listing = data.items.find(
+            (item) => path === extensionPath(item) || path === '/extensions/' + item.id,
           );
+          if (listing && path !== extensionPath(listing))
+            return new Response(null, {
+              status: 308,
+              headers: { ...security, Location: extensionPath(listing) + url.search },
+            });
+          data.item =
+            listing && (await extensionDetail(env, listing.id, url.searchParams.get('version')));
           if (!data.item) {
             data.detailError = true;
             status = 404;
