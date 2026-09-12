@@ -409,6 +409,143 @@
                                 "the keyless provider authenticated with a credential of its own"))
                       (finally (.stop server 0) (delete-tree! dir))))))
 
+(defn- goal-update-body
+  [stream? status]
+  (let [code
+        (str "g = session['goal']\n"
+             "assert g['status'] == 'active', g\n"
+             "print(update_goal(g['id'], g['version'], '"
+             status
+             "', 'Native fixture verified the terminal condition.'))")
+
+        call
+        {:id "native-goal-update"
+         :type "function"
+         :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}]
+
+    (if stream?
+      (str (json-chunk (json/write-json-str {:index 0
+                                             :delta {:role "assistant"
+                                                     :tool_calls [(assoc call :index 0)]}
+                                             :finish_reason nil}))
+           (json-chunk "{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}")
+           "data: [DONE]\n\n")
+      (json/write-json-str {:id "stub"
+                            :object "chat.completion"
+                            :model "stub-model"
+                            :choices [{:index 0
+                                       :message {:role "assistant" :content nil :tool_calls [call]}
+                                       :finish_reason "tool_calls"}]
+                            :usage {:prompt_tokens 1 :completion_tokens 2 :total_tokens 3}}))))
+
+(defn- native-goal-case!
+  [{:keys [progress-count resolution budget status iterations]}]
+  (let [dir
+        (temp-dir "vis-native-goal-")
+
+        progress-count
+        (long progress-count)
+
+        original-stream
+        stream-body
+
+        original-whole
+        whole-body
+
+        calls
+        (atom 0)
+
+        respond
+        (fn [stream? reply]
+          (let [n (long (swap! calls inc))]
+            (if (and resolution (= n (inc progress-count)))
+              (goal-update-body stream? resolution)
+              ((if stream? original-stream original-whole)
+                (cond (<= n progress-count) (str "Native goal progress " n ".")
+                      resolution reply
+                      :else "")))))]
+
+    (try
+      (with-redefs [stream-body
+                    (fn [reply]
+                      (respond true reply))
+
+                    whole-body
+                    (fn [reply]
+                      (respond false reply))]
+
+        (let [{:keys [server asked port]} (start-stub-provider! "Native goal resolved.")]
+          (try
+            (overlay! dir port)
+            (let [database (io/file dir "sessions")
+                  {:keys [finished? exit output]}
+                  (run-binary dir
+                              [(.getAbsolutePath (require-binary))
+                               (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                               (.getAbsolutePath database) "--raw"
+                               (str "/goal --budget " budget " Verify native goal continuation")]
+                              180)
+                  requests @asked]
+
+              (expect finished? "Native goal continuation must finish without a process timeout")
+              (when-not (= "paused" status) (expect (= 0 exit) output))
+              (expect (= iterations (count requests)) output)
+              (expect (str/includes? (:body (first requests)) "3 consecutive goal continuations")
+                      "The linked image must include the current model-assessed blocker audit")
+              (when resolution
+                (expect (str/includes? output "Native goal resolved.") output)
+                (doseq [n (range 1 (inc progress-count))]
+                  (let [messages (get (json/read-json (:body (nth requests n))) "messages")
+                        previous (filter #(= "assistant" (get % "role")) messages)]
+
+                    (expect (str/includes? (pr-str previous) (str "Native goal progress " n "."))
+                            "Each delivered progress reply must survive native provider replay")
+                    (expect (str/includes? (str messages) "<goal_continuation>"))
+                    (expect (not (str/includes? (str messages) "(final-answer-validation)"))))))
+              ;; Reopen the native process's isolated disk store, not a JVM substitute turn.
+              (let [store (ps/db-create-connection! (.getAbsolutePath database))]
+                (try
+                  (let [sessions (ps/db-list-sessions store :all)
+                        sid (:id (first sessions))
+                        goal (ps/db-get-session-goal store sid)
+                        turns (ps/db-list-session-turns store sid)
+                        saved (vec (mapcat #(ps/db-list-session-turn-iterations store (:id %))
+                                           turns))
+                        progress (filterv :assistant-prose saved)
+                        forms (mapcat :forms saved)]
+
+                    (expect (= 1 (count sessions)))
+                    (expect (= 1 (count turns)) "Goal replies continue the same native user turn")
+                    (expect (= status (get goal "status")))
+                    (expect (= iterations (get goal "iterations_used")))
+                    (expect (= budget (get goal "iteration_budget")))
+                    (expect (= (mapv #(str "Native goal progress " % ".")
+                                     (range 1 (inc progress-count)))
+                               (mapv :assistant-prose progress)))
+                    (expect (every? #(empty? (:forms %)) progress)
+                            "Progress replies must not persist fake validation-error forms")
+                    (expect (every? #(nil? (:error %)) forms) (pr-str forms))
+                    (when resolution
+                      (expect (= 1 (count forms)))
+                      (expect (str/includes? (:stdout (first forms)) status)
+                              "The terminal update must execute through the native Python host")))
+                  (finally (ps/db-dispose-connection! store)))))
+            (finally (.stop ^HttpServer server 0)))))
+      (finally (delete-tree! dir)))))
+
+(defdescribe
+  native-goal-continuation-test
+  (it "retains repeated progress beyond the empty-reply limit before explicit completion"
+      (native-goal-case!
+        {:progress-count 4 :resolution "complete" :budget 10 :status "complete" :iterations 6}))
+  (it "stops after an explicit blocker without losing the preceding progress replies"
+      (native-goal-case!
+        {:progress-count 3 :resolution "blocked" :budget 10 :status "blocked" :iterations 5}))
+  (it "retains the last progress reply but makes no request beyond the iteration budget"
+      (native-goal-case! {:progress-count 1 :budget 1 :status "budget_limited" :iterations 1}))
+  (it "still pauses an unresolved goal after genuinely empty replies"
+      (native-goal-case! {:progress-count 0 :budget 8 :status "paused" :iterations 3})))
+
 (defdescribe native-linked-report-delivery-test
              ;; #193: exercise CommonMark source spans and secure directory handles in the image.
              (it "snapshots a local report in a complete native agent turn"
