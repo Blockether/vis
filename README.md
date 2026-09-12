@@ -112,6 +112,19 @@ tracks. See [Runtime distributions](resources/vis-docs/distributions.md).
 A non-loopback `--host` requires a bearer token. `--pair` prints a QR code containing
 the address and token. See [Remote access and the Companion app](resources/vis-docs/gateway.md).
 
+## Desktop app (macOS / Linux)
+
+Download the latest stable desktop app from GitHub Releases. Choose the universal macOS `.dmg` or the Linux `.AppImage` for your architecture.
+
+<p>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
+</p>
+
+For automatic download and launch, run `vis-agent desktop --track release`.
+See [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app) for details.
+
 ## Companion app (iPhone / Android)
 
 Install the app and scan the pairing QR code to access the same sessions as the terminal UI. Both stores offer public testing without an invitation.

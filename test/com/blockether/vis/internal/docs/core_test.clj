@@ -322,30 +322,36 @@
 (defdescribe
   portable-store-buttons-test
   ;; GitHub does not load the docs stylesheet: linked images must carry the labels.
-  (it "keeps both store buttons readable without the documentation stylesheet"
-      (doseq [[source prefix]
-              [[(io/file "README.md") "resources/vis-docs/"] [(io/resource "vis-docs/index.md") ""]]
+  (it
+    "keeps mobile and latest-release desktop buttons readable without the documentation stylesheet"
+    (doseq [[source prefix]
+            [[(io/file "README.md") "resources/vis-docs/"] [(io/resource "vis-docs/index.md") ""]]
 
-              [name url label]
-              [["testflight" "https://testflight.apple.com/join/4anYT4Wk"
-                "TestFlight for iOS and iPadOS"]
-               ["google-play" "https://play.google.com/apps/testing/com.blockether.viscompanion"
-                "Google Play beta for Android"]]]
+            [name url label]
+            [["testflight" "https://testflight.apple.com/join/4anYT4Wk"
+              "TestFlight for iOS and iPadOS"]
+             ["google-play" "https://play.google.com/apps/testing/com.blockether.viscompanion"
+              "Google Play beta for Android"]
+             ["macos" "https://github.com/Blockether/vis/releases/latest"
+              "Latest desktop release for macOS"]
+             ["linux" "https://github.com/Blockether/vis/releases/latest"
+              "Latest desktop release for Linux"]]]
 
-        (let [md
-              (slurp source)
+      (let [md
+            (slurp source)
 
-              body
-              (some (fn [[_ attrs contents]]
-                      (when (str/includes? attrs (str "href=\"" url "\"")) contents))
-                    (re-seq #"(?s)<a\b([^>]*)>(.*?)</a>" md))]
+            body
+            (some (fn [[_ attrs contents]]
+                    (when (and (str/includes? attrs (str "href=\"" url "\""))
+                               (str/includes? contents (str "assets/install-" name ".png")))
+                      contents))
+                  (re-seq #"(?s)<a\b([^>]*)>(.*?)</a>" md))]
 
-          (expect (str/includes? (or body "")
-                                 (str "src=\"" prefix "assets/install-" name ".png\"")))
-          (expect (str/includes? (or body "") (str "alt=\"" label "\"")))
-          (expect (str/includes? (or body "") "width=\"224\" height=\"56\"")))))
-  (it "serves and exports both image buttons"
-      (doseq [name ["testflight" "google-play"]]
+        (expect (str/includes? (or body "") (str "src=\"" prefix "assets/install-" name ".png\"")))
+        (expect (str/includes? (or body "") (str "alt=\"" label "\"")))
+        (expect (str/includes? (or body "") "width=\"224\" height=\"56\"")))))
+  (it "serves and exports all mobile and desktop image buttons"
+      (doseq [name ["testflight" "google-play" "macos" "linux"]]
         (let [rel (str "install-" name ".png")
               response (docs/handle {:uri (str "/docs/assets/" rel)})]
 

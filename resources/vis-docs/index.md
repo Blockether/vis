@@ -64,13 +64,25 @@ On macOS or Linux, run:
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
+Download the latest stable desktop app from GitHub Releases. Choose the universal
+macOS `.dmg` or the Linux `.AppImage` for your architecture.
+
+<div class="store-links" aria-label="Download the desktop app">
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
+</div>
+
+For automatic download and launch, run `vis-agent desktop --track release`.
+See [Desktop setup](distributions.md#open-the-desktop-app) for details.
+
 <div class="store-links" aria-label="Install the Companion app">
 <a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
 </div>
 
-Public beta apps. Connect them to your Vis gateway: [pairing instructions](gateway.md).
+The mobile apps are public betas. Connect desktop or mobile apps to your Vis gateway: [pairing instructions](gateway.md).
 
 You can [read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent)
 before running it. It installs the stable native engine, bundled Python and terminal

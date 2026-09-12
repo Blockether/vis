@@ -390,6 +390,8 @@
    "vis-docs/assets/blockether.png" "assets/blockether.png"
    "vis-docs/assets/install-testflight.png" "assets/install-testflight.png"
    "vis-docs/assets/install-google-play.png" "assets/install-google-play.png"
+   "vis-docs/assets/install-macos.png" "assets/install-macos.png"
+   "vis-docs/assets/install-linux.png" "assets/install-linux.png"
    "vis-docs/assets/screenshots/ask.png" "assets/screenshots/ask.png"
    "vis-docs/assets/screenshots/live-running.png" "assets/screenshots/live-running.png"
    "vis-docs/assets/screenshots/live-stop.png" "assets/screenshots/live-stop.png"
