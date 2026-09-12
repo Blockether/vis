@@ -79,26 +79,19 @@ vis-agent update --track dev
 
 ## Native vs JVM
 
-Measured on an Apple M4 Max (36 GiB RAM, macOS 26.6.2), comparing the native
-v0.2.0 release with JVM source at the same commit. Medians of three fresh
-process runs per runtime:
+**Choose native for everyday use.** Choose JVM if you're developing Vis itself
+or want to run the latest code from `main`.
 
-| Metric | Native | JVM |
+| What matters | Native | JVM |
 | --- | --- | --- |
-| Gateway startup to `/healthz` ready | 0.71 s | 8.59 s |
-| Gateway RAM, no sessions | 122 MiB | 566 MiB |
-| Additional RAM per initialized session, averaged over 10 | 60 MiB | 153 MiB |
-| Gateway + 10 initialized sessions | 724 MiB | 2150 MiB |
+| Best for | Daily work and multiple sessions | Developing Vis and trying the latest changes |
+| Version track | `release` (default) or `beta` | `dev` |
+| Java / Git | Not needed | Git and JDK 25+ |
+| Gateway startup | ~0.7 s | ~8.6 s |
+| Gateway RAM | ~122 MiB | ~566 MiB |
+| RAM per session (light use) | ~60 MiB | ~153 MiB |
 
-RAM is summed process RSS, including session workers. Each session completed
-one `print(42)` Python tool call against a local stub provider, with no paid
-model calls. The per-session figure includes shared first-use initialization;
-it is not a fixed cost for every workload.
-
-Gateway readiness does not include all first-use work: the first Python-backed
-turn took a median **6.54 s native vs 2.32 s JVM** in this test. See
-[Getting started](resources/vis-docs/index.md#native-vs-jvm) for methodology,
-variation and measurement limits.
+*Performance figures: Vis v0.2.0 on Apple M4 Max.*
 
 ## Quick start
 

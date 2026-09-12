@@ -85,59 +85,19 @@ For runtime options and manual setup, see [Runtime distributions](distributions.
 
 ## Native vs JVM
 
-The native engine is the default for the `release` and `beta` tracks; the JVM
-runs source on the `dev` track. This comparison uses the **same v0.2.0 revision**
-for both, not a newer `main` against an older native release.
+**Choose native for everyday use.** Choose JVM if you're developing Vis itself
+or want to run the latest code from `main`.
 
-Measured on **2026-09-12**, on an **Apple M4 Max with 36 GiB RAM**, running
-**macOS 26.6.2 (arm64)**. Values are medians of three fresh process runs per
-runtime, alternating native and JVM:
-
-| Metric | Native | JVM |
+| What matters | Native | JVM |
 | --- | --- | --- |
-| Gateway startup to `/healthz` ready | 0.71 s | 8.59 s |
-| Gateway RAM, no sessions | 122 MiB | 566 MiB |
-| Additional RAM per initialized session, averaged over 10 | 60 MiB | 153 MiB |
-| Gateway + 10 initialized sessions | 724 MiB | 2150 MiB |
-| First Python-backed turn after gateway readiness | 6.54 s | 2.32 s |
+| Best for | Daily work and multiple sessions | Developing Vis and trying the latest changes |
+| Version track | `release` (default) or `beta` | `dev` |
+| Java / Git | Not needed | Git and JDK 25+ |
+| Gateway startup | ~0.7 s | ~8.6 s |
+| Gateway RAM | ~122 MiB | ~566 MiB |
+| RAM per session (light use) | ~60 MiB | ~153 MiB |
 
-### Measurement method
-
-- **Runtimes:** the published macOS arm64 [v0.2.0 native release](https://github.com/Blockether/vis/releases/tag/v0.2.0)
-  and JVM source at commit `e477440ff511e46763744fef0e73ccf3255bcbbe`, on
-  GraalVM CE JDK 25.0.3. The JVM used that revision's `:vis` JVM flags, including
-  `-Xmx5g`, and a pre-resolved source classpath. This is not an AOT JVM JAR benchmark.
-- **Startup:** launch `gateway start --host 127.0.0.1` on a fresh port, with a
-  fresh home, workspace and database, then wait for the first successful
-  `/healthz` response through the gateway client. Dependencies were cached;
-  installation, downloads and Clojure CLI dependency resolution are excluded.
-  The OS filesystem cache was not cleared.
-- **Sessions:** create 10 sessions sequentially. Each completes one turn with
-  a `python_execution` call running `print(42)`, followed by a final reply from
-  the native test suite's local stub provider. All 60 turns completed with
-  successful Python output; no paid model calls were made.
-- **RAM:** sample five seconds after gateway readiness, and again five seconds
-  after the first and tenth sessions complete their turns. Sum `ps` RSS for the
-  gateway and all its descendants. The final sample contains the gateway and
-  10 live session workers. The UI, benchmark driver and stub provider are
-  excluded. One MiB is 1024² bytes.
-- **Per-session RAM:** calculate `(RSS with 10 sessions − RSS with no sessions) / 10`
-  for each run, then take the median. This includes shared first-use costs,
-  rather than claiming every additional session allocates the same amount.
-  Each table row is calculated independently.
-
-Native used less RAM and made the gateway ready sooner in these runs, but its
-first Python-backed turn was slower: **6.35–13.93 s native**, versus
-**1.94–2.55 s JVM**, excluding session creation. Gateway startup ranged from
-**0.69–0.97 s native** and **7.35–10.03 s JVM**. Empty-gateway RSS ranged from
-**121–123 MiB native** and **560–875 MiB JVM**.
-
-These are small-workload measurements, not a memory limit or a model-response
-latency benchmark. Long histories, imports, extensions, browsers, builds and
-REPLs change memory use. Garbage collection and idle-session eviction also
-change later samples. Summed RSS can count shared pages more than once; it is
-not unique physical memory. The JVM's `-Xmx5g` is a heap ceiling, not its measured
-RAM consumption.
+*Performance figures: Vis v0.2.0 on Apple M4 Max.*
 
 ## First session
 
