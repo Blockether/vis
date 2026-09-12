@@ -132,6 +132,12 @@ The [Python SDK](https://pypi.org/project/vis-agent/) lets you run and inspect
 sessions from your own programs. Vis is also available as a
 [Clojure library](https://clojars.org/com.blockether/vis).
 
+## Add your own tools and checks
+
+Follow [Extending Vis](resources/vis-docs/extending.md) to add a tool for your workflow.
+For a working example of an automatic check, see
+[Check code complexity after edits](resources/vis-docs/extension-design.md#check-code-complexity-after-edits).
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
