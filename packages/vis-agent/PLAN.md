@@ -313,3 +313,33 @@ Plan state: complete. SDK 0.1.69 is published on PyPI; Spel uses the shared inte
 - Spel: 60 Python cases pass against the installed PyPI SDK (two opt-in native/browser cases skipped locally); its SDK module matches the canonical source byte-for-byte. The catalog also passes through the real trusted worker. Python formatting/lint and make lint pass. Local make test was not run because its global daemon cleanup could disrupt other sessions. [Extension CI](https://github.com/Blockether/spel/actions/runs/34613154093) passes on Python 3.11 and 3.14, including native DOM and external CDP isolation. [Full Spel CI](https://github.com/Blockether/spel/actions/runs/34613259215), including the consumer commit, passes on Linux, macOS and Windows.
 - [SDK publication](https://github.com/Blockether/vis/actions/runs/34611278514): all 13 jobs pass, including cross-platform Python and actual HTTP/stdio engine checks. [vis-agent 0.1.69](https://pypi.org/project/vis-agent/0.1.69/) has a public wheel and sdist. The publisher verifies the exact main commit and VIS_VERSION while retaining protected PyPI approval and artifact checks. No product tag, deployment or service restart was performed.
 - Pushed implementation commits: Vis `0d4bb8a66bea0eba8dd1470806fb46f6368d510f` and Spel `14a334a1191112dbb24c6b1f40093d4402bf6ff9`.
+
+## 12. Execute the SDK guides
+
+- Rationale: compiling examples and mocking HTTP cannot establish that the published workflows work.
+- Data: `tests/test_sdk_guide.py`, the existing real-engine fixture, and the four SDK/gateway/native guides in `resources/vis-docs/`.
+- Acceptance criteria: execute the Python and Java examples against isolated native HTTP/stdio engines; separately complete bounded real-provider requests; verify launcher and state-isolation instructions without restarting a shared gateway.
+- Unknowns: resolved for source-based workflows. Published JVM dependency closure and the embedded module-runner crash are separate release-owned blockers below.
+
+## 13. Make a local agent the starting point
+
+- Rationale: a project-local task should not require choosing a transport or writing a client wrapper.
+- Data: `engine/_local.py`, `engine/_client.py`, and their lifecycle tests.
+- Acceptance criteria: `Agent(project=".")` owns one local engine and conversation; follow-up requests reuse it; context exit closes the owned process; explicit gateway clients retain their existing ownership and API. Cover failures, timeouts, project resolution and native execution.
+- Unknowns: none in the intended local-only scope; remote convenience is not part of this change.
+
+## 14. Organize, verify and publish the guides
+
+- Rationale: explain the first useful task before connection choices, reference details and service operations.
+- Data: Python SDK, JVM SDK, gateway service and native-image pages, navigation, executable examples and package README.
+- Acceptance criteria: independent runnable quickstarts; accurate setup and ownership; visible unreleased API requirements; passing affected SDK, native-boundary, Java, docs build/link, formatting and lint checks; a reviewed scoped commit and push.
+- Unknowns: Agent is not in PyPI 0.2.2; the guide explicitly installs the source SDK. Linux systemd activation is not verified on this macOS host and no shared service may be restarted.
+
+Plan state: phases 12–14 implementation and required local verification complete. Release publication and Linux service activation remain outside this task. Root PLAN.md remains out of scope.
+
+- The literal Python gateway/local examples, progress function and Java/Clojure examples pass against real native HTTP/stdio engines with a deterministic model. The default Agent also completes a real provider request and a Python-tool/progress request; remote Python, Java and Clojure examples pass against the configured live provider after moving fixture credentials and gateway state outside the inspected project.
+- The native staging helper produced a complete bundle; its launcher reported a version with an unusable JAVA_CMD, and its Python tool completed through stdio. The pinned GraalVM selection and `clojure -X:deps prep` commands ran successfully.
+- Corrected VIS_HOME isolation claims, Java's null success status, cross-example file dependencies and task ordering. Added lifecycle and hierarchy regressions. The new API is a local-only owned Agent; no remote lifecycle adapter or protocol was added.
+- Separate release boundaries: published com.blockether:vis:0.2.2 resolves in Maven but fails to load vis-python-runtime. `VIS_TEST_PUBLISHED_JVM=0.2.2` retains a strict optional reproduction; the working JVM guide uses a prepared checkout. The build owner repaired Git dependency and SDK source packaging in `0ea20403a` and reported both Java/Clojure recipes passing with `VIS_TEST_JVM_JAR` replacing only the Vis JAR in the published dependency classpath. This candidate proof does not repair the public artifact. The embedded module-runner pytest crash was also handed to the release owner; neither published boundary is claimed fixed by these docs/SDK edits.
+- All 11 SDK verification gates pass: 647 source cases (23 opt-in skips), 664 installed-wheel cases (6 skips) with real native HTTP/stdio engines, direct/sdist wheel parity, contract contents and strict metadata. Nine candidate-classpath validation cases pass. SDK formatting and lint pass.
+- The 60 Clojure docs tests and reflection/lint pass; 161 generated-site tests and ESLint pass. Package README links use verified HTTP-200 documentation URLs. No systemd unit was enabled, shared gateway restarted, runtime published or release tagged.

@@ -407,11 +407,11 @@ update the client or gateway to a compatible version.
 
 ### Python SDK
 
-Follow the [Python SDK](python-sdk.md) guide to install the package, connect to a
-gateway and wrap an agent in your application. `GatewayClient` connects by URL
-and token; `LocalEngine` owns a private subprocess. For JVM applications, see the
-[Java and Clojure SDK](jvm-sdk.md). [Running a gateway](gateway-service.md) covers
-installation, service supervision and secure remote connections.
+Start with the [Python SDK](python-sdk.md) to run a task in your project with
+`Agent(project=".")`. Follow-up requests reuse the conversation; `GatewayClient`
+connects to shared or remote sessions. For JVM applications, see the
+[Java and Clojure SDK](jvm-sdk.md). Then learn to
+[run a shared gateway](gateway-service.md) or [build a native runtime](jvm-native-image.md).
 
 ### Resource limits
 
@@ -444,9 +444,10 @@ A value `<= 0` disables an eviction threshold.
 
 ### SDKs
 
-- [Python SDK](python-sdk.md) — install the client, wrap an agent and follow progress.
+- [Python SDK](python-sdk.md) — run a local agent, continue a conversation or connect remotely.
 - [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
 - [Running a gateway](gateway-service.md) — install and operate a shared agent service.
+- [Building the native binary](jvm-native-image.md) — build, test and package your own runtime.
 
 ### Extensions
 
@@ -470,4 +471,3 @@ A value `<= 0` disables an eviction threshold.
 
 - [Process jail and network policy](jail.md) — rules for child processes.
 - [Runtime distributions](distributions.md) — installation methods and updates.
-- [Building the native binary](jvm-native-image.md) — GraalVM build, metadata and TLS proxies.

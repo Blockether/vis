@@ -52,6 +52,30 @@ An automatically started gateway can exit when it has no clients or active
 work. Explicit `gateway start` is different: it stays running without clients,
 which is the mode to use under a supervisor.
 
+## Connect from another machine
+
+For a remote client, use a trusted VPN, an SSH tunnel or HTTPS with a trusted
+certificate. Do not send bearer tokens over plain HTTP on an untrusted network.
+Keep the gateway bound to loopback when a tunnel or reverse proxy provides the
+remote entry point.
+
+For example, forward a local port to a gateway on your server:
+
+```bash
+ssh -N -L 7891:127.0.0.1:7890 visgw@gateway.example.com
+```
+
+Keep that tunnel open and point the SDK at `http://127.0.0.1:7891`. Authentication
+is still required. For HTTPS, use an origin such as `https://gateway.example.com`
+with no path prefix if you use the Python SDK. Your proxy must forward
+authorization headers and let server-sent events stream without buffering or
+short idle timeouts.
+
+Supply the token through your application's secret configuration. Pairing links
+and QR codes also contain connection credentials: generate or view them only in
+a private terminal, and do not use them as public examples. See
+[remote app connections](index.md#pair-a-phone) for pairing the Vis app.
+
 ## Keep it running on Linux
 
 A service manager should own a **foreground** gateway, not a Python program
@@ -78,7 +102,6 @@ User=visgw
 Group=visgw
 WorkingDirectory=/srv/vis-project
 Environment=HOME=/home/visgw
-Environment=VIS_HOME=/home/visgw/.vis
 Environment=PATH=/home/visgw/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/visgw/.local/bin/vis-agent gateway start --host 127.0.0.1 --port 7890 --require-token
 Restart=on-failure
@@ -110,30 +133,6 @@ cannot run Python tools. A custom launcher must preserve the bundle layout and
 runtime environment. Prefer the supplied wrapper unless you maintain and test
 that setup yourself.
 
-## Connect from another machine
-
-For a remote client, use a trusted VPN, an SSH tunnel or HTTPS with a trusted
-certificate. Do not send bearer tokens over plain HTTP on an untrusted network.
-Keep the gateway bound to loopback when a tunnel or reverse proxy provides the
-remote entry point.
-
-For example, forward a local port to a gateway on your server:
-
-```bash
-ssh -N -L 7891:127.0.0.1:7890 visgw@gateway.example.com
-```
-
-Keep that tunnel open and point the SDK at `http://127.0.0.1:7891`. Authentication
-is still required. For HTTPS, use an origin such as `https://gateway.example.com`
-with no path prefix if you use the Python SDK. Your proxy must forward
-authorization headers and let server-sent events stream without buffering or
-short idle timeouts.
-
-Supply the token through your application's secret configuration. Pairing links
-and QR codes also contain connection credentials: generate or view them only in
-a private terminal, and do not use them as public examples. See
-[remote app connections](index.md#pair-a-phone) for pairing the Vis app.
-
 ## Operate a small server
 
 Use prebuilt native releases on a small VPS; compile native images on a larger
@@ -142,10 +141,11 @@ not eliminate the memory used by Python workers, extensions or commands the
 agent starts. Begin with modest concurrency and monitor memory under your real
 workload; see [resource limits](index.md#resource-limits).
 
-Keep the state directory persistent across service restarts and protect its
-backups: it contains conversation history and configuration, including private
-data. Leave room for databases, attachments, logs, runtime bundles and project
-builds. Do not place persistent state inside a release directory you will replace.
+The service account's `~/.vis` holds persistent configuration and history.
+Protect its backups and leave room for databases, attachments, logs and project
+builds. Do not store it in a replaceable release directory. `VIS_HOME` controls
+launcher installation state; it does not relocate all engine configuration.
+Use a separate OS account for a separate service's home and credentials.
 
 Before an update, review the [update behavior](distributions.md) and check for
 active work. `vis-agent update --keep-gateway` leaves the running gateway alone;

@@ -1,9 +1,11 @@
-"""Explicit Vis engine clients, lifecycle records, streams and transport errors.
+"""Vis agents, engine clients, lifecycle records, streams and transport errors.
 
-``GatewayClient`` connects to an existing gateway; ``LocalEngine`` owns a local
-stdio process. Importing either starts nothing and never binds an extension host.
+``Agent`` owns a project-local conversation. ``GatewayClient`` connects to an
+existing gateway; ``LocalEngine`` owns a local stdio process. Importing these
+starts nothing and never binds an extension host.
 """
 
+from ._agent import Agent
 from ._client import (
     Event,
     Events,
@@ -33,6 +35,7 @@ from ._council import (
 from ._local import LocalEngine
 
 __all__ = [
+    "Agent",
     "Council",
     "CouncilEntry",
     "CouncilKind",

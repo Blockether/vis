@@ -55,15 +55,15 @@ work inside it.
 ## Package and run your build
 
 Stage the complete engine bundle. This command **replaces**
-`target/release-bundle` and writes the named archive; do not keep unrelated files
-in that staging directory. Choose a fresh `VIS_HOME` for this build test so an
-installed `dev` track cannot make the launcher select a JVM instead of your
-native image. The state directory below is separate from the replaceable bundle:
+`target/release-bundle` and writes the named archive; keep unrelated files out of
+that staging directory. Create a fresh test home outside your project:
 
 ```bash
 bin/stage-release-bundle target/vis target/vis-agent-local.tar.gz
-export VIS_HOME="$PWD/target/local-vis-home"
-target/release-bundle/vis-agent --version
+export VIS_TEST_HOME="$(mktemp -d)"
+export VIS_HOME="$VIS_TEST_HOME/.vis"
+HOME="$VIS_TEST_HOME" target/release-bundle/vis-agent \
+  -Duser.home="$VIS_TEST_HOME" --version
 ```
 
 The staging helper renames `target/vis` to `vis-agent-native` and adds the
@@ -72,23 +72,28 @@ files together. The terminal client is a separate release component; this
 engine bundle is enough for gateway and SDK stdio use, not a complete TUI
 installation.
 
-To run the staged engine as a gateway, prepare your provider configuration and
-credentials for this test environment, and choose an unused port. Keep the
-same `VIS_HOME` setting:
+`VIS_HOME` selects launcher installation state, so an installed `dev` track cannot
+silently select the JVM. It does **not** relocate all engine state. The explicit
+`-Duser.home` selects the engine's home; `HOME` matches it for child processes.
+
+This test home is temporary. Prepare its provider configuration and credentials
+before starting a gateway; use a persistent service-account home for deployment.
+Choose an unused port and run:
 
 ```bash
-unset VIS_GATEWAY_URL VIS_GATEWAY_TOKEN
-target/release-bundle/vis-agent gateway start \
+unset VIS_GATEWAY_URL VIS_GATEWAY_TOKEN VIS_DB_PATH
+HOME="$VIS_TEST_HOME" target/release-bundle/vis-agent \
+  -Duser.home="$VIS_TEST_HOME" gateway start \
   --host 127.0.0.1 --port 7890 --require-token
 ```
 
-This starts a foreground service with persistent state under the chosen
-`VIS_HOME`. It can still use your project files and inherited environment;
-a separate state directory is not a complete sandbox. Do not run it over an
-existing shared gateway.
-For an owned Python job, instead pass the absolute path to
-`target/release-bundle/vis-agent` as `LocalEngine(executable=...)`. That mode uses
-a temporary session database; see the [Python SDK](python-sdk.md).
+Its default state is under `$VIS_TEST_HOME/.vis`. Separate state is not a security
+sandbox: the process can still use allowed project files and inherited environment
+variables. Do not replace or stop a shared gateway for this test.
+
+For an owned Python job, pass the absolute staged launcher path as
+`Agent(executable=...)` or `LocalEngine(executable=...)`. These use a temporary
+session database; see the [Python SDK](python-sdk.md).
 
 A separate Java application can connect to this gateway without itself being
 compiled to native code. If you embed Vis in a custom Java image, you also own

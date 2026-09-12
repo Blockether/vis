@@ -44,7 +44,7 @@
    :section "Guides"}
   {:pages
    [{:blurb
-     "Install the Python SDK, run your first task, and choose a shared gateway or a private agent process."
+     "Run a task in your project with Agent, continue the conversation or connect to a shared Vis gateway."
      :page "python-sdk"
      :title "Python SDK"}
     {:blurb
@@ -54,7 +54,11 @@
     {:blurb
      "Install and secure a shared Vis gateway, connect your clients and keep it running as a Linux service."
      :page "gateway-service"
-     :title "Running a gateway"}]
+     :title "Running a gateway"}
+    {:blurb
+     "Build your own native Vis engine with GraalVM, test it and package a complete runtime for deployment."
+     :page "jvm-native-image"
+     :title "Building the native binary"}]
    :section "SDKs"}
   {:pages
    [{:blurb
@@ -110,11 +114,7 @@
     {:blurb
      "Install or update Vis, choose a release track and compare native releases with JVM source builds."
      :page "distributions"
-     :title "Runtime distributions"}
-    {:blurb
-     "Build your own native Vis binary with GraalVM, check its metadata and configure a TLS proxy."
-     :page "jvm-native-image"
-     :title "Building the native binary"}]
+     :title "Runtime distributions"}]
    :section "Reference"}]
  :site {:extension-center {:section "Community" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"

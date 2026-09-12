@@ -151,11 +151,11 @@ covers requirements, startup time and memory use.
 
 ## Use Vis from your code
 
-Use the [Python SDK](resources/vis-docs/python-sdk.md) to connect to a gateway or
-wrap a private agent process. The [Java and Clojure guide](resources/vis-docs/jvm-sdk.md)
-covers JVM applications. Start with [Running a gateway](resources/vis-docs/gateway-service.md)
-for a shared service, or [build a native runtime](resources/vis-docs/jvm-native-image.md)
-for your own deployment.
+Start with the [Python SDK](resources/vis-docs/python-sdk.md) to run a task using
+`Agent(project=".")`, continue the conversation or connect to a shared gateway.
+For JVM applications, follow the [Java and Clojure guide](resources/vis-docs/jvm-sdk.md).
+Then [run a shared gateway](resources/vis-docs/gateway-service.md) or
+[build and package a native runtime](resources/vis-docs/jvm-native-image.md).
 
 ## Add your own tools and checks
 

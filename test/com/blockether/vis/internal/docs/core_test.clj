@@ -309,7 +309,7 @@
                          "VIS_GATEWAY_URL" "VIS_GATEWAY_TOKEN" "HTTP 401" "HTTP 426"
                          "VIS_GATEWAY_MAX_CONCURRENT_TURNS" "VIS_GATEWAY_EVENT_RING_MAX"
                          "VIS_ENV_CACHE_MAX" "VIS_ENV_MAX_TURNS_PER_CTX" "VIS_ENV_RSS_BUDGET_MB"
-                         "GatewayClient" "LocalEngine" "does not encrypt HTTP"
+                         "GatewayClient" "Agent(project=" "does not encrypt HTTP"
                          "Stopping a busy gateway interrupts"]]
           (expect (str/includes? md content) content))
         (expect (< (str/index-of md "## First session") (str/index-of md "## Gateway reference")))
