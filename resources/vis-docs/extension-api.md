@@ -369,12 +369,27 @@ or a plain string, which counts as an ok title. `body` is Markdown.
 vis.OpHook(ops, fn, phase="before")
 ```
 
-`ops` names sandbox tools such as `"patch"`, `"shell"` or `"python_execution"`.
+`ops` names operations such as `"patch"`, `"shell"` or `"python_execution"`.
 With `phase="before"`, `fn(call)` receives `{"op", "args"}` and returns
 `vis.block(reason)` to refuse the call or `None` to allow it; the model sees the
 reason as a tool failure. With `phase="after"`, `fn` receives `{"op", "args",
-"result"}` and its return value is ignored. An error inside a tool hook allows
-the call.
+"result"}` and its return value is ignored. Ordinary tool-hook errors are
+logged and do not block the operation. An after hook cannot undo its effects.
+
+For `"python_execution"`, `args` is `[{"code": <Python source>}]`. The before
+hook runs before the block. The after hook runs when evaluation returns;
+`result` is the execution result map, including captured `stdout`, evaluated
+`forms` and any `error`. It also runs when a normal Python exception ends the
+block, since earlier statements may already have written files. If a before
+hook refuses the block, the after hook receives `result=None`.
+
+This is a block boundary, not a hook on each `open()` or `Path.write_text()`.
+It does not continuously observe background work or guarantee a callback after
+a process is killed. Register for both `"patch"` and `"python_execution"` when
+you want post-edit checks to cover host patches and plain Python writes. Use
+`vis.state` and a `ctx` contribution to make findings available on the next
+model request, not the callback's return value. See the complete
+[complexity-check example](extension-design.md#check-code-complexity-after-edits).
 
 `ops` also names the draft lifecycle: `"draft/create"`, `"draft/approve"` and
 `"draft/discard"` run for the sandbox's `draft_create()`, `draft_approve()` and

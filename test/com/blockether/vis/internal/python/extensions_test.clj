@@ -1520,6 +1520,206 @@ vis.register(vis.Extension(
                        (fn [_]
                          :ran)))))))))
 
+(def ^:private execution-hook-py
+  "import blockether.vis.extension as vis
+
+
+def before(call):
+    vis.state[\"before\"] = call
+    if \"blocked_write\" in call[\"args\"][0][\"code\"]:
+        return vis.block(\"Use the reviewed write operation.\")
+    return None
+
+
+def after(call):
+    vis.state[\"after\"] = call
+    vis.state[\"completed\"] = vis.state.get(\"completed\", 0) + 1
+
+
+def context(env):
+    return {\"execution_hook\": dict(vis.state)}
+
+
+vis.register(vis.Extension(
+    name=\"execution-hook\",
+    description=\"Observe and guard Python blocks.\",
+    ctx=context,
+    op_hooks=[
+        vis.OpHook([\"python_execution\"], before, phase=\"before\"),
+        vis.OpHook([\"python_execution\"], after, phase=\"after\"),
+    ],
+))
+")
+
+(defdescribe
+  python-execution-op-hook-test
+  (it
+    "runs SDK hooks around Python blocks, including failed and blocked writes"
+    (with-fresh-loaded
+      {"execution_hook.py" execution-hook-py}
+      (fn [_ {:keys [ext-dir store]}]
+        (let [ext
+              (registered "execution-hook")
+
+              ctx
+              (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+              env
+              {:python-context ctx
+               :db-info store
+               :cwd (str ext-dir)
+               :session-id (str "execution-hook-" (random-uuid))
+               :extensions (atom [ext])
+               :active-extensions (atom [])}
+
+              written
+              (io/file ext-dir "written.py")
+
+              blocked
+              (io/file ext-dir "blocked.py")
+
+              snapshot
+              #(get ((:ext/ctx-fn ext) env) "execution_hook")]
+
+          (try (lp/sync-active-extension-symbols! env [ext])
+               (let [code
+                     "print('observed')"
+
+                     result
+                     (#'lp/run-python-code ctx code :env env)
+
+                     state
+                     (snapshot)]
+
+                 (expect (nil? (:error result)) (pr-str result))
+                 (expect (= "observed\n" (:stdout result)))
+                 (expect (= {"op" "python_execution" "args" [{"code" code}]} (get state "before")))
+                 (expect (= "observed\n" (get-in state ["after" "result" "stdout"])))
+                 (expect (= 1 (get state "completed"))))
+               ;; A failed block can still have written files; the after hook must see it.
+               (let [code
+                     (str "with open("
+                          (json/generate-string (str written))
+                          ", 'w') as f:\n"
+                          "    f.write('value = 1\\n')\n"
+                          "raise ValueError('after the write')")
+
+                     result
+                     (#'lp/run-python-code ctx code :env env)
+
+                     state
+                     (snapshot)]
+
+                 (expect (= "value = 1\n" (slurp written)))
+                 (expect (some? (:error result)))
+                 (expect (some? (get-in state ["after" "result" "error"])))
+                 (expect (= 2 (get state "completed"))))
+               (let [code
+                     (str "# blocked_write\n"
+                          "with open(" (json/generate-string (str blocked))
+                          ", 'w') as f:\n" "    f.write('must not run')")
+
+                     result
+                     (#'lp/run-python-code ctx code :env env)]
+
+                 (expect (str/includes? (or (get-in result [:error :message]) "")
+                                        "Use the reviewed write operation."))
+                 (expect (not (.exists blocked))))
+               (expect (nil? (get-in (snapshot) ["after" "result"])))
+               (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe
+  code-quality-recipe-test
+  (it
+    "runs the documented hook after patches, plain writes and failed Python blocks"
+    (let [document
+          (slurp "resources/vis-docs/extension-design.md")
+
+          source
+          (second (re-find #"(?s)```python\n# code_quality.py\n(.*?)\n```" document))
+
+          project
+          (temp-dir)
+
+          ext-dir
+          (io/file project ".vis/extensions")
+
+          source-dir
+          (io/file project "src")
+
+          file
+          (doto (io/file source-dir "orders.py") io/make-parents)
+
+          nested
+          "if a:\n    if b:\n        if c:\n            if d:\n                pass\n"
+
+          store
+          (ps/db-create-connection! :memory)
+
+          ctx
+          (:python-context (ep/create-python-context {} nil {:worker? true} nil))]
+
+      (expect (string? source))
+      (write-ext! ext-dir "code_quality.py" source)
+      (binding [extension/*current-environment* {:db-info store}]
+        (try
+          (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))
+          (let [ext (registered "project-nesting")
+                extensions [foundation/vis-extension ext]
+                env {:python-context ctx
+                     :db-info store
+                     :workspace/root (str project)
+                     :cwd (str project)
+                     :session-id (str "nesting-recipe-" (random-uuid))
+                     :extensions (atom extensions)
+                     :active-extensions (atom [])}
+                report #(get ((:ext/ctx-fn ext) env) "code_quality")
+                run-block #(#'lp/run-python-code ctx % :env env)]
+
+            (lp/sync-active-extension-symbols! env extensions)
+            (expect (str/includes? (first (get (report) "findings")) "not been checked"))
+            (let [result (run-block (str "from pathlib import Path\n"
+                                         "path = Path("
+                                         (json/generate-string (str file))
+                                         ")\n"
+                                         "path.write_text("
+                                         (json/generate-string nested)
+                                         ")"))]
+              (expect (nil? (:error result)) (pr-str result))
+              (expect (= {"checked" 1 "limit" 3 "findings" ["src/orders.py:4: nesting 4 exceeds 3"]}
+                         (report))))
+            (let [result (run-block "with open(path, 'w') as f:\n    f.write('value = 1\\n')")]
+              (expect (nil? (:error result)) (pr-str result))
+              (expect (empty? (get (report) "findings"))))
+            (let [result (run-block (str "with open(path, 'w') as f:\n"
+                                         "    f.write(" (json/generate-string nested)
+                                         ")\n" "raise ValueError('after the write')"))]
+              (expect (some? (:error result)))
+              (expect (= ["src/orders.py:4: nesting 4 exceeds 3"] (get (report) "findings"))))
+            ;; Bypass only the outer block hook here: a real host patch must
+            ;; refresh the report itself, not rely on python_execution to do it.
+            (doseq [[replacement findings] [["value = 1\n" []]
+                                            [nested ["src/orders.py:4: nesting 4 exceeds 3"]]]]
+              (let
+                [result
+                 (ep/run-python-block
+                   ctx
+                   (str
+                     "lines = cat(path).splitlines()\n"
+                     "anchors = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
+                     "print(patch(path, [{'from': anchors[0], 'to': anchors[-1], 'replace': "
+                     (json/generate-string replacement)
+                     "}]))"))]
+                (expect (nil? (:error result)) (pr-str result))
+                (expect (= replacement (slurp file)))
+                (expect (= findings (get (report) "findings")))))
+            (let [result (run-block "path.unlink()")]
+              (expect (nil? (:error result)) (pr-str result))
+              (expect (= {"checked" 0 "limit" 3 "findings" []} (report)))))
+          (finally (ep/dispose-python-context! ctx)
+                   (pyx/reload-python-extensions! {:dirs []})
+                   (ps/db-dispose-connection! store)))))))
+
 ;; Gate hooks — a Python extension guards the FILESYSTEM, not a tool's arguments
 
 (def ^:private fs-gate-py

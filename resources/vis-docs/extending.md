@@ -12,12 +12,18 @@ code or distribution. You can write it yourself or ask Vis to build it.
 | Add a command a person types, such as `/hello` | `vis.SlashCommand` | [Slash commands](extension-api.md#slash-commands) |
 | Explain when to use an extension's tools | The extension's short `prompt` | [Prompts and discovery](extension-api.md#prompts-and-discovery) |
 | Describe a reusable, multi-step procedure | A skill (`SKILL.md`); no Python extension required | [Skills](skills.md) |
-| Check tool calls before they run | `vis.OpHook` | [Op hooks](extension-api.md#op-hooks) |
+| Check calls before they run or inspect results afterward | `vis.OpHook` | [Op hooks](extension-api.md#op-hooks) |
 | Ask for input or display progress | `vis.ask` or `vis.live` inside a tool | [Forms](human-input.md) · [Live views](live-views.md) |
 | Add an LLM service with custom authentication | `vis.Provider` | [Provider extensions](provider-extensions.md) |
 
 Tools do work; prompts and skills explain when or how to use them. Instructions
 alone do not register a callable, run a procedure or authorize its side effects.
+If a rule needs to be checked every time, implement the check in a domain
+function or hook rather than rely on the agent remembering it. You decide what
+counts as a valid result. See the [tested post-edit complexity check](extension-design.md#check-code-complexity-after-edits)
+for an example that covers patches and plain Python writes. Before hooks can
+refuse calls; after hooks inspect outcomes and can supply context for what to do
+next. They do not undo completed work.
 
 ## Your first extension
 

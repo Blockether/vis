@@ -22,9 +22,22 @@ suite, checks its inputs and reports failures. It can use that function
 instead of working out a shell command each time.
 
 Start with the built-in tools, then add [Python extensions](extending.md)
-for work you repeat. Refine them as you use the agent. Keep `AGENTS.md` and
-skills for guidance; enforce an operation's rules in code. This makes
-individual operations more predictable, not the model's decisions.
+for work you repeat. Give those functions domain meaning: select affected tests,
+validate a migration or summarize a build, rather than just wrap an arbitrary
+shell command. You choose the inputs, checks and useful results.
+
+Keep `AGENTS.md` and skills for explanations and procedures. Put rules that must
+actually be checked in the functions or in [operation hooks](extension-api.md#op-hooks).
+A hook can inspect a call before it runs and refuse it, or inspect its result
+afterward and supply findings for the next step. This makes individual operations
+more predictable; it does not make the model's decisions deterministic.
+
+For example, the [complexity-check recipe](extension-design.md#check-code-complexity-after-edits)
+measures Python control-flow nesting after `patch` **and** after a completed
+Python block. It catches code written with `Path.write_text()` or `open()` too,
+then supplies file-and-line findings through the SDK's context contribution.
+The check runs because it is registered, not because the agent remembered a
+skill. It reports after the edit; it does not undo it.
 
 Once your functions cover a workflow, you can [disable shell access](jail.md)
 with `toggles.shell: false`. Extensions run as trusted host code with full
@@ -39,9 +52,18 @@ available operations exposed as Python functions. The agent finds them with
 `apropos()` and reads how to use them with `doc()`.
 
 It can search several files, check the matches and summarize what matters
-in one program. It can run independent work in parallel and inspect results
-in Python rather than send every result back to the conversation. You can
-also run and inspect sessions from your own code with the
+in one program, without sending every intermediate result back to the
+conversation. Sequential calls run one after another; `await gather(...)` lets
+independent async operations overlap when the underlying tools support it.
+Blocking calls do not become parallel just because they appear in one block,
+and calls into one Python extension instance are serialized.
+
+Some systems describe workflows as graphs of agent steps; others emphasize the
+agent's model/tool loop. Vis still has that loop. Its approach is to put
+repeatable work, conditions and concurrency in code you can inspect and test,
+rather than require another agent step or graph node for every operation.
+Concurrent tool calls are not the same thing as multiple agents coordinating.
+You can also run and inspect sessions from your own code with the
 [Python SDK](https://pypi.org/project/vis-agent/).
 
 ### Keep useful work when you return

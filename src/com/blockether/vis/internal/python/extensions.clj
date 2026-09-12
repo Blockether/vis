@@ -925,8 +925,8 @@
             (acquire-context! target)
             [target target-f]))]
 
-    (try (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name})
-                                  :env effective-env}
+    ;; A hook belongs to its Python extension, not the tool it observes.
+    (try (extension/with-context {:ext {:ext/name ext-name} :env effective-env}
                                  (python-host/conveying call-ctx (call-py call-ctx call-f args)))
          (catch Throwable t
            ;; A reload must not replay an operation which already ran and failed.

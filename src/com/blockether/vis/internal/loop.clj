@@ -1149,7 +1149,22 @@
 
                   ;; One persistent interpreter per session: globals (defs,
                   ;; imports, vars) carry across calls/turns NATURALLY.
-                  (let [out (env/run-python-block python-context code {:form-cap (:form-cap env)})]
+                  (let [result
+                        (extension/invoke-operation
+                          :python_execution
+                          env
+                          (fn [{:keys [code]}]
+                            (let [out (env/run-python-block python-context
+                                                            code
+                                                            {:form-cap (:form-cap env)})]
+                              (if (:error out)
+                                (extension/failure {:result out :error (:error out)})
+                                (extension/success {:result out}))))
+                          [{:code code}])
+
+                        out
+                        (or (:result result) {:forms [] :error (:error result)})]
+
                     (assoc out
                       :lru {}
                       :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink)))))

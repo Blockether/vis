@@ -360,6 +360,160 @@ regression also invokes that registered observation, cancels it and checks reade
 cancellation is never converted into a successful observation. Activity is the human
 presentation, not a replacement for typed result data. Serialize only at a transport edge.
 
+## Check code complexity after edits
+
+Suppose your team wants Python code to stay easy to follow. You can ask a skill to
+remind the agent to check complexity, but a reminder is not a measurement. Put the
+check in an extension hook so it runs at the edit boundary, and give the agent the
+findings on its next turn. You decide which metric, threshold and source files
+matter to your project.
+
+This example measures **control-flow nesting**, not cyclomatic complexity. It
+reports the deepest chain of `if`, loops, `try`, `with` and `match` statements in
+each Python file. A new function, class or lambda starts at depth zero; `elif`
+counts as another nested `if` in Python's syntax tree. Comprehensions and boolean
+expressions do not add depth. The limit of three is an example policy, not a
+universal definition of good code.
+
+### Install the check
+
+For a small Python project with a `src/` directory, save this complete file as
+`.vis/extensions/code_quality.py`, then use `/reload`. It needs Python 3.11 or
+later, the SDK supplied by Vis and no other packages. Like every extension, it
+runs as trusted host code: review it before loading it. Keep `src/` limited to
+code you intend to scan, including any linked files.
+
+```python
+# code_quality.py
+import ast
+from pathlib import Path
+
+import blockether.vis.extension as vis
+
+PROJECT = Path(__file__).resolve().parents[2]
+SOURCE = PROJECT / "src"
+LIMIT = 3
+REPORT_KEY = f"nesting:{PROJECT}"
+SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+BRANCHES = (
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.Try,
+    ast.TryStar,
+    ast.With,
+    ast.AsyncWith,
+    ast.Match,
+)
+
+
+def deepest(node, depth=0):
+    """Return the greatest control-flow depth and its first source line."""
+    if isinstance(node, SCOPES):
+        depth = 0
+    if isinstance(node, BRANCHES):
+        depth += 1
+    best = (depth, getattr(node, "lineno", 1))
+    for child in ast.iter_child_nodes(node):
+        candidate = deepest(child, depth)
+        if candidate[0] > best[0]:
+            best = candidate
+    return best
+
+
+def scan():
+    findings = []
+    checked = 0
+    try:
+        if not SOURCE.is_dir():
+            raise OSError("Expected a readable src/ directory.")
+        for path in sorted(SOURCE.rglob("*.py")):
+            label = str(path.relative_to(PROJECT))
+            try:
+                depth, line = deepest(ast.parse(path.read_bytes(), filename=label))
+            except (OSError, SyntaxError, ValueError, RecursionError) as error:
+                findings.append(f"{label}: could not check: {error}")
+                continue
+            checked += 1
+            if depth > LIMIT:
+                findings.append(f"{label}:{line}: nesting {depth} exceeds {LIMIT}")
+    except OSError as error:
+        findings.append(f"Could not scan src/: {error}")
+    return {"checked": checked, "limit": LIMIT, "findings": findings}
+
+
+def after_edit(call):
+    vis.state[REPORT_KEY] = scan()
+
+
+def context(env):
+    return {
+        "code_quality": vis.state.get(
+            REPORT_KEY, {"findings": ["Nesting has not been checked yet."]}
+        )
+    }
+
+
+vis.register(
+    vis.Extension(
+        name="project-nesting",
+        description="Report excessive Python control-flow nesting after edits.",
+        ctx=context,
+        op_hooks=[vis.OpHook(["patch", "python_execution"], after_edit, phase="after")],
+    )
+)
+```
+
+The callback reads the current files, not the text of the tool call. It scans all
+`src/**/*.py` files each time, so new files, deletions and several writes in one
+block are included without trying to parse Python write commands. For a large
+repository, narrow the scope or move this work into your existing analyzer.
+
+### Use the findings
+
+Ask Vis to make a Python change. After the next completed block, the agent sees a
+`session["code_quality"]` contribution such as:
+
+```python
+{
+    "checked": 4,
+    "limit": 3,
+    "findings": ["src/orders.py:18: nesting 4 exceeds 3"],
+}
+```
+
+The file and line tell it where to review the change. It can flatten a branch or
+extract a focused function, then inspect the next report. A parse or read error
+is a finding, not a passing check. An empty `findings` list means the scanned
+files passed this metric; it says nothing about tests or overall code quality.
+The SDK's `vis.state` stores the report per project, and `ctx` supplies it on the
+next model request. Returning text from an after hook would not do that: its
+return value is ignored.
+
+### Know what this checks
+
+- `patch` runs the check after a patch operation. A `python_execution` hook also
+  runs when the whole Python block returns, including a normal Python error
+  after a write. That covers `Path.write_text()` and `with open(..., "w")` too.
+  A block that calls `patch` can therefore scan more than once; the report is
+  replaced, not accumulated.
+- Writes are checked **at these boundaries**, not at every filesystem write.
+  Unfinished background processes, a killed interpreter and edits made outside
+  Vis are not continuously watched. Wait for any work you start before relying
+  on the report, and run your normal checks before accepting changes.
+- This is feedback, not a rollback or a security boundary. An after hook cannot
+  undo an edit or refuse it after the fact. For a hard rule, validate inside the
+  domain operation or use a `before` hook with `vis.block(reason)` on the
+  operation you want to refuse. Keep access controls in the sandbox policy and
+  repeat acceptance checks in CI. Ordinary tool-hook errors are logged and do
+  not block the operation.
+
+The repository tests execute this exact extension through the SDK and the host:
+patching, both Python write forms, a write followed by an exception, and clearing
+findings after a fix. The metric also has tests for scope boundaries, syntax
+errors and missing source directories.
+
 ## See also
 
 - [Extension API](extension-api.md) — exact declarations, contracts and callback rules.
