@@ -359,10 +359,12 @@
 
                  (expect (= 1 (get waited "exit")))
                  (expect (str/includes? raw "\u001b["))
-                 (doseq [result [sync waited logged]]
-                   (expect (= plain (get result "out")))
-                   (expect (re-find #"(?m)^\+\+\+ b/AGENTS\.md\r?$" (get result "out")))
-                   (expect (not (str/includes? (get result "out") "\u001b")))))
+                 ;; Logs are byte windows; follow their cursor instead of assuming
+                 ;; the complete coloured diff fits in the first default window.
+                 (doseq [out [(get sync "out") (get waited "out") (log-text env "diff")]]
+                   (expect (= plain out))
+                   (expect (re-find #"(?m)^\+\+\+ b/AGENTS\.md\r?$" out))
+                   (expect (not (str/includes? out "\u001b")))))
                (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
 
 ;; Regression: a `git push` came back as 28 lines of `Counting objects: N%` and 11
@@ -786,7 +788,7 @@
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [sid "shell-ext-auto-id"
+            (let [sid (str "shell-ext-auto-id-" (System/nanoTime))
                   env {:session-id sid}]
 
               (try (let [started (:result (shell* env {"op" "background" "command" "sleep 60"}))
@@ -804,7 +806,7 @@
                      (expect (not= (get started "pid") (get other "pid")))
                      ;; every other stage still names the shell it acts on
                      (expect (threw? #(shell* env {"op" "logs"}))))
-                   (finally (resources/stop-all! sid))))))))
+                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "carries uptime_ms and the shared TOTAL identity core in the logs payload"
       (with-shell-on
         (fn []
@@ -2509,6 +2511,53 @@
                        (expect (str/includes? out (str "payload-" i)))
                        (expect (not (str/includes? out (str "payload-" (mod (inc (long i)) n))))))))
                  (finally (resources/stop-all! sid)))))))))
+
+;; Regression, Council report 906: a completed automatic id was reassigned, so
+;; retained handles silently read the next command's log, even without a race.
+(defdescribe
+  shell-retained-auto-id-test
+  (it "preserves automatic identities and logs after exit and resource retirement"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-retained-auto-" (System/nanoTime))
+              env {:session-id sid}]
+
+          (try (let [a (:result (shell* env {"command" "printf audit-A"}))
+                     a-id (get a "id")
+                     a-done (wait* env a-id)
+                     b (:result (shell* env {"command" "printf audit-B"}))
+                     b-id (get b "id")
+                     b-done (wait* env b-id)]
+
+                 (expect (= [0 0] (mapv #(get % "exit") [a-done b-done])))
+                 (expect (not= a-id b-id))
+                 (expect (not= (get a "log_path") (get b "log_path")))
+                 (expect (= ["audit-A" "audit-B"] (mapv #(log-text env %) [a-id b-id])))
+                 (expect (= "printf audit-A"
+                            (get (:result (shell-logs* env a-id {:offset 0})) "command")))
+                 (shell-stop* env a-id)
+                 (let [again (:result (shell* env {"command" "printf audit-A"}))
+                       again-id (get again "id")
+                       done (wait* env again-id)]
+
+                   (expect (= 0 (get done "exit")))
+                   (expect (= 3 (count (distinct [a-id b-id again-id]))))
+                   (expect (= ["audit-A" "audit-B" "audit-A"]
+                              (mapv #(log-text env %) [a-id b-id again-id])))))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
+  (it "keeps a retained Python handle's logs and wait on its original run"
+      (let [sid
+            (str "py-shell-retained-auto-" (System/nanoTime))
+
+            c
+            (py-ctx {:session-id sid})]
+
+        (try (expect (= [true "audit-A" "audit-A" "audit-B"]
+                        (py c
+                            (str "a = __vis_settle__(shell('printf audit-A'))\n" "a.wait(20)\n"
+                                 "b = __vis_settle__(shell('printf audit-B'))\n" "b.wait(20)\n"
+                                 "[a['id'] != b['id'], a.logs()['out'],"
+                                 " a.wait(20)['out'], b.logs()['out']]"))))
+             (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
 
 ;; Regression, session report 6342aada-69e1-473b-a0cc-53a7e81e5bfd: two SEQUENTIAL
 ;; starts of one command in two repositories derived the SAME auto id — the dedup

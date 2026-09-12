@@ -6,9 +6,9 @@ mid-session answers with what it says now. What only THIS side knows is what
 the session can actually reach: which globals are callable, which modules were
 published, what its own `def`s say, and the prose that lives on a live object.
 
-So the facts are gathered here and merged there, in one call. It is one call
-because a host tool runs while the block waits inside it and cannot ask the
-interpreter anything: whatever the host needs has to travel with the question.
+So the facts are gathered here and merged there. The host resolves authoritative
+pages first; only a missing page or an undocumented module needs a second call
+with live prose. Known pages never trigger speculative Python imports.
 """
 
 #: Names that are globals but not tools: the async runtime a block imports, and
@@ -109,11 +109,11 @@ def install(namespace):
         if name is None:
             name = getattr(target, "__name__", target)
         name = "" if name is None else str(name)
-        return _ask(
-            namespace,
-            "__vis_doc__",
-            [_facts(namespace), name, _live_doc(namespace, name)],
-        )
+        facts = _facts(namespace)
+        page = _ask(namespace, "__vis_doc__", [facts, name, None])
+        if page is not None:
+            return page
+        return _ask(namespace, "__vis_doc__", [facts, name, _live_doc(namespace, name)])
 
     item = namespace["__vis_AproposItem__"]
     item.__repr__ = _item_repr

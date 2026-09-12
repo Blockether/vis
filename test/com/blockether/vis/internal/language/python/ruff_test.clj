@@ -141,6 +141,46 @@
                (expect (re-find #"does not exist" (get-in r [:error :message]))))
              (finally (cleanup root))))))
 
+;; Council #956: file lint must not turn analyzer/configuration failures into clean results.
+(defdescribe lint-failure-propagation-test
+             (it "reports missing and malformed explicit configuration for snippets and files"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "a.py" "x = 1\n")
+                        (spit! root "bad.toml" "line-length = [\n")
+                        (doseq [config ["missing.toml" "bad.toml"]
+                                target [{"code" "x = 1\n"} {"path" "a.py"}]]
+
+                          (let [message (try (pyruff/py-lint-fn
+                                               (env root)
+                                               (assoc target "config" (str (io/file root config))))
+                                             nil
+                                             (catch Exception e (ex-message e)))]
+                            (expect (re-find #"(?i)config" (str message)))
+                            (expect (re-find (re-pattern config) (str message)))))
+                        (finally (cleanup root)))))
+             (it
+               "does not report a clean batch when a later file has broken discovered configuration"
+               (let [root (tmp-dir)]
+                 (try (spit! root "a.py" "x = 1\n")
+                      (spit! root "z/b.py" "x = 1\n")
+                      (spit! root "z/ruff.toml" "line-length = [\n")
+                      (let [message (try (pyruff/py-lint-fn (env root) {"paths" ["a.py" "z/b.py"]})
+                                         nil
+                                         (catch Exception e (ex-message e)))]
+                        (expect (re-find #"ruff.toml" (str message))))
+                      (finally (cleanup root)))))
+             (it "keeps clean file batches successful and leaves source bytes unchanged"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "a.py" "x = 1\n")
+                        (spit! root "b.py" "y = 2\n")
+                        (let [result (pyruff/py-lint-fn (env root) {"paths" ["a.py" "b.py"]})]
+                          (expect (true? (:success? result)))
+                          (expect (contract/valid? :lint-fn (:result result)))
+                          (expect (= 2 (get-in result [:result "files"])))
+                          (expect (= [] (get-in result [:result "findings"])))
+                          (expect (= "x = 1\n" (slurp (io/file root "a.py")))))
+                        (finally (cleanup root))))))
+
 ;; ── what the result SAYS was linted ─────────────────────────────────────────
 
 ;; Regression: `lint_code("python", {"paths" [...]})` counted the files that HAD

@@ -3147,11 +3147,11 @@
 
 (defn- cat-one
   "`cat`'s whole implementation: ONE file, a closed line window, ONE string.
-   Every rendered line — blanks included, so the read is gap-free and every line
-   is addressable — carries its `<line>:<hash>` anchor. The window is capped at
-   `default-cat-limit` lines and `max-cat-window-bytes`; a clipped read SAYS so
-   on its last line and names the call that continues it, so nothing is ever
-   silently dropped."
+   Complete source lines, blanks included, carry `<line>:<hash>` anchors. The
+   entire UTF-8 result is capped at `max-cat-window-bytes` and source rows at
+   `default-cat-limit`. Continuations retain the requested end. If the first
+   requested line cannot fit, return a diagnostic without a partial anchor or
+   a non-advancing continuation; Python file IO can read bounded character slices."
   ^String [path from to]
   (let [content
         (anchored-file-content path)
@@ -3190,13 +3190,26 @@
             wanted
             (subvec lines (dec from-line) to-line)
 
-            ;; Two caps, whichever bites first. `byte-capped` walks the window once
-            ;; and stops at the byte ceiling, so one enormous line cannot blow the
-            ;; block's printed-output budget on its own.
-            line-capped
-            (vec (take (long default-cat-limit) wanted))
+            ;; JSON string escapes are Python-compatible after removing optional slash escapes.
+            quoted-path
+            (str/replace (json/write-json-str rel) "\\/" "/")
 
-            byte-capped
+            ;; Count the actual UTF-8 rendering, including anchors and continuation.
+            continuation
+            (fn [shown]
+              (str "\n… clipped at "
+                   shown
+                   " lines — file has "
+                   line-count
+                   "; continue with cat("
+                   quoted-path
+                   ", "
+                   (+ from-line (long shown))
+                   ", "
+                   to-line
+                   ")"))
+
+            rendered
             (loop [i
                    0
 
@@ -3206,39 +3219,32 @@
                    acc
                    []]
 
-              (if (>= i (count line-capped))
+              (if (or (>= i (count wanted)) (>= i (long default-cat-limit)))
                 acc
-                (let [next-total (+ total (count (nth line-capped i)) 8)]
-                  (if (and (pos? i) (> next-total (long max-cat-window-bytes)))
+                (let [row
+                      (hashline/render-hashline-block [[(+ from-line i) (nth wanted i)]])
+
+                      next-total
+                      (+ total (if (pos? i) 1 0) (alength (.getBytes ^String row "UTF-8")))
+
+                      footer
+                      (if (< (inc i) (count wanted)) (continuation (inc i)) "")]
+
+                  (if (> (+ next-total (alength (.getBytes ^String footer "UTF-8")))
+                         (long max-cat-window-bytes))
                     acc
-                    (recur (inc i) next-total (conj acc (nth line-capped i)))))))
+                    (recur (inc i) next-total (conj acc row))))))
 
             shown
-            (long (count byte-capped))
+            (count rendered)]
 
-            last-line
-            (+ from-line (dec shown))
-
-            body
-            (hashline/render-hashline-block (map-indexed (fn [i s]
-                                                           [(+ from-line (long i)) s])
-                                                         byte-capped))]
-
-        (if (>= last-line to-line)
-          body
-          (str body
-               "\n… clipped at "
-               shown
-               (if (= shown (count line-capped)) " lines" " lines (50 KiB window)")
-               " — file has "
-               line-count
-               "; continue with cat(\""
-               rel
-               "\", "
-               (inc last-line)
-               ", "
-               (min line-count (+ last-line (long default-cat-limit)))
-               ")"))))))
+        (if (zero? shown)
+          (str "cat: line "
+               from-line
+               " exceeds the 50 KiB rendered window budget; no partial anchor emitted. "
+               "Read a bounded character slice with Python file IO instead; "
+               "a slice is not a patch anchor.")
+          (str (str/join "\n" rendered) (when (< shown (count wanted)) (continuation shown))))))))
 
 (defn- cat-envelope
   "`cat-one`'s string in the canonical envelope every symbol must answer. The
@@ -3834,10 +3840,11 @@
     #'cat-tool
     {:activity (presenter/for-tool :cat)
      :symbol 'cat
-     :result
-     (str
-       "A plain string: one `<line>:<hash>│ <text>` line per source line, blanks included. "
-       "No map, no keys. Clipped windows say so on the last line and name the call that continues them.")
+     :result (str
+               "A plain string: one `<line>:<hash>│ <text>` line per source line, blanks included. "
+               "No map, no keys. Windows are capped at 50 KiB of UTF-8 including the continuation, "
+               "which retains your requested end. An oversized first line returns a diagnostic, "
+               "never a partial patch anchor; use bounded Python file IO slices to inspect it.")
      :description
      (str
        "SHOW the lines of one file — read, view or display any window of any text file, and the "

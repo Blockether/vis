@@ -447,6 +447,55 @@
           (expect (= [1 :failed] seen))))))
 
 (defdescribe
+  doc-authoritative-lookup-test
+  ;; Council 921: corpus hits discarded live docs after attempting imports.
+  (it
+    "skips live imports for corpus pages and preserves exact live fallbacks"
+    (doseq [worker? [false true]]
+      (tpc/with-own
+        [ctx {} (constantly [(System/getProperty "user.dir")])
+         {:worker? worker? :jail-enabled? true}]
+        (let
+          [setup (ep/run-python-block
+                   ctx
+                   "def doc_fixture_helper():\n    \"fixture helper prose\"\n    return 1")
+           result
+           (ep/run-python-block
+             ctx
+             (str
+               "import sys, importlib.abc, types\n"
+               "class DocImportProbe(importlib.abc.MetaPathFinder):\n"
+               "    def find_spec(self, fullname, path=None, target=None):\n"
+               "        if fullname in ('council', 'doc', 'COUNCIL'):\n"
+               "            imports.append(fullname)\n"
+               "        return None\n" "imports = []\n"
+               "probe = DocImportProbe()\n" "sys.meta_path.insert(0, probe)\n"
+               "original = __vis_dotted_doc__\n" "reads = []\n"
+               "def counted(name):\n" "    reads.append(name)\n"
+               "    return original(name)\n" "__vis_dotted_doc__ = counted\n"
+               "try:\n" "    assert 'Council' in doc('council')\n"
+               "    assert 'Council' in doc(' COUNCIL.md ')\n" "    assert 'doc' in doc(doc)\n"
+               "    assert doc()\n"
+               "    assert 'fixture helper prose' in doc('doc_fixture_helper')\n"
+               "    assert not reads, reads\n" "    assert not imports, imports\n"
+               "    assert 'Serialize' in doc('json.dumps')\n"
+               "    assert reads == ['json.dumps'], reads\n"
+               "    assert 'Serialize' not in doc('JSON.dumps')\n"
+               "    assert 'Serialize' not in doc('json.dumps.md')\n"
+               "    doc_fixture_module = types.ModuleType('doc_fixture_module', 'live module prose')\n"
+               "    __vis_docs__['doc_fixture_module'] = ''\n"
+               "    globals().setdefault('__vis_kinds__', {})['doc_fixture_module'] = 'module'\n"
+               "    assert 'live module prose' in doc('doc_fixture_module')\n"
+               "    assert reads[-1] == 'doc_fixture_module'\n"
+               "    assert 'is not a handle' in doc('missing_doc_fixture')\n"
+               "    print('host-first')\n" "finally:\n"
+               "    __vis_dotted_doc__ = original\n" "    sys.meta_path.remove(probe)\n"))]
+
+          (expect (nil? (:error setup)) (pr-str setup))
+          (expect (nil? (:error result)) (pr-str result))
+          (expect (= "host-first\n" (:stdout result))))))))
+
+(defdescribe
   worker-doc-apropos-surface-test
   (it "loads Vis-owned introspection modules in the session worker"
       (tpc/with-own

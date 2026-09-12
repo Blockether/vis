@@ -452,55 +452,52 @@
          empties
          (empty-targets expanded targets)]
 
-     (cond (seq missing) (missing-error "lint" missing)
-           (seq empties) (no-python-error "lint" empties)
-           :else (let [abs-files
-                       (when-not code (target-files expanded))
+     (cond
+       (seq missing) (missing-error "lint" missing)
+       (seq empties) (no-python-error "lint" empties)
+       :else
+       (let [abs-files
+             (when-not code (target-files expanded))
 
-                       findings
-                       (if code
-                         (mapv #(->finding nil %)
-                               (ruff/lint code
-                                          (assoc opts
-                                            :config (or (:config opts)
-                                                        (find-config (.getAbsolutePath root))))))
-                         (into []
-                               (mapcat (fn [abs]
-                                         (let [rel (relativize-path root abs)]
-                                           (map #(->finding rel %)
-                                                (ruff/lint-or (slurp abs)
-                                                              (with-config opts find-config abs)
-                                                              [])))))
-                               abs-files))
+             findings
+             (if code
+               (mapv #(->finding nil %)
+                     (ruff/lint code
+                                (assoc opts
+                                  :config (or (:config opts)
+                                              (find-config (.getAbsolutePath root))))))
+               (into []
+                     (mapcat (fn [abs]
+                               (let [rel (relativize-path root abs)]
+                                 (map #(->finding rel %)
+                                      (ruff/lint (slurp abs) (with-config opts find-config abs))))))
+                     abs-files))
 
-                       cfg
-                       (or (:config opts)
-                           (find-config (.getAbsolutePath root))
-                           (some find-config abs-files))
+             cfg
+             (or (:config opts) (find-config (.getAbsolutePath root)) (some find-config abs-files))
 
-                       by-level
-                       (frequencies (map #(get % "level") findings))]
+             by-level
+             (frequencies (map #(get % "level") findings))]
 
-                   (extension/success
-                     {:result (contract/check :lint-fn
-                                              (cond-> {"op" "ruff-lint"
-                                                       "language" "python"
-                                                       "error" (get by-level "error" 0)
-                                                       "warning" (get by-level "warning" 0)
-                                                       "info" (get by-level "info" 0)
-                                                       "files" (if code 1 (count abs-files))
-                                                       "findings" findings
-                                                       "providers" ["ruff"]}
-                                                code
-                                                (assoc "snippet" code)
+         (extension/success
+           {:result (contract/check :lint-fn
+                                    (cond-> {"op" "ruff-lint"
+                                             "language" "python"
+                                             "error" (get by-level "error" 0)
+                                             "warning" (get by-level "warning" 0)
+                                             "info" (get by-level "info" 0)
+                                             "files" (if code 1 (count abs-files))
+                                             "findings" findings
+                                             "providers" ["ruff"]}
+                                      code
+                                      (assoc "snippet" code)
 
-                                                (seq targets)
-                                                (assoc "targets"
-                                                  (mapv #(relativize-path root (under root %))
-                                                        targets))
+                                      (seq targets)
+                                      (assoc "targets"
+                                        (mapv #(relativize-path root (under root %)) targets))
 
-                                                cfg
-                                                (assoc "config" (relativize-path root cfg))
+                                      cfg
+                                      (assoc "config" (relativize-path root cfg))
 
-                                                (not cfg)
-                                                (assoc "hint" no-config-hint)))}))))))
+                                      (not cfg)
+                                      (assoc "hint" no-config-hint)))}))))))

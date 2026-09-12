@@ -1131,6 +1131,50 @@
 
         (expect (string/includes? printed "│ BETA"))
         (expect (= (cat-tool rel 2 3) (cat-tool rel printed 3)))))
+  ;; Council #919/#940: byte ceilings and continuation must preserve the requested window.
+  (it "counts UTF-8 bytes and refuses an oversized first line without an anchor"
+      (doseq [unit ["x" "é" "😀"]]
+        (let [rel (write-temp! "cat/huge.txt" (str (apply str (repeat 60000 unit)) "\ntail"))
+              out (:result ((private-fn "cat-tool") rel 1 2))]
+
+          (expect (<= (alength (.getBytes ^String out "UTF-8")) (* 50 1024)))
+          (expect (string/includes? out "line 1 exceeds"))
+          (expect (nil? (anchor-at out 1)))
+          (expect (not (string/includes? out "continue with cat("))))))
+  (it "bounds ASCII and multibyte windows and resumes within the caller's end"
+      (doseq [unit ["x" "é" "😀"]]
+        (let [rel (write-temp! "cat/bytes.txt"
+                               (string/join "\n" (repeat 100 (apply str (repeat 2000 unit)))))
+              out (:result ((private-fn "cat-tool") rel 1 40))]
+
+          (expect (<= (alength (.getBytes ^String out "UTF-8")) (* 50 1024)))
+          (expect (string/includes? out "clipped"))
+          (expect (string/ends-with? out ", 40)"))
+          (expect (some? (anchor-at out 1))))))
+  (it "keeps complete anchors before an oversized later line and diagnoses it on resume"
+      (let [rel
+            (write-temp! "cat/later.txt" (str "small\n" (apply str (repeat 60000 "x")) "\ntail"))
+
+            cat-tool
+            (comp :result (private-fn "cat-tool"))
+
+            out
+            (cat-tool rel 1 3)]
+
+        (expect (some? (anchor-at out 1)))
+        (expect (nil? (anchor-at out 2)))
+        (expect (string/ends-with? out ", 2, 3)"))
+        (expect (string/includes? (cat-tool rel 2 3) "line 2 exceeds"))
+        (expect (some? (anchor-at (cat-tool rel 3 3) 3)))))
+  (it "quotes the continuation pathname and retains the explicit end"
+      (let [rel
+            (write-temp! "cat/a\"b\\c.txt" (string/join "\n" (repeat 3000 "x")))
+
+            out
+            (:result ((private-fn "cat-tool") rel 1 2010))]
+
+        (expect (string/ends-with? out ", 2001, 2010)"))
+        (expect (string/includes? out "a\\\"b/c.txt"))))
   (it "a window is capped and the clip names the call that continues it"
       (let [rel
             (write-temp! "cat/big.txt" (string/join "\n" (map #(str "line " %) (range 1 3001))))

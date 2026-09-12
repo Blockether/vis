@@ -1018,20 +1018,13 @@
       e)))
 
 (defn- bg-id-taken?
-  "True while a registry `entry` SPEAKS FOR its id: a running process, or a start
-   that has claimed the id and not spawned yet.
+  "True while a claim, registered shell or retained log owns an automatic id.
 
-   Liveness alone cannot answer this. A start reserves its entry, opens the log
-   file and only then spawns, so in between the entry carries `:proc nil` and a
-   live check reads the id as FREE — the window two concurrent auto-id starts of
-   the same program both derive their id in. Only a KNOWN exit frees the id again,
-   so a finished shell's short name stays reusable while its log keeps its bytes."
-  [entry]
-  (boolean (when entry
-             (if (:proc entry)
-               (live-entry? entry)
-               (nil? (some-> (:exit entry)
-                             deref))))))
+   Exiting or retiring a process does not retire its handle: later reads still
+   resolve by id. Reusing that name would truncate its log and silently redirect
+   retained handles. Explicit named restarts remain the caller's choice."
+  [session id entry]
+  (boolean (or entry (.exists (shell-log/log-file session id)))))
 
 (defn- drop-bg-entry!
   [session id]
@@ -1108,8 +1101,8 @@
 
    Re-issuing the SAME script in the SAME directory while it runs returns that
    shell's own id, so the duplicate start resolves to `already_running` instead of a
-   second dev server; otherwise the program name is suffixed until no shell HOLDS
-   it, so an auto id never hijacks an unrelated process.
+   second dev server; otherwise the program name is suffixed until no claim, shell
+   or retained log owns it, so an auto id never hijacks an earlier run.
 
    `cwd` belongs in that key because a re-issue's identity is (id, command, cwd):
    matching on the command alone resolved `git status` in a second repo to the first
@@ -1157,18 +1150,20 @@
 
     (or running-same
         (let [[_ committed]
-              (swap-vals! bg-procs
-                          (fn [m]
-                            (let [ids (get m sk)
-                                  id (loop [n 1]
-                                       (let [candidate (if (= 1 n) base (str base "-" n))]
-                                         (cond (not (bg-id-taken? (get ids candidate))) candidate
-                                               (< n 100) (recur (inc n))
-                                               :else (str base "-" (System/nanoTime)))))]
+              (swap-vals!
+                bg-procs
+                (fn [m]
+                  (let [ids (get m sk)
+                        id (loop [n 1]
+                             (let [candidate (if (= 1 n) base (str base "-" n))]
+                               (cond (not (bg-id-taken? session candidate (get ids candidate)))
+                                     candidate
+                                     (< n 100) (recur (inc n))
+                                     :else (str base "-" (System/nanoTime)))))]
 
-                              (assoc-in m
-                                [sk id]
-                                {:claim token :command wanted :script wanted :origin origin}))))]
+                    (assoc-in m
+                      [sk id]
+                      {:claim token :command wanted :script wanted :origin origin}))))]
           (some (fn [[id entry]]
                   (when (= token (:claim entry)) id))
                 (get committed sk))))))
