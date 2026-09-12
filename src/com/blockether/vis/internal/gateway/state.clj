@@ -1127,11 +1127,16 @@
       (some->> (:workspace/id (live-env sid))
                (persistance/db-workspace-get db))))
 
+(def ^:dynamic ^:private *agent-name-for-root*
+  "Request-local resolver, shared by page and awaiting rows; nil outside listings."
+  nil)
+
 (defn session-agent-name
   "Resolve identity on the gateway from this session's workspace, never a client's cwd."
   [sid]
-  (config/agent-name (when-let [db (lp/db-info)]
-                       (:root (resolve-workspace db sid)))))
+  ((or *agent-name-for-root* config/agent-name)
+    (when-let [db (lp/db-info)]
+      (:root (resolve-workspace db sid)))))
 
 (defn set-agent-name!
   "Save the gateway identity before notifying every open session. Reconnects read
@@ -5150,8 +5155,18 @@
          window
          (if (some? limit) (into [] (take (max 0 (long limit))) tail) (vec tail))
 
+         ;; Resolve each workspace only once, including rows repeated in awaiting.
+         ;; This memo dies with the request, so edits/settings are visible next time.
+         name-for-root
+         (memoize config/agent-name)
+
+         page-soul
+         (fn [sid]
+           (binding [*agent-name-for-root* name-for-root]
+             (soul sid)))
+
          rows
-         (-> (into [] (comp (map :id) (keep soul)) window)
+         (-> (into [] (comp (map :id) (keep page-soul)) window)
              (session-summary-extras db stats)
              (order-by-ranking window))
 
@@ -5165,7 +5180,7 @@
          ;; which is a handful, and cut to the same channel/root as the listing.
          awaiting
          (let [listed (into #{} (map :id) ranked)]
-           (-> (into [] (comp (filter listed) (keep soul)) (keys (bus/waiting-requests)))
+           (-> (into [] (comp (filter listed) (keep page-soul)) (keys (bus/waiting-requests)))
                (session-summary-extras db stats)
                order-session-summaries))]
 

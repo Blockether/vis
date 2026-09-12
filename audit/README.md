@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-09-11.
+> Generated 2026-09-12.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -30,7 +30,7 @@ compliance.
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 58 unique, across 3 `deps.edn` modules (root + siblings).
+- **Direct dependency coordinates:** 59 unique, across 3 `deps.edn` modules (root + siblings).
 - **Total direct jar size:** ~38 MB; most space is used by Python and optional speech components (§8).
 - **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — **copyleft exception(s) flagged in §6.**
 - **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
@@ -182,6 +182,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `org.flywaydb/flyway-core` | `12.11.0` | Apache-2.0 | 791 KB | 3rd-party |
 | `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
 | `org.xerial/sqlite-jdbc` | `3.53.2.1` | Apache-2.0 | 11.4 MB | 3rd-party |
+| `org.yamlstar/yaml-parser` | `0.2.4` | MIT | 50 KB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.17` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
@@ -210,7 +211,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | License | Count |
 |---|---|
 | EPL-1.0 | 19 |
-| MIT | 15 |
+| MIT | 16 |
 | Apache-2.0 | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |

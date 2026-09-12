@@ -7,6 +7,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -2296,6 +2297,50 @@
 
                    (expect (= ["new" "old" "run"]
                               (mapv :session_id (state/search-session-matches "q")))))))
+
+(defdescribe session-page-resolves-agent-name-once-per-workspace-test
+             ;; Regression: every row reparsed all YAML tiers, including duplicate awaiting rows.
+             (it
+               "shares workspace identities across the window and awaiting rows, not requests"
+               (let [calls
+                     (atom [])
+
+                     label
+                     (atom "first")
+
+                     roots
+                     {"a" "/repo/a" "b" "/repo/a" "c" "/repo/b" "d" nil}
+
+                     records
+                     (mapv (fn [sid]
+                             {:id sid :title sid :channel :api :created-at 1000})
+                           ["a" "b" "c" "d" "unlisted"])]
+
+                 (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                  #'lp/by-channel (constantly records)
+                                  #'lp/by-id (into {} (map (juxt :id identity)) records)
+                                  #'persistance/db-session-turn-stats (constantly {})
+                                  #'bus/live-turns (constantly {})
+                                  #'bus/live-turn-id (constantly nil)
+                                  #'bus/session-waiting? (constantly false)
+                                  #'bus/waiting-requests (constantly {"a" [] "c" [] "d" []})
+                                  #'state/resolve-workspace (fn [_ sid]
+                                                              {:root (get roots sid)})
+                                  #'state/session-summary-extras (fn [rows _ _]
+                                                                   rows)
+                                  #'config/agent-name (fn [workspace-root]
+                                                        (swap! calls conj workspace-root)
+                                                        (str @label ":" workspace-root))}
+                   (fn []
+                     (doseq [prefix ["first" "updated"]]
+                       (reset! label prefix)
+                       (reset! calls [])
+                       (let [page (state/list-sessions-page :all {:limit 2})]
+                         (expect (= ["a" "b"] (mapv #(get % "id") (:sessions page))))
+                         (expect (= {"/repo/a" 1 "/repo/b" 1 nil 1} (frequencies @calls)))
+                         (doseq [row (concat (:sessions page) (:awaiting page))]
+                           (expect (= (str prefix ":" (get roots (get row "id")))
+                                      (get row "agent_name")))))))))))
 
 (defdescribe gateway-session-order-test
              (it "orders by content time alone, whatever happens to be running"

@@ -1063,20 +1063,78 @@
   [raw]
   (doto (interpolate-env raw) warn-unresolved-env-refs!))
 
+(defn- yaml-file-stamp
+  "Path, nanosecond mtime and size; absent files retain their path in the stamp."
+  [path]
+  (let [f (io/file path)]
+    (if (.isFile f)
+      (let [^java.nio.file.attribute.FileTime ft
+            (try (Files/getLastModifiedTime (.toPath f) (make-array java.nio.file.LinkOption 0))
+                 (catch java.io.IOException _ nil))]
+        [path (if ft (.to ft java.util.concurrent.TimeUnit/NANOSECONDS) (.lastModified f))
+         (.length f)])
+      [path nil nil])))
+
+(def ^:private yaml-config-cache-limit 256)
+
+(def ^:private empty-yaml-config-cache {:entries {} :order clojure.lang.PersistentQueue/EMPTY})
+
+(defonce ^:private yaml-config-cache
+  ;; One delayed parse per path/stamp. FIFO bounds retained workspaces and secrets;
+  ;; sharing the delay coalesces concurrent misses without a global parsing lock.
+  (atom empty-yaml-config-cache))
+
+(defn- cache-yaml-entry
+  [cache path entry]
+  (if (= (:stamp entry) (get-in cache [:entries path :stamp]))
+    cache
+    (let [present?
+          (contains? (:entries cache) path)
+
+          cache
+          (if (and (not present?) (>= (count (:entries cache)) (long yaml-config-cache-limit)))
+            (-> cache
+                (update :entries dissoc (peek (:order cache)))
+                (update :order pop))
+            cache)]
+
+      (cond-> (assoc-in cache [:entries path] entry)
+        (not present?)
+        (update :order conj path)))))
+
 (defn- parse-yaml-config-map
   "Parse one YAML file to its string-keyed representation WITHOUT spec
    validation. nil when absent / malformed / not a map. Shared by the strict
-   `read-yaml-config-map` and the lenient machine-store fallback.
+   `read-yaml-config-map` and the lenient machine-store fallback. Reuses raw
+   parses by canonical path, nanosecond mtime and size, including nil results;
+   validation and environment interpolation remain outside the cache.
 
    NOTHING is rewritten on the way in: `jail:` is the ONE confinement block, so
    a top-level `sandbox:` or `filesystem:` is not silently folded into it — the
    closed schema refuses the key by name instead of an operator believing a word
    Vis stopped reading."
   [path]
-  (let [f (io/file path)]
-    (when (.exists f)
-      (let [raw (try (yamlstar/load (slurp f)) (catch Exception _ nil))]
-        (when (map? raw) raw)))))
+  (let [path
+        (.getCanonicalPath (io/file path))
+
+        stamp
+        (yaml-file-stamp path)
+
+        cached
+        (get-in @yaml-config-cache [:entries path])]
+
+    (if (= stamp (:stamp cached))
+      @(:value cached)
+      (let [entry
+            {:stamp stamp
+             :value (delay (when (second stamp)
+                             (let [raw (try (yamlstar/load (slurp path)) (catch Exception _ nil))]
+                               (when (map? raw) raw))))}
+
+            cache
+            (swap! yaml-config-cache cache-yaml-entry path entry)]
+
+        @(get-in cache [:entries path :value])))))
 
 (defn- read-yaml-config-map
   "Parse one YAML file and validate its original string-keyed JSON shape.
@@ -1301,9 +1359,10 @@
   (atom nil))
 
 (defn invalidate-config-cache!
-  "Drop the `load-config-raw` memo. Called on every config WRITE, because two
-   writes inside one filesystem mtime tick could otherwise stamp identically."
+  "Drop parsed-file and merged-config caches. Called on config writes and reloads,
+   because same-size writes with a preserved mtime otherwise stamp identically."
   []
+  (reset! yaml-config-cache empty-yaml-config-cache)
   (reset! config-raw-cache nil))
 
 (defn- config-source-stamp
@@ -1312,17 +1371,7 @@
    millisecond still invalidate; `invalidate-config-cache!` covers our own
    writes regardless."
   []
-  (mapv (fn [^String p]
-          (let [f (io/file p)]
-            (if (.isFile f)
-              (let [^java.nio.file.attribute.FileTime ft
-                    (try (Files/getLastModifiedTime (.toPath f)
-                                                    (make-array java.nio.file.LinkOption 0))
-                         (catch Throwable _ nil))]
-                [p (if ft (.to ft java.util.concurrent.TimeUnit/NANOSECONDS) (.lastModified f))
-                 (.length f)])
-              [p nil nil])))
-        (config-source-paths)))
+  (mapv yaml-file-stamp (config-source-paths)))
 
 (defn load-config-raw
   "Load raw config as the deep-merge of four YAML sources — later sources win,
@@ -2286,4 +2335,4 @@
 
 (defn has-provider? [provider-id] (contains? (provider-ids) provider-id))
 
-(defn reload-config! [] (reset! active-config (load-config)))
+(defn reload-config! [] (invalidate-config-cache!) (reset! active-config (load-config)))
