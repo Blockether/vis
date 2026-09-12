@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.1] - 2026-09-12
+
+### Fixed
+- Retry provider timeouts without interrupting backoff or leaving a cancellation watchdog behind (#210).
+- Persist failed and interrupted turns, retain completed iterations, and pause goals with the concrete failure reason (#211).
+- Retain complete Activity history without total row or byte limits. Browse bounded pages, search all operations, and copy or export the full history in Companion, TUI and the Python SDK. Preserve independent histories when forking sessions and reject incomplete exports (#212).
+
+### Changed
+- Require gateway protocol 13 so older clients cannot silently lose paged Activity history. Update the engine and clients together.
+
 ## [v0.2.0] - 2026-09-11
 
 ### Added
