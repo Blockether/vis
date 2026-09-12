@@ -1,9 +1,17 @@
 {:nav
  [{:pages
    [{:blurb
-     "Install Vis, choose a model and start a coding session that can edit your files and run tests."
+     "Install Vis, open the terminal or desktop app and try your first task with a model you choose."
      :page "index"
-     :title "Getting started"}]
+     :title "Getting started"}
+    {:blurb
+     "Why I chose reusable tools over more reminders, Python to connect the steps and a shared view across devices."
+     :page "motivation"
+     :title "Why I built Vis"}
+    {:blurb
+     "Download Vis for macOS, Linux, iPhone or Android, connect to a gateway and follow the same sessions."
+     :page "gateway"
+     :title "Desktop and mobile apps"}]
    :section nil}
   {:pages
    [{:blurb
@@ -34,10 +42,6 @@
      "Try a change in an isolated working copy, review the diff and decide whether to approve it."
      :page "drafts"
      :title "Drafts"}
-    {:blurb
-     "Connect your phone or another computer to your Vis gateway and continue working in the same sessions."
-     :page "gateway"
-     :title "Remote access and the Companion app"}
     {:blurb "Report a problem with useful evidence, without sharing credentials or private code."
      :page "reporting-bugs"
      :title "Reporting a bug"}]
@@ -81,10 +85,6 @@
    :section "Extensions"}
   {:pages
    [{:blurb
-     "Read the motivation for domain-specific tools, visible work and one session across devices."
-     :page "motivation"
-     :title "Why I built Vis"}
-    {:blurb
      "See how Vis filters tool output, reuses findings and summarizes long conversations to manage context."
      :page "token-optimization"
      :title "How Vis manages context"}
@@ -108,5 +108,5 @@
    :section "Reference"}]
  :site {:extension-center {:section "Community" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"
-        :tagline "Vis is a coding agent that combines tools into Python programs."
+        :tagline "Vis is a coding agent you can adapt to your tools and workflow."
         :title "Vis"}}

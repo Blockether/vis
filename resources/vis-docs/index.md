@@ -1,89 +1,53 @@
-Vis is a coding agent that combines tools into Python programs.
-It can search your project, make changes and run tests, checking the results
-as it goes.
+Vis is a coding agent you can adapt to your tools and workflow.
+Use it to explore a project, make changes and check the results. You can work
+in the terminal or desktop app, then follow the same session from your phone.
 
 <nav class="quick-links" aria-label="Getting started">
   <a href="#why-vis">Why Vis</a>
   <a href="#install">Install</a>
   <a href="#first-session">First session</a>
-  <a href="configuration.md">Configuration</a>
+  <a href="gateway.md">Desktop and mobile</a>
 </nav>
 
 ## Why Vis
 
-You know how your project should be built, tested and checked. Vis lets you
-put that knowledge into functions the agent can use, so repeatable work
-doesn't depend only on written instructions. For the personal story behind
-these choices, read [Why I built Vis](motivation.md).
+You know which tests matter, how your team reviews changes and what must be
+checked before a release. Vis lets you turn that knowledge into reusable tools
+and automatic checks, rather than rely only on instructions the agent has to
+remember. The model combines those tools in Python; you can inspect both the
+code and the results.
 
-### Put your expertise into code
-
-Start with the built-in tools, then add [Python extensions](extending.md)
-for work you repeat. Give those functions domain meaning: select affected tests,
-validate a migration or summarize a build, rather than just wrap an arbitrary
-shell command. You choose the inputs, checks and useful results.
-
-Keep `AGENTS.md` and skills for explanations and procedures. Put rules that must
-actually be checked in the functions or in [operation hooks](extension-api.md#op-hooks).
-A hook can inspect a call before it runs and refuse it, or inspect its result
-afterward. For example, the [complexity-check recipe](extension-design.md#check-code-complexity-after-edits)
-reports Python control-flow nesting after `patch` and Python blocks, including
-`Path.write_text()` and `open()` writes. It supplies findings to the agent; it
-does not undo the edit or make the model's decisions deterministic.
-
-Once your functions cover a workflow, you can [disable shell access](jail.md)
-with `toggles.shell: false`. Extensions run as trusted host code with full
-CPython access, while the model's Python environment is
-[sandboxed](python-sandbox.md). Only install extensions you trust.
-
-### Combine steps in Python
-
-The agent uses tools through `python_execution`, with operations exposed as
-Python functions. It finds them with `apropos()` and reads their contracts with
-`doc()`. It can search files, check matches and summarize what matters in one
-program, without sending every intermediate result back to the conversation.
-
-Sequential calls run one after another; `await gather(...)` lets independent
-async operations overlap when the tools support it. Blocking calls do not become
-parallel just because they appear in one block, and calls into one Python
-extension instance are serialized.
-
-Vis still has a model/tool loop. Repeatable procedures, conditions and concurrency
-can live in ordinary Python rather than a graph of agent steps. Concurrent calls
-are not the same as multiple agents coordinating. You can also run and inspect
-sessions from your own code with the [Python SDK](https://pypi.org/project/vis-agent/).
-
-### Follow the work on every screen
-
-Activities show what an operation did, including useful counts, results and
-failures. You can [customize the presentation](extension-design.md#show-a-ci-report-without-hiding-failures)
-in your extension without changing the data returned to the agent.
-
-The terminal, desktop app and phone connect to the [same gateway](gateway.md)
-and sessions. You can check progress away from your desk without starting a
-separate agent or copying the conversation.
-
-### Keep useful work when you return
-
-The agent can define Python helpers and reuse them later in the same session.
-Their definitions survive restarting Vis and reloading extensions. This preserves
-their source, not every live Python object.
-
-The `session` dictionary exposes workspace facts, permissions and context usage.
-As a conversation grows, the agent can summarize completed work to make room for
-what comes next. The full history stays stored even when it is no longer sent to
-the model. See [How Vis manages context](token-optimization.md).
+Start with the built-in tools. Add your own when you want Vis to follow a
+specific workflow. Activities show what happened along the way, and the
+terminal, desktop and phone let you follow the same work. Read
+[Why I built Vis](motivation.md) for the thinking behind these choices.
 
 ## Install
 
-On macOS or Linux, run:
+### Install Vis where your work runs
+
+The stable release includes the engine, Python and terminal client. Native
+packages support Apple silicon macOS and Linux (x64 or ARM64); installation
+needs `curl` and `tar`, not Java or Git. For other platforms or a source build,
+see [Runtime distributions](distributions.md).
+
+The installer writes to `~/.local/bin` and can update your shell profile. You can
+[read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent)
+before running it:
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
-Download the latest stable desktop app from GitHub Releases. Choose the universal
-macOS `.dmg` or the Linux `.AppImage` for your architecture.
+If you connect to Vis on another computer, install the engine there. The desktop
+and phone apps are clients: they connect to its **gateway**, the service that
+runs your sessions and works with your files.
+
+### Get the desktop app
+
+Download the latest stable app from
+[GitHub Releases](https://github.com/Blockether/vis/releases/latest).
+Choose the universal macOS `.dmg`, or the Linux `.AppImage` for x64 or ARM64.
 
 <div class="store-links" aria-label="Download the desktop app">
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
@@ -91,8 +55,16 @@ macOS `.dmg` or the Linux `.AppImage` for your architecture.
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
 </div>
 
-For automatic download and launch, run `vis-agent desktop --track release`.
-See [Desktop setup](distributions.md#open-the-desktop-app) for details.
+Or run `vis-agent desktop --track release` to download and open it automatically.
+Opening the app does not start a gateway. Follow
+[Desktop and mobile apps](gateway.md) to connect it, or see
+[Desktop setup](distributions.md#open-the-desktop-app) for launcher options.
+
+### Get the phone app
+
+The iPhone, iPad and Android apps are public betas. Install one, then
+[pair it with your gateway](gateway.md#pair-a-phone) to see the same projects
+and sessions.
 
 <div class="store-links" aria-label="Install the Companion app">
 <a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
@@ -100,63 +72,75 @@ See [Desktop setup](distributions.md#open-the-desktop-app) for details.
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
 </div>
 
-The mobile apps are public betas. Connect desktop or mobile apps to your Vis gateway: [pairing instructions](gateway.md).
-
-You can [read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent)
-before running it. It installs the stable native engine, bundled Python and terminal
-client in `~/.local/bin`. Installation requires `curl` and `tar`, not Java or Git.
-
-Tracks choose which version of Vis you install:
-
-- `release` (default) installs the latest stable version and does not need Java.
-- `beta` installs the latest published preview that passed automated checks and does not need Java.
-- `dev` runs the latest code from `main` on the JVM and needs Git and JDK 25+.
-
-For runtime options and manual setup, see [Runtime distributions](distributions.md).
-
-## Native vs JVM
-
-**Choose native for everyday use.** Choose JVM if you're developing Vis itself
-or want to run the latest code from `main`.
-
-| What matters | Native | JVM |
-| --- | --- | --- |
-| Best for | Daily work and multiple sessions | Developing Vis and trying the latest changes |
-| Version track | `release` (default) or `beta` | `dev` |
-| Java / Git | Not needed | Git and JDK 25+ |
-| Gateway startup | ~0.7 s | ~8.6 s |
-| Gateway RAM | ~122 MiB | ~566 MiB |
-| RAM per session (light use) | ~60 MiB | ~153 MiB |
-
-*Performance figures: Vis v0.2.0 on Apple M4 Max.*
-
 ## First session
 
-Open a terminal in your project and start Vis:
+Before sending a task, choose how you will access a model. You need a supported
+provider account or API key, and your provider may charge for usage. You can
+also use Ollama or LM Studio for a local model. See
+[Providers and models](configuration.md#providers-and-models).
+
+Vis can edit files and run commands in your workspace. Start with a read-only
+task while you get familiar with it. Review changes before using them; you can
+[restrict file and network access](jail.md).
+
+### In the terminal
+
+Open a terminal in your project:
 
 ```bash
 cd /path/to/project
-vis-agent
+vis-agent tui
 ```
 
-1. Add a provider in the provider picker and follow its sign-in instructions.
-2. Select a model.
-3. Enter a task, such as “Explain how this project is organized.”
+Vis starts a local gateway if needed.
 
-Use an API key or a supported provider account. You can also connect a local model
-through Ollama or LM Studio. See [Providers and models](configuration.md#providers-and-models)
-for setup details.
+1. Add a provider in the provider picker.
+2. Follow its sign-in instructions.
+3. Select a model.
 
-Vis can modify files and run commands in your workspace. Review its changes
-before committing them. [Process jail and network policy](jail.md) explains filesystem and
-network permissions.
+### In the desktop or phone app
+
+[Connect to your gateway](gateway.md), open your project and start a session.
+Choose a provider and model there. The files and commands belong to the
+computer running the gateway, not the phone or computer displaying the app.
+
+### Try a first task
+
+> Explain how this project is organized and where its tests live. Don't change any files.
+
+You should get an explanation based on the project files. Activities in the
+conversation show the searches and reads behind it. Then try a small change,
+ask Vis to run the relevant tests and inspect the diff.
 
 ## Work with a project
 
-- Put shared project instructions in `AGENTS.md`. See [Project instructions](context-and-prompts.md).
-- Send follow-up instructions while a task runs. See [Controlling a session](queue-and-cancel.md).
-- Add reusable workflows with [Skills](skills.md), or custom tools with [Extending Vis](extending.md).
-- Use your phone or another machine through [Remote access and the Companion app](gateway.md).
+### Put your expertise into code
+
+Use `AGENTS.md` for project context and [Skills](skills.md) for reusable
+procedures. When you need an operation to follow the same rules every time,
+turn it into a tool or check. [Extending Vis](extending.md) starts with one
+Python file; you do not need to build an extension before using Vis.
+
+### Combine steps in Python
+
+Your tools can work together: read a build report, select the failed tests and
+rerun them. The model connects the steps in Python and can keep useful helper
+definitions for later. [Extension design](extension-design.md) shows how to
+make those operations useful for your environment.
+
+### Follow the work on every screen
+
+Activities show actions and their results in the conversation. Use
+[Desktop and mobile apps](gateway.md) to follow the same session from another
+device. You can send a follow-up or stop a task while it runs; see
+[Controlling a session](queue-and-cancel.md).
+
+### Keep useful work when you return
+
+Return to a session to continue its conversation. Reusable helper definitions
+survive restarts, and the full history stays stored even when Vis summarizes
+completed work to make room for the next task. See
+[How Vis manages context](token-optimization.md).
 
 ## Update
 
@@ -164,9 +148,15 @@ network permissions.
 vis-agent update
 ```
 
-`vis-agent update` always selects `release`; use `vis-agent update --track beta`
-or `vis-agent update --track dev` for the other tracks. See
-[Runtime distributions](distributions.md).
+This selects the latest stable release, even if you previously used another
+track. For beta or source builds, name the track explicitly; see
+[updates and release tracks](distributions.md#updating-and-selecting-a-track).
+
+## Native vs JVM
+
+The default native release is the everyday option. Use the JVM source build
+when developing Vis or trying the latest code. See the
+[runtime comparison](distributions.md#native-vs-jvm) for requirements and measurements.
 
 ## Learn more
 
@@ -178,7 +168,7 @@ or `vis-agent update --track dev` for the other tracks. See
 - [Controlling a session](queue-and-cancel.md) — send follow-ups, cancel a task and exit.
 - [Drafts](drafts.md) — try a change in an isolated working copy and review it before approval.
 - [Exporting sessions](exporting-sessions.md) — save or share a session.
-- [Remote access and the Companion app](gateway.md) — use Vis from your phone or another machine.
+- [Desktop and mobile apps](gateway.md) — download an app and connect to the same sessions.
 - [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
@@ -197,6 +187,7 @@ or `vis-agent update --track dev` for the other tracks. See
 
 ### Concepts
 
+- [Why I built Vis](motivation.md) — the motivation for reusable tools, visible work and shared sessions.
 - [How Vis manages context](token-optimization.md) — how filtering and summaries keep conversations manageable.
 - [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
 

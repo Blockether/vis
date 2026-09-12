@@ -267,11 +267,36 @@
                      (expect (not (str/includes? html "hero-install")))
                      (expect (not (str/includes? html "data-copy-active")))
                      (expect (str/includes? html "id=\"first-session\"")))))
-             (it "puts setup and daily use before implementation details"
+             (it "puts motivation and app setup next to getting started"
                  (let [slugs (mapv :slug (:pages (docs/collect)))]
-                   (expect (= ["index" "configuration"] (subvec slugs 0 2)))
+                   (expect (= ["index" "motivation" "gateway"] (subvec slugs 0 3)))
                    (expect (< (.indexOf slugs "queue-and-cancel")
                               (.indexOf slugs "python-sandbox"))))))
+
+(defdescribe
+  reader-first-onboarding-test
+  ;; Readers should not need the model's execution contract to install Vis.
+  (it "keeps execution reference out of the introduction"
+      (doseq [source
+              [(io/file "README.md") (io/resource "vis-docs/index.md")]
+
+              :let [intro
+                    (first (str/split (slurp source) #"(?m)^## Install$" 2))]
+              term
+              ["python_execution" "await gather" "apropos()" "Path.write_text()" "toggles.shell"]]
+
+        (expect (not (str/includes? intro term)) (str source " introduces " term " before setup"))))
+  (it "connects the landing page and app guide to desktop downloads and setup in both outputs"
+      (let [{:keys [pages] :as site} (docs/collect)]
+        (doseq [slug ["index" "gateway"]
+                mode [:static :live]
+                :let [page (first (filter #(= slug (:slug %)) pages))
+                      html (docs/page-html site page mode)
+                      setup (str (if (= mode :static) "distributions.html" "/docs/distributions")
+                                 "#open-the-desktop-app")]]
+
+          (expect (str/includes? html "href=\"https://github.com/Blockether/vis/releases/latest\""))
+          (expect (str/includes? html (str "href=\"" setup "\"")))))))
 
 ;; Regression: quick links inherited paragraph justification and split at separators on mobile.
 (defdescribe
@@ -305,8 +330,7 @@
                           (re-seq #"<a href=\"([^\"]+)\">([^<]+)</a>" (or navigation "")))]]
 
         (expect (= [["#why-vis" "Why Vis"] ["#install" "Install"] ["#first-session" "First session"]
-                    [(if (= mode :static) "configuration.html" "/docs/configuration")
-                     "Configuration"]]
+                    [(if (= mode :static) "gateway.html" "/docs/gateway") "Desktop and mobile"]]
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
         (expect (not (str/includes? html "<p><a href=\"#why-vis\">")))

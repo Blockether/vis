@@ -1,104 +1,104 @@
 # Why I built Vis
 
-I started Vis because I wanted a coding agent that fits the way I work: one that
-uses my environment's tools, shows me what it is doing and lets me follow the
-same work from my terminal, desktop or phone. Better model answers were only
-part of what I needed.
+I wanted a coding agent that understood more than the source code. It needed to
+work with my tools and processes, show me how it reached a result and let me
+follow the same work from my terminal, desktop or phone. That is why I started
+Vis.
 
 ## Fewer reminders, better tools
 
-I kept seeing behavioral rules accumulate in skills: remember this check, use
-that command, follow these steps before moving on. Skills are useful for
-explaining an approach. But when a check matters, I do not want its execution
-to depend only on whether the agent remembers the explanation.
+I kept adding rules to skills: remember this check, use that command, follow
+these steps. As models improved, they needed less help with ordinary coding.
+But the instructions about my environment kept growing. A better model still
+did not know why a team used Gerrit instead of GitHub, or Jenkins instead of
+GitHub Actions.
 
-In my experience, newer models need less instruction for ordinary coding work.
-They are better at understanding a request, using tools and working with code.
-That does not mean instructions have become unnecessary, or that a model knows
-your organization. It changes where I want to spend the effort.
+That is knowledge you have as the person working on the project. You know what
+makes a change safe, which tests are relevant and how your review process works.
+I wanted a way to give that knowledge to the agent that went beyond asking it
+to remember another paragraph.
 
-A capable model still cannot infer why you use Gerrit instead of GitHub, Jenkins
-instead of GitHub Actions, or a particular internal review process. Those are
-facts about your environment, not general programming knowledge. Repeating them
-in a prompt is one option. Giving the agent functions that already follow the
-process is another.
+Suppose every change needs a particular set of tests. You can describe the
+selection rules in a skill, or write a function that selects and runs those
+tests. The function gives you something you can test, improve and reuse. If a
+check needs to happen after an edit, a hook can run it at that point without
+waiting for the model to ask.
 
-That is the role of Vis extensions. You can write an operation that selects the
-right tests, validates a change or retrieves the relevant build result. Gerrit
-and Jenkins are examples of tools you could integrate, not built-in integrations.
-You supply the domain knowledge; the model works with operations that express it.
+Vis extensions let you define those operations in Python. Gerrit and Jenkins
+are examples of integrations you could build, not services bundled with Vis.
+Start with one task you repeat, give it clear inputs and useful results, and
+build from there. Keep `AGENTS.md` and skills for context, explanations and work
+that needs judgment.
 
-I still use `AGENTS.md` and skills for context, explanations and judgment. I put
-checks in code when I want them to run at a defined point. The
-[code-complexity example](extension-design.md#check-code-complexity-after-edits)
-shows the distinction: a registered hook measures nesting after an edit and
-reports findings. It is not a reminder to run a check, and it does not undo the
-edit or guarantee that the agent will fix every finding.
+The goal is to make the repeatable parts of the work predictable. It does not
+make the model deterministic. You still decide which checks matter and review
+the result. For a concrete example, the
+[code-check hook](extension-design.md#check-code-complexity-after-edits) measures
+Python nesting after edits and reports findings; it does not undo the edit.
 
 ## Let Python connect the steps
 
-I wanted to improve the path from a request to useful work, rather than describe
-every small step as another agent or a node in a workflow graph. In Vis, the
-model can compose operations in Python: read data, branch on the result, call the
-next function and print the evidence that matters.
+Models already write Python to work with code and data. I wanted Vis to use that
+ability, rather than make every small step a separate tool exchange or a node
+in a workflow graph. In my own work, Astra 6 has been particularly good at
+orchestrating tasks this way.
 
-This is a practical choice, not a claim that one language makes every model
-better. In my own use, Astra 6 has been particularly good at orchestrating work
-in Python. That experience helped shape Vis; it is not a benchmark or a guarantee
-about every model or task.
+Vis gives the model access to its tools and engine through Python functions.
+It can search, inspect the results, decide what to do next and combine operations
+in one program. Independent operations can overlap when the tools support it;
+steps that depend on a result wait for it. The conversation still has a
+model/tool loop, but a repeatable procedure can be ordinary code you can read
+and test.
 
-Vis still has a model/tool loop. The difference is that repeatable procedures
-can live in code you can inspect and test. Independent async operations can
-overlap when their tools support it; dependent steps stay sequential. You do
-not need a separate agent for every function call.
+Useful helper definitions can be reused when you return to the same session,
+even after restarting Vis. That saves rebuilding the same procedure each time;
+it preserves the helper's source, not every object in memory. Vis also gives
+the agent information about its workspace, permissions and available context.
+It can keep the evidence that matters and summarize completed work as the
+conversation grows, while the full history remains stored.
+
+Once your own tools cover a workflow, you can disable shell access and have the
+agent use those tools instead. That makes it easier to control the operations
+it can perform. Model-written Python runs in a [sandbox](python-sandbox.md),
+but installed extensions are trusted Python code with access to the host.
+Only install extensions you trust.
 
 ## Understand the work, not just the answer
 
-A stream of shell commands can be enough when I am experimenting at home. At
-work, I also want to know what was checked, what failed and how the result was
-reached. I do not want to reconstruct all of that from commands and raw output.
+When experimenting at home, a stream of shell commands was often enough. At
+work, I also needed to understand how a change was made: what was checked,
+what failed and what evidence supported the answer. Reconstructing that from
+commands and raw output took too much effort.
 
-Activities are the human-facing part of an operation. Your extension chooses a
-clear label, a useful summary and the evidence worth opening. The function can
-still return structured data for the agent to use in its next step.
+That is why Vis has **Activities**. A test run can show its passed and failed
+counts. A file change can show its diff. You can open the details when you need
+them, rather than work backward from the agent's final summary.
 
-For example, a local CI report reader can present:
-
-```text
-Read CI report
-42 passed · 1 failed
-Source: /workspace/ci-report.json
-```
-
-The read succeeded, but the test report contains a failure. Those are different
-outcomes, and the presentation should not blur them. An empty report should say
-that no tests were reported; a missing file should show an error. The
-[complete Activity example](extension-design.md#show-a-ci-report-without-hiding-failures)
-implements these cases with the public Python SDK.
-
-This visibility does not prove that a solution is correct. It lets you inspect
-the operations and evidence behind the answer, rather than accept a final
-summary without knowing what happened. You can change the presentation in your
-own extension instead of accepting a generic dump of its return value.
+When you write an extension, you also choose how its work appears. The agent
+gets structured data for its next step; you get an explanation suited to the
+task. Reading a report successfully should still leave its failed tests visible.
+The [Activity example](extension-design.md#show-a-ci-report-without-hiding-failures)
+shows how to do that, including empty results and errors.
 
 ## One view from the terminal, desktop and phone
 
-I also wanted to leave my desk without losing track of a session. I use the
-terminal for development, but I want to check progress or respond from my phone
-and use the desktop app when that is more convenient.
+I wanted to leave my desk without losing track of a session. I use the terminal
+for development, the desktop app when I want a separate window, and my phone to
+check progress or respond while I am away.
 
-Vis clients connect to the same gateway and sessions. The phone is not running
-a second agent with a copied conversation. You configure access to your gateway,
-then use the client that suits where you are. The [gateway guide](gateway.md)
-explains that setup.
+All of these connect to the same gateway, the service running your sessions.
+The work stays on that computer. Switching devices does not start a second
+agent or copy a conversation: you return to the same work. The
+[desktop and mobile guide](gateway.md) has the downloads and connection steps.
 
-These choices serve the same goal: give you control over how work runs and a
-clear view of what happened. Better models help, but they do not replace your
-knowledge of the environment, your checks or your judgment.
+For me, these choices belong together. Your tools express how the work should
+happen. Python lets the model combine them. Activities let you see what happened,
+and the different apps let you stay involved wherever you are.
 
 ## See also
 
-- [Getting started](index.md) — install Vis and start a session.
-- [Build an extension](extending.md) — add operations for your environment.
-- [Design an extension API](extension-design.md) — write useful tools, checks and Activities.
-- [Gateway and companion](gateway.md) — connect clients to the same sessions.
+- [Getting started](index.md) — install Vis and try your first task.
+- [Desktop and mobile apps](gateway.md) — download an app and connect to your sessions.
+- [Extending Vis](extending.md) — turn a repeated task into a tool.
+- [Extension design](extension-design.md) — working examples of checks and Activities.
+- [How Vis manages context](token-optimization.md) — how long sessions retain useful work.

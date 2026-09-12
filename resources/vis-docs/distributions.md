@@ -4,6 +4,22 @@ For everyday use, install the prebuilt native release; it does not need Java.
 The `dev` track runs from source on the JVM. Both install `vis-agent`, which runs
 the engine and gateway, and `vis-tui`, the terminal client that connects to it.
 
+## Native vs JVM
+
+Choose native for everyday use. Choose JVM when developing Vis itself or
+running the latest code from `main`.
+
+| What matters | Native | JVM |
+| --- | --- | --- |
+| Best for | Daily work and multiple sessions | Developing Vis and trying the latest changes |
+| Version track | `release` (default) or `beta` | `dev` |
+| Java / Git | Not needed | Git and JDK 25+ |
+| Gateway startup | ~0.7 s | ~8.6 s |
+| Gateway RAM | ~122 MiB | ~566 MiB |
+| RAM per session (light use) | ~60 MiB | ~153 MiB |
+
+*Performance figures: Vis v0.2.0 on Apple M4 Max.*
+
 ## Installing
 
 ```bash
@@ -139,6 +155,12 @@ use `vis-agent tui` for automatic local lifecycle management.
 
 ## Open the desktop app
 
+You can [download the stable desktop app from GitHub Releases](https://github.com/Blockether/vis/releases/latest)
+or use the launcher below. Choose the universal macOS `.dmg`, or the Linux
+`.AppImage` for x64 or ARM64. The app needs a running gateway;
+[Desktop and mobile apps](gateway.md) explains how to connect on the same
+computer or from another device.
+
 Open the desktop Companion for your selected release track:
 
 ```bash
@@ -181,7 +203,7 @@ falls back to an older build after a failure.
 Install Node.js 20 or newer with npm, Rust 1.85 or newer with Cargo, and the native
 build tools before running it. macOS needs Xcode and its command-line tools. Linux
 needs a C/C++ toolchain, WebKitGTK 4.1 development packages and `xdg-utils`; the
-[desktop build workflow](../../.github/workflows/desktop-companion.yml) lists the
+[desktop build workflow](https://github.com/Blockether/vis/blob/main/.github/workflows/desktop-companion.yml) lists the
 Ubuntu packages. Installing these prerequisites may need administrator access.
 Dependency downloads need network access, and the first native build can take
 several minutes. Subsequent builds reuse npm and Rust download/build caches, but
@@ -207,7 +229,7 @@ Installing the app in this cache needs no administrator access. Desktop launches
 do not require Java, change your engine track, or start or restart a gateway.
 
 On first launch, pair with your gateway in the app using its URL and bearer token.
-See [Remote access and the Companion app](gateway.md) for connection options.
+See [Desktop and mobile apps](gateway.md) for connection options.
 
 ## Automatic native betas
 
@@ -265,5 +287,5 @@ container machine and engine. Use the dev track on platforms without native bund
 ## See also
 
 - [Building the native binary](jvm-native-image.md)
-- [Remote access and the Companion app](gateway.md)
+- [Desktop and mobile apps](gateway.md) — download a client and connect to your sessions.
 - [Configuration](configuration.md)

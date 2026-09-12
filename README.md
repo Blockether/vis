@@ -19,110 +19,71 @@
 
 # Vis
 
-Vis is a coding agent that combines tools into Python programs.
-It can search your project, make changes and run tests, checking the results
-as it goes.
+Vis is a coding agent you can adapt to your tools and workflow.
+Ask it to explore a project, make a change or investigate a failure. Follow the
+work from your terminal, desktop or phone, with the same sessions on each.
 
 ## Why Vis
 
-You know how your project should be built, tested and checked. Vis lets you
-put that knowledge into functions the agent can use, so repeatable work
-doesn't depend only on written instructions.
+A capable model can write code, but it does not know how your team works: which
+tests matter, how changes get reviewed or what must be checked before a release.
+You do. Vis lets you put that knowledge into tools the agent can use, instead of
+relying on a growing list of reminders.
 
-- **Put your expertise into code.** Give the agent tested
-  [Python extensions](resources/vis-docs/extending.md) for your environment:
-  selecting tests, validating a change or reporting a build. Keep explanations in
-  `AGENTS.md` and skills; put checks that must run in functions and operation hooks.
-- **Combine steps in Python.** The agent uses one tool, `python_execution`, to
-  call functions, inspect results and print what matters. Independent async calls
-  can overlap with `await gather(...)` when the tools support it. Sequential calls
-  stay sequential; concurrency does not require an extra agent for each step.
-- **See what happened, on any screen.** Activities show meaningful actions,
-  results and failures instead of leaving you to interpret shell commands. Your
-  extensions choose the presentation. Connect the terminal, desktop app or phone
-  to the same gateway to follow the same sessions.
-- **Keep useful work when you return.** Reuse Python helper definitions in the
-  same session across restarts. Inspect workspace facts and permissions, and
-  summarize completed work without deleting the stored history.
+For example, a function can select and run the right tests for a change. A hook
+can check the code after an edit and report problems. You define the operations
+and checks; the model decides how to combine them. Your instructions explain the
+process, while your code carries out its repeatable parts.
 
-You choose the operations and their checks; the model decides how to use them.
-That makes repeatable work more predictable, not the model itself deterministic.
-See the working [code-check hook](resources/vis-docs/extension-design.md#check-code-complexity-after-edits)
-and [Activity example](resources/vis-docs/extension-design.md#show-a-ci-report-without-hiding-failures).
+Python connects those steps. Models already use it to work with code and data;
+Vis lets them use the same language to compose your tools, inspect results and
+reuse useful helper functions. You can start with the built-in tools and add
+[extensions](resources/vis-docs/extending.md) as you need them.
 
-Once your functions cover a workflow, you can disable shell access. Extensions
-run as trusted CPython code; the model's Python environment is sandboxed.
+You can also see how the answer was reached. **Activities** show actions, results
+and failures in the conversation. Your extensions choose what to show, so you
+can read a test result or build summary without deciphering a stream of shell
+commands. Switch devices to follow the same work, rather than start again.
 
-Read [Why I built Vis](resources/vis-docs/motivation.md) for the motivation, follow
-[Getting started](resources/vis-docs/index.md), or use the
-[Python SDK](https://pypi.org/project/vis-agent/) to run sessions from your own code.
+Read [Why I built Vis](resources/vis-docs/motivation.md) for the full motivation,
+or [Getting started](resources/vis-docs/index.md) to try it.
 
 ## Install
 
-Install the `vis-agent` command:
+Install Vis on the computer where your projects live. The default release
+includes the engine, Python and terminal client; it does not need Java or Git.
+Native packages support Apple silicon macOS and Linux (x64 or ARM64). See
+[Runtime distributions](resources/vis-docs/distributions.md) for source builds
+and other installation options.
+
+The installer writes to `~/.local/bin` and can update your shell profile. You can
+[read it first](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent).
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
-vis-agent help
 ```
-
-Tracks choose which version of Vis you install:
-
-- `release` (default) installs the latest stable version and does not need Java.
-- `beta` installs the latest published preview that passed automated checks and does not need Java.
-- `dev` runs the latest code from `main` on the JVM and needs Git and JDK 25+.
-
-```bash
-vis-agent update
-vis-agent update --track beta
-vis-agent update --track dev
-```
-
-**Clojure library:**
-
-```clojure
-;; deps.edn
-{:deps {com.blockether/vis {:mvn/version "0.1.44"}}}
-```
-
-## Native vs JVM
-
-**Choose native for everyday use.** Choose JVM if you're developing Vis itself
-or want to run the latest code from `main`.
-
-| What matters | Native | JVM |
-| --- | --- | --- |
-| Best for | Daily work and multiple sessions | Developing Vis and trying the latest changes |
-| Version track | `release` (default) or `beta` | `dev` |
-| Java / Git | Not needed | Git and JDK 25+ |
-| Gateway startup | ~0.7 s | ~8.6 s |
-| Gateway RAM | ~122 MiB | ~566 MiB |
-| RAM per session (light use) | ~60 MiB | ~153 MiB |
-
-*Performance figures: Vis v0.2.0 on Apple M4 Max.*
 
 ## Quick start
 
+Open a terminal in your project:
+
 ```bash
-vis-agent tui                                      # interactive terminal UI
-vis-agent desktop                                  # open the desktop for your selected track
-vis-agent gateway start --host 10.0.0.5 --pair       # phone app gateway; prints a pairing QR
+cd /path/to/project
+vis-agent tui
 ```
 
-`vis-agent tui` opens the terminal UI and starts a local gateway if needed.
-`vis-agent desktop` follows your selected track: release downloads and caches the
-stable app; dev builds your source checkout on every launch. Beta has no desktop
-artifacts. Use `vis-agent desktop --track release` or `--track dev` to override the
-track once, without changing your engine selection. `--update` checks for a newer
-release; on dev it rebuilds the current source. Pair with your gateway in the app.
-Every plain `vis-agent update` selects release; name beta or dev when updating those
-tracks. See [Runtime distributions](resources/vis-docs/distributions.md).
-A non-loopback `--host` requires a bearer token. `--pair` prints a QR code containing
-the address and token. See [Remote access and the Companion app](resources/vis-docs/gateway.md).
+Choose a provider, sign in and select a model. Your provider may charge for model
+usage; you can also use a supported local model. Try a read-only first task:
+“Explain how this project is organized. Don't change any files.”
+
+Vis can edit files and run commands within its configured permissions. Review
+changes before using them. The [first-session guide](resources/vis-docs/index.md#first-session)
+covers setup and what to expect.
 
 ## Desktop app (macOS / Linux)
 
-Download the latest stable desktop app from GitHub Releases. Choose the universal macOS `.dmg` or the Linux `.AppImage` for your architecture.
+Download the app from [GitHub Releases](https://github.com/Blockether/vis/releases/latest):
+the universal `.dmg` for macOS, or the `.AppImage` matching your Linux architecture.
 
 <p>
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
@@ -130,12 +91,16 @@ Download the latest stable desktop app from GitHub Releases. Choose the universa
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
 </p>
 
-For automatic download and launch, run `vis-agent desktop --track release`.
-See [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app) for details.
+Already installed the command? `vis-agent desktop --track release` downloads and
+opens the stable app for you. The app connects to a **gateway**, the Vis service
+running your sessions; opening the app does not start that service.
+Follow [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app)
+and [Desktop and mobile apps](resources/vis-docs/gateway.md) to connect it.
 
 ## Companion app (iPhone / Android)
 
-Install the app and scan the pairing QR code to access the same sessions as the terminal UI. Both stores offer public testing without an invitation.
+Use your phone to check progress or continue a conversation on the same gateway.
+Both stores offer public testing without an invitation.
 
 <p>
 <a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
@@ -143,7 +108,29 @@ Install the app and scan the pairing QR code to access the same sessions as the 
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
 </p>
 
+Follow the [phone pairing guide](resources/vis-docs/gateway.md#pair-a-phone).
 Questions and beta feedback: `contact@blockether.com`.
+
+## Update
+
+```bash
+vis-agent update
+```
+
+This selects the latest stable release. Preview and source-build updates need
+an explicit track; see [updates and release tracks](resources/vis-docs/distributions.md#updating-and-selecting-a-track).
+
+## Native vs JVM
+
+Use the native release for everyday work, or the JVM source build when developing
+Vis. The [runtime comparison](resources/vis-docs/distributions.md#native-vs-jvm)
+covers requirements, startup time and memory use.
+
+## Use Vis from your code
+
+The [Python SDK](https://pypi.org/project/vis-agent/) lets you run and inspect
+sessions from your own programs. Vis is also available as a
+[Clojure library](https://clojars.org/com.blockether/vis).
 
 ## License
 
