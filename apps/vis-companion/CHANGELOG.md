@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.0 (5927) — 2026-09-12
+<!-- commit: 8aa1ae04301917cf6f65d30a02132b98c7898e11 -->
+
+- Route shared files to the fleet session chooser
+- Align transcript headers across clients
+- Persist request origin and show actual messages
+- Label Council wake messages correctly
+- V0.2.0
+- Preserve shared runner keychain access
+- Isolate CI signing keychain and verify trust
+- Add typed extension catalogs and help (#203)
+- Sign and notarize macOS release builds
+- V0.1.68
+- Preserve command flags on iOS
+- Use readable extension group labels (#201)
+- Prevent Activity labels from overflowing
+- Honor trailing budgets and show elapsed time
+- V0.1.67
+- Preserve gateway pairing links
+- Centralize session health calculations #186
+- Align health accounting with UI #186
+- Use prepared request accounting (#186)
+- Distinguish estimates from usage (#186)
+
 ## 0.1.55 (5710) — 2026-09-09
 <!-- commit: 6f33f1c218e92e3c543bda251b5fe157fc4c2860 -->
 
