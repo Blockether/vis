@@ -105,7 +105,6 @@ def test_gateway_recipe_sends_a_task_and_releases_only_its_lease(
     recipe("gateway_task").main()
     assert submissions[0] == {
         "root": "/srv/vis-project",
-        "title": "SDK task",
         "channel": "app",
     }
     assert submissions[1]["request"] == "Summarize this project without changing files."
@@ -191,16 +190,40 @@ def test_recipes_complete_against_real_engine(
                 lambda **opts: engine.Agent(executable=client._command, **opts),
             )
             local.main()
-            with engine.Agent(executable=client._command) as agent:
-                first = agent.run("Run the guide fixture.")
-                assert first["status"] == "completed"
-                turn = agent.send("Run it again.")
-                result = recipe("progress").watch_turn(agent.session, turn)
-                assert result["status"] == "completed"
+        options = (
+            {"gateway_url": client._url, "token": client._token}
+            if transport == "http"
+            else {"executable": client._command}
+        )
+        with engine.Agent(work, **options) as agent:
+            session_id = agent.session.id
+            first = agent.run("Run the guide fixture.")
+            assert first["status"] == "completed"
+            turn = agent.send("Run it again.")
+            result = recipe("progress").watch_turn(agent.session, turn)
+            assert result["status"] == "completed"
+            assert (
+                "SDK flow completed"
+                in agent.session.transcript(format="markdown").content.decode()
+            )
+            if transport == "stdio":
+                owned_process = agent._client._process
+        if transport == "http":
+            # Closing Agent must leave the existing gateway and saved session usable.
+            with engine.GatewayClient(client._url, token=client._token) as resumed:
+                saved = resumed.session(session_id)
                 assert (
                     "SDK flow completed"
-                    in agent.session.transcript(format="markdown").content.decode()
+                    in saved.transcript(format="markdown").content.decode()
                 )
+                assert (
+                    saved.send("Continue after Agent closed.").wait(timeout=60)[
+                        "status"
+                    ]
+                    == "completed"
+                )
+        else:
+            assert owned_process.poll() is not None
         output = capsys.readouterr().out
         assert "Status: completed" in output
         assert "SDK flow completed" in output
@@ -434,6 +457,15 @@ def test_live_python_recipes(recipe, live_project, monkeypatch, capsys, transpor
         with real_client("http", command, state) as client:
             connection_environment(monkeypatch, client, work)
             recipe("gateway_task").main()
+            with engine.Agent(
+                work, gateway_url=client._url, token=client._token
+            ) as agent:
+                turn = agent.send(
+                    "Use Python to compute 7 * 6. Print the result, then reply SDK_GUIDE_OK 42. Do not read or change files."
+                )
+                result = recipe("progress").watch_turn(agent.session, turn)
+                assert result["status"] == "completed"
+                assert "SDK_GUIDE_OK 42" in json.dumps(result["content"])
     output = capsys.readouterr().out
     assert "Status: completed" in output
     assert "sdk-fixture-token" not in output

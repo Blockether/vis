@@ -343,3 +343,27 @@ Plan state: phases 12–14 implementation and required local verification comple
 - Separate release boundaries: published com.blockether:vis:0.2.2 resolves in Maven but fails to load vis-python-runtime. `VIS_TEST_PUBLISHED_JVM=0.2.2` retains a strict optional reproduction; the working JVM guide uses a prepared checkout. The build owner repaired Git dependency and SDK source packaging in `0ea20403a` and reported both Java/Clojure recipes passing with `VIS_TEST_JVM_JAR` replacing only the Vis JAR in the published dependency classpath. This candidate proof does not repair the public artifact. The embedded module-runner pytest crash was also handed to the release owner; neither published boundary is claimed fixed by these docs/SDK edits.
 - All 11 SDK verification gates pass: 647 source cases (23 opt-in skips), 664 installed-wheel cases (6 skips) with real native HTTP/stdio engines, direct/sdist wheel parity, contract contents and strict metadata. Nine candidate-classpath validation cases pass. SDK formatting and lint pass.
 - The 60 Clojure docs tests and reflection/lint pass; 161 generated-site tests and ESLint pass. Package README links use verified HTTP-200 documentation URLs. No systemd unit was enabled, shared gateway restarted, runtime published or release tagged.
+
+## 15. Support both Agent transports and verify Linux execution
+
+- Rationale: the same task interface should work with a private stdio process or an existing gateway, with ownership and project paths made explicit.
+- Data: `engine/_agent.py`, Agent and executable-guide tests, and the existing isolated Linux verification environment.
+- Acceptance criteria: default local project remains `.`; remote Agent needs no local engine or project directory, keeps one conversation, and closes only its client lease. Verify both modes, progress, follow-ups, failures and cleanup using an installed SDK and actual native Linux engines on a test VPS. Do not restart production services or use provider credentials there.
+- Unknowns: no remaining implementation blocker. Paid provider calls, dedicated-account provisioning and native recompilation are outside the isolated Linux verification; actual model calls were verified locally.
+
+## 16. Separate JVM extension builds from SDK use
+
+- Rationale: ordinary SDK clients and Python extensions should not be directed into a native-image build.
+- Data: `jvm-native-image.md`, SDK guide cross-links, site navigation and hierarchy tests.
+- Acceptance criteria: the native guide addresses only developers adding Java/Clojure capabilities to Vis, describes build-time integration and native testing, and lives under Extensions. Ordinary clients use prebuilt engines. Preserve tested commands and stable page anchors.
+- Unknowns: none in the documentation scope; no custom native rebuild or deployment is authorized by this documentation change.
+
+Plan state: phases 15–16 complete. Local and isolated Linux verification pass; no production service or account was changed. Prior verified phases remain complete.
+
+- The 12 local baseline Agent cases pass. Before implementation, all 12 new remote cases failed or errored because the gateway API was absent; all 24 now pass. Remote paths are explicit absolute POSIX paths and are not checked on the client filesystem.
+- All 11 SDK gates pass: 659 source cases (23 opt-in skips) and 676 installed-wheel cases (6 skips), including real native HTTP/stdio execution, shared-session follow-ups after Agent closes, local process exit, progress and Python tool calls. The new remote Agent also completed the exact quickstart and a Python-tool/progress request against a live provider locally.
+- Clojure docs: 61 cases pass, including Java compilation, navigation, links and the extension-author audience regression. Formatting/lint/reflection pass. Generated site: 161 cases and ESLint pass. The SDK module docstring's final wording was checked with formatting, lint and all 24 Agent cases.
+- The archived Linux candidate excludes other sessions' worktree changes. Its executable SDK and guide hashes independently match the locally verified files; subsequent changes only clarify a module docstring, one navigation label and this plan. No release or shared-service operation is part of this phase.
+- Linux x64: a freshly built and installed candidate wheel on Python 3.11.14 passes all 24 Agent cases and 20 guide cases (four opt-in live-provider skips) against the immutable public native 0.2.2 bundle. Exact Python, Java and Clojure recipes, HTTP/stdio, authentication refusal, progress, follow-ups, ownership and native restaging/Python-tool execution pass. JVM examples use the prepared source classpath with runtime 0.5.14, not a claim about the public Maven artifact.
+- The documented service unit passes systemd validation and isolated transient execution, including an existing unprivileged account, zero restarts, account-owned state and a mode-0600 token. Only test-owned units were stopped; temporary processes and the unprivileged test directory were removed. No account was created or unit enabled. Retained remote logs independently confirm exit zero and the 44-pass/four-skip result.
+- After the separate release owner's version sync, all 11 SDK gates pass again with 0.2.3 distribution metadata and the final SDK module docstring (659 source and 676 installed-wheel cases). This verifies a local candidate; it does not publish a release.

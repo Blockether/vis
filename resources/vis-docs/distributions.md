@@ -286,6 +286,6 @@ container machine and engine. Use the dev track on platforms without native bund
 
 ## See also
 
-- [Building the native binary](jvm-native-image.md)
+- [Native builds for JVM extensions](jvm-native-image.md) — only for adding Java/Clojure capabilities inside Vis.
 - [Getting started](index.md#connecting-the-companion-app) — download a client and connect to your sessions.
 - [Configuration](configuration.md)

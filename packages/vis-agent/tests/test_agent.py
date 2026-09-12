@@ -1,4 +1,4 @@
-"""Project-local Agent lifecycle and delegation; real transports live in test_sdk_guide."""
+"""Agent lifecycle and delegation; real transports live in test_sdk_guide."""
 
 from unittest.mock import Mock
 
@@ -114,3 +114,103 @@ def test_missing_launcher_has_no_surviving_process(tmp_path):
         with agent:
             pass
     agent.close()
+
+
+@pytest.fixture
+def remote(monkeypatch):
+    factory = Mock()
+    monkeypatch.setattr("blockether.vis.engine._agent.GatewayClient", factory)
+    return factory
+
+
+def test_remote_agent_needs_no_local_project_or_engine(local, remote):
+    agent = engine.Agent(
+        "/srv/vis-project",
+        gateway_url="https://gateway.example.com",
+        token="test-token",
+        timeout=12,
+    )
+    assert str(agent.project) == "/srv/vis-project"
+    local.assert_not_called()
+    remote.assert_called_once_with(
+        "https://gateway.example.com", token="test-token", timeout=12
+    )
+    remote.return_value.connect.assert_not_called()
+    with agent:
+        conversation = agent.session
+        remote.return_value.create_session.assert_called_once_with(
+            root="/srv/vis-project", channel="app"
+        )
+        result = agent.run("First", timeout=42, provider="provider", model="model")
+        assert result is conversation.send.return_value.wait.return_value
+        conversation.send.assert_called_once_with(
+            "First", provider="provider", model="model"
+        )
+        conversation.send.return_value.wait.assert_called_once_with(timeout=42)
+        assert agent.send("Follow up") is conversation.send.return_value
+        conversation.send.assert_called_with("Follow up")
+    remote.return_value.connect.assert_called_once_with()
+    remote.return_value.create_session.assert_called_once()
+    remote.return_value.close.assert_called_once_with()
+    conversation.delete.assert_not_called()
+    conversation.send.return_value.cancel.assert_not_called()
+    agent.close()
+    remote.return_value.close.assert_called_once_with()
+    with pytest.raises(engine.TransportError, match="closed"):
+        agent.send("Retry")
+
+
+@pytest.mark.parametrize("operation", ["connect", "create_session"])
+def test_remote_startup_failure_releases_client(remote, operation):
+    getattr(remote.return_value, operation).side_effect = engine.TransportError(
+        "startup"
+    )
+    agent = engine.Agent("/srv/vis-project", gateway_url="https://gateway.example.com")
+    with pytest.raises(engine.TransportError, match="startup"):
+        with agent:
+            pytest.fail("startup should not succeed")
+    remote.return_value.close.assert_called_once_with()
+    with pytest.raises(engine.TransportError, match="closed"):
+        agent.run("Retry")
+
+
+def test_remote_wait_timeout_and_context_error_only_close_client(remote):
+    with pytest.raises(engine.VisTimeout, match="deadline"):
+        with engine.Agent(
+            "/srv/vis-project", gateway_url="https://gateway.example.com"
+        ) as agent:
+            turn = agent.session.send.return_value
+            turn.wait.side_effect = engine.VisTimeout("deadline")
+            agent.run("Request", timeout=0.1)
+    turn.cancel.assert_not_called()
+    remote.return_value.close.assert_called_once_with()
+    remote.return_value.create_session.return_value.delete.assert_not_called()
+
+
+def test_remote_close_before_connect(remote):
+    agent = engine.Agent("/srv/vis-project", gateway_url="https://gateway.example.com")
+    agent.close()
+    agent.close()
+    remote.return_value.connect.assert_not_called()
+    remote.return_value.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("project", [".", "relative/project", "", "~/project"])
+def test_remote_project_must_be_explicit_absolute_path(local, project):
+    with pytest.raises(ValueError, match="absolute.*gateway"):
+        engine.Agent(project, gateway_url="https://gateway.example.com")
+    local.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"token": "test-token"},
+        {"gateway_url": "https://gateway.example.com", "executable": "custom-vis"},
+        {"gateway_url": "https://gateway.example.com", "startup_timeout": 10},
+    ],
+)
+def test_mixed_transport_options_are_rejected(local, tmp_path, options):
+    with pytest.raises(ValueError):
+        engine.Agent(tmp_path, **options)
+    local.assert_not_called()

@@ -48,17 +48,13 @@
      :page "python-sdk"
      :title "Python SDK"}
     {:blurb
-     "Connect Java or Clojure to a Vis gateway, submit tasks, handle results and understand native builds."
+     "Connect Java or Clojure to a Vis gateway, submit tasks and handle results without rebuilding the engine."
      :page "jvm-sdk"
      :title "Java and Clojure SDK"}
     {:blurb
      "Install and secure a shared Vis gateway, connect your clients and keep it running as a Linux service."
      :page "gateway-service"
-     :title "Running a gateway"}
-    {:blurb
-     "Build your own native Vis engine with GraalVM, test it and package a complete runtime for deployment."
-     :page "jvm-native-image"
-     :title "Building the native binary"}]
+     :title "Running a gateway"}]
    :section "SDKs"}
   {:pages
    [{:blurb
@@ -77,6 +73,10 @@
      "Connect an existing uv project to Vis while keeping its implementation editable in your checkout."
      :page "extension-development"
      :title "Using an existing Python project"}
+    {:blurb
+     "Add Java or Clojure capabilities inside Vis, then build, test and package a native engine containing your code."
+     :page "jvm-native-image"
+     :title "Native builds for Java and Clojure extensions"}
     {:blurb
      "Look up Python declarations, callbacks, tool contracts and host operations for Vis extensions."
      :page "extension-api"

@@ -173,5 +173,5 @@ restart policy does not undo your action.
 
 - [Python SDK](python-sdk.md) — connect a script or wrap an owned local agent.
 - [Java and Clojure SDK](jvm-sdk.md) — connect a JVM application.
-- [Building the native binary](jvm-native-image.md) — build and package a complete native runtime.
+- [Native builds for JVM extensions](jvm-native-image.md) — only when adding Java/Clojure capabilities to the engine.
 - [Process jail and network policy](jail.md) — limit what the service's tools can access.

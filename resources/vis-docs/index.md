@@ -408,10 +408,11 @@ update the client or gateway to a compatible version.
 ### Python SDK
 
 Start with the [Python SDK](python-sdk.md) to run a task in your project with
-`Agent(project=".")`. Follow-up requests reuse the conversation; `GatewayClient`
-connects to shared or remote sessions. For JVM applications, see the
-[Java and Clojure SDK](jvm-sdk.md). Then learn to
-[run a shared gateway](gateway-service.md) or [build a native runtime](jvm-native-image.md).
+`Agent(project=".")`, or pass `gateway_url` to the same Agent interface for remote
+work. Follow-up requests reuse the conversation. For JVM applications, see the
+[Java and Clojure SDK](jvm-sdk.md). To share the engine across clients,
+[run a gateway](gateway-service.md); no native build is needed. Use `GatewayClient`
+when your program needs to create or manage several gateway sessions.
 
 ### Resource limits
 
@@ -447,7 +448,6 @@ A value `<= 0` disables an eviction threshold.
 - [Python SDK](python-sdk.md) — run a local agent, continue a conversation or connect remotely.
 - [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
 - [Running a gateway](gateway-service.md) — install and operate a shared agent service.
-- [Building the native binary](jvm-native-image.md) — build, test and package your own runtime.
 
 ### Extensions
 
@@ -455,6 +455,7 @@ A value `<= 0` disables an eviction threshold.
 - [Extension design](extension-design.md) — design and test typed tools.
 - [Installing and sharing extensions](extension-packages.md) — layouts, installation, reload and distribution.
 - [Using an existing Python project](extension-development.md) — prepare editable uv packages for Vis.
+- [Native builds for Java and Clojure extensions](jvm-native-image.md) — only for adding JVM capabilities inside Vis.
 - [Extension API](extension-api.md) — declarations, tool contracts and host operations.
 - [Extension troubleshooting](extension-troubleshooting.md) — diagnose loading and call errors.
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.

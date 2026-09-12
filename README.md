@@ -154,14 +154,15 @@ covers requirements, startup time and memory use.
 Start with the [Python SDK](resources/vis-docs/python-sdk.md) to run a task using
 `Agent(project=".")`, continue the conversation or connect to a shared gateway.
 For JVM applications, follow the [Java and Clojure guide](resources/vis-docs/jvm-sdk.md).
-Then [run a shared gateway](resources/vis-docs/gateway-service.md) or
-[build and package a native runtime](resources/vis-docs/jvm-native-image.md).
+For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md); no native build is needed.
 
 ## Add your own tools and checks
 
 Follow [Extending Vis](resources/vis-docs/extending.md) to add a tool for your workflow.
 For a working example of an automatic check, see
 [Check code complexity after edits](resources/vis-docs/extension-design.md#check-code-complexity-after-edits).
+Only when adding Java/Clojure capabilities inside Vis, follow
+[Native builds for JVM extensions](resources/vis-docs/jvm-native-image.md).
 
 ## License
 

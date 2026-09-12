@@ -1,9 +1,12 @@
-# Building the native binary
+# Native builds for Java and Clojure extensions
 
-Build a native runtime when you want to ship your own Vis changes without
-requiring a JVM on the machine that runs them. This guide takes you from a
-source checkout to a tested engine bundle for a gateway or SDK wrapper. If you
-just want to use Vis, install a [prebuilt release](distributions.md) instead.
+Use this guide when you are adding **Java or Clojure capabilities inside Vis**
+and want to ship them in a native engine without requiring a JVM at runtime.
+This is an in-tree engine build, not a drop-in JAR plugin system.
+
+You do **not** need a native build to use the Python SDK, connect a Java/Clojure
+client, run a gateway or add a Python extension. Use a [prebuilt runtime](distributions.md)
+for those tasks; start with [Extending Vis](extending.md) for Python tools.
 
 ## Prerequisites
 
@@ -20,6 +23,29 @@ just want to use Vis, install a [prebuilt release](distributions.md) instead.
 Build for the target operating system and architecture. A macOS binary does not
 run on Linux. `vis-agent update --track dev` updates managed JVM source; it does
 not compile a native image.
+
+## Add and test your JVM capability
+
+Make the capability work on the JVM before compiling a native image:
+
+1. Add your code to the relevant domain under `src/com/blockether/vis/internal/`
+   and any required library to `deps.edn`. Java libraries must be on the build
+   classpath; adding a JAR beside an already-built binary does not load new code.
+2. Register tool bindings through `com.blockether.vis.internal.extension.core`;
+   a Clojure binding can call your Java API. Give each exported tool an explicit
+   input/output contract and a human-readable Activity presentation.
+3. If you add a module initializer, include its qualified registration symbol in
+   `resources/META-INF/vis/manifest.edn`'s ordered `:initialization` vector, after
+   its dependencies. This manifest registers built-in modules and supplies the
+   native build's entry points; it is not the Python extension loader.
+4. Add tests under `test/` for registration and actual calls, including failure
+   cases. Run the affected JVM tests with `clojure -M:test --namespace your.test-ns`.
+   Add matching execution coverage under `test-native/` for the compiled engine.
+
+Native compilation cannot discover arbitrary runtime-loaded classes. Check your
+library's reflection, resources and foreign-function requirements in
+[Native-image configuration](#native-image-configuration), then rebuild whenever
+you change JVM code or dependencies. Python extensions remain separately loadable.
 
 ## Build and test the image
 
@@ -95,10 +121,9 @@ For an owned Python job, pass the absolute staged launcher path as
 `Agent(executable=...)` or `LocalEngine(executable=...)`. These use a temporary
 session database; see the [Python SDK](python-sdk.md).
 
-A separate Java application can connect to this gateway without itself being
-compiled to native code. If you embed Vis in a custom Java image, you also own
-its AOT setup, reachability metadata and native execution tests. See
-[Java and Clojure SDK](jvm-sdk.md#package-a-jvm-application-or-a-native-runtime).
+To use your new capability, connect an SDK client to this custom gateway or wrap
+the staged launcher with Agent. The client still needs no native compilation;
+only the engine containing your Java/Clojure code was rebuilt.
 
 ## Native-image configuration
 
@@ -152,8 +177,8 @@ and `VIS_TRUSTSTORE_TYPE` (defaults `changeit` and `PKCS12`).
 
 ## See also
 
-- [Runtime distributions](distributions.md) — choose and update an installed runtime.
-- [Running a gateway](gateway-service.md) — supervise and secure the engine you ship.
-- [Python SDK](python-sdk.md) — wrap the built engine in a Python application.
-- [Java and Clojure SDK](jvm-sdk.md) — connect a JVM application or plan an embedding integration.
-- [Python sandbox](python-sandbox.md) — understand the Python runtime included with the binary.
+- [Extending Vis](extending.md) — add Python tools without rebuilding the engine.
+- [Runtime distributions](distributions.md) — use a prebuilt runtime when you do not change JVM capabilities.
+- [Running a gateway](gateway-service.md) — supervise and secure your custom engine.
+- [Python SDK](python-sdk.md) — call your capability through an owned engine or gateway.
+- [Java and Clojure SDK](jvm-sdk.md) — connect an external JVM application without rebuilding Vis.

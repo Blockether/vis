@@ -168,21 +168,17 @@ For a private child process rather than a shared service, the Python SDK's
 [`Agent` and `LocalEngine`](python-sdk.md#handle-failures-and-choose-a-lifecycle)
 already implement process ownership and the stdio protocol.
 
-Compiling an application that embeds Vis is not just
-`native-image -jar application.jar`. Clojure AOT classes, dynamic loading,
-reflection, resources, FFM access and the Python runtime all need the engine's
-build setup. Use the supported
-[native build and bundle workflow](jvm-native-image.md#build-and-test-the-image)
-when you want the Vis engine itself compiled ahead of time. A successful
-`javac` compilation does not verify native execution.
+Use a prebuilt Vis engine for either connection mode. You do not rebuild Vis
+merely to connect from Java or Clojure, wrap it from Python or host a gateway.
 
-If your own Java launcher must also be native, keep it a separate process wrapper
-around the complete Vis bundle, or provide and test reachability metadata for
-your embedding application. The repository's build compiles **Vis**; it does not
-automatically compile arbitrary Java applications that depend on it.
+Only if you are adding Java/Clojure capabilities **inside the engine**, follow
+[Native builds for JVM extensions](jvm-native-image.md). That workflow compiles
+Vis with your code, its Clojure AOT classes, resources and reachability metadata.
+It does not compile arbitrary SDK applications or provide a Java-only embedding
+recipe. Keep an external client and the engine as separate processes.
 
 ## See also
 
 - [Running a gateway](gateway-service.md) — install and supervise the service your application connects to.
 - [Python SDK](python-sdk.md) — a client API with an owned-process wrapper and event streams.
-- [Building the native binary](jvm-native-image.md) — select GraalVM CE, compile, test and package the engine.
+- [Native builds for JVM extensions](jvm-native-image.md) — only for adding Java/Clojure capabilities inside Vis.

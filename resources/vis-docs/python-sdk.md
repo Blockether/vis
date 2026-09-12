@@ -1,8 +1,8 @@
 # Python SDK
 
-Run a task in your project with `Agent(project=".")`, then send follow-up requests
-in the same conversation. For shared sessions or a remote machine, connect with
-`GatewayClient` instead.
+Use `Agent()` to run tasks in your current project without a gateway, or pass
+`gateway_url` to use a separately running gateway. Both modes provide `run()`,
+`send()` and one conversation for follow-up requests.
 
 ## Install the SDK
 
@@ -57,10 +57,67 @@ You should see a session ID, `Status: completed` and the answer's content blocks
 `run()` returns a turn record, not a text string. A failed, cancelled or suspended
 turn also returns a record: always check `status`.
 
+## Connect to a gateway and run a task
+
+Use a gateway when conversations must survive your script or be shared with the
+Vis app. You need only the Python SDK on the client machine, not a local engine.
+[Start a gateway](gateway-service.md#start-a-local-gateway), then set these
+variables in your private terminal for a local, default-state installation:
+
+```bash
+export VIS_GATEWAY_URL=http://127.0.0.1:7890
+export VIS_GATEWAY_TOKEN="$(cat "$HOME/.vis/gateway.token")"
+export VIS_PROJECT_ROOT="$PWD"
+```
+
+Do not print or commit the token. For a [remote gateway](gateway-service.md#connect-from-another-machine),
+use its HTTPS origin and obtain its token securely from the operator.
+`VIS_PROJECT_ROOT` must be an **absolute path on the gateway machine**, not a path
+on your laptop. Remote Agent rejects `.` rather than guessing a server directory.
+
+Save this independent example as `gateway_task.py` and run `python gateway_task.py`:
+
+```python
+# gateway_task.py
+import json
+import os
+
+from blockether.vis.engine import Agent
+
+
+def main():
+    with Agent(
+        project=os.environ["VIS_PROJECT_ROOT"],
+        gateway_url=os.environ["VIS_GATEWAY_URL"],
+        token=os.environ["VIS_GATEWAY_TOKEN"],
+    ) as agent:
+        result = agent.run("Summarize this project without changing files.")
+        print(f"Session: {agent.session.id}")
+        print(f"Status: {result['status']}")
+        print(json.dumps(result["content"], indent=2))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The script reads the environment variables; `Agent` does not discover a gateway
+or load a local token. Pass an HTTP(S) **origin** with no path prefix, query,
+fragment or URL credentials. TLS verification stays enabled and redirects are
+refused. Local-only `executable` and `startup_timeout` options cannot be combined
+with `gateway_url`.
+
+Closing a remote Agent closes its event streams and releases its client lease.
+It does **not** stop the gateway, cancel a turn or delete the saved conversation.
+The session uses the `app` channel, so it is visible in the app on that gateway.
+Keep the printed session ID: to resume it later, open a
+`GatewayClient(url, token=...)` context and use `client.session(session_id)`.
+Each new Agent creates a new session; it does not implicitly resume an old one.
+
 ## Continue a conversation
 
-Reuse the agent for follow-up requests. Use `send()` instead of `run()` when you
-want a turn handle for progress, waiting or cancellation:
+Reuse either kind of Agent for follow-up requests. Use `send()` instead of `run()`
+when you want a turn handle for progress, waiting or cancellation:
 
 ```python
 with Agent(project=".") as agent:
@@ -76,64 +133,9 @@ Export history before closing a local agent if you need to keep it.
 For example, inside the context, `agent.session.transcript(format="markdown").content`
 returns bytes you can save to a file.
 
-By default, requests use your configured provider and model. Both `run()` and
-`send()` accept `provider` and `model` to choose configured alternatives for a
+By default, requests use the engine's configured provider and model. Both `run()`
+and `send()` accept `provider` and `model` to choose configured alternatives for a
 request. They also accept `Session.send()` options such as `idempotency_key`.
-
-## Connect to a gateway and run a task
-
-Use a gateway when conversations must survive your script or be shared with the
-Vis app. [Start a gateway](gateway-service.md#start-a-local-gateway), then set these
-variables in your private terminal for a local, default-state installation:
-
-```bash
-export VIS_GATEWAY_URL=http://127.0.0.1:7890
-export VIS_GATEWAY_TOKEN="$(cat "$HOME/.vis/gateway.token")"
-export VIS_PROJECT_ROOT="$PWD"
-```
-
-Do not print or commit the token. For a [remote gateway](gateway-service.md#connect-from-another-machine),
-use its HTTPS origin and obtain its token securely from the operator.
-`VIS_PROJECT_ROOT` must exist **on the gateway machine**, not on your laptop.
-
-Save this independent example as `gateway_task.py` and run `python gateway_task.py`:
-
-```python
-# gateway_task.py
-import json
-import os
-
-from blockether.vis.engine import GatewayClient
-
-
-def main():
-    with GatewayClient(
-        os.environ["VIS_GATEWAY_URL"],
-        token=os.environ["VIS_GATEWAY_TOKEN"],
-    ) as client:
-        conversation = client.create_session(
-            root=os.environ["VIS_PROJECT_ROOT"], title="SDK task", channel="app"
-        )
-        print(f"Session: {conversation.id}")
-        turn = conversation.send("Summarize this project without changing files.")
-        result = turn.wait(timeout=300)
-        print(f"Status: {result['status']}")
-        print(json.dumps(result["content"], indent=2))
-
-
-if __name__ == "__main__":
-    main()
-```
-
-The script reads the environment variables, not `GatewayClient`. The client does
-not discover a gateway or load a local token. Pass an HTTP(S) **origin** with no
-path prefix, query, fragment or URL credentials. TLS verification stays enabled
-and redirects are refused.
-
-Keep the printed session ID. On a later connection, use `client.session(session_id)`
-and `conversation.send(...)` to continue. The `app` channel also makes the session
-visible in the app on that gateway. Closing the client releases its lease, not
-the saved conversation or the foreground service.
 
 ## Show progress while a turn runs
 
@@ -173,13 +175,14 @@ Do not automatically approve credential or permission requests.
 | A record whose `status` is not `completed` | The task did not complete normally; inspect its content and input requirements |
 
 A wait timeout is separate from the client's transport `timeout`. A local pipe
-timeout stops the owned engine; leaving an `Agent` context also stops any unfinished
+timeout stops the owned engine; leaving a local Agent context also stops unfinished
 work. A remote turn can outlive the client. When retrying a submission, reuse the
 same explicit `idempotency_key`; a new key means a new request.
 
 | API | Use it for | Closing it |
 | --- | --- | --- |
-| `Agent(project=".")` | One local conversation with convenient `run()` and `send()` | Stops its engine and discards session history |
+| `Agent(project=".")` | One local conversation, no gateway or HTTP listener | Stops its engine and discards session history |
+| `Agent(project="/srv/project", gateway_url=..., token=...)` | The same task interface on an existing gateway | Releases its client lease; keeps remote work and history |
 | `LocalEngine(executable=..., root=...)` | Several sessions in one owned stdio process | Stops that process and discards its session database |
 | `GatewayClient(url, token=...)` | Persistent or shared sessions on a separately running gateway | Closes streams and releases its client lease |
 
@@ -193,5 +196,5 @@ sidecar. Each client and its session handles use one calling thread.
 
 - [Running a gateway](gateway-service.md) — install and secure a shared agent service.
 - [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
-- [Building the native binary](jvm-native-image.md) — build a runtime for your application.
+- [Native builds for JVM extensions](jvm-native-image.md) — rebuild Vis only when adding Java/Clojure capabilities.
 - [Extending Vis](extending.md) — add tools inside the agent.
