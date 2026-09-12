@@ -26,6 +26,8 @@ import {
   ComposerResponseControls,
   type ComposerResponseControlsModel,
 } from '../components/ComposerResponseControls';
+import { shareArtifact } from '../lib/artifact-share';
+import { ActivityHistoryContext } from '../components/ActivityPanel';
 import { ComposerSuggestions, composerSuggestionListId } from '../components/ComposerSuggestions';
 import {
   SessionHeader,
@@ -566,6 +568,21 @@ export function SessionScreen({
   // Every screen-level snapshot is seeded from the client's cache: reopening a
   // session paints its last known transcript on the FIRST frame and revalidates
   // underneath, instead of holding the loading sheet over ready-to-paint rows.
+  const activityHistorySource = useMemo(
+    () => ({
+      load: (id: string, after: number, query: string, signal: AbortSignal) =>
+        client.activityPage(sid, id, after, query, signal),
+      export: async (id: string, signal: AbortSignal) => {
+        const blob = await client.activityExport(sid, id, signal);
+        if (signal.aborted) return '';
+        return shareArtifact(blob, 'activity.txt', 'text/plain', {
+          title: 'Activity history',
+          noun: 'Activity',
+        });
+      },
+    }),
+    [client, sid],
+  );
   const openingTranscript = useMemo(() => client.cachedTranscript(sid), [client, sid]);
   const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
   const [turns, setTurns] = useState<TranscriptTurn[]>(() => openingTranscript ?? []);
@@ -4258,7 +4275,7 @@ export function SessionScreen({
     },
   };
 
-  return (
+  const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <WorkspaceRootsContext.Provider value={workspaceRoots}>
         <section className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
@@ -4686,5 +4703,10 @@ export function SessionScreen({
         </section>
       </WorkspaceRootsContext.Provider>
     </AttachImageContext.Provider>
+  );
+  return (
+    <ActivityHistoryContext.Provider value={activityHistorySource}>
+      {screen}
+    </ActivityHistoryContext.Provider>
   );
 }

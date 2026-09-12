@@ -225,3 +225,65 @@ describe("one form's Activity read off the wire", () => {
     ).toBeNull();
   });
 });
+
+// #212: a bounded page is not a retention cap.
+it('admits a durable history window beyond the former receipt size', () => {
+  const page = activityProjection('succeeded');
+  const row = page.rows[0];
+  const rows = Array.from({ length: 24 }, (_, index) => ({
+    ...row,
+    id: `call-${index}`,
+    sequence: index + 1,
+    presentation: {
+      headline: 'Read',
+      summary: '',
+      content: [{ type: 'code', language: 'text', text: 'x'.repeat(4000) }],
+    },
+  }));
+  const history = {
+    id: '12345678-1234-1234-1234-123456789012',
+    revision: 1,
+    total: 160,
+    after: 0,
+    next_after: 24,
+  };
+  expect(activityProjectionFromWire({ ...page, rows, history })).toMatchObject({
+    history,
+    rows,
+  });
+  for (const invalid of [
+    { ...history, next_after: 0 },
+    { ...history, total: -1 },
+    { ...history, id: '' },
+  ]) {
+    expect(activityProjectionFromWire({ ...page, rows, history: invalid })).toBeNull();
+  }
+  expect(
+    activityProjectionFromWire({
+      ...page,
+      history,
+      rows: Array.from({ length: 33 }, (_, i) => ({ ...row, id: `over-${i}`, sequence: i + 1 })),
+    }),
+  ).toBeNull();
+  // Inline history has no total row cap; only history-bearing transport windows do.
+  expect(
+    activityProjectionFromWire({
+      ...page,
+      rows: Array.from({ length: 160 }, (_, i) => ({ ...row, id: `inline-${i}`, sequence: i + 1 })),
+    })?.rows,
+  ).toHaveLength(160);
+  const children = Array.from({ length: 32 }, (_, i) => ({
+    ...row,
+    id: `nested-${i}`,
+    sequence: i + 1,
+  }));
+  const grouped = {
+    ...page,
+    history,
+    rows: [{ ...row, id: 'group', operation: 'shell', children }],
+  };
+  expect(activityProjectionFromWire(grouped)?.rows[0].children).toHaveLength(32);
+  expect(
+    activityProjectionFromWire({ ...grouped, rows: [{ ...grouped.rows[0], id: children[0].id }] }),
+  ).toBeNull();
+});

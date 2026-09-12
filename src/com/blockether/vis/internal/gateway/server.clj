@@ -15,48 +15,51 @@
    client renders (§4.1). Any host process (the `vis-agent gateway start` daemon, a
    TUI run, an embedded caller) can start it alongside whatever else it
    is doing via `start!`."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str]
-            [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.contract.openapi :as openapi-contract]
-            [com.blockether.vis.contract.toggle :as toggle-contract]
-            [com.blockether.vis.internal.attachment.core :as attachments]
-            [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
-            [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.docs.core :as docs]
-            [com.blockether.vis.internal.extension.core :as extension]
-            [com.blockether.vis.internal.channel.file-picker :as file-picker]
-            [com.blockether.vis.internal.workspace.core :as workspace]
-            [com.blockether.vis.internal.gateway.discovery :as discovery]
-            [com.blockether.vis.internal.gateway.view :as gw-view]
-            [com.blockether.vis.internal.gateway.pairing :as pairing]
-            [com.blockether.vis.internal.gateway.runtime :as protocol]
-            [com.blockether.vis.internal.gateway.push :as push]
-            [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
-            [com.blockether.vis.internal.extension.registry :as registry]
-            [com.blockether.vis.internal.provider.auth :as provider-auth]
-            [com.blockether.vis.internal.provider.limits :as provider-limits]
-            [com.blockether.vis.internal.provider.service :as providers]
-            [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
-            [com.blockether.vis.internal.gateway.resources :as resources]
-            [com.blockether.vis.internal.python.extensions :as python-extensions]
-            [com.blockether.vis.internal.python.runtime :as python-runtime]
-            [com.blockether.vis.internal.channel.slash :as slash]
-            [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.speech.core :as speech]
-            [reitit.ring :as rr]
-            [ring.adapter.jetty9 :as jetty]
-            [ring.core.protocols :as ring-protocols]
-            [ring.middleware.cookies :as ring-cookies]
-            [ring.middleware.params :as ring-params]
-            [ring.middleware.multipart-params :as ring-multipart]
-            [ring.middleware.multipart-params.byte-array :as multipart-ba]
-            [taoensso.telemere :as tel])
+  (:require
+    [clojure.java.io :as io]
+    [clojure.string :as str]
+    [com.blockether.svar.internal.router :as svar-router]
+    [com.blockether.vis.contract.activity :as activity-contract]
+    [com.blockether.vis.contract.gateway :as gateway-contract]
+    [com.blockether.vis.contract.openapi :as openapi-contract]
+    [com.blockether.vis.contract.toggle :as toggle-contract]
+    [com.blockether.vis.internal.attachment.core :as attachments]
+    [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
+    [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.docs.core :as docs]
+    [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.channel.file-picker :as file-picker]
+    [com.blockether.vis.internal.workspace.core :as workspace]
+    [com.blockether.vis.internal.gateway.discovery :as discovery]
+    [com.blockether.vis.internal.gateway.view :as gw-view]
+    [com.blockether.vis.internal.gateway.pairing :as pairing]
+    [com.blockether.vis.internal.gateway.runtime :as protocol]
+    [com.blockether.vis.internal.gateway.push :as push]
+    [com.blockether.vis.internal.gateway.state :as state]
+    [com.blockether.vis.contract.wire :as wire]
+    [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
+    [com.blockether.vis.internal.extension.registry :as registry]
+    [com.blockether.vis.internal.persistance.core :as persistance]
+    [com.blockether.vis.internal.provider.auth :as provider-auth]
+    [com.blockether.vis.internal.provider.limits :as provider-limits]
+    [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
+    [com.blockether.vis.internal.gateway.resources :as resources]
+    [com.blockether.vis.internal.python.extensions :as python-extensions]
+    [com.blockether.vis.internal.python.runtime :as python-runtime]
+    [com.blockether.vis.internal.channel.slash :as slash]
+    [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.util :as util]
+    [com.blockether.vis.internal.speech.core :as speech]
+    [reitit.ring :as rr]
+    [ring.adapter.jetty9 :as jetty]
+    [ring.core.protocols :as ring-protocols]
+    [ring.middleware.cookies :as ring-cookies]
+    [ring.middleware.params :as ring-params]
+    [ring.middleware.multipart-params :as ring-multipart]
+    [ring.middleware.multipart-params.byte-array :as multipart-ba]
+    [taoensso.telemere :as tel])
   (:import [java.io InputStream OutputStream]
            [java.net BindException]
            [java.nio.charset StandardCharsets]
@@ -3008,6 +3011,99 @@
                                                   (get-in request [:path-params :tid]))})
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- activity-page-request
+  [request export?]
+  (let [params
+        (:query-params request)
+
+        integer-param
+        (fn [key default]
+          (if-let [value (get params key)]
+            (or (parse-long value)
+                (throw (ex-info "Activity page parameters must be integers"
+                                {:type :activity/invalid-page})))
+            default))
+
+        sid
+        (path-sid request)
+
+        aid
+        (some-> (get-in request [:path-params :aid])
+                parse-uuid)
+
+        page
+        (when (and sid aid)
+          (persistance/db-activity-page
+            (lp/db-info)
+            sid
+            (str aid)
+            (if export?
+              {}
+              {:after (integer-param "after" 0)
+               :limit (integer-param "limit" (get activity-contract/limits "max_page_rows"))
+               :q (get params "q")})))
+
+        revision
+        (integer-param "revision" nil)]
+
+    (when (and page revision (not= revision (get-in page [:history :revision])))
+      (throw (ex-info "Activity changed; reload the history and retry"
+                      {:type :activity/revision-conflict})))
+    {:sid sid :aid (str aid) :page page}))
+
+(defn- activity-error-response
+  [error]
+  (case (:type (ex-data error))
+    :activity/invalid-page
+    (error-response 400 "invalid_activity_page" (ex-message error))
+
+    :activity/revision-conflict
+    (error-response 409 "activity_changed" (ex-message error))
+
+    (throw error)))
+
+(defn- activity-page-handler
+  [request]
+  (try (if-let [page (:page (activity-page-request request false))]
+         (json-response page)
+         (error-response 404 "activity_not_found" "Activity history not found in this session"))
+       (catch clojure.lang.ExceptionInfo error (activity-error-response error))))
+
+(defn- activity-export-handler
+  "Stream complete redacted history one page at a time. Never mix revisions or build
+   the full export in gateway memory; an interrupted export must be retried."
+  [request]
+  (try (let [{:keys [sid aid page]} (activity-page-request request true)]
+         (if page
+           {:status 200
+            :headers {"Content-Type" "text/plain; charset=utf-8"
+                      "Content-Disposition" (str "attachment; filename=\"activity-" aid ".txt\"")
+                      "X-Vis-Activity-Revision" (str (get-in page [:history :revision]))}
+            :body
+            (reify
+              ring-protocols/StreamableResponseBody
+                (write-body-to-stream [_ _ output]
+                  (let [revision (get-in page [:history :revision])]
+                    (loop [current page
+                           first? true]
+
+                      (when-not (= revision (get-in current [:history :revision]))
+                        (.write ^OutputStream output
+                                (util/utf8
+                                  "\n\nINCOMPLETE EXPORT: Activity changed. Reload and retry.\n"))
+                        (throw (java.io.IOException. "Activity changed during export")))
+                      (let [text (activity-contract/copy-text (activity-contract/from-wire
+                                                                (wire/->wire current)))
+                            ^String chunk (if first? text (subs text (count "ACTIVITY")))]
+
+                        (.write ^OutputStream output (util/utf8 chunk)))
+                      (.flush ^OutputStream output)
+                      (when-let [after (get-in current [:history :next-after])]
+                        (recur (persistance/db-activity-page (lp/db-info) sid aid {:after after})
+                               false))))))}
+           (error-response 404 "activity_not_found" "Activity history not found in this session")))
+       (catch clojure.lang.ExceptionInfo error (activity-error-response error))))
+
 (defn- req-rid
   "Resource id from the request. It rides as the `rid` QUERY PARAM (not a path
    segment) because resource ids can embed absolute paths (e.g. an nREPL id
@@ -4395,6 +4491,8 @@
         [(sid-route "/resources") {:get resources-handler}]
         [(sid-route "/resources/stop") {:post resource-stop-handler}]
         [(sid-route "/resources/logs") {:get resource-logs-handler}]
+        [(sid-route "/activity/:aid") {:get activity-page-handler}]
+        [(sid-route "/activity/:aid/export") {:get activity-export-handler}]
         [(sid-route "/iterations/:iid/attachments") {:post append-attachment-handler}]
         [(sid-route "/iterations/:iid/attachments/:idx") {:get attachment-bytes-handler}]
         [(sid-route "/model") {:get session-model-handler :patch set-session-model-handler}]

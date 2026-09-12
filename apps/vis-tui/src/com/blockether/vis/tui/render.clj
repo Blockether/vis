@@ -2510,7 +2510,7 @@
                                         :node-id (:node-id meta)
                                         :collapsed? (:collapsed? meta)})))
 
-                        :activity-more
+                        (:activity-more :activity-page :activity-search)
                         (do (p/set-colors! g t/dialog-hint band-bg)
                             (p/put-str! g
                                         (+ (long x) (long (:mark-col meta)))
@@ -2519,14 +2519,39 @@
                                           (if (str/blank? mark)
                                             (str (:label meta))
                                             (str mark " " (:label meta)))))
-                            (when (:node-id meta)
+                            ;; A paging rule is pressed for its RECORD, not for a
+                            ;; disclosure: it carries the history it pages, the cursor
+                            ;; the next window starts at, the revision that window has
+                            ;; to continue, and the search it stays inside of.
+                            (case (:kind meta)
+                              :activity-page
                               (.register interactions/hit-map
                                          {:bounds
                                           {:row (+ (long viewport-top) (long y)) :col x :width iw}
-                                          :kind :toggle-details
+                                          :kind :activity-page
                                           :session-id (:session-id meta)
-                                          :node-id (:node-id meta)
-                                          :collapsed? (:collapsed? meta)})))
+                                          :history-id (:history-id meta)
+                                          :after (long (or (:after meta) 0))
+                                          :revision (:revision meta)
+                                          :query (:query meta)})
+
+                              :activity-search
+                              (.register interactions/hit-map
+                                         {:bounds
+                                          {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                          :kind :activity-search
+                                          :session-id (:session-id meta)
+                                          :history-id (:history-id meta)
+                                          :query (:query meta)})
+
+                              (when (:node-id meta)
+                                (.register interactions/hit-map
+                                           {:bounds
+                                            {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                            :kind :toggle-details
+                                            :session-id (:session-id meta)
+                                            :node-id (:node-id meta)
+                                            :collapsed? (:collapsed? meta)}))))
 
                         ;; A patch is read in the transcript's own diff ink: the added row
                         ;; carries a green band, the removed row a red one, and the band
@@ -5783,8 +5808,8 @@
   "A joined, independently folded Activity band. Every operation group is visible when
    #band is open; group contents start shut. Live/failure context survives manual folding.
    Row, file and group keys retain reader choices."
-  [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts]} max-w
-   session-id]
+  [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts
+           activity-histories activity-fetch]} max-w session-id]
   (let [rows
         (activity-operation-rows activity-rows)
 
@@ -6243,7 +6268,128 @@
                                                      (into (mapcat #(row-entry % (inc (long depth)))
                                                                    nested))))))
 
-        ;; A hard transport limit is not a disclosure: those bytes are unavailable.
+        ;; A PAGE IS NOT A LIMIT. Rows outside the window are still on the record,
+        ;; so the rule under the band can be PRESSED and says what the next press
+        ;; brings. A legacy omitted count is the other thing entirely — those rows
+        ;; were dropped before anything durable held them — so it keeps the bare
+        ;; count `more-rule` reserves for what is genuinely gone.
+        ;; The rule already SAYS its words: `more-rule` stands them in the gap it
+        ;; cuts in the line. The hint-colored overlay is there to recolor THAT copy,
+        ;; so it has to land on the column the words actually start at - painted at
+        ;; column 0 the same caption appeared twice on one row.
+        band-rule
+        (fn [label extra]
+          (let [rule
+                (more-rule label width)
+
+                words
+                (str/trim (str label))
+
+                label-col
+                (max 0 (long (or (str/index-of rule words) 0)))]
+
+            {:line (str activity-marker (ellipsize-cols rule width))
+             :meta
+             (merge
+               meta-base
+               {:kind :activity-more :item-id "#page" :mark "" :label words :mark-col label-col}
+               extra)}))
+
+        histories
+        (vec (remove nil? activity-histories))
+
+        ;; A merged display block joins several runs into one band, and each run
+        ;; keeps its OWN record and cursor: one rule per record that still has
+        ;; something to show, named by the run when there is more than one.
+        page-entries
+        (vec
+          (mapcat
+            (fn [index history]
+              (let [id
+                    (str (:id history))
+
+                    total
+                    (long (or (:total history) 0))
+
+                    after
+                    (long (or (:after history) 0))
+
+                    next-after
+                    (:next-after history)
+
+                    revision
+                    (:revision history)
+
+                    fetch
+                    (get activity-fetch id)
+
+                    ;; A search is a PROPERTY OF THE BAND, not of one window: it
+                    ;; survives every page press until the reader clears it, and
+                    ;; the rule that clears it is always in reach.
+                    query
+                    (:query fetch)
+
+                    run
+                    (if (< 1 (count histories)) (str " from run " (inc (long index))) "")
+
+                    search-rule
+                    (if (seq query)
+                      (band-rule (str "clear search · show every operation" run)
+                                 {:kind :activity-page :history-id id :after 0})
+                      (band-rule (str "search every operation" run)
+                                 {:kind :activity-search :history-id id :query query}))]
+
+                (cond
+                  (= :loading (:status fetch)) [(band-rule (str (if (seq query)
+                                                                  "searching every operation"
+                                                                  "loading more operations")
+                                                                run)
+                                                           nil)]
+                  ;; The record moved while this reader was paging it. Continuing
+                  ;; from the old cursor would splice two different histories, so
+                  ;; the only rule offered reads it again from the first operation.
+                  (= :stale (:status fetch))
+                  [(band-rule (str "Activity changed · show it again from the first operation" run)
+                              {:kind :activity-page :history-id id :after 0 :query query})]
+                  (= :failed (:status fetch)) [(band-rule (str "could not load · show again" run)
+                                                          {:kind :activity-page
+                                                           :history-id id
+                                                           :after (long (or (:after fetch) 0))
+                                                           :revision revision
+                                                           :query query})]
+                  :else (cond-> []
+                          next-after
+                          (conj
+                            (band-rule (str (if (seq query)
+                                              ;; `total` counts the WHOLE record and
+                                              ;; `next-after` is a sequence cursor, not a
+                                              ;; count of matches: subtracting one from the
+                                              ;; other would claim a number of further
+                                              ;; matches nobody counted. A searched page
+                                              ;; says there is more, not how much more.
+                                              "show more matching operations"
+                                              (str "show "
+                                                   (more-count (max 0 (- total (long next-after)))
+                                                               "operation")))
+                                            run)
+                                       {:kind :activity-page
+                                        :history-id id
+                                        :after (long next-after)
+                                        :revision revision
+                                        :query query}))
+
+                          (pos? after)
+                          (conj (band-rule
+                                  (str "show the earliest operations again" run)
+                                  {:kind :activity-page :history-id id :after 0 :query query}))
+
+                          :always
+                          (conj search-rule)))))
+            (range)
+            histories))
+
+        ;; Records the engine dropped before retention: unavailable bytes, not a
+        ;; window. It reports, it cannot be pressed.
         omitted-entry
         (when (pos? (long (or activity-omitted 0)))
           (let [label (str activity-omitted
@@ -6255,7 +6401,7 @@
              (merge meta-base
                     {:kind :activity-more :item-id "omitted" :mark "" :label label :mark-col 0})}))]
 
-    (when (or (seq rows) (pos? (long (or activity-omitted 0))))
+    (when (or (seq rows) (seq histories) (pos? (long (or activity-omitted 0))))
       (let [states
             (frequencies (map activity-row-state activity-rows))
 
@@ -6268,8 +6414,31 @@
 
                         (str (get states state) " " (name state))))
 
+            retained
+            (reduce + 0 (map #(long (or (:total %) 0)) histories))
+
+            ;; One search reads the whole record, so the band says what it is
+            ;; showing a filtered view OF, not merely how many rows survived it.
+            query
+            (some (fn [history]
+                    (let [q (:query (get activity-fetch (str (:id history))))]
+                      (when (seq q) q)))
+                  histories)
+
+            ;; WHAT THE BAND HOLDS OF WHAT THE RECORD HOLDS. One window of
+            ;; thirty-two out of three hundred calls is not "32 operations":
+            ;; the count a reader needs is the one that says there is more.
             summary
-            (str (count activity-rows) " operation" (when (not= 1 (count activity-rows)) "s"))
+            (let [shown (count activity-rows)]
+              (cond query (str "showing "
+                               shown
+                               " operation"
+                               (when (not= 1 shown) "s")
+                               " matching “"
+                               query
+                               "”")
+                    (< (long shown) (long retained)) (str shown " of " retained " operations")
+                    :else (str shown " operation" (when (not= 1 shown) "s"))))
 
             suffix
             (str/join " · "
@@ -6301,6 +6470,14 @@
                            :item-id "#band"
                            :copy-text (activity-contract/copy-text
                                         {:rows activity-rows :omitted {:rows activity-omitted}})
+                           ;; Copy means ALL of it. The window's own text is the
+                           ;; fallback for a record that has nothing else to give.
+                           :copy-history (when (seq histories)
+                                           (mapv (fn [history]
+                                                   {:id (str (:id history))
+                                                    :revision (:revision history)
+                                                    :total (long (or (:total history) 0))})
+                                                 histories))
                            :copy-width (when copy? (p/display-width code-copy-label))
                            :collapsed? (not band-open?)
                            :operation-col 0
@@ -6308,6 +6485,7 @@
 
         (vec (concat [header]
                      (when band-open? (cons blank (mapcat row-entry rows)))
+                     (when band-open? page-entries)
                      (when (and band-open? omitted-entry) [omitted-entry])
                      [blank]))))))
 
@@ -6440,7 +6618,12 @@
         :omitted
         {:rows (reduce + 0 (keep #(get-in % [:omitted :rows]) activities))
          :by-classification
-         (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))}}})))
+         (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))}
+        ;; Each joined run keeps its OWN durable record and its own cursor. One
+        ;; cursor could only ever address one of them, so the band carries them
+        ;; all and pages whichever the reader presses.
+        :histories (vec (keep :history activities))
+        :vis.channel-tui/fetch (apply merge {} (keep :vis.channel-tui/fetch activities))}})))
 
 (defn- execution-groups
   "One source and activity per adjacent Python run; comments and other languages are boundaries."
@@ -6745,6 +6928,10 @@
                                    :index index}])))
                            (filter #(= "tool" (or (:source %) (get % "source"))) attachments)))
                    :activity-omitted (get-in activity [:omitted :rows] 0)
+                   :activity-histories (vec (or (seq (:histories activity))
+                                                (when-let [history (:history activity)]
+                                                  [history])))
+                   :activity-fetch (:vis.channel-tui/fetch activity)
                    :activity-expanded? (fn [item-key default-open?]
                                          (detail-expanded? detail-expansions
                                                            session-id

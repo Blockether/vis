@@ -159,12 +159,12 @@
         (.register interactions/hit-map (assoc-in card [:artifact :index] 1))
         (.register interactions/hit-map (assoc-in card [:bounds :row] 20))
         (.commitFrame interactions/hit-map)
-        (#'screen/activate-detail-label! {:detail-labels labels} (cap/key-stroke (first label)))
+        (#'screen/activate-detail-label! nil {:detail-labels labels} (cap/key-stroke (first label)))
         (is (= [["live-review" (:artifact card)]] @opened))
         (is (= [[:set-detail-labels false] [:bump-render-version]] @events))
         (reset! opened [])
         (doseq [key [(KeyStroke. KeyType/Escape) (KeyStroke. \g true false)]]
-          (#'screen/activate-detail-label! {:detail-labels labels} key))
+          (#'screen/activate-detail-label! nil {:detail-labels labels} key))
         (is (empty? @opened))))))
 
 (defn- cell-grid

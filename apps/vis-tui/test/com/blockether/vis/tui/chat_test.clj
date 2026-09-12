@@ -1047,3 +1047,87 @@
                      (expect (= {:request "describe this" :attachments attachments}
                                 (select-keys @sent [:request :attachments])))
                      (expect (not (str/includes? (:request @sent) "screen.png")))))))
+
+;; Issue #212: the Activity band used to DROP operations at its row cap. The record
+;; keeps them all, so the TUI reads windows of it — and a broken read has to look
+;; different from an empty one, or a retry would look like nothing left to show.
+
+(def ^:private retained-window
+  {"state" "succeeded"
+   "counts" {"running" 0 "succeeded" 1 "failed" 0 "cancelled" 0}
+   "rows" [{"id" "r1"
+            "sequence" 0
+            "operation" "search_files"
+            "presenter" "generic"
+            "signal" "observation"
+            "state" "succeeded"
+            "summary" "Search files"
+            "resources" []
+            "evidence" []}]
+   "omitted" {"rows" 0 "by_classification" {}}
+   "history" {"id" "6f1c9c9e-6f6b-4a3a-9b3e-3f9a0a1b2c3d"
+              "revision" 4
+              "total" 274
+              "after" 32
+              "next_after" 64}})
+
+(defdescribe
+  activity-record-window-test
+  (it "reads one window of the retained record in engine spelling"
+      (let [asked (atom nil)]
+        (with-redefs [vis/activity-page (fn [session-id activity-id opts]
+                                          (reset! asked [session-id activity-id opts])
+                                          retained-window)]
+          (let [page (chat/activity-page "sid" "a1" {:after 32 :revision 4})]
+            (expect (= ["sid" "a1"
+                        {:after 32
+                         :limit (long (get activity/limits "max_page_rows"))
+                         :query nil
+                         :revision 4}]
+                       @asked))
+            (expect (= 274 (get-in page [:history :total])))
+            (expect (= 64 (get-in page [:history :next-after])))
+            (expect (= ["r1"] (mapv :id (:rows page))))))))
+  (it "asks for one page worth of rows when the caller names no limit"
+      (let [asked (atom nil)]
+        (with-redefs [vis/activity-page (fn [_ _ opts]
+                                          (reset! asked opts)
+                                          retained-window)]
+          (chat/activity-page "sid" "a1" {})
+          (expect (= (long (get activity/limits "max_page_rows")) (:limit @asked))))))
+  (it "carries a search to the record, not to the window in hand"
+      (let [asked (atom nil)]
+        (with-redefs [vis/activity-page (fn [_ _ opts]
+                                          (reset! asked opts)
+                                          retained-window)]
+          (chat/activity-page "sid" "a1" {:after 0 :query "patch"})
+          (expect (= "patch" (:query @asked))))))
+  (it "reports a broken read instead of an empty record"
+      (with-redefs [vis/activity-page (fn [& _]
+                                        (throw (ex-info "gateway down" {})))]
+        (expect (= {:rows [] :failed true} (chat/activity-page "sid" "a1" {:after 0}))))
+      (with-redefs [vis/activity-page (fn [& _]
+                                        nil)]
+        (expect (= {:rows [] :failed true} (chat/activity-page "sid" "a1" {:after 0})))))
+  (it "marks a record that moved on as stale, never as an ordinary failure"
+      (with-redefs [vis/activity-page (fn [& _]
+                                        :activity-changed)]
+        (expect (= {:rows [] :failed true :stale true}
+                   (chat/activity-page "sid" "a1" {:after 32 :revision 4})))))
+  (it "exports the whole history as text, pinned to the revision on screen"
+      (let [asked (atom nil)]
+        (with-redefs [vis/activity-export (fn [session-id activity-id revision]
+                                            (reset! asked [session-id activity-id revision])
+                                            "1. Search files\n2. Run tests")]
+          (expect (= {:text "1. Search files\n2. Run tests"} (chat/activity-export "sid" "a1" 4)))
+          (expect (= ["sid" "a1" 4] @asked)))))
+  (it "refuses to hand back half a history"
+      (with-redefs [vis/activity-export (fn [& _]
+                                          (throw (ex-info "gateway down" {})))]
+        (expect (= {:failed true} (chat/activity-export "sid" "a1" nil))))
+      (with-redefs [vis/activity-export (fn [& _]
+                                          nil)]
+        (expect (= {:failed true} (chat/activity-export "sid" "a1" nil))))
+      (with-redefs [vis/activity-export (fn [& _]
+                                          :activity-changed)]
+        (expect (= {:failed true :stale true} (chat/activity-export "sid" "a1" 4))))))

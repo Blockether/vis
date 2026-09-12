@@ -1225,3 +1225,56 @@ it('encodes literal log search and retains bounded match offsets', async () => {
   expect(url.searchParams.get('from')).toBe('200');
   expect(url.searchParams.get('limit')).toBe('200');
 });
+
+// #212: paging remains authenticated and does not replace the form's source identity.
+it('reads and validates a durable Activity page and exports with header authentication', async () => {
+  const { activityHistoryPage } = await import('../dev/activity-history');
+  const page = activityHistoryPage(32, 'operation');
+  const fetches = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(page), { status: 200 }))
+    .mockResolvedValueOnce(new Response('all activity', { status: 200 }));
+  vi.stubGlobal('fetch', fetches);
+  const { GatewayClient } = await import('./gateway');
+  const client = new GatewayClient({ ...conn, token: 'fixture-token' });
+  expect(await client.activityPage('session/one', page.history!.id, 32, 'operation')).toEqual(page);
+  const [url, init] = fetches.mock.calls[0];
+  expect(url).toContain('/v1/sessions/session%2Fone/activity/');
+  expect(new URL(url).searchParams.get('q')).toBe('operation');
+  expect(new Headers(init.headers).get('Authorization')).toBe('Bearer fixture-token');
+  expect(await (await client.activityExport('session/one', page.history!.id)).text()).toBe(
+    'all activity',
+  );
+  expect(fetches.mock.calls[1][0]).toContain('/export');
+  expect(new Headers(fetches.mock.calls[1][1].headers).get('Authorization')).toBe(
+    'Bearer fixture-token',
+  );
+  expect(client.cachedTranscript('session/one')).toBeNull();
+  fetches.mockResolvedValueOnce(
+    new Response(JSON.stringify({ ...page, history: { ...page.history, after: 0 } })),
+  );
+  await expect(client.activityPage('session/one', page.history!.id, 32)).rejects.toThrow(
+    'does not match',
+  );
+});
+
+// #212: a stream adapter may close normally after the server marks an incomplete export.
+it('rejects a marked HTTP 200 Activity export and preserves ordinary body failures', async () => {
+  const marker = '\n\nINCOMPLETE EXPORT: Activity changed. Reload and retry.\n';
+  const fetches = vi.fn().mockResolvedValueOnce(
+    new Response('retained output\n'.repeat(10000) + marker, { status: 200 }),
+  );
+  vi.stubGlobal('fetch', fetches);
+  const { GatewayClient } = await import('./gateway');
+  const client = new GatewayClient(conn);
+  await expect(client.activityExport('s1', 'history')).rejects.toThrow(
+    'Activity changed. Reload and retry.',
+  );
+  const aborted = new DOMException('Export aborted', 'AbortError');
+  fetches.mockResolvedValueOnce({ ok: true, blob: () => Promise.reject(aborted) });
+  await expect(client.activityExport('s1', 'history')).rejects.toBe(aborted);
+  // An example mentioning the marker within a complete export is not a failure trailer.
+  const complete = marker + 'More retained activity follows.\n';
+  fetches.mockResolvedValueOnce(new Response(complete));
+  expect(await (await client.activityExport('s1', 'history')).text()).toBe(complete);
+});

@@ -28,11 +28,19 @@
 
 (defn label-key
   "Stable identity for keyboard-addressable transcript disclosures and live cards.
-   A card's border, padding and content rows share one target. Other artifacts do not."
+   A card's border, padding and content rows share one target, an Activity
+   paging rule is addressed by the record and cursor it would fetch, and its
+   search rule by the record it would search. Other artifacts do not."
   [region]
   (case (:kind region)
     :toggle-details
     [:toggle-details (:session-id region) (:node-id region)]
+
+    :activity-page
+    [:activity-page (:session-id region) (:history-id region) (:after region)]
+
+    :activity-search
+    [:activity-search (:session-id region) (:history-id region)]
 
     :artifact
     (when (:live-card? region)

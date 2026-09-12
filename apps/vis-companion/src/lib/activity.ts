@@ -13,9 +13,8 @@
  * neither of which the Live View rail knows about. The two surfaces share a
  * transport, nothing else.
  *
- * The snapshot is ALREADY bounded when it arrives (128 rows, 64 KiB); this
- * parser re-checks both, because a payload that broke the engine's own bound
- * is a contract violation, not a bigger picture to render.
+ * History-backed snapshots are bounded windows, not complete histories. Their
+ * durable identity and cursor let the clients retrieve every retained operation.
  */
 import activityContract from '../../../../packages/vis-contract/resources/vis-contract/activity.json';
 const ACTIVITY_LIMITS = activityContract.limits;
@@ -308,13 +307,17 @@ export interface ActivityRow {
   presentation?: ActivityPresentation;
 }
 
-/**
- * One form's bounded execution picture. Protocol 8 carries no `schema_version`
- * and no `anchor`: the wire protocol number already gates the shape — that is
- * what the compatibility handshake is for — and a snapshot that lives ON its
- * form has nothing left to point at.
- */
+export interface ActivityHistory {
+  id: string;
+  revision: number;
+  total: number;
+  after: number;
+  next_after: number | null;
+}
+
+/** One form's current window, or a complete inline historical receipt. */
 export interface ActivityProjection {
+  history?: ActivityHistory;
   state: ActivityState;
   counts: Record<'running' | 'succeeded' | 'failed' | 'cancelled', number>;
   rows: ActivityRow[];
@@ -605,9 +608,31 @@ function activityRowIds(rows: readonly ActivityRow[]): string[] {
   return rows.flatMap((row) => [row.id, ...(row.children ? activityRowIds(row.children) : [])]);
 }
 
+function activityLeafCount(rows: readonly ActivityRow[]): number {
+  return rows.reduce(
+    (count, row) => count + (row.children?.length ? activityLeafCount(row.children) : 1),
+    0,
+  );
+}
+
 export function activityProjectionFromWire(value: unknown): ActivityProjection | null {
   const raw = record(value);
-  if (!raw || !hasExactKeys(raw, ['state', 'counts', 'rows', 'omitted'])) return null;
+  if (!raw || !hasExactKeys(raw, ['state', 'counts', 'rows', 'omitted'], ['history'])) return null;
+  const history = raw.history === undefined ? undefined : record(raw.history);
+  if (
+    raw.history !== undefined &&
+    (!history ||
+      !hasExactKeys(history, ['id', 'revision', 'total', 'after', 'next_after']) ||
+      typeof history.id !== 'string' ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(history.id) ||
+      [history.revision, history.total, history.after].some(
+        (value) => activityCount(value) === null,
+      ) ||
+      (history.next_after !== null &&
+        (activityCount(history.next_after) === null ||
+          Number(history.next_after) <= Number(history.after))))
+  )
+    return null;
   const state = activityEnum(raw.state, ACTIVITY_STATES);
   const countsRaw = record(raw.counts);
   const omittedRaw = record(raw.omitted);
@@ -644,12 +669,14 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     ) ||
     parsedRows.some((row) => row === null) ||
     new Set(ids).size !== ids.length ||
-    parsedRows.length > ACTIVITY_LIMITS.max_rows ||
-    new TextEncoder().encode(JSON.stringify(raw)).length > ACTIVITY_LIMITS.max_receipt_bytes
+    (history !== undefined &&
+      (activityLeafCount(rows) > ACTIVITY_LIMITS.max_page_rows ||
+        new TextEncoder().encode(JSON.stringify(raw)).length > ACTIVITY_LIMITS.max_page_bytes))
   ) {
     return null;
   }
   return {
+    ...(history ? { history: history as unknown as ActivityHistory } : {}),
     state,
     counts: counts as ActivityProjection['counts'],
     rows,

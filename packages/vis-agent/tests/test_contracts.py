@@ -68,19 +68,19 @@ def test_gateway_contract_is_whole():
     lease = gateway["client_lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(gateway["routes"]) == 111
-    assert len(operations) == 135
+    assert len(gateway["routes"]) == 113
+    assert len(operations) == 137
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 95,
+        "none": 97,
         "json": 36,
         "binary": 4,
     }
     assert Counter(operation["response"] for operation in operations) == {
-        "json": 118,
+        "json": 119,
         "resource": 2,
         "sse": 5,
         "empty": 3,
-        "binary": 4,
+        "binary": 5,
         "negotiated": 1,
         "html": 1,
         "markdown": 1,

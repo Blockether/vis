@@ -82,53 +82,55 @@
 
 (defn paint-activity-review!
   "Paint the production joined execution surface; no copied browser layout."
-  [^TerminalScreen screen rows expansions]
-  (.doResizeIfNecessary screen)
-  (.clear screen)
-  (let [cols
-        (.getColumns (.getTerminalSize screen))
+  ([^TerminalScreen screen rows expansions] (paint-activity-review! screen rows expansions nil))
+  ([^TerminalScreen screen rows expansions projection-extra]
+   (.doResizeIfNecessary screen)
+   (.clear screen)
+   (let [cols
+         (.getColumns (.getTerminalSize screen))
 
-        height
-        (.getRows (.getTerminalSize screen))
+         height
+         (.getRows (.getTerminalSize screen))
 
-        projection
-        {:state "running"
-         :rows rows
-         :counts (merge {:running 0 :succeeded 0 :failed 0 :cancelled 0}
-                        (frequencies (map (comp keyword :state) rows)))
-         :omitted {:rows 0 :by-classification {}}}
+         projection
+         (merge {:state "running"
+                 :rows rows
+                 :counts (merge {:running 0 :succeeded 0 :failed 0 :cancelled 0}
+                                (frequencies (map (comp keyword :state) rows)))
+                 :omitted {:rows 0 :by-classification {}}}
+                projection-extra)
 
-        rendered
-        (render/format-answer-with-thinking-data*
-          ""
-          [{:thinking "Inspect files, apply the patch, then run tests."
-            :forms [{:code "inspect_files()\napply_patch()\nrun_checks()"
-                     :stdout "Read 3 files.\nUpdated 2 files."
-                     :duration-ms 1200
-                     :activity projection}]}]
-          (- cols 4)
-          {:show-thinking true :show-iterations true}
-          nil
-          false
-          {:session-id "activity-review" :detail-expansions expansions})]
+         rendered
+         (render/format-answer-with-thinking-data*
+           ""
+           [{:thinking "Inspect files, apply the patch, then run tests."
+             :forms [{:code "inspect_files()\napply_patch()\nrun_checks()"
+                      :stdout "Read 3 files.\nUpdated 2 files."
+                      :duration-ms 1200
+                      :activity projection}]}]
+           (- cols 4)
+           {:show-thinking true :show-iterations true}
+           nil
+           false
+           {:session-id "activity-review" :detail-expansions expansions})]
 
-    (doto (.newTextGraphics screen)
-      (.setBackgroundColor theme/terminal-bg)
-      (.setForegroundColor theme/text-fg)
-      (.fill \space))
-    (.beginFrame interactions/hit-map)
-    (let [consumed (render/draw-chat-bubble! (.newTextGraphics screen)
-                                             {:role :assistant
-                                              :text ""
-                                              :prewrapped-lines (:lines rendered)
-                                              :line-meta (:line-meta rendered)}
-                                             2
-                                             1
-                                             (- cols 4)
-                                             {:viewport-h (- height 2)})]
-      (.commitFrame interactions/hit-map)
-      (.refresh screen)
-      (assoc rendered :review-rows (min height (+ 2 consumed))))))
+     (doto (.newTextGraphics screen)
+       (.setBackgroundColor theme/terminal-bg)
+       (.setForegroundColor theme/text-fg)
+       (.fill \space))
+     (.beginFrame interactions/hit-map)
+     (let [consumed (render/draw-chat-bubble! (.newTextGraphics screen)
+                                              {:role :assistant
+                                               :text ""
+                                               :prewrapped-lines (:lines rendered)
+                                               :line-meta (:line-meta rendered)}
+                                              2
+                                              1
+                                              (- cols 4)
+                                              {:viewport-h (- height 2)})]
+       (.commitFrame interactions/hit-map)
+       (.refresh screen)
+       (assoc rendered :review-rows (min height (+ 2 consumed)))))))
 
 (defn toggle-review-region
   "Use the same pure detail event that mouse and keyboard dispatch in the TUI."
@@ -809,3 +811,86 @@
              (is (= \X (.getCharacter (.getCharacter terminal (TerminalPosition. 7 2)))))
              (is (= \space (.getCharacter (.getCharacter terminal (TerminalPosition. 8 2)))))))
          (finally (.stopScreen screen)))))
+
+(defn- caption-count
+  "How many times one caption stands on a single painted row."
+  [line phrase]
+  (loop [from
+         0
+
+         n
+         0]
+
+    (if-let [at (str/index-of (str line) (str phrase) from)]
+      (recur (+ (long at) (count (str phrase))) (inc n))
+      n)))
+
+(deftest activity-history-window-states-html-test
+  ;; A paged Activity record stays readable in every fetch state: the search
+  ;; offer, a search in flight, a changed record and a failed window all say
+  ;; what happened and what one press does next.
+  (let [rows
+        (activity-review-rows "succeeded")
+
+        history
+        {:id "history-1" :revision 3 :total 90 :after 0 :next-after 7}
+
+        states
+        [[{} ["search every operation" "7 of 90 operations"]]
+         [{"history-1" {:status :loading :after 0 :query "patch"}}
+          ["searching every operation" "matching"]]
+         [{"history-1" {:status :stale :after 0}} ["Activity changed" "show it again"]]
+         [{"history-1" {:status :failed :after 7}} ["could not load"]]
+         [{"history-1" {:query "patch"}}
+          ["clear search" "showing 7 operations matching" "show more matching operations"]]]]
+
+    (doseq [cols
+            [80 120]
+
+            [fetch expected]
+            states]
+
+      (with-open [html
+                  (activity-review-terminal cols 60)
+
+                  terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 60))
+
+                  hs
+                  (doto (TerminalScreen. html) (.startScreen))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (let [extra
+              {:history history :vis.channel-tui/fetch fetch}
+
+              _
+              (paint-activity-review! hs rows {} extra)
+
+              band
+              (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
+                             (.current interactions/hit-map)))
+
+              opened
+              (toggle-review-region {} band)]
+
+          (is (some? band))
+          (paint-activity-review! hs rows opened extra)
+          (paint-activity-review! ts rows opened extra)
+          (let [text (str/join "\n"
+                               (map (fn [row]
+                                      (apply str
+                                        (map #(.getCharacterString
+                                                ^com.googlecode.lanterna.TextCharacter %)
+                                             row)))
+                                    (cell-grid terminal cols 60)))]
+            (doseq [phrase expected]
+              (is (str/includes? text phrase)
+                  (str "missing " (pr-str phrase) " at " cols " columns"))
+              ;; A rule paints its caption in the gap it cuts and the overlay only
+              ;; recolors that copy: the same words twice on one row is the bug.
+              (is (every? #(<= (long (caption-count % phrase)) 1) (str/split-lines text))
+                  (str "duplicated " (pr-str phrase) " on one row at " cols " columns")))
+            (is (= (cell-grid html cols 60) (cell-grid terminal cols 60)))
+            (is (str/includes? (.renderHtml html) "ACTIVITY"))))))))

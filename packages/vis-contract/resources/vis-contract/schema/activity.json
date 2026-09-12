@@ -50,10 +50,10 @@
     },
     "limits": {
       "const": {
-        "max_rows": 128,
+        "max_page_rows": 32,
         "max_depth": 2,
         "max_resources": 8,
-        "max_receipt_bytes": 65536,
+        "max_page_bytes": 1048576,
         "max_summary_bytes": 512,
         "max_detail_bytes": 2048,
         "max_event_bytes": 262144,
@@ -626,13 +626,48 @@
         },
         "rows": {
           "type": "array",
-          "maxItems": 128,
           "items": {
             "$ref": "#/$defs/row"
           }
         },
         "omitted": {
           "$ref": "#/$defs/omitted"
+        },
+        "history": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "after": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "next_after": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "total",
+            "after",
+            "next_after"
+          ]
         }
       },
       "required": [

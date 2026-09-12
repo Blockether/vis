@@ -31,10 +31,10 @@
     "markdown"
   ],
   "limits": {
-    "max_rows": 128,
+    "max_page_rows": 32,
     "max_depth": 2,
     "max_resources": 8,
-    "max_receipt_bytes": 65536,
+    "max_page_bytes": 1048576,
     "max_summary_bytes": 512,
     "max_detail_bytes": 2048,
     "max_event_bytes": 262144,
@@ -42,11 +42,11 @@
   },
   "semantics": {
     "ownership": "A projection belongs to its containing form. Only the event envelope carries session, turn, iteration and form_index. Activity is not a View and never enters model context.",
-    "delivery": "Each block.activity is a complete replacement, not a delta. Envelope seq orders revisions. Reconnect replays the latest replacement; settled evidence is durable.",
+    "delivery": "Each block.activity replaces the first bounded page, not the durable history. history.id identifies session-scoped durable records, revision orders changes, total counts all invocations, after is the exclusive sequence cursor and next_after is null at the end. Read further pages or search through the session Activity endpoint. Reopen and restart never depend on the live event ring.",
     "lifecycle": "The engine allocates invocation identity and entry sequence, records running before execution, and exactly one succeeded, failed or cancelled result. Presentation cannot control the operation.",
     "counts": "Counts describe observed invocations, including omitted rows. Group rows are presentation, not additional invocations. omitted.by_classification counts omitted evidence by signal. Readers form one group per exact operation across an Activity block, not just adjacent runs. operation_groups supplies known labels; unknown operations use their exact names. Groups follow first-entry order and members retain sequence order; grouping is not a global chronology. A group keeps its first row identity (the first child for an engine shell group). Labels, presenters, presentations and states never determine membership. Shell polling children remain evidence of one command, not more commands.",
     "arguments": "Within each operation group, readers may collapse rows with the same argument_key and show ×N. The engine supplies this optional opaque 64-character lowercase hexadecimal equality key for complete portable arguments within a block, salted per block. Map order is irrelevant; sequence order and value types are significant. Oversized or unsupported arguments have no key and stay separate. Never infer equality from redacted or truncated display text. Keep first-invocation disclosure identity, all outcomes and child evidence; counts still describe actual invocations. A shell group inherits its launch key, never a poll key.",
-    "bounds": "Redact credential-bearing structured fields before summarizing; enforce UTF-8 byte limits. Row ids are globally unique within a projection. At most max_rows top-level rows and max_depth child edges. Omission is explicit, never invented success.",
+    "bounds": "Redact credential-bearing structured fields before summarizing; enforce admission limits per event and presentation. Retain all admitted invocations and details durably without a total count or byte cap. Limit each history-bearing response to max_page_rows invocations and max_page_bytes, never shedding details. Row ids are globally unique within a projection. Legacy omitted counts describe already-lost historical records, never records still available through paging.",
     "declaration": "Symbols publish human-facing presentations: understandable sentence-case English headlines, a one-line summary, content blocks and optional sections of the same headline/summary/content shape. Headline and summary remain visible when collapsed; only content is disclosed. Declare show_start=false for quick operations that need only an end result; the default true shows running progress. Internal start/end events still preserve ordering, timing, failures and cancellation. End-only content stays hidden until settlement. Up to 8 sections, 32 blocks in total and 32 KiB per replacement; each headline and summary is at most 512 UTF-8 bytes. Content includes headings, Markdown, tables, code, diffs, attachment references and progress. The engine alone owns identity, timing and outcome; presentation failures never alter tool results."
   }
 }

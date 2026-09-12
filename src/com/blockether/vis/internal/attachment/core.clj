@@ -684,7 +684,7 @@
     (when (or (re-find #"(?i)\.(?:md|markdown|mdown|mkd)$" (str filename))
               (contains? markdown-media-types media-type))
       (let [text (String. b StandardCharsets/UTF_8)]
-        (when (and (Arrays/equals b (.getBytes text StandardCharsets/UTF_8))
+        (when (and (Arrays/equals b (util/utf8 text))
                    (not (re-find #"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]" text)))
           (:markdown document-media-types))))))
 

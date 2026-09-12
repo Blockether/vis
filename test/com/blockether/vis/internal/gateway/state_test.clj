@@ -4501,6 +4501,83 @@
               (expect (empty? (:content written)))))
           (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid)))))))
 
+(defdescribe
+  worker-failure-terminal-persistence-test
+  ;; Regression, issue #211: a worker that unwound out of the iteration loop (an
+  ;; interrupted retry backoff) settled only the in-memory registry. The canonical
+  ;; durable row stayed `running` until the next process start swept it, so a
+  ;; reopened session showed a dead turn still spinning with no failure and no
+  ;; answer.
+  (doseq [user-cancel? [false true]]
+    (it
+      (str "settles the durable row when the worker throws; user-cancel=" user-cancel?)
+      (let [sid (str "worker-throw-" (java.util.UUID/randomUUID))
+            tid "turn-1"
+            token (cancellation/cancellation-token)
+            stall (atom {:started? true :phase :provider-call})
+            registry @#'state/registry
+            writes (atom [])
+            events (atom [])
+            environment {:db-info ::db
+                         :session-id sid
+                         :router {:providers [{:id :openai-codex
+                                               :models [{:name "fixture-model"}]}]}}]
+
+        (try
+          (swap! registry assoc
+            sid
+            {:next-seq 0
+             :current-turn tid
+             :turn-order [tid]
+             :turns
+             {tid (cond-> {:turn_id tid :status "running" :request "continue" :cancel-token token}
+                    user-cancel?
+                    (assoc :cancelling_at 1))}})
+          (with-redefs-fn {#'lp/db-info (constantly ::db)
+                           #'persistance/db-store-session-turn! (fn [_ _]
+                                                                  tid)
+                           #'persistance/db-update-session-turn! (fn [_ _ opts]
+                                                                   (swap! writes conj opts)
+                                                                   true)
+                           #'lp/session-turn-position (fn [_ _]
+                                                        1)
+                           #'lp/iteration-loop
+                           (fn [_ _ _]
+                             (when user-cancel? (cancellation/cancel! token :user))
+                             ;; The retry backoff's `Thread/sleep` woken by a stale interrupt:
+                             ;; the loop escapes before its own `persist-turn-outcome!`.
+                             (throw (InterruptedException. "sleep interrupted")))
+                           #'lp/send! (fn [_ request opts]
+                                        (#'lp/run-normal-turn! environment request opts))
+                           #'state/append-event! (fn [_ type payload & _]
+                                                   (swap! events conj [type payload]))
+                           #'state/emit-context-updated! (fn [_]
+                                                           nil)
+                           #'state/record-metrics! (fn [_ _]
+                                                     nil)}
+            (fn []
+              (#'state/run-turn! sid tid "continue" {:cancel-token token :stall stall})))
+          (let [written (last @writes)
+                [event-type payload] (first (filter #(str/starts-with? (first %) "turn.") @events))
+                card (first (:content written))]
+
+            ;; Exactly one durable terminal, owned by the gateway catch.
+            (expect (= 1 (count @writes)))
+            (expect (= (if user-cancel? :interrupted :error) (:status written)))
+            (expect (= (if user-cancel? :cancelled :error) (:prior-outcome written)))
+            (expect (= (if user-cancel? "turn.cancelled" "turn.failed") event-type))
+            (expect (= (if user-cancel? "cancelled" "failed")
+                       (get-in @registry [sid :turns tid :status])))
+            (expect (nil? (get-in @registry [sid :current-turn])))
+            (if user-cancel?
+              (expect (empty? (:content written)))
+              (do (expect (= "turn_failed" (get card "code")))
+                  (expect (str/includes? (str (get card "message")) "sleep interrupted"))
+                  (expect (= card (:error written)))
+                  ;; The same concrete failure the channels render.
+                  (expect (= (:content written) (:content payload))))))
+          (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid)))))))
+
 ;; Recursive project delete. Until now DELETE of a project removed the row and
 ;; scattered its member sessions back to project-less, so there was no way at all
 ;; to remove a project AND its conversations — the one endpoint that sounded

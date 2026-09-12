@@ -16,13 +16,13 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Protocol 12 gives iteration forms
- * one successful fact, `stdout`; the obsolete `result_summary` field is gone.
+ * Wire protocol number THIS app build speaks. Protocol 13 retains complete Activity
+ * history and delivers bounded pages instead of capped receipts.
  */
-export const APP_PROTOCOL = 12;
+export const APP_PROTOCOL = 13;
 
-/** Oldest gateway protocol this app accepts: the canonical protocol 12 shape. */
-export const APP_MIN_GATEWAY_PROTOCOL = 12;
+/** Oldest gateway protocol this app accepts: the canonical protocol 13 shape. */
+export const APP_MIN_GATEWAY_PROTOCOL = 13;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

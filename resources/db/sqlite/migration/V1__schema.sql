@@ -894,3 +894,25 @@ CREATE TABLE improve (
 );
 CREATE INDEX idx_improve_session ON improve(session_soul_id, entry_id);
 CREATE INDEX idx_improve_iteration ON improve(session_turn_iteration_id, entry_id);
+
+-- Activity keeps admitted invocation details independently of transcript page budgets.
+CREATE TABLE activity_history (
+  id TEXT PRIMARY KEY NOT NULL,
+  session_soul_id TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  revision INTEGER NOT NULL DEFAULT 0,
+  metadata BLOB NOT NULL
+);
+CREATE INDEX idx_activity_history_session ON activity_history(session_soul_id, id);
+
+CREATE TABLE activity_invocation (
+  history_id TEXT NOT NULL REFERENCES activity_history(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  visible INTEGER NOT NULL,
+  payload BLOB NOT NULL,
+  search_text TEXT NOT NULL,
+  PRIMARY KEY (history_id, id),
+  UNIQUE (history_id, sequence)
+);
+CREATE INDEX idx_activity_invocation_running ON activity_invocation(history_id, state, sequence);

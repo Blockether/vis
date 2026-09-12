@@ -700,3 +700,9 @@
 (defdelegate db-council-interrupt! [db-info sid activation])
 
 (defdelegate db-council-unavailable! [db-info sid id])
+
+(defdelegate db-activity-apply! [db-info sid aid event])
+
+(defdelegate db-activity-settle! [db-info aid outcome summary])
+
+(defdelegate db-activity-page [db-info sid aid opts])

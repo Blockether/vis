@@ -1060,6 +1060,55 @@ class GatewayClient:
         )
         return response.json()
 
+    def get_session_activity(
+        self,
+        sid: str,
+        aid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/activity/:aid — a bounded page of complete Activity records.
+
+        Query with after, limit and q. Follow history.next_after until null;
+        reject a changed revision when combining pages into one copy.
+        """
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/activity/:aid",
+            path={"sid": sid, "aid": aid},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def get_session_activity_export(
+        self,
+        sid: str,
+        aid: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+    ) -> Response:
+        """GET /v1/sessions/:sid/activity/:aid/export — complete unfiltered Activity text.
+
+        The gateway streams this response; the returned Response buffers its bytes.
+        Supply revision to reject a changed history before the export starts.
+        Raises ProtocolError if a concurrent change marks the export incomplete.
+        """
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/activity/:aid/export",
+            path={"sid": sid, "aid": aid},
+            query=query,
+            timeout=timeout,
+        )
+        if response.content.endswith(
+            b"\n\nINCOMPLETE EXPORT: Activity changed. Reload and retry.\n"
+        ):
+            raise ProtocolError("Activity export is incomplete; reload and retry")
+        return response
+
     def get_session_artifacts(
         self, sid: str, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:

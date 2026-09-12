@@ -35,6 +35,38 @@
                               (assoc :error (ex-info (str result) {}))))])))
 
 (defdescribe
+  lossless-history-test
+  ;; Regression #212: neither invocation count nor aggregate bytes may discard history.
+  (it "retains every admitted operation and its detail past both former receipt limits"
+      (let [ctx
+            (event/context)
+
+            events
+            (vec (mapcat (fn [n]
+                           (event-pair ctx
+                                       (keyword (str "operation_" n))
+                                       (cond (= n 298) :failed
+                                             (= n 299) :cancelled
+                                             :else :succeeded)
+                                       (str n " " (apply str (repeat 1500 "x")))))
+                         (range 300)))
+
+            state
+            (activity/replay events)
+
+            projection
+            (activity/presentation state)]
+
+        (expect (= 300 (count (:rows state))))
+        (expect (= 300 (count (:rows projection))))
+        (expect (= (mapv :invocation-id (take-nth 2 events)) (mapv :id (:rows projection))))
+        (expect (= (mapv :result-summary (:rows state)) (mapv :result-summary (:rows projection))))
+        (expect (= ["failed" "cancelled"] (mapv :state (take-last 2 (:rows projection)))))
+        (expect (zero? (get-in projection [:omitted :rows])))
+        (expect (> (activity/byte-size projection) 65536))
+        (expect (contract/valid-projection? projection)))))
+
+(defdescribe
   completed-file-operations-test
   (it "uses declared end-only visibility for built-ins and extension operations"
       (doseq [operation [:cat :patch]]
@@ -274,7 +306,7 @@
         (expect (= :cancelled (:state state)))
         (expect (= {:running 0 :succeeded 0 :failed 0 :cancelled 1} (:counts state)))
         (expect (= [:cancelled] (mapv :state (:rows state))))))
-  (it "never retains more than the row or receipt byte budget"
+  (it "retains every admitted row past former receipt budgets"
       (let [ctx
             (event/context)
 
@@ -292,19 +324,19 @@
             snapshot
             (activity/snapshot state)]
 
-        (expect (<= (count (:rows snapshot)) activity/max-rows))
-        (expect (<= (activity/byte-size snapshot) activity/max-receipt-bytes))
+        (expect (= 150 (count (:rows snapshot))))
+        (expect (> (activity/byte-size snapshot) 65536))
         (expect (= 150 (get-in snapshot [:counts :succeeded])))))
   ;; Regression, issue td-1e6086: Activity was projected both as semantic data and as
   ;; generic status/stat/steps nodes, so every channel had two sources of truth.
-  (it "keeps one bounded semantic presentation at the 128-row ceiling"
+  (it "keeps one semantic presentation beyond the former row ceiling"
       (let [ctx
             (event/context)
 
             starts
             (mapv (fn [n]
                     (first (event-pair ctx (keyword (str "operation_" n)) :succeeded {:ok true})))
-                  (range activity/max-rows))
+                  (range 256))
 
             state
             (last (rest (reductions activity/reduce-event activity/empty-state starts)))
@@ -312,7 +344,7 @@
             presentation
             (activity/presentation state)]
 
-        (expect (= activity/max-rows (count (:rows presentation))))))
+        (expect (= 256 (count (:rows presentation))))))
   ;; Regression, issues td-1ccd13 and td-574cf3: shell-handle groups replaced the
   ;; command with a generic count or froze its transient `running` phrase into the
   ;; settled Activity receipt.
@@ -465,13 +497,13 @@
           projection
           (activity/presentation state)]
 
-      (expect (> (activity/byte-size state) activity/max-receipt-bytes))
+      (expect (> (activity/byte-size state) 65536))
       (expect (= 20 (count (:rows projection))))
       (expect (zero? (get-in projection [:omitted :rows])))
       (expect (= (mapv :result-summary (:rows state)) (mapv :result-summary (:rows projection))))
       (expect (every? #(= content (:presentation %)) (:rows projection)))
       (expect (not-any? :is-truncated (:rows projection)))
-      (expect (<= (activity/byte-size projection) activity/max-receipt-bytes))
+      (expect (> (activity/byte-size projection) 65536))
       (expect (contract/valid-projection? projection))))
   (it
     "keeps a large shell group and the current invocation available during live replacement"
@@ -506,23 +538,22 @@
           [group current]
           (:rows projection)]
 
-      (expect (> (activity/byte-size state) activity/max-receipt-bytes))
+      (expect (> (activity/byte-size state) 65536))
       (expect (= 24 (count (:children group))))
       (expect (= (:invocation-id running) (:id current)))
       (expect (= "running" (:state current)))
-      ;; Typed output uses the same receipt budget; any shed body must be explicit.
-      (expect (every? #(or (:is-truncated %)
-                           (some (fn [block]
-                                   (= (apply str (repeat 2000 "x")) (get block "text")))
-                                 (get-in % [:presentation "content"])))
+      ;; Regression #212: grouped children retain their complete admitted bodies.
+      (expect (every? #(some (fn [block]
+                               (= (apply str (repeat 2000 "x")) (get block "text")))
+                             (get-in % [:presentation "content"]))
                       (:children group)))
       (expect (zero? (get-in projection [:omitted :rows])))
-      (expect (<= (activity/byte-size projection) activity/max-receipt-bytes))
+      (expect (> (activity/byte-size projection) 65536))
       (expect (contract/valid-projection? projection)))))
 
 (defdescribe
   activity-pressure-fallback-test
-  (it "counts every invocation when a shell group exceeds even the skeleton budget"
+  (it "retains grouped invocations independently of their aggregate size"
       (let [ctx
             (event/context)
 
@@ -544,15 +575,14 @@
             (activity/replay (concat (mapcat identity pairs) [running]))
 
             projection
-            (with-redefs [activity/max-receipt-bytes 1500]
-              (activity/presentation state))]
+            (activity/presentation state)]
 
-        (expect (= [(:invocation-id running)] (mapv :id (:rows projection))))
-        (expect (= {:rows 12 :by-classification {:mutation 12}} (:omitted projection)))
+        (expect (= 12 (count (:children (first (:rows projection))))))
+        (expect (= (:invocation-id running) (:id (last (:rows projection)))))
+        (expect (zero? (get-in projection [:omitted :rows])))
         (expect (= {:running 1 :succeeded 12 :failed 0 :cancelled 0} (:counts projection)))
-        (expect (<= (activity/byte-size projection) 1500))
         (expect (contract/valid-projection? projection))))
-  (it "marks lost detail without hiding the steps and protects current content"
+  (it "retains past and current content without trimming either"
       (let [ctx
             (event/context)
 
@@ -579,10 +609,10 @@
 
         (expect (= 4 (count (:rows projection))))
         (expect (zero? (get-in projection [:omitted :rows])))
-        (expect (some :is-truncated (:rows projection)))
-        (expect (= blocks (get-in (last (:rows projection)) [:presentation "content"])))
+        (expect (not-any? :is-truncated (:rows projection)))
+        (expect (every? #(= blocks (get-in % [:presentation "content"])) (:rows projection)))
         (expect (every? #(= "Matches" (get-in % [:presentation "summary"])) (:rows projection)))
-        (expect (<= (activity/byte-size projection) activity/max-receipt-bytes))
+        (expect (> (activity/byte-size projection) 65536))
         (expect (contract/valid-projection? projection)))))
 
 (defdescribe

@@ -6,6 +6,7 @@
 // we send it on every request. A 401 surfaces as GatewayError so the UI can
 // prompt a re-pair.
 
+import { activityProjectionFromWire, type ActivityProjection } from './activity';
 import goalContract from '../../../../packages/vis-contract/resources/vis-contract/gateway.json';
 import type { PushGateway } from './relay';
 import {
@@ -3397,6 +3398,47 @@ export class GatewayClient {
       offset,
       hasMore: typeof response.has_more === 'boolean' ? response.has_more : offset > 0,
     };
+  }
+
+  /** Read one durable Activity window without adding it to the transcript cache. */
+  async activityPage(
+    sid: string,
+    id: string,
+    after = 0,
+    q = '',
+    signal?: AbortSignal,
+  ): Promise<ActivityProjection> {
+    const query = new URLSearchParams({ after: String(after), limit: '32' });
+    if (q) query.set('q', q);
+    const raw = await this.request<unknown>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/activity/${encodeURIComponent(id)}?${query}`,
+      undefined,
+      signal,
+    );
+    const page = activityProjectionFromWire(raw);
+    if (!page?.history || page.history.id !== id || page.history.after !== after) {
+      throw new Error('Activity response does not match the requested history window.');
+    }
+    return page;
+  }
+
+  /** Explicit whole-file export; unlike normal navigation this allocates a Blob. */
+  async activityExport(sid: string, id: string, signal?: AbortSignal): Promise<Blob> {
+    const path = `/v1/sessions/${encodeURIComponent(sid)}/activity/${encodeURIComponent(id)}/export`;
+    const response = await fetch(`${this.base}${path}`, {
+      headers: this.headers(),
+      signal,
+    });
+    if (!response.ok)
+      throw new GatewayError(response.status, `Activity export failed: HTTP ${response.status}`);
+    const blob = await response.blob();
+    const incomplete = '\n\nINCOMPLETE EXPORT: Activity changed. Reload and retry.\n';
+    // The server can mark a failed stream after HTTP 200 has already been sent.
+    // Inspect only its ASCII trailer, not a second copy of the entire export.
+    if ((await blob.slice(-incomplete.length).text()) === incomplete)
+      throw new Error('Activity changed. Reload and retry.');
+    return blob;
   }
 
   /** How much of `sid`'s transcript we hold, and how much older history exists. */

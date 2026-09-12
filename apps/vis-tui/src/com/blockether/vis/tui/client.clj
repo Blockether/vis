@@ -39,6 +39,12 @@
 
 (def ^:private slash-catalog-timeout-ms 120000)
 
+(def ^:private activity-export-timeout-ms
+  "A whole retained Activity history arrives as ONE streamed text body. The
+   page-sized read timeout would abandon a long session's export mid-stream,
+   which reads to a user exactly like the loss this export exists to undo."
+  120000)
+
 (defonce ^:private http-client
   (delay (http/client {:follow-redirects :normal
                        :connect-timeout 2000
@@ -389,6 +395,65 @@
          (when (= 200 (:status response))
            (vec (get (wire/parse-json (:body response)) "artifacts" []))))
        (catch Throwable _ nil)))
+
+(def ^:private activity-incomplete-export-marker
+  "The gateway appends this line to an export whose record changed mid-stream, then
+   drops the connection. The bytes already written are a TRUNCATED history, so a
+   body ENDING in it is no export at all. Only that exact terminal suffix marks a
+   truncated stream: an operation whose own text quotes the sentence is ordinary
+   history and must still be copied."
+  "\n\nINCOMPLETE EXPORT: Activity changed. Reload and retry.\n")
+
+(defn activity-page
+  "ONE page of a form's durable Activity history, string-keyed, or nil when the
+   daemon cannot answer. `after` is the EXCLUSIVE sequence cursor the previous
+   page returned as `history.next_after`; `limit` is bounded by the contract's
+   `max_page_rows`, and `query` searches every RETAINED record of that Activity,
+   not the page in hand. `revision` is the revision the caller is already showing:
+   the gateway refuses to continue a history that moved underneath it, which
+   arrives here as `:activity-changed`. nil is UNAVAILABLE — a channel must paint
+   it differently from a page that is genuinely empty."
+  [sid activity-id {:keys [after limit query revision]}]
+  (try
+    (let [response (request! :get
+                             (str "/v1/sessions/"
+                                  (enc sid)
+                                  "/activity/"
+                                  (enc activity-id)
+                                  "?after="
+                                  (long (or after 0))
+                                  (when limit (str "&limit=" (long limit)))
+                                  (when (seq query) (str "&q=" (enc query)))
+                                  (when revision (str "&revision=" (long revision))))
+                             {:timeout-ms channel-read-timeout-ms})]
+      (condp = (:status response) 200 (wire/parse-json (:body response)) 409 :activity-changed nil))
+    (catch Throwable _ nil)))
+
+(defn activity-export
+  "The WHOLE retained history of one Activity as plain text, `:activity-changed`
+   when the record moved while it streamed, or nil when the daemon cannot answer.
+   The gateway streams it in one response, so a reader who asks for everything
+   gets everything — never a page loop stitched here, which would race a live
+   Activity and hand back a history with holes in it. A body that ends in the
+   gateway's incomplete marker is exactly that race, so it is REFUSED rather than
+   handed to a caller who asked for the whole record.
+
+   `revision` pins the export to the revision the caller is showing."
+  ([sid activity-id] (activity-export sid activity-id nil))
+  ([sid activity-id revision]
+   (try (let [response (request! :get
+                                 (str "/v1/sessions/" (enc sid)
+                                      "/activity/" (enc activity-id)
+                                      "/export" (when revision (str "?revision=" (long revision))))
+                                 {:timeout-ms activity-export-timeout-ms})]
+          (condp = (:status response)
+            200 (let [body (:body response)]
+                  (if (str/ends-with? (str body) activity-incomplete-export-marker)
+                    :activity-changed
+                    body))
+            409 :activity-changed
+            nil))
+        (catch Throwable _ nil))))
 
 (defn toggle-setting!
   "Atomically flip one boolean setting in the gateway and return its refreshed

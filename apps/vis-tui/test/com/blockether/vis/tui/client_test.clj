@@ -366,3 +366,50 @@
                        (is (= "new-model"
                               (get-in (client/get-router) [:providers 0 :default-model])))
                        (is (empty? @pending)))))
+
+(deftest activity-history-reads-are-whole-or-nothing
+  ;; Issue #212. A window is only worth showing when it continues the revision
+  ;; already on screen, and an export is only worth copying when it is the WHOLE
+  ;; history — the gateway marks a truncated one in the body it already sent.
+  (let [asked
+        (atom [])
+
+        answer
+        (atom nil)]
+
+    (with-redefs-fn {#'client/request! (fn [method path _opts]
+                                         (swap! asked conj [method path])
+                                         @answer)}
+      (fn []
+        (testing "a page carries the cursor, the page size, the search and the revision"
+          (reset! answer {:status 200 :body "{\"rows\":[]}"})
+          (is (= {"rows" []}
+                 (client/activity-page "s1" "a1" {:after 32 :limit 32 :query "patch" :revision 4})))
+          (is (= "/v1/sessions/s1/activity/a1?after=32&limit=32&q=patch&revision=4"
+                 (second (last @asked)))))
+        (testing "a record that moved on is not a page, and not an export either"
+          (reset! answer {:status 409 :body "{\"error\":\"activity_changed\"}"})
+          (is (= :activity-changed (client/activity-page "s1" "a1" {:after 32 :revision 4})))
+          (is (= :activity-changed (client/activity-export "s1" "a1" 4))))
+        (testing "an export ENDING in the gateway's marker is refused, never handed on"
+          (reset! answer {:status 200
+                          :body (str
+                                  "ACTIVITY\n1. Search files"
+                                  "\n\nINCOMPLETE EXPORT: Activity changed. Reload and retry.\n")})
+          (is (= :activity-changed (client/activity-export "s1" "a1" 4))))
+        (testing "an operation whose own text quotes that sentence is ordinary history"
+          (let [quoted (str "ACTIVITY\n1. Search files\n"
+                            "   reported: INCOMPLETE EXPORT: Activity changed. Reload and retry.\n"
+                            "2. Run tests\n")]
+            (reset! answer {:status 200 :body quoted})
+            (is (= quoted (client/activity-export "s1" "a1" 4)))))
+        (testing "a complete export is its body, pinned to the revision when one is given"
+          (reset! answer {:status 200 :body "ACTIVITY\n1. Search files"})
+          (is (= "ACTIVITY\n1. Search files" (client/activity-export "s1" "a1" 4)))
+          (is (= "/v1/sessions/s1/activity/a1/export?revision=4" (second (last @asked))))
+          (is (= "ACTIVITY\n1. Search files" (client/activity-export "s1" "a1")))
+          (is (= "/v1/sessions/s1/activity/a1/export" (second (last @asked)))))
+        (testing "an unavailable daemon is not an empty record"
+          (reset! answer {:status 500 :body ""})
+          (is (nil? (client/activity-page "s1" "a1" {:after 0})))
+          (is (nil? (client/activity-export "s1" "a1"))))))))

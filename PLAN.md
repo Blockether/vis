@@ -42,3 +42,84 @@ Owners are `internal/foundation/shell.clj`, `internal/foundation/editing/core.cl
 2. Cat and doc complete locally with regressions and host/guest coverage. Cat bounds the entire UTF-8 response without partial anchors or expanded continuation. Doc skips live imports for authoritative pages. Runtime gather passes 15 tests / 69 assertions and 66 Vis consumer tests using a command-line local dependency override; direct ordered-exception and default all-settle consumer checks also pass. The two runtime files stay local, with no runtime commit, publication or pin update; installed-pin workaround documentation remains accurate.
 3. Combined shell/log/editing/env/presentation checks pass all 490 tests; formatting and lint/reflection are clean and diffs reviewed. Audit identified Python test-diagnostic truncation and conflicting formatter selectors; diagnostic repair and REPL isolation are separately owned work, excluded from this commit. Patch concurrency still needs deterministic reproduction. No managed REPL or temporary test process remains from this session; no paid evaluation or native-image test was performed.
 4. Complete locally: Ruff analysis/configuration failures now propagate rather than producing clean results, including a failing later file in a batch. The 71-case Ruff/facade integration passes, giving 561 affected Vis cases across the two runs. Formatting and Clojure lint/reflection are clean. Ten scoped Vis files are verified for commit/push; unrelated work and local-only runtime changes remain excluded. No deployment or live service restart is part of this workflow.
+
+# Recoverable turns and complete Activity history (#210–#212)
+
+Retain completed work across provider failures and client reconnects.
+
+## Context
+
+At initial clean main `e3b24d2ca`, Activity drops operations at 128 rows and
+sheds details to fit 64 KiB. Provider TTFT classification may have its owned
+interrupt re-armed by Svar routing; failure during retry backoff can leave the
+durable turn running. Existing liveness-marker repair does not settle that row.
+Owners: `internal/activity/`, Python Activity collection in `internal/loop.clj`,
+SQLite persistence, gateway routes, Companion and TUI Activity clients, and the
+Svar router. Reject higher retention caps, indiscriminate interrupt clearing,
+and reconstructing completed history solely from the live event ring.
+
+## 1. Reproduce and repair provider recovery
+
+- Rationale: an owned timeout must retry without swallowing genuine Stop.
+- Data: #210 watchdog → router → interrupted retry backoff; isolated HTTP regression.
+- Acceptance criteria: actual retry, bounded attempts, no unsafe replay, active goal
+  on recovery; exact terminal cause on exhaustion; Svar and Vis integration checks.
+- Unknowns: verify the published Svar coordinate before consuming it.
+
+## 2. Settle durable failed turns
+
+- Rationale: a dead worker must not reopen as running or hide saved iterations.
+- Data: #211 persisted running row with 65 completed iterations after worker failure.
+- Acceptance criteria: exact-once terminal persistence, closed live blocks, retained
+  history and concrete error after new turn, reconnect and store reopen.
+- Unknowns: reproduce the specific client symptom before attributing it to UI.
+
+## 3. Retain and page complete Activity
+
+- Rationale: response and rendering bounds must not be history-retention caps.
+- Data: #212 deterministic row/byte loss in reducer and receipt projection.
+- Acceptance criteria: durable per-invocation records, bounded keyset pages and
+  client windows, complete search/copy, stable identities, grouped tail outcomes,
+  safe redaction and restart coverage beyond 128 operations and 64 KiB.
+- Unknowns: client paging integration and compound-form identity preservation.
+
+## 4. Integrate and close out
+
+- Rationale: independently passing pieces do not prove the end-to-end boundary.
+- Data: regression failures, affected suites, formatting/lint/reflection and diffs.
+- Acceptance criteria: review scoped changes, verify the published Svar pin, commit
+  and push, complete the authorized product release, and update all three issues.
+  Deployment and live service restarts remain outside this task.
+- Unknowns: report concrete blockers rather than marking incomplete fixes resolved.
+
+## Plan state
+
+1. Reproduced routed TTFT/backoff failure on Svar 0.7.167 and a leaked pre-header
+   cancel watchdog. Local fixes preserve timeout classification and real Stop.
+   Svar 0.7.168 is published from `58b57042e7` with its full verification and
+   release checks passing. Vis resolves that Clojars pin without a local override.
+
+2. Worker catch persists terminal state before live completion with an exact-once
+   running-state comparison. Goal halts store the valid `:complete` prior outcome.
+   Regression tests preserve concrete errors and completed work; integration and
+   source review are complete with the published Svar pin.
+
+3. Activity retains every admitted invocation without total row/byte caps. Tests
+   cover 300 calls, large grouped details, real Python, disk reopen, independent
+   forks, redaction, tail outcomes, write errors and incomplete exports. Companion
+   build/lint, targeted tests and 246 stories across 12 themes pass; browser review
+   reaches operation 160 through paging and search. TUI passes all 1,974 cases;
+   final HtmlTerminal review confirms honest search counts and single captions.
+   Protocol 13 prevents older clients from silently dropping paged Activity.
+
+4. All 5,598 JVM cases pass on published Svar 0.7.168, including an old-store
+   Activity table/index upgrade and failure to read the final page without losing
+   Python output or its original error. Companion passes 2,722 cases (two skips),
+   TUI passes 1,974. SDK source passes 589 cases (13 opt-in skips), and the
+   installed wheel passes all 602 against the fresh native engine over HTTP and
+   stdio. Both native images build with the pinned GraalVM CE; all 37 native
+   cases pass, including Activity history and isolated speech round trips. SDK
+   artifact parity, metadata, docs, formatting and lint/reflection checks pass.
+   The separate README-link regression is fixed in `a239d6eaa`. Local acceptance
+   is complete; v0.2.1 is prepared for the authorized commit, push and release
+   workflow. No live service was restarted.

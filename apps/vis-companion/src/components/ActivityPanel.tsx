@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
-import { BandLabel, CopyChip, Disclosure, LoadMore } from './ui';
+import { BandLabel, Button, CopyChip, Disclosure, Input, LoadMore } from './ui';
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
@@ -889,6 +889,213 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   );
 }
 
+export interface ActivityHistorySource {
+  load: (
+    id: string,
+    after: number,
+    query: string,
+    signal: AbortSignal,
+  ) => Promise<ActivityProjection>;
+  export: (id: string, signal: AbortSignal) => Promise<string>;
+}
+
+/** SessionScreen owns authenticated retrieval; stories replace only this boundary. */
+export const ActivityHistoryContext = createContext<ActivityHistorySource | null>(null);
+
+/** A single bounded window. Changing history revision remounts this state, not its band. */
+function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
+  const source = useContext(ActivityHistoryContext);
+  const [page, setPage] = useState(activity);
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => pending.current?.abort(), []);
+  const history = page.history!;
+  const run = async (label: string, action: (signal: AbortSignal) => Promise<void>) => {
+    pending.current?.abort();
+    const controller = new AbortController();
+    pending.current = controller;
+    setBusy(label);
+    setError('');
+    setNotice('');
+    try {
+      await action(controller.signal);
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setError(
+          cause instanceof Error ? cause.message : 'Activity could not be loaded. Try again.',
+        );
+    } finally {
+      if (pending.current === controller) {
+        pending.current = null;
+        setBusy('');
+      }
+    }
+  };
+  const load = (after: number, q = search) =>
+    void run('Loading operations…', async (signal) => {
+      if (!source) throw new Error('Reconnect to load retained operations.');
+      const result = await source.load(history.id, after, q, signal);
+      if (signal.aborted) return;
+      if (after > 0 && result.history?.revision !== history.revision) {
+        throw new Error('Activity changed. Choose First to load its latest revision.');
+      }
+      setPage(result);
+      setSearch(q);
+    });
+  const copy = () =>
+    void run('Copying all operations…', async (signal) => {
+      if (!source) throw new Error('Reconnect to copy the complete Activity history.');
+      // Clipboard APIs require a complete string. This explicit operation allocates it;
+      // ordinary navigation retains just one page and never accumulates detail bodies.
+      const chunks: string[] = [];
+      let after = 0;
+      let revision: number | undefined;
+      while (true) {
+        const result = await source.load(history.id, after, '', signal);
+        if (signal.aborted) return;
+        const next = result.history;
+        if (
+          !next ||
+          next.id !== history.id ||
+          next.after !== after ||
+          (revision !== undefined && next.revision !== revision)
+        ) {
+          throw new Error(
+            'Activity changed while copying. Try Copy all again. Nothing was copied.',
+          );
+        }
+        revision = next.revision;
+        chunks.push(activityCopyText(result));
+        if (next.next_after === null) break;
+        if (next.next_after <= after)
+          throw new Error('Activity cursor did not advance. Nothing was copied.');
+        after = next.next_after;
+      }
+      if (signal.aborted) return;
+      await navigator.clipboard.writeText(chunks.join('\n\n'));
+      if (!signal.aborted) setNotice('All operations copied.');
+    });
+  return (
+    <div className="min-w-0">
+      <form
+        className="flex min-w-0 items-center gap-4 py-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          load(0, query);
+        }}
+      >
+        <Input
+          type="search"
+          aria-label="Search all operations"
+          placeholder="Search all operations"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setQuery('');
+              load(0, '');
+            }
+          }}
+        />
+        <Button
+          variant="quiet"
+          density="compact"
+          type="submit"
+          disabled={!!busy || !source}
+          aria-label="Search activity"
+        >
+          Search
+        </Button>
+      </form>
+      <div className="flex flex-wrap items-center gap-4 pb-3">
+        <Button
+          variant="quiet"
+          density="compact"
+          disabled={!!busy || !source}
+          onClick={() => load(0)}
+          aria-label="First operations"
+        >
+          First
+        </Button>
+        <Button
+          variant="quiet"
+          density="compact"
+          disabled={!!busy || !source || history.next_after === null}
+          onClick={() => load(history.next_after!)}
+          aria-label="Next operations"
+        >
+          Next
+        </Button>
+        <Button
+          variant="quiet"
+          density="compact"
+          disabled={!!busy || !source}
+          onClick={copy}
+          aria-label="Copy all activity"
+        >
+          Copy all
+        </Button>
+        <Button
+          variant="quiet"
+          density="compact"
+          disabled={!!busy || !source}
+          onClick={() =>
+            void run('Exporting all operations…', async (signal) => {
+              const message = await source!.export(history.id, signal);
+              if (!signal.aborted) setNotice(message);
+            })
+          }
+          aria-label="Export all activity"
+        >
+          Export
+        </Button>
+        {busy && (
+          <Button
+            variant="quiet"
+            density="compact"
+            onClick={() => {
+              pending.current?.abort();
+              pending.current = null;
+              setBusy('');
+              setNotice('Cancelled.');
+            }}
+          >
+            Cancel
+          </Button>
+        )}
+      </div>
+      <p className="pb-2 text-ui text-dialog-hint" role="status">
+        {busy ||
+          notice ||
+          `${page.rows.length} ${page.rows.length === 1 ? 'row' : 'rows'} shown · ${history.total} operations retained${history.next_after !== null ? ' · More available' : ' · End of results'}`}
+      </p>
+      {!source && (
+        <p className="pb-2 text-ui text-dialog-hint">
+          Reconnect to search, copy or load all retained operations.
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="pb-2 text-ui text-err-ink">
+          {error} Retry using the controls above.
+        </p>
+      )}
+      {page.rows.length === 0 && (
+        <p className="pb-2 text-ui text-dialog-hint">
+          No matching operations. Change or clear your search.
+        </p>
+      )}
+      <ActivityThread
+        key={`${history.id}:${history.revision}:${history.after}:${search}`}
+        activity={page}
+      />
+    </div>
+  );
+}
+
 /** Joined execution band. Hiding it retains disclosure state and silences live re-announcements. */
 export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
   const [open, setOpen] = useState(false);
@@ -900,6 +1107,7 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
   )
     return null;
   const total = Math.max(
+    activity.history?.total ?? 0,
     activity.rows.length + activity.omitted.rows,
     Object.values(activity.counts).reduce((sum, count) => sum + count, 0),
   );
@@ -930,10 +1138,24 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
             </span>
           </span>
         </Disclosure>
-        <CopyChip value={activityCopyText(activity)} label="Copy activity" density="compact" edge />
+        {!activity.history && (
+          <CopyChip
+            value={activityCopyText(activity)}
+            label="Copy activity"
+            density="compact"
+            edge
+          />
+        )}
       </div>
       <div hidden={!open}>
-        <ActivityThread activity={activity} />
+        {activity.history ? (
+          <ActivityHistoryWindow
+            key={`${activity.history.id}:${activity.history.revision}`}
+            activity={activity}
+          />
+        ) : (
+          <ActivityThread activity={activity} />
+        )}
       </div>
     </section>
   );

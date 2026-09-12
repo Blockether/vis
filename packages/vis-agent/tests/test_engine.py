@@ -678,7 +678,7 @@ def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
                 assert time.monotonic() < deadline, "Council wake did not finish"
                 time.sleep(0.05)
             assert len(turns) == 1 and turns[0]["status"] == "completed"
-            assert "Council wake" in turns[0]["request"]
+            assert f"Council notification #{entry.entry_id}." in turns[0]["request"]
             assert (
                 conversation.publish(
                     entry.content,

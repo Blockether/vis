@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.persistance.sqlite.core :as sqlite-core]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h :refer
              [raw-count raw-query]]
+            [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [honey.sql :as sql]
@@ -929,6 +930,83 @@
             (expect (= 1 (raw-count s2 :topup_probe)))
             (finally (vis/db-dispose-connection! s2))))
         (finally (fs/delete-tree root))))))
+
+(defn- activity-schema-names
+  [store]
+  (set (map :sqlite_master/name
+            (jdbc/execute!
+              (:datasource store)
+              [(str "SELECT name FROM sqlite_master WHERE type IN ('table', 'index') "
+                    "AND name LIKE '%activity_%' AND name NOT LIKE 'sqlite_autoindex_%'")]))))
+
+(defdescribe
+  migration-activity-table-top-up-test
+  ;; Release readiness for #212: a `~/.vis` database created before the durable
+  ;; Activity storage existed has no `activity_history` / `activity_invocation`
+  ;; tables, and the column top-up skips tables that do not exist. The open path
+  ;; must install the newly added V1 tables and their indexes, or every tool
+  ;; event on an upgraded store fails with `no such table`.
+  (it
+    "a store created by a pre-Activity canonical V1 gains both Activity tables and indexes on reopen"
+    (let [root
+          (fs/create-temp-dir {:prefix "vis-activity-topup-"})
+
+          dir
+          (str (fs/path root "store"))
+
+          s1
+          (vis/db-create-connection! dir)
+
+          expected
+          #{"activity_history" "activity_invocation" "idx_activity_history_session"
+            "idx_activity_invocation_running"}]
+
+      (try (expect (= expected (activity-schema-names s1)))
+           ;; Rewind this store to the shape it had before Activity storage was added:
+           ;; Flyway history intact, both tables (and with them their indexes) absent.
+           (doseq [table ["activity_invocation" "activity_history"]]
+             (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
+           (expect (empty? (activity-schema-names s1)))
+           (vis/db-dispose-connection! s1)
+           (let [s2 (vis/db-create-connection! dir)]
+             (try (expect (= expected (activity-schema-names s2)))
+                  ;; The upgraded store serves normal Activity writes and reads.
+                  (let [sid (h/store-session! s2 {})
+                        aid (str (random-uuid))
+                        ctx (event/context)
+                        inv (event/invocation ctx nil)
+                        details {:operation :read-record
+                                 :presenter :generic
+                                 :args [{:path "record-1"}]
+                                 :activity {:headline "Read record"}}]
+
+                    (persistance/db-activity-apply! s2 sid aid (event/start-event ctx inv details))
+                    (persistance/db-activity-apply!
+                      s2
+                      sid
+                      aid
+                      (event/content-event ctx
+                                           inv
+                                           details
+                                           {"headline" "Read record"
+                                            "summary" "Record 1"
+                                            "content" [{"type" "text" "text" "Record 1"}]}))
+                    (persistance/db-activity-apply! s2
+                                                    sid
+                                                    aid
+                                                    (event/terminal-event
+                                                      ctx
+                                                      inv
+                                                      (assoc details
+                                                        :outcome :succeeded
+                                                        :started-at-ms (System/currentTimeMillis))))
+                    (let [page (persistance/db-activity-page s2 sid aid {})]
+                      (expect (= [(:invocation-id inv)] (mapv :id (:rows page))))
+                      (expect (= ["succeeded"] (mapv :state (:rows page))))
+                      (expect (= 1 (raw-count s2 :activity_history)))
+                      (expect (= 1 (raw-count s2 :activity_invocation)))))
+                  (finally (vis/db-dispose-connection! s2))))
+           (finally (fs/delete-tree root))))))
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])

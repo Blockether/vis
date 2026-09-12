@@ -72,6 +72,277 @@
                      (expect (not (str/includes? text "Detail"))))))))
 
 (defdescribe
+  activity-history-window-test
+  (it
+    "offers the rest of the record instead of reporting a limit"
+    (let [rows
+          (mapv (fn [index]
+                  {:id (str "row-" index)
+                   :sequence (inc index)
+                   :operation "grep"
+                   :state "succeeded"
+                   :summary (str "match " index)
+                   :resources []
+                   :evidence []})
+                (range 32))
+
+          entries
+          (#'render/activity-detail-entries
+           {:node-id "activity"
+            :activity-rows rows
+            :activity-expanded? (fn [key default]
+                                  (get {"#band" true} key default))
+            :activity-histories [{:id "0f3f2a1e-0000-4000-8000-000000000001"
+                                  :revision 4
+                                  :total 274
+                                  :after 0
+                                  :next-after 32}]}
+           72
+           "fixture")
+
+          text
+          (str/join "\n" (map :line entries))
+
+          page
+          (first (filter #(= :activity-page (get-in % [:meta :kind])) entries))
+
+          header
+          (first (filter #(= :activity-header (get-in % [:meta :kind])) entries))]
+
+      ;; Issue #212: a 274-operation turn used to end at a bare count of what
+      ;; the transport had thrown away. The window now says where it stops and
+      ;; the rule below it fetches the next page of the retained record.
+      (expect (str/includes? text "32 of 274 operations"))
+      (expect (some? page))
+      (expect (= 32 (get-in page [:meta :after])))
+      (expect (= "0f3f2a1e-0000-4000-8000-000000000001" (get-in page [:meta :history-id])))
+      (expect (str/includes? (get-in page [:meta :label]) "show 242 more operations"))
+      (expect (not (str/includes? text "Activity limit")))
+      (expect (= [{:id "0f3f2a1e-0000-4000-8000-000000000001" :revision 4 :total 274}]
+                 (get-in header [:meta :copy-history])))))
+  (it "can walk back to the earliest operations of a record"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows [{:id "row-200"
+                               :sequence 201
+                               :operation "grep"
+                               :state "succeeded"
+                               :summary "match"
+                               :resources []
+                               :evidence []}]
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories
+              [{:id "history-1" :revision 9 :total 274 :after 200 :next-after nil}]}
+             72
+             "fixture")
+
+            pages
+            (filterv #(= :activity-page (get-in % [:meta :kind])) entries)]
+
+        (expect (= 1 (count pages)))
+        (expect (= 0 (get-in (first pages) [:meta :after])))
+        (expect (str/includes? (get-in (first pages) [:meta :label]) "earliest")))))
+
+(defdescribe
+  activity-history-fetch-state-test
+  (it "says a window is loading without offering a second press"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories [{:id "history-1" :revision 2 :total 90 :after 0 :next-after 32}]
+              :activity-fetch {"history-1" {:status :loading :after 32}}}
+             72
+             "fixture")
+
+            text
+            (str/join "\n" (map :line entries))]
+
+        (expect (str/includes? text "loading more operations"))
+        (expect (empty? (filter #(= :activity-page (get-in % [:meta :kind])) entries)))))
+  (it "keeps a failed window retryable at the cursor it tried"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories [{:id "history-1" :revision 2 :total 90 :after 0 :next-after 32}]
+              :activity-fetch {"history-1" {:status :failed :after 32}}}
+             72
+             "fixture")
+
+            retry
+            (first (filter #(= :activity-page (get-in % [:meta :kind])) entries))]
+
+        (expect (some? retry))
+        (expect (= 32 (get-in retry [:meta :after])))
+        (expect (str/includes? (get-in retry [:meta :label]) "could not load"))))
+  (it "pages each joined run of a merged block on its own cursor"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories [{:id "history-1" :revision 1 :total 40 :after 0 :next-after 32}
+                                   {:id "history-2" :revision 1 :total 50 :after 0 :next-after 32}]}
+             72
+             "fixture")
+
+            pages
+            (filterv #(= :activity-page (get-in % [:meta :kind])) entries)]
+
+        (expect (= ["history-1" "history-2"] (mapv #(get-in % [:meta :history-id]) pages)))
+        (expect (str/includes? (get-in (first pages) [:meta :label]) "from run 1"))
+        (expect (str/includes? (get-in (second pages) [:meta :label]) "from run 2"))))
+  (it "offers a search of the whole record, discoverable under the band"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories [{:id "history-1" :revision 2 :total 90 :after 0 :next-after 32}]}
+             72
+             "fixture")
+
+            search
+            (first (filter #(= :activity-search (get-in % [:meta :kind])) entries))]
+
+        (expect (some? search))
+        (expect (= "history-1" (get-in search [:meta :history-id])))
+        (expect (str/includes? (get-in search [:meta :label]) "search every operation"))))
+  (it
+    "keeps a search across its own pages and says what the band is showing"
+    (let [entries
+          (#'render/activity-detail-entries
+           {:node-id "activity"
+            :activity-rows [{:id "row-1"
+                             :sequence 33
+                             :operation "patch"
+                             :state "succeeded"
+                             :summary "edit"
+                             :resources []
+                             :evidence []}]
+            :activity-expanded? (fn [key default]
+                                  (get {"#band" true} key default))
+            :activity-histories [{:id "history-1" :revision 2 :total 90 :after 0 :next-after 32}]
+            :activity-fetch {"history-1" {:query "patch"}}}
+           72
+           "fixture")
+
+          text
+          (str/join "\n" (map :line entries))
+
+          next-page
+          (first (filter #(and (= :activity-page (get-in % [:meta :kind]))
+                               (= 32 (get-in % [:meta :after])))
+                         entries))
+
+          clear
+          (first (filter #(str/includes? (str (get-in % [:meta :label])) "clear search") entries))]
+
+      (expect (str/includes? text "matching"))
+      (expect (str/includes? text "patch"))
+      (expect (= "patch" (get-in next-page [:meta :query])))
+      (expect (= 2 (get-in next-page [:meta :revision])))
+      (expect (some? clear))
+      (expect (= 0 (get-in clear [:meta :after])))
+      (expect (nil? (get-in clear [:meta :query])))))
+  (it "never counts unmatched operations into a searched page's next rule"
+      ;; Issue #212: `total` is the UNFILTERED size of the record and `next-after` is
+      ;; a sequence cursor, so their difference is not a count of further matches. A
+      ;; sparse search with high sequence numbers must not claim one.
+      (let [matched
+            (fn [id sequence]
+              {:id id
+               :sequence sequence
+               :operation "patch"
+               :state "succeeded"
+               :summary "edit"
+               :resources []
+               :evidence []})
+
+            entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows [(matched "row-1" 512) (matched "row-2" 873)]
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories
+              [{:id "history-1" :revision 2 :total 900 :after 0 :next-after 874}]
+              :activity-fetch {"history-1" {:query "patch"}}}
+             72
+             "fixture")
+
+            text
+            (str/join "\n" (map :line entries))
+
+            label
+            (str (get-in (first (filter #(and (= :activity-page (get-in % [:meta :kind]))
+                                              (= 874 (get-in % [:meta :after])))
+                                        entries))
+                         [:meta :label]))]
+
+        (expect (= "show more matching operations" label))
+        (expect (nil? (re-find #"\d" label)))
+        (expect (str/includes? text "showing 2 operations matching"))
+        (expect (not (str/includes? text "of 900")))))
+  (it "sends a changed record back to its first operation instead of splicing revisions"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories [{:id "history-1" :revision 2 :total 90 :after 32 :next-after 64}]
+              :activity-fetch {"history-1" {:status :stale :after 64}}}
+             72
+             "fixture")
+
+            pages
+            (filterv #(= :activity-page (get-in % [:meta :kind])) entries)]
+
+        (expect (= 1 (count pages)))
+        (expect (= 0 (get-in (first pages) [:meta :after])))
+        (expect (str/includes? (get-in (first pages) [:meta :label]) "Activity changed"))
+        (expect (str/includes? (get-in (first pages) [:meta :label]) "first operation"))))
+  (it "paints each rule caption once, on the column its overlay points at"
+      ;; The rule already stands its words in the gap it cuts, and the painter only
+      ;; recolors that copy. An overlay column of 0 printed the same caption a
+      ;; second time at the left edge of the band.
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true} key default))
+              :activity-histories
+              [{:id "history-1" :revision 2 :total 90 :after 32 :next-after 64}]}
+             72
+             "fixture")
+
+            rules
+            (filterv #(contains? #{:activity-page :activity-search} (get-in % [:meta :kind]))
+              entries)]
+
+        (expect (= 3 (count rules)))
+        (doseq [rule rules]
+          (let [label (str (get-in rule [:meta :label]))
+                ;; `:line` opens with the band marker the painter strips before it
+                ;; draws the row, so the overlay column is an offset into the rest.
+                painted (subs (str (:line rule)) 1)
+                column (get-in rule [:meta :mark-col])]
+
+            (expect (= column (str/index-of painted label)))
+            (expect (= column (str/last-index-of painted label))))))))
+
+(defdescribe
   direct-activity-result-test
   (it "does not render generic result summaries or offer empty disclosures"
       (let [row {:state "succeeded"

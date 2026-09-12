@@ -3341,34 +3341,52 @@
               err
               (cond user-cancel? nil
                     stalled? (str (stall-failure-text stall) " (force-cancelled)")
-                    :else (ex-message t))]
+                    :else (ex-message t))
+
+              content
+              (cond user-cancel? []
+                    ;; A provider failure that unwound the worker (rate limit, auth
+                    ;; rejection, dead connection) is the SAME failure the in-loop path
+                    ;; renders as a styled card. Emitting the bare `ex-message` here is
+                    ;; why an error Vis formats perfectly elsewhere sometimes landed in
+                    ;; the TUI (and the app) as raw unformatted text.
+                    (and (not stalled?) (provider-error/provider-failure? t))
+                    (provider-error/provider-error-content t)
+                    :else [(content/error "turn_failed" (or err "Turn failed") false)])]
 
           (if user-cancel?
             (tel/log! :info ["gateway: turn cancelled by user" tid])
             (tel/log! :error ["gateway: turn worker failed" tid err]))
           (when (claim-terminal!)
-            (finish-turn!
+            ;; The worker unwound BEFORE the engine's own terminal write (a throw out
+            ;; of the iteration loop — an interrupted retry backoff, a dead provider
+            ;; connection — escapes `run-normal-turn!` without `persist-turn-outcome!`).
+            ;; The in-memory registry alone forgetting the turn is not enough: the
+            ;; canonical durable row stayed `running` until the next process start
+            ;; swept it, so reopening the session from a fresh client (or after a
+            ;; journal rollover) showed a dead turn still spinning with no failure and
+            ;; no answer (Blockether/vis#211). Settle it here, under the same claim
+            ;; and with the same content the channels see; the compare-and-set from
+            ;; `running` keeps a terminal the engine did land authoritative.
+            (persist-forced-terminal!
               sid
               tid
-              (cond-> {:status status
-                       :role "assistant"
-                       :content (cond user-cancel? []
-                                      ;; A provider failure that unwound the worker (rate
-                                      ;; limit, auth rejection, dead connection) is the SAME
-                                      ;; failure the in-loop path renders as a styled card.
-                                      ;; Emitting the bare `ex-message` here is why an error
-                                      ;; Vis formats perfectly elsewhere sometimes landed in
-                                      ;; the TUI (and the app) as raw unformatted text.
-                                      (and (not stalled?) (provider-error/provider-failure? t))
-                                      (provider-error/provider-error-content t)
-                                      :else
-                                      [(content/error "turn_failed" (or err "Turn failed") false)])
-                       :completed_at (util/now-ms)}
-                err
-                (assoc :error err)
+              (if user-cancel?
+                {:status :interrupted :content [] :prior-outcome :cancelled}
+                (cond-> {:status :error :content content :prior-outcome :error}
+                  (seq content)
+                  (assoc :error (first content)))))
+            (finish-turn! sid
+                          tid
+                          (cond-> {:status status
+                                   :role "assistant"
+                                   :content content
+                                   :completed_at (util/now-ms)}
+                            err
+                            (assoc :error err)
 
-                eval
-                (assoc :eval eval)))
+                            eval
+                            (assoc :eval eval)))
             ;; Close every block still OPEN. Without it a cancelled/failed turn
             ;; leaves half-open live panels in every channel — the blank screen the
             ;; TUI showed after Esc.

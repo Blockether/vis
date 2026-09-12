@@ -117,8 +117,8 @@
              [{"error" 0 "warning" 0 "info" 0 "files" 0} "No files to lint"] [{} "No lint result"]]]
       (expect (= expected
                  (get (presenter/result-presentation {:operation :lint_code} result) "summary")))))
-  (it "keeps useful outcomes when later output exhausts the receipt body budget"
-      ;; Regression: both rows had empty summaries, leaving only Details truncated.
+  (it "keeps useful outcomes and full details when later output grows the history"
+      ;; Regression #212: subsequent output must not discard earlier presentation content.
       (let [checks
             [[:format_code "src/example.clj"
               {"changed" false "path" "src/example.clj" "formatter" "zprint"} nil]
@@ -137,8 +137,8 @@
         (expect (contract/valid-projection? projection))
         (expect (= ["No formatting changes · src/example.clj" "No lint findings · 1 file checked"]
                    (mapv #(get-in % ["presentation" "summary"]) rows)))
-        (expect (every? #(empty? (get-in % ["presentation" "content"])) rows))
-        (expect (every? #(get % "is_truncated") rows))))
+        (expect (every? #(seq (get-in % ["presentation" "content"])) rows))
+        (expect (not-any? #(get % "is_truncated") rows))))
   (it "counts full results before the event bounds per-file and per-finding evidence"
       (let [projection
             (result-fixture

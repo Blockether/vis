@@ -180,6 +180,10 @@
 
 (def ^:private copy-bubble! (deref #'screen/copy-bubble!))
 
+(def ^:private copy-disclosure! (deref #'screen/copy-disclosure!))
+
+(def ^:private prompt-activity-search! (deref #'screen/prompt-activity-search!))
+
 (def ^:private activate-tab-entry-hit! (deref #'screen/activate-tab-entry-hit!))
 
 (def ^:private open-click-target! (deref #'screen/open-click-target!))
@@ -3096,3 +3100,151 @@ therapy line 2"
         (expect (empty? @opened))
         (expect (= [:live-record-open "s1"] (subvec (first @events) 0 2)))
         (expect (= "Release checks" (get-in (first @events) [2 :view :title])))))))
+
+;; Issue #212: an Activity band paints ONE window of a record that keeps more,
+;; so its COPY target must reach the record - the gateway's whole-history
+;; export - instead of the thirty-two rows that happen to be on screen.
+(defdescribe
+  activity-history-copy-test
+  (it
+    "copies the exported record behind an Activity band"
+    (let [payload
+          (render/format-answer-with-thinking-data
+            ""
+            [{:forms [{:code "search()"
+                       :success? true
+                       :activity {:state "succeeded"
+                                  :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                                  :rows [{:id "search-1"
+                                          :sequence 1
+                                          :operation "grep"
+                                          :state "succeeded"
+                                          :summary "source"
+                                          :resources []
+                                          :evidence []}]
+                                  :omitted {:rows 0}
+                                  :history {:id "0f3f2a1e-0000-4000-8000-000000000001"
+                                            :revision 4
+                                            :total 274
+                                            :after 0
+                                            :next-after 32}}}]}]
+            (- 80 (long render/MESSAGE_SIDE_PAD))
+            {:show-thinking true :show-iterations true}
+            nil
+            false
+            {:session-id "sid"
+             :session-turn-id "turn"
+             :detail-expansions {:vis.channel-tui/expand-all-details? true}})
+
+          message
+          {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
+
+          copy
+          (first (filter
+                   #(str/ends-with? (str (:node-id %)) ":#band")
+                   (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)))
+
+          copied
+          (promise)
+
+          notified
+          (promise)]
+
+      (expect (some? copy))
+      (expect (= "sid" (:session-id copy)))
+      (expect (= [{:id "0f3f2a1e-0000-4000-8000-000000000001" :revision 4 :total 274}]
+                 (:history copy)))
+      (with-redefs-fn {#'chat/activity-export
+                       (fn [session-id activity-id revision]
+                         {:text (str "export " session-id " " activity-id " r" revision)})
+                       #'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify! (fn [text & kvs]
+                                       (deliver notified [text kvs]))}
+        (fn []
+          (expect (true? (deref (copy-disclosure! copy) 1000 ::timeout)))
+          (expect (= "export sid 0f3f2a1e-0000-4000-8000-000000000001 r4"
+                     (deref copied 1000 ::timeout)))
+          (expect (= "✓ Copied Activity history" (first (deref notified 1000 ::timeout))))))))
+  (it "never substitutes the painted window when the whole history cannot be had"
+      (let [copied
+            (promise)
+
+            notified
+            (promise)]
+
+        (with-redefs-fn {#'chat/activity-export (fn [& _]
+                                                  {:failed true})
+                         #'input/clipboard-copy! (fn [text]
+                                                   (deliver copied text)
+                                                   true)
+                         #'vis/notify! (fn [text & kvs]
+                                         (deliver notified [text kvs]))}
+          (fn []
+            (expect (false? (deref (copy-disclosure! {:session-id "sid"
+                                                      :history
+                                                      [{:id "history-1" :revision 4 :total 274}]
+                                                      :text "ACTIVITY window"})
+                                   1000
+                                   ::timeout)))
+            (expect (= ::pristine (deref copied 100 ::pristine)))
+            (let [[text kvs] (deref notified 1000 ::timeout)]
+              (expect (str/includes? text "Could not copy the whole Activity history"))
+              (expect (= :error (:level (apply hash-map kvs)))))))))
+  (it "tells a reader whose record changed mid-export to read it again first"
+      (let [copied
+            (promise)
+
+            notified
+            (promise)]
+
+        (with-redefs-fn {#'chat/activity-export (fn [& _]
+                                                  {:failed true :stale true})
+                         #'input/clipboard-copy! (fn [text]
+                                                   (deliver copied text)
+                                                   true)
+                         #'vis/notify! (fn [text & kvs]
+                                         (deliver notified [text kvs]))}
+          (fn []
+            (expect (false? (deref (copy-disclosure! {:session-id "sid"
+                                                      :history
+                                                      [{:id "history-1" :revision 4 :total 274}]
+                                                      :text "ACTIVITY window"})
+                                   1000
+                                   ::timeout)))
+            (expect (= ::pristine (deref copied 100 ::pristine)))
+            (expect (str/includes? (first (deref notified 1000 ::timeout))
+                                   "Activity changed while copying")))))))
+
+;; Issue #212: a reader who cannot find an operation in the painted window must be
+;; able to search the WHOLE record from the band, and to leave it exactly as it was.
+(defdescribe activity-search-prompt-test
+             (it "reads the first window of the search the reader typed"
+                 (let [events
+                       (atom [])
+
+                       asked
+                       (atom nil)]
+
+                   (with-redefs [state/dispatch
+                                 #(swap! events conj %)
+
+                                 dlg/text-input-dialog!
+                                 (fn [_screen title label & opts]
+                                   (reset! asked [title label (apply hash-map opts)])
+                                   "patch")]
+
+                     (prompt-activity-search! :screen {:session-id "sid" :history-id "history-1"})
+                     (expect (= [[:activity-page "sid" "history-1" 0 nil "patch"]
+                                 [:bump-render-version]]
+                                @events))
+                     (expect (= "Search Activity" (first @asked))))))
+             (it "leaves the band untouched when the reader cancels"
+                 (let [events (atom [])]
+                   (with-redefs [state/dispatch #(swap! events conj %)
+                                 dlg/text-input-dialog! (fn [& _]
+                                                          nil)]
+
+                     (prompt-activity-search! :screen {:session-id "sid" :history-id "history-1"})
+                     (expect (empty? @events))))))

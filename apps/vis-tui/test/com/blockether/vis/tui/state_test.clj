@@ -5817,3 +5817,124 @@
           (expect (= "describe this" (:request (first @calls))))
           (expect (= [{:filename "screen.png" :media-type "image/png" :base64 "aW1hZ2U="}]
                      (:attachments (first @calls))))))))
+
+;; Issue #212: the band used to DROP operations at its row cap and say so with a
+;; dead count. The record keeps them, so the rule under the band pages it: these
+;; events are what a press runs.
+
+(defn- paged-activity
+  [after next-after rows]
+  {:state "succeeded"
+   :counts {:running 0 :succeeded 3 :failed 0 :cancelled 0}
+   :rows rows
+   :history (cond-> {:id "a1" :revision 4 :total 274 :after after}
+              next-after
+              (assoc :next-after next-after))})
+
+(defn- activity-paging-db
+  "One record shown twice at once: settled in a message trace and live in progress."
+  []
+  {:session {:id "cid"}
+   :render-version 0
+   :messages [{:role :agent
+               :traces [{:forms [{:code "1" :activity (paged-activity 0 32 [{:id "r1"}])}]}]}]
+   :progress {:iterations [{:forms [{:code "1" :activity (paged-activity 0 32 [{:id "r1"}])}]}]}})
+
+(defn- settled-activity [] (get-in @state/app-db [:messages 0 :traces 0 :forms 0 :activity]))
+
+(defn- live-activity [] (get-in @state/app-db [:progress :iterations 0 :forms 0 :activity]))
+
+(defdescribe
+  activity-paging-test
+  (it "asks the record for the pressed window and marks that rule loading"
+      (let [asked (atom [])]
+        (state/reg-fx :load-activity-page
+                      (fn [& args]
+                        (swap! asked conj (vec args))))
+        (reset! state/app-db (activity-paging-db))
+        (state/dispatch [:activity-page "cid" "a1" 32 4 "patch"])
+        (expect (= [["cid" "a1" 32 4 "patch"]] @asked))
+        (expect (= {:status :loading :after 32 :query "patch"}
+                   (get-in (settled-activity) [:vis.channel-tui/fetch "a1"])))
+        (expect (= {:status :loading :after 32 :query "patch"}
+                   (get-in (live-activity) [:vis.channel-tui/fetch "a1"])))))
+  (it "swaps the fetched window into every copy of the record"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]
+                      nil))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:activity-page "cid" "a1" 32])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 64 [{:id "r2"}])
+                       {:after 32}])
+      (expect (= [{:id "r2"}] (:rows (settled-activity))))
+      (expect (= [{:id "r2"}] (:rows (live-activity))))
+      (expect (= 32 (get-in (settled-activity) [:history :after])))
+      (expect (nil? (:vis.channel-tui/fetch (settled-activity)))))
+  (it "keeps a search alive across the windows of its own result"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]
+                      nil))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:activity-page "cid" "a1" 0 4 "patch"])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 0 32 [{:id "r2"}])
+                       {:after 0 :query "patch"}])
+      (expect (= [{:id "r2"}] (:rows (settled-activity))))
+      (expect (= {:query "patch"} (get-in (settled-activity) [:vis.channel-tui/fetch "a1"]))))
+  (it "refuses a window that is not the one it asked for"
+      ;; Issue #212: continuing from a cursor the gateway did not answer would
+      ;; splice two different reads of the record into one history.
+      (state/reg-fx :load-activity-page
+                    (fn [& _]
+                      nil))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:activity-page "cid" "a1" 32])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 64 96 [{:id "r9"}])
+                       {:after 32}])
+      (expect (= [{:id "r1"}] (:rows (settled-activity))))
+      (expect (= {:status :stale :after 32}
+                 (get-in (settled-activity) [:vis.channel-tui/fetch "a1"]))))
+  (it "refuses a window whose revision is not the one it continued"
+      ;; Issue #212: a 200 carrying a different revision is still two reads
+      ;; of the record spliced together. Only a reload from the first
+      ;; operation, which asks WITHOUT a revision, may take up a new one.
+      (state/reg-fx :load-activity-page
+                    (fn [& _]
+                      nil))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:activity-page "cid" "a1" 32 4])
+      (state/dispatch [:activity-page-loaded "cid" "a1"
+                       (assoc-in (paged-activity 32 64 [{:id "r9"}]) [:history :revision] 5)
+                       {:after 32 :revision 4}])
+      (expect (= [{:id "r1"}] (:rows (settled-activity))))
+      (expect (= {:status :stale :after 32}
+                 (get-in (settled-activity) [:vis.channel-tui/fetch "a1"])))
+      (state/dispatch [:activity-page "cid" "a1" 0])
+      (state/dispatch [:activity-page-loaded "cid" "a1"
+                       (assoc-in (paged-activity 0 32 [{:id "r9"}]) [:history :revision] 5)
+                       {:after 0}])
+      (expect (= [{:id "r9"}] (:rows (settled-activity))))
+      (expect (nil? (:vis.channel-tui/fetch (settled-activity)))))
+  (it "keeps the rows in hand and re-arms the same cursor when the fetch fails"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]
+                      nil))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:activity-page "cid" "a1" 32])
+      (state/dispatch [:activity-page-failed "cid" "a1" 32])
+      (expect (= [{:id "r1"}] (:rows (settled-activity))))
+      (expect (= {:status :failed :after 32}
+                 (get-in (settled-activity) [:vis.channel-tui/fetch "a1"]))))
+  (it "marks a changed record stale so the rule reloads it from the first window"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]
+                      nil))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:activity-page "cid" "a1" 32 4])
+      (state/dispatch [:activity-page-failed "cid" "a1" 32 true])
+      (expect (= [{:id "r1"}] (:rows (settled-activity))))
+      (expect (= {:status :stale :after 32}
+                 (get-in (settled-activity) [:vis.channel-tui/fetch "a1"]))))
+  (it "leaves a record belonging to another tab untouched"
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:activity-page-failed "other-session" "a1" 0])
+      (expect (nil? (:vis.channel-tui/fetch (settled-activity))))))

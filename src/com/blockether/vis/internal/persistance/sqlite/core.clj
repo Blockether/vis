@@ -19,6 +19,10 @@
      (db-open! db-spec)   -> {:datasource ds :path ...}
      (db-close! store)    -> idempotent dispose"
   (:require [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.activity.event :as activity-event]
+            [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.wire :as wire]
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -4065,6 +4069,55 @@
         []))
     []))
 
+(defn- fork-activity-histories!
+  "Copy the durable Activity histories that `forms` (one copied iteration's stored
+   form vector) reference, under `new-soul-id`, with fresh history ids. Returns
+   `{old-history-id new-history-id}`; the caller rewrites the copied forms with it.
+
+   Bounded SQL `INSERT ... SELECT` per history: the invocation rows never enter
+   the heap. Histories are session-owned (`db-activity-page` rejects another
+   soul) and cascade with their soul, so a fork must own its own copy to keep the
+   forms' Activity readable after the source is deleted (Blockether/vis#212)."
+  [tx-info new-soul-id forms]
+  (into {}
+        (for [old-id
+              (distinct (keep #(get-in % [:activity :history :id]) forms))
+
+              :let [old-s
+                    (str old-id)]
+              :when (query-one! tx-info
+                                {:select [:id] :from :activity_history :where [:= :id old-s]})
+              :let [new-id
+                    (str (new-uuid))]]
+
+          (do (execute! tx-info
+                        {:insert-into
+                         [[:activity_history [:id :session_soul_id :revision :metadata]]
+                          {:select [[[:lift new-id]] [[:lift new-soul-id]] :revision :metadata]
+                           :from :activity_history
+                           :where [:= :id old-s]}]})
+              (execute! tx-info
+                        {:insert-into [[:activity_invocation
+                                        [:history_id :id :sequence :state :visible :payload
+                                         :search_text]]
+                                       {:select [[[:lift new-id]] :id :sequence :state :visible
+                                                 :payload :search_text]
+                                        :from :activity_invocation
+                                        :where [:= :history_id old-s]}]})
+              [old-id new-id]))))
+
+(defn- fork-iteration-tool-calls
+  "The copied iteration's `tool_calls` BLOB with every form's Activity history id
+   remapped through `history-id-map`; the original bytes when nothing is remapped."
+  [tool-calls history-id-map]
+  (if (empty? history-id-map)
+    tool-calls
+    (->blob (mapv (fn [form]
+                    (if-let [new-id (get history-id-map (get-in form [:activity :history :id]))]
+                      (assoc-in form [:activity :history :id] new-id)
+                      form))
+                  (<-blob tool-calls)))))
+
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is
    `:through-turn-id`, into a brand-new INDEPENDENT session.
@@ -4205,12 +4258,18 @@
                                           :session_turn_soul_id new-turn-soul-id
                                           :version 0
                                           :forked_from_session_turn_state_id nil)]}))
-                  (doseq [it iters]
+                  (doseq [it iters
+                          :let [forms (<-blob (:tool_calls it))
+                                history-id-map (fork-activity-histories! tx-info new-soul-id forms)]]
+
                     (execute! tx-info
                               {:insert-into :session_turn_iteration
                                :values [(assoc it
                                           :id (get iter-id-map (:id it))
-                                          :session_turn_state_id new-ts-id)]}))
+                                          :session_turn_state_id new-ts-id
+                                          :tool_calls (fork-iteration-tool-calls
+                                                        (:tool_calls it)
+                                                        history-id-map))]}))
                   ;; Attachments: user-rail rows (nil iteration) always copy; tool-rail
                   ;; rows copy only when their iteration was copied (latest state), with
                   ;; the iteration FK remapped. Skip tool rows from older versions.
@@ -5208,3 +5267,160 @@
                                  :set {:state "unavailable"}
                                  :where [:and [:= :recipient_sid sid] [:= :entry_id id]
                                          [:= :state "pending"]]}))))
+
+(defn- activity-record
+  [aid row]
+  {:history_id aid
+   :id (:id row)
+   :sequence (:sequence row)
+   :state (name (:state row))
+   :visible (if (and (= :running (:state row)) (false? (:show-start row))) 0 1)
+   :payload (->blob row)
+   :search_text (wire/json-str (activity/presentation (assoc activity/empty-state :rows [row])))})
+
+(defn db-activity-apply!
+  "Persist one admitted lifecycle edge without retaining the history in heap."
+  [db sid aid raw-event]
+  (let [event
+        (activity-event/checked raw-event)
+
+        aid
+        (str aid)
+
+        sid
+        (str sid)]
+
+    (sqlite-write-tx!
+      db
+      (fn [tx]
+        (let [history
+              (query-one! tx {:select [:*] :from [:activity_history] :where [:= :id aid]})
+
+              previous
+              (query-one! tx
+                          {:select [:payload]
+                           :from [:activity_invocation]
+                           :where [:and [:= :history_id aid] [:= :id (:invocation-id event)]]})
+
+              row
+              (<-blob (:payload previous))
+
+              phase
+              (:phase event)]
+
+          (when (and history (not= sid (:session_soul_id history)))
+            (throw (ex-info "Activity history belongs to another session" {:type :activity/owner})))
+          (when (or (and (= phase :start) row)
+                    (and (not= phase :start) (not= :running (:state row))))
+            (throw (ex-info "Invalid Activity lifecycle transition" {:type :activity/lifecycle})))
+          (when-not history
+            (execute! tx
+                      {:insert-into :activity_history
+                       :values [{:id aid
+                                 :session_soul_id sid
+                                 :revision 0
+                                 :metadata (->blob (dissoc activity/empty-state :rows))}]}))
+          (let [metadata
+                (or (<-blob (:metadata history)) (dissoc activity/empty-state :rows))
+
+                state
+                (activity/reduce-event (assoc metadata :rows (if row [row] [])) event)
+
+                record
+                (activity-record aid (first (:rows state)))]
+
+            (if row
+              (execute! tx
+                        {:update :activity_invocation
+                         :set (dissoc record :history_id :id)
+                         :where [:and [:= :history_id aid] [:= :id (:id row)]]})
+              (execute! tx {:insert-into :activity_invocation :values [record]}))
+            (execute! tx
+                      {:update :activity_history
+                       :set {:metadata (->blob (dissoc state :rows))
+                             :revision (inc (long (or (:revision history) 0)))}
+                       :where [:= :id aid]})
+            (dissoc state :rows)))))))
+
+(defn db-activity-settle!
+  "Close still-running invocations in bounded batches at the enclosing evaluation boundary."
+  [db aid outcome summary]
+  (sqlite-write-tx!
+    db
+    (fn [tx]
+      (when-let [history
+                 (query-one! tx {:select [:*] :from [:activity_history] :where [:= :id (str aid)]})]
+        (let [metadata (<-blob (:metadata history))]
+          (when (pos? (long (get-in metadata [:counts :running] 0)))
+            (loop []
+
+              (let [rows (query! tx
+                                 {:select [:payload]
+                                  :from [:activity_invocation]
+                                  :where [:and [:= :history_id (str aid)] [:= :state "running"]]
+                                  :order-by [[:sequence :asc]]
+                                  :limit 32})]
+                (when (seq rows)
+                  (doseq [item rows]
+                    (let [row (assoc (<-blob (:payload item))
+                                :state outcome
+                                :summary summary)
+                          record (activity-record (str aid) row)]
+
+                      (execute! tx
+                                {:update :activity_invocation
+                                 :set (dissoc record :history_id :id)
+                                 :where [:and [:= :history_id (str aid)] [:= :id (:id row)]]})))
+                  (recur))))
+            (execute! tx
+                      {:update :activity_history
+                       :set {:metadata (->blob (dissoc (activity/settle-running (assoc metadata
+                                                                                  :rows [])
+                                                                                outcome
+                                                                                summary)
+                                                 :rows))
+                             :revision (inc (long (:revision history)))}
+                       :where [:= :id (str aid)]})))))))
+
+(defn db-activity-page
+  "A session-authorized, keyset page of complete records. Search never clips retention."
+  [db sid aid {:keys [after limit q] :or {after 0 limit 32}}]
+  (when (or (neg? (long after)) (not (<= 1 (long limit) 32)) (and q (> (count q) 512)))
+    (throw (ex-info "Invalid Activity page parameters" {:type :activity/invalid-page})))
+  ;; One transaction keeps metadata/revision and its bounded row page consistent.
+  (sqlite-write-tx!
+    db
+    (fn [db]
+      (when-let [history (query-one! db
+                                     {:select [:*]
+                                      :from [:activity_history]
+                                      :where [:and [:= :id (str aid)]
+                                              [:= :session_soul_id (str sid)]]})]
+        (let [metadata (<-blob (:metadata history))
+              rows (query! db
+                           {:select [:payload]
+                            :from [:activity_invocation]
+                            :where (cond-> [:and [:= :history_id (str aid)] [:> :sequence after]
+                                            [:= :visible 1]]
+                                     (not (str/blank? q))
+                                     (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
+                            :order-by [[:sequence :asc]]
+                            :limit (inc (long limit))})
+              records (mapv #(<-blob (:payload %)) rows)
+              page (fn [selected more?]
+                     (assoc (activity/presentation (assoc metadata :rows selected))
+                       :history {:id (str aid)
+                                 :revision (:revision history)
+                                 :total (reduce + 0 (vals (:counts metadata)))
+                                 :after after
+                                 :next-after (when more? (:sequence (peek selected)))}))]
+
+          (loop [selected (vec (take limit records))]
+            (let [projection (page selected (> (count records) (count selected)))]
+              (if (<= (activity/byte-size projection)
+                      (long (get activity-contract/limits "max_page_bytes")))
+                projection
+                (if (> (count selected) 1)
+                  (recur (pop selected))
+                  (throw (ex-info "Admitted Activity record exceeds page size"
+                                  {:type :activity/oversized-record})))))))))))

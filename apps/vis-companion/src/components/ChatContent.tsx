@@ -372,7 +372,7 @@ function segmentsToLines(segments: SyntaxSegment[]): SyntaxSegment[][] {
 }
 
 const GUTTER_LINE = /^(\s*\d+) {2}(.*)$/;
-const GUTTER_DIVIDER = /^(\s*\u22ef)\s*$/;
+const GUTTER_DIVIDER = /^(\s*\u{22ef})\s*$/u;
 
 // `cat` bodies arrive as a numbered gutter (` 12 <code>`) fenced with the
 // file language. Feeding those line numbers to Prism poisons the grammar, so
@@ -1418,11 +1418,10 @@ function formStep(
    */
   status: string;
 } {
-  // Activity rides the form itself now, so there is no artifact to fetch and no
-  // loading or unavailable state to paint: either this form did something and
-  // carries the record of it, or it did not. The form's own `duration_ms` is
-  // the elapsed time — the projection no longer keeps window timestamps of its
-  // own, and the settled duration is exactly what the terminal frame measured.
+  // The form carries its initial Activity window. Its durable history, when present,
+  // is loaded by ActivityPanel without replacing the form's source identity.
+  // The form's own `duration_ms` is the elapsed time; Activity does not keep
+  // separate window timestamps. The settled duration is what the terminal measured.
   const activity = form.activity;
   const detected = Boolean(
     activity &&
@@ -1554,7 +1553,18 @@ const FormTrace = memo(function FormTrace({
         aria-label="Execution trace"
       >
         {status && <span className="sr-only">{status}</span>}
-        {detectedActivity && activity && <ActivityPanel activity={activity} />}
+        {detectedActivity &&
+          (forms.some((source) => source.activity?.history)
+            ? forms.map(
+                (source, index) =>
+                  source.activity && (
+                    <ActivityPanel
+                      key={source.activity.history?.id ?? index}
+                      activity={source.activity}
+                    />
+                  ),
+              )
+            : activity && <ActivityPanel activity={activity} />)}
       </div>
     </div>
   );

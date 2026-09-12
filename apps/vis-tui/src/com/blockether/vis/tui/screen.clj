@@ -499,13 +499,28 @@
 (def ^:private status-error-ttl-ms 5000)
 
 (defn- copy-text-async!
-  [worker-name text success-message]
-  (vis/worker-future
-    worker-name
-    #(let [copied? (try (true? (input/clipboard-copy! (or text ""))) (catch Throwable _ false))]
-       (vis/notify! (if copied? success-message "Copy failed — terminal clipboard unavailable")
-                    :level (if copied? :success :error)
-                    :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms)) copied?)))
+  "Copy off the input thread. `text` is a string, or a thunk producing one when
+   the payload needs a gateway round trip — that fetch belongs on the worker
+   rather than on the keystroke that asked for it.
+
+   A thunk that answers nil could NOT produce what was asked for. Nothing is
+   copied then: the clipboard keeps what it already held and `failure-message`
+   (a string, or a thunk for a reason known only once the fetch has failed) says
+   what happened and that it is worth trying again."
+  ([worker-name text success-message] (copy-text-async! worker-name text success-message nil))
+  ([worker-name text success-message failure-message]
+   (vis/worker-future
+     worker-name
+     #(if-let [payload (if (fn? text) (text) text)]
+        (let [copied? (try (true? (input/clipboard-copy! payload)) (catch Throwable _ false))]
+          (vis/notify! (if copied? success-message "Copy failed — terminal clipboard unavailable")
+                       :level (if copied? :success :error)
+                       :ttl-ms (if copied? copy-success-ttl-ms status-error-ttl-ms))
+          copied?) (do (vis/notify! (or (if (fn? failure-message) (failure-message) failure-message)
+                                        "Copy failed — nothing to copy")
+                                    :level :error
+                                    :ttl-ms status-error-ttl-ms)
+                       false)))))
 
 (defn- copy-session-id!
   "Copy the session id in its MARKED form (`vis_session_id#<uuid>`, see
@@ -527,6 +542,37 @@
 (defn- copy-bubble!
   [text]
   (copy-text-async! "vis-tui-copy-bubble" (selection/clean-copied-text text) "✓ Copied bubble"))
+
+(defn- copy-disclosure!
+  "Copy a disclosure hit: an expanded body, a code header, or an Activity band.
+
+   An Activity band paints one WINDOW of a record that keeps more, so its header
+   copies what the RECORD holds — the gateway's whole-history export
+   (`chat/activity-export`, one body per retained run), pinned to the revision the
+   band is showing.
+
+   Anything short of the whole history is not what was asked for. A failed export,
+   or one the gateway itself marked incomplete, leaves the clipboard UNTOUCHED and
+   says so: quietly substituting the visible page is exactly the silent loss this
+   copy exists to undo."
+  [hit]
+  (if-let [histories (seq (:history hit))]
+    (let [session-id (:session-id hit)
+          failure (volatile! nil)]
+
+      (copy-text-async!
+        "vis-tui-copy-activity-history"
+        (fn []
+          (let [exports (mapv #(chat/activity-export session-id (:id %) (:revision %)) histories)]
+            (if (some :failed exports)
+              (do (vreset! failure (if (some :stale exports) :stale :unavailable)) nil)
+              (str/join "\n\n" (map :text exports)))))
+        "✓ Copied Activity history"
+        (fn []
+          (if (= :stale @failure)
+            "Activity changed while copying — show it again from the first operation, then copy"
+            "Could not copy the whole Activity history — press copy again to retry"))))
+    (copy-bubble! (:text hit))))
 
 (defn- copy-bubble-hit!
   "Copy a whole-bubble copy-region hit. The region's `:text` is a DELAY
@@ -1782,6 +1828,10 @@
            :width (if header? copy-width bubble-w)
            :height 1
            :text text
+           ;; What an Activity header offers to copy is the whole retained
+           ;; record, which the gateway holds and this window does not.
+           :session-id (:session-id m)
+           :history (:copy-history m)
            :node-id (:node-id m)})))))
 
 (defn- fitting-image-placements
@@ -2359,10 +2409,24 @@
        (catch Throwable _
          (vis/notify! "Artifact could not be opened." :level :warn :ttl-ms status-error-ttl-ms)))))
 
+(defn- prompt-activity-search!
+  "Ask what a whole Activity record is searched for, then read the FIRST window of
+   the result. The gateway matches every retained operation of that record, not the
+   window on screen. Esc or an empty answer leaves the band exactly as it was."
+  [screen hit]
+  (let [query (dlg/text-input-dialog! screen
+                                      "Search Activity" "Text"
+                                      :initial (str (:query hit))
+                                      :body "Searches every retained operation of this Activity.")]
+    (when-not (str/blank? (str query))
+      (state/dispatch [:activity-page (:session-id hit) (:history-id hit) 0 nil (str/trim query)])
+      (state/dispatch [:bump-render-version]))))
+
 (defn- activate-detail-label!
   "Resolve a frozen jump label against the current frame and activate its target.
-   Live cards share the durable opener used by mouse input; other labels toggle folds."
-  [db ^KeyStroke key]
+   Live cards share the durable opener used by mouse input; other labels toggle folds,
+   page an Activity record or open its search."
+  [screen db ^KeyStroke key]
   (let [chr
         (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))
 
@@ -2385,6 +2449,13 @@
 
       :toggle-details
       (state/dispatch [:toggle-detail (:session-id target) (:node-id target) (:collapsed? target)])
+
+      :activity-page
+      (state/dispatch [:activity-page (:session-id target) (:history-id target) (:after target)
+                       (:revision target) (:query target)])
+
+      :activity-search
+      (prompt-activity-search! screen target)
 
       nil)
     (state/dispatch [:set-detail-labels false])
@@ -5574,6 +5645,28 @@
                           (state/dispatch [:prepend-history sid page shift])
                           (state/dispatch [:bump-render-version]))))
                     (catch Throwable _ (state/dispatch [:older-history-loading sid false])))))))
+       (state/reg-fx
+         :load-activity-page
+         ;; A press on the rule under an Activity band. The record keeps the WHOLE
+         ;; history of that run, so this asks it for ONE window on a worker — never on
+         ;; the input or the render thread — and hands the result to the store, which
+         ;; swaps it into the band the reader is looking at. A failure leaves the rows
+         ;; in hand and re-arms the same cursor.
+         (fn [sid history-id after revision query]
+           (vis/worker-future
+             "tui-load-activity-page"
+             (fn []
+               (try (let [page (chat/activity-page sid
+                                                   history-id
+                                                   {:after after :revision revision :query query})]
+                      (if (or (nil? page) (:failed page))
+                        (state/dispatch [:activity-page-failed sid history-id after
+                                         (boolean (:stale page)) query])
+                        (state/dispatch [:activity-page-loaded sid history-id page
+                                         {:after after :revision revision :query query}])))
+                    (catch Throwable _
+                      (state/dispatch [:activity-page-failed sid history-id after false query])))
+               (state/dispatch [:bump-render-version])))))
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try
            (when-not (:html? opts)
@@ -6613,18 +6706,21 @@
                                  ;; must TOGGLE, never copy — the toggle row also
                                  ;; sits inside the whole-bubble copy rectangle, so
                                  ;; resolve it FIRST and gate the copy hits on it.
-                                 toggle-detail-hit (when (and simple-click? (not= source :input))
-                                                     (let [h (.lookup interactions/hit-map mx my)]
-                                                       (when (= :toggle-details (:kind h)) h)))
-                                 disclosure-hit (when (and simple-click?
-                                                           (not= source :input)
-                                                           (not toggle-detail-hit))
-                                                  (bubble-copy-hit
-                                                    screen-point
+                                 ;; The rule under an Activity band is the same
+                                 ;; gesture: it PAGES the record, it never copies.
+                                 control-hit (when (and simple-click? (not= source :input))
+                                               (let [h (.lookup interactions/hit-map mx my)]
+                                                 (when (contains? #{:toggle-details :activity-page
+                                                                    :activity-search}
+                                                                  (:kind h))
+                                                   h)))
+                                 disclosure-hit
+                                 (when (and simple-click? (not= source :input) (not control-hit))
+                                   (bubble-copy-hit screen-point
                                                     transcript-disclosure-copy-regions))
                                  bubble-hit (when (and simple-click?
                                                        (not= source :input)
-                                                       (not toggle-detail-hit)
+                                                       (not control-hit)
                                                        (not disclosure-hit))
                                               (bubble-copy-hit screen-point
                                                                transcript-bubble-copy-regions))
@@ -6660,11 +6756,16 @@
                                  payload (selection-copy-payload source doc-text screen-cell-text)]
 
                              (state/dispatch [:clear-mouse-selection])
-                             (cond toggle-detail-hit
-                                   (state/dispatch [:toggle-detail (:session-id toggle-detail-hit)
-                                                    (:node-id toggle-detail-hit)
-                                                    (:collapsed? toggle-detail-hit)])
-                                   disclosure-hit (copy-bubble! (:text disclosure-hit))
+                             (cond (= :activity-page (:kind control-hit))
+                                   (state/dispatch [:activity-page (:session-id control-hit)
+                                                    (:history-id control-hit) (:after control-hit)
+                                                    (:revision control-hit) (:query control-hit)])
+                                   (= :activity-search (:kind control-hit))
+                                   (prompt-activity-search! screen control-hit)
+                                   control-hit (state/dispatch
+                                                 [:toggle-detail (:session-id control-hit)
+                                                  (:node-id control-hit) (:collapsed? control-hit)])
+                                   disclosure-hit (copy-disclosure! disclosure-hit)
                                    bubble-hit (copy-bubble-hit! bubble-hit)
                                    (and (not simple-click?) (not (str/blank? payload)))
                                    (copy-selection! payload source)))
@@ -6749,6 +6850,13 @@
                                  (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)
                                                   (:collapsed? hit)])
 
+                                 :activity-page
+                                 (state/dispatch [:activity-page (:session-id hit) (:history-id hit)
+                                                  (:after hit) (:revision hit) (:query hit)])
+
+                                 :activity-search
+                                 (prompt-activity-search! screen hit)
+
                                  :preview-switcher
                                  (state/dispatch [:select-preview-mode (:session-id hit)
                                                   (:node-id hit) (:mode hit)])
@@ -6784,7 +6892,7 @@
                                      disclosure-hit
                                      (bubble-copy-hit point transcript-disclosure-copy-regions)]
 
-                                 (cond disclosure-hit (copy-bubble! (:text disclosure-hit))
+                                 (cond disclosure-hit (copy-disclosure! disclosure-hit)
                                        :else (when-let [bubble-hit
                                                         (bubble-copy-hit
                                                           point
@@ -6812,7 +6920,10 @@
                        (= atype MouseActionType/CLICK_DOWN)
                        (do
                          (let [hit (.lookup interactions/hit-map mx my)]
-                           (if (and hit (not= :toggle-details (:kind hit)))
+                           (if (and hit
+                                    (not (contains? #{:toggle-details :activity-page
+                                                      :activity-search}
+                                                    (:kind hit))))
                              (do
                                ;; Tell the matching CLICK_RELEASE in
                                ;; the same gesture pair to skip the
@@ -6910,6 +7021,13 @@
                                  :toggle-details
                                  (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)
                                                   (:collapsed? hit)])
+
+                                 :activity-page
+                                 (state/dispatch [:activity-page (:session-id hit) (:history-id hit)
+                                                  (:after hit) (:revision hit) (:query hit)])
+
+                                 :activity-search
+                                 (prompt-activity-search! screen hit)
 
                                  :preview-switcher
                                  (state/dispatch [:select-preview-mode (:session-id hit)
@@ -7103,7 +7221,7 @@
                    ;; other key cancels. Sits above the fall-through so the
                    ;; label keys never reach the draft or the app-verb dispatch.
                    (and (instance? KeyStroke key) (:detail-labels-active? db))
-                   (do (activate-detail-label! db key) (recur))
+                   (do (activate-detail-label! screen db key) (recur))
                    :else
                    (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
                          {:keys [action state workspace-index character]}

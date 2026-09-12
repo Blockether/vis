@@ -930,6 +930,66 @@
       (history-page session-id
                     {:limit older-page-turns :offset (max 0 (- offset (long older-page-turns)))}))))
 
+(def activity-page-rows
+  "Rows ONE Activity window asks for. The contract caps every history-bearing
+   response at `max_page_rows`, so asking for exactly that is one round trip per
+   window and never a request the gateway has to trim."
+  (long (get activity-contract/limits "max_page_rows")))
+
+(defn activity-page
+  "ONE window of a form's RETAINED Activity, projected exactly like the bounded
+   snapshot the block already carries, so a reader pages without changing what
+   they are reading.
+
+   `opts`: `:after`, the EXCLUSIVE cursor the previous window returned as
+   `history.next-after` (nil starts at the beginning); `:limit` rows (nil =
+   `activity-page-rows`); `:query`, which the gateway matches against EVERY
+   retained record of this Activity, not the window in hand; and `:revision`, the
+   revision the reader is already looking at.
+
+   Returns the engine-spelled projection, or `{:rows [] :failed true}` when the
+   gateway could not answer — `:stale true` as well when the record moved on and
+   the only honest continuation is to read it again from the first window. A
+   reader has to tell \"nothing is there\" from \"the fetch broke\": only the
+   second is worth a retry, and only the first may retire a cursor."
+  [session-id activity-id opts]
+  (try (let [page (vis/activity-page session-id
+                                     activity-id
+                                     {:after (:after opts)
+                                      :limit (or (:limit opts) activity-page-rows)
+                                      :query (:query opts)
+                                      :revision (:revision opts)})]
+         (cond (= :activity-changed page) {:rows [] :failed true :stale true}
+               (nil? page) {:rows [] :failed true}
+               :else (or (activity-contract/from-wire page) {:rows [] :failed true})))
+       (catch Exception e
+         (t/log! {:level :warn
+                  :id ::activity-page-failed
+                  :data (exception->log-data e)
+                  :msg (str "Failed to load Activity page: " (ex-message e))})
+         {:rows [] :failed true})))
+
+(defn activity-export
+  "The WHOLE retained history of one Activity as plain text: `{:text …}`, or
+   `{:failed true}` when the gateway could not answer — `:stale true` as well when
+   the record changed while it streamed, which the gateway marks in the body it
+   already sent. This is what \"copy everything\" copies: one streamed body from
+   the record itself, never the windows a reader happens to have paged through and
+   never a body the gateway itself called incomplete. A caller that cannot deliver
+   the whole history must deliver NOTHING and say so."
+  ([session-id activity-id] (activity-export session-id activity-id nil))
+  ([session-id activity-id revision]
+   (try (let [exported (vis/activity-export session-id activity-id revision)]
+          (cond (= :activity-changed exported) {:failed true :stale true}
+                (str/blank? (str exported)) {:failed true}
+                :else {:text exported}))
+        (catch Exception e
+          (t/log! {:level :warn
+                   :id ::activity-export-failed
+                   :data (exception->log-data e)
+                   :msg (str "Failed to export Activity history: " (ex-message e))})
+          {:failed true}))))
+
 (defn- event-get
   "Read field `k` off a canonical string-keyed wire map — ONE deterministic
    lookup: the exact spelling `vis/wire-key` emits (snake_case, `foo?` ->

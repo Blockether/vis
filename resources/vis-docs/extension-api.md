@@ -220,6 +220,26 @@ demonstrates the callback beside registration. Exact portable limits and block
 shapes live in the
 [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
 
+The per-presentation bounds do not limit the number of calls or the total size of
+Activity history. Vis keeps every admitted, redacted invocation and its details
+in the session store. Companion and the TUI load small pages as you browse;
+search, Copy all and Export cover the full history, including calls outside the
+current page. Copying or sharing a complete export can use memory proportional
+to its size. Closing a client or restarting Vis does not discard saved Activity.
+
+For clients, a projection's optional `history` object identifies its durable
+record and carries the revision, total invocation count and page cursor. Read
+`GET /v1/sessions/:sid/activity/:aid?after=0&limit=32&q=...` through an authenticated
+gateway client; `q` searches all retained details. Follow `history.next_after`
+until it is `null`. Pages contain at most 32 invocations and 1 MiB, without
+shortening their details. Synthetic group headings do not count as invocations.
+
+`GET /v1/sessions/:sid/activity/:aid/export` streams the unfiltered history as
+text. Optional `revision` pins either request to the version you read; a changed
+revision returns 409. An export interrupted by a concurrent change is marked
+incomplete and must be retried. Old receipts that already lost records retain
+their original omission warning; the missing data cannot be reconstructed.
+
 ## Prompts and discovery
 
 Use `prompt` for a short explanation of **when** to choose this extension and the

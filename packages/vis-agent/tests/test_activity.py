@@ -295,3 +295,85 @@ def test_custom_activity_async_and_wire_roundtrip(monkeypatch):
     with pytest.raises(TypeError):
         projection.rows[0].presentation["headline"] = "changed"
     assert fixture["rows"][0]["presentation"]["headline"] == "success"
+
+
+def _history_projection(count, *, paged):
+    fixture = json.loads((_contracts._DATA / "fixtures/activity.json").read_text())
+    first = fixture["rows"][0]
+    fixture["rows"] = [
+        {
+            **first,
+            "id": f"call-{index}",
+            "sequence": index + 1,
+            "state": "succeeded",
+            "presentation": {
+                "headline": "Read record",
+                "summary": f"Record {index}",
+                "content": [{"type": "text", "text": "界" * 2000}],
+            },
+        }
+        for index in range(count)
+    ]
+    fixture["state"] = "succeeded"
+    fixture["counts"] = {"running": 0, "succeeded": count, "failed": 0, "cancelled": 0}
+    fixture["omitted"] = {"rows": 0, "by_classification": {}}
+    if paged:
+        fixture["history"] = {
+            "id": "00000000-0000-4000-8000-000000000212",
+            "revision": 480,
+            "total": 160,
+            "after": 0,
+            "next_after": count,
+        }
+    return fixture
+
+
+def test_activity_history_has_no_total_retention_cap():
+    # Regression #212: delivery windows do not discard large inline histories.
+    from blockether.vis.activity import ActivityProjection
+
+    fixture = _history_projection(160, paged=False)
+    assert len(json.dumps(fixture, ensure_ascii=False).encode()) > 65536
+    projection = ActivityProjection.from_wire(fixture)
+    assert len(projection.rows) == 160
+    assert projection.to_wire() == fixture
+
+
+@pytest.mark.parametrize("next_after", [32, None])
+def test_activity_page_roundtrips_history_and_nullable_end(next_after):
+    from blockether.vis.activity import ActivityProjection
+
+    fixture = _history_projection(32, paged=True)
+    fixture["history"]["next_after"] = next_after
+    projection = ActivityProjection.from_wire(fixture)
+    assert projection.to_wire() == fixture
+    assert projection.history["total"] == 160
+    with pytest.raises(TypeError):
+        projection.history["after"] = 10
+    frame = Event.from_wire(
+        {
+            "type": "block.activity",
+            "session_id": "s",
+            "turn_id": "t",
+            "seq": 3,
+            "iteration": 1,
+            "form_index": 0,
+            "activity": fixture,
+        }
+    )
+    assert frame.activity == projection
+
+
+def test_activity_page_counts_real_invocations_not_synthetic_groups():
+    from blockether.vis.activity import ActivityProjection
+
+    fixture = _history_projection(32, paged=True)
+    fixture["rows"] = [
+        {**fixture["rows"][0], "id": "group-1", "children": fixture["rows"]}
+    ]
+    assert ActivityProjection.from_wire(fixture).to_wire() == fixture
+    fixture["rows"][0]["children"].append(
+        {**fixture["rows"][0]["children"][0], "id": "call-33"}
+    )
+    with pytest.raises(ValueError):
+        ActivityProjection.from_wire(fixture)

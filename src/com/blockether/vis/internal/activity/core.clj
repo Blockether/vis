@@ -1,15 +1,10 @@
 (ns com.blockether.vis.internal.activity.core
-  "Pure bounded reducer from immutable lifecycle events to channel-neutral Activity.
+  "Lossless reducer from immutable lifecycle events to channel-neutral Activity.
 
    Wrapper-entry sequence owns row placement and terminal events update rows in place."
-  (:require [com.blockether.vis.contract.activity :as contract]
-            [com.blockether.vis.internal.activity.event :as event]
+  (:require [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]))
-
-(def max-rows (get contract/limits "max_rows"))
-
-(def max-receipt-bytes (get contract/limits "max_receipt_bytes"))
 
 (def empty-state
   "Initial rendered Activity state.
@@ -27,31 +22,6 @@
         (:failed event) :failed
         (:cancelled event) :cancelled
         :else nil))
-
-(defn- priority
-  "Who leaves first when the receipt is full, highest number first. A failure or a
-   cancellation is the one row a reader must never lose, and a step still running is
-   the picture being watched right now: settled routine rows go first, then
-   verification, then what changed files, and only then the running step."
-  ^long [row]
-  (case (:state row)
-    :failed
-    0
-
-    :cancelled
-    1
-
-    :running
-    2
-
-    (case (:classification row)
-      :mutation
-      3
-
-      :verification
-      4
-
-      5)))
 
 (defn- start-row
   [event]
@@ -81,12 +51,6 @@
     (:argument-truncated event)
     (assoc :is-truncated true)))
 
-(defn- note-omitted
-  [state classification]
-  (-> state
-      (update-in [:omitted :rows] (fnil inc 0))
-      (update-in [:omitted :by-classification classification] (fnil inc 0))))
-
 (defn- update-counts
   [counts before after]
   (cond-> counts
@@ -96,26 +60,11 @@
     after
     (update after (fnil inc 0))))
 
-(defn- replaceable-index
-  [rows]
-  (->> rows
-       (keep-indexed (fn [i row]
-                       (when (and (not= :failed (:state row)) (not= :cancelled (:state row)))
-                         [i (priority row) (:sequence row)])))
-       (sort-by (fn [[_ p sequence]]
-                  [(unchecked-negate (long p)) (unchecked-negate (long sequence))]))
-       ffirst))
-
 (defn- retain-start
   [state event]
-  (let [row (start-row event)]
-    (if (< (long (count (:rows state))) (long max-rows))
-      (-> state
-          (update :rows conj row)
-          (update :counts update-counts nil :running))
-      (-> state
-          (update :counts update :running (fnil inc 0))
-          (note-omitted (:classification row))))))
+  (-> state
+      (update :rows conj (start-row event))
+      (update :counts update-counts nil :running)))
 
 (defn- terminal-row
   [row event]
@@ -161,12 +110,6 @@
       (:result-truncated event)
       (assoc :is-truncated true))))
 
-(defn- retain-late-failure
-  [state event]
-  (if-let [idx (replaceable-index (:rows state))]
-    (assoc-in state [:rows idx] (terminal-row (start-row event) event))
-    state))
-
 (defn- settle
   [state event]
   (let [id
@@ -180,10 +123,7 @@
 
     (cond-> (update state :counts update-counts :running outcome)
       (some? idx)
-      (assoc-in [:rows idx] (terminal-row (get (:rows state) idx) event))
-
-      (and (nil? idx) (= :failed outcome))
-      (retain-late-failure event))))
+      (assoc-in [:rows idx] (terminal-row (get (:rows state) idx) event)))))
 
 (defn reduce-event
   "Apply one validated event. The same ordered input always yields the same state."
@@ -376,199 +316,10 @@
        coalesce-adjacent-observations
        vec))
 
-(defn- drop-row
-  "The state without row `idx`. A grouped row is several invocations, so dropping one
-   omits every child it held: the counts describe invocations, and a `+1` for a group
-   of fifteen would let the reader add the picture up to the wrong total."
-  [state idx]
-  (let [row
-        (get (:rows state) idx)
-
-        gone
-        (or (seq (:children row)) [row])]
-
-    (reduce (fn [state {:keys [classification]}]
-              (note-omitted state classification))
-            (update state :rows #(into (subvec % 0 (long idx)) (subvec % (inc (long idx)))))
-            gone)))
-
-(defn- deduplicate-results
-  "Drop only result evidence already present verbatim in the row's result-summary.
-   This saves wire bytes without losing any text or changing the displayed result."
-  [row]
-  (cond-> (update row
-                  :evidence
-                  (fn [evidence]
-                    (into []
-                          (remove #(and (= :result (:kind %)) (= (:text %) (:result-summary row))))
-                          evidence)))
-    (seq (:children row))
-    (update :children #(mapv deduplicate-results %))))
-
-(def ^:private trimmed-text-bytes
-  "The words a step keeps once its receipt must shed weight: the head of a result or
-   an argument list, enough to recognize the call, never the page it printed."
-  160)
-
-(defn- trim-text [text] (event/bounded-text (str text) trimmed-text-bytes))
-
-(defn- marked
-  "`after`, flagged `:is-truncated` when it lost something `before` carried."
-  [before after]
-  (cond-> after
-    (not= before after)
-    (assoc :is-truncated true)))
-
-(defn- without-presentation-bodies
-  "Keep the closed row useful even when the receipt budget must omit its open content."
-  [row]
-  (cond-> row
-    (:presentation row)
-    (update :presentation
-            (fn [view]
-              (let [view (wire/->wire view)]
-                (cond-> (assoc view "content" [])
-                  (contains? view "sections")
-                  (update "sections"
-                          #(mapv (fn [section]
-                                   (assoc section "content" []))
-                                 %))))))))
-
-(defn- shed-bodies
-  "The row without its published content and its diff bodies. A patch keeps its file,
-   its counts and `:is-truncated`, the way `event/fit-event` cuts one: a hunk that
-   stops mid-file reads as the change, so the whole body goes or none of it."
-  [row]
-  (marked row
-          (cond-> (-> row
-                      without-presentation-bodies
-                      (update :evidence
-                              (fn [evidence]
-                                (mapv (fn [{:keys [kind lines] :as item}]
-                                        (if (and (= :diff kind) (seq lines))
-                                          (assoc item
-                                            :lines []
-                                            :is-truncated true)
-                                          item))
-                                      evidence))))
-            (seq (:children row))
-            (update :children #(mapv shed-bodies %)))))
-
-(defn- shed-words
-  "The row with its texts cut to `trimmed-text-bytes`. Result evidence leaves whole,
-   because `:result-summary` already carries the same words; arguments and errors
-   keep their head."
-  [row]
-  (marked row
-          (cond-> (assoc row
-                    :evidence (into []
-                                    (comp (remove #(= :result (:kind %)))
-                                          (map (fn [{:keys [kind text] :as item}]
-                                                 (if (= :diff kind)
-                                                   item
-                                                   (assoc item :text (trim-text text))))))
-                                    (:evidence row)))
-            (:result-summary row)
-            (update :result-summary trim-text)
-
-            (seq (:children row))
-            (update :children #(mapv shed-words %)))))
-
-(defn- shed-detail
-  "The skeleton: the step's name, state, resources and the head of its outcome, with
-   nothing under them."
-  [row]
-  (marked row
-          (cond-> (-> row
-                      without-presentation-bodies
-                      (assoc :evidence []))
-            (:result-summary row)
-            (update :result-summary trim-text)
-
-            (:error-summary row)
-            (update :error-summary trim-text)
-
-            (seq (:children row))
-            (update :children #(mapv shed-detail %)))))
-
-(defn- row-bytes ^long [row] (long (event/utf8-bytes (wire/json-str row))))
-
-(defn- shedding-order
-  "Indexes of `rows`, the first to lose detail first: the same ranks `priority` drops
-   rows in, but the OLDEST step first within a rank, because the eye is on the newest
-   steps and a stale result is the detail a reader misses least."
-  [rows]
-  (->> rows
-       (map-indexed (fn [i row]
-                      [i (priority row) (:sequence row)]))
-       (sort-by (fn [[_ p sequence]]
-                  [(unchecked-negate (long p)) (long sequence)]))
-       (mapv first)))
-
-(defn- shed
-  "`[rows total]` after `tier` was applied to rows in `order`, one at a time, until
-   `total` fits the receipt or every row has taken it. Sizes move by the difference a
-   row's own encoding makes, so no pass re-encodes the whole receipt."
-  [rows ^long total order tier]
-  (loop [rows
-         rows
-
-         total
-         total
-
-         order
-         (seq order)]
-
-    (if (or (<= total (long max-receipt-bytes)) (nil? order))
-      [rows total]
-      (let [idx
-            (first order)
-
-            before
-            (get rows idx)
-
-            after
-            (tier before)]
-
-        (recur (assoc rows idx after)
-               (+ total (- (row-bytes after) (row-bytes before)))
-               (next order))))))
-
-(defn bounded
-  "Receipt no larger than 64 KiB, paid in DETAIL before steps.
-
-   Twelve settled `grep` calls carry sixty kilobytes of results, and a `shell` loop
-   grows one grouped row past the ceiling on its own. Dropping whole rows at that
-   point took the fifteen-child shell group AND the running step out of a live
-   picture and left `2 more steps` in their place, with nothing a reader could open.
-   Remove duplicate result evidence first, without losing any content. Only if that
-   still exceeds the limit do we shorten text, shed bodies, then keep skeletons.
-   Each pass takes the oldest low-priority rows first; whole steps leave last."
-  [state]
-  (let [rows
-        (projected-rows (:rows state))
-
-        state
-        (assoc state :rows rows)
-
-        [rows]
-        (reduce (fn [[rows total] tier]
-                  (if (<= (long total) (long max-receipt-bytes))
-                    (reduced [rows total])
-                    (shed rows total (shedding-order rows) tier)))
-                [rows (byte-size state)]
-                [deduplicate-results shed-words shed-bodies shed-detail])]
-
-    (loop [current (assoc state :rows rows)]
-      (if (or (<= (long (byte-size current)) (long max-receipt-bytes)) (empty? (:rows current)))
-        current
-        (let [idx (or (replaceable-index (:rows current)) (dec (count (:rows current))))]
-          (recur (drop-row current idx)))))))
-
 (defn snapshot
-  "Bounded running/final projection consumed by both channels."
+  "Project every admitted row without shedding history. Transport pages live in storage."
   [state]
-  (bounded state))
+  (assoc state :rows (projected-rows (:rows state))))
 
 (defn- enum-name [value] (if (keyword? value) (name value) (str value)))
 
@@ -637,7 +388,7 @@
     (assoc :is-truncated true)))
 
 (defn presentation
-  "Bounded Activity data shared by TUI, Companion, and settled replay.
+  "Lossless Activity data shared by TUI, Companion, and settled replay.
 
    It contains semantic values only, and no key naming its owner: the form that
    carries it supplies that. Channel markup stays in each painter, while

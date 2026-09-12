@@ -23,6 +23,7 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.view.core :as human-input]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as db-test]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.provider.auth :as pauth]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
@@ -1768,7 +1769,8 @@ vis.register(vis.Extension(
                 env {:python-context ctx
                      :db-info store
                      :cwd (str ext-dir)
-                     :session-id (str "ci-report-recipe-" (random-uuid))
+                     ;; #212: durable Activity belongs to a real stored session.
+                     :session-id (str (db-test/store-session! store {:channel :api}))
                      :extensions (atom extensions)
                      :active-extensions (atom [])
                      :activity/on-snapshot #(swap! snapshots conj %)}

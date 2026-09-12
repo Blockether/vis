@@ -179,21 +179,29 @@
                  goal)))))
 
 (defn finish-turn!
-  "A cancelled or failed turn pauses only the goal/version it started with."
-  [env started-goal status]
-  (when (and (contains? #{:cancelled :error :interrupted} status)
-             (= "active" (get started-goal "status")))
-    (change! (:db-info env)
-             (:session-id env)
-             (fn [goal]
-               (if (and (= (get started-goal "id") (get goal "id"))
-                        (= (get started-goal "version") (get goal "version"))
-                        (= "active" (get goal "status")))
-                 (-> goal
-                     (assoc "status" "paused"
-                            "reason" "Turn stopped before completion.")
-                     (update "version" inc))
-                 goal)))))
+  "A cancelled or failed turn pauses only the goal/version it started with.
+
+   `cause`, when given, is the concrete failure the turn ended with (the provider
+   error message, the watchdog verdict) so the paused goal names why it stopped
+   instead of a generic notice (Blockether/vis#210)."
+  ([env started-goal status] (finish-turn! env started-goal status nil))
+  ([env started-goal status cause]
+   (when (and (contains? #{:cancelled :error :interrupted} status)
+              (= "active" (get started-goal "status")))
+     (change! (:db-info env)
+              (:session-id env)
+              (fn [goal]
+                (if (and (= (get started-goal "id") (get goal "id"))
+                         (= (get started-goal "version") (get goal "version"))
+                         (= "active" (get goal "status")))
+                  (-> goal
+                      (assoc "status" "paused"
+                             "reason" (if (str/blank? (str cause))
+                                        "Turn stopped before completion."
+                                        (str "Turn stopped before completion: "
+                                             (str/trim (str cause)))))
+                      (update "version" inc))
+                  goal))))))
 
 (defn halt-result
   "Stop outstanding goal work at a request or tool boundary, without starting a model call."

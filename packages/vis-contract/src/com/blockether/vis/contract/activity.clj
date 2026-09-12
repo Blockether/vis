@@ -1,5 +1,5 @@
 (ns com.blockether.vis.contract.activity
-  "Activity vocabulary, declaration and bounded projection admission. Lifecycle stays in the engine."
+  "Activity vocabulary, declarations and lossless history pages. Lifecycle stays in the engine."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire])
@@ -37,7 +37,7 @@
                      blocks))))))
 
 (defn valid-projection?
-  "Admit the closed schema plus globally unique row ids and the canonical UTF-8 byte bound."
+  "Admit lossless projections; history-bearing transport pages have bounded rows and bytes."
   [value]
   (and (document/valid? "activity" "projection" value)
        (let [value
@@ -56,8 +56,12 @@
               (every? #(or (not (contains? % "presentation"))
                            (valid-presentation? (get % "presentation")))
                       rows)
-              (<= (alength (.getBytes ^String (wire/json-str value) StandardCharsets/UTF_8))
-                  (long (get limits "max_receipt_bytes")))))))
+              (or (nil? (get value "history"))
+                  (and (<= (count (filter #(empty? (children %)) rows))
+                           (long (get limits "max_page_rows")))
+                       (<= (alength (.getBytes ^String (wire/json-str value)
+                                               StandardCharsets/UTF_8))
+                           (long (get limits "max_page_bytes")))))))))
 
 (defn from-wire
   "Valid projection in engine spelling, or nil. Never accepts retired owner/view keys."

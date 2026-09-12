@@ -957,7 +957,8 @@
 
    Returns `[dispatch! shutdown!]`. `dispatch!` captures the caller's dynamic
    bindings and answers a Future; optional delay-ms schedules a trailing flush
-   on the same serial worker. Shutdown discards delayed work after settlement."
+   on the same serial worker. At most 64 immediate transitions can be pending;
+   producers wait without dropping admitted events. Shutdown discards delayed flushes."
   []
   (let [factory
         (reify
@@ -969,12 +970,20 @@
         (doto (java.util.concurrent.ScheduledThreadPoolExecutor. 1 ^ThreadFactory factory)
           (.setExecuteExistingDelayedTasksAfterShutdownPolicy false))
 
+        pending
+        (java.util.concurrent.Semaphore. 64)
+
         dispatch!
         (fn [f & [delay-ms]]
-          (let [^java.util.concurrent.Callable task (bound-fn [] (f))]
+          (let [^java.util.concurrent.Callable task
+                (bound-fn [] (try (f) (finally (when-not delay-ms (.release pending)))))]
             (if delay-ms
               (.schedule executor task (long delay-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
-              (.submit ^ExecutorService executor task))))]
+              (do (.acquireUninterruptibly pending)
+                  (try (.submit ^ExecutorService executor task)
+                       (catch java.util.concurrent.RejectedExecutionException error
+                         (.release pending)
+                         (throw error)))))))]
 
     [dispatch! #(.shutdown ^ExecutorService executor)]))
 
@@ -987,8 +996,11 @@
   (let [thrown
         (atom nil)
 
+        activity-history-id
+        (when (and (:db-info env) (:session-id env)) (str (random-uuid)))
+
         activity-collector
-        (activity-event/collector)
+        (when-not activity-history-id (activity-event/collector))
 
         activity-context
         (activity-event/context)
@@ -996,9 +1008,12 @@
         [dispatch-activity! shutdown-activity!]
         (serial-activity-dispatcher)
 
-        ;; Ownerless: the form this block becomes is the snapshot's only identity.
+        ;; Durable invocations are separate from the bounded page carried by the form.
         activity-state
         (atom activity/empty-state)
+
+        activity-error
+        (atom nil)
 
         ;; `:open` until the settler freezes the picture. A tool callback that lands
         ;; after that is dropped rather than allowed to edit a snapshot already
@@ -1011,6 +1026,12 @@
 
         activity-flush-pending?
         (atom false)
+
+        present-activity
+        (fn [state]
+          (if activity-history-id
+            (persistance/db-activity-page (:db-info env) (:session-id env) activity-history-id {})
+            (activity/presentation state)))
 
         publish-activity!
         (fn publish! [state]
@@ -1027,7 +1048,7 @@
                                             (publish! @activity-state)))
                                         delay-ms))
                   (do (reset! activity-published-at now)
-                      (try (emit! (activity/presentation state)) (catch Throwable _ nil))))))))
+                      (try (emit! (present-activity state)) (catch Throwable _ nil))))))))
 
         cancel-token
         (:cancel-token env)
@@ -1069,8 +1090,17 @@
           (try (dispatch-activity!
                  (fn []
                    (when (= :open @activity-phase)
-                     (activity-event/accept! activity-collector event)
-                     (let [state (swap! activity-state activity/reduce-event event)]
+                     (let [state (if activity-history-id
+                                   (try (reset! activity-state (persistance/db-activity-apply!
+                                                                 (:db-info env)
+                                                                 (:session-id env)
+                                                                 activity-history-id
+                                                                 event))
+                                        (catch Throwable error
+                                          (compare-and-set! activity-error nil error)
+                                          @activity-state))
+                                   (do (activity-event/accept! activity-collector event)
+                                       (swap! activity-state activity/reduce-event event)))]
                        (when (activity-event/visible-event? event) (publish-activity! state))))
                    (when tool-event-fn (tool-event-fn event))))
                (catch java.util.concurrent.RejectedExecutionException _ nil)))
@@ -1204,21 +1234,43 @@
                            (dispatch-activity!
                              (fn []
                                (reset! activity-phase :settled)
+                               (when activity-history-id
+                                 (persistance/db-activity-settle! (:db-info env)
+                                                                  activity-history-id
+                                                                  outcome
+                                                                  summary))
                                (swap! activity-state activity/settle-running outcome summary))))
                      (catch ExecutionException e
+                       (compare-and-set! activity-error nil (.getCause e))
                        (tel/log! {:level :warn
                                   :id ::activity-settlement-failed
                                   :error (.getCause e)
                                   :msg "Activity settlement failed"})
-                       @activity-state))]
+                       @activity-state))
+
+                projection
+                (when (activity/detected? final)
+                  (try (present-activity final)
+                       (catch Throwable e
+                         (compare-and-set! activity-error nil e)
+                         (tel/log! {:level :warn
+                                    :id ::activity-read-failed
+                                    :error e
+                                    :msg "Activity history could not be read"})
+                         nil)))]
 
             (shutdown-activity!)
-            ;; Activity is what the block DID, beside what it returned. It rides the
-            ;; form itself: never Python stdout, never model context, and never a
-            ;; second artifact a client would have to fetch.
+            ;; The first page rides the form; further pages stay durable and load on demand.
+            ;; Activity never enters stdout or model context.
             (cond-> envelope
-              (activity/detected? final)
-              (assoc :activity (activity/presentation final)))))
+              (and @activity-error (nil? (:error envelope)))
+              (assoc :error
+                {:type :activity/persistence
+                 :message
+                 "Activity history could not be saved or read. Check storage before retrying."})
+
+              projection
+              (assoc :activity projection))))
 
         timeout-sentinel
         (Object.)
@@ -9890,9 +9942,15 @@
                     (assoc prepared :status-id (status->id (:status prepared))))
                   raw)]
 
-            (goals/finish-turn! env goal-at-turn-start (:status result))
+            (goals/finish-turn! env
+                                goal-at-turn-start
+                                (:status result)
+                                (some-> (turn-error-data (:answer result))
+                                        (get "message")))
             result)
-          (catch Throwable t (goals/finish-turn! env goal-at-turn-start :error) (throw t)))
+          (catch Throwable t
+            (goals/finish-turn! env goal-at-turn-start :error (ex-message t))
+            (throw t)))
 
         ;; Deferred auto-title: only a successful foreground turn earns a cosmetic
         ;; provider call. Cancellation and failure must stay terminal without
@@ -9903,8 +9961,13 @@
         (when (and (= :success (:status result)) (nil? (goals/halt-result env goal-at-turn-start)))
           (titling/after-turn-auto-title! env user-request))
 
+        ;; `prior_outcome` is a CHECKed column (`complete`/`cancelled`/`error`). A goal
+        ;; halt or an empty-reply give-up ends the loop with `:status :success`, which
+        ;; is not an outcome value: stored verbatim it failed every persist stage and
+        ;; left the turn row `:running` forever (Blockether/vis#211).
         prior-outcome
-        (:status result)
+        (some-> (:status result)
+                {:cancelled :cancelled :error :error :success :complete})
 
         ;; Snapshot the CTX as it stands at end-of-turn. Run gc-pass first
         ;; so terminal-status entries past their TTL drop out of the live

@@ -1844,3 +1844,46 @@ describe('user log attachments', () => {
     expect(view.container.querySelector('img, audio, video')).toBeNull();
   });
 });
+
+// #212: adjacent forms must not flatten away durable source addresses.
+it('keeps independently paged Activity sources addressable in a combined execution band', async () => {
+  const { ActivityHistoryContext } = await import('./ActivityPanel');
+  const { activityHistoryPage } = await import('../dev/activity-history');
+  const first = activityHistoryPage();
+  const second = activityHistoryPage();
+  second.history!.id = '87654321-1234-1234-1234-123456789012';
+  const load = vi.fn(async (id: string, after: number) => ({
+    ...activityHistoryPage(after),
+    history: { ...activityHistoryPage(after).history!, id },
+  }));
+  const turn = {
+    turn_id: 'history-turn',
+    status: 'completed',
+    iterations: [
+      {
+        id: 'history-iteration',
+        position: 1,
+        forms: [
+          { source: 'first()', activity: first },
+          { source: 'second()', activity: second },
+        ],
+      },
+    ],
+  } as TranscriptTurn;
+  const view = render(
+    <ActivityHistoryContext.Provider value={{ load, export: vi.fn() }}>
+      <AssistantMessage turn={turn} />
+    </ActivityHistoryContext.Provider>,
+  );
+  const expands = view.getAllByRole('button', { name: 'Expand Activity' });
+  expect(expands).toHaveLength(2);
+  fireEvent.click(expands[1]);
+  const next = view
+    .getAllByRole('button', { name: 'Next operations' })
+    .find((button) => !button.closest('[hidden]'))!;
+  fireEvent.click(next);
+  await waitFor(() =>
+    expect(load).toHaveBeenCalledWith(second.history!.id, 32, '', expect.any(AbortSignal)),
+  );
+  view.unmount();
+});

@@ -1,9 +1,9 @@
 {
   "version": 5,
   "protocol": {
-    "minimum_client": 12,
-    "minimum_gateway": 12,
-    "version": 12
+    "minimum_client": 13,
+    "minimum_gateway": 13,
+    "version": 13
   },
   "headers": {
     "protocol": "x-vis-protocol",
@@ -573,6 +573,26 @@
         }
       },
       "path": "/v1/sessions/:sid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/activity/:aid"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/sessions/:sid/activity/:aid/export"
     },
     {
       "audience": "sdk",

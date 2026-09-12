@@ -39,7 +39,11 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
-            [lazytest.core :refer [defdescribe describe it expect throws?]]))
+            [com.blockether.vis.internal.session.goals :as goals]
+            [lazytest.core :refer [defdescribe describe it expect throws?]])
+  (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
+           [java.net InetSocketAddress]
+           [java.util.concurrent Executors]))
 
 (defdescribe
   python-providers-before-router-test
@@ -6414,6 +6418,173 @@
                        (count retries)))
             (when (= :exhaust mode) (expect (= "error" (get (first (:answer result)) "type")))))
           (finally (lp/dispose-environment! environment)))))))
+
+(defn- anthropic-sse-event
+  [type payload]
+  (str "event: " type "\ndata: " (json/write-json-str (assoc payload "type" type)) "\n\n"))
+
+(defn- anthropic-answer-stream
+  "A complete Anthropic Messages SSE reply carrying one text block."
+  [text]
+  (str (anthropic-sse-event "message_start"
+                            {"message" {"id" "msg_stub"
+                                        "type" "message"
+                                        "role" "assistant"
+                                        "model" "model"
+                                        "content" []
+                                        "stop_reason" nil
+                                        "usage" {"input_tokens" 1 "output_tokens" 0}}})
+       (anthropic-sse-event "content_block_start"
+                            {"index" 0 "content_block" {"type" "text" "text" ""}})
+       (anthropic-sse-event "content_block_delta"
+                            {"index" 0 "delta" {"type" "text_delta" "text" text}})
+       (anthropic-sse-event "content_block_stop" {"index" 0})
+       (anthropic-sse-event "message_delta"
+                            {"delta" {"stop_reason" "end_turn" "stop_sequence" nil}
+                             "usage" {"output_tokens" 5}})
+       (anthropic-sse-event "message_stop" {})))
+
+(defn- start-messages-stub!
+  "Real loopback Anthropic-style `/v1/messages` endpoint, the dialect the helper's
+   `:lmstudio` provider speaks. `behavior` maps the 1-based request number to
+   `[:stall ms]` (accept the POST, send NO response header for `ms`) or
+   `[:answer text]` (a complete SSE reply). Returns `{:base-url :requests :stop!}`;
+   `requests` counts POSTs that reached the server."
+  [behavior]
+  (let [requests
+        (atom 0)
+
+        server
+        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+
+    (.createContext
+      server
+      "/v1/messages"
+      (reify
+        HttpHandler
+          ;; Hinting the PARAMETER makes the compiler refuse the void
+          ;; `handle`; hint a local instead.
+          (handle [_ e]
+            (let [^HttpExchange exchange
+                  e
+
+                  n
+                  (swap! requests inc)
+
+                  [mode arg]
+                  (behavior n)]
+
+              (try (with-open [_ (.getRequestBody exchange)]
+                     (case mode
+                       :stall
+                       (do (Thread/sleep (long arg)) (.sendResponseHeaders exchange 503 -1))
+
+                       :answer
+                       (do (.add (.getResponseHeaders exchange) "Content-Type" "text/event-stream")
+                           (.sendResponseHeaders exchange 200 0)
+                           (with-open [out (.getResponseBody exchange)]
+                             (.write out (.getBytes (anthropic-answer-stream arg) "UTF-8"))
+                             (.flush out)))))
+                   (catch Throwable _ nil)
+                   (finally (.close exchange)))
+              nil))))
+    ;; The stalled handler holds its thread for the whole stall: the retry must be
+    ;; served concurrently, never queued behind the request it replaces.
+    (.setExecutor server (Executors/newCachedThreadPool))
+    (.start server)
+    {:base-url (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/v1")
+     :requests requests
+     :stop! (fn []
+              (.stop server 0))}))
+
+(defdescribe
+  provider-ttft-recovery-real-router-test
+  ;; Regression, issue #210: a provider accepted the POST and sent no response
+  ;; header for the whole TTFT budget. Svar's typed watchdog fired, Vis announced
+  ;; its pre-output retry, and the retry backoff died with `sleep interrupted`:
+  ;; the router had re-armed the interrupt the watchdog already consumed, and the
+  ;; autonomous goal was paused with a generic notice. This drives the REAL Svar
+  ;; router over a loopback HTTP stub - no mocked `ask-code!` - through Vis'
+  ;; nonzero backoff, so the interrupt boundary between the two is what is tested.
+  (doseq [[label behavior expected-status expected-requests]
+          [["retries once after a pre-header TTFT timeout and finishes on the second request"
+            (fn [n]
+              (if (= 1 n) [:stall 1500] [:answer "Recovered after the timeout."])) :success 2]
+           ["exhausts its retry budget when every request stalls and names the cause"
+            (fn [_]
+              [:stall 1500]) :error 3]]]
+    (it
+      label
+      (let [{:keys [base-url requests stop!]} (start-messages-stub! behavior)
+            router (svar/make-router [{:id :lmstudio
+                                       :api-key "test"
+                                       :base-url base-url
+                                       :models [{:name "model" :context 200000}]}])
+            environment (lp/create-environment router {:db :memory})
+            db (:db-info environment)
+            sid (:session-id environment)
+            ;; A one-request budget: the recovered answer is accounted exactly once
+            ;; and the goal stops on its budget instead of pausing on a failure.
+            goal (goals/set-goal! db sid "Finish the loopback recovery drill" 1)
+            chunks (atom [])]
+
+        (try
+          (let [result (with-redefs-fn {#'lp/provider-network-policy (fn [_ _]
+                                                                       ;; First-output deadline = 150 + 300 ms: the
+                                                                       ;; abandoned attempt's predicate would fire
+                                                                       ;; it while the turn is already over.
+                                                                       {:ttft-timeout-ms 150
+                                                                        :idle-timeout-ms 300
+                                                                        :semantic-timeout-ms 300})
+                                        ;; NONZERO backoff: the sleep is exactly where a leaked interrupt lands.
+                                        #'lp/STREAM_RECOVERY_RETRY_DELAYS_MS [25 25]}
+                         #(#'lp/run-normal-turn!
+                            environment
+                            "loopback recovery"
+                            {:hooks {:on-chunk (fn [chunk]
+                                                 (swap! chunks conj chunk))}}))
+                retries (filter #(= :stream-watchdog-pre-output (get-in % [:event :reason]))
+                                @chunks)
+                goal-after (goals/check-goal environment)
+                row (first (filter #(= (:session-turn-id result) (:id %))
+                                   (persistance/db-list-session-turns db sid)))]
+
+            (expect (= expected-status (:status result)))
+            (expect (= expected-requests @requests))
+            (expect (= (dec expected-requests) (count retries)))
+            ;; The watchdog's own interrupt never reaches the caller.
+            (expect (false? (.isInterrupted (Thread/currentThread))))
+            (if (= :success expected-status)
+              (do (expect (some #(str/includes? (str %) "Recovered after the timeout.") @chunks))
+                  (expect (str/includes? (str (:answer result)) "Goal iteration budget reached"))
+                  ;; The retried request counts once; nothing paused the goal.
+                  (expect (= "budget_limited" (get goal-after "status")))
+                  (expect (= 1 (get goal-after "iterations_used")))
+                  (expect (= (get goal "version") (get goal-after "version")))
+                  ;; A goal halt ends the loop with `:status :success`; the row must still
+                  ;; settle with a CHECK-valid outcome instead of staying `:running` (#211).
+                  (expect (= :done (:status row)))
+                  (expect (= :complete (:prior-outcome row))))
+              (let [card (first (:answer result))]
+                (expect (= "error" (get card "type")))
+                (expect (= :error (:status row)))
+                ;; The paused goal carries the concrete cause, not a generic notice.
+                (expect (= "paused" (get goal-after "status")))
+                (expect (str/starts-with? (str (get goal-after "reason"))
+                                          "Turn stopped before completion: "))
+                (expect (str/includes? (str (get goal-after "reason"))
+                                       (str (get card "message")))))))
+          (finally (stop!) (lp/dispose-environment! environment)))
+        ;; The abandoned attempts' watchdogs outlive the turn. Their deadline must
+        ;; never interrupt this thread now that it runs the next work.
+        (let [landed (atom [])
+              t0 (System/nanoTime)]
+
+          (while (< (- (System/nanoTime) t0) 1500000000)
+            (try (Thread/sleep 100)
+                 (catch InterruptedException _
+                   (swap! landed conj (quot (- (System/nanoTime) t0) 1000000)))))
+          (expect (= [] @landed)))))))
 
 (defdescribe
   reasoning-only-stream-boundary-test

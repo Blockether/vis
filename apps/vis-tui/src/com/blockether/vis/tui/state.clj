@@ -1459,6 +1459,147 @@
                               (let [expanded? (true? (get m k false))]
                                 (if expanded? (dissoc m k) (assoc (or m {}) k true)))))))))
 
+(defn- activity-history-id
+  "The retained-history id of a form's Activity, as a string, or nil."
+  [form]
+  (some-> form
+          :activity :history
+          :id str))
+
+(defn- update-activity-history
+  "Apply `f` to the Activity of every form that shows retained history `history-id`.
+
+   One record can be on screen in three places at once — the live progress trace,
+   the trace parked on a pending bubble, and the settled message traces — so the
+   window a reader paged to is written to ALL of them, never to whichever copy
+   happened to paint last."
+  [db history-id f]
+  (let [form-fn
+        (fn [form]
+          (if (= history-id (activity-history-id form)) (update form :activity f) form))
+
+        entry-fn
+        (fn [entry]
+          (if (seq (:forms entry)) (update entry :forms #(mapv form-fn %)) entry))
+
+        trace-fn
+        (fn [trace]
+          (mapv entry-fn trace))
+
+        message-fn
+        (fn [message]
+          (cond-> message
+            (seq (:traces message))
+            (update :traces trace-fn)
+
+            (seq (get-in message [:terminal-pending :trace]))
+            (update-in [:terminal-pending :trace] trace-fn)))]
+
+    (cond-> db
+      (seq (get-in db [:progress :iterations]))
+      (update-in [:progress :iterations] trace-fn)
+
+      (seq (:messages db))
+      (update :messages #(mapv message-fn %)))))
+
+(reg-event-fx :activity-page
+              ;; The reader pressed the rule under an Activity band. NOTHING was lost when the
+              ;; band was trimmed — the record still holds every operation — so ask it for the
+              ;; window starting at `after` and mark that row loading. The loading row is inert,
+              ;; which is also what stops a second press queueing the same fetch again.
+              ;;
+              ;; `revision` is the revision the band is showing: the gateway refuses a window
+              ;; from a record that has moved on, and refusing is right — two revisions spliced
+              ;; together are a history that never existed. `query` keeps a search alive across
+              ;; the pages of its own result.
+              (fn [db [_ session-id history-id after revision query]]
+                (let [id
+                      (str history-id)
+
+                      cursor
+                      (long (or after 0))]
+
+                  (if (= (str session-id) (str (get-in db [:session :id])))
+                    {:db (update-activity-history db
+                                                  id
+                                                  #(assoc-in %
+                                                     [:vis.channel-tui/fetch id]
+                                                     (cond-> {:status :loading :after cursor}
+                                                       (seq query)
+                                                       (assoc :query query))))
+                     :fx [[:load-activity-page (str session-id) id cursor revision query]]}
+                    {:db db}))))
+
+(reg-event-db :activity-page-loaded
+              ;; One window of the retained record arrived. It REPLACES the projection the
+              ;; band is showing — the same shape, different rows — and clears that
+              ;; history's paging state, so the rule under it names the NEXT window.
+              ;; Height changes, hence the scroll park a disclosure toggle also does.
+              ;;
+              ;; A window is only shown when it is the window that was ASKED for: same
+              ;; record, same cursor, and — when the press continued a revision — the
+              ;; same revision. Anything else is a different history wearing the right
+              ;; shape, so it is refused the way a changed revision is. A reload from
+              ;; the first operation asks WITHOUT a revision, which is how a reader
+              ;; deliberately picks up the record as it is now.
+              (fn [db [_ session-id history-id projection {:keys [after query revision]}]]
+                (let [id
+                      (str history-id)
+
+                      cursor
+                      (long (or after 0))
+
+                      history
+                      (:history projection)
+
+                      requested?
+                      (and (= id (str (:id history)))
+                           (= cursor (long (or (:after history) 0)))
+                           (or (nil? revision)
+                               (= (long revision) (long (or (:revision history) -1)))))]
+
+                  (cond (not= (str session-id) (str (get-in db [:session :id]))) db
+                        requested? (update-activity-history
+                                     (park-scroll-for-toggle db)
+                                     id
+                                     (fn [activity]
+                                       (let [others
+                                             (dissoc (:vis.channel-tui/fetch activity) id)
+
+                                             fetch
+                                             (cond-> others
+                                               (seq query)
+                                               (assoc id {:query query}))]
+
+                                         (cond-> projection
+                                           (seq fetch)
+                                           (assoc :vis.channel-tui/fetch fetch)))))
+                        :else (update-activity-history db
+                                                       id
+                                                       #(assoc-in %
+                                                          [:vis.channel-tui/fetch id]
+                                                          (cond-> {:status :stale :after cursor}
+                                                            (seq query)
+                                                            (assoc :query query))))))))
+
+(reg-event-db :activity-page-failed
+              ;; The window could not be fetched. Keep the rows in hand and say so on the
+              ;; rule itself: the same cursor stays pressable, so a retry costs one press.
+              ;; A `stale?` failure is not a retry — the record changed, so the rule offers
+              ;; the only continuation that cannot lie: read it again from the first window.
+              (fn [db [_ session-id history-id after stale? query]]
+                (let [id (str history-id)]
+                  (if (= (str session-id) (str (get-in db [:session :id])))
+                    (update-activity-history db
+                                             id
+                                             #(assoc-in %
+                                                [:vis.channel-tui/fetch id]
+                                                (cond-> {:status (if stale? :stale :failed)
+                                                         :after (long (or after 0))}
+                                                  (seq query)
+                                                  (assoc :query query))))
+                    db))))
+
 (reg-event-db :collapse-all-details
               ;; C-x [ — collapse EVERY disclosure. Wipe per-node overrides and set the
               ;; bulk baseline; `render/detail-expanded?` reads `:baseline` when a node has

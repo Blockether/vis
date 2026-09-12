@@ -17,7 +17,8 @@ import {
   ACTIVITY_SETTLED,
   ACTIVITY_TREE_CHANGES,
 } from '../dev/story-data';
-import { ActivityPanel } from './ActivityPanel';
+import { ActivityHistoryContext, ActivityPanel } from './ActivityPanel';
+import { activityHistoryPage } from '../dev/activity-history';
 import { activityProjectionFromWire } from '../lib/activity';
 import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 
@@ -448,8 +449,8 @@ export const CompactMiddle: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
-    const rows = ['before', 'middle', 'after'].map(
-      (id) => canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
+    const rows = ['before', 'middle', 'after'].map((id) =>
+      canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
     );
     const middle = within(rows[1]).getByRole('button');
     // Adjacent boxes alone miss the blank space inside an oversized toggle.
@@ -511,5 +512,34 @@ export const ExtensionGroups: Story = {
     await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(3);
     await expect(canvasElement).not.toHaveTextContent('reviews.search');
     await expect(canvasElement).not.toHaveTextContent('reviews.deployment_status');
+  },
+};
+
+/** #212: the data source stands in for authenticated paged retrieval, not the UI. */
+export const RetainedHistory: Story = {
+  args: { activity: activityHistoryPage() },
+  decorators: [
+    (Story) => (
+      <ActivityHistoryContext.Provider
+        value={{
+          load: async (_id, after, query) => activityHistoryPage(after, query),
+          export: async () => 'All operations exported (fixture).',
+        }}
+      >
+        <Story />
+      </ActivityHistoryContext.Provider>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Next operations' }));
+    await expect(await canvas.findByText('Operation 64')).toBeVisible();
+    await expect(canvas.queryByText('Operation 1')).toBeNull();
+    await userEvent.type(canvas.getByRole('searchbox'), 'operation 159');
+    await userEvent.click(canvas.getByRole('button', { name: 'Search activity' }));
+    await expect(await canvas.findByText('Operation 159')).toBeVisible();
+    await expect(canvas.queryByText('Operation 64')).toBeNull();
+    await expect(canvas.getByRole('button', { name: 'Next operations' })).toBeDisabled();
   },
 };

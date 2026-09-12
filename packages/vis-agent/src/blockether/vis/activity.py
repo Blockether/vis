@@ -168,12 +168,13 @@ class ActivityOmitted:
 
 @dataclass(frozen=True, slots=True)
 class ActivityProjection:
-    """A full replacement for one form; no owner id or View lifecycle inside it."""
+    """One form's Activity, optionally a window into its durable history."""
 
     state: str
     counts: ActivityCounts
     rows: tuple[ActivityRow, ...]
     omitted: ActivityOmitted
+    history: Mapping[str, Any] | None = None
 
     @property
     def groups(self) -> tuple[ActivityGroup, ...]:
@@ -199,8 +200,10 @@ class ActivityProjection:
     def from_wire(cls, value: Any) -> ActivityProjection:
         validate("activity", "projection", value)
         ids = []
+        leaf_count = 0
 
         def visit(rows):
+            nonlocal leaf_count
             for row in rows:
                 presentation = row.get("presentation")
                 sections = (
@@ -235,15 +238,23 @@ class ActivityProjection:
                     ):
                         raise ValueError("invalid activity table width")
                 ids.append(row["id"])
-                visit(row.get("children", []))
+                children = row.get("children", [])
+                if not children:
+                    leaf_count += 1
+                visit(children)
 
         visit(value["rows"])
-        if (
-            len(set(ids)) != len(ids)
-            or len(
-                json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+        if len(set(ids)) != len(ids) or (
+            "history" in value
+            and (
+                leaf_count > ACTIVITY["limits"]["max_page_rows"]
+                or len(
+                    json.dumps(
+                        value, ensure_ascii=False, separators=(",", ":")
+                    ).encode()
+                )
+                > ACTIVITY["limits"]["max_page_bytes"]
             )
-            > ACTIVITY["limits"]["max_receipt_bytes"]
         ):
             raise ValueError("invalid activity projection identity or byte bound")
         return cls(
@@ -254,6 +265,7 @@ class ActivityProjection:
                 value["omitted"]["rows"],
                 MappingProxyType(dict(value["omitted"]["by_classification"])),
             ),
+            freeze(value["history"]) if "history" in value else None,
         )
 
     def to_wire(self) -> dict[str, Any]:

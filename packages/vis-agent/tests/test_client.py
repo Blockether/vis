@@ -625,3 +625,28 @@ def test_all_job_streams_preserve_event_name_and_stop_on_terminal(
         assert values[-1].id == "job-one"
         assert values[-1].is_done
         assert len([c for c in calls if c[1] == route]) == 1
+
+
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_activity_export_rejects_marked_partial_response(incomplete):
+    # Regression #212: a transport can finish HTTP 200 after the stream was marked incomplete.
+    text = b"ACTIVITY\n" + b"Complete retained operation details\n" * 3000
+    if incomplete:
+        text += b"\n\nINCOMPLETE EXPORT: Activity changed. Reload and retry.\n"
+    route = "/v1/sessions/session-one/activity/history-one/export"
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        assert method == "GET" and path == route
+        return 200, text, "text/plain; charset=utf-8"
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        if incomplete:
+            with pytest.raises(ProtocolError, match="incomplete"):
+                client.get_session_activity_export("session-one", "history-one")
+        else:
+            response = client.get_session_activity_export("session-one", "history-one")
+            assert response.content == text
+            assert len(response.content) > 65536
+        assert len([c for c in calls if c[1] == route]) == 1
