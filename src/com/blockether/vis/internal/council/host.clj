@@ -101,7 +101,7 @@
      (result env :council.publish opts entry))))
 
 (defn threads
-  "List thread roots with their root message kind, ascending by thread_id. Returns entries, after and has_more; no content."
+  "List thread roots/kinds ascending by thread_id, without content. group_id defaults to the session group. after is an exclusive nonnegative integer thread_id cursor (default 0); limit is an integer 1–50 (default 50). Returns entries, after, has_more; pass returned after for the next page while has_more. Pages may be shorter due to the byte budget. Does not accept thread_id."
   ([env] (threads env {}))
   ([env opts]
    (let [opts (walk/keywordize-keys opts)]
@@ -111,7 +111,7 @@
              (council/threads (:db-info env) (str (:session-id env)) opts)))))
 
 (defn read
-  "Read a bounded page of the group log, optionally filtered by thread_id. Does not consume pings."
+  "Read the group log ascending by entry_id; does not consume pings. group_id defaults to the session group; optional thread_id is a positive root entry_id. after is an exclusive nonnegative integer entry_id cursor (default 0); limit is an integer 1–50 (default 50). Returns entries, after, has_more; pass returned after for the next page while has_more. Pages may be shorter due to the byte budget."
   ([env] (read env {}))
   ([env opts]
    (let [opts (walk/keywordize-keys opts)]

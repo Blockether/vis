@@ -390,6 +390,62 @@
             (expect (= #{[{"query" "a.*b" "is_regex" true}] [{"query" "c.+d" "is_regex" true}]}
                        (set @seen))))))))
 
+(defn- gather-outcome
+  [code]
+  (let [seen (atom [])]
+    (tpc/with-own [ctx
+                   {'succeed (fn [value]
+                               (swap! seen conj value)
+                               value)
+                    'fail (fn []
+                            (swap! seen conj :failed)
+                            (throw (ex-info "expected fixture failure" {})))}]
+                  (let [result (ep/run-python-block
+                                 ctx
+                                 (str "async def call_slot(value):\n"
+                                      "    if value is None:\n        return await fail()\n"
+                                      "    return await succeed(value)\n" code))]
+                    {:result result :seen @seen}))))
+
+(defdescribe
+  gather-exception-contract-test
+  (it
+    "returns ordered values and exceptions through the documented async helpers"
+    (let
+      [{:keys [result seen]}
+       (gather-outcome
+         (str
+           "answers = await gather(call_slot(1), call_slot(None), call_slot(2), return_exceptions=True)\n"
+           "assert answers[0] == 1 and answers[2] == 2\n"
+           "assert isinstance(answers[1], Exception)\n"
+           "assert 'expected fixture failure' in str(answers[1])\n" "print('ordered')"))]
+      (expect (nil? (:error result)) (pr-str result))
+      (expect (= "ordered\n" (:stdout result)))
+      (expect (= [1 :failed 2] seen))))
+  (it
+    "settles successful helper siblings before surfacing the default-mode failure"
+    (let
+      [{:keys [result seen]}
+       (gather-outcome
+         "answers = await gather(call_slot(1), call_slot(None), call_slot(2))\nprint('not reached')")]
+      (expect (some? (:error result)))
+      (expect (str/includes? (pr-str (:error result)) "[1] expected fixture failure"))
+      (expect (not (str/includes? (str (:stdout result)) "not reached")))
+      (expect (= #{1 :failed 2} (set seen)))
+      (expect (= 3 (count seen)))))
+  ;; Council report 896: the pinned runtime probes direct calls before gather dispatch.
+  ;; Keep the documented limitation reproducible until its runtime fix is pinned.
+  (it "reproduces the direct-await limitation behind the documented helper workaround"
+      (doseq [mode ["False" "True"]]
+        (let [{:keys [result seen]}
+              (gather-outcome
+                (str "answers = await gather(succeed(1), fail(), succeed(2), return_exceptions="
+                     mode
+                     ")\nprint('not reached')"))]
+          (expect (str/includes? (pr-str (:error result)) "expected fixture failure"))
+          (expect (not (str/includes? (str (:stdout result)) "not reached")))
+          (expect (= [1 :failed] seen))))))
+
 (defdescribe
   worker-doc-apropos-surface-test
   (it "loads Vis-owned introspection modules in the session worker"
@@ -556,14 +612,16 @@
           (expect (str/includes? out "REGULAR-EXPRESSION FILTER over every SYMBOL name"))
           (expect (str/includes? out "doc(target) -> str"))
           (expect (str/includes? out "A skill is one of these documents and nothing more"))))
-    (it "gather exposes its concurrency contract through apropos and doc"
+    (it "gather exposes its failure modes through apropos and doc"
         (let [out (run (str "print([i.body for i in apropos('gather') if i.name == 'gather'][0])\n"
                             "print(doc('gather'))"))]
-          (expect (str/includes? out "gather(*awaitables) -> list"))
-          (expect (str/includes? out "independent deferred tool calls"))
-          (expect (str/includes? out "results preserve input order"))
-          (expect (str/includes? out "keep dependent calls sequential"))
-          (expect (str/includes? out "every failing slot index"))))
+          (doseq [text ["gather(*awaitables, return_exceptions=False)"
+                        "independent deferred tool calls" "results preserve input order"
+                        "keep dependent calls sequential" "every failing slot index"
+                        "return_exceptions=True" "exception objects" "host slots run serially"
+                        "side effects" "Current limitation" "probes them before dispatch"
+                        "async def read_one(p): return await cat(p)"]]
+            (expect (str/includes? out text) text))))
     ;; The fold receipt promises nothing it cannot keep: with the native-result
     ;; store gone there is no coordinate to hand back, so the doc says the gist is
     ;; what survives and `read_session()` is the only door to the rest.

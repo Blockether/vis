@@ -6,6 +6,8 @@ builtins.dict or a process-global runtime class. Unknown operations keep dict re
 Use dict(r), r.keys(), or json.dumps(r) for the complete data.
 """
 
+from collections import Counter
+
 
 def _bounded(value, source, limit):
     text = str(value).rstrip("\n")
@@ -152,6 +154,88 @@ def _session(result):
     return "\n".join(lines)
 
 
+def _reply_counts(replies):
+    counts = Counter(reply["state"] for reply in replies)
+    return ", ".join(f"{state}={count}" for state, count in sorted(counts.items()))
+
+
+def _council_entry(entry, source):
+    if "entry_id" in entry:
+        heading = f"Entry #{entry['entry_id']}; thread #{entry['thread_id']}"
+    else:
+        heading = f"Thread #{entry['thread_id']}"
+    lines = [heading + f"; {entry['kind']}"]
+    for key in ("author_session_id", "group_id", "title"):
+        if entry.get(key):
+            lines.append(f"{key}: {_bounded(entry[key], f'{source}[{key!r}]', 160)}")
+    if entry.get("ping"):
+        lines.append(
+            f"Ping: {len(entry['ping'])} recipients; "
+            + _bounded(entry["ping"], f"{source}['ping']", 300)
+        )
+    if "reply_required" in entry:
+        lines.append(f"reply_required={entry['reply_required']}")
+    if entry.get("reply_to") is not None:
+        lines.append(f"reply_to=#{entry['reply_to']}")
+    replies = entry.get("replies") or []
+    if replies:
+        lines.append("Replies: " + _reply_counts(replies))
+        for index, reply in enumerate(replies[:3]):
+            recipient = _bounded(
+                reply["session_id"], f"{source}['replies'][{index}]['session_id']", 80
+            )
+            state = f"  {reply['state']} {recipient}"
+            if reply.get("reply_entry_id") is not None:
+                state += f"; reply_entry_id={reply['reply_entry_id']}"
+            lines.append(state)
+        if len(replies) > 3:
+            lines.append(
+                f"… {len(replies) - 3} recipient states omitted; full replies: {source}['replies']."
+            )
+    if entry.get("content"):
+        lines.append(_bounded(entry["content"], f"{source}['content']", 600))
+    return lines
+
+
+def _council(result):
+    op = result["op"]
+    if "entries" in result:
+        entries = result["entries"]
+        lines = [
+            f"{op}: {len(entries)} entries; after={result['after']}; has_more={result['has_more']}"
+        ]
+        required = sum(bool(entry.get("reply_required")) for entry in entries)
+        replies = [reply for entry in entries for reply in (entry.get("replies") or [])]
+        if required or replies:
+            lines.append(
+                f"Page reply_required=True: {required}; replies: {_reply_counts(replies) or 'none'}."
+            )
+        for index, entry in enumerate(entries[:5]):
+            lines.extend(_council_entry(entry, f"r['entries'][{index}]"))
+        if len(entries) > 5:
+            key = "thread_id" if op == "council.threads" else "entry_id"
+            identities = ", ".join(f"#{entry[key]}" for entry in entries[5:])
+            lines.append(
+                f"… {len(entries) - 5} more entries ({key}: {identities}); "
+                "full messages and reply states: r['entries']."
+            )
+        if result["has_more"]:
+            lines.append(
+                f"Next page: {op}(after={result['after']}) with the same filters."
+            )
+    elif "entry_id" in result:
+        lines = [op] + _council_entry(result, "r")
+    elif result.get("error"):
+        lines = [f"{op}: error"]
+    else:
+        return dict.__repr__(result)
+    lines.extend(_details(result))
+    lines.append(
+        "Full data: inspect r[key] or dict(r); retrieve an entry with await council.get(entry_id)."
+    )
+    return "\n".join(lines)
+
+
 def _result_repr(result):
     """Render known model-facing results without changing their underlying data."""
     op = result.get("op")
@@ -165,6 +249,8 @@ def _result_repr(result):
             return _tests(result)
         if op == "read_session":
             return _session(result)
+        if op in ("council.publish", "council.get", "council.read", "council.threads"):
+            return _council(result)
     except (AttributeError, KeyError, TypeError, ValueError):
         # Incomplete/unknown shapes must remain inspectable, not fail during print.
         pass

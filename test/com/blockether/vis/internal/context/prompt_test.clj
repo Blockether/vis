@@ -359,6 +359,23 @@
         (expect (str/includes? text rule) rule)))))
 
 (defdescribe
+  core-prompt-execution-invariants-test
+  ;; Compression must retain executable contracts, not just capability names.
+  (it "keeps independent batching separate from dependent observations"
+      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+        (doseq [rule ["plural arguments first" "`await gather(...)` for" "independent calls"
+                      "Print it and END the block; continue in the NEXT block"]]
+          (expect (str/includes? text rule) rule))))
+  (it "preserves output, shape recovery, and watched shell handles"
+      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+        (doseq [rule ["keep results in variables" "`print()` is the ONE channel back"
+                      "an unprinted value is DISCARDED" "a bare trailing expression is never echoed"
+                      "Inspect shape before indexing; after an error inspect keys/types, then adapt"
+                      "answers a HANDLE" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.stop()`"
+                      "each carrying status"]]
+          (expect (str/includes? text rule) rule)))))
+
+(defdescribe
   prompt-core-test
   ;; With one tool there is no schema to be authoritative: a capability's OWN
   ;; document is the contract, and the core prompt has to say where it lives or
@@ -454,7 +471,8 @@
       ;; 7.7k → 8.2k for project-style correctness (#188); scope and verification stay single-owned.
       ;; 8.2k → 8.3k for confirmed paths, direct reads and question-driven discovery.
       ;; 8.3k → 8.5k for optional ls glob filtering and per-path overrides.
-      (expect (< (count text) 8500))
+      ;; Deduplication keeps the same contracts below the previous 8.5k ceiling.
+      (expect (< (count text) 8100))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -467,15 +485,14 @@
                      "`cat(path, start, end)`" "`patch(path, edits)`"
                      "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
         (expect (str/includes? text shape)))
-      (expect
-        (str/includes?
-          text
-          "When the user asks a question, answer the question. Do not start coding. Use tools or scripts only when you need more information for the answer."))
-      (expect (< (str/index-of text "When the user asks a question")
+      (expect (str/includes?
+                text
+                "Answer questions without coding; use tools only for missing information."))
+      (expect (< (str/index-of text "Answer questions without coding")
                  (str/index-of text "## 3. Inspect")))
       ;; A helper the model wrote is the only document it can author mid-session, so the rule that
       ;; orders one has to name what its docstring BECOMES — a gist, a page, and a way to be found.
-      (expect (str/includes? text "One docstring line is its `defs()` gist"))
+      (expect (str/includes? text "one-line docstring supplies its `defs()` gist"))
       ;; The verification rule must name a call the language surface accepts: a lone
       ;; string is the PAYLOAD, not a language, so `run_tests("python")` would run the
       ;; workspace's primary pack instead of the python one.
@@ -573,7 +590,7 @@
       ;; These assertions pin prompt content, not model compliance.
       (doseq
         [required
-         ["If asked only for analysis or a diff preview, do not apply changes"
+         ["For analysis-only or diff-preview requests, do not apply changes"
           "create worktrees or clones only when explicitly requested"
           "Commit and push require an explicit request"
           "or explicit authorization in applicable project instructions"
@@ -1159,10 +1176,10 @@
   (it "waits for observed anchors before generating a dependent patch"
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule ["Print it and END the block; continue in the NEXT block"
-                      "Copy anchors verbatim from observed output"
-                      "same line number and full three-character hash"
-                      "never guess hashes or use placeholders" "Never probe with an invalid patch"
-                      "a hard-coded patch in the same block cannot use output you have not seen"]]
+                      "Copy observed anchors verbatim"
+                      "checking each endpoint's line number and full three-character hash"
+                      "Never guess hashes, use placeholders or probe with an invalid patch"
+                      "A read and hard-coded patch in one block cannot use unseen output"]]
           (expect (str/includes? text rule) rule))))
   ;; Editing e2e used source text or bare line numbers despite the anchor instruction.
   (it "defines both endpoints as hashline strings rather than text or line numbers"
@@ -1188,10 +1205,10 @@
   (it "states the ls signature, batching, return type, and hidden precedence"
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None)"
-                      "Optional `pattern` filters basenames by case-sensitive glob"
-                      "one path or a list of paths" "returns a printable STRING"
-                      "hidden=True` aliases `is_hidden=True"
-                      "non-None `hidden` overrides `is_hidden`" "gitignored entries stay excluded"]]
+                      "`pattern`: case-sensitive basename glob (not regex), None disables"
+                      "applies at each depth, keeps ancestors; per-path specs override it"
+                      "accepts str/Path or a list; returns STRING"
+                      "Non-None `hidden` overrides `is_hidden`" "gitignored entries stay excluded"]]
           (expect (str/includes? text rule) rule)))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
@@ -1199,7 +1216,7 @@
 (defdescribe core-prompt-steers-python-shape-test
              (it "uses the advertised prebound paths instead of defining or guessing aliases"
                  (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "Write a PROGRAM, not a transcript"))
+                   (expect (str/includes? text "every action is sandbox Python"))
                    ;; User report: the runtime always binds project_root_path, never a root alias.
                    (expect (str/includes? text "`project_root_path` (workspace, always available)"))
                    (expect (str/includes? text "`root` is not prebound; do not create that alias"))
@@ -1207,7 +1224,7 @@
                    (expect (str/includes? text "`python_name`"))
                    (expect (str/includes? text "`cwd`"))
                    (expect (not (str/includes? text "path_globals")))
-                   (expect (str/includes? text "prebound `Path` objects"))
+                   (expect (str/includes? text "Prebound `Path` objects"))
                    (expect (str/includes? text "do not redefine them or guess aliases"))
                    (expect (not (str/includes? text "prebound `root`")))
                    (expect (not (str/includes? text "root = Path(session")))
@@ -1221,14 +1238,14 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "Reuse helpers"))
                    (expect (str/includes? text "`defs()`"))
-                   (expect (str/includes? text "`defs(name)` reads one back"))
+                   (expect (str/includes? text "`defs(name)` reads one"))
                    ;; Regression: the prompt promised a `def` only "persists for the whole
                    ;; session" — true of the interpreter, false of the PROCESS, so a restart
                    ;; silently emptied the sandbox the transcript still described.
-                   (expect (str/includes? text "outlives the block, turn"))
+                   (expect (str/includes? text "survives blocks, turns and gateway restarts"))
                    (expect (str/includes? text "gateway restart"))
-                   (expect (str/includes? text "REBUILT before every block"))
-                   (expect (str/includes? text "never store in it"))
+                   (expect (str/includes? text "rebuilt before every block; writes are erased"))
+                   (expect (str/includes? text "Never store state there"))
                    (expect (not (str/includes? text "definitions persist between blocks")))
                    (expect (not (str/includes? text "live read-only map")))))
              ;; Creating extensions requires a request and reading their contract first.

@@ -168,6 +168,100 @@
       (check-result {"op" "other" "optional" nil "value" [1 2]}
                     "assert repr(r) == repr(dict(r))\nassert r['optional'] is None")))
 
+(defn- council-entry
+  [entry-id]
+  {"entry_id" entry-id
+   "thread_id" 1
+   "group_id" "fixture-group"
+   "author_session_id" "fixture-author"
+   "created_at" 0
+   "source" "host"
+   "ping" []
+   "kind" "coordination"
+   "title" "Review cancellation"
+   "content" "Keep the existing cancellation boundary."})
+
+(defdescribe
+  compact-council-result-test
+  (it "prints entry identity, message and reply state without changing raw data"
+      (doseq [op ["council.publish" "council.get"]]
+        (let [out (check-result
+                    (assoc (council-entry 7)
+                      "op" op
+                      "reply_required" true
+                      "reply_to" 3
+                      "ping" ["notified-peer"]
+                      "replies" [{"session_id" "peer-a" "state" "pending"}
+                                 {"session_id" "peer-b" "state" "delivered"}
+                                 {"session_id" "peer-c" "state" "replied" "reply_entry_id" 8}])
+                    (str "before = json.dumps(r)\nprint([r])\n" "assert json.dumps(r) == before\n"
+                         "assert json.loads(before) == dict(r)\n"
+                         "assert r['replies'][2]['reply_entry_id'] == 8"))]
+          (doseq [text [op "Entry #7" "thread #1" "coordination" "fixture-group" "fixture-author"
+                        "Review cancellation" "Keep the existing cancellation boundary."
+                        "reply_required=True" "reply_to=#3" "pending=1" "delivered=1" "peer-a"
+                        "replied=1" "reply_entry_id=8" "Ping: 1 recipients" "notified-peer"
+                        "dict(r)"]]
+            (expect (str/includes? out text) text)))))
+  (it "bounds long messages and recipient lists with explicit read-back paths"
+      (let [out (check-result
+                  (assoc (council-entry 9)
+                    "op" "council.get"
+                    "ping" (mapv #(str "notified-peer-" %) (range 256))
+                    "content"
+                    (str "first diagnostic\n" (apply str (repeat 20000 "x")) "\nlast diagnostic")
+                    "replies" (vec (concat (for [n (range 255)]
+                                             {"session_id" (str "peer-" n) "state" "pending"})
+                                           [{"session_id" "last-peer" "state" "unavailable"}])))
+                  "assert len(r['content']) > 20000\nassert len(r['replies']) == 256\nprint(r)")]
+        (expect (< (count out) 4000))
+        (doseq [text ["Ping: 256 recipients" "r['ping']" "first diagnostic" "last diagnostic"
+                      "omitted" "r['content']" "r['replies']" "pending=255" "unavailable=1"]]
+          (expect (str/includes? out text) text))))
+  (it "bounds pages while retaining cursors, omitted IDs and all reply-state counts"
+      (let [entries
+            (mapv #(assoc (council-entry %) "content" (apply str (repeat 20000 "x"))) (range 1 51))
+
+            entries
+            (update entries
+                    49 assoc
+                    "reply_required" true
+                    "replies" [{"session_id" "last-peer" "state" "unavailable"}
+                               {"session_id" "held-peer" "state" "interrupted"}])
+
+            out
+            (check-result {"op" "council.read" "entries" entries "after" 50 "has_more" true}
+                          (str "assert len(r['entries']) == 50\n"
+                               "assert len(r['entries'][49]['content']) == 20000\nprint(r)"))]
+
+        (expect (< (count out) 9000))
+        (doseq [text ["50 entries" "after=50" "has_more=True" "#50" "45 more entries" "r['entries']"
+                      "same filters" "unavailable=1" "interrupted=1" "reply_required=True: 1"]]
+          (expect (str/includes? out text) text))))
+  (it "distinguishes thread lists, empty pages and failures"
+      (let [out (check-result {"op" "council.threads"
+                               "entries" [{"thread_id" 7
+                                           "title" "Recover retries"
+                                           "kind" "complain"
+                                           "author_session_id" "fixture-author"}]
+                               "after" 7
+                               "has_more" false}
+                              "print(r)")]
+        (doseq [text ["Thread #7" "Recover retries" "complain" "has_more=False"]]
+          (expect (str/includes? out text) text)))
+      (let [out (check-result {"op" "council.read" "entries" [] "after" 0 "has_more" false}
+                              "print(r)")]
+        (doseq [text ["0 entries" "after=0" "has_more=False"]]
+          (expect (str/includes? out text) text)))
+      (let [out (check-result {"op" "council.read" "error" {"message" "limit must be <= 50"}}
+                              "print(r)")]
+        (expect (str/includes? out "error"))
+        (expect (str/includes? out "limit must be <= 50"))))
+  (it "leaves unfamiliar or malformed Council shapes inspectable"
+      (doseq [data [{"op" "council.unknown" "payload" [1 2]}
+                    {"op" "council.read" "entries" [nil] "after" 1 "has_more" false}]]
+        (check-result data "assert repr(r) == repr(dict(r))"))))
+
 (defdescribe
   compact-discovery-result-test
   (it
@@ -190,9 +284,16 @@
       (tpc/with-own
         [ctx
          {'fixture (fn []
-                     {"op" "run_tests" "is_pass" true "total" 3 "fail" 0})}
+                     {"op" "run_tests" "is_pass" true "total" 3 "fail" 0})
+          'council-fixture (fn []
+                             (assoc (council-entry 7) "op" "council.get"))}
          (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]
-        (let [result (ep/run-python-block ctx "print(await fixture())\nprint(apropos(r'^doc$'))")]
+        (let [result (ep/run-python-block ctx
+                                          (str "print(await fixture())\n"
+                                               "print(apropos(r'^doc$'))\n"
+                                               "print(await council_fixture())"))]
           (expect (nil? (:error result)) (pr-str (:error result)))
           (expect (str/includes? (:stdout result) "run_tests: PASS; 3 tests; 0 failures"))
-          (expect (str/includes? (:stdout result) "tool doc — "))))))
+          (expect (str/includes? (:stdout result) "tool doc — "))
+          (expect (str/includes? (:stdout result) "Entry #7"))
+          (expect (str/includes? (:stdout result) "Keep the existing cancellation boundary."))))))

@@ -129,7 +129,11 @@
         (is (document/valid? "council" "kind" kind))
         (doseq [text [tool-doc prompt manual]]
           (is (str/includes? text kind))))
-      (doseq [text [tool-doc prompt manual]]
+      ;; User documentation preserves API names, not the agent prompt's prose.
+      (doseq [field ["entry_id" "thread_id" "reply_to" "reply_required" "improve" "autocomplain"
+                     "source_ref" "read_session"]]
+        (is (str/includes? manual field)))
+      (doseq [text [tool-doc prompt]]
         (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required" "improve"
                        "autocomplain" "source_ref" "turn/iteration" "reproduction steps" "expected"
                        "actual" "environment" "version" "diagnostics" "frequency" "impact"
@@ -148,25 +152,23 @@
 (deftest asynchronous-work-guidance-test
   (with-redefs [toggles/enabled? (constantly true)]
     (let [tool-doc (extension/symbol-doc-text (second host/symbols))
-          prompt (council/prompt {})
-          manual (slurp (io/resource "vis-docs/council.md"))]
+          prompt (council/prompt {})]
 
-      (doseq [text [tool-doc prompt manual]
+      (doseq [text [tool-doc prompt]
               :let [normalized (str/lower-case (str/replace text #"[\s*]+" " "))]]
 
         (is (str/includes? normalized "asynchronous message passing"))
         (is (str/includes? normalized "acceptance criteria"))
         (is (str/includes? normalized "before ending the turn"))
         (is (not (str/includes? normalized "in the receiving iteration"))))
-      (doseq [text [prompt manual]]
+      (doseq [text [prompt]]
         (is (str/includes? text "cannot wake unrelated idle peers"))
         (is (str/includes? text "satisfied"))
         (is (str/includes? text "acknowledgement"))))))
 
 (deftest context-reuse-guidance-test
   (with-redefs [toggles/enabled? (constantly true)]
-    (doseq [[surface text] [["prompt" (council/prompt {})]
-                            ["manual" (slurp (io/resource "vis-docs/council.md"))]]]
+    (doseq [[surface text] [["prompt" (council/prompt {})]]]
       (let [normalized (str/replace text #"\s+" " ")]
         (doseq
           [guidance

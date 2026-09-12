@@ -996,7 +996,7 @@
    'doc
    "doc(target) -> str. RETRIEVE one symbol whole: an `AproposItem` a search answered with, a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a callable wins a name collision. What comes back is what the target IS: a function's or class's own docstring, a module's, a whole documentation page, a whole `SKILL.md`. A DOTTED target reads ONE MEMBER live off the object itself — `doc(\"pandas.read_csv\")` prints that member's signature and docstring. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it."
    'gather
-   "gather(*awaitables) -> list. Concurrently run independent deferred tool calls/awaitables on a bounded host pool; results preserve input order. One list/tuple works. Use `await gather(...)`; keep dependent calls sequential. All settle before failure reports every failing slot index."
+   "gather(*awaitables, return_exceptions=False) -> list. Run independent deferred tool calls/awaitables; results preserve input order. One list/tuple works; keep dependent calls sequential. Host batches use a bounded pool: all dispatched slots settle before failure reports every failing slot index. A failed await returns no partial list; successful calls may already have side effects, so do not replay an entire write batch. With `return_exceptions=True`, results and exception objects occupy their original slots; host slots run serially in this mode. Current limitation: awaiting direct host calls, as in `await gather(tool(...), ...)`, probes them before dispatch and can run them serially or fail before batch recovery. For reliable batching and per-slot recovery, wrap each call in an async helper that awaits it: `async def read_one(p): return await cat(p)`, then `await gather(read_one(path_a), read_one(path_b), return_exceptions=True)`. Inspect each slot before retrying safe failed work."
    'defs
    "defs(name=None) -> str. The FUNCTIONS this session defined, as text: `defs()` lists each one's name, signature, block, length and the first line of its DOCSTRING; `defs(name)` returns that one's source, so a helper is refined by editing what it already says instead of being re-pasted from memory. WRITE that docstring: its first line is the gist this listing prints and the whole of it is the helper's own `doc(name)` page. Session-local definitions are deliberately absent from `apropos`; find them with `defs()`. A `def` outlives the block and the turn, and is re-created in a fresh sandbox after a gateway restart — a restored one is marked `(restored)`. Imported functions and engine internals are never listed. When the same helper recurs across sessions it has outgrown the sandbox: propose a Python extension (`doc(\"extending\")`)."
    'fold-session
@@ -1005,7 +1005,7 @@
 (def ^:private introspection-signatures
   {'apropos "pattern=''"
    'doc "target=None"
-   'gather "*awaitables"
+   'gather "*awaitables, return_exceptions=False"
    'defs "name=None"
    'fold-session "key, gist=None"})
 

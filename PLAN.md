@@ -1,34 +1,36 @@
-# Council asynchronous work and documentation
+# Prompt and tool contract optimization
 
-Make wake useful for scoped work, not only immediate answers.
+Reduce repeated instructions and tool output without weakening the contracts.
 
 ## Context
 
-At main `54a903d9e`, Council validates required replies after every tool iteration as well as final answers. Session `29ac86ff-9058-4409-8b31-c3483f0cdb92` read a request and calculated before replying; both intermediate calls received validation errors. Owners are `internal/council/`, `internal/loop.clj`, gateway wake text and `resources/vis-docs/council.md`. Peers reviewed existing findings in Council thread 720. Reject automatic satisfaction loops, new task-state APIs and unrestricted wake chains. Existing user authorization, cancellation and holds remain authoritative.
+At main `9442bb200`, the core prompt has 8,474 characters and the always-on Council prompt has 8,631. Council pagination rejects values above 50, but its callable documentation omits that bound and errors do not identify the failed constraint. The host's `gather` discovery entry omits `return_exceptions`; that mode currently serializes host slots. Council results print full transport dictionaries.
 
-## 1. Reproduce and correct the reply boundary
+Owners are `internal/context/prompt.clj`, `internal/council/{core,host}.clj`, `internal/python/env.clj`, `resources/vis-guest/vis_results.py` and mirrored tests. Council threads 868–870 divide implementation and independent review between sessions. Preserve concurrent UI/transcript and sharing work, including existing edits to `council/core_test.clj`. Reject runtime concurrency changes, automatic REPL reloads, cache-prefix reordering, upstream skill rewrites and unsupported performance claims in this pass.
 
-- Rationale: reading and bounded work can span invocations without ending the turn.
-- Data: target t4/i1–i3 and the real Python/SQLite required-boundary suite.
-- Acceptance criteria: intermediate tools succeed; unanswered final prose is rejected; replies still correlate and notify once.
-- Unknowns: none after source review; retain runtime cancellation and wake coverage.
+## 1. Align callable contracts and diagnostics
 
-## 2. Align the work protocol and documentation
+- Rationale: avoid preventable failures and make recovery precise.
+- Data: canonical Council schema, reproduced pagination failure, live `gather` signature and runtime behavior.
+- Acceptance criteria: schema-derived field/constraint errors without echoed user content; documented pagination bounds and ordered exception behavior; regression tests across the host boundary.
+- Unknowns: any contract gaps discovered by the focused tests.
 
-- Rationale: distinguish questions, work requests, progress, completion and follow-up.
-- Data: Council prompt, host tool documentation, wake text and existing reply constraints.
-- Acceptance criteria: clear authorized scope, acceptance criteria, final result/blocker and bounded review; no receipt-equals-completion claim. Mermaid message-flow and module diagrams render in static/live docs without a new runtime dependency.
-- Unknowns: verify rendered diagram readability and asset serving.
+## 2. Reduce prompt and result overhead
 
-## 3. Verify and publish
+- Rationale: remove redundancy instead of relying on more instructions.
+- Data: core/Council prompt baselines, result presentation hooks and existing contract tests.
+- Acceptance criteria: all material safety, authorization, completion, wake and lifecycle rules preserved; prompt assembly unchanged; bounded Council representations retain identifiers, meaningful content, errors and cursors, with full raw data available.
+- Unknowns: review may favor retaining wording where brevity would weaken the rule.
 
-- Rationale: the loop and host boundary require behavioral tests, not wording alone.
-- Data: affected Council, loop, gateway and docs tests; formatting/lint/reflection; generated site checks.
-- Acceptance criteria: scoped checks pass, final diff reviewed, only task files committed and pushed with session trailer; report no live restart.
-- Unknowns: concurrent release changes must remain unstaged.
+## 3. Integrate and verify
+
+- Rationale: independently implemented changes need combined review and affected checks.
+- Data: peer results, targeted JVM/guest-runtime tests, formatting/lint/reflection, measured text sizes and final scoped diff.
+- Acceptance criteria: affected checks pass, regressions remain in suites, unrelated edits preserved, static reductions distinguished from unmeasured model quality/cost/latency. The user subsequently authorized a scoped commit and push; paid evaluation, deployment and live restarts remain outside this pass.
+- Unknowns: decide the smallest later paired-model evaluation from the independent review; no such result is assumed here.
 
 ## Plan state
 
-1. Complete: read/research-before-reply regression failed, then passed with final-only gating. Same-thread follow-up regression failed, then passed using stored request/reply pairs; unrelated and transitive wakes remain blocked.
-2. Complete: prompt/tool/wake/manual aligned; Mermaid sources and self-contained SVGs render in static/live docs. Browser review confirms loaded bundled fonts and no page overflow at 390 px.
-3. Verified: 1007 affected JVM tests and 149 docs-site tests pass; Clojure formatting, lint/reflection, JavaScript formatting/lint and diff checks pass. Ready for scoped commit and push; no gateway restart, deployment or paid-model replay.
+1. Complete locally: Council bounds/diagnostics and discovery docs covered by host-boundary regressions. `gather` signature/modes and the verified async-helper workaround are documented; its direct-await classifier defect remains separately recorded in Council report 896, without a runtime or dependency-pin change.
+2. Complete locally: core prompt 8,474 → 8,017 characters; Council 8,631 → 6,727. Council result views retain raw mappings, IDs, cursors, content recovery, ping recipients and reply-state counts. Individual owner checks pass.
+3. Verified: independent acceptance/presentation reviews and scoped diff review complete. The combined clean-JVM run passes all 221 affected tests, including embedded Python and jailed-worker coverage; formatting, Clojure lint/reflection, Python lint and diff whitespace checks pass. The fixed 50-entry long-page fixture shrinks from 1,011,201 to 4,472 printed characters with raw data unchanged. Commit and push are explicitly authorized after a fresh scope recheck. No paid model quality/cost/latency evaluation, deployment or live restart was performed.
