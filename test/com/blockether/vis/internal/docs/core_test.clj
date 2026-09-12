@@ -299,6 +299,7 @@
           (expect (str/includes? html (str "href=\"" setup "\"")))))))
 
 ;; Regression: quick links inherited paragraph justification and split at separators on mobile.
+;; Motivation must open the full guide, not jump to the homepage summary.
 (defdescribe
   getting-started-quick-links-test
   (it
@@ -329,11 +330,12 @@
                             [href label])
                           (re-seq #"<a href=\"([^\"]+)\">([^<]+)</a>" (or navigation "")))]]
 
-        (expect (= [["#why-vis" "Why Vis"] ["#install" "Install"] ["#first-session" "First session"]
+        (expect (= [[(if (= mode :static) "motivation.html" "/docs/motivation") "Motivation"]
+                    ["#install" "Install"] ["#first-session" "First session"]
                     [(if (= mode :static) "gateway.html" "/docs/gateway") "Desktop and mobile"]]
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
-        (expect (not (str/includes? html "<p><a href=\"#why-vis\">")))
+        (expect (not (str/includes? html "<p><nav class=\"quick-links\"")))
         (let [link-css (second (re-find #"(?s)(?:^|\})\s*\.quick-links a\s*\{([^}]+)\}" css))]
           (doseq [fragment ["min-height: 2.75rem" "white-space: nowrap"]]
             (expect (str/includes? (or link-css "") fragment) fragment)))

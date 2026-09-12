@@ -3,7 +3,7 @@ Use it to explore a project, make changes and check the results. You can work
 in the terminal or desktop app, then follow the same session from your phone.
 
 <nav class="quick-links" aria-label="Getting started">
-  <a href="#why-vis">Why Vis</a>
+  <a href="motivation.md">Motivation</a>
   <a href="#install">Install</a>
   <a href="#first-session">First session</a>
   <a href="gateway.md">Desktop and mobile</a>
