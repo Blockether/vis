@@ -635,6 +635,55 @@
           (expect (= old-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
           (expect (= "old\n" (slurp (io/file managed-src "update-marker"))))))))
 
+(defdescribe
+  library-git-runtime-closure-test
+  (it
+    "packages the prepared Git runtime without requiring a Maven runtime artifact"
+    ;; Published 0.2.2 resolved and compiled Java, then both SDK recipes failed
+    ;; requiring vis-python-runtime. Exercise the real package builder, not an uberjar.
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-library-closure-test-"
+                                              (make-array FileAttribute 0)))
+
+          classes
+          (.getAbsolutePath (io/file root "classes"))
+
+          jar
+          (.getAbsolutePath (io/file root "vis.jar"))
+
+          program
+          `(do (load-file "build.clj")
+               (with-redefs-fn {(ns-resolve (symbol "build") (symbol "target-paths"))
+                                (fn [~'_]
+                                  {:class-dir ~classes :jar-file ~jar})
+                                (ns-resolve (symbol "build") (symbol "install-local!")) (fn [~'_])
+                                (ns-resolve (symbol "clojure.tools.build.api") (symbol "delete"))
+                                (fn [~'_])}
+                 (fn []
+                   ((ns-resolve (symbol "build") (symbol "build-one!"))
+                     {:lib 'com.blockether/vis :dir "."}))))]
+
+      (try
+        (let [{:keys [exit output]} (run-bash ["clojure" "-M:build" "-e" (pr-str program)] {})]
+          (expect (zero? exit) output)
+          (when (zero? exit)
+            (with-open [archive (java.util.jar.JarFile. jar)]
+              (doseq
+                [resource
+                 ["blockether/vis/extension.py" "com/blockether/vis_python_runtime.clj"
+                  "com/blockether/vispython/HostFunction.class" "vis-python-runtime/VERSION"
+                  "vis-python-runtime/SOURCES" "vis-python/vis_runtime.py"
+                  "META-INF/native-image/com.blockether/vis-python-runtime/reachability-metadata.json"]]
+                (expect (some? (.getJarEntry archive resource)) resource)
+                (when-let [entry (.getJarEntry archive resource)]
+                  (with-open [actual (.getInputStream archive entry)
+                              expected (io/input-stream (io/resource resource))]
+
+                    (expect (java.util.Arrays/equals (.readAllBytes actual)
+                                                     (.readAllBytes expected))
+                            resource)))))))
+        (finally (delete-tree! root))))))
+
 (defdescribe native-image-python-sidecar-test
              (it "stages the embedded interpreter beside the image instead of inside it"
                  (let [build (slurp "build.clj")]

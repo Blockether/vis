@@ -228,15 +228,7 @@
 
 (defn- src-dirs
   [{:keys [dir]}]
-  (let [src
-        (str dir "/src")
-
-        res
-        (str dir "/resources")]
-
-    (cond-> [src]
-      (.exists (io/file res))
-      (conj res))))
+  (mapv #(absolute-local-root dir %) (:paths (read-package-deps dir))))
 
 (defn- install-local!
   [{:keys [lib class-dir jar-file]}]
@@ -260,8 +252,12 @@
         basis
         (package-basis pkg)
 
+        ;; Maven cannot represent Git coordinates. Ship their prepared classpath
+        ;; roots (including Java classes and metadata) inside the library instead.
         srcs
-        (src-dirs pkg)]
+        (into (src-dirs pkg)
+              (comp (filter :git/sha) (mapcat :paths) (distinct))
+              (vals (:libs basis)))]
 
     (b/delete {:path (str "target/" (name lib))})
     (write-package-pom! pkg class-dir basis)
