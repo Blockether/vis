@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
-import { fireEvent, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const links = vi.hoisted(() => ({ receive: (_url: string) => {} }));
+vi.mock('./lib/deeplink', () => ({
+  onPairingLink: async (handler: (url: string) => void) => {
+    links.receive = handler;
+    return () => {};
+  },
+}));
 
 import { renderApp } from './app-harness';
 import { peekPendingShare, receiveSharedText, resetShareIntakeForTests } from './lib/share-intake';
@@ -11,12 +19,15 @@ afterEach(() => {
   restore();
   restore = () => {};
   resetShareIntakeForTests();
+  vi.restoreAllMocks();
+  window.history.replaceState(null, '', '/');
 });
 
 const settle = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const fleet = () => [
   { label: 'laptop', sessions: [listSession({ id: 's1', title: 'Session one' })] },
+  { label: 'server', sessions: [listSession({ id: 's2', title: 'Session two' })] },
 ];
 
 // Regression, cross-validated on the Android emulator: a voice memo shared from
@@ -37,6 +48,13 @@ describe('a share that arrives with no destination', () => {
 
     expect(composer.value).toBe('');
     expect(peekPendingShare()?.text).toBe('look at this');
+    await waitFor(() => expect(screen.queryByLabelText('Message Vis')).not.toBeInTheDocument());
+    expect(await screen.findByText('Sharing')).toBeVisible();
+    // The source machine is not the destination. Switching machines keeps the share.
+    fireEvent.click(within(screen.getByRole('group', { name: 'Machines' })).getByText('server'));
+    fireEvent.click(await screen.findByText('Session two'));
+    await waitFor(() => expect(screen.getByLabelText('Message Vis')).toHaveValue('look at this'));
+    expect(peekPendingShare()).toBeNull();
     view.unmount();
   });
 
@@ -55,6 +73,51 @@ describe('a share that arrives with no destination', () => {
 
     expect(composer.value).toContain('look at this');
     expect(peekPendingShare()).toBeNull();
+    view.unmount();
+  });
+
+  it('closes diagnostics settings when the native share sheet returns logs to Vis', async () => {
+    window.history.replaceState(null, '', '/');
+    const view = renderApp({ machines: fleet() });
+    restore = view.restore;
+    fireEvent.click(await screen.findByRole('button', { name: 'Open preferences' }));
+    expect(await screen.findByRole('dialog')).toBeVisible();
+
+    await act(async () => {
+      links.receive(
+        'vis://share?file=file:///cache/vis-diagnostics.jsonl.gz&name=vis-diagnostics.jsonl.gz&type=application/gzip&at=1',
+      );
+    });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(await screen.findByText('Sharing')).toBeVisible();
+    expect(peekPendingShare()?.files?.[0].name).toBe('vis-diagnostics.jsonl.gz');
+    fireEvent.click(screen.getByLabelText('Discard the share'));
+    await waitFor(() => expect(screen.queryByText('Sharing')).not.toBeInTheDocument());
+    expect(peekPendingShare()).toBeNull();
+    view.unmount();
+  });
+
+  it('reveals the desktop chooser for PLAN.md even when the sidebar was hidden', async () => {
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: query.includes('pointer: fine'),
+    }));
+    localStorage.setItem('vis.sidebar', 'hidden');
+    const view = renderApp({ machines: fleet() });
+    restore = view.restore;
+    await screen.findByRole('button', { name: 'Show the session list' });
+
+    await act(async () => {
+      links.receive('vis://share?file=file:///cache/PLAN.md&name=PLAN.md&type=text/markdown&at=2');
+    });
+
+    expect(await screen.findByRole('button', { name: 'Hide the session list' })).toBeVisible();
+    const list = screen.getByRole('region', { name: 'Sessions' });
+    expect(list.parentElement).not.toHaveClass('hidden');
+    expect(within(list).getByText('Sharing')).toBeVisible();
+    expect(peekPendingShare()?.files?.[0].name).toBe('PLAN.md');
     view.unmount();
   });
 });

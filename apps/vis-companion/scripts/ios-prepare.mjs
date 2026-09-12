@@ -515,34 +515,48 @@ final class ShareViewController: UIViewController {
         return types.first { $0.conforms(to: .data) && !$0.conforms(to: .text) && !$0.conforms(to: .url) }
     }
 
+    private static func copySharedFile(_ url: URL, into folder: URL, name: String, type: UTType) -> StagedFile? {
+        let manager = FileManager.default
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values?.isRegularFile == true, (values?.fileSize ?? 0) <= Self.maxFileBytes else { return nil }
+        do {
+            try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+            let destination = folder.appendingPathComponent(name)
+            try? manager.removeItem(at: destination)
+            try manager.copyItem(at: url, to: destination)
+            return StagedFile(url: destination, name: name, type: type.preferredMIMEType ?? "")
+        } catch {
+            return nil
+        }
+    }
+
     private func stage(_ provider: NSItemProvider, into directory: URL, index: Int) async -> StagedFile? {
-        guard let type = stageableType(provider) else { return nil }
         let folder = directory.appendingPathComponent(String(index), isDirectory: true)
+        // A real file URL is a file even when its content type inherits from text.
+        // PLAN.md and plain diagnostics logs must not fall through to selected prose.
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            let staged = await withCheckedContinuation { (continuation: CheckedContinuation<StagedFile?, Never>) in
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    // Apple may vend public.file-url as NSURL or as its data representation.
+                    let url = (item as? URL) ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                    guard let url, url.isFileURL else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let access = url.startAccessingSecurityScopedResource()
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    let type = UTType(filenameExtension: url.pathExtension) ?? .data
+                    continuation.resume(returning: Self.copySharedFile(url, into: folder, name: url.lastPathComponent, type: type))
+                }
+            }
+            if let staged { return staged }
+        }
+        guard let type = stageableType(provider) else { return nil }
         let name = fileName(provider, type)
         return await withCheckedContinuation { (continuation: CheckedContinuation<StagedFile?, Never>) in
-            // The URL is valid only INSIDE this block, so the copy happens here —
-            // after the continuation resumes the temporary file is already gone.
+            // The representation's URL is valid only inside this callback.
             _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
-                guard let url else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                let manager = FileManager.default
-                let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                guard size <= Self.maxFileBytes else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                do {
-                    try manager.createDirectory(at: folder, withIntermediateDirectories: true)
-                    let destination = folder.appendingPathComponent(name)
-                    try? manager.removeItem(at: destination)
-                    try manager.copyItem(at: url, to: destination)
-                    let staged = StagedFile(url: destination, name: name, type: type.preferredMIMEType ?? "")
-                    continuation.resume(returning: staged)
-                } catch {
-                    continuation.resume(returning: nil)
-                }
+                continuation.resume(returning: url.flatMap { Self.copySharedFile($0, into: folder, name: name, type: type) })
             }
         }
     }

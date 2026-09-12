@@ -29,6 +29,11 @@ describe('the share the list is holding', () => {
     const banner = label.closest('[role="status"]');
     expect(banner?.className).not.toContain('warn');
     expect(label.nextElementSibling).toBe(detail);
+    // The destination can be on any machine, so the notice precedes the machine band.
+    const machines = screen.getByRole('group', { name: 'Machines' });
+    expect(
+      banner!.compareDocumentPosition(machines) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it('counts a multi-file share rather than listing it', async () => {

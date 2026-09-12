@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
-import { STORY_FLEET_CONNS, storyFleetFetch } from '../dev/story-data';
+import { STORY_FLEET_CONNS, STORY_GATEWAYS, storyFleetFetch } from '../dev/story-data';
 import { SessionsScreen } from './SessionsScreen';
 
 /** The shipped screen over fixture responses, scoped to one story's lifecycle. */
@@ -193,4 +193,45 @@ export const DeleteProject: Story = {
 /** The complete navigator takes the review frame, not a fixed phone-width wrapper. */
 export const ResponsiveFleet: Story = {
   play: Fleet.play,
+};
+
+/** A share stays above the destination switch while the reader chooses another machine. */
+export const Sharing: Story = {
+  args: {
+    conns: STORY_GATEWAYS.slice(0, 2),
+    share: { files: [{ path: '/cache/PLAN.md', name: 'PLAN.md', type: 'text/markdown' }] },
+    onDiscardShare: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const page = within(canvasElement);
+    const notice = (await page.findByText('Sharing')).closest('[role="status"]')!;
+    const machines = page.getByRole('group', { name: 'Machines' });
+    await expect(notice.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      machines.getBoundingClientRect().top,
+    );
+    const tabs = within(machines).getAllByRole('button');
+    await userEvent.click(tabs[1]);
+    await expect(tabs[1]).toHaveAttribute('aria-pressed', 'true');
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveTextContent('PLAN.md');
+    await userEvent.click(page.getByRole('button', { name: 'Discard the share' }));
+    await expect(args.onDiscardShare).toHaveBeenCalledOnce();
+  },
+};
+
+export const SharingPhone: Story = {
+  ...Sharing,
+  globals: { viewport: { value: 'phone', isRotated: false } },
+};
+
+export const SharingDesktop: Story = {
+  ...Sharing,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  decorators: [
+    (Story) => (
+      <div className="w-80">
+        <Story />
+      </div>
+    ),
+  ],
 };

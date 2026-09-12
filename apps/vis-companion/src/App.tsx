@@ -197,6 +197,8 @@ export function App() {
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);
   const [tab, setTab] = useState<Tab>('sessions');
+  // Sharing must reveal the chooser even when the desktop sidebar was hidden.
+  const [isSidebarShown, toggleSidebar] = useSidebar();
   // The share still owed a session. The SHELL holds it because the list is the
   // chooser: until a composer takes it, every screen that could receive it has
   // to be able to say what is waiting.
@@ -351,23 +353,20 @@ export function App() {
   // on a project header is the "new session" answer. The payload stays parked
   // until a composer takes it, so choosing slowly never loses it.
   const openSharedSession = useCallback(async () => {
+    setSettingsDestination(null);
+    setOpenTarget(null);
+    setSearching(false);
+    setQuery('');
+    setOffline(null);
+    if (!isSidebarShown) toggleSidebar();
     const conn = active ?? (await getPrimaryConnection());
     if (!conn) {
       setTab('connect');
       return;
     }
     setActive(conn);
-    setOpenTarget(null);
     setTab('sessions');
-  }, [active]);
-
-  // The parked share, mirrored into shell state so the list can report it. The
-  // listener also answers `null`, which is how the banner learns that a
-  // composer took the payload.
-  useEffect(() => {
-    setPendingShare(peekPendingShare());
-    return onSharedText(setPendingShare);
-  }, []);
+  }, [active, isSidebarShown, toggleSidebar]);
 
   // Dropping the share: the staged copies go with it, or a shared memo stays on
   // the device as megabytes nobody asked us to keep.
@@ -382,17 +381,30 @@ export function App() {
   const [shareNonce, setShareNonce] = useState(0);
   const handledShareNonce = useRef(0);
 
-  // A share that outlived the webview it was dropped into (cold start, OS
-  // reclaim, crash). Only a RECENT one steers navigation: opening the app days
-  // later must not yank the user into a session, and the payload keeps waiting
-  // for whichever composer mounts next either way.
+  // Every new payload opens the chooser, including a share from inside Vis.
+  // Claiming re-notifies the same object: it must not navigate away from the
+  // destination the user just picked. Only recent restored shares steer a launch.
   useEffect(() => {
+    let current = peekPendingShare();
+    let disposed = false;
+    setPendingShare(current);
+    const off = onSharedText((share) => {
+      if (share && share !== current) setShareNonce((nonce) => nonce + 1);
+      current = share;
+      setPendingShare(share);
+    });
     void hydratePendingShare().then((share) => {
+      if (disposed) return;
+      current = share;
       setPendingShare(share);
       if (share && Date.now() - (share.at ?? 0) < RESUMABLE_SHARE_MS) {
         setShareNonce((nonce) => nonce + 1);
       }
     });
+    return () => {
+      disposed = true;
+      off();
+    };
   }, []);
 
   // Hash routing: a session is a shareable URL (#/s/<sid>?gw=<gateway-url>).
@@ -595,7 +607,7 @@ export function App() {
       if (shared) {
         // Park it BEFORE navigating: a link the user handed us must not depend
         // on this app managing to reach a composer in this launch.
-        if (receiveSharedText(shared)) setShareNonce((nonce) => nonce + 1);
+        receiveSharedText(shared);
         return;
       }
       const hash = parseSessionDeepLink(url);
@@ -606,8 +618,8 @@ export function App() {
     return () => dispose();
   }, [addConnection]);
 
-  // Steer to a composer once a share is parked AND the initial route has been
-  // applied: routing earlier would be overwritten by the hash we booted with.
+  // Show the destination chooser after the initial route has been applied:
+  // routing earlier would be overwritten by the hash we booted with.
   useEffect(() => {
     if (!shareNonce || !routeApplied || shareNonce === handledShareNonce.current) return;
     handledShareNonce.current = shareNonce;
@@ -1034,8 +1046,6 @@ export function App() {
 
   // A media query is a runtime fact, read here so every render asks it once.
   const isDesk = useDeskRail();
-  // Whether the desk's sidebar is up: the reader's own choice, kept across reloads.
-  const [isSidebarShown, toggleSidebar] = useSidebar();
 
   if (!ready) return <Splash />;
 

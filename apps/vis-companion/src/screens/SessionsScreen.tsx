@@ -1540,6 +1540,20 @@ export function SessionsScreen({
       aria-label="Sessions"
       className={`flex h-full min-h-0 w-full flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none ${isDesk ? '' : 'mx-auto max-w-[1400px] sm:px-6 sm:py-4'}`}
     >
+      {/* A pending share belongs to the whole fleet, not the selected machine. */}
+      {share && (
+        <div className={`shrink-0 px-3 pt-3 ${isDesk ? '' : 'sm:pb-3 sm:pl-0 sm:pr-4 sm:pt-0'}`}>
+          <Banner
+            kind="neutral"
+            title="Sharing"
+            dismiss={
+              onDiscardShare ? { label: 'Discard the share', onClick: onDiscardShare } : undefined
+            }
+          >
+            {shareSummary(share)} — pick a session, or start a new one
+          </Banner>
+        </div>
+      )}
       {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
           already draws the rule below the Vis mark. A `border-y` here stacked a
           second hairline on top of it, so the Sessions tab wore a 2px seam while
@@ -1654,28 +1668,6 @@ export function SessionsScreen({
               })}
             </MachineSwitcher>
           </div>
-          {/* WHAT IS WAITING TO BE SENT, on the row that already reports the
-              state of this list. A share arrives with a payload and no
-              destination, and the app must not guess: the memo the human sent
-              from Messages belongs to a conversation only they can name. So the
-              list says what is parked and stays a list — tapping a row sends it
-              there, the yellow + on any project header sends it to a session
-              that does not exist yet, and the ✕ throws it away. */}
-          {share && (
-            <div className="order-last w-full">
-              <Banner
-                kind="neutral"
-                title="Sharing"
-                dismiss={
-                  onDiscardShare
-                    ? { label: 'Discard the share', onClick: onDiscardShare }
-                    : undefined
-                }
-              >
-                {shareSummary(share)} — pick a session, or start a new one
-              </Banner>
-            </div>
-          )}
           {/* THE SEARCH REPORT IS A LINE OF ITS OWN ON A PHONE. It used to ride the
               trailing cluster beside the switch on a row that could not shrink, so on a
               390px glass "271 matches / 1 machine did not answer" pushed the strip until
