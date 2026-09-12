@@ -244,12 +244,12 @@
         (with-redefs [main/stdout! #(swap! lines conj %)]
           (#'main/print-package-result
            "Installed"
-           {"name" "vis-spel"
-            "repository" "blockether/spel"
-            "version" "0.1.3"
+           {"name" "vis-greeter"
+            "repository" "example/extensions"
+            "version" "1.2.0"
             "mode" "github"
             "next" "/reload"}))
-        (expect (= ["Installed blockether/spel@0.1.3 (github). /reload"] @lines))))
+        (expect (= ["Installed example/extensions@1.2.0 (github). /reload"] @lines))))
   (it "passes version selection to install without losing the project scope"
       (let [calls (atom [])]
         (with-redefs [python-extensions/install-package!

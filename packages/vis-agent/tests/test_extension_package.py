@@ -57,7 +57,7 @@ def test_normalize_github_repository(source, suffix):
         "git@github.com:a/b",
         "https://github.com/a/..",
         "https://github.com/a/%2e%2e",
-        "vis-spel",
+        "vis-greeter",
         "/example/extensions",
         "example/extensions/extra",
         "example/..",

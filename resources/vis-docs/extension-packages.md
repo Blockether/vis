@@ -146,16 +146,16 @@ dependency paths inside the selected project, within 4096 entries and 64 MiB.
 
 ### Check for updates and roll back
 
-Use the GitHub `owner/repository` slug, such as `blockether/spel`, not the Python
-package name (`vis-spel`). Repository names are case-insensitive; project folders
+Use the GitHub `owner/repository` slug, such as `example/greeting`, not the Python
+package name (`vis-greeter`). Repository names are case-insensitive; project folders
 keep their case. A full HTTPS GitHub repository URL also works.
 
 ```bash
-vis-agent extension versions blockether/spel --project
-vis-agent extension update blockether/spel --project --trust
-vis-agent extension update blockether/spel --version 0.1.3 --project --trust
-vis-agent extension rollback blockether/spel --project --trust
-vis-agent extension rollback blockether/spel --version 0.1.2 --project --trust
+vis-agent extension versions example/greeting --project
+vis-agent extension update example/greeting --project --trust
+vis-agent extension update example/greeting --version 1.3.0 --project --trust
+vis-agent extension rollback example/greeting --project --trust
+vis-agent extension rollback example/greeting --version 1.1.0 --project --trust
 ```
 
 Vis finds the installed repository in the selected global or project scope. If you
@@ -164,7 +164,7 @@ one; Vis refuses to guess. Use `--subdirectory .` to select its root project.
 Before installation, `versions` needs the folder shown in the catalog, for example:
 
 ```bash
-vis-agent extension versions blockether/spel --subdirectory extensions/vis-spel
+vis-agent extension versions example/extensions --subdirectory tools/greeting
 ```
 
 `versions` shows the installed version, approved history, latest stable version and
