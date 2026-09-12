@@ -55,7 +55,6 @@ resolves that issue. Keep any other body text to the reason the diff cannot expl
 - No profanity or vulgarity in tracked content, including documentation, examples, activity copy,
   quoted reports, fixtures and commit text. Paraphrase reports instead; do not copy a user's wording
   into documentation. Keep terminology consistent across extension guides and executable examples.
-- Use direct, literal language in documentation. Avoid metaphors, slogans and rhetorical filler.
 - Every observed tool binding owns an explicit Activity presentation, including each exported Python
   object method. Activities are for human consumption: use understandable English and capitalized
   natural-language labels ("Run tests", "Search files"), not code identifiers or all-caps sentences.
@@ -76,6 +75,33 @@ resolves that issue. Keep any other body text to the reason the diff cannot expl
   Clojure HTTP uses `babashka.http-client`. Do not introduce Clojure `declare`.
 - Clojure formatting uses `.zprint.edn` and the Vis formatter: one blank line between top-level forms,
   attached comments preserved, one final newline. `.clj-kondo/imports/` is tracked source, not cache.
+
+### Documentation audience and style
+
+The README and `resources/vis-docs/` are written for people. Serving the manual through
+`doc()` does not make it an agent instruction sheet. User guides address people using Vis;
+extension guides and API reference address developers building with it.
+
+- Start with the reader's goal: what the feature does, when to use it and how to get a useful
+  result. Show ordinary chat or UI workflows before internal calls when those workflows exist.
+- Address the reader as "you". Use plain words, active voice, short paragraphs and a clear,
+  conversational but professional tone. Be direct and literal; avoid unexplained jargon,
+  metaphors, slogans, rhetorical filler and forced friendliness.
+- Organize guides around tasks, with realistic examples and expected results. Explain relevant
+  prerequisites, costs, permissions and destructive consequences before the reader acts.
+- Keep tutorials, task guides, explanations and API reference distinct. Put low-level protocol
+  details in clearly labeled reference sections rather than leading with them. Do not copy
+  agent prompts or operating checklists into user guides; explain their user-visible effects.
+- Preserve exact API names, runnable examples, documented limits and stable links/anchors.
+  Friendlier wording must not weaken a contract or imply capabilities Vis does not have.
+- Review headings, introductions, navigation labels and page descriptions as well as body text.
+  A new reader should understand the purpose and next step without knowing Vis internals.
+
+Apply these writing guides within the repository's rules:
+
+- [Google: tone and style](https://developers.google.com/style/tone) — clear, direct and conversational.
+- [Microsoft: simple and human](https://learn.microsoft.com/en-us/style-guide/brand-voice-above-all-simple-human) — everyday words and the reader's task first.
+- [Diátaxis: how-to guides](https://diataxis.fr/how-to-guides/) — goal-focused instructions, separate from explanation and reference.
 
 ### Computer-use automation
 
