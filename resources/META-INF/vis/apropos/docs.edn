@@ -8,6 +8,9 @@
  {:kind "doc" :name "jail" :resource "vis-docs/jail.md"}
  {:kind "doc" :name "jvm-native-image" :resource "vis-docs/jvm-native-image.md"}
  {:kind "doc" :name "distributions" :resource "vis-docs/distributions.md"}
+ {:kind "doc" :name "python-sdk" :resource "vis-docs/python-sdk.md"}
+ {:kind "doc" :name "jvm-sdk" :resource "vis-docs/jvm-sdk.md"}
+ {:kind "doc" :name "gateway-service" :resource "vis-docs/gateway-service.md"}
  {:kind "doc" :name "configuration" :resource "vis-docs/configuration.md"}
  {:kind "doc" :name "context-and-prompts" :resource "vis-docs/context-and-prompts.md"}
  {:kind "doc" :name "exporting-sessions" :resource "vis-docs/exporting-sessions.md"}

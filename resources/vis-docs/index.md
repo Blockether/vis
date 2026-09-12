@@ -407,9 +407,11 @@ update the client or gateway to a compatible version.
 
 ### Python SDK
 
-`blockether.vis.engine.GatewayClient` connects to a gateway by URL and token.
-`LocalEngine` runs a Vis executable as a subprocess without a gateway. See
-the [Python SDK](https://pypi.org/project/vis-agent/).
+Follow the [Python SDK](python-sdk.md) guide to install the package, connect to a
+gateway and wrap an agent in your application. `GatewayClient` connects by URL
+and token; `LocalEngine` owns a private subprocess. For JVM applications, see the
+[Java and Clojure SDK](jvm-sdk.md). [Running a gateway](gateway-service.md) covers
+installation, service supervision and secure remote connections.
 
 ### Resource limits
 
@@ -440,6 +442,12 @@ A value `<= 0` disables an eviction threshold.
 - [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
+### SDKs
+
+- [Python SDK](python-sdk.md) — install the client, wrap an agent and follow progress.
+- [Java and Clojure SDK](jvm-sdk.md) — call Vis from a JVM application.
+- [Running a gateway](gateway-service.md) — install and operate a shared agent service.
+
 ### Extensions
 
 - [Extending Vis](extending.md) — choose a capability and build your first tool.
@@ -451,7 +459,6 @@ A value `<= 0` disables an eviction threshold.
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
-- [Python SDK](https://pypi.org/project/vis-agent/) — develop and test extensions outside Vis.
 
 ### Concepts
 

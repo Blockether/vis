@@ -581,7 +581,7 @@
 (def ^:private fence-languages
   "Languages a fenced block may declare. ONE set, so the same kind of block is
    highlighted the same way on every page."
-  #{"bash" "clojure" "edn" "ini" "json" "markdown" "python" "text" "toml" "yaml"})
+  #{"bash" "clojure" "edn" "ini" "java" "json" "markdown" "python" "text" "toml" "xml" "yaml"})
 
 (defn- scan
   "PURE: `{:headings [[line level text] …] :fences [[line info] …]}` for `md`.

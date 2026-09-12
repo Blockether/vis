@@ -21,7 +21,7 @@
      * Anchors are unique within a page, and every relative `page.md#anchor` link
        resolves against the TARGET page's own toc.
      * Every fenced block declares a language, one of `bash`, `clojure`, `edn`,
-       `ini`, `json`, `markdown`, `python`, `text`, `toml`, `yaml`.
+       `ini`, `java`, `json`, `markdown`, `python`, `text`, `toml`, `xml`, `yaml`.
      * `index.md` is the MAP: it links every other page under `## Learn more`,
        with that page's title as the link text, so a page nobody can reach from
        the landing page does not exist for a reader.

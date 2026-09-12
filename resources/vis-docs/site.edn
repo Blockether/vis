@@ -42,6 +42,16 @@
      :page "reporting-bugs"
      :title "Reporting a bug"}]
    :section "Guides"}
+  {:pages [{:blurb "Connect a Python program to a gateway or let it own a private agent process."
+            :page "python-sdk"
+            :title "Python SDK"}
+           {:blurb "Use the public JVM API from Java or Clojure to create sessions and run tasks."
+            :page "jvm-sdk"
+            :title "Java and Clojure SDK"}
+           {:blurb "Install, secure and supervise a shared gateway for your apps and SDK clients."
+            :page "gateway-service"
+            :title "Running a gateway"}]
+   :section "SDKs"}
   {:pages
    [{:blurb
      "Write a Python tool, register it with Vis and try it in a session, starting with one file."
