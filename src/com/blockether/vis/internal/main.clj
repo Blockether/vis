@@ -3836,7 +3836,7 @@
 (defn- print-package-result
   [action result]
   (stdout! (str action
-                " " (get result "name")
+                " " (or (get result "repository") (get result "name"))
                 "@" (get result "version")
                 " (" (get result "mode")
                 "). " (get result "next")))
@@ -3856,29 +3856,29 @@
    :cmd/doc "Install an approved GitHub release, an explicit commit or a local Python project."
    :cmd/usage
    "vis-agent extension install SOURCE --trust [--subdirectory PATH] [--version VERSION | --revision SHA] [--project]"
-   :cmd/args [{:name "source"
-               :kind :positional
-               :type :string
-               :required true
-               :doc "HTTPS GitHub repository URL, pyproject.toml or source directory."}
-              {:name "trust"
-               :kind :flag
-               :type :boolean
-               :doc "Allow this package and its build backend to run with your permissions."}
-              {:name "subdirectory"
-               :kind :flag
-               :type :string
-               :doc
-               "Folder containing pyproject.toml and extension.py; defaults to repository root."}
-              {:name "revision"
-               :kind :flag
-               :type :string
-               :doc "Reviewed full Git commit SHA for a GitHub install."}
-              {:name "version"
-               :kind :flag
-               :type :string
-               :doc "Approved release version; defaults to the latest approved stable release."}
-              {:name "project" :kind :flag :type :boolean :doc "Install for this project only."}]
+   :cmd/args
+   [{:name "source"
+     :kind :positional
+     :type :string
+     :required true
+     :doc "GitHub owner/repository slug or HTTPS URL, pyproject.toml or source directory."}
+    {:name "trust"
+     :kind :flag
+     :type :boolean
+     :doc "Allow this package and its build backend to run with your permissions."}
+    {:name "subdirectory"
+     :kind :flag
+     :type :string
+     :doc "Folder containing pyproject.toml and extension.py; defaults to repository root."}
+    {:name "revision"
+     :kind :flag
+     :type :string
+     :doc "Reviewed full Git commit SHA for a GitHub install."}
+    {:name "version"
+     :kind :flag
+     :type :string
+     :doc "Approved release version; defaults to the latest approved stable release."}
+    {:name "project" :kind :flag :type :boolean :doc "Install for this project only."}]
    :cmd/run-fn (fn [{:strs [source trust subdirectory revision version project]} _]
                  (print-package-result "Installed"
                                        (python-extensions/install-package!
@@ -3961,17 +3961,17 @@
                :kind :positional
                :type :string
                :required true
-               :doc "GitHub repository URL or normalized installed extension name."}
+               :doc "GitHub owner/repository slug or HTTPS repository URL."}
               {:name "subdirectory"
                :kind :flag
                :type :string
-               :doc "Project folder for a repository URL; installed names use their saved folder."}
+               :doc "Project folder; omitted uses the sole installed project or repository root."}
               {:name "project" :kind :flag :type :boolean :doc "Check the project installation."}]
    :cmd/run-fn (fn [{:strs [source subdirectory project]} _]
-                 (let [result (python-extensions/package-versions
-                                source
-                                {:subdirectory (or subdirectory "")
-                                 :directory (package-directory project)})]
+                 (let [result (python-extensions/package-versions source
+                                                                  {:subdirectory subdirectory
+                                                                   :directory (package-directory
+                                                                                project)})]
                    (when-let [installed (get result "installed")]
                      (stdout! (str "Installed: " installed
                                    ". " (if (get result "update_available")
@@ -3994,23 +3994,30 @@
      :cmd/doc (if (= command "update")
                 "Explicitly select a newer approved extension release. Never updates automatically."
                 "Restore the previous pinned source or choose an older approved release.")
-     :cmd/usage (str "vis-agent extension " command " NAME --trust [--version VERSION] [--project]")
+     :cmd/usage (str "vis-agent extension "
+                     command
+                     " REPOSITORY --trust [--subdirectory PATH] [--version VERSION] [--project]")
      :cmd/args
-     [{:name "name"
+     [{:name "source"
        :kind :positional
        :type :string
        :required true
-       :doc "Normalized installed extension name, such as vis-greeter."}
+       :doc "GitHub owner/repository slug or HTTPS URL of an installed extension."}
+      {:name "subdirectory"
+       :kind :flag
+       :type :string
+       :doc "Project folder; required when several extensions from this repository are installed."}
       {:name "trust"
        :kind :flag
        :type :boolean
        :doc "Allow the reviewed source and build backend to run with your permissions."}
       {:name "version" :kind :flag :type :string :doc "Select an approved release explicitly."}
       {:name "project" :kind :flag :type :boolean :doc "Change the project installation only."}]
-     :cmd/run-fn (fn [{:strs [name trust version project]} _]
+     :cmd/run-fn (fn [{:strs [source trust subdirectory version project]} _]
                    (print-package-result action
-                                         (operation name
+                                         (operation source
                                                     {:trust trust
+                                                     :subdirectory subdirectory
                                                      :version version
                                                      :directory (package-directory project)})))}))
 

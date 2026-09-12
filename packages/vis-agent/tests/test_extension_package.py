@@ -31,8 +31,17 @@ def project(directory, manifest=MANIFEST):
 
 
 @pytest.mark.parametrize("suffix", ["", "/", ".git"])
-def test_normalize_github_repository(suffix):
-    assert package.github_repository(REPOSITORY + suffix) == REPOSITORY
+@pytest.mark.parametrize(
+    "source",
+    [
+        REPOSITORY,
+        "example/extensions",
+        "Example/Extensions",
+        "https://github.com/Example/Extensions",
+    ],
+)
+def test_normalize_github_repository(source, suffix):
+    assert package.github_repository(source + suffix) == REPOSITORY
 
 
 @pytest.mark.parametrize(
@@ -48,9 +57,17 @@ def test_normalize_github_repository(suffix):
         "git@github.com:a/b",
         "https://github.com/a/..",
         "https://github.com/a/%2e%2e",
+        "vis-spel",
+        "/example/extensions",
+        "example/extensions/extra",
+        "example/..",
+        "example//extensions",
+        "example/extensions?unsafe",
+        "example/extensions#main",
+        "example\\extensions",
     ],
 )
-def test_only_public_github_repository_urls_are_accepted(url):
+def test_only_public_github_repository_slugs_and_urls_are_accepted(url):
     with pytest.raises(ValueError, match="GitHub"):
         package.github_repository(url)
 
@@ -327,10 +344,13 @@ def releases(tmp_path, monkeypatch):
     return metadata, tmp_path / "installed", commands
 
 
-def test_version_install_update_and_rollback_use_real_pinned_checkouts(releases):
+@pytest.mark.parametrize("source", ["example/extensions", REPOSITORY])
+def test_version_install_update_and_rollback_use_real_pinned_checkouts(
+    releases, source
+):
     metadata, target, commands = releases
     first = package.install(
-        REPOSITORY, target, trust=True, subdirectory="plugins/greeting", version="1.0.0"
+        source, target, trust=True, subdirectory="plugins/greeting", version="1.0.0"
     )
     active = target / "vis-greeter"
     initial = active.resolve()
@@ -343,22 +363,131 @@ def test_version_install_update_and_rollback_use_real_pinned_checkouts(releases)
     )
     assert active.is_symlink()
     assert '"1.0.0"' in (active / "src/greeter.py").read_text()
-    status = package.versions("vis-greeter", directory=target)
+    status = package.versions(source, directory=target)
     assert status["installed"] == "1.0.0"
     assert status["latest"] == "1.1.0"
     assert status["update_available"]
     assert [r["version"] for r in status["releases"]] == ["2.0.0rc1", "1.1.0", "1.0.0"]
-    updated = package.update("vis-greeter", target, trust=True)
+    updated = package.update(source, target, trust=True)
     assert updated["version"] == "1.1.0"
     assert initial.exists()
     assert active.resolve() != initial
-    assert not package.versions("vis-greeter", directory=target)["update_available"]
-    restored = package.rollback("vis-greeter", target, trust=True)
+    assert not package.versions(source, directory=target)["update_available"]
+    restored = package.rollback(source, target, trust=True)
     assert restored["revision"] == first["revision"]
     assert package.inspect_source(active)["repository"] == inspected["repository"]
     assert '"1.0.0"' in (active / "src/greeter.py").read_text()
     assert all(args[-1] != "HEAD" for args in commands if "fetch" in args)
     assert len([args for args in commands if "fetch" in args]) == 3
+    assert updated["repository"] == "example/extensions"
+    assert restored["repository"] == "example/extensions"
+
+
+@pytest.mark.parametrize("source", ["example/extensions", REPOSITORY])
+def test_versions_before_install_preserve_the_selected_folder(releases, source):
+    _, target, commands = releases
+    status = package.versions(source, subdirectory="plugins/greeting", directory=target)
+    assert status["installed"] is None
+    assert status["latest"] == "1.1.0"
+    assert status["subdirectory"] == "plugins/greeting"
+    assert not target.exists()
+    assert not commands
+
+
+@pytest.mark.parametrize(
+    "operation", [package.versions, package.update, package.rollback]
+)
+def test_package_names_are_not_repository_selectors(releases, operation):
+    _, target, _ = releases
+    package.install(REPOSITORY, target, trust=True, subdirectory="plugins/greeting")
+    options = {} if operation is package.versions else {"trust": True}
+    with pytest.raises(ValueError, match="GitHub"):
+        operation("vis-greeter", directory=target, **options)
+
+
+@pytest.mark.parametrize("operation", [package.update, package.rollback])
+def test_repository_resolution_stays_in_selected_scope_and_folder(releases, operation):
+    _, target, _ = releases
+    package.install(REPOSITORY, target, trust=True, subdirectory="plugins/greeting")
+    for directory, folder in [
+        (target, "plugins/other"),
+        (target.parent / "other-scope", None),
+    ]:
+        with pytest.raises(ValueError, match="No managed GitHub installation"):
+            operation("example/extensions", directory, trust=True, subdirectory=folder)
+
+
+@pytest.mark.parametrize(
+    "operation", [package.versions, package.update, package.rollback]
+)
+@pytest.mark.parametrize("other_folder", ["", "Plugins/Other"])
+def test_monorepo_selectors_require_an_unambiguous_installed_folder(
+    releases, operation, other_folder, monkeypatch
+):
+    # A repository slug must not silently select one of two installed projects.
+    _, target, _ = releases
+    package.install(REPOSITORY, target, trust=True, subdirectory="plugins/greeting")
+    other = target / ".versions/another-package/.install-other/project"
+    project(other, MANIFEST.replace("vis-greeter", "another-package"))
+    receipt = json.loads(
+        ((target / "vis-greeter").resolve().parent / "receipt.json").read_text()
+    )
+    receipt.update(name="another-package", subdirectory=other_folder)
+    (other.parent / "receipt.json").write_text(json.dumps(receipt))
+    (target / "another-package").symlink_to(other)
+    options = {} if operation is package.versions else {"trust": True}
+    with pytest.raises(ValueError, match="--subdirectory"):
+        operation("example/extensions", directory=target, **options)
+    if operation is package.rollback:
+        with pytest.raises(ValueError, match="No previous"):
+            operation(
+                "example/extensions",
+                directory=target,
+                subdirectory="plugins/greeting",
+                **options,
+            )
+    else:
+        result = operation(
+            "example/extensions",
+            directory=target,
+            subdirectory="plugins/greeting",
+            **options,
+        )
+        assert result.get("installed", result.get("version")) == "1.1.0"
+    assert (target / "another-package").resolve() == other
+    monkeypatch.setattr(package, "_catalog", lambda *_: {"releases": [receipt]})
+    status = package.versions(
+        "Example/Extensions", directory=target, subdirectory=other_folder or "."
+    )
+    assert status["installed"] == "1.1.0"
+    assert status["subdirectory"] == other_folder
+    if other_folder:
+        with pytest.raises(ValueError, match="No managed GitHub installation"):
+            package.update(
+                "example/extensions",
+                target,
+                trust=True,
+                subdirectory=other_folder.lower(),
+            )
+
+
+def test_repository_slug_does_not_silently_select_a_local_directory(
+    releases, tmp_path, monkeypatch
+):
+    _, target, _ = releases
+    local = project(tmp_path / "example/extensions")
+    monkeypatch.chdir(tmp_path)
+    installed = package.install(
+        "example/extensions",
+        target,
+        trust=True,
+        subdirectory="plugins/greeting",
+        version="1.0.0",
+    )
+    assert installed["mode"] == "github"
+    linked = package.install("./example/extensions", tmp_path / "linked", trust=True)
+    assert linked["mode"] == "source"
+    assert (tmp_path / "linked/vis-greeter").resolve() == local
 
 
 def test_default_install_selects_stable_and_prerelease_is_explicit(releases):
@@ -367,9 +496,11 @@ def test_default_install_selects_stable_and_prerelease_is_explicit(releases):
         REPOSITORY, target, trust=True, subdirectory="plugins/greeting"
     )
     assert installed["revision"] == metadata[1]["revision"]
-    pre = package.update("vis-greeter", target, trust=True, version="2.0.0rc1")
+    pre = package.update("example/extensions", target, trust=True, version="2.0.0rc1")
     assert pre["revision"] == metadata[2]["revision"]
-    restored = package.rollback("vis-greeter", target, trust=True, version="1.0.0")
+    restored = package.rollback(
+        "example/extensions", target, trust=True, version="1.0.0"
+    )
     assert restored["version"] == "1.0.0"
 
 
@@ -380,8 +511,8 @@ def test_rollback_keeps_local_edits_but_refetches_original_source(releases):
     )
     saved = (target / "vis-greeter").resolve()
     (saved / "src/greeter.py").write_text("LOCAL_EDIT = True")
-    package.update("vis-greeter", target, trust=True)
-    package.rollback("vis-greeter", target, trust=True)
+    package.update("example/extensions", target, trust=True)
+    package.rollback("example/extensions", target, trust=True)
     assert (saved / "src/greeter.py").read_text() == "LOCAL_EDIT = True"
     assert '"1.0.0"' in (target / "vis-greeter/src/greeter.py").read_text()
 
@@ -417,7 +548,7 @@ def test_failed_updates_leave_the_current_package_and_receipt_intact(
         )
         monkeypatch.setattr(owner, attribute, fail)
     with pytest.raises(ValueError):
-        package.update("vis-greeter", target, trust=True)
+        package.update("example/extensions", target, trust=True)
     assert (target / "vis-greeter").resolve() == active
     assert (active.parent / "receipt.json").read_bytes() == receipt
     assert len(list(active.parent.parent.iterdir())) == 1
@@ -440,21 +571,23 @@ def test_version_lookup_and_lifecycle_fail_closed(releases, monkeypatch):
     )
     active = (target / "vis-greeter").resolve()
     with pytest.raises(ValueError, match="No previous"):
-        package.rollback("vis-greeter", target, trust=True)
+        package.rollback("example/extensions", target, trust=True)
     for operation in (package.update, package.rollback):
         with pytest.raises(ValueError, match="trust"):
-            operation("vis-greeter", target)
+            operation("example/extensions", target)
     with pytest.raises(ValueError, match="older"):
-        package.rollback("vis-greeter", target, trust=True, version="1.1.0")
-    package.update("vis-greeter", target, trust=True)
+        package.rollback("example/extensions", target, trust=True, version="1.1.0")
+    package.update("example/extensions", target, trust=True)
     with pytest.raises(ValueError, match="rollback"):
-        package.update("vis-greeter", target, trust=True, version="1.0.0")
-    unchanged = package.update("vis-greeter", target, trust=True)
+        package.update("example/extensions", target, trust=True, version="1.0.0")
+    unchanged = package.update("example/extensions", target, trust=True)
     assert "Already installed" in unchanged["next"]
     monkeypatch.setattr(
         package, "_catalog", lambda *_: (_ for _ in ()).throw(ValueError("offline"))
     )
-    assert package.rollback("vis-greeter", target, trust=True)["version"] == "1.0.0"
+    assert (
+        package.rollback("example/extensions", target, trust=True)["version"] == "1.0.0"
+    )
     assert active.exists()
 
 
@@ -463,8 +596,8 @@ def test_local_source_links_and_unmanaged_directories_are_never_replaced(tmp_pat
     target = tmp_path / "installed"
     package.install(str(source), target, trust=True)
     for operation in (package.update, package.rollback):
-        with pytest.raises(ValueError, match="local source"):
-            operation("vis-greeter", target, trust=True)
+        with pytest.raises(ValueError, match="No managed GitHub installation"):
+            operation("example/extensions", target, trust=True)
     with pytest.raises(ValueError, match="version"):
         package.install(str(source), target, trust=True, version="1.0.0")
     assert (target / "vis-greeter").resolve() == source
@@ -511,7 +644,7 @@ def test_changed_installation_is_not_overwritten_after_network_preparation(
 
     monkeypatch.setattr(package, "_checkout", replace_during_fetch)
     with pytest.raises(ValueError, match="local source"):
-        package.update("vis-greeter", target, trust=True)
+        package.update("example/extensions", target, trust=True)
     assert (target / "vis-greeter").resolve() == target / "user-source"
 
 
@@ -565,7 +698,7 @@ def test_prerelease_only_needs_explicit_selection_and_update_never_downgrades(re
     metadata.append(
         {**metadata[0], "version": "1.1.0", "revision": "a" * 40, "prerelease": False}
     )
-    result = package.update("vis-greeter", target, trust=True)
+    result = package.update("example/extensions", target, trust=True)
     assert result["revision"] == installed["revision"]
     assert "no changes" in result["next"]
 

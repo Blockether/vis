@@ -239,6 +239,17 @@
 
 (defdescribe
   extension-version-commands-test
+  (it "prints the repository slug rather than the Python distribution name"
+      (let [lines (atom [])]
+        (with-redefs [main/stdout! #(swap! lines conj %)]
+          (#'main/print-package-result
+           "Installed"
+           {"name" "vis-spel"
+            "repository" "blockether/spel"
+            "version" "0.1.3"
+            "mode" "github"
+            "next" "/reload"}))
+        (expect (= ["Installed blockether/spel@0.1.3 (github). /reload"] @lines))))
   (it "passes version selection to install without losing the project scope"
       (let [calls (atom [])]
         (with-redefs [python-extensions/install-package!
@@ -246,9 +257,9 @@
                         (swap! calls conj [source options])
                         {"name" "vis-greeter" "version" "1.2.0" "mode" "github" "next" "/reload"})]
           (with-out-str (commandline/dispatch! (#'main/root-command)
-                                               ["vis-agent" "extension" "install"
-                                                "https://github.com/example/greeting" "--version"
-                                                "1.2.0" "--trust" "--project"])))
+                                               ["vis-agent" "extension" "install" "example/greeting"
+                                                "--version" "1.2.0" "--trust" "--project"])))
+        (expect (= "example/greeting" (get-in @calls [0 0])))
         (expect (= "1.2.0" (get-in @calls [0 1 :version])))
         (expect (= (str (System/getProperty "user.dir") "/.vis/extensions")
                    (get-in @calls [0 1 :directory])))))
@@ -257,7 +268,7 @@
         (with-redefs [main/stdout! #(swap! lines conj %)
                       python-extensions/package-versions
                       (fn [source options]
-                        (expect (= "vis-greeter" source))
+                        (expect (= "example/extensions" source))
                         (expect (= "plugins/greeting" (:subdirectory options)))
                         {"installed" "1.0.0"
                          "latest" "1.2.0"
@@ -265,8 +276,8 @@
                          "releases" [{"version" "1.2.0" "revision" (apply str (repeat 40 "a"))}]})]
 
           (commandline/dispatch! (#'main/root-command)
-                                 ["vis-agent" "extension" "versions" "vis-greeter" "--subdirectory"
-                                  "plugins/greeting"]))
+                                 ["vis-agent" "extension" "versions" "example/extensions"
+                                  "--subdirectory" "plugins/greeting"]))
         (expect (some #(str/includes? % "Update available") @lines))
         (expect (some #(str/includes? % "1.2.0") @lines))))
   (it "passes explicit trust, version and project to lifecycle operations"
@@ -279,12 +290,14 @@
           (with-redefs [python-extensions/update-package! operation
                         python-extensions/rollback-package! operation]
 
-            (with-out-str (commandline/dispatch! (#'main/root-command)
-                                                 ["vis-agent" "extension" command "vis-greeter"
-                                                  "--trust" "--version" "1.2.0" "--project"])))
-          (expect (= [["vis-greeter"
+            (with-out-str (commandline/dispatch!
+                            (#'main/root-command)
+                            ["vis-agent" "extension" command "example/extensions" "--trust"
+                             "--version" "1.2.0" "--project" "--subdirectory" "plugins/greeting"])))
+          (expect (= [["example/extensions"
                        {:trust true
                         :version "1.2.0"
+                        :subdirectory "plugins/greeting"
                         :directory (str (System/getProperty "user.dir") "/.vis/extensions")}]]
                      @calls))))))
 

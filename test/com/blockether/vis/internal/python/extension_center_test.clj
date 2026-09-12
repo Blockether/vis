@@ -240,23 +240,21 @@
                            ;; and remote transport are replaced; discovery and trusted workers are real.
                            #'python-runtime/ensure-project! (constantly packages)}
             (fn []
-              (is (= "1.0.0"
-                     (get (pyx/install-package! "https://github.com/example/extensions" options)
-                          "version")))
+              (is (= "1.0.0" (get (pyx/install-package! "example/extensions" options) "version")))
               (reload-release)
               (is (= "1.0.0" (active-version)))
-              (let [status (pyx/package-versions "vis-release-fixture" {:directory directory})]
+              (let [status (pyx/package-versions "Example/Extensions" {:directory directory})]
                 (is (= "1.0.0" (get status "installed")))
                 (is (= "1.1.0" (get status "latest")))
                 (is (true? (get status "update_available"))))
               (is (= "1.1.0"
-                     (get (pyx/update-package! "vis-release-fixture" (dissoc options :version))
+                     (get (pyx/update-package! "example/extensions" (dissoc options :version))
                           "version")))
               (is (= "1.0.0" (active-version)) "Installed code changes only after reload")
               (reload-release)
               (is (= "1.1.0" (active-version)))
               (is (= "1.0.0"
-                     (get (pyx/rollback-package! "vis-release-fixture" (dissoc options :version))
+                     (get (pyx/rollback-package! "example/extensions" (dissoc options :version))
                           "version")))
               (is (= "1.1.0" (active-version)))
               (reload-release)

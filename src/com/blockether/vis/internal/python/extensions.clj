@@ -1856,16 +1856,16 @@
                       :vis_version (package-version)}))
 
 (defn package-versions
-  "List approved releases and update availability for a repository or installed name."
+  "List approved releases and update availability for a GitHub repository slug or URL."
   [source {:keys [subdirectory directory]}]
-  (package-operation "versions"
-                     {:source source :subdirectory (or subdirectory "") :directory directory}))
+  (package-operation "versions" {:source source :subdirectory subdirectory :directory directory}))
 
 (defn update-package!
   "Explicitly activate a newer approved source snapshot; dependencies prepare on reload."
-  [name {:keys [trust version directory]}]
+  [source {:keys [trust subdirectory version directory]}]
   (package-operation "update"
-                     {:name name
+                     {:source source
+                      :subdirectory subdirectory
                       :directory directory
                       :trust (boolean trust)
                       :version version
@@ -1873,9 +1873,10 @@
 
 (defn rollback-package!
   "Restore a previous pinned source or an explicitly selected older approved release."
-  [name {:keys [trust version directory]}]
+  [source {:keys [trust subdirectory version directory]}]
   (package-operation "rollback"
-                     {:name name
+                     {:source source
+                      :subdirectory subdirectory
                       :directory directory
                       :trust (boolean trust)
                       :version version

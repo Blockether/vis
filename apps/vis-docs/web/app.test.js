@@ -92,8 +92,12 @@ test('every extension uses its GitHub owner/repository as its catalog name', asy
   expect($('#github-owner').textContent).toBe(item.owner);
   expect($('#github-owner').href).toBe('https://github.com/' + item.owner);
   expect($('#detail').textContent).toContain('Python package');
-  for (const command of ['versions', 'update', 'rollback'])
-    expect($('#detail').textContent).toContain(`vis-agent extension ${command} '${item.name}'`);
+  for (const command of ['versions', 'update', 'rollback']) {
+    expect($('#detail').textContent).toContain(
+      `vis-agent extension ${command} '${item.repository.toLowerCase()}' --subdirectory '${item.subdirectory}'`,
+    );
+    expect($('#detail').textContent).not.toContain(`vis-agent extension ${command} '${item.name}'`);
+  }
 });
 
 test('sort controls affect real results and persist when the search form is submitted', async () => {
@@ -243,7 +247,9 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   );
   expect($('meta[name="description"]').content).toBe(item.description);
   expect($('#install-command').textContent).toBe(installCommand(item));
-  expect(installCommand(item)).toContain("--subdirectory 'extensions/greeting'");
+  expect(installCommand(item)).toBe(
+    "vis-agent extension install 'example/extension-examples' --subdirectory 'extensions/greeting' --version '1.0.0' --trust",
+  );
   expect(installCommand(item)).toContain("--version '1.0.0'");
   expect(installCommand(item)).not.toMatch(/registry|zip/i);
   expect(installCommand({ ...item, subdirectory: "tools/O'Reilly" })).toContain(

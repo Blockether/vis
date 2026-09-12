@@ -54,12 +54,12 @@ def project_subdirectory(value=""):
 
 
 def github_repository(value):
-    """Accept only an HTTPS GitHub owner/repository URL, without credentials or redirects."""
+    """Accept a GitHub owner/repository slug or HTTPS repository URL, without credentials."""
     if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
-        raise ValueError(
-            "Use a GitHub repository URL: https://github.com/owner/repository"
-        )
-    parts = urlsplit(value)
+        raise ValueError("Use a GitHub owner/repository slug or HTTPS repository URL")
+    parts = urlsplit(
+        value if value.startswith("https://") else "https://github.com/" + value
+    )
     path = parts.path.rstrip("/").removesuffix(".git")
     if (
         parts.scheme != "https"
@@ -72,9 +72,9 @@ def github_repository(value):
         or path.rsplit("/", 1)[-1] in {".", ".."}
     ):
         raise ValueError(
-            "Use a GitHub repository URL, not a file or tree URL; set the project folder separately"
+            "Use a GitHub owner/repository slug or HTTPS repository URL; set the project folder separately"
         )
-    return "https://github.com" + path
+    return "https://github.com" + path.lower()
 
 
 def manifest_metadata(text, vis_version=None, python_version=None):
@@ -390,26 +390,60 @@ def _managed(directory, name):
     return snapshot, record
 
 
-def versions(source, subdirectory="", directory=None):
-    """List approved releases and update availability for a repository or installed name."""
-    installed = None
-    if not source.startswith("https://"):
-        if directory is None:
-            raise ValueError(
-                "Use a GitHub repository URL or an installed extension name"
-            )
-        _, installed = _managed(Path(directory).expanduser().resolve(), source)
-        source, subdirectory = installed["repository_url"], installed["subdirectory"]
+def _installed_repository(directory, repository, subdirectory=None, required=True):
+    """Resolve active managed receipts by repository and folder, never by package basename."""
+    directory = Path(directory).expanduser().resolve()
+    matches = []
+    for store in (directory / ".versions").glob("*"):
+        destination = directory / store.name
+        if not destination.is_symlink():
+            continue
+        project = destination.resolve()
+        if project.name != "project" or project.parent.parent != store.resolve():
+            continue
+        snapshot, record = _managed(directory, store.name)
+        if github_repository(record.get("repository_url")) == repository and (
+            subdirectory is None
+            or project_subdirectory(record.get("subdirectory", "")) == subdirectory
+        ):
+            matches.append((snapshot, record))
+    if len(matches) > 1:
+        raise ValueError(
+            "Multiple installed extensions from this repository; choose --subdirectory"
+        )
+    if matches:
+        return matches[0]
+    if required:
+        raise ValueError(
+            "No managed GitHub installation for this repository and folder in the selected scope; "
+            "local source links and unmanaged directories are never replaced"
+        )
+    return None, None
+
+
+def versions(source, subdirectory=None, directory=None):
+    """List approved releases for a repository slug or URL, including its installed version.
+
+    With no folder, use the sole installed project from this repository in the
+    selected scope, or the repository root when it is not installed.
+    """
     repository = github_repository(source)
-    subdirectory = project_subdirectory(subdirectory)
-    releases = _releases(repository, subdirectory)
+    folder = project_subdirectory(subdirectory) if subdirectory is not None else None
+    installed = None
+    if directory is not None:
+        _, installed = _installed_repository(
+            directory, repository, folder, required=False
+        )
+    if folder is None:
+        folder = installed["subdirectory"] if installed else ""
+    releases = _releases(repository, folder)
     try:
         latest = _select(releases)["version"]
     except ValueError:
         latest = None
     return {
         "repository_url": repository,
-        "subdirectory": subdirectory,
+        "subdirectory": folder,
         "installed": installed["version"] if installed else None,
         "latest": latest,
         "update_available": bool(
@@ -533,6 +567,10 @@ def _admit(
             lock.unlink()
     return {
         "name": metadata["name"],
+        "repository": repository.removeprefix("https://github.com/")
+        if repository
+        else None,
+        "subdirectory": subdirectory,
         "version": metadata["version"],
         "path": str(destination),
         "mode": "github" if repository else "source",
@@ -565,22 +603,33 @@ def install(
         raise ValueError("Choose --version or --revision, not both")
     path = Path(source).expanduser()
     local = path.is_dir() or (path.is_file() and path.name == "pyproject.toml")
+    try:
+        source = github_repository(source)
+        local = False
+    except ValueError:
+        if not local:
+            raise
     release = None
     if local and version is not None:
         raise ValueError(
             "version applies only to a GitHub repository, not a local directory"
         )
     if not local and not revision:
-        release = _select(_releases(github_repository(source), subdirectory), version)
+        release = _select(_releases(source, subdirectory), version)
         revision = release["revision"]
     return _admit(source, directory, subdirectory, revision, vis_version, release)
 
 
-def update(name, directory, trust=False, version=None, vis_version=None):
-    """Explicitly replace a managed package with an approved newer stable or selected release."""
+def update(
+    source, directory, trust=False, version=None, vis_version=None, subdirectory=None
+):
+    """Update a managed repository slug or URL; select a folder when several are installed."""
     _trust(trust)
     directory = Path(directory).expanduser().resolve()
-    active, current = _managed(directory, name)
+    repository = github_repository(source)
+    folder = project_subdirectory(subdirectory) if subdirectory is not None else None
+    active, current = _installed_repository(directory, repository, folder)
+    name = current["name"]
     release = _select(
         _releases(current["repository_url"], current["subdirectory"]), version
     )
@@ -592,6 +641,8 @@ def update(name, directory, trust=False, version=None, vis_version=None):
     if older or release["revision"] == current["revision"]:
         return {
             "name": name,
+            "repository": repository.removeprefix("https://github.com/"),
+            "subdirectory": current["subdirectory"],
             "version": current["version"],
             "mode": "github",
             "revision": current["revision"],
@@ -613,15 +664,20 @@ def update(name, directory, trust=False, version=None, vis_version=None):
     )
 
 
-def rollback(name, directory, trust=False, version=None, vis_version=None):
-    """Restore the previous pinned source, or select an older approved catalog version.
+def rollback(
+    source, directory, trust=False, version=None, vis_version=None, subdirectory=None
+):
+    """Restore a managed repository slug or URL's previous pinned source or an older release.
 
     Source is re-fetched and validated before the atomic pointer change. Previous
     snapshots are retained, including local edits; dependencies are resolved on /reload.
     """
     _trust(trust)
     directory = Path(directory).expanduser().resolve()
-    active, current = _managed(directory, name)
+    repository = github_repository(source)
+    folder = project_subdirectory(subdirectory) if subdirectory is not None else None
+    active, current = _installed_repository(directory, repository, folder)
+    name = current["name"]
     if version is not None:
         release = _select(
             _releases(current["repository_url"], current["subdirectory"]), version

@@ -101,6 +101,8 @@ and does not fetch sources, install dependencies or run extension code.
    ```
 
    The local checkout is linked, not copied. You may also pass its `pyproject.toml`.
+   Prefix a relative checkout path with `./` when it could look like `owner/repository`;
+   a bare repository slug always selects GitHub, even if a matching local directory exists.
    Omit `--project` only when you intend a global installation.
 
 2. Start Vis there, or run `/reload`. Vis prepares dependencies before registration.
@@ -115,9 +117,9 @@ of public GitHub projects. **Publishing an extension on PyPI is not required.**
 Review the selected version's source, manifest and dependencies before installing:
 
 ```bash
-vis-agent extension versions https://github.com/example/vis-greeter
-vis-agent extension install https://github.com/example/vis-greeter --version 1.2.0 --project --trust
-vis-agent extension install https://github.com/example/extensions --subdirectory tools/greeting --version 1.2.0 --project --trust
+vis-agent extension versions example/greeting
+vis-agent extension install example/greeting --version 1.2.0 --project --trust
+vis-agent extension install example/extensions --subdirectory tools/greeting --version 1.2.0 --project --trust
 ```
 
 Replace the example repository and version with an approved listing. In the Extension
@@ -133,8 +135,9 @@ Moving or deleting a GitHub tag cannot change an approved version's SHA.
 
 For source outside the catalog, use `--revision` with a reviewed full lowercase
 40-character commit SHA instead of `--version`. This deliberately bypasses catalog
-approval, not trust or manifest checks. Only HTTPS `github.com/owner/repository` URLs
-are accepted. Select a monorepo folder with `--subdirectory`, not a file or tree URL.
+approval, not trust or manifest checks. Use a GitHub `owner/repository` slug or its
+HTTPS `github.com/owner/repository` URL. Select a monorepo folder with `--subdirectory`,
+not a file or tree URL.
 
 GitHub installation stages and validates only the selected project before atomically
 activating a source snapshot. The catalog stores no source distributions. Submodules
@@ -143,14 +146,25 @@ dependency paths inside the selected project, within 4096 entries and 64 MiB.
 
 ### Check for updates and roll back
 
-Use the normalized installed package name, not the repository name:
+Use the GitHub `owner/repository` slug, such as `blockether/spel`, not the Python
+package name (`vis-spel`). Repository names are case-insensitive; project folders
+keep their case. A full HTTPS GitHub repository URL also works.
 
 ```bash
-vis-agent extension versions vis-greeter --project
-vis-agent extension update vis-greeter --project --trust
-vis-agent extension update vis-greeter --version 1.3.0 --project --trust
-vis-agent extension rollback vis-greeter --project --trust
-vis-agent extension rollback vis-greeter --version 1.1.0 --project --trust
+vis-agent extension versions blockether/spel --project
+vis-agent extension update blockether/spel --project --trust
+vis-agent extension update blockether/spel --version 0.1.3 --project --trust
+vis-agent extension rollback blockether/spel --project --trust
+vis-agent extension rollback blockether/spel --version 0.1.2 --project --trust
+```
+
+Vis finds the installed repository in the selected global or project scope. If you
+installed several extensions from that repository, add `--subdirectory` to select
+one; Vis refuses to guess. Use `--subdirectory .` to select its root project.
+Before installation, `versions` needs the folder shown in the catalog, for example:
+
+```bash
+vis-agent extension versions blockether/spel --subdirectory extensions/vis-spel
 ```
 
 `versions` shows the installed version, approved history, latest stable version and
@@ -166,9 +180,11 @@ Vis or use `/reload` to prepare dependencies and activate the code in running se
 Source rollback does not undo extension state, external side effects or dependency
 changes already made by a build backend. Review release notes before changing versions.
 
-Managed GitHub installations use a link in `.vis/extensions/` and retain source
-snapshots and receipts in its hidden `.versions/<package>/` directory. Previous
-snapshots preserve local edits but are not used as release source when rolling back.
+The Python manifest name is still used internally for installed links, dependencies
+and `.versions/<package>/` storage; it is not the GitHub command identifier. Managed
+GitHub installations use a link in `.vis/extensions/` and retain snapshots and receipts
+in that hidden directory. Previous snapshots preserve local edits but are not used
+as release source when rolling back.
 Do not edit receipts or delete snapshots you still need. Local development links and
 unmanaged directories are never replaced by `update` or `rollback`; use their source
 workflow instead. A pre-existing unmanaged GitHub copy must be preserved and removed
@@ -183,9 +199,9 @@ and catalog moderation; local installation and activation are separate steps.
 
 Extension Center displays each extension as lowercase `owner/repository`, using
 GitHub's repository owner rather than a package author or submitter-provided name.
-The project folder distinguishes packages in a monorepo. This catalog name is
-separate from `project.name`: keep the Python package name for installation,
-`versions`, `update`, `rollback` and package-prefixed release tags.
+The project folder distinguishes packages in a monorepo. Use this repository identity
+for `install`, `versions`, `update` and `rollback`. Keep `project.name` as the Python
+distribution name for dependency metadata, internal storage and package-prefixed release tags.
 
 1. Commit `pyproject.toml`, `extension.py`, required source and optional skills together
    in a public GitHub repository. Use a static `project.version`, and commit `uv.lock`
@@ -203,7 +219,7 @@ separate from `project.name`: keep the Python package name for installation,
 5. After approval, publish subsequent GitHub Releases in the same repository and folder.
    Scheduled discovery validates them and queues new versions for moderation without
    another submission form. The current approved version stays available during review.
-6. After approval, use `vis-agent extension versions` with the repository URL and optional
+6. After approval, use `vis-agent extension versions` with the repository slug and optional
    `--subdirectory` to confirm the available version and its reviewed commit SHA.
 
 Catalog releases use canonical `MAJOR.MINOR.PATCH`, optionally followed by `aN`, `bN`
