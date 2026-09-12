@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.2] - 2026-09-12
+
+Includes the reliability and complete Activity-history fixes for #210, #211 and #212 prepared for v0.2.1, whose Linux verification blocked publication.
+
+### Added
+- See iOS, desktop and TUI screenshots in the README and browse full-size galleries in the documentation.
+
+### Fixed
+- Keep terminal colour and title controls out of paged shell logs, including sequences split at byte boundaries, without changing raw log retention or cursors.
+- Provision pytest for project-runner regression tests in clean CI environments.
+- Align adjacent Activity result tables in Companion and TUI.
+
+### Changed
+- Use readable repository paths for extension pages and repository slugs for extension version, update and rollback commands.
+
 ## [v0.2.1] - 2026-09-12
 
 ### Fixed
