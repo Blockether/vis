@@ -310,6 +310,21 @@
     (throw (ex-info "Expected (arg) or (language, arg)."
                     {:type :language-surface/bad-args :got args}))))
 
+(defn- normalize-format-call
+  "Reject conflicting snippet/file modes before any formatter can write. Blank
+   targets must not turn explicit snippets into disk batches. Directory keys only
+   choose context; file/default calls retain their existing selectors."
+  [{:keys [opts payload] :as call}]
+  (if (str/blank? (str (get opts "code")))
+    call
+    (let [paths (get opts "paths")]
+      (when (some #(not (str/blank? (str %))) (if (sequential? paths) paths [paths]))
+        (throw (ex-info "format_code: use either nonblank `code` or `path`/`paths`, not both."
+                        {:type :language-surface/bad-args :selectors ["code" "path" "paths"]})))
+      (assoc call
+        :opts (dissoc opts "paths")
+        :payload (dissoc payload "paths")))))
+
 (defn- dispatch!
   "Run `capability`'s handler for the chosen language. `post` (default: the raw
    result) sees the CHOSEN handler alongside its result, so a caller can stamp
@@ -323,7 +338,9 @@
                 result)))
   ([env capability args post]
    (let [{:keys [opts payload]}
-         (parse-language-call args)
+         (cond-> (parse-language-call args)
+           (= :format-fn capability)
+           normalize-format-call)
 
          handler
          (choose-handler env capability opts)
@@ -524,7 +541,7 @@
       "full suite"))
 
 (defn format-code
-  "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Omit code/paths for default source paths recursively. python also takes ruff's own `line_length` and `config`."
+  "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Nonblank `code` and nonblank `path`/`paths` targets are mutually exclusive; conflicting selectors are rejected before any files change. Blank target selectors are ignored for explicit snippets. Omit code/paths for default source paths recursively. python also takes ruff's own `line_length` and `config`."
   [env & args]
   (dispatch! env :format-fn args))
 
@@ -632,8 +649,10 @@
        "`format_code(\"python\", {\"paths\": [\"src\"]})`. `language` leads the call and is optional: it is "
        "inferred from paths and workspace. `cwd` selects the project directory and defaults to the workspace "
        "root. `path` formats one file or directory; `paths` formats a list recursively, in place, and answers "
-       "per-file changes. `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
-       "all selectors to format the pack's default source paths. python also takes ruff's own knobs: "
+       "per-file changes. `code` formats one snippet and answers `changed` + char delta, NEVER the text. "
+       "Nonblank `code` and nonblank `path`/`paths` targets are mutually exclusive; conflicting selectors "
+       "are rejected before any files change. Blank target selectors are ignored for explicit snippets. "
+       "Omit all selectors to format the pack's default source paths. python also takes ruff's own knobs: "
        "`line_length` overrides the discovered config, `config` pins one file.")
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
@@ -642,7 +661,7 @@
               {:name "project" :note "alias of `cwd`"} {:name "project_root" :note "alias of `cwd`"}
               {:name "path" :note "one file or directory"}
               {:name "paths" :note "list of files or directories"}
-              {:name "code" :note "one snippet instead of `paths`"}
+              {:name "code" :note "one snippet instead of `path`/`paths`"}
               {:name "line_length" :note "python — overrides ruff config"}
               {:name "config" :note "python — pin one ruff config"}]
      :call {:lead-opt "language" :rest :always}

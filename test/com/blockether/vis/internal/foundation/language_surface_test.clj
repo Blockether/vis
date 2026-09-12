@@ -1,8 +1,11 @@
 (ns com.blockether.vis.internal.foundation.language-surface-test
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
+            [com.blockether.vis.internal.language.clojure.core :as clojure-language]
+            [com.blockether.vis.internal.language.python.ruff :as python-format]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
@@ -20,6 +23,185 @@
    :jail-policy-fn (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")])
                                 :net-enabled? false})
    :extensions (atom [{:ext/name "fake-clj" :ext/language-tools handlers}])})
+
+(defdescribe
+  format-selector-test
+  (it "refuses mixed snippet and file selectors before handler dispatch"
+      (doseq [language
+              ["clojure" "python"]
+
+              selectors
+              [{"path" "src"} {"paths" ["src"]} {"path" "src" "paths" ["test"]}
+               {"path" "" "paths" [" " "src"]} {"paths" [nil "" " \t" "src"]} {"paths" "src"}]
+
+              :let [code
+                    "snippet contents must not appear in the error"
+
+                    payload
+                    (assoc selectors "code" code)]
+              args
+              [[payload] [(assoc payload "language" language)] [language payload]]]
+
+        (let [calls
+              (atom 0)
+
+              env
+              (fake-env [{:language language
+                          :format-fn (fn [_ _]
+                                       (swap! calls inc)
+                                       {:success? true})}])
+
+              error
+              (try (apply language-surface/format-code env args)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect (= :language-surface/bad-args (:type (ex-data error))))
+          (expect (zero? @calls))
+          (expect (not (str/includes? (str (ex-message error) (ex-data error)) code))))))
+  (it "reports conflicting selectors even when no language handler is available"
+      (expect
+        (= :language-surface/bad-args
+           (try (language-surface/format-code (fake-env []) "missing" {"code" "x = 1" "path" "src"})
+                nil
+                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+  (it "preserves blank code defaults and normalized file targets"
+      (doseq [language
+              ["clojure" "python"]
+
+              code-opts
+              [{} {"code" nil} {"code" ""} {"code" " \n\t"}]
+
+              [selectors normalized]
+              [[{"path" "src"} {"paths" ["src"]}] [{"paths" ["src"]} {"paths" ["src"]}]]
+
+              :let [payload
+                    (merge code-opts selectors)
+
+                    expected
+                    (merge code-opts normalized)]
+              [args expected]
+              [[[(assoc payload "language" language)] (assoc expected "language" language)]
+               [[language payload] expected]]]
+
+        (let [seen
+              (atom nil)
+
+              env
+              (fake-env [{:language language
+                          :format-fn (fn [_ arg]
+                                       (reset! seen arg)
+                                       {:success? true})}])]
+
+          (expect (:success? (apply language-surface/format-code env args)))
+          (expect (= expected @seen)))))
+  (it "removes blank file selectors from explicit snippet calls"
+      (doseq [language
+              ["clojure" "python"]
+
+              selectors
+              [{} {"path" nil} {"path" ""} {"paths" nil} {"paths" []} {"paths" " "}
+               {"paths" [nil "" " \t"]}]
+
+              :let [payload
+                    (assoc selectors "code" "  x = 1\n")
+
+                    expected
+                    {"code" "  x = 1\n"}]
+              [args expected]
+              [[[(assoc payload "language" language)] (assoc expected "language" language)]
+               [[language payload] expected]]]
+
+        (let [seen
+              (atom nil)
+
+              env
+              (fake-env [{:language language
+                          :format-fn (fn [_ arg]
+                                       (reset! seen arg)
+                                       {:success? true})}])]
+
+          (expect (:success? (apply language-surface/format-code env args)))
+          (expect (= expected @seen)))))
+  (it "keeps directory aliases usable as snippet configuration context"
+      (doseq [language
+              ["clojure" "python"]
+
+              directory-key
+              ["cwd" "root" "project" "project_root"]]
+
+        (let [seen
+              (atom nil)
+
+              env
+              (fake-env [{:language language
+                          :format-fn (fn [_ arg]
+                                       (reset! seen arg)
+                                       {:success? true})}])]
+
+          (expect (:success? (language-surface/format-code env
+                                                           language
+                                                           {"code" "x = 1"
+                                                            directory-key "projects/format"})))
+          (expect (= {"code" "x = 1" "cwd" "projects/format"} @seen)))))
+  (it "preserves positional source and no-selector default calls"
+      (doseq [language
+              ["clojure" "python"]
+
+              [args expected]
+              [[[] {}] [[{}] {}] [[language {}] {}] [["x = 1"] "x = 1"]
+               [[language "x = 1"] "x = 1"]]]
+
+        (let [seen
+              (atom nil)
+
+              env
+              (fake-env [{:language language
+                          :format-fn (fn [_ arg]
+                                       (reset! seen arg)
+                                       {:success? true})}])]
+
+          (expect (:success? (apply language-surface/format-code env args)))
+          (expect (= expected @seen)))))
+  (it "does not change the selector contract for linting"
+      (let [seen
+            (atom nil)
+
+            env
+            (fake-env [{:language "clojure"
+                        :lint-fn (fn [_ arg]
+                                   (reset! seen arg)
+                                   {:success? true})}])]
+
+        (expect (:success? (language-surface/lint-code env {"code" "(+ 1 2)" "path" "src"})))
+        (expect (= {"code" "(+ 1 2)" "paths" ["src"]} @seen)))))
+
+(defdescribe format-snippet-file-safety-test
+             ;; A blank singular path becomes [""], which used to select the Clojure disk
+             ;; batch even with explicit code. Exercise real backends in a disposable project.
+             (it
+               "never lets blank selectors turn a snippet into a disk format"
+               (doseq [[language handler extension original code]
+                       [["clojure" clojure-language/clj-format-fn ".clj" "(defn f [x]\n(+ x 1))\n"
+                         "(+ 1   2)"] ["python" python-format/py-format-fn ".py" "x=1\n" "y=2\n"]]]
+                 (let [directory (.toFile (java.nio.file.Files/createTempDirectory
+                                            "vis-format-selectors-"
+                                            (make-array java.nio.file.attribute.FileAttribute 0)))
+                       target (io/file directory (str "sample" extension))
+                       env (assoc (fake-env [{:language language :format-fn handler}])
+                             :workspace/root (str directory))]
+
+                   (try (spit target original)
+                        (doseq [selectors [{"path" nil} {"path" ""} {"paths" nil} {"paths" []}
+                                           {"paths" [""]} {"paths" [nil "" " \t"]}]
+                                :let [payload (assoc selectors "code" code)]
+                                args [[(assoc payload "language" language)] [language payload]]]
+
+                          (let [result (apply language-surface/format-code env args)]
+                            (expect (= original (slurp target)))
+                            (expect (:success? result))
+                            (expect (contains? (:result result) "chars"))))
+                        (finally (io/delete-file target true) (io/delete-file directory true)))))))
 
 (defdescribe
   language-surface-dispatch-test
