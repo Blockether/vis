@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.language.python.interpreter :as interp]
             [com.blockether.vis.internal.language.python.repl-manager :as repl]
             [com.blockether.vis.internal.activity.presenter-test :as activity-fixture]
+            [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
@@ -156,86 +157,84 @@
   (it "starts, evaluates, persists globals across evals, captures output + errors, stops"
       (when (has-python?)
         (let [dir (.getPath (tmp-dir))]
-          (try (expect (= "up" (get (repl/start! dir {:session-id test-session-id}) "status")))
+          (try (expect (= "up" (get (repl/start! test-session-id dir {}) "status")))
                ;; last expression's value is captured (REPL semantics)
-               (expect (= "2" (get (repl/eval! dir "1+1" 10000) "value")))
+               (expect (= "2" (get (repl/eval! test-session-id dir "1+1" 10000) "value")))
                ;; globals PERSIST across separate evals — a real session
-               (repl/eval! dir "x = 21" 10000)
-               (expect (= "42" (get (repl/eval! dir "x*2" 10000) "value")))
+               (repl/eval! test-session-id dir "x = 21" 10000)
+               (expect (= "42" (get (repl/eval! test-session-id dir "x*2" 10000) "value")))
                ;; stdout is captured, not leaked
-               (let [r (repl/eval! dir "print('hi')" 10000)]
+               (let [r (repl/eval! test-session-id dir "print('hi')" 10000)]
                  (expect (= "hi\n" (get r "out")))
                  (expect (get r "ok")))
                ;; an exception is captured, not thrown into Clojure
-               (let [r (repl/eval! dir "1/0" 10000)]
+               (let [r (repl/eval! test-session-id dir "1/0" 10000)]
                  (expect (false? (get r "ok")))
                  (expect (re-find #"ZeroDivisionError" (str (get r "exc")))))
-               (let [up (repl/status dir)]
+               (let [up (repl/status test-session-id dir)]
                  (expect (= "up" (get up "status")))
                  ;; ONE status shape for every language: a key rides only where
                  ;; it MEANS something
                  (expect (true? (get up "running")))
                  (expect (get up "pid")))
-               (repl/stop! dir)
-               (let [down (repl/status dir)]
+               (repl/stop! test-session-id dir)
+               (let [down (repl/status test-session-id dir)]
                  (expect (= "down" (get down "status")))
                  (expect (not (contains? down "running")))
                  (expect (not (contains? down "pid")))
                  (expect (not (contains? down "cmd"))))
-               (finally (repl/stop! dir))))))
+               (finally (repl/stop! test-session-id dir))))))
   ;; Regression, issue #repl-consistency: a second `repl_start` KILLED the live
   ;; Python process and spawned a new one, so the session's globals vanished while
   ;; the call reported plain success — where Clojure answered "already-running".
   ;; A live REPL is reused in EVERY language now, and the env it was started with
   ;; is part of its identity.
-  (it
-    "reuses a live REPL and refuses a start naming a different env"
-    (when (has-python?)
-      (let [dir (.getPath (tmp-dir))]
-        (try (let [first-start
-                   (repl/start! dir {:session-id test-session-id "env" {"VIS_REPL_MARK" "one"}})]
-               (expect (= "started" (get first-start "result")))
-               ;; the env rides by NAME + digest, never by value
-               (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
-               (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
-               ;; and it really reached the child
-               (expect (re-find
-                         #"one"
-                         (str (get (repl/eval! dir "import os; os.environ['VIS_REPL_MARK']" 10000)
-                                   "value"))))
-               (repl/eval! dir "vis_mark = 7" 10000)
-               (let [same (repl/start! dir
-                                       {:session-id test-session-id "env" {"VIS_REPL_MARK" "one"}})]
-                 (expect (= "already-running" (get same "result")))
-                 ;; SAME process — the state the session stands on survived
-                 (expect (= "7" (get (repl/eval! dir "vis_mark" 10000) "value"))))
-               (let [refused (try (repl/start! dir
-                                               {:session-id test-session-id
-                                                "env" {"VIS_REPL_MARK" "two"}})
-                                  nil
-                                  (catch clojure.lang.ExceptionInfo e e))]
-                 (expect (some? refused))
-                 (expect (= :py/repl-env-mismatch (:type (ex-data refused))))
-                 (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
-                 ;; the refusal names the KEY, never the value
-                 (expect (not (str/includes? (.getMessage refused) "two")))
-                 (expect (str/includes? (.getMessage refused) "repl_stop"))))
-             (finally (repl/stop! dir))))))
+  (it "reuses a live REPL and refuses a start naming a different env"
+      (when (has-python?)
+        (let [dir (.getPath (tmp-dir))]
+          (try (let [first-start (repl/start! test-session-id dir {"env" {"VIS_REPL_MARK" "one"}})]
+                 (expect (= "started" (get first-start "result")))
+                 ;; the env rides by NAME + digest, never by value
+                 (expect (= ["VIS_REPL_MARK"] (keys (get first-start "env"))))
+                 (expect (not= "one" (get (get first-start "env") "VIS_REPL_MARK")))
+                 ;; and it really reached the child
+                 (expect (re-find #"one"
+                                  (str (get (repl/eval! test-session-id
+                                                        dir
+                                                        "import os; os.environ['VIS_REPL_MARK']"
+                                                        10000)
+                                            "value"))))
+                 (repl/eval! test-session-id dir "vis_mark = 7" 10000)
+                 (let [same (repl/start! test-session-id dir {"env" {"VIS_REPL_MARK" "one"}})]
+                   (expect (= "already-running" (get same "result")))
+                   ;; SAME process — the state the session stands on survived
+                   (expect (= "7" (get (repl/eval! test-session-id dir "vis_mark" 10000) "value"))))
+                 (let [refused (try
+                                 (repl/start! test-session-id dir {"env" {"VIS_REPL_MARK" "two"}})
+                                 nil
+                                 (catch clojure.lang.ExceptionInfo e e))]
+                   (expect (some? refused))
+                   (expect (= :py/repl-env-mismatch (:type (ex-data refused))))
+                   (expect (= ["VIS_REPL_MARK"] (:env (ex-data refused))))
+                   ;; the refusal names the KEY, never the value
+                   (expect (not (str/includes? (.getMessage refused) "two")))
+                   (expect (str/includes? (.getMessage refused) "repl_stop"))))
+               (finally (repl/stop! test-session-id dir))))))
   ;; Regression, issue #123: a pinned `vis-agent python` command rejected `-u`,
   ;; but start still reported an unusable process as up and exposed its driver source.
   (it "fails startup when the child cannot complete the ping handshake"
       (let [dir (.getPath (tmp-dir))]
         (try (let [result (with-redefs [interp/detect-command
                                         (constantly ["sh" "-c" "printf 'not-json\\n'; sleep 30"])]
-                            (repl/start! dir {:session-id test-session-id}))]
+                            (repl/start! test-session-id dir {}))]
                (expect (= "failed" (get result "status")))
                (expect (re-find #"invalid response" (get result "message")))
                (expect (= "<vis python driver>" (last (get result "cmd"))))
                (expect (= :py/no-repl
-                          (try (repl/eval! dir "1" 1000)
+                          (try (repl/eval! test-session-id dir "1" 1000)
                                nil
                                (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
-             (finally (repl/stop! dir)))))
+             (finally (repl/stop! test-session-id dir)))))
   ;; Regression, issue #repl-consistency: a Python start that died read by
   ;; `error` / `stderr` / `exit_code` while Clojure's read by `message` /
   ;; `log_tail` / `exit`, so a failed start could not be read the same way twice.
@@ -243,7 +242,7 @@
       (let [dir (.getPath (tmp-dir))]
         (try (let [result (with-redefs [interp/detect-command
                                         (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
-                            (repl/start! dir {:session-id test-session-id}))]
+                            (repl/start! test-session-id dir {}))]
                (expect (= "failed" (get result "result")))
                (expect (= "failed" (get result "status")))
                (expect (string? (get result "message")))
@@ -253,11 +252,11 @@
                (expect (nil? (get result "error")))
                (expect (nil? (get result "stderr")))
                (expect (nil? (get result "exit_code"))))
-             (finally (repl/stop! dir)))))
+             (finally (repl/stop! test-session-id dir)))))
   (it "eval before start fails closed with a clear error"
       (let [dir (str (.getPath (tmp-dir)) "-never-started")]
         (expect (= :py/no-repl
-                   (try (repl/eval! dir "1" 1000)
+                   (try (repl/eval! test-session-id dir "1" 1000)
                         nil
                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
@@ -299,7 +298,7 @@
                           (mapv #(get % "text") (filter #(= "heading" (get % "type")) blocks))))
                (expect (= [code "hello\n" "warning\n" "{'answer': 42}"]
                           (mapv #(get % "text") (filter #(= "code" (get % "type")) blocks)))))
-             (finally (repl/stop! dir) (cleanup root)))))))
+             (finally (repl/stop! test-session-id dir) (cleanup root)))))))
 
 (defdescribe
   facade-test
@@ -322,7 +321,7 @@
                (let [r (core/py-repl-eval-fn env "3 * 7")]
                  (expect (:success? r))
                  (expect (= "21" (get-in r [:result "value"]))))
-               (finally (repl/stop! dir))))))
+               (finally (repl/stop! test-session-id dir))))))
   (it "shows a home-relative, retryable cwd when no REPL is running"
       (let [home
             (System/getProperty "user.home")
@@ -356,7 +355,180 @@
             (expect (= "up" (get-in (core/py-start-repl-fn env "status" nil) [:result "status"])))
             (core/py-start-repl-fn env "stop" nil)
             (expect (= "down" (get-in (core/py-start-repl-fn env "status" nil) [:result "status"])))
-            (finally (repl/stop! dir)))))))
+            (finally (repl/stop! test-session-id dir)))))))
+
+;; Regression, issue #208: sessions at one cwd must not share interpreter state
+;; or let a lifecycle/resource cleanup stop another session's Python process.
+(defn- with-session-repls
+  [f]
+  (let [root
+        (tmp-dir)
+
+        dir
+        (.getCanonicalPath root)
+
+        envs
+        (mapv (fn [_]
+                {:workspace/root dir :session-id (str (java.util.UUID/randomUUID))})
+              (range 2))]
+
+    (try (doseq [env envs]
+           (process-jail/register-session-jail!
+             (:session-id env)
+             (constantly {:roots-fn (constantly [dir]) :net-enabled? false :disabled? true})))
+         (apply f envs)
+         (finally (doseq [env envs]
+                    (resources/stop-all! (:session-id env))
+                    (core/py-start-repl-fn env "stop" nil)
+                    (process-jail/unregister-session-jail! (:session-id env)))
+                  (cleanup root)))))
+
+(defdescribe
+  session-isolation-test
+  (it
+    "isolates discovery, globals and explicit stop at the same canonical cwd"
+    (when (has-python?)
+      (with-session-repls
+        (fn [env-a env-b]
+          (let [a (:result (core/py-start-repl-fn env-a "start" nil))]
+            (expect (= "started" (get a "result")))
+            (core/py-repl-eval-fn env-a "session_mark = 'A'")
+            (expect (= "down"
+                       (get-in (core/py-start-repl-fn env-b "status" nil) [:result "status"])))
+            (expect (empty? (resources/list-resources (:session-id env-b))))
+            (expect (= :py/no-repl
+                       (try (core/py-repl-eval-fn env-b "session_mark")
+                            nil
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            (expect (= "not-managed"
+                       (get-in (core/py-start-repl-fn env-b "stop" nil) [:result "result"])))
+            (expect (= "'A'"
+                       (get-in (core/py-repl-eval-fn env-a "session_mark") [:result "value"])))
+            (let [b (:result (core/py-start-repl-fn env-b "start" {"cwd" "."}))
+                  reused (:result (core/py-start-repl-fn env-a "start" {"cwd" "."}))]
+
+              (expect (= "started" (get b "result")))
+              (expect (not= (get a "pid") (get b "pid")))
+              (expect (= "already-running" (get reused "result")))
+              (expect (= (get a "pid") (get reused "pid")))
+              (expect (= (get a "pid")
+                         (get (repl/status (:session-id env-a) (str (:workspace/root env-a) "/."))
+                              "pid")))
+              (expect (= (get a "id") (get reused "id")))
+              (expect (= "False"
+                         (get-in (core/py-repl-eval-fn env-b "'session_mark' in globals()")
+                                 [:result "value"])))
+              (core/py-repl-eval-fn env-b "session_mark = 'B'")
+              (expect (= "'A'"
+                         (get-in (core/py-repl-eval-fn env-a "session_mark") [:result "value"])))
+              (expect (= "stopped"
+                         (get-in (core/py-start-repl-fn env-a "stop" nil) [:result "result"])))
+              (expect (empty? (resources/list-resources (:session-id env-a))))
+              (expect (= (get b "pid")
+                         (get-in (core/py-start-repl-fn env-b "status" nil) [:result "pid"])))
+              (expect (= "'B'"
+                         (get-in (core/py-repl-eval-fn env-b "session_mark")
+                                 [:result "value"])))))))))
+  (it
+    "scopes resource stop and session teardown even when resource IDs match"
+    (when (has-python?)
+      (doseq [stop-mode [:resource :session]]
+        (with-session-repls
+          (fn [env-a env-b]
+            (let [opts {"id" "shared-repl-name"}
+                  a (:result (core/py-start-repl-fn env-a
+                                                    "start"
+                                                    (assoc opts "env" {"VIS_REPL_MARK" "A"})))
+                  b (:result (core/py-start-repl-fn env-b
+                                                    "start"
+                                                    (assoc opts "env" {"VIS_REPL_MARK" "B"})))
+                  sid-a (:session-id env-a)
+                  sid-b (:session-id env-b)]
+
+              (expect (not= (get a "pid") (get b "pid")))
+              (expect (= (get a "pid")
+                         (get (resources/get-resource sid-a "shared-repl-name") "pid")))
+              (expect (= (get b "pid")
+                         (get (resources/get-resource sid-b "shared-repl-name") "pid")))
+              (core/py-repl-eval-fn env-b "session_mark = 208")
+              (expect (= "'A'"
+                         (get-in (core/py-repl-eval-fn env-a
+                                                       "import os; os.environ['VIS_REPL_MARK']")
+                                 [:result "value"])))
+              (expect (= "'B'"
+                         (get-in (core/py-repl-eval-fn env-b
+                                                       "import os; os.environ['VIS_REPL_MARK']")
+                                 [:result "value"])))
+              (expect (= :stopped
+                         (:result (case stop-mode
+                                    :resource
+                                    (resources/stop! sid-a "shared-repl-name")
+
+                                    :session
+                                    (first (resources/stop-all! sid-a))))))
+              (expect (= "down"
+                         (get-in (core/py-start-repl-fn env-a "status" opts) [:result "status"])))
+              (expect (empty? (resources/list-resources sid-a)))
+              (expect (= (get b "pid")
+                         (get-in (core/py-start-repl-fn env-b "status" opts) [:result "pid"])))
+              (expect (= ["shared-repl-name"]
+                         (mapv #(get % "id") (resources/list-resources sid-b))))
+              (expect (= "208"
+                         (get-in (core/py-repl-eval-fn env-b "session_mark")
+                                 [:result "value"]))))))))))
+
+(defdescribe
+  session-failure-isolation-test
+  (it
+    "keeps another session usable after failed startup or protocol teardown"
+    (when (has-python?)
+      (doseq [failure-mode [:handshake :closed :protocol]]
+        (with-session-repls
+          (fn [env-a env-b]
+            (let [b (:result (core/py-start-repl-fn env-b "start" nil))]
+              (core/py-repl-eval-fn env-b "session_mark = 208")
+              (case failure-mode
+                :handshake
+                (let [failed (with-redefs [interp/detect-command
+                                           (constantly ["sh" "-c"
+                                                        "echo failed-start 1>&2; exit 3"])]
+                               (:result (core/py-start-repl-fn env-a "start" nil)))]
+                  (expect (= "failed" (get failed "result")))
+                  (expect (= 3 (get failed "exit"))))
+
+                (:closed :protocol)
+                (do
+                  (core/py-start-repl-fn env-a "start" nil)
+                  (let
+                    [error
+                     (try
+                       (core/py-repl-eval-fn
+                         env-a
+                         (case failure-mode
+                           :closed
+                           "import os; os._exit(0)"
+
+                           :protocol
+                           "import sys; sys.__stdout__.write('not-json\\n'); sys.__stdout__.flush()"))
+                       nil
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                    (expect (= (case failure-mode
+                                 :closed
+                                 :py/closed
+
+                                 :protocol
+                                 :py/protocol-error)
+                               (:type error)))
+                    (expect (= (:session-id env-a) (:session-id error))))))
+              (expect (= "down"
+                         (get-in (core/py-start-repl-fn env-a "status" nil) [:result "status"])))
+              (expect (= "not-managed"
+                         (get-in (core/py-start-repl-fn env-a "stop" nil) [:result "result"])))
+              (expect (= (get b "pid")
+                         (get-in (core/py-start-repl-fn env-b "status" nil) [:result "pid"])))
+              (expect (= "208"
+                         (get-in (core/py-repl-eval-fn env-b "session_mark")
+                                 [:result "value"]))))))))))
 
 (def ^:private activation-fn @#'core/activation-fn)
 
@@ -385,34 +557,37 @@
   (it "represents dicts / lists / sets as nested data"
       (when (has-python?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {:session-id test-session-id})
+          (try (repl/start! test-session-id dir {})
                (expect (= {"a" 1 "b" [2 3]}
-                          (get (repl/eval! dir "{'a': 1, 'b': [2,3]}" 10000) "data")))
-               (expect (= [1 2 3] (sort (get (repl/eval! dir "{3,1,2}" 10000) "data"))))
-               (expect (= "dict" (get (repl/eval! dir "{}" 10000) "type")))
-               (finally (repl/stop! dir))))))
+                          (get (repl/eval! test-session-id dir "{'a': 1, 'b': [2,3]}" 10000)
+                               "data")))
+               (expect (= [1 2 3]
+                          (sort (get (repl/eval! test-session-id dir "{3,1,2}" 10000) "data"))))
+               (expect (= "dict" (get (repl/eval! test-session-id dir "{}" 10000) "type")))
+               (finally (repl/stop! test-session-id dir))))))
   (it "represents a dataclass / custom object as a field map tagged with __type__"
       (when (has-python?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {:session-id test-session-id})
+          (try (repl/start! test-session-id dir {})
                (repl/eval!
+                 test-session-id
                  dir
                  "from dataclasses import dataclass\n@dataclass\nclass P:\n    x: int\n    y: int"
                  10000)
                (expect (= {"x" 3 "y" 4 "__type__" "P"}
-                          (get (repl/eval! dir "P(3,4)" 10000) "data")))
-               (finally (repl/stop! dir))))))
+                          (get (repl/eval! test-session-id dir "P(3,4)" 10000) "data")))
+               (finally (repl/stop! test-session-id dir))))))
   (it "an OPAQUE object stays LIVE + is described (type/repr/attrs), not lost"
       (when (has-python?)
         (let [dir (.getPath (tmp-dir))]
-          (try (repl/start! dir {:session-id test-session-id})
-               (let [d (get (repl/eval! dir "(i for i in range(3))" 10000) "data")]
+          (try (repl/start! test-session-id dir {})
+               (let [d (get (repl/eval! test-session-id dir "(i for i in range(3))" 10000) "data")]
                  (expect (get d "__opaque__"))
                  (expect (= "generator" (get d "__type__")))
                  (expect (string? (get d "__repr__"))))
                ;; bind it, then keep using it across evals — globals persist
-               (repl/eval! dir "g = (i*i for i in range(4))" 10000)
-               (expect (= "0" (get (repl/eval! dir "next(g)" 10000) "value")))
-               (expect (= "1" (get (repl/eval! dir "next(g)" 10000) "value")))
-               (expect (= "4" (get (repl/eval! dir "next(g)" 10000) "value")))
-               (finally (repl/stop! dir)))))))
+               (repl/eval! test-session-id dir "g = (i*i for i in range(4))" 10000)
+               (expect (= "0" (get (repl/eval! test-session-id dir "next(g)" 10000) "value")))
+               (expect (= "1" (get (repl/eval! test-session-id dir "next(g)" 10000) "value")))
+               (expect (= "4" (get (repl/eval! test-session-id dir "next(g)" 10000) "value")))
+               (finally (repl/stop! test-session-id dir)))))))

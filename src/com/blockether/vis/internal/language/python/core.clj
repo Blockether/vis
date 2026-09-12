@@ -75,7 +75,7 @@
                              :owner :ext/language-python
                              :language :python}
                             {:stop-fn (fn []
-                                        (repl/stop! dir))})
+                                        (repl/stop! session dir))})
     (vis/notify! (str "● python REPL up — " (.getName (io/file dir)))
                  :level :success
                  :ttl-ms 4000)))
@@ -86,9 +86,9 @@
   "REPL-lifecycle handler for Python. The facade's `repl_start` / `repl_status` /
    `repl_stop` verbs reach a pack as a positional `op` STRING plus opts
    `{dir, id, env}` — there is NO restart (stop, then start), and a `repl_start`
-   for a REPL that is already running REUSES it, refusing only when this call
-   named a different `env`. `op` arrives as a STRING from the model
-   (strings-only boundary) — dispatch on it, no keyword minting."
+   for a REPL already running in THIS session REUSES it, refusing only when this
+   call named a different `env`. Other sessions have independent interpreters.
+   `op` arrives as a STRING from the model — dispatch without keyword minting."
   [env op opts]
   (let [root
         (env-root env)
@@ -106,18 +106,18 @@
 
     (case op
       "status"
-      (extension/success {:result (assoc (repl/status dir) "id" (repl-resource-id dir id))})
+      (extension/success {:result (assoc (repl/status (:session-id env) dir)
+                                    "id" (repl-resource-id dir id))})
 
       "stop"
-      (let [r (assoc (repl/stop! dir) "id" (repl-resource-id dir id))]
+      (let [r (assoc (repl/stop! (:session-id env) dir) "id" (repl-resource-id dir id))]
         (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
         (extension/success {:result r}))
 
       "start"
-      (let [r (assoc (repl/start! dir
-                                  (assoc (or opts {})
-                                    "id" (repl-resource-id dir id)
-                                    :session-id (:session-id env)))
+      (let [r (assoc (repl/start! (:session-id env)
+                                  dir
+                                  (assoc (or opts {}) "id" (repl-resource-id dir id)))
                 "id" (repl-resource-id dir id))]
         (register-repl-resource! (:session-id env) dir r id)
         (extension/success {:result r}))
@@ -129,8 +129,8 @@
 
 (defn py-repl-eval-fn
   "repl_eval handler for Python. Accepts a code string or
-   `{code, dir, timeout_ms}`. Requires a running REPL for the dir, then evaluates
-   with globals persistent across calls."
+   `{code, dir, timeout_ms}`. Requires this session to own a running REPL for the
+   canonical dir, then evaluates with globals persistent across calls."
   [env arg]
   (let [root
         (env-root env)
@@ -147,7 +147,7 @@
         tmo
         (and (map? arg) (get arg "timeout_ms"))]
 
-    (when-not (= "up" (get (repl/status dir) "status"))
+    (when-not (= "up" (get (repl/status (:session-id env) dir) "status"))
       ;; Home-homogenized: the message reads `~/vis`, matching the REPL ids in
       ;; session["resources"] — and `resolve-dir` expands `~` back, so the cwd
       ;; shown can be pasted straight into the retry call.
@@ -157,11 +157,11 @@
                              "; call repl_start(\"python\", {\"cwd\": "
                              (pr-str shown)
                              "}) first")
-                        {:type :py/no-repl :dir dir}))))
+                        {:type :py/no-repl :session-id (:session-id env) :dir dir}))))
     ;; Carry the evaluated code back on the result (string key) so the shared
     ;; repl_eval op-card can surface the FORM section — the render fn sees only
     ;; the result map, not the call args.
-    (let [res (repl/eval! dir code tmo)]
+    (let [res (repl/eval! (:session-id env) dir code tmo)]
       (extension/success {:result (cond-> res
                                     (map? res)
                                     (assoc "code" code))}))))

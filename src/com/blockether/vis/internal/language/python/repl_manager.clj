@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.language.python.repl-manager
   "A MANAGED Python REPL: a persistent interpreter subprocess running a tiny
    line-framed eval server — one JSON request per line in, one JSON response per
-   line out. Globals persist across evals (real REPL state). One process per dir;
-   the `Process` handle is cached so teardown is clean."
+   line out. Globals persist across evals (real REPL state). One process per
+   session and canonical directory; the cached `Process` handle owns teardown."
   (:require [com.blockether.vis.internal.util :as util]
             [charred.api :as json]
             [clojure.java.io :as io]
@@ -105,8 +105,10 @@ def _main():
 _main()
 ")
 
-;; dir -> {:process ^Process :writer :reader :cmd :pid :started-at}
+;; [session-id canonical-dir] -> {:process ^Process :writer :reader :cmd :pid :started-at}
 (defonce ^:private processes (atom {}))
+
+(defn- repl-key [session-id dir] [session-id (.getCanonicalPath (io/file dir))])
 
 (defn- alive?
   [info]
@@ -164,10 +166,11 @@ _main()
    `status`, plus `running` / `pid` / `cmd` / `env` while the interpreter is up.
    A key appears only where it MEANS something — a down REPL has no pid and no
    command — which is the shape every language answers. `env` is the delta this
-   REPL was STARTED with, by NAME and digest only, and never a value."
-  [dir]
+   REPL was STARTED with, by NAME and digest only, and never a value. Lookup is
+   scoped to `session-id` and canonical `dir`."
+  [session-id dir]
   (let [info
-        (get @processes dir)
+        (get @processes (repl-key session-id dir))
 
         running?
         (alive? info)]
@@ -187,14 +190,65 @@ _main()
       (and running? (seq (:env-fingerprint info)))
       (assoc "env" (:env-fingerprint info)))))
 
-(declare request!)
+(defn- request!
+  [session-id dir req timeout-ms]
+  (let [info (get @processes (repl-key session-id dir))]
+    (when-not (alive? info)
+      (throw (ex-info "Python REPL is not running for this dir — repl_start(\"python\") first."
+                      {:type :py/no-repl :session-id session-id :dir dir})))
+    (locking info
+      (let [^BufferedWriter w (:writer info)
+            ^BufferedReader r (:reader info)]
+
+        (.write w (str (json/write-json-str req) "\n"))
+        (.flush w)
+        (let [fut (future (.readLine r))
+              line (deref fut timeout-ms ::timeout)]
+
+          (if (= line ::timeout)
+            (do (future-cancel fut)
+                (throw (ex-info "Python eval timed out"
+                                {:type :py/timeout :session-id session-id :dir dir})))
+            (if (nil? line)
+              (let [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
+                    exit-code (try (.exitValue ^Process (:process info)) (catch Throwable _ nil))]
+
+                (swap! processes dissoc (repl-key session-id dir))
+                (throw
+                  (ex-info
+                    "Python REPL closed the connection; start it again with repl_start(\"python\")."
+                    {:type :py/closed
+                     :session-id session-id
+                     :dir dir
+                     :stderr stderr
+                     :exit-code exit-code})))
+              (try
+                (json/read-json line)
+                (catch Throwable e
+                  (try (.destroyForcibly ^Process (:process info)) (catch Throwable _ nil))
+                  (try (.waitFor ^Process (:process info)) (catch Throwable _ nil))
+                  (let [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
+                        exit-code (try (.exitValue ^Process (:process info))
+                                       (catch Throwable _ nil))]
+
+                    (swap! processes dissoc (repl-key session-id dir))
+                    (throw
+                      (ex-info
+                        "Python REPL returned an invalid response and is dead; start it again with repl_start(\"python\")."
+                        {:type :py/protocol-error
+                         :session-id session-id
+                         :dir dir
+                         :raw-line line
+                         :stderr stderr
+                         :exit-code exit-code}
+                        e))))))))))))
 
 (defn- spawn!
-  "Replace whatever is cached for `dir` with a freshly spawned interpreter,
+  "Replace this session's cached process for `dir` with a fresh interpreter,
    stamped with the env delta it was started with. Only `start!` calls this: a
    LIVE REPL is reused, never respawned."
-  [dir {:keys [session-id] :as opts} env-fingerprint]
-  (when-let [old (get @processes dir)]
+  [session-id dir opts env-fingerprint]
+  (when-let [old (get @processes (repl-key session-id dir))]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let [cmd
         (vec (concat (interp/detect-command dir) ["-c" server-script]))
@@ -220,10 +274,10 @@ _main()
         shown-cmd
         (:cmd info)]
 
-    (swap! processes assoc dir info)
-    (try (let [ping (request! dir {"op" "ping"} 5000)]
+    (swap! processes assoc (repl-key session-id dir) info)
+    (try (let [ping (request! session-id dir {"op" "ping"} 5000)]
            (if (true? (get ping "pong"))
-             (assoc (status dir) "result" "started")
+             (assoc (status session-id dir) "result" "started")
              (throw (ex-info "Python REPL did not acknowledge its startup ping"
                              {:type :py/bad-handshake :response ping}))))
          (catch Throwable e
@@ -236,7 +290,7 @@ _main()
                  tail
                  (stderr-tail info)]
 
-             (swap! processes dissoc dir)
+             (swap! processes dissoc (repl-key session-id dir))
              (cond-> {"result" "failed"
                       "status" "failed"
                       "pid" (.pid p)
@@ -250,7 +304,8 @@ _main()
                (assoc "log_tail" tail)))))))
 
 (defn start!
-  "Start the managed Python REPL for `dir` — or REUSE the one already running.
+  "Start the managed Python REPL for this session and canonical `dir`, or reuse
+   its live process. Other sessions at the same directory have separate REPLs.
 
    A live REPL is NEVER silently replaced: its globals ARE the session's work,
    so a second start answers \"already-running\", exactly as every other Vis
@@ -263,86 +318,41 @@ _main()
    that differ, because there is no restart — stop it, then start it.
 
    Returns a STRING-keyed lifecycle map."
-  [dir opts]
+  [session-id dir opts]
   (let [id
         (or (get opts "id") (str "pyrepl:" dir))
 
         env-fingerprint
         (vis/env-fingerprint (vis/call-env-values (get opts "env")))]
 
-    (if (alive? (get @processes dir))
-      (let [refusal
-            (vis/env-mismatch-refusal id (:env-fingerprint (get @processes dir)) env-fingerprint)]
+    (if (alive? (get @processes (repl-key session-id dir)))
+      (let [refusal (vis/env-mismatch-refusal id
+                                              (:env-fingerprint (get @processes
+                                                                     (repl-key session-id dir)))
+                                              env-fingerprint)]
         (when refusal
           (throw (ex-info (:message refusal)
                           {:type :py/repl-env-mismatch :id id :env (:differing refusal)})))
-        (assoc (status dir) "result" "already-running"))
-      (spawn! dir opts env-fingerprint))))
-
-(defn- request!
-  [dir req timeout-ms]
-  (let [info (get @processes dir)]
-    (when-not (alive? info)
-      (throw (ex-info "Python REPL is not running for this dir — repl_start(\"python\") first."
-                      {:type :py/no-repl :dir dir})))
-    (locking info
-      (let [^BufferedWriter w (:writer info)
-            ^BufferedReader r (:reader info)]
-
-        (.write w (str (json/write-json-str req) "\n"))
-        (.flush w)
-        (let [fut (future (.readLine r))
-              line (deref fut timeout-ms ::timeout)]
-
-          (if (= line ::timeout)
-            (do (future-cancel fut)
-                (throw (ex-info "Python eval timed out" {:type :py/timeout :dir dir})))
-            (if (nil? line)
-              (let [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
-                    exit-code (try (.exitValue ^Process (:process info)) (catch Throwable _ nil))]
-
-                (swap! processes dissoc dir)
-                (throw
-                  (ex-info
-                    "Python REPL closed the connection; start it again with repl_start(\"python\")."
-                    {:type :py/closed :dir dir :stderr stderr :exit-code exit-code})))
-              (try
-                (json/read-json line)
-                (catch Throwable e
-                  (try (.destroyForcibly ^Process (:process info)) (catch Throwable _ nil))
-                  (try (.waitFor ^Process (:process info)) (catch Throwable _ nil))
-                  (let [stderr (try (slurp (:error-reader info)) (catch Throwable _ ""))
-                        exit-code (try (.exitValue ^Process (:process info))
-                                       (catch Throwable _ nil))]
-
-                    (swap! processes dissoc dir)
-                    (throw
-                      (ex-info
-                        "Python REPL returned an invalid response and is dead; start it again with repl_start(\"python\")."
-                        {:type :py/protocol-error
-                         :dir dir
-                         :raw-line line
-                         :stderr stderr
-                         :exit-code exit-code}
-                        e))))))))))))
+        (assoc (status session-id dir) "result" "already-running"))
+      (spawn! session-id dir opts env-fingerprint))))
 
 (defn eval!
-  "Evaluate `code` in the REPL for `dir`. Returns
+  "Evaluate `code` in this session's REPL for canonical `dir`. Returns
    {\"ok\" \"out\" \"err\" \"value\" \"data\" \"type\" \"exc\"} — `value` is the
    last expression's repr, `data` its JSON-safe STRUCTURED view (dicts/lists/
    dataclasses/numpy/pandas/objects, so the model can read real fields), `type`
    the class name."
-  [dir code timeout-ms]
-  (request! dir {"code" (str code)} (or timeout-ms 30000)))
+  [session-id dir code timeout-ms]
+  (request! session-id dir {"code" (str code)} (or timeout-ms 30000)))
 
 (defn stop!
-  "Stop THIS dir's managed interpreter. No-op-safe: with nothing managed the
-   result says `not-managed` rather than claiming a stop that never happened."
-  [dir]
-  (let [info (get @processes dir)]
+  "Stop this session's interpreter for canonical `dir`. No-op-safe: with nothing
+   managed the result says `not-managed`, not a stop that never happened."
+  [session-id dir]
+  (let [info (get @processes (repl-key session-id dir))]
     (when info
       (try (.destroy ^Process (:process info)) (catch Throwable _ nil))
       (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
            (catch Throwable _ nil)))
-    (swap! processes dissoc dir)
+    (swap! processes dissoc (repl-key session-id dir))
     {"result" (if info "stopped" "not-managed") "cwd" dir "status" "down"}))
