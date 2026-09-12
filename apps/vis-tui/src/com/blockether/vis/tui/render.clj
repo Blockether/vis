@@ -1838,7 +1838,9 @@
                             "Information"
 
                             "complain"
-                            "Complaint"))))
+                            "Complaint")))
+                   (when-let [thread-id (get-in message [:council "thread_id"])]
+                     (str " · Thread #" thread-id)))
               user? "You"
               :else agent-name)
 

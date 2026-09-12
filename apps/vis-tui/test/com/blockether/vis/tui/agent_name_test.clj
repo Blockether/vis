@@ -57,6 +57,22 @@
 
           [message label]
           [[{:role :user :request-kind :council :text "Actual peer request"} "Council"]
+           ;; Match Companion, including separators and the thread rather than entry id.
+           [{:role :user
+             :request-kind :council
+             :text "Actual peer request"
+             :council {"entry_id" 84 "thread_id" 42 "kind" "coordination"}}
+            "Council · Coordination · Thread #42"]
+           [{:role :user
+             :request-kind :council
+             :text "Actual peer request"
+             :council {"entry_id" 84 "thread_id" 42 "kind" "informational"}}
+            "Council · Information · Thread #42"]
+           [{:role :user
+             :request-kind :council
+             :text "Actual peer request"
+             :council {"entry_id" 84 "thread_id" 42 "kind" "complain"}}
+            "Council · Complaint · Thread #42"]
            [{:role :user :text "Council wake — literal user text"} "You"]
            [{:role :user :text "Hello"} "You"]
            [{:role :user :text "Explain Council wake — messages."} "You"]

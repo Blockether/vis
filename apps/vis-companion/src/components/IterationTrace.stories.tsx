@@ -459,7 +459,7 @@ export const Forking: Story = {
 };
 
 const councilRequest = {
-  entry_id: 831,
+  entry_id: 832,
   thread_id: 831,
   kind: 'coordination' as const,
   content: [
@@ -488,7 +488,9 @@ export const CouncilWake: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText('Council', { exact: true })).toBeVisible();
+    await expect(
+      canvas.getByText('Council · Coordination · Thread #831', { exact: true }),
+    ).toBeVisible();
     await expect(canvas.queryByText('You', { exact: true })).toBeNull();
     const toggle = await canvas.findByRole('button', { name: 'Show full message' });
     const body = canvasElement.querySelector('.line-clamp-4')!;

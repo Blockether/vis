@@ -3701,9 +3701,7 @@ export const UserMessage = memo(function UserMessage({
       <div className="mb-1 font-mono text-meta font-bold text-you-role">
         {requestKind === 'council' ? 'Council' : 'You'}
         {requestKind === 'council' && council && (
-          <span className="ml-2 font-normal text-dialog-hint">
-            {councilKindLabel[council.kind]} · #{council.entry_id}
-          </span>
+          ` · ${councilKindLabel[council.kind]} · Thread #${council.thread_id}`
         )}
       </div>
       <div

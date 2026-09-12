@@ -470,16 +470,23 @@ describe('request speaker labels', () => {
     expect(article.children[1].textContent).toBe(request);
   });
 
-  it.each(['coordination', 'informational', 'complain'] as const)('labels explicit Council %s', (kind) => {
+  // Both transcripts identify the thread, not the entry that woke the session.
+  it.each([
+    ['coordination', 'Coordination'],
+    ['informational', 'Information'],
+    ['complain', 'Complaint'],
+  ] as const)('labels explicit Council %s', (kind, label) => {
     const view = render(
       <UserMessage
         requestKind="council"
-        council={{ entry_id: 42, thread_id: 42, kind, content: 'Actual peer request' }}
+        council={{ entry_id: 84, thread_id: 42, kind, content: 'Actual peer request' }}
       >
-        Council notification #42. Read the attributed Council input.
+        Council notification #84. Read the attributed Council input.
       </UserMessage>,
     );
-    expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent('Council');
+    expect(view.container.querySelector('article')!.firstElementChild!.textContent).toBe(
+      `Council · ${label} · Thread #42`,
+    );
     expect(view.getByText('Actual peer request')).toBeInTheDocument();
     expect(view.queryByText(/Council notification/)).toBeNull();
   });
