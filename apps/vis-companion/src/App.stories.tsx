@@ -36,12 +36,17 @@ function SearchHeader() {
 
 export const Search: Story = {
   render: () => <SearchHeader />,
-  play: async ({ canvas }) => {
+  play: async ({ canvas, canvasElement }) => {
     const search = canvas.getByRole('searchbox', {
       name: 'Search sessions on every machine',
     });
     const reference = canvas.getByRole('textbox', { name: 'Reference form field' });
     await search.ownerDocument.fonts.ready;
+    const header = canvasElement.querySelector('header')!;
+    const frame = header.getBoundingClientRect();
+    const inset = window.innerWidth >= 640 ? 16 : 12;
+    await expect(header.firstElementChild!.getBoundingClientRect().width).toBe(frame.width);
+    await expect(frame.right - search.getBoundingClientRect().right).toBe(inset);
     await expect(search).toHaveFocus();
     // The header cannot introduce another height or type scale for the same input.
     await expect(search.getBoundingClientRect().height).toBe(
@@ -55,6 +60,11 @@ export const Search: Story = {
     await expect(search).toHaveFocus();
     await userEvent.keyboard('{Escape}');
     await expect(canvas.queryByRole('searchbox')).not.toBeInTheDocument();
+    // The logo and preferences follow the full-width bar, not a centered content cap.
+    const logo = canvas.getByLabelText('Vis').getBoundingClientRect();
+    const preferences = canvas.getByRole('button', { name: 'Open preferences' });
+    await expect(logo.left - frame.left).toBe(inset);
+    await expect(frame.right - preferences.getBoundingClientRect().right).toBe(inset);
     await userEvent.keyboard('/');
     await expect(canvas.getByRole('searchbox')).toHaveFocus();
   },

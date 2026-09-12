@@ -138,6 +138,28 @@ describe('the app bar', () => {
     view.restore();
   });
 
+  // Regression: a centered 1400px cap pulled the app controls away from wide-window edges.
+  it('keeps both app-bar states full width with symmetric safe-area gutters', async () => {
+    const view = await mount();
+    try {
+      const header = view.baseElement.querySelector('header')!;
+      const bar = header.firstElementChild!;
+      expect(bar).toHaveClass('w-full');
+      expect(bar.className).not.toMatch(/max-w-|mx-auto/);
+      expect(bar.className).toContain('sm:pl-[max(1rem,env(safe-area-inset-left))]');
+      expect(bar.className).toContain('sm:pr-[max(1rem,env(safe-area-inset-right))]');
+      await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+      expect(header.firstElementChild).toHaveClass('w-full');
+      expect(header.firstElementChild!.className).not.toMatch(/max-w-|mx-auto/);
+      expect(header.firstElementChild!.className).toContain(
+        'sm:pr-[max(1rem,env(safe-area-inset-right))]',
+      );
+    } finally {
+      view.unmount();
+      view.restore();
+    }
+  });
+
   // Regression, user report (paraphrased: make it ONE screen, with pairing behind a
   // single icon, so there are not two tabs): pairing owned a whole tab of a two-tab
   // bar for a verb used twice a year.

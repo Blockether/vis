@@ -1323,7 +1323,7 @@ export function Header({
           Leaving the page clears the query, so the list a human comes back to is the
           one they left rather than a silently filtered copy of it. */}
       {isSearching ? (
-        <div className="mx-auto flex h-12 w-full max-w-[1400px] items-stretch pr-[max(0.75rem,env(safe-area-inset-right))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+        <div className="flex h-12 w-full items-stretch pr-[max(0.75rem,env(safe-area-inset-right))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
           <BackButton label="Close search" onClick={onCloseSearch} />
           <HeaderSearchField
             inputRef={searchRef}
@@ -1335,7 +1335,7 @@ export function Header({
           />
         </div>
       ) : (
-        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+        <div className="flex w-full items-center gap-3 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))]">
           {/* THE MARK IS AN ILLUSTRATION, NOT A GLYPH. An eye outline, an iris, a
               pupil, a highlight, a smile and seven rays share the box, so barely a
               third of it is ink and it reads smaller than it measures; under 24px a
