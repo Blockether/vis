@@ -181,6 +181,21 @@
 
 ;; tables
 
+(defdescribe repeated-table-header-test
+             (it "retains bold header tags and a separator for each result group"
+                 (let [lines (layout/ast->lines [:ast
+                                                 [:table [:tr [:th "Detail"] [:th "Result"]]
+                                                  [:tr [:td "Kind"] [:td "ready"]]
+                                                  [:tr [:th "Detail"] [:th "Result"]]
+                                                  [:tr [:td "Last checked"] [:td "today"]]]]
+                                                60)]
+                   (expect (= [:table-sep :table-head :table-sep :table-row :table-sep :table-head
+                               :table-sep :table-row :table-sep]
+                              (mapv :block-tag lines)))
+                   (expect (apply =
+                             (map #(str/index-of % "Result")
+                                  (texts (filter #(= :table-head (:block-tag %)) lines))))))))
+
 (defdescribe table-test
              (it "renders IR tables as boxed rows with semantic table tags"
                  (let [lines

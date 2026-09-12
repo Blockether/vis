@@ -38,6 +38,40 @@ it('keeps embedded document headings and code inside their Activity step', () =>
   expect(screen.getAllByRole('group', { name: 'text code' })).toHaveLength(2);
 });
 
+it('shares a table layout without losing repeated headers or result groups', () => {
+  paintActivity({ activity: storyData.ACTIVITY_TABLES });
+  openEverySettledStep();
+  expect(screen.getAllByRole('table')).toHaveLength(1);
+  expect(screen.getAllByRole('columnheader', { name: 'Result' })).toHaveLength(3);
+  expect(screen.getByRole('table').querySelectorAll('tbody')).toHaveLength(3);
+  expect(screen.getAllByRole('cell', { name: 'informational' })).toHaveLength(3);
+  expect(screen.getByRole('cell', { name: /部署/ })).toBeTruthy();
+});
+
+it('keeps table schemas and intervening content separate, including empty groups', () => {
+  const activity = structuredClone(storyData.ACTIVITY_TABLES);
+  const table = activity.rows[0].presentation!.content![0];
+  if (table.type !== 'table') throw new Error('expected table fixture');
+  activity.rows[0].presentation!.content = [
+    table,
+    { ...table, rows: [] },
+    { type: 'text', text: 'Next result' },
+    { type: 'text', text: 'Still separate' },
+    table,
+    { ...table, columns: ['Metric', 'Result'] },
+    { ...table, columns: ['Result', 'Metric'] },
+    { type: 'table', columns: ['Detail', 'Result', 'State'], rows: [['Literal', '<tag>', '**ready**']] },
+  ];
+  paintActivity({ activity });
+  openEverySettledStep();
+  expect(screen.getAllByRole('table')).toHaveLength(5);
+  expect(screen.getByText('No rows').getAttribute('colspan')).toBe('2');
+  expect(screen.getByText('Next result')).toBeTruthy();
+  expect(screen.getByText('Still separate')).toBeTruthy();
+  expect(screen.getByRole('cell', { name: '<tag>' }).innerHTML).toBe('&lt;tag&gt;');
+  expect(screen.getByRole('cell', { name: '**ready**' }).textContent).toBe('**ready**');
+});
+
 /**
  * The engine's own Activity fixture, parsed. Protocol 7 ships it as a bare
  * projection on the form that produced it, not as a classified view, so the

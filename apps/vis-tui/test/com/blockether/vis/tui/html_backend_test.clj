@@ -189,6 +189,44 @@
               (is (not (str/includes? text "Value"))))
             (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))
 
+(defn activity-table-rows
+  "Repeated-table fixture shared with Companion; unequal labels and multiline Unicode."
+  []
+  (-> (io/resource "vis-contract/fixtures/activity-tables.json")
+      slurp
+      json/read-str
+      activity-contract/from-wire
+      :rows))
+
+(deftest activity-tables-html-native-parity-test
+  (doseq [cols [40 80 120]]
+    (with-open [html (activity-review-terminal cols 80)
+                terminal (DefaultVirtualTerminal. (TerminalSize. cols 80))
+                hs (doto (TerminalScreen. html) (.startScreen))
+                ts (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [rows (activity-table-rows)
+            expansions {:vis.channel-tui/expand-execution-details? true
+                        :vis.channel-tui/expand-all-details? true}]
+
+        (paint-activity-review! hs rows expansions)
+        (paint-activity-review! ts rows expansions)
+        (let [grid (cell-grid terminal cols 80)
+              headers (keep-indexed (fn [y row]
+                                      (let [text (apply str
+                                                   (map #(.getCharacterString
+                                                           ^com.googlecode.lanterna.TextCharacter %)
+                                                        row))]
+                                        (when-let [x (str/index-of text "Result")]
+                                          [x y])))
+                                    grid)]
+
+          (is (= (cell-grid html cols 80) grid))
+          (is (= 3 (count headers)))
+          (is (apply = (map first headers)))
+          (doseq [[x y] headers]
+            (is (.isBold ^com.googlecode.lanterna.TextCharacter (get-in grid [y x])))))))))
+
 (deftest repl-result-html-native-parity-test
   (let [rows (-> (io/resource "vis-contract/fixtures/activity-repl.json")
                  slurp

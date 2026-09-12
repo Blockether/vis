@@ -479,11 +479,33 @@ function ActivityText({
 /** The containing trace resolves only attachments belonging to this transcript. */
 export const ActivityAttachmentContext = createContext<((id: string) => ReactNode) | null>(null);
 
+/** Consecutive tables with the same schema share intrinsic column sizing, not data. */
+function activityContentRuns(content: ActivityContent[]): ActivityContent[][] {
+  const runs: ActivityContent[][] = [];
+  for (const block of content) {
+    const previous = runs.at(-1);
+    const first = previous?.[0];
+    if (
+      previous &&
+      block.type === 'table' &&
+      first?.type === 'table' &&
+      block.columns.length === first.columns.length &&
+      block.columns.every((column, index) => column === first.columns[index])
+    ) {
+      previous.push(block);
+    } else {
+      runs.push([block]);
+    }
+  }
+  return runs;
+}
+
 function ActivityBody({ content, running }: { content: ActivityContent[]; running: boolean }) {
   const attachment = useContext(ActivityAttachmentContext);
   return (
     <div className="grid min-w-0 gap-1" data-activity-content>
-      {content.map((block, index) => {
+      {activityContentRuns(content).map((blocks, index) => {
+        const block = blocks[0];
         switch (block.type) {
           case 'heading':
             return (
@@ -528,32 +550,44 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
                 tabIndex={0}
               >
                 <table className="w-full text-left text-meta text-code-result">
-                  <thead>
-                    <tr>
-                      {block.columns.map((column, at) => (
-                        <th
-                          key={at}
-                          scope="col"
-                          className="border-b border-edge px-2 py-1 font-bold"
-                        >
-                          {column}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {block.rows.map((row, at) => (
-                      <tr key={at}>
-                        {row.map((cell, col) => (
-                          <td key={col} className="whitespace-pre-wrap px-2 py-1">
-                            {cell}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
+                  {blocks.map(
+                    (table, group) =>
+                      table.type === 'table' && (
+                        <tbody key={group}>
+                          <tr>
+                            {table.columns.map((column, at) => (
+                              <th
+                                key={at}
+                                scope="col"
+                                className={`border-b border-edge px-2 pb-1 align-top font-bold ${group > 0 ? 'pt-2' : 'pt-1'}`}
+                              >
+                                {column}
+                              </th>
+                            ))}
+                          </tr>
+                          {table.rows.map((row, at) => (
+                            <tr key={at}>
+                              {row.map((cell, col) => (
+                                <td
+                                  key={col}
+                                  className="px-2 py-1 align-top whitespace-pre-wrap [overflow-wrap:anywhere]"
+                                >
+                                  {cell}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                          {!table.rows.length && (
+                            <tr>
+                              <td colSpan={table.columns.length} className="px-2 py-1 text-dialog-hint">
+                                No rows
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      ),
+                  )}
                 </table>
-                {!block.rows.length && <p className="text-meta text-dialog-hint">No rows</p>}
               </div>
             );
           case 'progress':

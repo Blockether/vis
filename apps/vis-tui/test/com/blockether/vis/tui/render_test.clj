@@ -49,6 +49,50 @@
           (let [idx (first (keep-indexed #(when (str/includes? (:line %2) heading) %1) entries))]
             (expect (str/blank? (:line (nth entries (dec idx))))))))))
 
+(defdescribe activity-table-alignment-test
+             (it "shares column widths across adjacent matching tables at every terminal size"
+                 (let [blocks (-> (io/resource "vis-contract/fixtures/activity-tables.json")
+                                  slurp
+                                  json/read-str
+                                  activity-contract/from-wire
+                                  :rows
+                                  first
+                                  :presentation
+                                  :content)]
+                   (doseq [width [40 80 120]]
+                     (let [entries (#'render/activity-content-entries blocks width 2 nil {} false)
+                           lines (map :line entries)
+                           headers (filter #(str/includes? % "Result") lines)]
+
+                       (expect (= 3 (count headers)))
+                       (expect (apply = (map #(str/index-of % "Result") headers)))
+                       (expect (= 1 (count (filter #(str/includes? % "┌") lines)))))))))
+
+(defdescribe activity-table-boundaries-test
+             (it "preserves empty groups and never combines different schemas or intervening text"
+                 (let [table
+                       {:type "table" :columns ["Detail" "Result"] :rows [["Kind" "informational"]]}
+
+                       blocks
+                       [table (assoc table :rows []) {:type "text" :text "Next result"}
+                        {:type "text" :text "Still separate"} table
+                        (assoc table :columns ["Metric" "Result"])
+                        (assoc table :columns ["Result" "Metric"])
+                        {:type "table"
+                         :columns ["Detail" "Result" "State"]
+                         :rows [["Literal" "<tag>" "**ready**"]]}]
+
+                       entries
+                       (#'render/activity-content-entries blocks 80 2 nil {} false)
+
+                       text
+                       (str/join "\n" (map :line entries))]
+
+                   (expect (= 5 (count (re-seq #"┌" text))))
+                   (expect (= 6 (count (re-seq #"Result" text))))
+                   (doseq [literal ["Next result" "Still separate" "<tag>" "**ready**"]]
+                     (expect (str/includes? text literal))))))
+
 (defdescribe repl-activity-result-test
              (it
                "renders the shared REPL fixture without transport tables at narrow and wide widths"

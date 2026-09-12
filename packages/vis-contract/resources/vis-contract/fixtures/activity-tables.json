@@ -1,0 +1,96 @@
+{
+  "state": "succeeded",
+  "counts": {
+    "running": 0,
+    "succeeded": 1,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "rows": [
+    {
+      "id": "table-results",
+      "sequence": 1,
+      "operation": "council.threads",
+      "presenter": "generic",
+      "signal": "observation",
+      "state": "succeeded",
+      "summary": "3 threads",
+      "duration_ms": 12,
+      "presentation": {
+        "headline": "Listed Council threads",
+        "summary": "3 threads",
+        "content": [
+          {
+            "type": "table",
+            "columns": [
+              "Detail",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Created at",
+                "1789027065163"
+              ],
+              [
+                "Kind",
+                "informational"
+              ],
+              [
+                "Title",
+                "Goal iteration budget scope"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "columns": [
+              "Detail",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Created at",
+                "1789027165163"
+              ],
+              [
+                "Kind",
+                "informational"
+              ],
+              [
+                "Title",
+                "Captured scope: goal tests plus code durations"
+              ]
+            ]
+          },
+          {
+            "type": "table",
+            "columns": [
+              "Detail",
+              "Result"
+            ],
+            "rows": [
+              [
+                "Last checked",
+                "1789027265163"
+              ],
+              [
+                "Kind",
+                "informational"
+              ],
+              [
+                "Title",
+                "Deployment review — 部署\nZażółć gęślą jaźń"
+              ]
+            ]
+          }
+        ]
+      },
+      "resources": [],
+      "evidence": []
+    }
+  ],
+  "omitted": {
+    "rows": 0,
+    "by_classification": {}
+  }
+}

@@ -5652,19 +5652,24 @@
 
     nil))
 
+(defn- activity-content-field
+  [block k]
+  (or (get block k) (get block (name k)) (get block (keyword (str/replace (name k) "_" "-")))))
+
 (defn- activity-content-entries
   "Render symbol content through the existing Markdown/table/code painter, set in
    from the paper's edge to `col`, the column its step's words start in.
+   Adjacent tables with identical headers share a grid, retaining each header.
    Media references use the durable artifact opener, not arbitrary paths or URLs."
   [blocks width col session-id artifacts running?]
   (vec
     (mapcat
-      (fn [index block]
-        (let [field
-              (fn [k]
-                (or (get block k)
-                    (get block (name k))
-                    (get block (keyword (str/replace (name k) "_" "-")))))
+      (fn [group]
+        (let [[index block]
+              (first group)
+
+              field
+              (partial activity-content-field block)
 
               kind
               (field :type)
@@ -5694,10 +5699,15 @@
 
                 "table"
                 [:ast {}
-                 (into [:table {} (into [:tr {}] (map #(vector :th {} %) (field :columns)))]
-                       (map (fn [row]
-                              (into [:tr {}] (map #(vector :td {} %) row)))
-                            (field :rows)))]
+                 (into [:table {}]
+                       (mapcat (fn [[_ table]]
+                                 (cons (into [:tr {}]
+                                             (map #(vector :th {} %)
+                                                  (activity-content-field table :columns)))
+                                       (map (fn [row]
+                                              (into [:tr {}] (map #(vector :td {} %) row)))
+                                            (activity-content-field table :rows))))
+                               group))]
 
                 "progress"
                 [:ast {}
@@ -5729,8 +5739,11 @@
                     (mapv #(update % :meta merge {:artifact artifact :session-id session-id})
                           entries)
                     entries))))
-      (range)
-      blocks)))
+      (partition-by (fn [[index block]]
+                      (if (= "table" (activity-content-field block :type))
+                        (activity-content-field block :columns)
+                        index))
+                    (map-indexed vector blocks)))))
 
 (defn- activity-group-row
   [id label rows children]

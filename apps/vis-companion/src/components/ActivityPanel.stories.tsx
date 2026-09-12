@@ -7,6 +7,7 @@ import {
   ACTIVITY_REPEATED_ARGUMENTS,
   ACTIVITY_RESULTS,
   ACTIVITY_REPL,
+  ACTIVITY_TABLES,
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_LONG_LABELS,
   ACTIVITY_LISTING,
@@ -369,6 +370,29 @@ export const TreeChanges: Story = {
 };
 
 export const SymbolContent: Story = { args: { activity: ACTIVITY_RICH } };
+
+/** Repeated headers and cells must share one column edge, including wrapped values. */
+export const AlignedTables: Story = {
+  args: { activity: ACTIVITY_TABLES },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: /Listed Council threads/ }));
+    const headers = canvas.getAllByRole('columnheader', { name: 'Result' });
+    await expect(headers).toHaveLength(3);
+    const left = headers[0].getBoundingClientRect().left;
+    for (const header of headers) {
+      await expect(header.getBoundingClientRect().left).toBe(left);
+    }
+    for (const row of canvasElement.querySelectorAll('tbody tr')) {
+      const cell = row.children[1];
+      await expect(cell.getBoundingClientRect().left).toBe(left);
+      await expect(getComputedStyle(cell).verticalAlign).toBe('top');
+    }
+    const body = canvasElement.querySelector('[data-activity-content]')!;
+    await expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth);
+  },
+};
 
 export const Listing: Story = {
   args: { activity: ACTIVITY_LISTING },

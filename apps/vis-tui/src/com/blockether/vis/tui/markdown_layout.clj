@@ -911,7 +911,8 @@
   "Render canonical `:table` IR as TUI table rows. Unlike the old plain
    projection fallback, this emits semantic header/separator/body line
    tags so the existing bubble painter can draw muted grid chrome,
-   bold headers, and answer/thinking-zone backgrounds.
+   bold headers, and answer/thinking-zone backgrounds. Repeated header rows
+   separate table groups while sharing the same column widths.
 
    Cell text WRAPS inside its column: when natural column widths exceed
    the bubble width they are shrunk (`shrink-table-widths`) and each
@@ -931,12 +932,12 @@
         (vec (node-children node))
 
         header?
-        (= :th
-           (some-> rows
-                   first
-                   node-children
-                   first
-                   node-tag))
+        (fn [row]
+          (= :th
+             (some-> row
+                     node-children
+                     first
+                     node-tag)))
 
         raw-rows
         (mapv (fn [tr]
@@ -1028,13 +1029,19 @@
             bottom
             (sep-line (table-border-line "└" "┴" "┘" widths) :table-sep)]
 
-        (if header?
-          (vec (concat [top]
-                       (data-lines (first norm-rows) :table-head)
-                       [mid]
-                       (mapcat #(data-lines % :table-row) (rest norm-rows))
-                       [bottom]))
-          (vec (concat [top] (mapcat #(data-lines % :table-row) norm-rows) [bottom])))))))
+        (vec (concat [top]
+                     (mapcat (fn [index row cells]
+                               (if (header? row)
+                                 (concat (when (and (pos? index)
+                                                    (not (header? (nth rows (dec index)))))
+                                           [mid])
+                                         (data-lines cells :table-head)
+                                         [mid])
+                                 (data-lines cells :table-row)))
+                             (range)
+                             rows
+                             norm-rows)
+                     [bottom]))))))
 
 (defn- tag-lines
   "Stamp every produced line with `:block-tag` so downstream adapters
