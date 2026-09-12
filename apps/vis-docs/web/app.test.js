@@ -2,7 +2,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
 import { mount, installCommand } from './app.js';
 import fixtures from './catalog.fixture.json';
-import { filters, filterURL, shellHTML } from './render.js';
+import { detailHTML, filters, filterURL, previewHTML, shellHTML } from './render.js';
 import { readFileSync } from 'node:fs';
 const item = fixtures.at(-1);
 const tick = async () => {
@@ -91,12 +91,28 @@ test('every extension uses its GitHub owner/repository as its catalog name', asy
   expect($('#detail h1').textContent).toBe(item.repository.toLowerCase());
   expect($('#github-owner').textContent).toBe(item.owner);
   expect($('#github-owner').href).toBe('https://github.com/' + item.owner);
-  expect($('#detail').textContent).toContain('Python package');
+  expect($('.project-details .facts').textContent).not.toContain('Python package');
   for (const command of ['versions', 'update', 'rollback']) {
     expect($('#detail').textContent).toContain(
       `vis-agent extension ${command} '${item.repository.toLowerCase()}' --subdirectory '${item.subdirectory}'`,
     );
     expect($('#detail').textContent).not.toContain(`vis-agent extension ${command} '${item.name}'`);
+  }
+});
+
+test('project details and submission previews identify extensions by repository slug', () => {
+  for (const entry of fixtures) {
+    for (const render of [detailHTML, previewHTML]) {
+      document.body.innerHTML = render(entry);
+      const facts = Object.fromEntries(
+        [...document.querySelectorAll('.facts dt')].map((term) => [
+          term.textContent,
+          term.nextElementSibling.textContent,
+        ]),
+      );
+      expect(facts.Extension).toBe(entry.repository.toLowerCase());
+      expect(facts).not.toHaveProperty('Python package');
+    }
   }
 });
 
@@ -220,6 +236,12 @@ test('extension detail spacing overrides prose margins without changing README t
   expect(css('#version-help').textAlign).toBe('start');
   expect(css('.release-history ol').marginTop).toBe('0.5rem');
   expect(css('.package-readme p').textAlign).toBe('justify');
+  // Owner links must not inherit the standalone repository link's row-expanding target.
+  expect(css('#github-owner').display).toBe('inline');
+  expect(css('#github-owner').minHeight).toBe(
+    css('.project-details .facts dd a:not(#github-owner)').minHeight,
+  );
+  expect(css('.detail-heading .repository-link').minHeight).toBe('2rem');
 });
 test('repository anti-spam check is separated from the review button', () => {
   const style = document.createElement('style');
