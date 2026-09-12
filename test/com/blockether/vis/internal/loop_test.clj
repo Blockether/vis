@@ -6455,7 +6455,10 @@
         (atom 0)
 
         server
-        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
+
+        executor
+        (Executors/newCachedThreadPool)]
 
     (.createContext
       server
@@ -6490,12 +6493,13 @@
               nil))))
     ;; The stalled handler holds its thread for the whole stall: the retry must be
     ;; served concurrently, never queued behind the request it replaces.
-    (.setExecutor server (Executors/newCachedThreadPool))
+    (.setExecutor server executor)
     (.start server)
     {:base-url (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/v1")
      :requests requests
      :stop! (fn []
-              (.stop server 0))}))
+              (.stop server 0)
+              (.shutdownNow executor))}))
 
 (defdescribe
   provider-ttft-recovery-real-router-test
@@ -6509,13 +6513,16 @@
   (doseq [[label behavior expected-status expected-requests]
           [["retries once after a pre-header TTFT timeout and finishes on the second request"
             (fn [n]
-              (if (= 1 n) [:stall 1500] [:answer "Recovered after the timeout."])) :success 2]
+              (if (= 1 n) [:stall 5000] [:answer "Recovered after the timeout."])) :success 2]
            ["exhausts its retry budget when every request stalls and names the cause"
             (fn [_]
-              [:stall 1500]) :error 3]]]
+              [:stall 5000]) :error 3]]]
     (it
       label
-      (let [{:keys [base-url requests stop!]} (start-messages-stub! behavior)
+      (let [warming? (atom true)
+            {:keys [base-url requests stop!]} (start-messages-stub!
+                                                (fn [n]
+                                                  (if @warming? [:answer "Ready."] (behavior n))))
             router (svar/make-router [{:id :lmstudio
                                        :api-key "test"
                                        :base-url base-url
@@ -6526,17 +6533,40 @@
             ;; A one-request budget: the recovered answer is accounted exactly once
             ;; and the goal stops on its budget instead of pausing on a failure.
             goal (goals/set-goal! db sid "Finish the loopback recovery drill" 1)
-            chunks (atom [])]
+            chunks (atom [])
+            provider-errors (atom [])
+            ask-code! svar/ask-code!]
 
         (try
+          ;; Issue #210 tests a stalled POST, not cold HTTP/SSE initialization.
+          ;; Warm the same real router before arming the short watchdog budget;
+          ;; otherwise a slow JVM can spend a retry before any POST reaches the stub.
+          (expect (= "Ready."
+                     (:content (svar/ask-code! router
+                                               {:messages [{:role "user"
+                                                            :content "Warm the transport."}]
+                                                :tools []
+                                                :on-chunk (fn [_])
+                                                :ttft-timeout-ms 5000
+                                                :idle-timeout-ms 5000
+                                                :semantic-timeout-ms 5000}))))
+          (expect (= 1 @requests))
+          (reset! requests 0)
+          (reset! warming? false)
           (let [result (with-redefs-fn {#'lp/provider-network-policy (fn [_ _]
-                                                                       ;; First-output deadline = 150 + 300 ms: the
-                                                                       ;; abandoned attempt's predicate would fire
-                                                                       ;; it while the turn is already over.
-                                                                       {:ttft-timeout-ms 150
-                                                                        :idle-timeout-ms 300
-                                                                        :semantic-timeout-ms 300})
-                                        ;; NONZERO backoff: the sleep is exactly where a leaked interrupt lands.
+                                                                       ;; First-output deadline = 1000 + 1000 ms.
+                                                                       ;; Leave scheduling headroom while keeping
+                                                                       ;; the stall longer than either watchdog.
+                                                                       {:ttft-timeout-ms 1000
+                                                                        :idle-timeout-ms 1000
+                                                                        :semantic-timeout-ms 1000})
+                                        ;; Observe the real router's errors, not its logger or UI wrapper.
+                                        #'svar/ask-code! (fn [router opts]
+                                                           (try (ask-code! router opts)
+                                                                (catch Exception e
+                                                                  (swap! provider-errors conj e)
+                                                                  (throw e))))
+                                        ;; NONZERO backoff: a leaked interrupt would abort the sleep.
                                         #'lp/STREAM_RECOVERY_RETRY_DELAYS_MS [25 25]}
                          #(#'lp/run-normal-turn!
                             environment
@@ -6552,6 +6582,13 @@
             (expect (= expected-status (:status result)))
             (expect (= expected-requests @requests))
             (expect (= (dec expected-requests) (count retries)))
+            ;; A generic first-output cancellation is not the TTFT regression.
+            (expect (= (if (= :success expected-status) 1 expected-requests)
+                       (count @provider-errors)))
+            (expect (every? (fn [error]
+                              (some #(= :svar.core/stream-ttft-timeout (:type (ex-data %)))
+                                    (take-while some? (iterate ex-cause error))))
+                            @provider-errors))
             ;; The watchdog's own interrupt never reaches the caller.
             (expect (false? (.isInterrupted (Thread/currentThread))))
             (if (= :success expected-status)
@@ -6580,7 +6617,7 @@
         (let [landed (atom [])
               t0 (System/nanoTime)]
 
-          (while (< (- (System/nanoTime) t0) 1500000000)
+          (while (< (- (System/nanoTime) t0) 3000000000)
             (try (Thread/sleep 100)
                  (catch InterruptedException _
                    (swap! landed conj (quot (- (System/nanoTime) t0) 1000000)))))
