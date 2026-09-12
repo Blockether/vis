@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// Warm transforms outside timed cases; beforeEach still resets module state.
+import './gateway';
+import { STORY_GOAL } from '../dev/story-data';
 
 class MemoryStorage implements Storage {
   private readonly rows = new Map<string, string>();
@@ -1172,7 +1175,6 @@ describe('GatewayClient abandoned requests', () => {
 
 describe('session goal revisions', () => {
   it('keeps live state across replay, stale reads and a cold initial fetch', async () => {
-    const { STORY_GOAL } = await import('../dev/story-data');
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
     const live = { ...STORY_GOAL, revision: 10, status: 'complete' as const };
