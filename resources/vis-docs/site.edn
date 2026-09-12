@@ -94,10 +94,6 @@
      :page "jail"
      :title "Process jail and network policy"}
     {:blurb
-     "Read the message and streaming formats you need when building a Vis gateway client or renderer."
-     :page "content-blocks"
-     :title "Content-block protocol"}
-    {:blurb
      "Install or update Vis, choose a release track and compare native releases with JVM source builds."
      :page "distributions"
      :title "Runtime distributions"}

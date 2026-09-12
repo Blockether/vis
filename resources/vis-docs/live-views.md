@@ -477,4 +477,3 @@ output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
 
 - [Extending Vis](extending.md) — the extension that opens a view.
 - [Forms and user input](human-input.md) — the same layout builders, used for questions.
-- [Content-block protocol](content-blocks.md) — how a finished view reaches a transcript.

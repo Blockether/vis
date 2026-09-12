@@ -5,7 +5,6 @@
  {:kind "doc" :name "token-optimization" :resource "vis-docs/token-optimization.md"}
  {:kind "doc" :name "python-sandbox" :resource "vis-docs/python-sandbox.md"}
  {:kind "doc" :name "jail" :resource "vis-docs/jail.md"}
- {:kind "doc" :name "content-blocks" :resource "vis-docs/content-blocks.md"}
  {:kind "doc" :name "jvm-native-image" :resource "vis-docs/jvm-native-image.md"}
  {:kind "doc" :name "distributions" :resource "vis-docs/distributions.md"}
  {:kind "doc" :name "configuration" :resource "vis-docs/configuration.md"}

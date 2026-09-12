@@ -172,6 +172,5 @@ or `vis-agent update --track dev` for the other tracks. See
 ### Reference
 
 - [Process jail and network policy](jail.md) — rules for child processes.
-- [Content-block protocol](content-blocks.md) — message and streaming formats.
 - [Runtime distributions](distributions.md) — installation methods and updates.
 - [Building the native binary](jvm-native-image.md) — GraalVM build, metadata and TLS proxies.
