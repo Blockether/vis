@@ -97,10 +97,14 @@ or want to run the latest code from `main`.
 
 ```bash
 vis-agent tui                                      # interactive terminal UI
+vis-agent desktop                                  # download once and open the desktop app
 vis-agent gateway start --host 10.0.0.5 --pair       # phone app gateway; prints a pairing QR
 ```
 
 `vis-agent tui` opens the terminal UI and starts a local gateway if needed.
+`vis-agent desktop` downloads the stable desktop app on first use and opens it;
+later launches reuse the download. Use `vis-agent desktop --update` to check for
+a newer desktop release. Pair the desktop with your gateway in the app.
 Every plain `vis-agent update` selects release; name beta or dev when updating those
 tracks. See [Runtime distributions](resources/vis-docs/distributions.md).
 A non-loopback `--host` requires a bearer token. `--pair` prints a QR code containing

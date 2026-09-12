@@ -136,6 +136,41 @@ gateways remain user-owned.
 to it and never starts or stops a local replacement. Help and version commands do
 not start a gateway. Direct `vis-tui` execution remains a connection-only client;
 use `vis-agent tui` for automatic local lifecycle management.
+
+## Open the desktop app
+
+Run the desktop Companion without building it or installing it as an administrator:
+
+```bash
+vis-agent desktop            # download the stable app on first use, then open it
+vis-agent desktop --update   # check the latest stable release, then open it
+vis-agent desktop --help
+```
+
+The command chooses the universal macOS app (Apple silicon or Intel), or the Linux
+AppImage for x64 or ARM64. Windows is not a desktop release target. Downloads need
+`curl` and network access. On macOS, the launcher copies `Vis.app` from the signed
+disk image into your Vis cache and opens it. If the desktop is already running,
+its existing window is activated; quit it and rerun the command to switch to an
+updated version. On Linux, the launcher runs the AppImage in the
+foreground with built-in extraction, so FUSE is not required; you still need a
+graphical desktop and the system libraries required by the app.
+
+Later launches reuse the cached app without contacting GitHub. `--update` checks
+for a newer stable version and downloads only when that version is not cached.
+Failed downloads or installation steps leave the previously selected app intact;
+retry the command, or omit `--update` to open the existing copy. A missing cached
+executable is downloaded again automatically.
+
+Files live in `~/.vis/install/desktop/<platform>/<version>/`, or under `VIS_HOME`
+when set. Older versions remain in the cache so an update does not replace files
+used by an open app. Desktop downloads are separate from `vis-agent update` and
+always use stable releases, even if your engine uses beta or dev. They do not
+change your engine track, require Java, or start or restart a gateway.
+
+On first launch, pair with your gateway in the app using its URL and bearer token.
+See [Remote access and the Companion app](gateway.md) for connection options.
+
 ## Automatic native betas
 
 The Beta Native workflow starts after successful push CI on `main`. It verifies
@@ -157,6 +192,7 @@ stable release, and does not publish mobile or desktop applications.
 | `~/.local/bin/vis-agent-native` | Installed native engine |
 | `~/.local/bin/vis-agent-python/` | Its bundled Python worker and interpreter |
 | `~/.local/bin/vis-tui` | Matching native terminal client |
+| `~/.vis/install/desktop/` | Downloaded desktop apps, grouped by platform and version |
 | `~/.vis/install/track` | Selection used for subsequent launches |
 | `~/.vis/install/src` | Managed dev checkout at a detached main commit |
 | `~/.vis/install/ref` | Commit pinned by the last dev update |

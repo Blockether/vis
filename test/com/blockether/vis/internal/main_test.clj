@@ -585,16 +585,18 @@
              (expect (true? (:vis/user-error (ex-data e))))))))
 
 (defdescribe launcher-owned-commands-test
-             (it "keeps the launcher's runtime and update out of the binary's command tree"
-                 ;; The `vis-agent` wrapper runs both itself and never forwards them,
+             (it "keeps launcher-owned commands out of the binary command tree"
+                 ;; The `vis-agent` wrapper runs these itself and never forwards them,
                  ;; so registering them here only advertised commands this runtime
                  ;; cannot execute.
                  (let [by-name
                        (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
-                   (doseq [nm ["runtime" "update"]]
+                   (doseq [nm ["runtime" "update" "desktop"]]
                      (expect (nil? (get by-name nm))))))
-             (it "documents the launcher-owned update track in help"
+             (it "documents launcher-owned desktop and update commands in help"
                  (let [^String help (commandline/render-tree (#'main/root-command))]
+                   (expect (str/includes? help "DESKTOP APP"))
+                   (expect (str/includes? help "vis-agent desktop --update"))
                    (expect (str/includes? help "UPDATES"))
                    (expect (str/includes? help "vis-agent update"))
                    (expect (not (str/includes? help "vis-agent runtime"))))))

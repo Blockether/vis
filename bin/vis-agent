@@ -5,6 +5,7 @@
 #   1. run Vis,
 #   2. update Vis — and this command with it — (`vis-agent update`).
 #
+# Desktop downloads are separate from the engine track and cached on first launch.
 # Release and beta install native engine, Python and TUI bundles. Dev follows main
 # on the JVM. `update` defaults to release; only --track selects beta or dev.
 # --jvm selects source for one launch without changing the installed track.
@@ -989,9 +990,141 @@ vis_do_update() {
   exit 0
 }
 
+# ── Desktop companion ────────────────────────────────────────────────────────
+vis_desktop_usage() {
+  cat <<'EOF'
+Usage: vis-agent desktop [--update]
+
+Download and open the latest stable desktop app on first use. Later launches
+reuse the cached app without network access. --update checks for a newer release.
+Quit an already-running desktop before reopening to switch to an updated version.
+
+Supports macOS (Apple silicon and Intel) and Linux (x64 and ARM64).
+Files live in ${VIS_HOME:-~/.vis}/install/desktop; no administrator access needed.
+The desktop uses Companion pairing; this command does not start a gateway or
+change the engine's installed track. Pair with your gateway in the app.
+EOF
+}
+
+vis_desktop_ready() {
+  [[ -s "$1/$2" && -x "$1/$2" ]]
+}
+
+# Install in isolation: an interrupted download or failed mount/copy must not
+# change the selected version. Keep old versions so a running app stays intact.
+vis_install_desktop() (
+  local url="$1" destination="$2" executable="$3" staging mounted=""
+  staging="$(mktemp -d "$(dirname "$destination")/.download.XXXXXX")"
+  desktop_detach() {
+    # Spotlight can briefly keep our private, read-only mount busy after copying.
+    hdiutil detach "$mounted" || hdiutil detach "$mounted" -force
+  }
+  desktop_cleanup() {
+    if [[ -n "$mounted" ]] && ! desktop_detach; then
+      warn "desktop: could not unmount $mounted; temporary files kept at $staging"
+      return
+    fi
+    rm -rf "$staging"
+  }
+  trap 'desktop_cleanup' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  mkdir -p "$staging/app"
+  say "downloading $url"
+  if [[ "$executable" == Vis.AppImage ]]; then
+    curl -fSL "$url" -o "$staging/app/Vis.AppImage" || die "desktop: download failed; retry vis-agent desktop"
+    chmod +x "$staging/app/Vis.AppImage"
+  else
+    curl -fSL "$url" -o "$staging/desktop.dmg" || die "desktop: download failed; retry vis-agent desktop"
+    mkdir "$staging/mount"
+    hdiutil attach "$staging/desktop.dmg" -readonly -nobrowse -mountpoint "$staging/mount" || \
+      die "desktop: could not mount the downloaded disk image"
+    mounted="$staging/mount"
+    [[ -d "$mounted/Vis.app" ]] || die "desktop: the disk image is missing Vis.app"
+    ditto "$mounted/Vis.app" "$staging/app/Vis.app" || die "desktop: could not copy Vis.app"
+    desktop_detach || die "desktop: could not unmount the disk image"
+    mounted=""
+  fi
+  vis_desktop_ready "$staging/app" "$executable" || die "desktop: the download is missing its executable"
+  # Only a damaged cache can exist here; complete versions are reused by the caller.
+  if [[ -e "$destination" ]]; then mv "$destination" "$staging/previous"; fi
+  if ! mv "$staging/app" "$destination"; then
+    [[ ! -e "$staging/previous" ]] || mv "$staging/previous" "$destination"
+    die "desktop: could not install the downloaded app"
+  fi
+  printf '%s\n' "${destination##*/}" > "$staging/current"
+  mv -f "$staging/current" "$(dirname "$destination")/current"
+  desktop_cleanup
+  trap - EXIT
+)
+
+vis_do_desktop() {
+  local update=0 arg os arch platform extension executable desktop_dir version api json url asset cmd
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) vis_desktop_usage; exit 0 ;;
+      --update) update=1 ;;
+      *) die "desktop: unknown option $arg" "Run: vis-agent desktop --help" ;;
+    esac
+  done
+  (( ! jvm_requested )) || die "desktop: --jvm selects an engine runtime, not the released desktop app"
+  os="$(uname -s)"
+  arch="$(uname -m)"
+  case "$os/$arch" in
+    Darwin/arm64|Darwin/x86_64)
+      platform=macos-universal; extension=dmg; executable=Vis.app/Contents/MacOS/pake-vis ;;
+    Linux/x86_64|Linux/amd64)
+      platform=linux-x64; extension=AppImage; executable=Vis.AppImage ;;
+    Linux/aarch64|Linux/arm64)
+      platform=linux-arm64; extension=AppImage; executable=Vis.AppImage ;;
+    *) die "desktop: unsupported platform $os/$arch" "Desktop releases support macOS and Linux x64/ARM64." ;;
+  esac
+  desktop_dir="$vis_install_dir/desktop/$platform"
+  version="$(read_state "$desktop_dir/current")"
+  if (( update )) || [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+     ! vis_desktop_ready "$desktop_dir/$version" "$executable"; then
+    command -v curl >/dev/null 2>&1 || die "desktop: downloading the app needs 'curl' on PATH"
+    configure_system_trust native
+    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
+    say "checking the latest stable desktop release"
+    json="$(curl -fsSL "$api")" || die "desktop: could not check the latest release; cached app unchanged" \
+      "Retry later, or run vis-agent desktop without --update to use a cached app."
+    url="$(vis_asset_url "$json" "vis-companion-[0-9][0-9.]*-$platform\\.$extension")"
+    [[ -n "$url" ]] || die "desktop: no desktop release for $platform" "Checked $api"
+    asset="${url##*/}"
+    version="${asset#vis-companion-}"
+    version="${version%-"$platform"."$extension"}"
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "desktop: invalid release asset $asset"
+    mkdir -p "$desktop_dir"
+    if ! vis_desktop_ready "$desktop_dir/$version" "$executable"; then
+      if [[ "$os" == Darwin ]]; then
+        for cmd in hdiutil ditto; do
+          command -v "$cmd" >/dev/null 2>&1 || die "desktop: installing the app needs '$cmd' on PATH"
+        done
+      fi
+      vis_install_desktop "$url" "$desktop_dir/$version" "$executable"
+    else
+      # A previously downloaded version may have become latest again.
+      local selection
+      selection="$(mktemp "$desktop_dir/.current.XXXXXX")"
+      printf '%s\n' "$version" > "$selection"
+      mv -f "$selection" "$desktop_dir/current"
+    fi
+  fi
+  say "opening desktop $version"
+  if [[ "$os" == Darwin ]]; then
+    # Invoke the cached bundle; Pake activates its existing instance if one is running.
+    exec open -n -a "$desktop_dir/$version/Vis.app"
+  else
+    # AppImage's built-in extraction avoids requiring a system FUSE installation.
+    exec env APPIMAGE_EXTRACT_AND_RUN=1 "$desktop_dir/$version/Vis.AppImage"
+  fi
+}
+
 # ── Wrapper-owned commands. The Vis app never sees these. ────────────────────
 case "${1:-}" in
   runtime) die "unknown command: runtime" "Run: vis-agent update --help" ;;
+  desktop) shift; vis_do_desktop "$@" ;;
   update)
     shift
     (( ! jvm_requested )) || die "update: --jvm selects a launch runtime, not an update track" \

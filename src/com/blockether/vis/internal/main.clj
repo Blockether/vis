@@ -4146,6 +4146,8 @@
      "GATEWAY (WHICH DAEMON RUNS THE WORK)"
      (help-row "--gateway HOST[:PORT]|URL" "Drive another machine's gateway (VIS_GATEWAY_URL).")
      (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
+     "DESKTOP APP" (help-row "vis-agent desktop" "Download once and open the stable desktop app.")
+     (help-row "vis-agent desktop --update" "Check for a newer desktop release, then open it.") ""
      "UPDATES" (help-row "vis-agent update" "Install the latest complete native release (default).")
      (help-row "--track release|beta|dev" "Release, green-CI native beta, or main on JVM.") ""
      "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")

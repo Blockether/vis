@@ -1731,6 +1731,199 @@
           (expect (str/includes? output "<-M:vis><python><-c><pass>") output))
         (finally (delete-tree! dir))))))
 
+(defn- with-desktop-fixture
+  [os arch f]
+  (let [dir
+        (.toFile (Files/createTempDirectory "vis-desktop-test-" (make-array FileAttribute 0)))
+
+        bin
+        (doto (io/file dir "bin") .mkdirs)
+
+        home
+        (doto (io/file dir "home with spaces") .mkdirs)
+
+        launcher
+        (io/file bin "vis-agent")
+
+        calls
+        (io/file dir "calls")
+
+        release
+        (io/file dir "release.json")
+
+        payload
+        (io/file dir "payload")
+
+        platform
+        (if (= os "Darwin") "macos-universal" (str "linux-" (if (= arch "aarch64") "arm64" "x64")))
+
+        suffix
+        (if (= os "Darwin") "dmg" "AppImage")
+
+        desktop
+        (io/file home ".vis/install/desktop" platform)
+
+        env
+        {"HOME" (.getAbsolutePath home)
+         "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
+         "VIS_REPO_SLUG" "example/project"
+         "VIS_NO_AUTO_INSTALL" "1"
+         "PATH" (str (.getAbsolutePath bin) ":" (System/getenv "PATH"))
+         "DESKTOP_CALLS" (.getAbsolutePath calls)
+         "DESKTOP_RELEASE" (.getAbsolutePath release)
+         "DESKTOP_PAYLOAD" (.getAbsolutePath payload)}
+
+        publish!
+        (fn [version]
+          (let [url (str "https://github.com/example/project/releases/download/v" version
+                         "/vis-companion-" version
+                         "-" platform
+                         "." suffix)]
+            ;; GitHub's release JSON leaves URL slashes unescaped.
+            (spit release
+                  (str/replace (wire/json-str {"assets" [{"browser_download_url" (str url
+                                                                                      ".sha256")}
+                                                         {"browser_download_url" url}]})
+                               "\\/"
+                               "/"))))]
+
+    (try
+      (io/copy (io/file "bin/vis-agent") launcher)
+      (spit calls "")
+      (publish! "9.8.7")
+      (write-executable!
+        payload
+        "#!/usr/bin/env bash\nprintf 'desktop-app extract=%s\\n' \"${APPIMAGE_EXTRACT_AND_RUN:-}\"\n")
+      (write-executable!
+        (io/file bin "uname")
+        (str "#!/usr/bin/env bash\ncase $1 in -s) echo " os ";; -m) echo " arch ";; esac\n"))
+      (doseq [command ["vis-agent-native" "java" "clojure"]]
+        (write-executable! (io/file bin command)
+                           "#!/usr/bin/env bash\necho unexpected-engine\nexit 95\n"))
+      (write-executable!
+        (io/file bin "curl")
+        (str
+          "#!/usr/bin/env bash\necho \"curl $*\" >> \"$DESKTOP_CALLS\"\n"
+          "if [[ $* == *api.github.com* ]]; then\n" "  [[ ${DESKTOP_FAIL:-} != api ]] || exit 22\n"
+          "  cat \"$DESKTOP_RELEASE\"; exit 0\nfi\n"
+          "while (($#)); do if [[ $1 == -o ]]; then output=$2; shift; fi; shift; done\n"
+          "[[ ${DESKTOP_FAIL:-} != download ]] || { echo partial > \"$output\"; exit 18; }\n"
+          "if [[ ${DESKTOP_FAIL:-} == empty ]]; then : > \"$output\"; else cp \"$DESKTOP_PAYLOAD\" \"$output\"; fi\n"))
+      (write-executable!
+        (io/file bin "hdiutil")
+        (str
+          "#!/usr/bin/env bash\necho \"hdiutil $*\" >> \"$DESKTOP_CALLS\"\n"
+          "if [[ ${DESKTOP_FAIL:-} == busy && $1 == detach && $* != *-force* ]]; then exit 1; fi\n"
+          "[[ ${DESKTOP_FAIL:-} != $1 ]] || exit 1\n" "[[ $1 == attach ]] || exit 0\n"
+          "while (($#)); do if [[ $1 == -mountpoint ]]; then mount=$2; shift; fi; shift; done\n"
+          "[[ ${DESKTOP_FAIL:-} != bundle ]] || exit 0\n"
+          "mkdir -p \"$mount/Vis.app/Contents/MacOS\"\n"
+          ;; The released Pake bundle names its executable pake-vis, not Vis.
+          "cp \"$DESKTOP_PAYLOAD\" \"$mount/Vis.app/Contents/MacOS/pake-vis\"\n"))
+      (write-executable!
+        (io/file bin "ditto")
+        "#!/usr/bin/env bash\n[[ ${DESKTOP_FAIL:-} != copy ]] || exit 1\ncp -R \"$1\" \"$2\"\n")
+      (write-executable!
+        (io/file bin "open")
+        "#!/usr/bin/env bash\necho \"open $*\" >> \"$DESKTOP_CALLS\"\nprintf 'desktop-open<%s>\\n' \"$@\"\nexit ${DESKTOP_OPEN_EXIT:-0}\n")
+      (f {:desktop desktop
+          :calls calls
+          :release release
+          :publish! publish!
+          :run! (fn [args extra-env]
+                  (run-bash (into ["bash" (.getAbsolutePath launcher) "desktop"] args)
+                            (merge env extra-env)))})
+      (finally (delete-tree! dir)))))
+
+(defdescribe
+  desktop-launcher-test
+  (it "downloads the platform release, launches it, and reuses it without network or engine startup"
+      (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]
+                         ["Linux" "aarch64"]]]
+        (with-desktop-fixture
+          os
+          arch
+          (fn [{:keys [desktop calls run!]}]
+            (let [{:keys [exit output]} (run! [] {})
+                  downloaded (slurp calls)]
+
+              (expect (zero? exit) output)
+              (expect (str/includes? output
+                                     (if (= os "Darwin") "desktop-open" "desktop-app extract=1"))
+                      output)
+              (expect (not (str/includes? output "unexpected-engine")) output)
+              (expect (= "9.8.7\n"
+                         (when (.exists (io/file desktop "current"))
+                           (slurp (io/file desktop "current")))))
+              (expect (= 2 (count (re-seq #"(?m)^curl " downloaded))) downloaded)
+              (expect (not (str/includes? downloaded ".sha256")) downloaded)
+              (let [{:keys [exit output]} (run! [] {"DESKTOP_FAIL" "api"})]
+                (expect (zero? exit) output)
+                (expect (= 2 (count (re-seq #"(?m)^curl " (slurp calls))))))
+              (when (= os "Darwin")
+                (expect (str/includes? downloaded "hdiutil detach") downloaded)
+                (expect (str/includes? output "desktop-open<-n>") output)
+                (expect (str/includes? output (.getAbsolutePath (io/file desktop "9.8.7/Vis.app")))
+                        output)))))))
+  (it
+    "checks updates without redownloading the same release, and preserves the previous cache on failure"
+    (with-desktop-fixture "Linux"
+                          "x86_64"
+                          (fn [{:keys [desktop calls publish! run!]}]
+                            (expect (zero? (:exit (run! [] {}))))
+                            (expect (zero? (:exit (run! ["--update"] {}))))
+                            (expect (= 3 (count (re-seq #"(?m)^curl " (slurp calls)))))
+                            (publish! "9.8.8")
+                            (doseq [failure ["api" "download" "empty"]]
+                              (let [{:keys [exit output]} (run! ["--update"]
+                                                                {"DESKTOP_FAIL" failure})]
+                                (expect (not (zero? exit)) output)
+                                (expect (= "9.8.7\n" (slurp (io/file desktop "current"))))
+                                (expect (not (.exists (io/file desktop "9.8.8"))))))
+                            (expect (zero? (:exit (run! [] {"DESKTOP_FAIL" "api"}))))
+                            (expect (zero? (:exit (run! ["--update"] {}))))
+                            (expect (= "9.8.8\n" (slurp (io/file desktop "current"))))
+                            (expect (.exists (io/file desktop "9.8.7/Vis.AppImage")))
+                            (io/delete-file (io/file desktop "9.8.8/Vis.AppImage"))
+                            (expect (zero? (:exit (run! [] {}))))
+                            (expect (.canExecute (io/file desktop "9.8.8/Vis.AppImage"))))))
+  (it "reports missing release assets and retries failed macOS installs with mount cleanup"
+      (with-desktop-fixture "Darwin"
+                            "arm64"
+                            (fn [{:keys [desktop calls release publish! run!]}]
+                              (spit release "{}")
+                              (let [{:keys [exit output]} (run! [] {})]
+                                (expect (not (zero? exit)) output)
+                                (expect (str/includes? output "no desktop release") output))
+                              (publish! "9.8.7")
+                              (doseq [failure ["attach" "copy" "bundle" "detach"]]
+                                (let [{:keys [exit output]} (run! [] {"DESKTOP_FAIL" failure})]
+                                  (expect (not (zero? exit)) output)
+                                  (expect (not (.exists (io/file desktop "current"))))))
+                              (expect (str/includes? (slurp calls) "hdiutil detach"))
+                              (expect (zero? (:exit (run! [] {}))))
+                              (expect (= 6 (:exit (run! [] {"DESKTOP_OPEN_EXIT" "6"})))))))
+  (it "handles a busy private macOS mount before selecting and opening the app"
+      (with-desktop-fixture "Darwin"
+                            "arm64"
+                            (fn [{:keys [calls run!]}]
+                              (let [{:keys [exit output]} (run! [] {"DESKTOP_FAIL" "busy"})]
+                                (expect (zero? exit) output)
+                                (expect (str/includes? output "desktop-open") output)
+                                (expect (str/includes? (slurp calls) "-force"))))))
+  (it "shows help and rejects unsupported platforms or options without network access"
+      (with-desktop-fixture "FreeBSD"
+                            "riscv64"
+                            (fn [{:keys [calls run!]}]
+                              (let [{:keys [exit output]} (run! ["--help"] {})]
+                                (expect (zero? exit) output)
+                                (expect (str/includes? output "Usage: vis-agent desktop") output))
+                              (doseq [args [[] ["--unknown"] ["--jvm"] ["update"]]]
+                                (let [{:keys [exit output]} (run! args {})]
+                                  (expect (not (zero? exit)) output)
+                                  (expect (not (str/includes? output "unexpected-engine")) output)))
+                              (expect (= "" (slurp calls)))))))
+
 ;; Regression: the public `vis-agent tui` command fell through to the one-shot
 ;; prompt shortcut, so asking for the terminal client sent "tui" to a model.
 (defdescribe
