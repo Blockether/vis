@@ -1934,9 +1934,7 @@
                      :blocks blocks
                      :answer answer-value}
                     extra-ctx)]
-     ;; Explicit goals and extension validators share the normal continuation path.
      (or (council/reply-error environment)
-         (goals/completion-error environment)
          (some (fn [ext]
                  (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                          (when (= :turn.answer/validate phase)
@@ -1953,7 +1951,7 @@
                (answer-validation-extensions environment active-extensions))))))
 
 (defn- finalize-answer!
-  "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
+  "Finalize the turn from an accepted terminal ANSWER reply (`s` = the markdown). Classifies
    the value, runs `ctx-loop/finalize-turn!` (the real turn/context finalization),
    and sets turn-state `:answer` so run-iteration's FINAL path stores + renders it.
    Reads the per-turn atoms off `environment` — the answer is the answer; we
@@ -3645,7 +3643,7 @@
               body
               (when (seq body-ls) (str/join "\n" body-ls))]
 
-          (str/join "\n\n" (remove str/blank? [body ctx-diff])))]
+          (str/join "\n\n" (remove str/blank? [body (:goal-continuation iter-record) ctx-diff])))]
 
     (cond
       ;; Collapsed by summarize/drop: the whole iteration is gone — emit ONLY the
@@ -5542,7 +5540,12 @@
           ;; Show the prose ONLY when it adds something the code doesn't already
           ;; say — otherwise it's a dim duplicate of the python_execution block.
           assistant-prose (when (seq tool-calls) (prose-beyond-code prose-md tool-calls))
-          _ (when answer-md (finalize-answer! environment answer-md))
+          ;; Keep useful prose for a later stop without finalizing the turn before validation
+          ;; or while an explicit goal still has work to do.
+          _ (when answer-md
+              (swap! turn-state-atom assoc
+                :best-answer
+                {:value {:answer answer-md} :answer-markdown answer-md}))
           _ (when (and assistant-prose on-chunk)
               (on-chunk
                 {:phase :assistant-prose :iteration iteration-position :text assistant-prose}))
@@ -5808,16 +5811,18 @@
                   form-tool-ids
                   form-tool-names))]
 
-      (if-let [{value :value} (:answer @turn-state-atom)]
-        ;; A plain end reply was already finalized; only the extension answer gate can veto it.
-        ;; Persist canonical IR and the resolved model/provider fields separately.
-        (let [validation-error (final-answer-gate-error environment
+      (if answer-md
+        ;; Answer validation and goal continuation are separate: accepted progress is not
+        ;; an error and must not finalize the turn/context while the goal remains active.
+        (let [value {:answer answer-md}
+              validation-error (final-answer-gate-error environment
                                                         iteration-position
                                                         blocks
                                                         value
                                                         active-extensions
                                                         (assoc answer-validation-context
                                                           :code-entries code-entries))
+              goal-continuation (when-not validation-error (goals/continuation-prompt environment))
               model-name (actual-llm-model resolved-model ask-result)
               provider (actual-llm-provider resolved-model ask-result)]
 
@@ -5850,8 +5855,11 @@
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}
             {:thinking thinking
+             :assistant-prose (when goal-continuation answer-md)
+             :goal-continuation goal-continuation
              :blocks blocks
-             :final-result {:final? true :answer value}
+             :final-result (when-not goal-continuation
+                             {:final? true :answer (finalize-answer! environment value)})
              :request-health request-health
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
@@ -5870,7 +5878,10 @@
              :llm-routing-trace (:routed/trace ask-result)
              :reasoning-effort-resolution reasoning-effort-resolution
              :llm-returned-empty-code? (empty? blocks)
-             :assistant-message (:assistant-message ask-result)}))
+             :assistant-message (or (:assistant-message ask-result)
+                                    (when goal-continuation
+                                      {:role "assistant"
+                                       :content [{:type "text" :text answer-md}]}))}))
         ;; Normal path (tool-call iteration)
         {:thinking thinking
          :assistant-prose assistant-prose
@@ -9255,7 +9266,8 @@
                           (update :llm-routing-trace (fnil conj []) (pick-move-event pick-move)))
                         iteration-result (linked-reports/deliver-iteration environment
                                                                            iteration-result)
-                        {:keys [thinking assistant-prose blocks final-result]} iteration-result
+                        {:keys [thinking assistant-prose goal-continuation blocks final-result]}
+                        iteration-result
                         python-error (env/retired-context-error environment)
                         block (first blocks)
                         ;; Phase 7: merge per-iteration `:lru` stamps
@@ -9481,7 +9493,7 @@
                                       :stable-message-count (count stable-prompt-messages)
                                       :assistant-message (:assistant-message iteration-result)})))
                       :else
-                      (if (empty? blocks)
+                      (if (and (empty? blocks) (not goal-continuation))
                         (let [empty-streak (inc (long (or (:empty-iteration-streak loop-state) 0)))]
                           (log-stage! :empty iteration {:empty-streak empty-streak})
                           (log-stage! :iteration/stop iteration {:blocks 0 :errors 0 :times []})
@@ -9594,6 +9606,7 @@
                                               [(inc (long iteration))
                                                {:council-input council-input
                                                 :thinking thinking
+                                                :goal-continuation goal-continuation
                                                 :blocks blocks
                                                 ;; `forms-vec` is the one scope source: persistence
                                                 ;; and model context both read it.
@@ -9623,8 +9636,8 @@
                                                 :tool-calls (:tool-calls iteration-result)
                                                 :preserved-thinking/replay? true}])]
 
-                            ;; The model controls when the turn is complete. Repeated tool
-                            ;; calls remain ordinary non-terminal iterations.
+                            ;; Tool calls and accepted goal progress remain non-terminal;
+                            ;; only an accepted answer without active goal work ends the turn.
                             (when on-chunk
                               (on-chunk {:phase :iteration-final
                                          :iteration (inc (long iteration))

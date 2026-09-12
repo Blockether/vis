@@ -318,3 +318,114 @@
              (is (= :cancelled (:status result)))
              (is (= "paused" (get (goals/check-goal env) "status")))))
          (finally (lp/dispose-environment! env)))))
+
+(deftest active-goal-does-not-reject-progress-answer-test
+  (let [{:keys [db-info session-id] :as env} (environment)]
+    (try (goals/set-goal! db-info session-id "Verify all remaining work" nil)
+         (is (nil? (lp/final-answer-gate-error env 1 [] {:answer "Here is the progress so far."})))
+         (is (= "active" (get (goals/check-goal env) "status")))
+         (finally (lp/dispose-environment! env)))))
+
+(deftest progress-answers-continue-without-validation-errors-or-finalization-test
+  (let [env
+        (environment)
+
+        progress-count
+        (inc @#'lp/CONSECUTIVE_EMPTY_REPLY_LIMIT)
+
+        requests
+        (atom 0)
+
+        messages
+        (atom [])
+
+        request-states
+        (atom [])
+
+        chunks
+        (atom [])
+
+        finalizations
+        (atom 0)
+
+        finalize
+        ctx-loop/finalize-turn!]
+
+    (try
+      (with-redefs
+        [ctx-loop/finalize-turn!
+         (fn [& args]
+           (swap! finalizations inc)
+           (apply finalize args))
+
+         svar/ask-code!
+         (fn [_ opts]
+           (swap! request-states conj
+             {:finalizations @finalizations
+              :answer (:answer (ctx-loop/read-turn-state env))
+              :goal-status (get (goals/check-goal env) "status")})
+           (swap! messages conj (:messages opts))
+           (let [n (swap! requests inc)]
+             (cond
+               (<= n progress-count) {:stop-reason :end :content (str "Progress report " n ".")}
+               (= n (inc progress-count))
+               {:stop-reason :tool-calls
+                :tool-calls
+                [{:id "complete-goal"
+                  :name "python_execution"
+                  :input
+                  {:code
+                   "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All requested checks passed.'))"}}]}
+               (= n (+ progress-count 2)) {:stop-reason :end :content "Verified and complete."}
+               :else (throw (AssertionError. "Unexpected goal continuation")))))]
+
+        (let [result
+              (lp/run-turn! env
+                            "/goal Verify progress continuation"
+                            {:hooks {:on-chunk #(swap! chunks conj %)}})
+
+              progress
+              (filterv :assistant-prose (:trace result))
+
+              progress-chunks
+              (filterv :assistant-prose @chunks)]
+
+          (is (= "Verified and complete." (get-in result [:answer :answer])))
+          (is (= "complete" (get (goals/check-goal env) "status")))
+          (is (= (+ progress-count 2) @requests))
+          (is (= @requests (get (goals/check-goal env) "iterations_used")))
+          (is (= 1 @finalizations))
+          (is (every? #(and (zero? (:finalizations %)) (nil? (:answer %))) @request-states))
+          (is (every? #(= "active" (:goal-status %)) (take progress-count @request-states)))
+          (is (= (mapv #(str "Progress report " % ".") (range 1 (inc progress-count)))
+                 (mapv :assistant-prose progress)))
+          (is (every? #(and (empty? (:blocks %)) (nil? (:answer %))) progress))
+          (is (= progress-count (count progress-chunks)))
+          (is (every? #(and (false? (:done? %)) (nil? (:final %))) progress-chunks))
+          (doseq [n (range 1 (inc progress-count))]
+            (is (str/includes? (str (nth @messages n)) (str "Progress report " n ".")))
+            (is (str/includes? (str (nth @messages n)) "goal_continuation"))
+            (is (not (str/includes? (str (nth @messages n)) "Final answer rejected"))))))
+      (finally (lp/dispose-environment! env)))))
+
+(deftest progress-answer-honors-last-iteration-budget-test
+  (let [env
+        (environment)
+
+        requests
+        (atom 0)]
+
+    (try (with-redefs [svar/ask-code! (fn [_ _]
+                                        (when (> (swap! requests inc) 1)
+                                          (throw (AssertionError. "Exceeded progress budget")))
+                                        {:stop-reason :end
+                                         :content "Some work is verified; more remains."})]
+           (let [result (lp/run-turn! env "/goal --budget 1 Verify remaining work" {})]
+             (is (= :success (:status result)))
+             (is (= 1 @requests))
+             (is (= "budget_limited" (get (goals/check-goal env) "status")))
+             (is (= "Some work is verified; more remains."
+                    (:assistant-prose (first (:trace result)))))
+             (is (empty? (:blocks (first (:trace result)))))
+             (is (str/includes? (str (:answer result)) "iteration budget reached"))))
+         (finally (lp/dispose-environment! env)))))

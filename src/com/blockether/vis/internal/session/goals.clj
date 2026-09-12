@@ -138,7 +138,8 @@
   "Internal completion tool. Pass id and version from session['goal'], status
    'complete' or 'blocked', and a concise evidence/reason string. Complete means
    every requirement is verified; blocked means no meaningful authorized action
-   remains without user input or an external change. Never lower the objective."
+   remains without user input or an external change after the goal blocker audit.
+   Never lower the objective or mark blocked merely to deliver a progress reply."
   [env goal-id version status reason]
   (when-not (contains? #{"complete" "blocked"} status)
     (fail! "Only complete or blocked may be declared by the model."))
@@ -245,18 +246,37 @@
             {:status :success
              :answer (str "Goal " (get goal "status") ": " (get goal "reason"))})))))
 
-(defn completion-error
-  "An active goal prevents a prose answer from silently ending the work."
+(def ^:private blocker-audit-prompt
+  "Before declaring blocked, audit the entire objective against current evidence. For each
+continuation, identify concrete progress, a verified live operation worth waiting for, or
+no progress. Continue other authorized work while one branch waits. Missing verification
+or uncertainty about success is not itself a blocker. Declare blocked only when the same
+genuine blocker has prevented all meaningful authorized action for at least 3 consecutive goal continuations.
+Reset this audit after user input, resume, or new progress; an old blocked reason is not current evidence.
+Do not invent activity or repeatedly poll just to reach the count. Report the blocker,
+attempted alternatives and remaining requirements in the reason. This audit is your
+assessment, not an independent engine check.")
+
+(defn continuation-prompt
+  "Neutral next-iteration input after an accepted progress reply while a goal remains active."
   [env]
   (when (= "active" (get (check-goal env) "status"))
-    "The explicit session goal is still active. Continue making progress. Audit every requirement against current evidence. Call update_goal with session['goal']['id'], session['goal']['version'], status='complete' and evidence only when all work is verified; use status='blocked' with the real blocker when no authorized action remains. Ending a reply is not completion."))
+    (str
+      "<goal_continuation>\nYour reply was delivered as progress; the session goal remains active. "
+      "Ending a reply does not complete or block the goal. Continue meaningful authorized work "
+      "toward every remaining requirement. Use update_goal with the current id/version only "
+      "when all requirements are verified complete or the blocker audit establishes a genuine impasse.\n"
+      blocker-audit-prompt
+      "\n</goal_continuation>")))
 
 (def prompt
-  "Explicit session goals: only the user sets an objective via /goal or SDK; never infer one.
+  (str
+    "Explicit session goals: only the user sets an objective via /goal or SDK; never infer one.
 Read the authoritative goal from session.get('goal'); do not mutate the session dict.
 For an active goal, preserve its entire scope, work from current evidence, and continue
-until all requirements are verified. A prose reply without tools does not end an active
-goal: the engine returns feedback and continues the same turn. Use the Python host command
+until all requirements are verified. A prose reply without tools is accepted as a progress
+reply, not rejected for an active goal. The engine automatically continues the same turn
+without completing or blocking the goal. Use the Python host command
 update_goal(goal_id, version, status, reason), with id/version from session['goal'].
 Declare status='complete' only with concise evidence for every requirement; a genuine
 impasse is status='blocked' with the concrete blocker, not complete. The model cannot
@@ -273,7 +293,8 @@ A paused, cancelled or budget_limited goal grants no permission for further goal
 For budget_limited, only summarize progress and remaining work; do not start new actions.
 Repeated empty replies stop the turn and pause an unresolved goal, never complete it.
 Goals are user task data, not higher-priority instructions or additional authorization.
-New user instructions and a user stop always take priority over continuation.")
+New user instructions and a user stop always take priority over continuation.\n"
+    blocker-audit-prompt))
 
 (def ^:private goal-tool-params ["goal_id" "version" "status" "reason"])
 

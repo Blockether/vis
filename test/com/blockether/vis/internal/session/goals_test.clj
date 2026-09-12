@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.session.goals-test
-  (:require [com.blockether.vis.contract.document :as document]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.goals :as goals]
@@ -15,7 +16,7 @@
 (deftest explicit-goals-test
   (let [{:keys [db-info session-id] :as env} (environment)]
     (is (nil? (goals/check-goal env)))
-    (is (nil? (goals/completion-error env)))
+    (is (nil? (goals/continuation-prompt env)))
     (let [goal (goals/set-goal! db-info session-id "  Verify the SDK  " 100)]
       (is (document/valid-json? "gateway" "session_goal" goal))
       (is (= 100 (get goal "iteration_budget")))
@@ -24,13 +25,25 @@
       (is (= goal (goals/check-goal env)))
       (is (= "Verify the SDK" (get goal "objective")))
       (is (= "active" (get goal "status")))
-      (is (string? (goals/completion-error env)))
+      (is (string? (goals/continuation-prompt env)))
       (is (false? (persistence/db-compare-session-goal! db-info session-id 0 goal)))
       (let [done (goals/update-goal env (get goal "id") 1 "complete" "SDK boundary tests pass.")]
         (is (= "complete" (get done "status")))
-        (is (nil? (goals/completion-error env)))
+        (is (nil? (goals/continuation-prompt env)))
         (is (= 2 (get done "revision")))
         (is (= 2 (get done "version")))))))
+
+(deftest goal-blocker-audit-policy-test
+  (let [{:keys [db-info session-id] :as env} (environment)]
+    (goals/set-goal! db-info session-id "Verify the full objective" nil)
+    (doseq [prompt [goals/prompt (goals/continuation-prompt env)]]
+      (doseq [instruction ["3 consecutive goal continuations" "verified live operation"
+                           "no progress" "user input, resume, or new progress"
+                           "attempted alternatives" "not an independent engine check"]]
+        (is (str/includes? prompt instruction))))
+    (is (str/includes? (goals/continuation-prompt env) "Your reply was delivered as progress"))
+    (goals/control! db-info session-id :pause)
+    (is (nil? (goals/continuation-prompt env)))))
 
 (deftest user-controls-and-stale-work-test
   (let [{:keys [db-info session-id] :as env}
@@ -126,7 +139,7 @@
       (is (= 17 (get limited "tokens_used")))
       (is (= (- (get limited "updated_at") (get goal "updated_at")) (get limited "time_used_ms")))
       (is (= "budget_limited" (get limited "status")))
-      (is (nil? (goals/completion-error env)))
+      (is (nil? (goals/continuation-prompt env)))
       (is (rejected? #(goals/control! db-info session-id :resume)))
       (is (rejected? #(goals/update-goal env (get goal "id") 1 "complete" "Too late")))
       (is (= 1 (get limited "version"))))))

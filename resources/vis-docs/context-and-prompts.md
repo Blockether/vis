@@ -130,9 +130,20 @@ create, cancel, replace, resume or enlarge a goal. Stale goal IDs and lifecycle
 versions are rejected. Saying "complete" in a reply does not update the goal;
 even a recorded completion is the model's assessment, not an independent check.
 
-While the goal is active, a final reply without tools is rejected and Vis
-continues the same turn. Repeated empty replies stop the turn and pause an
-unresolved goal. An exhausted iteration budget instead leaves it `budget_limited`.
+While the goal is active, you can receive a progress reply without ending the
+work. Vis keeps that reply and automatically continues the same turn; it does
+not reject the reply or require the agent to mark the goal `blocked` to answer.
+
+Before reporting `blocked`, the agent is instructed to check the whole objective
+for progress, a verified operation still running, or no progress. The same
+concrete blocker must prevent all meaningful authorized work for at least three
+consecutive goal continuations. New user input, a resume or new progress resets
+that audit. One waiting branch or missing verification is not enough: the agent
+should continue other available work, without repeatedly polling just to reach
+the count. This is a model-assessed policy, not an independent engine check.
+
+Repeated empty replies stop the turn and pause an unresolved goal. An exhausted
+iteration budget instead leaves it `budget_limited`.
 
 ### Session data and interfaces
 
