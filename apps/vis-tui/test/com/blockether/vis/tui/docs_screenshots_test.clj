@@ -7,6 +7,8 @@
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.live-view :as lv]
+            [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.live-view-fixture :as fixture]
             [com.blockether.vis.tui.view-materializer :as live]
             [lazytest.core :refer [defdescribe expect it]])
@@ -87,6 +89,100 @@
                         :out (str (io/file out-dir (str (name kind) ".png")))
                         :font-size 18})))
         [:ask :live-running :live-stop]))
+
+(defn- capture-nesting
+  [finding?]
+  (let [row
+        {:id "nesting-check"
+         :sequence 1
+         :operation "check_nesting"
+         :presenter "generic"
+         :signal "observation"
+         :state "succeeded"
+         :duration-ms 12
+         :resources []
+         :evidence []
+         :presentation
+         {"headline" "Check code nesting"
+          "summary" (if finding? "4 files checked · 1 finding" "4 files checked · 0 findings")
+          "content"
+          [{"type" "text" "text" "Scope: src/**/*.py · Nesting limit: 3"}
+           {"type" "text"
+            "text" (if finding? "src/orders.py:18: nesting 4 exceeds 3" "No nesting findings.")}]}}
+
+        projection
+        {:state "succeeded"
+         :rows [row]
+         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+         :omitted {:rows 0 :by-classification {}}}]
+
+    (cap/capture!
+      {:cols 80
+       :rows 17
+       :paint! (fn [{:keys [screen]}]
+                 (let [rendered
+                       (render/format-answer-with-thinking-data*
+                         ""
+                         [{:forms [{:code "print(check_nesting())"
+                                    :stdout ""
+                                    :duration-ms 12
+                                    :activity projection}]}]
+                         76
+                         {:show-thinking false :show-iterations true}
+                         nil
+                         false
+                         {:session-id "docs-nesting"
+                          :detail-expansions {:vis.channel-tui/expand-all-details? true}})
+
+                       g
+                       (.newTextGraphics ^TerminalScreen screen)]
+
+                   (doto g
+                     (.setBackgroundColor theme/terminal-bg)
+                     (.setForegroundColor theme/text-fg)
+                     (.fill \space))
+                   (.beginFrame interactions/hit-map)
+                   (render/draw-chat-bubble! g
+                                             {:role :assistant
+                                              :text ""
+                                              :prewrapped-lines (:lines rendered)
+                                              :line-meta (:line-meta rendered)}
+                                             2 1
+                                             76 {:viewport-h 15})
+                   (.commitFrame interactions/hit-map)
+                   (.refresh ^TerminalScreen screen)))})))
+
+(defn write-nesting-screenshots!
+  "Write the before/after code-quality Activity PNGs using the production renderer."
+  [out-dir]
+  (mapv (fn [[finding? filename]]
+          (let [capture (capture-nesting finding?)]
+            (when-let [error (:error capture)]
+              (throw error))
+            (cap/shot! {:grid (last (:frames capture))
+                        :out (str (io/file out-dir filename))
+                        :font-size 18})))
+        [[true "nesting-finding.png"] [false "nesting-clear.png"]]))
+
+(defdescribe nesting-activity-captures-test
+             (it "shows the finding and the cleared report in real expanded Activities"
+                 (doseq [finding?
+                         [true false]
+
+                         :let [capture
+                               (capture-nesting finding?)
+
+                               text
+                               (cap/frame-text (last (:frames capture)))]]
+
+                   (expect (nil? (:error capture)))
+                   (doseq [label ["Check code nesting" "4 files checked" "Scope: src/**/*.py"
+                                  "Nesting limit: 3" (if finding? "1 finding" "0 findings")
+                                  (if finding?
+                                    "src/orders.py:18: nesting 4 exceeds 3"
+                                    "No nesting findings.")]]
+                     (expect (str/includes? text label) (str label "\n" text)))
+                   (expect (= finding? (str/includes? text "exceeds 3"))))))
 
 (defdescribe
   documentation-captures-test

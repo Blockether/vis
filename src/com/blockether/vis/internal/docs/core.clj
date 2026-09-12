@@ -395,6 +395,8 @@
    "vis-docs/assets/screenshots/ask.png" "assets/screenshots/ask.png"
    "vis-docs/assets/screenshots/live-running.png" "assets/screenshots/live-running.png"
    "vis-docs/assets/screenshots/live-stop.png" "assets/screenshots/live-stop.png"
+   "vis-docs/assets/screenshots/nesting-finding.png" "assets/screenshots/nesting-finding.png"
+   "vis-docs/assets/screenshots/nesting-clear.png" "assets/screenshots/nesting-clear.png"
    "vis-docs/assets/diagrams/council-messages.svg" "assets/diagrams/council-messages.svg"
    "vis-docs/assets/diagrams/council-messages.mmd" "assets/diagrams/council-messages.mmd"
    "vis-docs/assets/diagrams/council-modules.svg" "assets/diagrams/council-modules.svg"

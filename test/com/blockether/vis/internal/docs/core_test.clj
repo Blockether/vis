@@ -40,7 +40,8 @@
     "resolves screenshot sources and full-size links in both modes"
     (let [{:keys [pages] :as site} (docs/collect)]
       (doseq [[slug image] [["human-input" "ask"] ["live-views" "live-running"]
-                            ["live-views" "live-stop"]]
+                            ["live-views" "live-stop"] ["extension-design" "nesting-finding"]
+                            ["extension-design" "nesting-clear"]]
               mode [:static :live]
               :let [page (first (filter #(= slug (:slug %)) pages))
                     html (docs/page-html site page mode)
@@ -52,7 +53,7 @@
 (defdescribe screenshot-assets-test
              (it "serves every screenshot as a PNG and includes it in static assets"
                  (doseq [name
-                         ["ask" "live-running" "live-stop"]
+                         ["ask" "live-running" "live-stop" "nesting-finding" "nesting-clear"]
 
                          :let [rel
                                (str "screenshots/" name ".png")

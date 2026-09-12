@@ -1666,15 +1666,38 @@ vis.register(vis.Extension(
           (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))
           (let [ext (registered "project-nesting")
                 extensions [foundation/vis-extension ext]
-                env {:python-context ctx
-                     :db-info store
-                     :workspace/root (str project)
-                     :cwd (str project)
-                     :session-id (str "nesting-recipe-" (random-uuid))
-                     :extensions (atom extensions)
-                     :active-extensions (atom [])}
+                snapshots (atom [])
+                env
+                {:python-context ctx
+                 :db-info store
+                 :workspace/root (str project)
+                 :cwd (str project)
+                 :session-id
+                 (str
+                   ((requiring-resolve
+                      'com.blockether.vis.internal.persistance.sqlite.test-helpers/store-session!)
+                     store
+                     {:channel :api}))
+                 :extensions (atom extensions)
+                 :active-extensions (atom [])
+                 :activity/on-snapshot #(swap! snapshots conj %)}
                 report #(get ((:ext/ctx-fn ext) env) "code_quality")
-                run-block #(#'lp/run-python-code ctx % :env env)]
+                run-block #(#'lp/run-python-code ctx % :env env)
+                check-activity
+                (fn [summary evidence]
+                  (reset! snapshots [])
+                  (let [result (run-block "print(check_nesting())")
+                        rows (get-in result [:activity :rows])
+                        row (first rows)]
+
+                    (expect (nil? (:error result)) (pr-str result))
+                    (expect (= 1 (count rows)))
+                    (expect (= "succeeded" (:state row)))
+                    (expect (= "Check code nesting" (get-in row [:presentation "headline"])))
+                    (expect (= summary (get-in row [:presentation "summary"])))
+                    (expect (str/includes? (pr-str (get-in row [:presentation "content"]))
+                                           evidence))
+                    (expect (every? #(not= "running" (:state %)) (mapcat :rows @snapshots)))))]
 
             (lp/sync-active-extension-symbols! env extensions)
             (expect (str/includes? (first (get (report) "findings")) "not been checked"))
@@ -1688,9 +1711,11 @@ vis.register(vis.Extension(
               (expect (nil? (:error result)) (pr-str result))
               (expect (= {"checked" 1 "limit" 3 "findings" ["src/orders.py:4: nesting 4 exceeds 3"]}
                          (report))))
+            (check-activity "1 file checked · 1 finding" "src/orders.py:4: nesting 4 exceeds 3")
             (let [result (run-block "with open(path, 'w') as f:\n    f.write('value = 1\\n')")]
               (expect (nil? (:error result)) (pr-str result))
               (expect (empty? (get (report) "findings"))))
+            (check-activity "1 file checked · 0 findings" "No nesting findings.")
             (let [result (run-block (str "with open(path, 'w') as f:\n"
                                          "    f.write(" (json/generate-string nested)
                                          ")\n" "raise ValueError('after the write')"))]
@@ -1715,7 +1740,11 @@ vis.register(vis.Extension(
                 (expect (= findings (get (report) "findings")))))
             (let [result (run-block "path.unlink()")]
               (expect (nil? (:error result)) (pr-str result))
-              (expect (= {"checked" 0 "limit" 3 "findings" []} (report)))))
+              (expect (= {"checked" 0 "limit" 3 "findings" []} (report))))
+            (check-activity "No Python files found" "Add Python source files under src/.")
+            (let [result (run-block "path.write_text('if :\\n')")]
+              (expect (nil? (:error result)) (pr-str result)))
+            (check-activity "0 files checked · 1 finding" "could not check"))
           (finally (ep/dispose-python-context! ctx)
                    (pyx/reload-python-extensions! {:dirs []})
                    (ps/db-dispose-connection! store)))))))

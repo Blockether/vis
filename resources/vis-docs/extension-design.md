@@ -504,6 +504,41 @@ counts as another nested `if` in Python's syntax tree. Comprehensions and boolea
 expressions do not add depth. The limit of three is an example policy, not a
 universal definition of good code.
 
+### See the edit–check–fix cycle
+
+After installing the example below, ask Vis:
+
+> Update the order-processing code. Show the nesting check, simplify any reported
+> nesting, then show the check again. Run the normal tests before finishing.
+
+1. **Edit.** The hook scans `src/**/*.py` at the edit boundaries and supplies
+   findings to the agent on its next request.
+2. **Check.** The agent calls `check_nesting()` to scan the current files and show
+   you a **Check code nesting** Activity. Expand it to see the scope, limit and
+   file-and-line findings.
+3. **Fix and repeat.** After simplifying the code, the agent calls the check again.
+   The new Activity shows the new result; the earlier finding remains in history.
+
+The hook supplies automatic feedback, but does not create its own Activity or
+force the agent to fix anything. The registered tool provides the visible check.
+It runs a fresh scan, so you can also ask for it before making an edit. This quick
+local check uses `show_start=False`: you see the result, not a running row.
+
+These static captures use example results in Vis's actual terminal Activity
+renderer, not a separate mockup. Select either image to view it full size.
+
+**Before the fix:** four files checked, with one location above the nesting limit.
+
+[![Expanded Check code nesting Activity: four files checked, one finding at src/orders.py line 18, nesting 4 exceeds the limit of 3.](assets/screenshots/nesting-finding.png)](assets/screenshots/nesting-finding.png)
+
+**After the fix:** the same four files checked, with no nesting findings.
+
+[![Expanded Check code nesting Activity after the fix: four files checked, zero findings, and No nesting findings.](assets/screenshots/nesting-clear.png)](assets/screenshots/nesting-clear.png)
+
+A successful Activity means the scan returned a report, not that every file
+passed. Findings include parse and read errors; **No Python files found** is a
+separate empty state, not a passing check.
+
 ### Install the check
 
 For a small Python project with a `src/` directory, save this complete file as
@@ -572,8 +607,55 @@ def scan():
     return {"checked": checked, "limit": LIMIT, "findings": findings}
 
 
+def check_nesting() -> dict:
+    """Scan this project's src/**/*.py and return checked, limit and findings.
+
+    Uses the nesting metric and limit defined in this extension. Parse and read
+    errors are findings; zero checked files is not evidence of a passing check.
+    Stores the fresh report for the next model request. Does not modify source
+    files, run tests or guarantee overall code quality.
+    """
+    report = scan()
+    vis.state[REPORT_KEY] = report
+    return report
+
+
+def present_nesting(*, phase, result=None, error=None, **_):
+    headline = "Check code nesting"
+    if phase == "start":
+        return vis.ActivityPresentation(headline, "Scanning src/**/*.py")
+    if phase == "failure":
+        detail = f"{type(error).__name__}: {error}"
+        if len(detail) > 1000:
+            detail = detail[:1000] + "\n[Error excerpt]"
+        return vis.ActivityPresentation(
+            headline, "Could not check code nesting", (vis.ActivityText(detail),)
+        )
+    checked, findings = result["checked"], result["findings"]
+    files = "file" if checked == 1 else "files"
+    issues = "finding" if len(findings) == 1 else "findings"
+    summary = f"{checked} {files} checked · {len(findings)} {issues}"
+    if not checked and not findings:
+        summary = "No Python files found"
+    detail = "\n".join(findings) or (
+        "No nesting findings." if checked else "Add Python source files under src/."
+    )
+    if len(detail) > 6000:
+        detail = (
+            detail[:6000] + "\n[Excerpt; full findings are in the returned report.]"
+        )
+    return vis.ActivityPresentation(
+        headline,
+        summary,
+        (
+            vis.ActivityText(f"Scope: src/**/*.py · Nesting limit: {result['limit']}"),
+            vis.ActivityText(detail),
+        ),
+    )
+
+
 def after_edit(call):
-    vis.state[REPORT_KEY] = scan()
+    check_nesting()
 
 
 def context(env):
@@ -588,6 +670,15 @@ vis.register(
     vis.Extension(
         name="project-nesting",
         description="Report excessive Python control-flow nesting after edits.",
+        alias="quality",
+        symbols=[
+            vis.Symbol(
+                check_nesting,
+                activity=vis.Activity(
+                    label="Check code nesting", show_start=False, render=present_nesting
+                ),
+            )
+        ],
         ctx=context,
         op_hooks=[vis.OpHook(["patch", "python_execution"], after_edit, phase="after")],
     )
@@ -610,6 +701,12 @@ Ask Vis to make a Python change. After the next completed block, the agent sees 
     "limit": 3,
     "findings": ["src/orders.py:18: nesting 4 exceeds 3"],
 }
+```
+
+The agent can show you a fresh result with the registered tool:
+
+```python
+print(check_nesting())
 ```
 
 The file and line tell it where to review the change. It can flatten a branch or
@@ -640,8 +737,9 @@ return value is ignored.
 
 The repository tests execute this exact extension through the SDK and the host:
 patching, both Python write forms, a write followed by an exception, and clearing
-findings after a fix. The metric also has tests for scope boundaries, syntax
-errors and missing source directories.
+findings after a fix. They also invoke the registered check and verify its
+end-only Activity, findings, clear results and empty source tree. The metric has
+tests for scope boundaries, syntax errors and missing source directories.
 
 ## See also
 

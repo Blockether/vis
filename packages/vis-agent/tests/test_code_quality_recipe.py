@@ -125,3 +125,54 @@ def test_scan_reports_missing_source_directory_and_isolates_project_state(recipe
     assert "Expected a readable src/ directory" in module.scan()["findings"][0]
     vis.state["nesting:/another-project"] = {"findings": []}
     assert "not been checked" in module.context({})["code_quality"]["findings"][0]
+
+
+def test_registered_check_presents_the_edit_check_fix_cycle(recipe, monkeypatch):
+    module, registration = recipe
+    (symbol,) = registration["symbols"]
+    assert symbol["name"] == "check_nesting"
+    assert symbol["activity"]["show_start"] is False
+    shown = []
+    monkeypatch.setattr(
+        vis, "publish_activity", lambda presentation: shown.append(presentation)
+    )
+    path = module.SOURCE / "orders.py"
+    path.write_text(
+        "if a:\n    if b:\n        if c:\n            if d:\n                pass\n"
+    )
+    report = symbol["fn"]()
+    assert report == module.context({})["code_quality"]
+    assert report["findings"] == ["src/orders.py:4: nesting 4 exceeds 3"]
+    assert len(shown) == 1  # This quick local check has no running presentation.
+    assert shown[-1].headline == "Check code nesting"
+    assert shown[-1].summary == "1 file checked · 1 finding"
+    assert "src/orders.py:4: nesting 4 exceeds 3" in shown[-1].content[-1].text
+    path.write_text("value = 1\n")
+    assert symbol["fn"]()["findings"] == []
+    assert shown[-1].summary == "1 file checked · 0 findings"
+    assert shown[-1].content[-1].text == "No nesting findings."
+    path.unlink()
+    assert symbol["fn"]()["checked"] == 0
+    assert shown[-1].summary == "No Python files found"
+
+
+def test_nesting_activity_preserves_scan_errors_and_bounds_only_presentation(recipe):
+    module, _ = recipe
+    (module.SOURCE / "broken.py").write_text("if :\n")
+    report = module.check_nesting()
+    shown = module.present_nesting(phase="success", result=report)
+    assert shown.summary == "0 files checked · 1 finding"
+    assert "could not check" in shown.content[-1].text
+    assert "No nesting findings" not in shown.content[-1].text
+    report = {"checked": 200, "limit": 3, "findings": ["x" * 7000]}
+    shown = module.present_nesting(phase="success", result=report)
+    assert len(shown.content[-1].text) < 6200
+    assert (
+        "[Excerpt; full findings are in the returned report.]" in shown.content[-1].text
+    )
+    assert report["findings"] == ["x" * 7000]
+    assert module.present_nesting(phase="start").summary == "Scanning src/**/*.py"
+    error = RuntimeError("scan unavailable")
+    shown = module.present_nesting(phase="failure", error=error)
+    assert shown.summary == "Could not check code nesting"
+    assert shown.content[-1].text == "RuntimeError: scan unavailable"
