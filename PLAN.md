@@ -129,3 +129,54 @@ and reconstructing completed history solely from the live event ring.
    cases, including HTTP and stdio integration. Formatting, lint/reflection,
    actionlint and diff review pass. Main CI and the v0.2.2 release workflow remain
    to be verified. No live service was restarted.
+
+# Privacy-safe screenshot gallery
+
+Show Vis on iOS, desktop and in the terminal without exposing personal work.
+
+## Context
+
+README.md and resources/vis-docs/index.md show all nine iOS, desktop and TUI
+screenshots in one gallery, without separate platform sections or descriptions.
+Use production clients with newly created Fieldnotes example content. The demo
+must have its own home, gateway, SQLite database and client storage; never use
+or copy the current gateway, credentials, projects, sessions or tasks. GitHub
+cannot run a JavaScript carousel, so provide one linked preview grid there and
+one keyboard/touch carousel on the documentation site. Preserve concurrent work.
+
+## 1. Capture fresh example screens
+
+- Rationale: screenshots must be accurate and safe to publish.
+- Data: production Companion and TUI renderers; a new isolated demo database.
+- Acceptance criteria: three useful screens per platform, readable captures,
+  synthetic content only, and no existing client storage or gateway discovery.
+- Unknowns: native iOS automation availability; verify before selecting captures.
+
+## 2. Embed one accessible gallery
+
+- Rationale: let readers explore each client without overwhelming installation.
+- Data: README, Getting Started, canonical docs assets and existing site tests.
+- Acceptance criteria: one gallery with all nine screenshots, concise labels,
+  full-size links, keyboard/touch controls, reduced-motion and no-JavaScript fallbacks.
+- Unknowns: GitHub sanitization limits; previews must remain useful without scripts.
+
+## 3. Verify and publish
+
+- Rationale: publish only reviewed images and a working documentation site.
+- Data: screenshot inspection, gallery interaction/link tests, docs build and lint.
+- Acceptance criteria: scoped diff and privacy review, passing affected checks,
+  commit/push and successful docs deployment; stop temporary capture machinery.
+- Unknowns: concurrent commits and hosted deployment outcome.
+
+## Plan state
+
+1. Complete: nine reviewed production-client captures from a new isolated gateway,
+   database, home, sessions and client storage. Native iOS used a fresh simulator.
+2. Complete: one linked README preview grid and one accessible Getting Started
+   carousel, with a consistent image frame for portrait and landscape screenshots.
+3. Complete: 56 docs tests and 160 site tests pass, with formatting, lint,
+   asset/link checks and desktop/mobile browser checks. GitHub shows one preview
+   grid; the live docs show one nine-slide carousel with working controls.
+   Published in `6cdcada18`; Docs run `34695148233` passed verification and deployment.
+   The nine reviewed captures are unchanged. Temporary capture and preview
+   infrastructure is stopped; no existing gateway or personal work was used.
