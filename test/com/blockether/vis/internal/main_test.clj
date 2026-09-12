@@ -597,6 +597,7 @@
                  (let [^String help (commandline/render-tree (#'main/root-command))]
                    (expect (str/includes? help "DESKTOP APP"))
                    (expect (str/includes? help "vis-agent desktop --update"))
+                   (expect (str/includes? help "vis-agent desktop --track dev"))
                    (expect (str/includes? help "UPDATES"))
                    (expect (str/includes? help "vis-agent update"))
                    (expect (not (str/includes? help "vis-agent runtime"))))))

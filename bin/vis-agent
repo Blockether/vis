@@ -5,7 +5,7 @@
 #   1. run Vis,
 #   2. update Vis — and this command with it — (`vis-agent update`).
 #
-# Desktop downloads are separate from the engine track and cached on first launch.
+# Desktop follows the selected track: release downloads; dev builds from source.
 # Release and beta install native engine, Python and TUI bundles. Dev follows main
 # on the JVM. `update` defaults to release; only --track selects beta or dev.
 # --jvm selects source for one launch without changing the installed track.
@@ -993,14 +993,21 @@ vis_do_update() {
 # ── Desktop companion ────────────────────────────────────────────────────────
 vis_desktop_usage() {
   cat <<'EOF'
-Usage: vis-agent desktop [--update]
+Usage: vis-agent desktop [--track release|beta|dev] [--update]
 
-Download and open the latest stable desktop app on first use. Later launches
-reuse the cached app without network access. --update checks for a newer release.
-Quit an already-running desktop before reopening to switch to an updated version.
+Open the desktop for your installed track; --track overrides it for this launch.
+  release  Download the stable app once; --update checks for a newer release.
+  dev      Build the selected source checkout on every launch (also with --update).
+  beta     No desktop artifacts are published; choose release or dev explicitly.
+
+Dev needs Node/npm, Rust/Cargo, and native build tools (Xcode on macOS; WebKitGTK
+and a C/C++ toolchain on Linux). It builds the current source, including local
+edits. Fetch newer source separately with: vis-agent update --track dev
+Quit an already-running app before reopening to use a newer build of that track.
 
 Supports macOS (Apple silicon and Intel) and Linux (x64 and ARM64).
-Files live in ${VIS_HOME:-~/.vis}/install/desktop; no administrator access needed.
+Files live in ${VIS_HOME:-~/.vis}/install/desktop; no administrator access needed
+for the app itself. Dev build prerequisites may need administrator installation.
 The desktop uses Companion pairing; this command does not start a gateway or
 change the engine's installed track. Pair with your gateway in the app.
 EOF
@@ -1013,7 +1020,7 @@ vis_desktop_ready() {
 # Install in isolation: an interrupted download or failed mount/copy must not
 # change the selected version. Keep old versions so a running app stays intact.
 vis_install_desktop() (
-  local url="$1" destination="$2" executable="$3" staging mounted=""
+  local source="$1" destination="$2" executable="$3" staging payload mounted=""
   staging="$(mktemp -d "$(dirname "$destination")/.download.XXXXXX")"
   desktop_detach() {
     # Spotlight can briefly keep our private, read-only mount busy after copying.
@@ -1030,27 +1037,38 @@ vis_install_desktop() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
   mkdir -p "$staging/app"
-  say "downloading $url"
   if [[ "$executable" == Vis.AppImage ]]; then
-    curl -fSL "$url" -o "$staging/app/Vis.AppImage" || die "desktop: download failed; retry vis-agent desktop"
-    chmod +x "$staging/app/Vis.AppImage"
+    payload="$staging/app/Vis.AppImage"
   else
-    curl -fSL "$url" -o "$staging/desktop.dmg" || die "desktop: download failed; retry vis-agent desktop"
+    payload="$staging/desktop.dmg"
+  fi
+  if [[ "$source" == https://* ]]; then
+    say "downloading $source"
+    curl -fSL "$source" -o "$payload" || die "desktop: download failed; retry vis-agent desktop"
+  else
+    cp "$source" "$payload" || die "desktop: could not stage the source-built app"
+  fi
+  if [[ "$executable" == Vis.AppImage ]]; then
+    chmod +x "$payload"
+  else
+    for cmd in hdiutil ditto; do
+      command -v "$cmd" >/dev/null 2>&1 || die "desktop: installing the app needs '$cmd' on PATH"
+    done
     mkdir "$staging/mount"
     hdiutil attach "$staging/desktop.dmg" -readonly -nobrowse -mountpoint "$staging/mount" || \
-      die "desktop: could not mount the downloaded disk image"
+      die "desktop: could not mount the disk image"
     mounted="$staging/mount"
     [[ -d "$mounted/Vis.app" ]] || die "desktop: the disk image is missing Vis.app"
     ditto "$mounted/Vis.app" "$staging/app/Vis.app" || die "desktop: could not copy Vis.app"
     desktop_detach || die "desktop: could not unmount the disk image"
     mounted=""
   fi
-  vis_desktop_ready "$staging/app" "$executable" || die "desktop: the download is missing its executable"
+  vis_desktop_ready "$staging/app" "$executable" || die "desktop: the app is missing its executable"
   # Only a damaged cache can exist here; complete versions are reused by the caller.
   if [[ -e "$destination" ]]; then mv "$destination" "$staging/previous"; fi
   if ! mv "$staging/app" "$destination"; then
     [[ ! -e "$staging/previous" ]] || mv "$staging/previous" "$destination"
-    die "desktop: could not install the downloaded app"
+    die "desktop: could not install the app"
   fi
   printf '%s\n' "${destination##*/}" > "$staging/current"
   mv -f "$staging/current" "$(dirname "$destination")/current"
@@ -1059,61 +1077,105 @@ vis_install_desktop() (
 )
 
 vis_do_desktop() {
-  local update=0 arg os arch platform extension executable desktop_dir version api json url asset cmd
-  for arg in "$@"; do
-    case "$arg" in
+  local update=0 track os arch platform extension executable desktop_dir version api json url asset cmd
+  local source destination artifact
+  track="$(read_state "$vis_track_file")"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
       -h|--help) vis_desktop_usage; exit 0 ;;
       --update) update=1 ;;
-      *) die "desktop: unknown option $arg" "Run: vis-agent desktop --help" ;;
+      --track)
+        [[ $# -ge 2 && -n "$2" ]] || die "desktop: --track needs release, beta, or dev"
+        track="$2"; shift ;;
+      *) die "desktop: unknown option $1" "Run: vis-agent desktop --help" ;;
     esac
+    shift
   done
-  (( ! jvm_requested )) || die "desktop: --jvm selects an engine runtime, not the released desktop app"
+  (( ! jvm_requested )) || die "desktop: --jvm selects an engine runtime" "Use: vis-agent desktop --track dev"
+  if [[ -z "$track" ]]; then
+    if [[ "$(runtime_effective)" == jvm ]]; then track=dev; else track=release; fi
+  fi
+  case "$track" in
+    release|dev) ;;
+    beta) die "desktop: no beta desktop artifacts are published" \
+      "Use: vis-agent desktop --track release (download) or --track dev (build source)." ;;
+    *) die "desktop: unknown track $track" "Choose release, beta, or dev." ;;
+  esac
   os="$(uname -s)"
   arch="$(uname -m)"
   case "$os/$arch" in
     Darwin/arm64|Darwin/x86_64)
-      platform=macos-universal; extension=dmg; executable=Vis.app/Contents/MacOS/pake-vis ;;
+      platform=macos-universal; extension=dmg; executable=Vis.app/Contents/MacOS/pake-vis
+      if [[ "$track" == dev ]]; then
+        if [[ "$arch" == arm64 ]]; then platform=macos-arm64; else platform=macos-x64; fi
+      fi ;;
     Linux/x86_64|Linux/amd64)
       platform=linux-x64; extension=AppImage; executable=Vis.AppImage ;;
     Linux/aarch64|Linux/arm64)
       platform=linux-arm64; extension=AppImage; executable=Vis.AppImage ;;
-    *) die "desktop: unsupported platform $os/$arch" "Desktop releases support macOS and Linux x64/ARM64." ;;
+    *) die "desktop: unsupported platform $os/$arch" "Desktop supports macOS and Linux x64/ARM64." ;;
   esac
   desktop_dir="$vis_install_dir/desktop/$platform"
-  version="$(read_state "$desktop_dir/current")"
-  if (( update )) || [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
-     ! vis_desktop_ready "$desktop_dir/$version" "$executable"; then
-    command -v curl >/dev/null 2>&1 || die "desktop: downloading the app needs 'curl' on PATH"
+  if [[ "$track" == dev ]]; then
+    source="$(find_jvm_source)" || die "desktop: no development source checkout found" \
+      "Run: vis-agent update --track dev, or use bin/vis-agent from a Vis checkout."
+    [[ -f "$source/apps/vis-companion/package.json" ]] || die "desktop: no Companion source in $source"
+    for cmd in node npm cargo rustc; do
+      command -v "$cmd" >/dev/null 2>&1 || die "desktop: building dev needs '$cmd' on PATH" \
+        "Install Node/npm, Rust/Cargo, and the native build prerequisites; see vis-agent desktop --help."
+    done
+    version="$(read_state "$source/VIS_VERSION")"
+    version="${version%%-*}"
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "desktop: invalid VIS_VERSION in $source"
+    artifact="$source/apps/vis-companion/build/desktop-dev/vis-companion-$version-$platform.$extension"
     configure_system_trust native
-    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
-    say "checking the latest stable desktop release"
-    json="$(curl -fsSL "$api")" || die "desktop: could not check the latest release; cached app unchanged" \
-      "Retry later, or run vis-agent desktop without --update to use a cached app."
-    url="$(vis_asset_url "$json" "vis-companion-[0-9][0-9.]*-$platform\\.$extension")"
-    [[ -n "$url" ]] || die "desktop: no desktop release for $platform" "Checked $api"
-    asset="${url##*/}"
-    version="${asset#vis-companion-}"
-    version="${version%-"$platform"."$extension"}"
-    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "desktop: invalid release asset $asset"
+    say "building dev desktop from $source (Node/npm, Rust, and native build tools required)"
+    (
+      cd "$source/apps/vis-companion"
+      rm -f "$artifact"
+      npm ci || die "desktop: dev dependency installation failed; no app was opened"
+      npm run build || die "desktop: dev web build failed; no app was opened"
+      npm run package:desktop -- --dev || die "desktop: dev native build failed; no app was opened"
+    )
+    [[ -s "$artifact" ]] || die "desktop: dev build did not produce $artifact; no app was opened"
+    desktop_dir="$vis_install_dir/desktop/dev/$platform"
     mkdir -p "$desktop_dir"
-    if ! vis_desktop_ready "$desktop_dir/$version" "$executable"; then
-      if [[ "$os" == Darwin ]]; then
-        for cmd in hdiutil ditto; do
-          command -v "$cmd" >/dev/null 2>&1 || die "desktop: installing the app needs '$cmd' on PATH"
-        done
+    # Keep every rebuild distinct, including uncommitted edits and running apps.
+    destination="$(mktemp -d "$desktop_dir/$version.XXXXXX")"
+    rmdir "$destination"
+    version="${destination##*/}"
+    vis_install_desktop "$artifact" "$destination" "$executable"
+  else
+    version="$(read_state "$desktop_dir/current")"
+    if (( update )) || [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+       ! vis_desktop_ready "$desktop_dir/$version" "$executable"; then
+      command -v curl >/dev/null 2>&1 || die "desktop: downloading the app needs 'curl' on PATH"
+      configure_system_trust native
+      api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
+      say "checking the latest stable desktop release"
+      json="$(curl -fsSL "$api")" || die "desktop: could not check the latest release; cached app unchanged" \
+        "Retry later, or run vis-agent desktop without --update to use a cached app."
+      url="$(vis_asset_url "$json" "vis-companion-[0-9][0-9.]*-$platform\\.$extension")"
+      [[ -n "$url" ]] || die "desktop: no desktop release for $platform" "Checked $api"
+      asset="${url##*/}"
+      version="${asset#vis-companion-}"
+      version="${version%-"$platform"."$extension"}"
+      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "desktop: invalid release asset $asset"
+      mkdir -p "$desktop_dir"
+      if ! vis_desktop_ready "$desktop_dir/$version" "$executable"; then
+        vis_install_desktop "$url" "$desktop_dir/$version" "$executable"
+      else
+        # A previously downloaded version may have become latest again.
+        local selection
+        selection="$(mktemp "$desktop_dir/.current.XXXXXX")"
+        printf '%s\n' "$version" > "$selection"
+        mv -f "$selection" "$desktop_dir/current"
       fi
-      vis_install_desktop "$url" "$desktop_dir/$version" "$executable"
-    else
-      # A previously downloaded version may have become latest again.
-      local selection
-      selection="$(mktemp "$desktop_dir/.current.XXXXXX")"
-      printf '%s\n' "$version" > "$selection"
-      mv -f "$selection" "$desktop_dir/current"
     fi
   fi
-  say "opening desktop $version"
+  say "opening $track desktop $version"
   if [[ "$os" == Darwin ]]; then
-    # Invoke the cached bundle; Pake activates its existing instance if one is running.
+    # Dev and release have distinct bundle IDs; an existing same-track app activates.
     exec open -n -a "$desktop_dir/$version/Vis.app"
   else
     # AppImage's built-in extraction avoids requiring a system FUSE installation.

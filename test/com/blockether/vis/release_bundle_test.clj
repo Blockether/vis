@@ -1763,6 +1763,18 @@
         desktop
         (io/file home ".vis/install/desktop" platform)
 
+        source
+        (io/file home ".vis/install/src")
+
+        companion
+        (io/file source "apps/vis-companion")
+
+        track
+        (io/file home ".vis/install/track")
+
+        dev-platform
+        (str (if (= os "Darwin") "macos-" "linux-") (if (#{"aarch64" "arm64"} arch) "arm64" "x64"))
+
         env
         {"HOME" (.getAbsolutePath home)
          "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
@@ -1771,7 +1783,9 @@
          "PATH" (str (.getAbsolutePath bin) ":" (System/getenv "PATH"))
          "DESKTOP_CALLS" (.getAbsolutePath calls)
          "DESKTOP_RELEASE" (.getAbsolutePath release)
-         "DESKTOP_PAYLOAD" (.getAbsolutePath payload)}
+         "DESKTOP_PAYLOAD" (.getAbsolutePath payload)
+         "DESKTOP_DEV_PLATFORM" dev-platform
+         "DESKTOP_DEV_SUFFIX" suffix}
 
         publish!
         (fn [version]
@@ -1791,6 +1805,11 @@
       (io/copy (io/file "bin/vis-agent") launcher)
       (spit calls "")
       (publish! "9.8.7")
+      (.mkdirs companion)
+      (spit (io/file source "deps.edn") "{}")
+      (spit (io/file source "VIS_VERSION") "9.8.6-dev\n")
+      (spit (io/file companion "package.json") "{}")
+      (spit (io/file companion "marker") "one")
       (write-executable!
         payload
         "#!/usr/bin/env bash\nprintf 'desktop-app extract=%s\\n' \"${APPIMAGE_EXTRACT_AND_RUN:-}\"\n")
@@ -1800,6 +1819,19 @@
       (doseq [command ["vis-agent-native" "java" "clojure"]]
         (write-executable! (io/file bin command)
                            "#!/usr/bin/env bash\necho unexpected-engine\nexit 95\n"))
+      (doseq [command ["node" "cargo" "rustc"]]
+        (write-executable! (io/file bin command) "#!/usr/bin/env bash\nexit 0\n"))
+      (write-executable!
+        (io/file bin "npm")
+        (str
+          "#!/usr/bin/env bash\nset -e\necho \"npm $* cwd=$PWD\" >> \"$DESKTOP_CALLS\"\n"
+          "case $* in\n"
+          "  ci) [[ ${DESKTOP_FAIL:-} != ci ]];;\n"
+          "  'run build') [[ ${DESKTOP_FAIL:-} != build ]];;\n"
+          "  'run package:desktop -- --dev')\n" "    [[ ${DESKTOP_FAIL:-} != package ]] || exit 1\n"
+          "    [[ ${DESKTOP_FAIL:-} != artifact ]] || exit 0\n" "    mkdir -p build/desktop-dev\n"
+          "    printf '#!/usr/bin/env bash\\necho dev-source-%s\\n' \"$(cat marker)\" > \"build/desktop-dev/vis-companion-9.8.6-$DESKTOP_DEV_PLATFORM.$DESKTOP_DEV_SUFFIX\";;\n"
+          "  *) echo unexpected-npm; exit 96;;\nesac\n"))
       (write-executable!
         (io/file bin "curl")
         (str
@@ -1814,12 +1846,13 @@
         (str
           "#!/usr/bin/env bash\necho \"hdiutil $*\" >> \"$DESKTOP_CALLS\"\n"
           "if [[ ${DESKTOP_FAIL:-} == busy && $1 == detach && $* != *-force* ]]; then exit 1; fi\n"
-          "[[ ${DESKTOP_FAIL:-} != $1 ]] || exit 1\n" "[[ $1 == attach ]] || exit 0\n"
+          "[[ ${DESKTOP_FAIL:-} != $1 ]] || exit 1\n"
+          "[[ $1 == attach ]] || exit 0\n" "image=$2\n"
           "while (($#)); do if [[ $1 == -mountpoint ]]; then mount=$2; shift; fi; shift; done\n"
           "[[ ${DESKTOP_FAIL:-} != bundle ]] || exit 0\n"
           "mkdir -p \"$mount/Vis.app/Contents/MacOS\"\n"
           ;; The released Pake bundle names its executable pake-vis, not Vis.
-          "cp \"$DESKTOP_PAYLOAD\" \"$mount/Vis.app/Contents/MacOS/pake-vis\"\n"))
+          "cp \"$image\" \"$mount/Vis.app/Contents/MacOS/pake-vis\"\nchmod +x \"$mount/Vis.app/Contents/MacOS/pake-vis\"\n"))
       (write-executable!
         (io/file bin "ditto")
         "#!/usr/bin/env bash\n[[ ${DESKTOP_FAIL:-} != copy ]] || exit 1\ncp -R \"$1\" \"$2\"\n")
@@ -1830,6 +1863,11 @@
           :calls calls
           :release release
           :publish! publish!
+          :source source
+          :track track
+          :checkout dir
+          :bin bin
+          :dev-desktop (io/file home ".vis/install/desktop/dev" dev-platform)
           :run! (fn [args extra-env]
                   (run-bash (into ["bash" (.getAbsolutePath launcher) "desktop"] args)
                             (merge env extra-env)))})
@@ -1923,6 +1961,99 @@
                                   (expect (not (zero? exit)) output)
                                   (expect (not (str/includes? output "unexpected-engine")) output)))
                               (expect (= "" (slurp calls)))))))
+
+(defdescribe
+  desktop-track-test
+  (it "honors the selected track and a one-launch override without changing that selection"
+      (with-desktop-fixture "Linux"
+                            "x86_64"
+                            (fn [{:keys [track calls run!]}]
+                              (spit track "beta\n")
+                              (let [{:keys [exit output]} (run! [] {})]
+                                (expect (not (zero? exit)) output)
+                                (expect (str/includes? output "no beta desktop") output)
+                                (expect (= "" (slurp calls))))
+                              (expect (zero? (:exit (run! ["--track" "release"] {}))))
+                              (expect (= "beta\n" (slurp track)))
+                              (spit calls "")
+                              (doseq [args [["--track" "beta"] ["--track" "unknown"] ["--track"]]]
+                                (expect (not (zero? (:exit (run! args {}))))))
+                              (expect (= "" (slurp calls))))))
+  (it "builds dev from the selected source every time and keeps the release cache separate"
+      (doseq [[os arch] [["Darwin" "arm64"] ["Darwin" "x86_64"] ["Linux" "x86_64"]
+                         ["Linux" "aarch64"]]]
+        (with-desktop-fixture
+          os
+          arch
+          (fn [{:keys [desktop dev-desktop source track calls run!]}]
+            (expect (zero? (:exit (run! ["--track" "release"] {}))))
+            (spit calls "")
+            (spit track "dev\n")
+            (let [{:keys [exit output]} (run! [] {})
+                  current (io/file dev-desktop "current")
+                  first-build (when (.exists current) (str/trim (slurp current)))]
+
+              (expect (zero? exit) output)
+              (expect (some? first-build))
+              (expect (str/includes? (slurp calls) "npm ci cwd="))
+              (expect (str/includes? (slurp calls) "npm run build cwd="))
+              (expect (str/includes? (slurp calls) "npm run package:desktop -- --dev cwd="))
+              (expect (str/includes? (slurp calls)
+                                     (.getAbsolutePath (io/file source "apps/vis-companion"))))
+              (expect (not (str/includes? (slurp calls) "curl ")))
+              (expect (= "9.8.7\n" (slurp (io/file desktop "current"))))
+              (spit (io/file source "apps/vis-companion/marker") "two")
+              (let [{:keys [exit output]} (run! ["--update"] {})]
+                (expect (zero? exit) output)
+                (expect (= 2 (count (re-seq #"(?m)^npm ci " (slurp calls)))))
+                (when (.exists current) (expect (not= first-build (str/trim (slurp current)))))
+                (when (= os "Linux") (expect (str/includes? output "dev-source-two") output)))
+              (expect (= "dev\n" (slurp track))))))))
+  (it "does not fall back to a release or an older dev app after a build failure"
+      (with-desktop-fixture
+        "Linux"
+        "x86_64"
+        (fn [{:keys [dev-desktop source track calls run!]}]
+          (spit track "dev\n")
+          (expect (zero? (:exit (run! [] {}))))
+          (let [current
+                (io/file dev-desktop "current")
+
+                previous
+                (when (.exists current) (slurp current))]
+
+            (doseq [failure ["ci" "build" "package" "artifact"]]
+              (spit (io/file
+                      source
+                      "apps/vis-companion/build/desktop-dev/vis-companion-9.8.6-linux-x64.AppImage")
+                    "stale")
+              (spit calls "")
+              (let [{:keys [exit output]} (run! [] {"DESKTOP_FAIL" failure})]
+                (expect (not (zero? exit)) output)
+                (expect (not (str/includes? output "dev-source-")) output)
+                (expect (not (str/includes? (slurp calls) "curl ")))
+                (when (.exists current) (expect (= previous (slurp current))))))
+            (delete-tree! source)
+            (spit calls "")
+            (let [{:keys [exit output]} (run! [] {})]
+              (expect (not (zero? exit)) output)
+              (expect (str/includes? output "vis-agent update --track dev") output)
+              (expect (= "" (slurp calls))))))))
+  (it "defaults a source-only checkout to dev without persisting a track"
+      (with-desktop-fixture "Linux"
+                            "x86_64"
+                            (fn [{:keys [source checkout bin track calls run!]}]
+                              (io/delete-file (io/file bin "vis-agent-native"))
+                              (spit (io/file checkout "deps.edn") "{}")
+                              (io/copy (io/file source "VIS_VERSION")
+                                       (io/file checkout "VIS_VERSION"))
+                              (expect (.renameTo (io/file source "apps") (io/file checkout "apps")))
+                              (delete-tree! source)
+                              (let [{:keys [exit output]} (run! [] {})]
+                                (expect (zero? exit) output)
+                                (expect (str/includes? output "dev-source-one") output)
+                                (expect (not (str/includes? (slurp calls) "curl ")))
+                                (expect (not (.exists track))))))))
 
 ;; Regression: the public `vis-agent tui` command fell through to the one-shot
 ;; prompt shortcut, so asking for the terminal client sent "tui" to a model.

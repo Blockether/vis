@@ -208,3 +208,72 @@ describe('desktop release platforms', () => {
     expect(firstRun).toBeGreaterThan(checkout);
   });
 });
+
+describe('desktop development builds', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    existsSync.mockReturnValue(true);
+  });
+
+  it.each([
+    ['darwin', 'arm64', 'dmg', 'macos-arm64'],
+    ['darwin', 'x64', 'dmg', 'macos-x64'],
+    ['linux', 'arm64', 'AppImage', 'linux-arm64'],
+    ['linux', 'x64', 'AppImage', 'linux-x64'],
+  ])('builds only the local %s/%s app with a distinct identity', (platform, arch, ext, asset) => {
+    const assets = packageDesktop({ platform, arch, dev: true, log: vi.fn() });
+    expect(assets).toEqual([`/app/build/desktop-dev/vis-companion-1.0.0-${asset}.${ext}`]);
+    expect(spawnSync).toHaveBeenCalledTimes(1);
+    const [command, args, options] = spawnSync.mock.calls[0];
+    expect(command).toBe('npx');
+    expect(args).not.toContain('--multi-arch');
+    expect(args).toContain(platform === 'darwin' ? 'dmg' : 'appimage');
+    expect(args[args.indexOf('--identifier') + 1]).toBe('com.blockether.viscompanion.desktop.dev');
+    expect(options.cwd).toBe('/app/build/desktop-dev');
+  });
+
+  it('does not inherit release signing or notarization credentials', () => {
+    const credentials = [
+      'APPLE_SIGNING_IDENTITY',
+      'APPLE_CERTIFICATE',
+      'APPLE_CERTIFICATE_PASSWORD',
+      'APPLE_API_KEY',
+      'APPLE_API_KEY_PATH',
+      'APPLE_API_ISSUER',
+      'APPLE_ID',
+      'APPLE_PASSWORD',
+      'APPLE_TEAM_ID',
+    ];
+    try {
+      for (const name of credentials) vi.stubEnv(name, 'test-only');
+      packageDesktop({ platform: 'darwin', arch: 'arm64', dev: true, log: vi.fn() });
+      const { env } = spawnSync.mock.calls[0][2];
+      for (const name of credentials) expect(env?.[name], name).toBeUndefined();
+      expect(env.PATH).toBe(process.env.PATH);
+      packageDesktop({ platform: 'darwin', arch: 'arm64', log: vi.fn() });
+      const releaseEnv = spawnSync.mock.calls[1][2].env;
+      for (const name of credentials) {
+        expect(releaseEnv[name], name).toBe('test-only');
+        expect(process.env[name], name).toBe('test-only');
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not install a stale artifact when compilation fails', () => {
+    spawnSync.mockReturnValueOnce({ status: 1 });
+    expect(() =>
+      packageDesktop({ platform: 'linux', arch: 'x64', dev: true, log: vi.fn() }),
+    ).toThrow(/failed/);
+    expect(renameSync).not.toHaveBeenCalled();
+  });
+
+  it('rejects a successful build with no installer instead of using an older asset', () => {
+    existsSync.mockImplementation((path) => basename(path) !== 'vis.AppImage');
+    expect(() =>
+      packageDesktop({ platform: 'linux', arch: 'x64', dev: true, log: vi.fn() }),
+    ).toThrow(/missing/);
+    expect(renameSync).not.toHaveBeenCalled();
+  });
+});

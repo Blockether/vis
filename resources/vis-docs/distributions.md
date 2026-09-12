@@ -139,34 +139,72 @@ use `vis-agent tui` for automatic local lifecycle management.
 
 ## Open the desktop app
 
-Run the desktop Companion without building it or installing it as an administrator:
+Open the desktop Companion for your selected release track:
 
 ```bash
-vis-agent desktop            # download the stable app on first use, then open it
-vis-agent desktop --update   # check the latest stable release, then open it
+vis-agent desktop                  # use the track selected by vis-agent update
+vis-agent desktop --update         # check for a release update, or rebuild dev
+vis-agent desktop --track release  # download and open stable for this launch
+vis-agent desktop --track dev      # build and open your current source checkout
 vis-agent desktop --help
 ```
 
-The command chooses the universal macOS app (Apple silicon or Intel), or the Linux
-AppImage for x64 or ARM64. Windows is not a desktop release target. Downloads need
+`--track` overrides the desktop track for one launch; it does not change your
+engine selection. With no installed track, a source-only checkout defaults to dev;
+otherwise the default is release. Beta publishes engine and TUI bundles, not desktop
+apps. On beta, choose `--track release` or `--track dev` explicitly; the command
+never silently substitutes a stable app.
+
+### Release: download and reuse
+
+The release track chooses the universal macOS app (Apple silicon or Intel), or the
+Linux AppImage for x64 or ARM64. Windows is not a desktop target. Downloads need
 `curl` and network access. On macOS, the launcher copies `Vis.app` from the signed
-disk image into your Vis cache and opens it. If the desktop is already running,
-its existing window is activated; quit it and rerun the command to switch to an
-updated version. On Linux, the launcher runs the AppImage in the
-foreground with built-in extraction, so FUSE is not required; you still need a
-graphical desktop and the system libraries required by the app.
+disk image into your Vis cache. On Linux, it runs the AppImage in the foreground
+with built-in extraction, so FUSE is not required; you still need a graphical
+desktop and the system libraries required by the app.
 
-Later launches reuse the cached app without contacting GitHub. `--update` checks
-for a newer stable version and downloads only when that version is not cached.
-Failed downloads or installation steps leave the previously selected app intact;
-retry the command, or omit `--update` to open the existing copy. A missing cached
-executable is downloaded again automatically.
+Later release launches reuse the cached app without contacting GitHub. `--update`
+checks for a newer stable version and downloads only when that version is not
+cached. Failed downloads or installation steps leave the previously selected app
+intact; retry the command, or omit `--update` to open the existing copy. A missing
+cached executable is downloaded again automatically.
 
-Files live in `~/.vis/install/desktop/<platform>/<version>/`, or under `VIS_HOME`
-when set. Older versions remain in the cache so an update does not replace files
-used by an open app. Desktop downloads are separate from `vis-agent update` and
-always use stable releases, even if your engine uses beta or dev. They do not
-change your engine track, require Java, or start or restart a gateway.
+### Dev: build from source
+
+The dev track builds the web bundle and native desktop app from your selected
+source on **every launch**, including uncommitted changes. It uses the managed
+checkout at `~/.vis/install/src` when present; otherwise, a checkout-owned
+`bin/vis-agent` builds that checkout. It never downloads a released desktop app or
+falls back to an older build after a failure.
+
+Install Node.js 20 or newer with npm, Rust 1.85 or newer with Cargo, and the native
+build tools before running it. macOS needs Xcode and its command-line tools. Linux
+needs a C/C++ toolchain, WebKitGTK 4.1 development packages and `xdg-utils`; the
+[desktop build workflow](../../.github/workflows/desktop-companion.yml) lists the
+Ubuntu packages. Installing these prerequisites may need administrator access.
+Dependency downloads need network access, and the first native build can take
+several minutes. Subsequent builds reuse npm and Rust download/build caches, but
+still run the build steps.
+
+The launcher runs `npm ci`, `npm run build`, and `npm run package:desktop -- --dev`
+in `apps/vis-companion`. This reinstalls that checkout's `node_modules` and updates
+its build outputs. The result targets only your machine's architecture, needs no
+release signing credentials, and has a separate app identity from stable.
+`desktop --update` also builds the **current** checkout; to fetch newer source
+first, run `vis-agent update --track dev`.
+
+### Cached files and pairing
+
+Release files live in `~/.vis/install/desktop/<platform>/<version>/`; source builds
+live in `~/.vis/install/desktop/dev/<platform>/<version>.<build>/`. Both respect
+`VIS_HOME`. Older copies remain so a build or update does not replace files used
+by an open app. Quit an already-running app before reopening to use a newer build
+of that track; otherwise its existing window is activated. Dev and release can run
+side by side.
+
+Installing the app in this cache needs no administrator access. Desktop launches
+do not require Java, change your engine track, or start or restart a gateway.
 
 On first launch, pair with your gateway in the app using its URL and bearer token.
 See [Remote access and the Companion app](gateway.md) for connection options.
