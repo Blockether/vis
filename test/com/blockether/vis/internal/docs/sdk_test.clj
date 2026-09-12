@@ -48,7 +48,8 @@
 (deftest sdk-guides-task-order-test
   (doseq [[page headings] [["python-sdk"
                             ["## Install the SDK" "## Let your program own a private agent"
-                             "## Connect to a gateway and run a task" "## Continue a conversation"
+                             "## Connect to a gateway and run a task"
+                             "## Give the agent your functions" "## Continue a conversation"
                              "## Show progress while a turn runs"
                              "## Handle failures and choose a lifecycle"]]
                            ["jvm-sdk"

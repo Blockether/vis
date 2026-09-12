@@ -114,6 +114,126 @@ Keep the printed session ID: to resume it later, open a
 `GatewayClient(url, token=...)` context and use `client.session(session_id)`.
 Each new Agent creates a new session; it does not implicitly resume an old one.
 
+## Give the agent your functions
+
+Register your Python functions as a **project extension** to let the agent use
+business rules, query your data or call your services. `Agent` runs the
+conversation; the extension adds the capabilities. The SDK does not accept
+client-side callbacks or a `tools` argument on `Agent`.
+
+The functions run in the **engine's extension worker**, not in your SDK process.
+Extensions are trusted Python code: they run with the engine user's permissions,
+outside the model's sandbox. Review the code and its dependencies before loading
+it, especially when a function can change data or contact a service.
+
+### Register a function
+
+Create this file under the project you pass to `Agent`. For a gateway-backed
+Agent, put it in that project **on the gateway machine**, not just on your laptop.
+This example returns a delivery price in cents without network calls or file
+changes:
+
+```python
+# .vis/extensions/delivery_tools.py
+import blockether.vis.extension as vis
+
+
+def delivery_quote(weight_grams: int, *, express: bool = False) -> int:
+    """Return a delivery price in cents for a positive weight in grams.
+
+    Charge 500 cents plus 100 per started kilogram. express defaults to False;
+    True adds 500 cents. Raise ValueError for zero or negative weight.
+    This function makes no network calls and changes no files or other data.
+    """
+    if weight_grams <= 0:
+        raise ValueError("weight_grams must be positive")
+    kilograms = (weight_grams + 999) // 1000
+    return 500 + 100 * kilograms + (500 if express else 0)
+
+
+def quote_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    return vis.ActivityPresentation("Quote delivery", f"{result} cents")
+
+
+vis.register(
+    vis.Extension(
+        name="delivery",
+        description="Delivery prices for this project.",
+        alias="delivery",
+        prompt="Use delivery_quote for delivery prices.",
+        symbols=[
+            vis.Symbol(
+                delivery_quote,
+                activity=vis.Activity(
+                    label="Quote delivery",
+                    show_start=False,
+                    render=quote_activity,
+                ),
+            )
+        ],
+    )
+)
+```
+
+`vis.Symbol` exposes the function's name, annotations and docstring to the agent.
+Here the callable is `delivery_quote`, not `delivery.delivery_quote`: `alias`
+identifies the extension, not a function-name prefix. The `prompt` tells the
+agent when to use it; the `symbols` registration makes it callable. Every exported
+function needs an Activity presentation. This quick calculation shows its price
+on completion rather than adding a running indicator; failures retain their
+error details.
+
+To expose an existing function, import it into this entry file and pass it to
+`vis.Symbol` in the same way. For methods, packages and other extension features,
+see [the extension API](extension-api.md). Install third-party dependencies in the
+**engine's** Python environment, not only in your SDK application's environment;
+[develop an extension](extension-development.md) and
+[package an extension](extension-packages.md) cover that setup. Python extensions
+do not require a native-image rebuild.
+
+### Ask the agent to use it
+
+Create the extension before starting the Agent. Save this script in the project
+and run `python delivery_task.py`:
+
+```python
+# delivery_task.py
+from blockether.vis.engine import Agent
+
+
+def quote_delivery(agent: Agent) -> dict:
+    result = agent.run(
+        "Use delivery_quote to quote express delivery for a 1200-gram parcel. "
+        "Report the returned price in cents."
+    )
+    print("Status:", result["status"])
+    print(agent.session.transcript(format="markdown").content.decode())
+    return result
+
+
+if __name__ == "__main__":
+    with Agent(project=".") as agent:
+        quote_delivery(agent)
+```
+
+The function returns **1200 cents**. The agent can discover its contract through
+`apropos` and `doc`, call it through `python_execution`, and use the returned value
+in its answer. The Activity reads **Quote delivery · 1200 cents**. This is a model
+request, so it uses your configured provider and may incur model charges.
+
+For a remote agent, call the same `quote_delivery(agent)` inside the gateway-backed
+`Agent` context shown above. Both modes load capabilities from the selected engine
+project; neither uploads this file, your dependencies or local Python closures.
+Calling `vis.register()` in the SDK client process does not register a remote tool.
+
+After editing an extension, restart your private local Agent, or use `/reload` in
+Vis for an existing gateway conversation. Already-loaded extension code does not
+change just because you edited the file. See
+[add your first extension](extending.md#your-first-extension) for discovery and
+reload behavior.
+
 ## Continue a conversation
 
 Reuse either kind of Agent for follow-up requests. Use `send()` instead of `run()`

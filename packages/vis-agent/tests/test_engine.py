@@ -247,6 +247,7 @@ def sdk_fixture(
     council=False,
     tool_code=None,
     before_reply=None,
+    project_extensions=None,
 ):
     raw = os.environ.get("VIS_TEST_LOCAL_COMMAND")
     if not raw:
@@ -258,6 +259,8 @@ def sdk_fixture(
     extensions = work / ".vis" / "extensions"
     extensions.mkdir(parents=True)
     (extensions / "fixture.py").write_text(EXTENSION)
+    for name, source in (project_extensions or {}).items():
+        (extensions / name).write_text(source)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("JAVA_TOOL_OPTIONS", f"-Duser.home={home}")
     monkeypatch.delenv("VIS_GATEWAY_URL", raising=False)

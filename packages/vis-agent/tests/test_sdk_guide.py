@@ -11,25 +11,30 @@ from types import ModuleType
 from urllib.parse import parse_qs, urlsplit
 
 import blockether.vis.engine as engine
+import blockether.vis.extension as vis
 import pytest
+from blockether.vis import _contracts
 from test_client import compatible, endpoint
 from test_engine import real_client, sdk_fixture
 
 
+def _recipe_source(name):
+    document = Path(__file__).parents[3] / "resources/vis-docs/python-sdk.md"
+    match = re.search(
+        rf"```python\n# {re.escape(name)}.py\n(.*?)\n```",
+        document.read_text(),
+        re.S,
+    )
+    assert match, f"Missing executable example: {name}"
+    return match[1]
+
+
 @pytest.fixture
 def recipe(monkeypatch):
-    document = Path(__file__).parents[3] / "resources/vis-docs/python-sdk.md"
-
     def load(name):
-        match = re.search(
-            rf"```python\n# {re.escape(name)}.py\n(.*?)\n```",
-            document.read_text(),
-            re.S,
-        )
-        assert match, f"Missing executable example: {name}"
-        module = ModuleType(name)
-        monkeypatch.setitem(sys.modules, name, module)
-        exec(compile(match[1], str(document), "exec"), module.__dict__)
+        module = ModuleType(Path(name).name)
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+        exec(compile(_recipe_source(name), name + ".py", "exec"), module.__dict__)
         return module
 
     return load
@@ -232,6 +237,81 @@ def test_recipes_complete_against_real_engine(
         result = recipe("progress").watch_turn(conversation, turn)
         assert result["status"] == "completed"
         assert requests
+
+
+def test_capability_recipe_registers_function_and_activity(recipe, monkeypatch):
+    monkeypatch.setattr(vis, "_registration", {"spec": None})
+    updates = []
+    monkeypatch.setattr(
+        vis._host, "activity", lambda value: updates.append(value) or True
+    )
+    module = recipe(".vis/extensions/delivery_tools")
+    declaration = vis._registration["spec"]
+    assert declaration["name"] == "delivery"
+    (tool,) = declaration["symbols"]
+    assert tool["contract"]["name"] == "delivery_quote"
+    assert _contracts.validate("symbol", "callable", tool["contract"])
+    assert "express" in tool["doc"] and "False" in tool["doc"]
+    assert tool["activity"]["label"] == "Quote delivery"
+    assert tool["activity"]["show_start"] is False
+    assert tool["fn"](1200, express=True) == 1200
+    assert updates == [
+        {"headline": "Quote delivery", "summary": "1200 cents", "content": []}
+    ]
+    assert module.delivery_quote(1200) == 700
+    assert module.delivery_quote(1) == 600
+    assert module.delivery_quote(1000) == 600
+    assert module.delivery_quote(1001) == 700
+    for weight in (0, -1):
+        with pytest.raises(ValueError, match="positive"):
+            tool["fn"](weight)
+    for phase in ("start", "failure"):
+        assert module.quote_activity(phase=phase, result=None) is None
+
+
+@pytest.mark.parametrize("transport", ["http", "stdio"])
+def test_capability_recipe_runs_on_engine(
+    recipe, tmp_path, monkeypatch, capsys, transport
+):
+    code = """
+print(apropos(r"^delivery_quote$"))
+print(doc("delivery_quote"))
+print("DELIVERY_QUOTE", await delivery_quote(1200, express=True))
+try:
+    await delivery_quote(0)
+except Exception as error:
+    print("INVALID_WEIGHT", "positive" in str(error))
+"""
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        transport,
+        tool_code=code,
+        project_extensions={
+            "delivery_tools.py": _recipe_source(".vis/extensions/delivery_tools")
+        },
+    ) as (client, work, requests):
+        options = (
+            {"gateway_url": client._url, "token": client._token}
+            if transport == "http"
+            else {"executable": client._command}
+        )
+        with engine.Agent(work, **options) as agent:
+            result = recipe("delivery_task").quote_delivery(agent)
+            assert result["status"] == "completed"
+        output = capsys.readouterr().out
+        assert "Status: completed" in output
+        tool_results = [
+            message["content"]
+            for request in requests
+            for message in request["messages"]
+            if message["role"] == "tool"
+        ]
+        assert tool_results, requests
+        text = "\n".join(str(content) for content in tool_results)
+        assert "DELIVERY_QUOTE 1200" in text
+        assert "INVALID_WEIGHT True" in text
+        assert "express" in text and "False" in text
 
 
 def _jvm_candidate_classpath(classpath, version, candidate):

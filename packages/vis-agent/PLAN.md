@@ -367,3 +367,16 @@ Plan state: phases 15–16 complete. Local and isolated Linux verification pass;
 - Linux x64: a freshly built and installed candidate wheel on Python 3.11.14 passes all 24 Agent cases and 20 guide cases (four opt-in live-provider skips) against the immutable public native 0.2.2 bundle. Exact Python, Java and Clojure recipes, HTTP/stdio, authentication refusal, progress, follow-ups, ownership and native restaging/Python-tool execution pass. JVM examples use the prepared source classpath with runtime 0.5.14, not a claim about the public Maven artifact.
 - The documented service unit passes systemd validation and isolated transient execution, including an existing unprivileged account, zero restarts, account-owned state and a mode-0600 token. Only test-owned units were stopped; temporary processes and the unprivileged test directory were removed. No account was created or unit enabled. Retained remote logs independently confirm exit zero and the 44-pass/four-skip result.
 - After the separate release owner's version sync, all 11 SDK gates pass again with 0.2.3 distribution metadata and the final SDK module docstring (659 source and 676 installed-wheel cases). This verifies a local candidate; it does not publish a release.
+
+## 17. Add custom functions to an Agent
+
+- Rationale: creating an Agent is not enough to show how to give it application capabilities.
+- Data: the Python SDK guide, its executable recipes, and the existing real-engine fixture.
+- Acceptance criteria: a complete typed-function registration, meaningful Activity, and SDK invocation work through both local stdio and gateway Agents. Explain engine-side code, dependencies, permissions and reloads without inventing client-side callback injection.
+- Unknowns: none in the documentation and regression-test scope; public artifact publication remains release-owned.
+
+Plan state: phase 17 complete. Prior phases remain complete.
+
+- The new registration test first failed because the capability recipe was absent. The literal example now passes registration, contract, pricing boundaries, invalid-input and Activity checks.
+- Actual native HTTP and stdio Agents load the documented extension, discover its contract, call the function and receive both the price and validation error. The same three cases pass on Linux with an installed candidate SDK; independently read logs and source hashes match the local inputs. No paid model calls or production service changes were made for this phase.
+- All 11 SDK gates pass: 660 source cases (25 opt-in skips) and 679 installed-wheel cases (six skips), including native execution. The 61 Clojure docs cases, 161 generated-site cases, formatting, lint and reflection checks pass. The SDK source-install caveat remains until public artifact verification.
