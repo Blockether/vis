@@ -186,3 +186,64 @@ one keyboard/touch carousel on the documentation site. Preserve concurrent work.
    Published in `6cdcada18`; Docs run `34695148233` passed verification and deployment.
    The nine reviewed captures are unchanged. Temporary capture and preview
    infrastructure is stopped; no existing gateway or personal work was used.
+
+# Full release end-to-end verification
+
+Verify the current sources and public artifacts before publishing the next complete release.
+
+## Context
+
+Published v0.2.2 contains the fixes for #210, #211 and #212. The user requests
+all test suites, isolated Linux host validation, green CI and a full release.
+Use the existing source, native, installed-SDK and editing end-to-end suites.
+Do not restart the live gateway, weaken tests, move tags or publish partial assets.
+Keep unrelated concurrent documentation work separate from verification repairs.
+
+## 1. Verify source suites
+
+- Rationale: every repository-owned component must pass its canonical checks.
+- Data: CI, Companion and Storybook, relay, docs, SDK and the editing harness.
+- Acceptance criteria: passing full suites and applicable formatting/lint checks;
+  distinguish environmental failures from reproduced product failures.
+- Unknowns: model availability and any new test failures.
+
+## 2. Verify public native artifacts
+
+- Rationale: source tests do not prove downloaded binaries work.
+- Data: macOS and Linux public engine/TUI bundles and installed PyPI SDK.
+- Acceptance criteria: full native suites, real HTTP/stdio integration and version
+  checks in isolated test environments; no live service changes.
+- Unknowns: host availability and artifact-specific failures.
+
+## 3. Repair and publish
+
+- Rationale: the complete release must use exactly the verified source revision.
+- Data: scoped regression fixes, version mirrors and canonical release workflow.
+- Acceptance criteria: scoped commits, green CI, immutable matching version/tag,
+  successful native/mobile/desktop gates, GitHub/Clojars/PyPI publication.
+- Unknowns: concurrent main pushes and store processing.
+
+## Plan state
+
+1. Pre-cut complete: source CI 34709606682 passes all 18 jobs. The normal full
+   Companion suite passes 2,743 tests with two existing skips across 283 files;
+   gateway fixture transforms now load before timed cases without changing deadlines
+   or module-reset isolation. Lint and build pass. Storybook passes 251 stories and
+   contrast checks across 12 themes; all 1,984 TUI tests, relay and docs pass.
+   SDK commit 4eceb78fc passes all 11 gates with 660 source and 679 installed-native
+   tests, 61 docs tests and 161 site tests. Isolated Linux checks pass 44 SDK cases
+   and root/non-root service smokes, with no live service changes.
+   Editing E2E passes all 19 scenarios after one unchanged targeted retry for a
+   model lookup error; the strict no-error gate remains intact.
+2. Baseline complete: public v0.2.2 passes all 38 tag-matching Linux native cases,
+   installed SDK checks and macOS history/ANSI cases. A fresh macOS engine with
+   runtime 0.5.14 passes all 42 native cases and 62 embedded pytest client tests.
+   Repeat with final published engine and TUI bundles.
+3. In progress: runtime 0.5.14 publishes the Path/Counter and embedded pytest signal
+   fixes; four-platform CI and all release jobs pass. The final Vis pin passes 146
+   consumer tests. Package closure repair 0ea20403a passes both strict candidate
+   Maven Java/Clojure recipes; all 100 bundle tests pass after the 0.2.3 version sync.
+   The public v0.2.2 library remains incomplete. Remaining: matching version/tag,
+   complete product publication, fresh public Maven/PyPI/native proof and
+   released-client docs updates. New client-callback development is outside this cut.
+   Preserve and exclude the unrelated, explicitly local-only runtime gather fix.

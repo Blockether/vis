@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.3] - 2026-09-12
+
+### Added
+- Use the Python SDK's `Agent` with a project-local process or an existing gateway to follow progress and continue conversations with built-in Python tools.
+- Follow tested Python, Java and Clojure SDK guides, including gateway connections and native-image packaging for JVM extensions.
+
+### Fixed
+- Continue running goals while tools make progress, and report completion, blockers, exhausted budgets and repeated empty replies separately.
+- Show one Activity band for merged execution blocks, including all inline and retained operations in search, copy and export without losing independent history cursors (#212).
+- Preserve `Path` and `Counter` class identity on their first use in embedded Python.
+- Prevent pytest's fatal-signal handler from conflicting with the embedded JVM without skipping tests.
+- Include the Python runtime and SDK resources in the published JVM library so standalone Java and Clojure clients can load it.
+
+### Changed
+- Keep mobile Activity pagination compact and make the documentation screenshot gallery easier to browse.
+
 ## [v0.2.2] - 2026-09-12
 
 Includes the reliability and complete Activity-history fixes for #210, #211 and #212 prepared for v0.2.1, whose Linux verification blocked publication.
