@@ -80,6 +80,28 @@ describe('attachmentsFromSharedFiles', () => {
     expect(result.attachments[0]?.filename).toBe('memo.m4a');
   });
 
+  it.each([
+    'text/markdown',
+    'text/x-markdown',
+    'text/plain',
+    'application/octet-stream',
+    undefined,
+  ])('keeps a shared Markdown attachment declared as %s', async (type) => {
+    const payload = btoa('# Shared notes\n\n- Keep the original bytes.\n');
+    readFile.mockResolvedValueOnce({ data: payload });
+    const result = await attachmentsFromSharedFiles([staged('NOTES.md', type)], {
+      mediaTypes: ['text/markdown'],
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0]).toMatchObject({
+      filename: 'NOTES.md',
+      media_type: 'text/markdown',
+      base64: `data:text/markdown;base64,${payload}`,
+    });
+  });
+
   it('reports the files it could not read', async () => {
     readFile.mockRejectedValueOnce(new Error('gone'));
 

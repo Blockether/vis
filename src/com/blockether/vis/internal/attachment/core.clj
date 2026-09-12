@@ -12,9 +12,9 @@
    What a file IS is sniffed from magic bytes (pi-parity: jpeg / non-animated
    png / gif / webp / bmp, plus MP4/QuickTime clips, mp3/m4a/wav/ogg/flac
    recordings, PDF/HTML documents and gzip streams) or, for SVG, from the
-   markup head -- never trusted from the extension alone. A container the model
-   cannot consume is still attached: recordings, documents and compressed files
-   are kept for the HUMAN and NAMED to the model ([[model-blind-media-type?]]).
+   markup head. Markdown uploads use a filename or MIME hint plus UTF-8 validation;
+   an extension alone never blesses a payload. A container the model cannot consume
+   is kept for the HUMAN and NAMED to the model ([[model-blind-media-type?]]).
 
    Storing and SENDING are deliberately separate concerns:
 
@@ -41,7 +41,7 @@
   (:import [java.io File RandomAccessFile]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
-           [java.util Base64]))
+           [java.util Arrays Base64]))
 
 ;; Limits
 
@@ -314,7 +314,12 @@
   {:pdf "application/pdf"
    :html "text/html"
    :xhtml "application/xhtml+xml"
+   :markdown "text/markdown"
    :jsonl "application/x-ndjson"})
+
+(def markdown-media-types
+  "MIME spellings used by Markdown file providers. Intake stores `text/markdown`."
+  #{"text/markdown" "text/x-markdown"})
 
 (def gzip-media-types
   "MIME spellings file providers use for a gzip stream. Intake sniffs and stores
@@ -332,7 +337,7 @@
    audience the caller asked for. Documents and gzip streams are not pixels; the
    honest route is to keep their bytes in the session, name the file to the model,
    and let it inspect those bytes on demand with `read_attachment`."
-  (into (set (vals document-media-types)) gzip-media-types))
+  (into (set (vals document-media-types)) (concat gzip-media-types markdown-media-types)))
 
 (defn detect-document-mime
   "Sniff a PDF, HTML or XHTML document from its bytes, never its extension."
@@ -667,15 +672,32 @@
       (if (neg? i) s (subs s (inc i))))
     s))
 
+(defn- detect-markdown-mime
+  "Markdown has no magic bytes. Require a filename or MIME hint and valid UTF-8
+   without binary control characters; ordinary prose and empty documents are valid."
+  [^bytes b filename media-type]
+  (let [media-type (-> (str media-type)
+                       str/lower-case
+                       (str/split #";" 2)
+                       first
+                       str/trim)]
+    (when (or (re-find #"(?i)\.(?:md|markdown|mdown|mkd)$" (str filename))
+              (contains? markdown-media-types media-type))
+      (let [text (String. b StandardCharsets/UTF_8)]
+        (when (and (Arrays/equals b (.getBytes text StandardCharsets/UTF_8))
+                   (not (re-find #"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]" text)))
+          (:markdown document-media-types))))))
+
 (defn prepare-inline-attachments
   "Validate already-encoded attachments delivered INLINE (web/API upload) rather
    than as filesystem paths. Each entry is `{:base64 :filename :media-type?}`; the
    base64 may be a bare payload or a `data:...;base64,` URL. Decodes each, sniffs
-   the MIME from magic bytes (the declared `:media-type` is NEVER trusted),
-   enforces the same caps as [[collect-user-images]], and returns its
-   `{:attached [...] :skipped [...]}` shape. Never throws.
+   the MIME from magic bytes, then checks Markdown hints against valid UTF-8 text.
+   A declared `:media-type` alone never accepts binary bytes. Enforces the same caps
+   as [[collect-user-images]], returning its `{:attached [...] :skipped [...]}` shape.
+   Never throws.
 
-   The ORIGINAL payload is stored under its SNIFFED container and never converted.
+   The ORIGINAL payload is stored under its validated type and never converted.
    Image adaptation remains a SEND-time question (see [[wire-image]]); human-only
    files stay available through `read_attachment`."
   ([attachments] (prepare-inline-attachments attachments {}))
@@ -694,7 +716,8 @@
                (.decode (Base64/getDecoder) payload)
 
                mime
-               (detect-media-mime raw)
+               (or (detect-media-mime raw)
+                   (detect-markdown-mime raw label (or (:media-type att) (get att "media_type"))))
 
                size
                (alength raw)]

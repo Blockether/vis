@@ -5,6 +5,7 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
+            [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -330,6 +331,65 @@
                                                                   (java.util.Base64/getDecoder)
                                                                   ^String (:base64 attachment))
                                                                 "UTF-8")))))))
+
+(deftest markdown-upload-survives-turn-intake
+  (let [sid
+        (random-uuid)
+
+        payload
+        (.getBytes "# Shared notes\n\n- café\n" "UTF-8")
+
+        prepared
+        (atom nil)]
+
+    (with-redefs-fn {#'state/soul (constantly {:id sid})
+                     #'state/submit-turn! (fn [_ opts]
+                                            (reset! prepared (attachments/prepare-inline-attachments
+                                                               (:attachments opts)))
+                                            {:turn {:turn_id "turn-markdown"}})
+                     #'state/turn-attachments (fn [actual-sid tid]
+                                                (is (= sid actual-sid))
+                                                (is (= "turn-markdown" tid))
+                                                (wire/canonical (:attached @prepared)))}
+      (fn []
+        (let [uploaded
+              ((rv 'upload-attachment-handler)
+                {:path-params {:sid (str sid)}
+                 :query-params {"filename" "notes.md" "media_type" "text/plain"}
+                 :body (java.io.ByteArrayInputStream. payload)})
+
+              upload-id
+              (get (wire/parse-json (:body uploaded)) "upload_id")
+
+              response
+              ((rv 'submit-turn-handler)
+                {:path-params {:sid (str sid)}
+                 :body (java.io.ByteArrayInputStream.
+                         (.getBytes (wire/json-str {:request "Read these notes"
+                                                    :attachments [{:upload_id upload-id}]})
+                                    "UTF-8"))})
+
+              attachment
+              (first (:attached @prepared))]
+
+          (is (= 201 (:status uploaded)))
+          (is (= 202 (:status response)))
+          (is (empty? (:skipped @prepared)))
+          (is (= "notes.md" (:filename attachment)))
+          (is (= "text/markdown" (:media-type attachment)))
+          (is (= (.encodeToString (java.util.Base64/getEncoder) payload) (:base64 attachment)))
+          (is (attachments/hidden-from-model? attachment))
+          (let [downloaded
+                ((rv 'turn-attachments-handler)
+                  {:path-params {:sid (str sid) :tid "turn-markdown"}})
+
+                returned
+                (get-in (wire/parse-json (:body downloaded)) ["attachments" 0])]
+
+            (is (= 200 (:status downloaded)))
+            (is (= "notes.md" (get returned "filename")))
+            (is (= "text/markdown" (get returned "media_type")))
+            (is (= (:base64 attachment) (get returned "base64")))))))))
 
 (deftest audio-upload-starts-transcription-before-turn-submit
   (let [sid
@@ -923,9 +983,9 @@
           ;; and the model is told it can inspect them on demand.
           (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "application/gzip"
                   "application/pdf" "application/x-gzip" "application/x-ndjson"
-                  "application/xhtml+xml" "text/html" "video/mp4" "video/quicktime" "audio/aac"
-                  "audio/aiff" "audio/amr" "audio/flac" "audio/mp4" "audio/mpeg" "audio/ogg"
-                  "audio/wav" "audio/x-caf"]
+                  "application/xhtml+xml" "text/html" "text/markdown" "text/x-markdown" "video/mp4"
+                  "video/quicktime" "audio/aac" "audio/aiff" "audio/amr" "audio/flac" "audio/mp4"
+                  "audio/mpeg" "audio/ogg" "audio/wav" "audio/x-caf"]
                  (get-in body ["features" "attachments" "media_types"])))
           (is (= ["video/mp4" "video/quicktime"]
                  (get-in body ["features" "attachments" "video_media_types"])))

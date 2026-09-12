@@ -47,7 +47,13 @@ const DEFAULT_AUDIO_MEDIA_TYPES = [
 
 // A document is stored for the human and named to the model. The Files door must
 // advertise these even though the gallery door has nothing to do with them.
-const DEFAULT_DOCUMENT_MEDIA_TYPES = ['application/pdf', 'application/xhtml+xml', 'text/html'];
+const DEFAULT_DOCUMENT_MEDIA_TYPES = [
+  'application/pdf',
+  'application/xhtml+xml',
+  'text/html',
+  'text/markdown',
+  'text/x-markdown',
+];
 
 const DEFAULT_MEDIA_TYPES = [
   ...DEFAULT_IMAGE_MEDIA_TYPES,
@@ -236,8 +242,8 @@ async function collectAttachments(
 // The document browser is the one picker that hands back a file the platform
 // could not name: an iCloud Drive item and a voice memo routinely arrive with an
 // empty `mimeType`. The extension is then the only claim there is — and it stays
-// a claim: the gateway sniffs every payload from magic bytes and never trusts
-// the label, so a wrong guess is refused there instead of believed here.
+// a claim: the gateway validates the bytes (including UTF-8 for Markdown),
+// so a filename alone cannot make binary data a document.
 const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -249,6 +255,10 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   html: 'text/html',
   htm: 'text/html',
   xhtml: 'application/xhtml+xml',
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  mdown: 'text/markdown',
+  mkd: 'text/markdown',
   gz: 'application/gzip',
   jsonl: 'application/x-ndjson',
   ndjson: 'application/x-ndjson',
@@ -275,16 +285,20 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
 // answers `application/octet-stream` for anything its MIME table does not know —
 // a voice memo, a recording synced from a desktop — and believing that word
 // costs the user the file, since the gate then refuses a format the gateway
-// takes. The extension is the better guess, and the gateway's magic-byte sniff
+// takes. The extension is the better guess, and the gateway's byte validation
 // is the verdict either way.
 const UNNAMED_MEDIA_TYPES = ['application/octet-stream', 'binary/octet-stream'];
 
 /** What a picked file CLAIMS to be: the platform's word, else its extension. */
 export function candidateMediaType(name: string, declared: string | null | undefined): string {
-  const claim = (declared ?? '').trim().toLowerCase();
-  if (claim && !UNNAMED_MEDIA_TYPES.includes(claim)) return claim;
+  const claim = (declared ?? '').split(';')[0].trim().toLowerCase();
   const extension = (name.split('.').pop() ?? '').toLowerCase();
-  return EXTENSION_MEDIA_TYPES[extension] ?? claim;
+  const inferred = EXTENSION_MEDIA_TYPES[extension];
+  if (claim === 'text/x-markdown' || (claim === 'text/plain' && inferred === 'text/markdown')) {
+    return 'text/markdown';
+  }
+  if (claim && !UNNAMED_MEDIA_TYPES.includes(claim)) return claim;
+  return inferred ?? claim;
 }
 
 /** Picker entries as candidates — the one shape every chooser funnels into. */

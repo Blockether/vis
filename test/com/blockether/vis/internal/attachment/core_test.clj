@@ -643,6 +643,66 @@
         (expect (nil? (attachments/detect-media-mime (.getBytes text "UTF-8")))))))
 
 (defdescribe
+  markdown-attachment-test
+  (it "keeps shared Markdown as UTF-8 documents, including plain prose and empty files"
+      (doseq [[filename media-type]
+              [["notes.md" nil] ["NOTES.MD" "application/octet-stream"]
+               ["notes.markdown" "text/plain"] ["notes.mdown" "binary/octet-stream"]
+               ["notes.mkd" ""] ["shared-note" "text/markdown; charset=utf-8"]
+               ["shared-note" "TEXT/X-MARKDOWN"]]
+
+              text
+              ["# Notes\n\n- café ☕\n" "Plain prose without Markdown punctuation." ""
+               "\uFEFF# Notes\r\n"]]
+
+        (let [payload
+              (b64 (.getBytes ^String text "UTF-8"))
+
+              out
+              (attachments/prepare-inline-attachments
+                [{"filename" filename "media_type" media-type "base64" payload}])
+
+              attachment
+              (first (:attached out))]
+
+          (expect (empty? (:skipped out)))
+          (expect (= filename (:filename attachment)))
+          (expect (= "text/markdown" (:media-type attachment)))
+          (expect (= payload (:base64 attachment))))))
+  (it "keeps Markdown readable without sending it as an image"
+      (doseq [media-type ["text/markdown" "text/x-markdown; charset=utf-8"]]
+        (let [attachment {:filename "notes.md"
+                          :media-type media-type
+                          :base64 (b64 (.getBytes "# Notes\n" "UTF-8"))
+                          :audience "both"}
+              wired (attachments/wire-images [attachment])]
+
+          (expect (attachments/hidden-from-model? attachment))
+          (expect (empty? (:attached wired)))
+          (expect (:readable-blind? (first (:skipped wired)))))))
+  (it "refuses binary or invalid UTF-8 even with a Markdown name or media type"
+      (doseq [bytes [(byte-array [0 1 2 3]) (byte-array [0xc3 0x28])
+                     (byte-array (concat (.getBytes "# Notes\n" "UTF-8") [0xff]))]]
+        (let [out (attachments/prepare-inline-attachments
+                    [{:filename "notes.md" :media-type "text/markdown" :base64 (b64 bytes)}])]
+          (expect (empty? (:attached out)))
+          (expect (= "not a supported attachment format" (:reason (first (:skipped out))))))))
+  (it "does not admit arbitrary text or override a sniffed image with a Markdown label"
+      (let [out (attachments/prepare-inline-attachments
+                  [{:filename "notes.txt"
+                    :media-type "text/plain"
+                    :base64 (b64 (.getBytes "ordinary prose" "UTF-8"))}
+                   {:filename "notes.md" :media-type "text/markdown" :base64 tiny-png-b64}])]
+        (expect (= 1 (count (:skipped out))))
+        (expect (= ["image/png"] (mapv :media-type (:attached out))))))
+  (it "retains the attachment size and count limits"
+      (let [attachment {:filename "notes.md" :base64 (b64 (.getBytes "# Notes\n" "UTF-8"))}]
+        (doseq [limits [{:max-bytes 1} {:max-images 0}]]
+          (let [out (attachments/prepare-inline-attachments [attachment] limits)]
+            (expect (empty? (:attached out)))
+            (expect (str/includes? (:reason (first (:skipped out))) "limit")))))))
+
+(defdescribe
   provider-safe-media-type-test
   "Intake STORES, it does not decide. The wire's four containers are still the
    only ones a provider takes, but which of them a payload must become is a

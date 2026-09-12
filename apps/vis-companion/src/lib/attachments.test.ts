@@ -234,6 +234,44 @@ describe('what Android hands over', () => {
   });
 });
 
+describe('Markdown attachments', () => {
+  it.each([
+    ['notes.md', ''],
+    ['NOTES.MD', 'application/octet-stream'],
+    ['notes.markdown', 'text/plain'],
+    ['notes.mdown', 'binary/octet-stream'],
+    ['notes.mkd', ''],
+    ['shared-note', 'text/markdown; charset=utf-8'],
+    ['shared-note', 'TEXT/X-MARKDOWN'],
+  ])('admits %s declared as %s', async (name, type) => {
+    const result = await attachmentsFromFiles([new File(['# Notes\n'], name, { type })]);
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0]).toMatchObject({ filename: name, media_type: 'text/markdown' });
+  });
+
+  it('offers Markdown in the document picker', async () => {
+    filePicker.pickFiles.mockResolvedValue({ files: [picked('notes.md', 'text/markdown')] });
+    const result = await pickDocumentAttachments();
+    expect(filePicker.pickFiles).toHaveBeenCalledWith({
+      types: expect.arrayContaining(['text/markdown', 'text/x-markdown']),
+      readData: false,
+    });
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments).toHaveLength(1);
+  });
+
+  it('still obeys the gateway format, size and count limits', async () => {
+    const file = new File(['# Notes\n'], 'notes.md');
+    for (const limits of [{ mediaTypes: ['image/png'] }, { maxFileBytes: 1 }, { maxFiles: 0 }]) {
+      const result = await attachmentsFromFiles([file], limits);
+      expect(result.attachments).toEqual([]);
+      expect(result.rejected).toHaveLength(1);
+    }
+    expect(candidateMediaType('notes.txt', 'text/plain')).toBe('text/plain');
+    expect(candidateMediaType('notes.md', 'image/png')).toBe('image/png');
+  });
+});
+
 // Regression: diagnostics shared back to Vis were rejected by paste/file intake.
 describe('diagnostics attachments', () => {
   it.each([
