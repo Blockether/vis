@@ -349,6 +349,8 @@
              ;; merging, provider selection and the HTTP transport. No unit test crosses
              ;; all of that inside the LINKED image, and every one of those layers has a
              ;; native-image failure mode of its own.
+             ;; Regression: YAMLStar 0.1.21's lazy reference plugin must be linked explicitly;
+             ;; otherwise the valid overlay is ignored and startup reports no provider.
              ;;
              ;; The provider is INVENTED HERE. No shipped provider extension is named, so
              ;; this stays green when the set of bundled vendors changes, and it proves the

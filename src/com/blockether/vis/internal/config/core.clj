@@ -32,7 +32,9 @@
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove]
             [taoensso.trove.telemere :as trove-telemere]
-            [yamlstar.core :as yamlstar])
+            [yamlstar.core :as yamlstar]
+            ;; YAMLStar 0.1.21 loads plugins lazily; link/register the default in native images.
+            [yamlstar.plugin.parser.reference])
   (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)
            (java.nio.channels FileChannel FileLock)
            (java.nio.file CopyOption Files OpenOption Path StandardCopyOption StandardOpenOption)

@@ -132,9 +132,7 @@
         org.flywaydb/flyway-core {:mvn/version "12.11.0"}
         org.flywaydb/flyway-database-nc-sqlite {:mvn/version "12.11.0"}
         org.xerial/sqlite-jdbc {:mvn/version "3.53.2.1"}
-        ;; 0.2.4 fixes per-character reflection in yamlstar's transitive parser.
-        org.yamlstar/yaml-parser {:mvn/version "0.2.4"}
-        org.yamlstar/yamlstar {:mvn/version "0.1.17"}
+        org.yamlstar/yamlstar {:mvn/version "0.1.21"}
         ring/ring-core {:mvn/version "1.15.5"}
         ;; CVE pin: Flyway 12.11.0 pulls tools.jackson jackson-databind 3.1.4
         ;; (CVE-2026-59889). Declared here so the top-level version wins.
