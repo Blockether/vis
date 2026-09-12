@@ -135,6 +135,8 @@ export interface LiveLogNode extends LiveNodeBase {
   lines: string[];
   window_lines: number;
   total_lines: number;
+  /** Semantic tones aligned with `lines`; null/absent entries are plain. */
+  line_tones?: (LiveTone | null)[];
   default_expanded?: boolean;
 }
 
@@ -262,6 +264,7 @@ export interface LiveLogPage {
   matched: number;
   /** Original, one-based line numbers corresponding to `lines`. */
   line_numbers: number[];
+  line_tones?: (LiveTone | null)[];
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -483,6 +486,11 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         ...base,
         type: 'log',
         lines: lines(node.lines),
+        ...(Array.isArray(node.line_tones)
+          ? {
+              line_tones: node.line_tones.map((value) => (value == null ? null : tone(value))),
+            }
+          : {}),
         window_lines: count(node.window_lines, LIVE_LOG_WINDOW),
         total_lines: count(node.total_lines, lines(node.lines).length),
         ...(node.default_expanded === undefined
@@ -668,17 +676,34 @@ function applyAppend(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       ...node,
       lines: overflow > 0 ? all.slice(overflow) : all,
       total_lines: node.total_lines + arriving.length,
+      ...(node.line_tones || op.tone != null
+        ? {
+            line_tones: [
+              ...(node.line_tones ?? node.lines.map(() => null)),
+              ...arriving.map(() => (op.tone == null ? null : tone(op.tone))),
+            ].slice(overflow),
+          }
+        : {}),
     };
   }
   switch (node.type) {
     case 'table':
       return { ...node, rows: upsert(node.rows, keyed(op.rows, rowFromWire)) };
     case 'stat':
-      return { ...node, stats: upsert(node.stats, keyed(op.stats, statFromWire)) };
+      return {
+        ...node,
+        stats: upsert(node.stats, keyed(op.stats, statFromWire)),
+      };
     case 'steps':
-      return { ...node, steps: upsert(node.steps, keyed(op.steps, stepFromWire)) };
+      return {
+        ...node,
+        steps: upsert(node.steps, keyed(op.steps, stepFromWire)),
+      };
     case 'link':
-      return { ...node, links: upsert(node.links, keyed(op.links, linkFromWire)) };
+      return {
+        ...node,
+        links: upsert(node.links, keyed(op.links, linkFromWire)),
+      };
     default:
       return node;
   }
@@ -713,7 +738,7 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
 function applyClear(node: LiveLeafNode): LiveNode {
   switch (node.type) {
     case 'log':
-      return { ...node, lines: [], total_lines: 0 };
+      return { ...node, lines: [], line_tones: undefined, total_lines: 0 };
     case 'table':
       return { ...node, rows: [], selected_ids: [] };
     case 'stat':

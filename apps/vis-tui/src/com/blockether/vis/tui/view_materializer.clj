@@ -238,7 +238,7 @@
         (disj (set (keys op)) :op :node-id)
 
         wrong
-        (sort (map name (disj given k)))]
+        (sort (map name (if (= :log (:type node)) (disj given k :tone) (disj given k))))]
 
     (when (nil? k)
       (invalid-patch! (:id node) (str "a " (name (:type node)) " node has nothing to append to")))
@@ -260,11 +260,17 @@
       (if (= :log (:type node))
         (let [window (long (:window-lines node))
               all (into (:lines node) items)
-              overflow (max 0 (- (count all) window))]
+              overflow (max 0 (- (count all) window))
+              styled? (or (contains? node :line-tones) (contains? op :tone))
+              tones (when styled?
+                      (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
+                            (repeat (count items) (:tone op))))]
 
-          (assoc node
-            :lines (if (pos? overflow) (subvec all overflow) all)
-            :total-lines (+ (long (:total-lines node)) (count items))))
+          (cond-> (assoc node
+                    :lines (if (pos? overflow) (subvec all overflow) all)
+                    :total-lines (+ (long (:total-lines node)) (count items)))
+            styled?
+            (assoc :line-tones (if (pos? overflow) (subvec tones overflow) tones))))
         (update node k #(checked-count! node (upsert % items)))))))
 
 (defn- prune-selected
@@ -294,9 +300,10 @@
   [node]
   (case (:type node)
     :log
-    (assoc node
-      :lines []
-      :total-lines 0)
+    (-> node
+        (assoc :lines []
+               :total-lines 0)
+        (dissoc :line-tones))
 
     (let [{:keys [key]} (spec/item-bounds (:type node))]
       (when (nil? key)
@@ -735,41 +742,45 @@
          (merge model-budget (select-keys opts [:log-tail-lines :table-rows]))
 
          budgeted
-         (mapv (fn [node]
-                 (case (:type node)
-                   :log
-                   (let [lines
-                         (:lines node)
+         (mapv
+           (fn [node]
+             (case (:type node)
+               :log
+               (let [lines
+                     (:lines node)
 
-                         tail
-                         (long log-tail-lines)
+                     tail
+                     (long log-tail-lines)
 
-                         shown
-                         (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
+                     shown
+                     (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
 
-                         behind
-                         (- (long (or (:total-lines node) (count lines))) (count shown))]
+                     behind
+                     (- (long (or (:total-lines node) (count lines))) (count shown))]
 
-                     (with-meta (assoc node :lines shown) {:elided (max 0 behind)}))
+                 (with-meta (cond-> (assoc node :lines shown)
+                              (:line-tones node)
+                              (update :line-tones #(vec (take-last (count shown) %))))
+                   {:elided (max 0 behind)}))
 
-                   :table
-                   (let [rows
-                         (ordered-rows node)
+               :table
+               (let [rows
+                     (ordered-rows node)
 
-                         limit
-                         (long table-rows)
+                     limit
+                     (long table-rows)
 
-                         shown
-                         (if (> (count rows) limit) (subvec rows 0 limit) rows)]
+                     shown
+                     (if (> (count rows) limit) (subvec rows 0 limit) rows)]
 
-                     (with-meta (-> node
-                                    (assoc :rows shown
-                                           :order :insertion)
-                                    (dissoc :is-selectable :selected-ids))
-                       {:elided (- (count rows) (count shown))}))
+                 (with-meta (-> node
+                                (assoc :rows shown
+                                       :order :insertion)
+                                (dissoc :is-selectable :selected-ids))
+                   {:elided (- (count rows) (count shown))}))
 
-                   node))
-               (leaf-nodes (:nodes view)))]
+               node))
+           (leaf-nodes (:nodes view)))]
 
      {:view (cond-> {:title (:title view) :nodes budgeted}
               (:description view)

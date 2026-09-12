@@ -133,3 +133,45 @@ describe('log search', () => {
     expect(onActivate).not.toHaveBeenCalled();
   });
 });
+
+it('preserves #209 text, styles and line numbers in a closed searchable receipt', async () => {
+  const saved = view(['WARN current', 'ERROR <script>literal</script>', 'plain']);
+  const log = saved.nodes[0];
+  if (log.type !== 'log') throw new Error('fixture');
+  log.line_tones = ['warn', 'error', null];
+  const load = vi.fn().mockResolvedValue({ ...page(['ERROR older']), line_tones: ['error'] });
+  const { container } = render(<LiveViewPanel view={saved} isSettled load={load} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Build log' }));
+  expect(output()).toBe(log.lines.join('\n'));
+  expect(container.querySelector('script')).toBeNull();
+  expect(screen.getByTitle('Severity: warn').textContent).toContain('WARN current');
+  search('ERROR');
+  await waitFor(() => expect(output()).toBe('10: ERROR older'));
+  expect(screen.getByTitle('Severity: error').textContent).toBe('10: ERROR older');
+  fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+  expect(output()).toBe(log.lines.join('\n'));
+});
+
+it('keeps only one earlier styled page while retaining Stop and independent status', async () => {
+  const load = vi.fn().mockImplementation(async (nodeId, from) => ({
+    ...page([`WARN page ${from}`], from, 1000, 1000),
+    node_id: nodeId,
+    line_tones: ['warn'],
+  }));
+  const live = view(['latest'], 1000);
+  live.nodes.unshift({
+    id: 'status',
+    type: 'status',
+    text: 'Failed promptly',
+    tone: 'error',
+  });
+  render(<LiveViewPanel view={live} load={load} onInterrupt={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Load 200 earlier lines' }));
+  await waitFor(() => expect(output()).toContain('WARN page 799'));
+  fireEvent.click(screen.getByRole('button', { name: 'Load 200 earlier lines' }));
+  await waitFor(() => expect(output()).toContain('WARN page 599'));
+  expect(output()).not.toContain('WARN page 799');
+  expect(screen.getByText('Failed promptly')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+  expect(screen.getByRole('textbox', { name: 'Why are you stopping Build?' })).toBeTruthy();
+});

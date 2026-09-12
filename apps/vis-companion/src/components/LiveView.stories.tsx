@@ -90,8 +90,16 @@ export const FinishedJobs: Story = {
             { id: 'result', label: 'Result', align: 'left' },
           ],
           rows: [
-            { id: 'test', cells: ['Typecheck and test', 'success · 17s'], tone: 'ok' },
-            { id: 'deploy', cells: ['Deploy to Cloudflare', 'success · 19s'], tone: 'ok' },
+            {
+              id: 'test',
+              cells: ['Typecheck and test', 'success · 17s'],
+              tone: 'ok',
+            },
+            {
+              id: 'deploy',
+              cells: ['Deploy to Cloudflare', 'success · 19s'],
+              tone: 'ok',
+            },
           ],
           max_rows: 100,
           order: 'insertion',
@@ -103,8 +111,12 @@ export const FinishedJobs: Story = {
     onSelect: fn(),
   },
   play: async ({ canvas, args }) => {
-    const first = canvas.getByRole('button', { name: 'Select Typecheck and test' });
-    const last = canvas.getByRole('button', { name: 'Select Deploy to Cloudflare' });
+    const first = canvas.getByRole('button', {
+      name: 'Select Typecheck and test',
+    });
+    const last = canvas.getByRole('button', {
+      name: 'Select Deploy to Cloudflare',
+    });
     const table = first.closest('table')!;
     const node = table.closest('li')!;
     const nodeStyle = getComputedStyle(node);
@@ -182,7 +194,12 @@ export const AllPrimitives: Story = {
 };
 
 export const AllPrimitivesReceipt: Story = {
-  args: { view: STORY_LIVE_PRIMITIVES, isSettled: true, onActivate: fn(), onSelect: undefined },
+  args: {
+    view: STORY_LIVE_PRIMITIVES,
+    isSettled: true,
+    onActivate: fn(),
+    onSelect: undefined,
+  },
   play: async ({ canvas }) => {
     await expect(canvas.queryByRole('button', { name: 'Interrupt' })).not.toBeInTheDocument();
     await expect(
@@ -271,5 +288,42 @@ export const SearchableLogReceipt: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Search' }));
     await expect(await canvas.findByText(/1 matches.*503 recorded lines/)).toBeVisible();
     await expect(canvas.queryByRole('button', { name: 'Interrupt' })).not.toBeInTheDocument();
+  },
+};
+
+/** #209: semantic colors on literal output, with no loss of readable severity words. */
+export const StyledLog: Story = {
+  args: {
+    view: {
+      id: 'styled-log',
+      title: 'Build output',
+      seq: 1,
+      nodes: [
+        { id: 'status', type: 'status', text: 'Build failed', tone: 'error' },
+        {
+          id: 'log',
+          type: 'log',
+          label: 'Build log',
+          default_expanded: true,
+          window_lines: 200,
+          total_lines: 6,
+          lines: [
+            '10:42:00 INFO $ npm test',
+            '10:42:01 OK dependencies ready',
+            '10:42:02 WARN cache unavailable',
+            '10:42:03 ERROR compiler failed',
+            '    at compile (src/build.ts:42:7)',
+            '<script>literal</script> \\u001b[2J',
+          ],
+          line_tones: ['running', 'ok', 'warn', 'error', null, null],
+        },
+      ],
+    },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByTitle('Severity: error')).toHaveTextContent('ERROR compiler failed');
+    await expect(canvas.getByRole('region', { name: 'Build log output' })).toHaveTextContent(
+      '<script>literal</script>',
+    );
   },
 };

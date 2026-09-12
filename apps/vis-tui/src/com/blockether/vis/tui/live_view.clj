@@ -107,6 +107,30 @@
 
      default)))
 
+(defn- log-ink
+  "Use readable theme ink when an accent cannot serve as small log text."
+  [tone]
+  (letfn [(channel ^double [^long c]
+            (let [v (/ (double c) 255.0)]
+              (if (<= v 0.04045) (/ v 12.92) (Math/pow (/ (+ v 0.055) 1.055) 2.4))))
+          (luminance ^double [^com.googlecode.lanterna.TextColor color]
+            (+ (* 0.2126 (channel (.getRed color)))
+               (* 0.7152 (channel (.getGreen color)))
+               (* 0.0722 (channel (.getBlue color)))))]
+    (let [ink
+          (tone-fg tone)
+
+          foreground
+          (luminance ink)
+
+          background
+          (luminance t/dialog-bg)
+
+          contrast
+          (/ (+ (max foreground background) 0.05) (+ (min foreground background) 0.05))]
+
+      (if (>= contrast 4.5) ink t/dialog-fg))))
+
 (defn- clamp ^long [^long v ^long lo ^long hi] (max lo (min hi v)))
 
 (defn- flat-text
@@ -798,7 +822,7 @@
     [{:kind :empty :node-id id :text (empty-text :steps)}]))
 
 (defmethod node-rows :log
-  [{:keys [id label lines total-lines]} {:keys [is-expanded]}]
+  [{:keys [id label lines line-tones total-lines]} {:keys [is-expanded]}]
   (into [{:kind :log-search :node-id id :item-id :search :text (str "Search " (or label "Output"))}]
         (if (seq lines)
           (let [{:keys [shown]}
@@ -812,9 +836,12 @@
                       :node-id id
                       :text (str "… " behind " earlier lines — the view's record keeps them all")}]
                     [])
-                  (map (fn [line]
-                         {:kind :log :node-id id :text (str line)}))
-                  shown))
+                  (map-indexed (fn [index line]
+                                 {:kind :log
+                                  :node-id id
+                                  :text (str line)
+                                  :tone (get line-tones (+ (- (count lines) (count shown)) index))})
+                               shown)))
           [{:kind :empty :node-id id :text (empty-text :log)}])))
 
 (defmethod node-rows :table
@@ -1572,7 +1599,7 @@
     (paint-segments! g left row inner-w (:segments entry))
 
     :log
-    (paint-plain! g left row inner-w t/dialog-fg (:text entry))
+    (paint-plain! g left row inner-w (log-ink (:tone entry)) (:text entry))
 
     :thead
     (paint-segments! g left row inner-w (:segments entry))

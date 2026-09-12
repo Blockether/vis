@@ -189,7 +189,7 @@
   "Allowed keys for a live node."
   #{:id :type :label :text :detail :tone :value :done :total :stats :steps :lines :window-lines
     :columns :rows :max-rows :order :is-selectable :selected-ids :links :total-lines
-    :default-expanded :level :language :variant :is-active :is-disabled :clicks})
+    :default-expanded :line-tones :level :language :variant :is-active :is-disabled :clicks})
 
 (def live-view-keys
   "Every key a live view may carry, engine stamps included."
@@ -206,7 +206,7 @@
   "Allowed keys for each patch operation."
   {:set #{:op :node-id :text :detail :tone :label :value :done :total :stats :steps :selected-ids
           :links :level :language :variant :is-active :is-disabled :clicks}
-   :append #{:op :node-id :lines :rows :stats :steps :links}
+   :append #{:op :node-id :lines :tone :rows :stats :steps :links}
    :remove #{:op :node-id :item-ids}
    :clear #{:op :node-id}
    :add-node #{:op :node-spec :after}

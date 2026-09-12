@@ -292,7 +292,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
-| `vis.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines)`, `.clear()` |
+| `vis.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
 | `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, branch=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
@@ -329,7 +329,53 @@ The existing `GET /v1/sessions/:sid/views/live/:view-id/log/:node-id` route acce
 `query`, `from` and `limit`. `from` is a zero-based match offset; an empty query
 matches all lines. The response includes `lines`, `line_numbers`, `matched` and
 `total`. The gateway caps pages at the default log-window size; it streams the
-record and retains only the requested result page.
+record and retains only the requested result page. Styled pages also include
+`line_tones`, aligned with `lines`; a `null` entry means plain text.
+
+### Add severity to streaming output
+
+Use `view["log"].write(..., tone="error")` to distinguish compiler failures,
+warnings and successful steps without treating a mixed build log as one source
+language. The typed `vis.LogTone` values are `"idle"`, `"running"`, `"ok"`, `"warn"`
+and `"error"`. Omitting `tone` keeps the plain-text default. A tone applies to all
+lines in that call, not to later calls.
+
+```python
+with vis.live("Build output", [vis.output("log", label="Build log")]) as view:
+    view["log"].write("10:42:00 INFO $ npm test")
+    view["log"].write("10:42:01 WARN cache unavailable", tone="warn")
+    view["log"].write("10:42:02 ERROR compiler failed", tone="error")
+    view["log"].write("    at compile (src/build.ts:42:7)")
+```
+
+Keep severity words in the text so the log also makes sense without color.
+TUI and Companion use their theme's semantic colors; plain stderr and Markdown
+receipts keep the same readable text. Companion's search results retain colors;
+the TUI's search and full-line dialogs provide a plain-text fallback. Completed
+live-view receipts retain the style metadata as well as the original line numbers.
+
+Redact secrets **before** calling `write` or seeding `lines`. Engine presentation
+redaction is an additional safeguard, not a detector for arbitrary secrets. Styles
+are separate metadata: they never divide, hide or replace text before redaction,
+search or copying. HTML and URLs in output remain literal, not links or executable
+markup. ANSI is not a styling API: C0/C1 controls other than tab and newline are
+shown as visible `\uXXXX` text (for example, Escape becomes `\u001b`). Cursor moves,
+OSC links, clipboard escapes and color escapes are never executed.
+
+Each argument to `write` is a complete retained line, not a raw network fragment.
+Decode and assemble partial lines in your adapter before redacting and appending
+them. Successive batches keep their own tones, even when updates are coalesced.
+Append incremental output rather than clearing and replacing snapshots. Styling
+does not change `window_lines`, retention or search pagination; Companion keeps
+one earlier page loaded at a time. Use `vis.code(..., language=...)` for a separate,
+known-language snippet, not to reinterpret the mixed log.
+
+For raw wire clients, an `append` operation may carry `tone` only for a log node.
+Log snapshots may carry `line_tones`, with one tone or `null` per line. Clojure uses
+`:tone` on log append operations and `:line-tones` on seeded log nodes. These
+closed enums accept no CSS, arbitrary color values, HTML or terminal commands.
+
+### Add spinners and buttons
 
 Spinner variants are `braille`, `dots`, `line` and `pulse`. Set `is_active=False`
 to stop one without removing its text. Completed receipts never animate, and the
@@ -391,8 +437,8 @@ children.
 
 Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_` and
 links. Status text wraps and is justified within its column.
-Log lines and code blocks remain verbatim and are never executed. There is no arbitrary Markdown node; each node type
-has its own Markdown output.
+Log lines and code blocks are never executed. Log terminal controls display as visible escapes;
+other text stays literal. There is no arbitrary Markdown node; each node type has its own Markdown output.
 
 ## Updating
 

@@ -775,6 +775,18 @@ def _live_check_node(node, seen, *, is_declaration=True):
             complaint = _live_check_node(child, seen, is_declaration=is_declaration)
             if complaint:
                 return complaint
+    if kind == "log":
+        from .extension import _log_text
+
+        node["lines"] = [_log_text(line) for line in node.get("lines", [])]
+        node.setdefault("total_lines", len(node["lines"]))
+        tones = node.get("line_tones")
+        if tones is not None and (
+            not isinstance(tones, list)
+            or len(tones) != len(node["lines"])
+            or any(tone is not None and tone not in _LIVE["tones"] for tone in tones)
+        ):
+            return "line_tones must have one known tone or null per line"
     if kind == "heading":
         node.setdefault("level", 2)
     if kind == "spinner":
@@ -895,6 +907,8 @@ def _live_bound(node):
     if node.get("type") == "log":
         window = int(node.get("window_lines") or _LIVE["log"]["window_lines"])
         node["lines"] = list(node.get("lines") or [])[-window:]
+        if "line_tones" in node:
+            node["line_tones"] = node["line_tones"][-window:]
     elif node.get("type") == "table":
         rows = int(node.get("max_rows") or _LIVE["table"]["max_rows"])
         node["rows"] = list(node.get("rows") or [])[-rows:]
@@ -947,12 +961,28 @@ def _live_apply(view, op):
     elif name == "append":
         key = _live_items_key(node, "lines to append")
         payload = list(op.get(key) or [])
+        if "tone" in op and (key != "lines" or op["tone"] not in _LIVE["tones"]):
+            raise Refused("only log appends accept a known tone")
         if key == "lines":
+            from .extension import _log_text
+
+            payload = [_log_text(line) for line in payload]
+            op = {**op, "lines": payload}
+            if "tone" in op or "line_tones" in node:
+                node["line_tones"] = node.get(
+                    "line_tones", [None] * len(node.get(key, []))
+                ) + [op.get("tone")] * len(payload)
+            node["total_lines"] = node.get("total_lines", len(node.get(key, []))) + len(
+                payload
+            )
             node[key] = list(node.get(key) or []) + payload
         else:
             node[key] = _live_upsert(node.get(key), payload)
     elif name == "clear":
         node[_live_items_key(node, "clear")] = []
+        if node.get("type") == "log":
+            node["total_lines"] = 0
+            node.pop("line_tones", None)
     elif name == "remove":
         key = _live_items_key(node, "item_ids")
         dropped = set(op.get("item_ids") or [])

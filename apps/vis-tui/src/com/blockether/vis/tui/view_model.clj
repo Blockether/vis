@@ -23,9 +23,11 @@
   (cond (map? x) (persistent! (reduce-kv (fn [out k v]
                                            (assoc! out
                                                    k
-                                                   (if (and (keyword-value-keys k) (string? v))
-                                                     (keyword v)
-                                                     (restore-values v))))
+                                                   (cond (and (= :line-tones k) (sequential? v))
+                                                         (mapv #(get view-spec/live-tones % %) v)
+                                                         (and (keyword-value-keys k) (string? v))
+                                                         (keyword v)
+                                                         :else (restore-values v))))
                                          (transient {})
                                          x))
         (sequential? x) (mapv restore-values x)

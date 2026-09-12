@@ -196,3 +196,48 @@ def test_outside_refuses_invalid_primitive_declarations(monkeypatch, invalid):
             "Invalid", [vis.disclosure("section", "Section", invalid)], flush_ms=0
         ):
             pass
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_styled_output_appends_preserve_plain_text_and_chunk_tones(
+    monkeypatch, host_kind
+):
+    # #209: style is metadata, never an ANSI/HTML interpreter or rewritten history.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    with vis.live(
+        "Styled output", [vis.output("log", window_lines=3)], flush_ms=10000
+    ) as view:
+        view.write("first")
+        with view.batch():
+            view.write("WARN low space", tone="warn")
+            view.write("ERROR <script>literal</script>", tone="error")
+            view.write("last")
+        node = view.state()["nodes"][0]
+        assert node["lines"] == [
+            "WARN low space",
+            "ERROR <script>literal</script>",
+            "last",
+        ]
+        assert node["line_tones"] == ["warn", "error", None]
+        assert node["total_lines"] == 4
+        result = view.close()
+        assert result["view"]["nodes"][0] == node
+
+
+def test_log_controls_are_visible_and_styles_are_closed(monkeypatch, capsys):
+    monkeypatch.setattr(vis, "_host", _outside.host)
+    with vis.live("Safe output", [vis.output("log")], flush_ms=0) as view:
+        view.write("error\x1b[2J\x1b]8;;javascript:alert(1)\x07", tone="error")
+        line = view.state()["nodes"][0]["lines"][0]
+        assert line == r"error\u001b[2J\u001b]8;;javascript:alert(1)\u0007"
+        assert "\x1b" not in capsys.readouterr().err
+        with pytest.raises((ValueError, _outside.Refused)):
+            view.write("invalid", tone="red;url(javascript:alert(1))")
+        view["log"].clear()
+        view.write("plain")
+        node = view.state()["nodes"][0]
+        assert node["lines"] == ["plain"]
+        assert not any(node.get("line_tones", []))

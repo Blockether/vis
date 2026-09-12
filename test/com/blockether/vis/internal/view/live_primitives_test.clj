@@ -258,20 +258,68 @@
         (is (= ["ERROR fresh"] (:lines (search 0 10 "error"))))))))
 
 (deftest retained-log-search-is-bounded-beyond-the-hot-window-test
-  (watching (fn [view]
-              (let [id
-                    (:id view)
+  (watching
+    (fn [view]
+      (let [id
+            (:id view)
 
-                    lines
-                    (mapv #(str (if (even? %) "ERROR " "ok ") %) (range 2500))
+            lines
+            (mapv #(str (if (even? %) "ERROR " "ok ") %) (range 2500))
 
-                    file
-                    (sink/view-file (:session-id view) id)]
+            file
+            (sink/view-file (:session-id view) id)]
 
-                (doseq [chunk (partition-all 100 lines)]
-                  (engine/patch-live! id [{:op :append :node-id "a" :lines (vec chunk)}]))
-                (let [page (sink/log-range file "a" 0 2 "error")]
-                  (is (= 2501 (:total page)))
-                  (is (= 1250 (:matched page)))
-                  (is (= ["ERROR 0" "ERROR 2"] (:lines page)))
-                  (is (= [2 4] (:line-numbers page))))))))
+        (doseq [chunk (partition-all 100 lines)]
+          ;; #209: styling processes only arriving chunks, never the retained file.
+          (engine/patch-live! id [{:op :append :node-id "a" :lines (vec chunk) :tone :error}]))
+        (let [page (sink/log-range file "a" 0 2 "error")]
+          (is (= 2501 (:total page)))
+          (is (= 1250 (:matched page)))
+          (is (= ["ERROR 0" "ERROR 2"] (:lines page)))
+          (is (= [2 4] (:line-numbers page)))
+          (is (= ["error" "error"] (:line-tones page)))
+          (is (= 2000 (count (:line-tones (node (engine/live-view id) "a"))))))
+        (engine/patch-live! id [{:op :set :node-id "wait" :text "Failed promptly"}])
+        (is (= "Failed promptly" (:text (node (engine/live-view id) "wait"))))
+        (is (:is-accepted (engine/action! id {:action :interrupt})))))))
+
+(deftest styled-output-history-test
+  ;; #209: styles stay alongside complete text through appends, redaction and closure.
+  (watching
+    (fn [view]
+      (let [id
+            (:id view)
+
+            file
+            (sink/view-file (:session-id view) id)]
+
+        (engine/patch-live!
+          id
+          [{:op :append :node-id "a" :lines ["WARN disk" "password=fixture-log-secret"] :tone :warn}
+           {:op :append :node-id "a" :lines ["ERROR <script>literal</script>"] :tone :error}
+           {:op :append :node-id "a" :lines ["last"]}])
+        (let [log
+              (node (engine/live-view id) "a")
+
+              page
+              (sink/log-range file "a" 0 10)]
+
+          (is (= [nil :warn :warn :error nil] (:line-tones log)))
+          (is (= [nil "warn" "warn" "error" nil] (:line-tones page)))
+          (is (= (:lines log) (:lines page)))
+          (is (= "password=[REDACTED]" (nth (:lines log) 2)))
+          (is (= log (node (engine/live-view<-wire (wire/->wire (engine/live-view id))) "a")))
+          (is (= [4] (:line-numbers (sink/log-range file "a" 0 2 "error"))))
+          (is (= ["error"] (:line-tones (sink/log-range file "a" 0 2 "error"))))
+          (is (not (str/includes? (slurp file) "fixture-log-secret")))
+          (engine/close-live! id)
+          (is (= page (sink/log-range file "a" 0 10))))))))
+
+(deftest log-controls-and-tone-validation-test
+  (let [log (engine/normalize-live-node
+              {:type :log :id "safe" :lines [(str "literal" (char 27) "[2J" (char 7))]})]
+    (is (= ["literal\\u001b[2J\\u0007"] (:lines log))))
+  (doseq [tones [[:unknown] []]]
+    (is (try (engine/normalize-live-node {:type :log :id "bad" :lines ["x"] :line-tones tones})
+             false
+             (catch clojure.lang.ExceptionInfo _ true)))))

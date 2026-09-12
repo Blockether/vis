@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.view-materializer :as materializer]
             [com.blockether.vis.tui.theme :as theme]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -366,3 +367,134 @@
     (is (= ["GET"
             "/v1/sessions/sid/views/live/view/log/a?from=200&limit=200&query=%5Bdisk%5D%26%C5%81"]
            @called))))
+
+(deftest styled-log-wire-patches-and-receipts-test
+  ;; #209: whole-line severity never replaces literal text or changes line order.
+  (let [view
+        (hi/live-view<-wire {"id" "styled"
+                             "kind" "live"
+                             "version" 1
+                             "seq" 0
+                             "title" "Build output"
+                             "nodes" [{"id" "log"
+                                       "type" "log"
+                                       "lines" ["WARN before"]
+                                       "line_tones" ["warn"]
+                                       "window_lines" 2
+                                       "total_lines" 1
+                                       "default_expanded" true}]})
+
+        pane
+        (lv/patched (lv/opened view)
+                    (hi/live-patch<-wire
+                      {"view_id" "styled"
+                       "seq" 1
+                       "ops"
+                       [{"op" "append" "node_id" "log" "lines" ["ERROR compiler"] "tone" "error"}
+                        {"op" "append" "node_id" "log" "lines" ["plain"]}]}))
+
+        logs
+        #(filterv (fn [row]
+                    (= :log (:kind row)))
+           (entries %))]
+
+    (is (= :warn (get-in view [:nodes 0 :line-tones 0])))
+    (is (= ["ERROR compiler" "plain"] (mapv :text (logs pane))))
+    (is (= [:error nil] (mapv :tone (logs pane))))
+    (is (= (logs pane) (logs (lv/expanded (lv/settled pane {:reason :completed}) "log"))))))
+
+(deftest styled-log-narrow-terminal-test
+  (doseq [cols [24 40 80]]
+    (let [view {:id "styled"
+                :title "Build output"
+                :seq 0
+                :nodes [{:id "log"
+                         :type :log
+                         :lines ["ERROR compiler"]
+                         :line-tones [:error]
+                         :total-lines 1
+                         :window-lines 200
+                         :default-expanded true}]}
+          captured (capture/capture! {:cols cols
+                                      :rows 16
+                                      :paint! (fn [{:keys [screen]}]
+                                                (lv/paint! (.newTextGraphics ^TerminalScreen screen)
+                                                           cols
+                                                           16 [(lv/opened view)]
+                                                           1 3))})]
+
+      (is (nil? (:error captured)))
+      (let [frame (last (:frames captured))
+            line (first (filter #(str/includes? (apply str (map :ch %)) "ERROR compiler") frame))
+            start (str/index-of (apply str (map :ch line)) "ERROR compiler")
+            color theme/footer-error-fg]
+
+        (is (some? start))
+        (is (= [(.getRed ^com.googlecode.lanterna.TextColor color)
+                (.getGreen ^com.googlecode.lanterna.TextColor color)
+                (.getBlue ^com.googlecode.lanterna.TextColor color)]
+               (:fg (get line start))))))))
+
+(deftest styled-log-theme-contrast-test
+  ;; #209: a theme's accent is not necessarily readable as small log text.
+  (let [original
+        @theme/active-theme-id
+
+        luminance
+        (fn [rgb]
+          (reduce +
+                  0.0
+                  (map (fn [c weight]
+                         (let [v (/ (double c) 255.0)]
+                           (*
+                             (double weight)
+                             (if (<= v 0.04045) (/ v 12.92) (Math/pow (/ (+ v 0.055) 1.055) 2.4)))))
+                       rgb
+                       [0.2126 0.7152 0.0722])))]
+
+    (try
+      (doseq [id
+              (shared-theme/available-theme-ids)
+
+              tone
+              [:idle :running :ok :warn :error]]
+
+        (theme/apply-theme! id)
+        (let [view
+              {:id "contrast"
+               :title "Build output"
+               :seq 0
+               :nodes [{:id "log"
+                        :type :log
+                        :lines ["LEVEL output"]
+                        :line-tones [tone]
+                        :total-lines 1
+                        :window-lines 200
+                        :default-expanded true}]}
+
+              captured
+              (capture/capture! {:cols 40
+                                 :rows 16
+                                 :paint! (fn [{:keys [g]}]
+                                           (lv/paint! g 40 16 [(lv/opened view)] 1 3))})
+
+              line
+              (first (filter #(str/includes? (apply str (map :ch %)) "LEVEL output")
+                             (last (:frames captured))))
+
+              start
+              (str/index-of (apply str (map :ch line)) "LEVEL output")
+
+              cell
+              (get line start)
+
+              foreground
+              (double (luminance (:fg cell)))
+
+              background
+              (double (luminance (:bg cell)))]
+
+          (is (some? cell))
+          (is (>= (/ (+ (max foreground background) 0.05) (+ (min foreground background) 0.05)) 4.5)
+              (str id " " tone))))
+      (finally (theme/apply-theme! original)))))

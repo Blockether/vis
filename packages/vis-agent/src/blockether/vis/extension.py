@@ -2746,12 +2746,30 @@ class Steps(_Node):
         return _KeyedNode.remove(self, *item_ids)
 
 
+LogTone: TypeAlias = Literal["idle", "running", "ok", "warn", "error"]
+
+
+def _log_text(text):
+    """Make terminal controls visible without interpreting or deleting log text."""
+    return "".join(
+        f"\\u{ord(char):04x}"
+        if (ord(char) < 32 and char not in "\t\n") or 127 <= ord(char) <= 159
+        else char
+        for char in str(text)
+    )
+
+
 class Log(_Node):
-    def write(self, *lines):
-        # Lines as arguments or as one iterable. A log is UNBOUNDED: every line
-        # reaches the view's record, and the window is only what a surface holds.
+    def write(self, *lines: str | Sequence[str], tone: LogTone | None = None):
+        """Append complete lines, optionally styled by severity. Redact before writing.
+
+        Each argument is a retained line, not a raw byte fragment. A tone applies
+        only to this call; omitted tones are plain. Controls are displayed literally.
+        """
+        if tone is not None and tone not in get_args(LogTone):
+            raise ValueError("log tone must be idle, running, ok, warn or error")
         given = lines[0] if len(lines) == 1 and not isinstance(lines[0], str) else lines
-        return self._op("append", lines=[str(line) for line in given])
+        return self._op("append", lines=[_log_text(line) for line in given], tone=tone)
 
     def clear(self):
         # A PHOTOGRAPH, not a scroll: the record starts over with the window, so a
@@ -3140,8 +3158,8 @@ class LiveView:
             step_id, tone=tone, label=label, detail=detail, value=value
         )
 
-    def write(self, *lines):
-        return self._only("log", "write").write(*lines)
+    def write(self, *lines: str | Sequence[str], tone: LogTone | None = None):
+        return self._only("log", "write").write(*lines, tone=tone)
 
     def row(self, row_id, cells, tone=None, branch=None):
         return self._only("table", "row").upsert(
@@ -3248,8 +3266,10 @@ class LiveView:
 
 def _merge_append(earlier, op):
     """Fold `op`'s items into `earlier`, or answer False when they do not fold."""
-    keys = [k for k in earlier if k not in ("op", "node_id")]
-    other = [k for k in op if k not in ("op", "node_id")]
+    if earlier.get("tone") != op.get("tone"):
+        return False
+    keys = [k for k in earlier if k not in ("op", "node_id", "tone")]
+    other = [k for k in op if k not in ("op", "node_id", "tone")]
     if len(keys) != 1 or keys != other:
         return False
     key = keys[0]
@@ -3359,7 +3379,7 @@ class _LiveRecorder:
         for node in self._nodes(view.get("nodes")):
             kind = node.get("type")
             if kind == "log":
-                node.setdefault("lines", [])
+                node["lines"] = [_log_text(line) for line in node.get("lines", [])]
                 node.setdefault("window_lines", 2000)
                 node["total_lines"] = len(node["lines"])
             elif kind == "heading":
@@ -3426,12 +3446,18 @@ class _LiveRecorder:
             if node["type"] == "log":
                 # `live/apply-clear`: a cleared log starts its RECORD over too.
                 node["total_lines"] = 0
+                node.pop("line_tones", None)
         elif action == "remove":
             key = self._COLLECTION[node["type"]]
             removed = set(op.get("item_ids") or [])
             node[key] = [item for item in node[key] if item.get("id") not in removed]
         elif action == "append" and node["type"] == "log":
-            lines = self._copy(op.get("lines") or [])
+            lines = [_log_text(line) for line in op.get("lines", [])]
+            if "tone" in op or "line_tones" in node:
+                tones = node.get("line_tones", [None] * len(node["lines"]))
+                node["line_tones"] = (tones + [op.get("tone")] * len(lines))[
+                    -node["window_lines"] :
+                ]
             node["total_lines"] += len(lines)
             node["lines"] = (node["lines"] + lines)[-node["window_lines"] :]
         elif action == "append":
@@ -3779,6 +3805,9 @@ def output(node_id, **spec):
     ``default_expanded=True`` opens an active log initially. Updates preserve the
     local choice; completion starts a collapsed receipt. Hiding never clears lines.
     ``window_lines`` bounds only the hot window, not the durable record.
+    ``write(..., tone="warn")`` styles complete lines with a ``LogTone``; omitted
+    tones remain plain. Seeded ``line_tones`` align one-for-one with ``lines``.
+    Redact before writing. ANSI controls are visible text, never executed.
     """
     return _live_node("log", node_id, spec)
 

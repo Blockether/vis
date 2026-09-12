@@ -1116,12 +1116,20 @@
 
             :log
             (cond-> (assoc base
-                      :lines (if-some [lines (pick* node :lines)]
-                               (text-items node-fail! ":lines" lines)
-                               [])
+                      :lines (mapv materializer/log-text
+                                   (text-items node-fail! ":lines" (or (pick* node :lines) [])))
                       :window-lines (if-some [window (pick* node :window-lines)]
                                       (live-long node-fail! ":window-lines" window)
                                       (long (:window-lines view-spec/log-defaults))))
+              (some? (pick* node :line-tones))
+              (assoc :line-tones
+                (let [tones (pick* node :line-tones)]
+                  (when-not (and (sequential? tones) (= (count tones) (count (pick* node :lines))))
+                    (node-fail! ":line-tones must have one tone or nil per line"))
+                  (mapv #(when (some? %)
+                           (live-term node-fail! ":line-tones" view-spec/live-tones %))
+                        tones)))
+
               (some? (pick* node :default-expanded))
               (assoc :default-expanded
                 (bool-value node-fail! ":default-expanded" (pick* node :default-expanded) false)))
@@ -1265,7 +1273,7 @@
    :total (fn [fail! value]
             (live-long fail! ":total" value))
    :lines (fn [fail! value]
-            (text-items fail! ":lines" value))
+            (mapv materializer/log-text (text-items fail! ":lines" value)))
    :item-ids (fn [fail! value]
                (text-items fail! ":item-ids" value))
    :selected-ids (fn [fail! value]
@@ -1672,6 +1680,7 @@
    of minting a keyword no surface knows how to paint."
   {:type (assoc view-spec/live-node-types view-spec/group-type-name view-spec/group-type)
    :tone view-spec/live-tones
+   :line-tones view-spec/live-tones
    :op view-spec/live-ops
    :variant view-spec/spinner-variants
    :order view-spec/live-orders
@@ -1701,6 +1710,7 @@
                          (assoc! m
                                  k*
                                  (cond (and table (string? v)) (get table v v)
+                                       (and table (sequential? v)) (mapv #(get table % %) v)
                                        ;; The channels the view was published on: keywords on
                                        ;; both sides, rendered as their names by the encoder.
                                        (and (= :channel-ids k*) (sequential? v)) (mapv keyword v)

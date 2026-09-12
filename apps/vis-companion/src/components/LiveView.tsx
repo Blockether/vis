@@ -306,6 +306,31 @@ function StepsRows({ node }: { node: LiveStepsNode }) {
   );
 }
 
+function LogLines({
+  lines,
+  tones,
+  numbers,
+}: {
+  lines: string[];
+  tones?: (LiveTone | null)[];
+  numbers?: number[];
+}) {
+  return lines.map((line, index) => {
+    const tone = tones?.[index];
+    return (
+      <span
+        key={index}
+        className={tone ? TONE_INK[tone] : undefined}
+        title={tone ? `Severity: ${tone}` : undefined}
+      >
+        {index > 0 && '\n'}
+        {numbers ? `${numbers[index]}: ` : ''}
+        {line}
+      </span>
+    );
+  });
+}
+
 /**
  * Output as it arrives, and a way BACK past it.
  *
@@ -322,12 +347,15 @@ function LogRows({
   node: LiveLogNode;
   load?: (from: number, limit: number, query?: string) => Promise<LiveLogPage>;
 }) {
-  const [earlier, setEarlier] = useState<{ from: number; lines: string[] } | null>(null);
+  const [earlier, setEarlier] = useState<LiveLogPage | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [readError, setReadError] = useState(false);
   const [draft, setDraft] = useState('');
   const [search, setSearch] = useState<{ query: string; from: number } | null>(null);
-  const [result, setResult] = useState<{ page: LiveLogPage; window: string[] } | null>(null);
+  const [result, setResult] = useState<{
+    page: LiveLogPage;
+    window: string[];
+  } | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState(false);
   const searchRequest = useRef(0);
@@ -366,7 +394,13 @@ function LogRows({
         ? []
         : node.lines.flatMap((line, index) =>
             line.toLowerCase().includes(query.toLowerCase())
-              ? [{ line, number: windowStart + index + 1 }]
+              ? [
+                  {
+                    line,
+                    number: windowStart + index + 1,
+                    tone: node.line_tones?.[index] ?? null,
+                  },
+                ]
               : [],
           );
       const slice = matches.slice(from, from + LOG_PAGE);
@@ -379,6 +413,7 @@ function LogRows({
             matched: matches.length,
             lines: slice.map((match) => match.line),
             line_numbers: slice.map((match) => match.number),
+            line_tones: slice.map((match) => match.tone),
           };
       if (request === searchRequest.current) setResult({ page, window: node.lines });
     } catch {
@@ -397,10 +432,8 @@ function LogRows({
     setReadError(false);
     load(from, limit)
       .then((page) => {
-        setEarlier((current) => ({
-          from: page.from,
-          lines: [...page.lines, ...(current ? current.lines : [])],
-        }));
+        // Keep one history page; older output stays in the retained record.
+        setEarlier(page);
       })
       .catch(() => setReadError(true))
       .finally(() => setIsReading(false));
@@ -509,18 +542,22 @@ function LogRows({
             searchInput.current?.focus();
           }
         }}
-        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-words border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint"
+        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-all border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint"
       >
         {search ? (
-          result?.page.lines
-            .map((line, index) => `${result.page.line_numbers[index]}: ${line}`)
-            .join('\n')
+          result && (
+            <LogLines
+              lines={result.page.lines}
+              tones={result.page.line_tones}
+              numbers={result.page.line_numbers}
+            />
+          )
         ) : (
           <>
-            {earlier && earlier.lines.join('\n')}
+            {earlier && <LogLines lines={earlier.lines} tones={earlier.line_tones} />}
             {hole > 0 && `\n... ${hole} lines scrolled past while you were reading\n`}
             {earlier && hole === 0 && node.lines.length > 0 && '\n'}
-            {node.lines.join('\n')}
+            <LogLines lines={node.lines} tones={node.line_tones} />
           </>
         )}
       </pre>
@@ -1247,7 +1284,10 @@ export function LiveView({
     setStopping(viewId);
     setError(null);
     client
-      .viewAction(sid, viewId, { action: 'interrupt', ...(note ? { note } : {}) })
+      .viewAction(sid, viewId, {
+        action: 'interrupt',
+        ...(note ? { note } : {}),
+      })
       .catch(() => setError('That view would not stop. It may have just finished.'))
       .finally(() => setStopping(null));
   };
@@ -1255,14 +1295,21 @@ export function LiveView({
   const select = (viewId: string, nodeId: string, itemIds: string[]) => {
     setError(null);
     client
-      .viewAction(sid, viewId, { action: 'select', node_id: nodeId, item_ids: itemIds })
+      .viewAction(sid, viewId, {
+        action: 'select',
+        node_id: nodeId,
+        item_ids: itemIds,
+      })
       .catch(() => setError('That job could not be selected. It may have just finished.'));
   };
 
   const activate = async (viewId: string, nodeId: string) => {
     setError(null);
     try {
-      const outcome = await client.viewAction(sid, viewId, { action: 'activate', node_id: nodeId });
+      const outcome = await client.viewAction(sid, viewId, {
+        action: 'activate',
+        node_id: nodeId,
+      });
       if (!outcome.is_accepted)
         setError('That action is unavailable. The button may be disabled or the run finished.');
     } catch {

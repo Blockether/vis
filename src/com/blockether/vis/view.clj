@@ -307,7 +307,9 @@
 (defn log
   "Append-only lines — the scrollback. `:lines` seeds it and `:window-lines` says
    how many a surface holds hot; the view's record on disk keeps every line
-   either way, so a window is a paint budget, never a loss."
+   either way, so a window is a paint budget, never a loss. Optional `:line-tones`
+   align with seeded lines (nil is plain); append ops accept one `:tone` for their
+   lines. Redact before publishing. Terminal controls display literally."
   ([id] (log id nil))
   ([id opts] (live-node "log" id opts)))
 

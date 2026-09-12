@@ -211,8 +211,8 @@
 
 (defn- take-window
   "Count every line and match, retaining only matches inside `[from end)`."
-  [state lines from end ^String query]
-  (reduce (fn [acc text]
+  [state lines tones from end ^String query]
+  (reduce (fn [acc [text tone]]
             (let [line-number
                   (inc (long (:total acc)))
 
@@ -227,10 +227,14 @@
                 (update :matched inc)
 
                 (and matches? (<= (long from) at) (< at (long end)))
-                (-> (update :lines conj text)
+                (-> (cond->
+                      (or tone (contains? acc :line-tones))
+                      (assoc :line-tones
+                        (conj (or (:line-tones acc) (vec (repeat (count (:lines acc)) nil))) tone)))
+                    (update :lines conj text)
                     (update :line-numbers conj line-number)))))
           state
-          (or lines [])))
+          (map vector (or lines []) (concat tones (repeat nil)))))
 
 (defn- fold-record
   "Fold declarations, appends and resets into one bounded log result page."
@@ -238,22 +242,24 @@
   (case (str (:kind entry))
     "open"
     (if-let [node (find-log-node (:nodes (:view entry)) node-id)]
-      (take-window state (:lines node) from end query)
+      (take-window state (:lines node) (:line-tones node) from end query)
       state)
 
     "patch"
-    (reduce (fn [acc op]
-              (let [op-name (str (:op op))]
-                (cond (= "add-node" op-name) (if-let [node (find-log-node [(:node-spec op)]
-                                                                          node-id)]
-                                               (take-window empty-log (:lines node) from end query)
-                                               acc)
-                      (not= node-id (str (:node-id op))) acc
-                      (= "append" op-name) (take-window acc (:lines op) from end query)
-                      (contains? #{"clear" "remove-node"} op-name) empty-log
-                      :else acc)))
-            state
-            (:ops (:patch entry)))
+    (reduce
+      (fn [acc op]
+        (let [op-name (str (:op op))]
+          (cond (= "add-node" op-name)
+                (if-let [node (find-log-node [(:node-spec op)] node-id)]
+                  (take-window empty-log (:lines node) (:line-tones node) from end query)
+                  acc)
+                (not= node-id (str (:node-id op))) acc
+                (= "append" op-name)
+                (take-window acc (:lines op) (repeat (count (:lines op)) (:tone op)) from end query)
+                (contains? #{"clear" "remove-node"} op-name) empty-log
+                :else acc)))
+      state
+      (:ops (:patch entry)))
 
     state))
 

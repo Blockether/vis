@@ -31,7 +31,11 @@ it('materializes the canonical SDK live View lifecycle', () => {
     first_seq: 1,
     patch: canonical.patch,
   });
-  expect(patched.nodes[0]).toMatchObject({ id: 'status', text: 'Done', tone: 'ok' });
+  expect(patched.nodes[0]).toMatchObject({
+    id: 'status',
+    text: 'Done',
+    tone: 'ok',
+  });
   expect(patched.nodes).toEqual(canonical.result.view.nodes);
 });
 
@@ -214,7 +218,11 @@ describe('a patch frame', () => {
 
   it('inserts a node after the one the op names, and drops one by id', () => {
     const view = patched(opened(), 1, [
-      { op: 'add-node', after: 'now', node_spec: { id: 'queued', type: 'status', text: 'Queued' } },
+      {
+        op: 'add-node',
+        after: 'now',
+        node_spec: { id: 'queued', type: 'status', text: 'Queued' },
+      },
       { op: 'remove-node', node_id: 'links' },
     ]);
     expect(ids(view)).toEqual(['now', 'queued', 'swept', 'score', 'phases', 'tail', 'reading']);
@@ -290,9 +298,10 @@ describe('the three session events', () => {
   const other: SseEvent = { type: 'turn.delta' };
 
   it('accepts the shared lifecycle only for the live capability', () => {
-    const events = [VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, VIEW_CLOSE_EVENT].map(
-      (type): SseEvent => ({ type, kind: 'live' }),
-    );
+    const events = [VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, VIEW_CLOSE_EVENT].map((type): SseEvent => ({
+      type,
+      kind: 'live',
+    }));
     expect(events.map(isViewEvent)).toEqual([true, true, true]);
     expect(events.map(isLiveViewEvent)).toEqual([true, true, true]);
     expect(isLiveViewEvent({ type: VIEW_OPEN_EVENT, kind: 'input' })).toBe(false);
@@ -330,7 +339,11 @@ describe('the three session events', () => {
       }),
     ).toEqual([]);
     expect(
-      applyLiveViewEvent(views, { type: VIEW_CLOSE_EVENT, kind: 'live', view_id: 'other' }),
+      applyLiveViewEvent(views, {
+        type: VIEW_CLOSE_EVENT,
+        kind: 'live',
+        view_id: 'other',
+      }),
     ).toBe(views);
     expect(applyLiveViewEvent(views, frame({ ...views[0], id: 'other' }, 1, []))).toBe(views);
     expect(applyLiveViewEvent(views, other)).toBe(views);
@@ -379,7 +392,11 @@ describe('what a table and a progress state', () => {
       { id: 'c', cells: ['c', 'clean', '2'], tone: 'idle' as const },
     ];
     expect(
-      orderedRows({ ...table, rows, order: { by: 'findings', dir: 'asc' } }).map((row) => row.id),
+      orderedRows({
+        ...table,
+        rows,
+        order: { by: 'findings', dir: 'asc' },
+      }).map((row) => row.id),
     ).toEqual(['b', 'c', 'a']);
   });
 
@@ -387,7 +404,15 @@ describe('what a table and a progress state', () => {
     expect(liveFraction({ id: 'p', type: 'progress' })).toBeNull();
     expect(liveFraction({ id: 'p', type: 'progress', done: 2, total: 0 })).toBeNull();
     expect(liveFraction({ id: 'p', type: 'progress', done: 2, total: 3 })).toBeCloseTo(2 / 3);
-    expect(liveFraction({ id: 'p', type: 'progress', value: 0.5, done: 2, total: 3 })).toBe(0.5);
+    expect(
+      liveFraction({
+        id: 'p',
+        type: 'progress',
+        value: 0.5,
+        done: 2,
+        total: 3,
+      }),
+    ).toBe(0.5);
     expect(livePercent(2 / 3)).toBe(67);
   });
 });
@@ -438,7 +463,12 @@ describe('the record of a settled view', () => {
       [
         openLine,
         patchLine(1, [{ op: 'add-node', node_spec: status('one', 'first') }]),
-        closeLine({ view_id: opened().id, reason: 'completed', is_completed: true, view: sealed }),
+        closeLine({
+          view_id: opened().id,
+          reason: 'completed',
+          is_completed: true,
+          view: sealed,
+        }),
       ].join('\n'),
     );
     expect(ids(record!.view)).toEqual(['sealed']);
@@ -552,4 +582,39 @@ describe('a view still wearing the retired Activity vocabulary', () => {
     expect(liveViewFromWire({ ...view, classification: 'activity' })).toBeNull();
     expect(liveViewFromWire({ ...view, activity: { state: 'running' } })).toBeNull();
   });
+});
+
+it('keeps #209 log tones aligned through wire parsing, chunk appends and clear', () => {
+  const opened = liveViewFromWire({
+    id: 'styled',
+    title: 'Build',
+    seq: 0,
+    nodes: [
+      {
+        id: 'log',
+        type: 'log',
+        lines: ['first'],
+        line_tones: ['running'],
+        total_lines: 1,
+        window_lines: 2,
+      },
+    ],
+  })!;
+  const updated = patched(opened, 1, [
+    {
+      op: 'append',
+      node_id: 'log',
+      lines: ['ERROR literal <script>'],
+      tone: 'error',
+    },
+    { op: 'append', node_id: 'log', lines: ['plain'] },
+  ]);
+  expect(updated.nodes[0]).toMatchObject({
+    lines: ['ERROR literal <script>', 'plain'],
+    line_tones: ['error', null],
+    total_lines: 3,
+  });
+  const cleared = patched(updated, 2, [{ op: 'clear', node_id: 'log' }]);
+  expect(cleared.nodes[0]).toMatchObject({ lines: [], total_lines: 0 });
+  expect(cleared.nodes[0]).not.toHaveProperty('line_tones', ['error', null]);
 });

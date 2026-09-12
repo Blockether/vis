@@ -1886,6 +1886,14 @@
               "minItems": 0,
               "maxItems": 100000
             },
+            "line_tones": {
+              "description": "Optional tones aligned with lines; null means plain text.",
+              "type": "array",
+              "maxItems": 100000,
+              "items": {
+                "enum": [null, "idle", "running", "ok", "warn", "error"]
+              }
+            },
             "window_lines": {
               "type": "integer",
               "minimum": 1,
@@ -2379,6 +2387,10 @@
             },
             "node_id": {
               "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "tone": {
+              "description": "Semantic styling for every line in this append; log nodes only.",
+              "enum": ["idle", "running", "ok", "warn", "error"]
             },
             "lines": {
               "type": "array",
