@@ -235,12 +235,11 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
 const LIST_PEEK = 40;
 const LIST_FOOT = 16;
 const LIST_GEOMETRY = {
-  touch: { row: 49, chrome: 211 + LIST_PEEK, min: 15 },
-  mouse: { row: 33, chrome: 149 + LIST_FOOT + LIST_PEEK, min: 3 },
-  // The desk's sidebar: the same 149px of app bar, machine strip and project band
-  // above the first row as the mouse layout, its own 28px footer below, and a
-  // one-line row — the title and its mark — at the pointer's own height.
-  desk: { row: 33, chrome: 149 + 28 + LIST_PEEK, min: 3 },
+  // Numeric pages occupy their own line inside the project band.
+  touch: { row: 49, chrome: 211 + 44 + LIST_PEEK, min: 15 },
+  mouse: { row: 33, chrome: 149 + 40 + LIST_FOOT + LIST_PEEK, min: 3 },
+  // The desk rail has one-line session rows and its own 28px footer.
+  desk: { row: 33, chrome: 149 + 40 + 28 + LIST_PEEK, min: 3 },
 } as const;
 
 /** Page size sent to the gateway for the current measured layout. */

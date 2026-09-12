@@ -345,7 +345,9 @@ describe('ProviderRows', () => {
       );
       fireEvent.click(screen.getByRole('button', { name: 'Refresh limits for GITHUB-COPILOT' }));
       expect(asked).toEqual(pending ? [] : ['github-copilot']);
-      expect(screen.getByRole('button', { name: /GITHUB-COPILOT/i, expanded: false })).toBeTruthy();
+      expect(
+        screen.getByRole('button', { name: /^GITHUB-COPILOT/i, expanded: false }),
+      ).toBeTruthy();
     },
   );
 

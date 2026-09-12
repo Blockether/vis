@@ -648,87 +648,25 @@ describe('ProjectStatusCounts', () => {
 // header used to hide its whole history behind a disclosure, and the history grew
 // one endless column through "Show more" over rows the client had downloaded.
 describe('Pager', () => {
-  // A step is PAINTED when its own slot is not `invisible`; the slot itself is
-  // always in the DOM, because a control that vanishes moves its neighbour.
-  const isPainted = (html: string, label: string) => {
-    const at = html.indexOf(`aria-label="${label}"`);
-    expect(at).toBeGreaterThan(-1);
-    return !html.slice(html.lastIndexOf('<button', at), at).includes('invisible');
-  };
-
   it('renders nothing for a project that fits on one page', () => {
     expect(
       renderToStaticMarkup(<Pager page={1} pageCount={1} onPage={() => {}} label="vis sessions" />),
     ).toBe('');
   });
 
-  // Regression, user report ("on page one there should be no `<`; and what if I
-  // want to jump to page 5?"): the band painted a dead disabled step at each end
-  // and offered nothing but one-page steps, so page 5 of 73 cost four taps.
-  //
-  // Regression, user report ("clicking `>` many times, its width changes and I
-  // cannot click again to keep going"): dropping the step from the DOM re-centred
-  // the band, so stepping off page one slid `>` left out from under the finger
-  // already on it. The step is unpainted and unannounced, but its slot stays.
-  it('drops the step it cannot take without moving the one it can', () => {
-    const first = renderToStaticMarkup(
-      <Pager page={1} pageCount={7} onPage={() => {}} label="vis sessions" />,
-    );
-    expect(first).toContain('aria-label="Pages of vis sessions"');
-    expect(first).toContain('Page 1 of 7');
-    expect(isPainted(first, 'Previous page')).toBe(false);
-    expect(isPainted(first, 'Next page')).toBe(true);
-    expect(first).not.toContain('disabled=""');
-    // The unpainted slot is held, unannounced, and out of the tab order.
-    expect(first).toContain('aria-hidden="true"');
-    expect(first).toContain('tabindex="-1"');
-    // Both ends are fixed and only the numbers between them breathe.
-    expect(first).toContain('flex-1 items-center justify-center');
-    expect(first).not.toContain('justify-center gap-1 border-t');
-
-    const last = renderToStaticMarkup(
-      <Pager page={7} pageCount={7} onPage={() => {}} label="vis sessions" />,
-    );
-    expect(isPainted(last, 'Previous page')).toBe(true);
-    expect(isPainted(last, 'Next page')).toBe(false);
-  });
-
-  // Regression, user report: the `<` and `>` were spread the full width of the
-  // list, "too much and hard to click" — 360px apart on a phone, so no thumb can
-  // reach both and click-click-click through pages. The shelf still runs the full
-  // width; the control on it is content-sized and held at its trailing end.
-  //
-  // Regression, user report with a screenshot of a phone: the capped cluster
-  // (`w-full max-w-[19rem]`) could not keep the promise the cap was for. A flex item
-  // cannot shrink below its own content, so on page 4 — where the window opens to
-  // `1 2 3 4 5 … 80`, 319px of a 304px cap — the box overflowed and `>` sat 15px
-  // right of where it sits on every other page, outside the trailing column.
-  it("keeps the two steps within a thumb's reach of the numbers", () => {
+  // Regression: the desktop sidebar hid the numeric controls behind arrow-only paging.
+  it('prints page numbers at every width and announces the position once', () => {
     const html = renderToStaticMarkup(
-      <Pager page={4} pageCount={73} onPage={() => {}} label="vis sessions" />,
+      <Pager page={1} pageCount={80} onPage={() => {}} label="vis sessions" />,
     );
-    expect(html).not.toContain('max-w-[19rem]');
-  });
-
-  // Regression, user report with a screenshot of a phone ("this is not looking
-  // good"): on page 4 of a 798-session project the shelf was TWO lines with a hole
-  // in it — the count alone on the first beside 300px of empty paper, the numbers
-  // alone on the second — and the sticky strip grew from 41px to 59px as the reader
-  // paged, measured at 430px. A phone line cannot hold both: at 390px the 115px
-  // count and the 304px window need 431px of 362px.
-  it('says the position in six characters where the numbers cannot fit', () => {
-    const html = renderToStaticMarkup(
-      <Pager page={4} pageCount={80} onPage={() => {}} label="vis sessions" />,
-    );
-    expect(html).toContain('4 / 80');
-    expect(html).toContain('class="hidden flex-1 items-center justify-center gap-1 @2xl:flex"');
-    // `display: none` takes the numbers out of the accessibility tree too, so the
-    // position is announced ONCE, by the live region both forms are drawn from.
-    expect(html.match(/Page 4 of 80/g)?.length).toBe(1);
-    expect(html).toContain('<span aria-live="polite" class="sr-only">');
-    // Both steps are still there to walk with.
-    expect(isPainted(html, 'Previous page')).toBe(true);
-    expect(isPainted(html, 'Next page')).toBe(true);
+    expect(html).toContain('aria-label="Pages of vis sessions"');
+    expect(html.match(/Page 1 of 80/g)).toHaveLength(1);
+    expect(html).not.toContain('Next page');
+    expect(html).not.toContain('Previous page');
+    expect(html).not.toMatch(/@[^" ]*:hidden/);
+    for (const n of [1, 2, 3, 4, 5, 80]) {
+      expect(html).toContain(`aria-label="Page ${n}"`);
+    }
   });
 
   it('makes every printed page a one-tap jump, current one marked', () => {
@@ -747,18 +685,13 @@ describe('Pager', () => {
     expect(pageWindow(1, 1)).toEqual([1]);
     expect(pageWindow(3, 5)).toEqual([1, 2, 3, 4, 5]);
     expect(pageWindow(5, 73)).toEqual([1, null, 4, 5, 6, null, 73]);
-    expect(pageWindow(1, 73)).toEqual([1, 2, null, 73]);
-    expect(pageWindow(72, 73)).toEqual([1, null, 71, 72, 73]);
+    expect(pageWindow(1, 73)).toEqual([1, 2, 3, 4, 5, null, 73]);
+    expect(pageWindow(72, 73)).toEqual([1, null, 69, 70, 71, 72, 73]);
     expect(pageWindow(4, 73)).toEqual([1, 2, 3, 4, 5, null, 73]);
   });
 });
 
-// Regression, user report (paraphrased: what stands under the project band belongs
-// in the band itself): a project heading was TWO boxes — the band, and a
-// `SectionShelf` stuck under it carrying the count and the pager on a second paper,
-// behind a second hairline and a second sticky layer. It cost 40px of the screen
-// under the band for the whole of a project, and it is gone: the pager is a cluster
-// in the band's own trailing column and the count rides on the name's second line.
+// Counts and navigation belong to the same project band, without competing for width.
 describe('a project band carries its own count and its own pager', () => {
   const band =
     /<SwipeActions\s+label=\{project\}[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0] ??
@@ -766,16 +699,15 @@ describe('a project band carries its own count and its own pager', () => {
   const qualifier = band.slice(band.indexOf('qualifier={'), band.indexOf('qualifierTitle='));
   const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? '';
 
-  it("walks the project from the band's own trailing cluster", () => {
-    expect(cluster).toMatch(/<Pager\s+page=\{shownPage\}/);
+  it('keeps numeric pages inside the band but outside its action cluster', () => {
+    expect(band).toMatch(/<Pager\s+page=\{shownPage\}/);
+    expect(cluster).not.toContain('<Pager');
     expect(cluster).toContain('<NewSessionButton');
     // ...and it is the ONLY pager on this screen.
     expect(sessionsListSource.match(/<Pager\b/g)?.length).toBe(1);
   });
 
-  // Regression, user report with a marked phone screenshot: the pager and New session
-  // control hugged the band's first line instead of sharing its vertical centre.
-  it('centers the pager and verb together through the project band', () => {
+  it('centers the creation control through the project heading', () => {
     expect(cluster).toContain('<HeaderActions align="center">');
     expect(cluster).not.toContain('align="start"');
   });
@@ -825,21 +757,11 @@ describe('a project band carries its own count and its own pager', () => {
     expect(pager).not.toContain('sticky');
   });
 
-  // Regression, user report with a screenshot of a phone: the strip wrapped as soon
-  // as the pager's window opened — 41px on page 1, 59px on page 4 — a STICKY box
-  // changing height under the thumb that pressed it. The phone form is one fixed
-  // width, so the band it now stands in cannot move as the reader walks.
-  it('is the same width on every page, so the band never moves under the thumb', () => {
-    const face = (page: number) =>
-      /<nav [^>]*>([\s\S]*?)<\/nav>/.exec(
-        renderToStaticMarkup(
-          <Pager page={page} pageCount={100} onPage={() => {}} label="vis sessions" />,
-        ),
-      )?.[0] ?? '';
-    // The window that opens on page 4 is the DESKTOP form only; the phone form says
-    // `4 / 100` in the same box `1 / 100` stood in.
-    expect(face(1)).toContain('1 / 100');
-    expect(face(4)).toContain('4 / 100');
+  it('keeps the same number of navigation slots while crossing a large history', () => {
+    expect(pageWindow(1, 100)).toHaveLength(7);
+    expect(pageWindow(4, 100)).toHaveLength(7);
+    expect(pageWindow(50, 100)).toHaveLength(7);
+    expect(pageWindow(100, 100)).toHaveLength(7);
   });
 });
 

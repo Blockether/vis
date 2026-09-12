@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { expect, fn, userEvent, waitFor } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { SESSION_VERBS, STORY_SESSION } from '../dev/story-data';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
@@ -21,8 +21,8 @@ import {
  * at 72px each is most of a phone, so the caption on a cell stays one word and the
  * whole sentence lives in `name`, for a reader who cannot see the row.
  *
- * Touch opens the scroll-snap drawer. A pointer reveals a reserved trailing slot,
- * with no sideways scroll and no action painted over the row's own controls.
+ * Touch opens the scroll-snap drawer. A pointer opens a vertical-dot dropdown,
+ * reserving only one target beside the row's permanent controls.
  */
 const MARKS: Record<string, ReactNode> = {
   star: <StarIcon className="size-4" />,
@@ -58,8 +58,17 @@ export const SessionRow: Story = {
     actions,
     children: <ListRow>{STORY_SESSION.title}</ListRow>,
   },
-  play: async ({ canvas }) => {
-    await userEvent.click(canvas.getByRole('button', { name: 'Star this session' }));
+  play: async ({ canvas, canvasElement }) => {
+    const pointer = canvasElement.ownerDocument.defaultView!.matchMedia(
+      '(min-width: 640px) and (pointer: fine)',
+    ).matches;
+    if (pointer) {
+      await userEvent.click(canvas.getByRole('button', { name: /^Actions for/ }));
+      const menu = within(canvasElement.ownerDocument.body).getByRole('dialog');
+      await userEvent.click(within(menu).getByRole('button', { name: 'Star this session' }));
+    } else {
+      await userEvent.click(canvas.getByRole('button', { name: 'Star this session' }));
+    }
     await expect(onStar).toHaveBeenCalledOnce();
   },
 };
@@ -96,6 +105,9 @@ export const ProjectHeader: Story = {
           <div className="grid min-w-0 flex-1">
             <Story />
           </div>
+          <div className="px-3 pb-2 pt-1 sm:px-4">
+            <Pager page={1} pageCount={5} label={STORY_SESSION.project} onPage={onPage} />
+          </div>
         </SectionHeader>
       </div>
     ),
@@ -124,7 +136,6 @@ export const ProjectHeader: Story = {
     trailing: (
       <div className="flex bg-level-project">
         <HeaderActions align="center">
-          <Pager page={1} pageCount={5} label={STORY_SESSION.project} onPage={onPage} />
           <NewSessionButton machine={STORY_SESSION.machine} onPress={onCreate} />
         </HeaderActions>
       </div>
@@ -132,55 +143,46 @@ export const ProjectHeader: Story = {
   },
   play: async ({ canvas, canvasElement }) => {
     const create = canvas.getByRole('button', { name: `New session on ${STORY_SESSION.machine}` });
-    const next = canvas.getByRole('button', { name: 'Next page' });
-    const remove = canvas.getByRole('button', { name: `Delete ${STORY_SESSION.project}` });
-    const strip = remove.parentElement!;
-    const track = strip.parentElement!;
+    const second = canvas.getByRole('button', { name: 'Page 2' });
+    const track = create.closest<HTMLElement>('[data-swipe-track]')!;
     const doc = canvasElement.ownerDocument;
     const win = doc.defaultView!;
-    await expect(win.getComputedStyle(track).display).toBe('flex');
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
-      // Touch retains the full-width row and the separate, captioned swipe drawer.
       await expect(track.scrollWidth).toBeGreaterThan(track.clientWidth);
-      await expect(remove.getBoundingClientRect().width).toBeGreaterThanOrEqual(44);
       return;
     }
+    const trigger = canvas.getByRole('button', { name: `Actions for ${STORY_SESSION.project}` });
     const before = create.getBoundingClientRect();
-    await userEvent.hover(create);
-    // userEvent dispatches events; focus also reveals the strip in real browser CSS.
-    create.focus();
-    await waitFor(() => expect(win.getComputedStyle(strip).opacity).toBe('1'));
-    await expect(create.getBoundingClientRect().x).toBe(before.x);
-    await expect(create.getBoundingClientRect().width).toBe(before.width);
     await expect(track.scrollWidth).toBe(track.clientWidth);
-    await expect(
-      track.firstElementChild!.firstElementChild!.getBoundingClientRect().right,
-    ).toBeLessThanOrEqual(strip.getBoundingClientRect().left);
-    // Hit-test the real pixels, not just DOM clicks which ignore covering siblings.
-    for (const control of [next, create, remove]) {
+    for (const control of [second, create, trigger]) {
       const box = control.getBoundingClientRect();
+      await expect(box.width).toBeGreaterThanOrEqual(28);
+      await expect(box.height).toBeGreaterThanOrEqual(28);
       await expect(
         control.contains(doc.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)),
       ).toBe(true);
     }
-    await expect(remove.getBoundingClientRect().width).toBeGreaterThanOrEqual(28);
-    await expect(remove.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
-    await expect(remove.querySelector('svg')!.getBoundingClientRect().width).toBeLessThan(
-      create.querySelector('svg')!.getBoundingClientRect().width,
-    );
-    await userEvent.click(next);
+    await userEvent.click(second);
     await expect(onPage).toHaveBeenCalledWith(2);
     await userEvent.click(create);
     await expect(onCreate).toHaveBeenCalledOnce();
     await expect(onDelete).not.toHaveBeenCalled();
-    await userEvent.tab();
-    await expect(remove).toHaveFocus();
+    trigger.focus();
     await userEvent.keyboard('{Enter}');
+    const menu = within(doc.body).getByRole('dialog');
+    const remove = within(menu).getByRole('button', { name: `Delete ${STORY_SESSION.project}` });
+    await expect(remove).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    await expect(trigger).toHaveFocus();
+    await userEvent.click(trigger);
+    await userEvent.click(
+      within(within(doc.body).getByRole('dialog')).getByRole('button', {
+        name: `Delete ${STORY_SESSION.project}`,
+      }),
+    );
     await expect(onDelete).toHaveBeenCalledOnce();
-    remove.blur();
-    await userEvent.unhover(create);
-    await waitFor(() => expect(win.getComputedStyle(strip).opacity).toBe('0'));
-    await expect(win.getComputedStyle(strip).pointerEvents).toBe('none');
+    await expect(within(doc.body).queryByRole('dialog')).not.toBeInTheDocument();
+    await expect(create.getBoundingClientRect().x).toBe(before.x);
   },
 };
 

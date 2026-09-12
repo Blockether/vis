@@ -70,14 +70,14 @@ describe("a project's page is cut by the device", () => {
   });
 
   it('uses the extra room when more than fifteen rows fit', async () => {
-    await expectRows(1200, 19);
+    await expectRows(1200, 18);
   });
   it('keeps the row the reader is on when the screen changes shape', async () => {
     const view = onScreen(844);
     try {
       await waitFor(() => expect(view.getByText('alpha 00')).toBeTruthy());
-      fireEvent.click(view.getByLabelText('Next page'));
-      fireEvent.click(view.getByLabelText('Next page'));
+      fireEvent.click(view.getByLabelText('Page 2'));
+      fireEvent.click(view.getByLabelText('Page 3'));
       // Page 3 of 3 at fifteen rows a page: the reader is holding `alpha 30`.
       await waitFor(() => expect(view.getByText('alpha 30')).toBeTruthy());
 
@@ -85,7 +85,7 @@ describe("a project's page is cut by the device", () => {
       // kept across that would name a different stretch, so the row index is kept.
       window.innerHeight = 1200;
       fireEvent(window, new Event('resize'));
-      await waitFor(() => expect(shown(view)).toHaveLength(19));
+      await waitFor(() => expect(shown(view)).toHaveLength(18));
       expect(view.getByText('alpha 30')).toBeTruthy();
     } finally {
       view.unmount();
@@ -106,10 +106,9 @@ describe('a desk cuts a page for the room it really has', () => {
     const view = onScreen(900);
     try {
       await waitFor(() => expect(view.getByText('alpha 00')).toBeTruthy());
-      // 900px, minus the 176px of app bar, machine strip and project band above the
-      // first row, the footer under the list and the peek under the last row, over
-      // a 33px row.
-      expect(shown(view)).toHaveLength(20);
+      // The numbered pager has its own line in the project band. With the single
+      // top inset, footer and next-project peek, this window still fits nineteen rows.
+      expect(shown(view)).toHaveLength(19);
     } finally {
       view.unmount();
       view.restore();

@@ -111,7 +111,7 @@ it('refreshes missing reset data from the row action without consuming a reset',
   const read = vi.spyOn(client, 'providerLimits').mockResolvedValue(provider.limits!);
   const consume = vi.spyOn(client, 'consumeProviderResetCredit');
   render(<ConnectedRows client={client} />);
-  fireEvent.click(await screen.findByRole('button', { name: /OpenAI Codex/i, expanded: false }));
+  fireEvent.click(await screen.findByRole('button', { name: /^OpenAI Codex/i, expanded: false }));
   await screen.findByText(
     'The gateway did not report reset availability. Check that it is up to date.',
   );
@@ -124,7 +124,7 @@ it('refreshes missing reset data from the row action without consuming a reset',
   await screen.findByText('3 resets available');
   expect(read).toHaveBeenCalledTimes(2);
   expect(consume).not.toHaveBeenCalled();
-  expect(screen.getByRole('button', { name: /OpenAI Codex/i, expanded: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^OpenAI Codex/i, expanded: true })).toBeTruthy();
 });
 
 it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a lost response after reopening', async () => {
@@ -183,7 +183,7 @@ it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a 
     token: 'test',
   } as GatewayConn);
   const first = render(<ConnectedRows client={client} />);
-  fireEvent.click(await screen.findByRole('button', { name: /OpenAI Codex/i, expanded: false }));
+  fireEvent.click(await screen.findByRole('button', { name: /^OpenAI Codex/i, expanded: false }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
   fireEvent.click(screen.getByRole('button', { name: 'Use 1 reset' }));
@@ -191,7 +191,7 @@ it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a 
   expect(screen.getByText('0 resets available')).toBeTruthy();
   first.unmount();
   render(<ConnectedRows client={client} />);
-  fireEvent.click(await screen.findByRole('button', { name: /OpenAI Codex/i, expanded: false }));
+  fireEvent.click(await screen.findByRole('button', { name: /^OpenAI Codex/i, expanded: false }));
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Check reset result…' })).toBeEnabled(),
   );
@@ -234,7 +234,7 @@ it.runIf(!!process.env.VIS_CODEX_RESET_E2E_URL)(
     const view = render(<ConnectedRows client={client} />);
     async function openRow() {
       fireEvent.click(
-        await screen.findByRole('button', { name: /OpenAI Codex/i, expanded: false }),
+        await screen.findByRole('button', { name: /^OpenAI Codex/i, expanded: false }),
       );
     }
     async function submit(trigger: string, confirm: string) {
@@ -323,7 +323,7 @@ it.each([false, true])(
       </>,
     );
     await waitFor(() => expect(screen.getByTestId('other-quota')).toHaveTextContent('100'));
-    fireEvent.click(await screen.findByRole('button', { name: /OpenAI Codex/i, expanded: false }));
+    fireEvent.click(await screen.findByRole('button', { name: /^OpenAI Codex/i, expanded: false }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeEnabled(),
     );

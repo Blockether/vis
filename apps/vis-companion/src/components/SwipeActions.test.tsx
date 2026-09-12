@@ -6,14 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { SwipeActions } from './SwipeActions';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
 
-// Regression, user reports about row verbs, in the order they arrived: "I don't
-// need the ⋯ and swiping" — the mark beside the gesture said nothing and opened a
-// menu holding what the gesture already held; "the swipe should be always right
-// without this ⋯" — the slide stays, the mark goes; and then, after the verbs had
-// been moved into permanently painted marks in every row, "you removed the slides
-// from the session list and also from the machine — we should have the slide and
-// just fix it". So the slide is the ONE row-verb surface, on both lists, with no
-// mark standing beside it.
+// Touch keeps its swipe gesture; desktop actions live behind one vertical-dot trigger.
 
 // Regression, user report ("the colour is the same as rename"): every action on the
 // strip wore one neutral ink, so the star — the mark the human types in themselves,
@@ -70,8 +63,7 @@ describe('SwipeActions tones', () => {
 // track 288px wider than its own box, and a pointer has no swipe — so the only way
 // one could reach it was a two-finger trackpad drag or shift+wheel, which slid a
 // delete button under the cursor on whichever rows the sideways gesture crossed.
-// A mouse gets no track and no scroll: the strip stands at the trailing edge and
-// fades in on hover or on keyboard focus.
+// A mouse gets no track and no scroll: one button opens the row's dropdown.
 describe('a mouse never slides', () => {
   const markup = () =>
     renderToStaticMarkup(
@@ -98,17 +90,12 @@ describe('a mouse never slides', () => {
     expect(html).toContain('snap-x snap-mandatory overflow-x-auto');
   });
 
-  it('reveals the strip on hover and on keyboard focus instead', () => {
+  it('reserves only a menu trigger and hides the touch strip from a pointer', () => {
     const html = markup();
-    expect(html).toContain('group/swipe');
-    expect(html).toContain('mouse:group-hover/swipe:opacity-100');
-    expect(html).toContain('mouse:group-focus-within/swipe:opacity-100');
-  });
-
-  it('takes no pointer while unseen', () => {
-    const html = markup();
-    expect(html).toContain('mouse:group-hover/swipe:pointer-events-auto');
-    expect(html).toContain('mouse:group-focus-within/swipe:pointer-events-auto');
+    expect(html).toContain('aria-label="Actions for a session"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain('snap-end mouse:hidden');
+    expect(html).not.toContain('group-hover/swipe:opacity');
   });
 
   // Regression: desktop hover put Delete over the project's + and pager.
@@ -117,7 +104,7 @@ describe('a mouse never slides', () => {
     const html = markup();
     expect(html).not.toContain('mouse:absolute');
     expect(html).toContain('mouse:flex-1');
-    expect(html).toContain('class="mouse:sr-only">Delete<');
+    expect(html).toContain('>Delete</span>');
     expect(html).toContain('pr-3 sm:pr-4');
   });
 });
@@ -185,16 +172,18 @@ describe('the slide', () => {
     </SwipeActions>
   );
 
-  it('offers the verbs with no mark standing beside them', () => {
+  it('keeps captioned touch actions separate from the desktop trigger', () => {
     render(row('first'));
-    // Three buttons in this row: the row itself and its two verbs. A `⋯` would be
-    // a fourth — the control the report asked to be rid of.
-    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
-      null,
-      'Rename',
-      'Delete',
-    ]);
-    expect(screen.queryByRole('button', { name: /^Actions for/ })).toBeNull();
+    const strip = screen.getByRole('group', { name: 'first actions' });
+    expect(
+      Array.from(strip.querySelectorAll('button')).map((button) =>
+        button.getAttribute('aria-label'),
+      ),
+    ).toEqual(['Rename', 'Delete']);
+    expect(screen.getByRole('button', { name: 'Actions for first' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
     expect(screen.getByRole('group', { name: 'first actions' })).toBeTruthy();
   });
 

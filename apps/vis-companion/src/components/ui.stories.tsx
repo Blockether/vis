@@ -128,13 +128,16 @@ export const Buttons: Story = {
           Disabled
         </Button>
       </Group>
-      <Group of="Button, three densities">
+      <Group of="Button, four densities">
         <Button variant="secondary">Default</Button>
         <Button variant="secondary" density="compact">
           Compact
         </Button>
         <Button variant="secondary" density="panel">
           Panel
+        </Button>
+        <Button variant="secondary" density="page" aria-label="Page 5" aria-current="page">
+          5
         </Button>
       </Group>
       <Group of="The word-only verbs">

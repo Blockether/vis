@@ -13,8 +13,8 @@ import { MachineRows } from './Machines';
 // of full-width words under the ONE row the column was reading, then into marks
 // painted permanently in every row's trailing cell, and the report on that was
 // "you removed the slides from the session list and also from the machine — we
-// should have the slide and just fix it". The slide is the surface; the `⋯` is
-// what goes.
+// should have the slide and just fix it". Touch keeps that slide without a menu;
+// desktop now uses one dropdown instead of a row of hover icons.
 
 const tower: GatewayConn = { url: 'http://10.0.0.5:7890', label: 'tower' };
 const laptop: GatewayConn = { url: 'http://10.0.0.6:7890', label: 'laptop' };
@@ -61,7 +61,7 @@ describe('a machine keeps its verbs under its own row', () => {
     expect(verbsOf('laptop')).toEqual(['Make laptop primary', 'Rename laptop', 'Forget laptop']);
   });
 
-  it('reaches them by sliding the row, and by nothing else', () => {
+  it('keeps sliding on touch and reserves the dropdown for a mouse', () => {
     fleet();
     // The row is the whole width and the strip waits past its trailing edge: one
     // snap track per row, the row first, the verbs second.
@@ -70,11 +70,14 @@ describe('a machine keeps its verbs under its own row', () => {
     const html = tracks[0]!.innerHTML;
     expect(html.indexOf('snap-start')).toBeLessThan(html.indexOf('snap-end'));
 
-    // No `⋯` anywhere: nothing stands beside the gesture, and nothing stands in
-    // the row's trailing cell either.
-    expect(screen.queryByRole('button', { name: /^Actions for/ })).toBeNull();
-    // Two machine rows, five verbs, and no other control on this list.
-    expect(screen.getAllByRole('button')).toHaveLength(7);
+    // The menu is desktop-only: nothing stands beside the touch gesture.
+    const menus = screen.getAllByRole('button', { name: /^Actions for/ });
+    expect(menus).toHaveLength(2);
+    for (const menu of menus) {
+      expect(menu.parentElement).toHaveClass('hidden', 'mouse:flex');
+    }
+    // Two machine rows, five touch verbs and two desktop menu triggers.
+    expect(screen.getAllByRole('button')).toHaveLength(9);
 
     // The captions stay one word wide — the cell is 72px — while the accessible
     // name says which machine the verb acts on.

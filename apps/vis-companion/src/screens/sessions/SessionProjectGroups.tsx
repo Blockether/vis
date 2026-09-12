@@ -488,14 +488,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                   trailing={
                     <div className="flex bg-level-project">
                       <HeaderActions align="center">
-                        {isShowing && (
-                          <Pager
-                            page={shownPage}
-                            pageCount={pageCount}
-                            onPage={goToPage}
-                            label={`${project} sessions`}
-                          />
-                        )}
                         <NewSessionButton
                           machine={machineLabel(conn)}
                           where={project}
@@ -569,6 +561,16 @@ export const ProjectGroup = memo(function ProjectGroup({
                     />
                   </div>
                 </SwipeActions>
+                {isShowing && pageCount > 1 && (
+                  <div className="px-3 pb-2 pt-1 sm:px-4">
+                    <Pager
+                      page={shownPage}
+                      pageCount={pageCount}
+                      onPage={goToPage}
+                      label={`${project} sessions`}
+                    />
+                  </div>
+                )}
               </div>
             </SectionHeader>
           )}

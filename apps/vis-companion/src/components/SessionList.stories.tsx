@@ -41,13 +41,22 @@ export const AwaitingInput: Story = {
 };
 
 export const Renaming: Story = {
-  play: async ({ canvas }) => {
-    const actions = canvas.getByRole('group', {
-      name: `${STORY_SESSION_ROW.title} actions`,
-    });
-    const rename = within(actions).getByRole('button', { name: 'Rename' });
-    rename.focus();
-    await userEvent.keyboard('{Enter}');
+  play: async ({ canvas, canvasElement }) => {
+    const pointer = canvasElement.ownerDocument.defaultView!.matchMedia(
+      '(min-width: 640px) and (pointer: fine)',
+    ).matches;
+    if (pointer) {
+      await userEvent.click(
+        canvas.getByRole('button', { name: `Actions for ${STORY_SESSION_ROW.title}` }),
+      );
+      const menu = within(canvasElement.ownerDocument.body).getByRole('dialog');
+      await userEvent.click(within(menu).getByRole('button', { name: 'Rename' }));
+    } else {
+      const actions = canvas.getByRole('group', { name: `${STORY_SESSION_ROW.title} actions` });
+      const rename = within(actions).getByRole('button', { name: 'Rename' });
+      rename.focus();
+      await userEvent.keyboard('{Enter}');
+    }
     await expect(
       await canvas.findByRole('textbox', {
         name: `Rename ${STORY_SESSION_ROW.title}`,

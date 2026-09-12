@@ -59,7 +59,7 @@ describe('a project is paged by the gateway that counts it', () => {
       // THE TURN COSTS NO ROUND TRIP: the page the reader steps onto is already
       // held, so it paints in the frame of the tap. It used to stand on the page
       // before it until the gateway answered.
-      fireEvent.click(view.getByLabelText('Next page'));
+      fireEvent.click(view.getByLabelText('Page 2'));
       expect(shown(view)[0]).toBe('alpha 15');
       await settle();
 
@@ -101,7 +101,7 @@ describe('a project is paged by the gateway that counts it', () => {
       expect(shown(view)[0]).toBe('alpha 00');
       await waitFor(() => expect(pageReads(view)).toHaveLength(2));
 
-      fireEvent.click(view.getByLabelText('Next page'));
+      fireEvent.click(view.getByLabelText('Page 2'));
 
       // Until the slow answer lands, both halves keep saying page one. It used to
       // announce page two over page one's rows for the whole network round trip.

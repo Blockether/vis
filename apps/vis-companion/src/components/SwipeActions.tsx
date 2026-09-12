@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { LIST_EDGE_END } from './SessionNavigator';
+import { DotsIcon } from './icons';
+import { IconButton } from './ui';
+import { Menu, MenuHeading, MenuItem, MENU_WIDTH } from './Menu';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 
 export interface SwipeAction {
   key: string;
@@ -54,14 +58,110 @@ let openDrawer: (() => void) | null = null;
  */
 const OPEN_PAST_PX = 8;
 
+/** A pointer uses one persistent trigger; touch keeps the swipe drawer below. */
+function RowActionMenu({ actions, label }: { actions: SwipeAction[]; label?: string }) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<MenuPosition | null>(null);
+  const dismiss = useCallback(() => {
+    setAt(null);
+    triggerRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!at) return;
+    const panel = panelRef.current?.closest('[role="dialog"]');
+    const anchor = triggerRef.current?.getBoundingClientRect();
+    const height = panel?.getBoundingClientRect().height;
+    if (!height) return;
+    const placed = menuPosition(anchor, MENU_WIDTH, undefined, height);
+    if (placed && (placed.top !== at.top || placed.left !== at.left)) setAt(placed);
+  }, [at]);
+
+  useEffect(() => {
+    if (!at) return;
+    // Skip the heading's close control and focus the first action.
+    panelRef.current?.querySelectorAll('button')[1]?.focus({ preventScroll: true });
+    const onScroll = (event: Event) => {
+      if (
+        event.target instanceof Node &&
+        panelRef.current?.closest('[role="dialog"]')?.contains(event.target)
+      )
+        return;
+      dismiss();
+    };
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [at, dismiss]);
+
+  return (
+    <>
+      <IconButton
+        ref={triggerRef}
+        label={label ? `Actions for ${label}` : 'Row actions'}
+        variant="quiet"
+        aria-haspopup="dialog"
+        aria-expanded={at !== null}
+        onClick={(event) =>
+          setAt(menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH))
+        }
+      >
+        <DotsIcon className="size-3.5 rotate-90" />
+      </IconButton>
+      {at && (
+        <Menu label={label ? `${label} actions` : 'Row actions'} at={at} onDismiss={dismiss}>
+          <div
+            ref={panelRef}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                dismiss();
+              } else if (event.key === 'Tab') {
+                const buttons = event.currentTarget.querySelectorAll('button');
+                const first = buttons[0];
+                const last = buttons[buttons.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                  event.preventDefault();
+                  last?.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                  event.preventDefault();
+                  first?.focus();
+                }
+              }
+            }}
+          >
+            <MenuHeading onClose={dismiss} closeLabel="Close row actions">
+              {label ?? 'Row actions'}
+            </MenuHeading>
+            {actions.map((action) => (
+              <MenuItem
+                key={action.key}
+                title={action.name ?? action.label}
+                icon={action.icon}
+                tone={action.tone === 'danger' ? 'danger' : 'default'}
+                onSelect={() => {
+                  const anchor = triggerRef.current;
+                  dismiss();
+                  if (anchor) action.onSelect(anchor);
+                }}
+              />
+            ))}
+          </div>
+        </Menu>
+      )}
+    </>
+  );
+}
+
 /**
- * Shared row-action drawer. Touch uses a two-panel scroll-snap track; fine pointers
- * reserve a trailing slot and reveal it on hover/focus without covering or moving
- * row controls. Hidden actions cannot intercept input; touch keeps the swipe drawer.
- *
- * One button serves both inputs: a captioned 72px cell on touch, a 28px target with
- * a smaller 20px face and 14px mark under a pointer. This stays here rather than
- * duplicating IconButton and exposing each action twice to keyboard/screen readers.
+ * Shared row actions: a scroll-snap drawer on touch and a vertical-dot dropdown
+ * under a pointer. Only the trigger reserves desktop width, regardless of action
+ * count. Permanent row controls stay mounted once, after the action trigger.
  */
 export function SwipeActions({
   actions,
@@ -72,7 +172,7 @@ export function SwipeActions({
   actions: SwipeAction[];
   children: ReactNode;
   label?: string;
-  /** Permanent row controls: inside the touch panel, after the hover strip on desktop. */
+  /** Permanent row controls: inside the touch panel, after the desktop menu trigger. */
   trailing?: ReactNode;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -195,8 +295,7 @@ export function SwipeActions({
       className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden mouse:transition-colors mouse:duration-150 mouse:hover:bg-hover mouse:motion-reduce:transition-none"
     >
       {/* Touch keeps content and permanent controls in one full-width snap panel.
-          On desktop its children join the track: content, reserved verbs, then the
-          permanent trailing edge. The controls are mounted only once. */}
+          Desktop reserves just one menu trigger before the permanent trailing edge. */}
       <div
         className="grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start bg-panel mouse:contents"
         onClickCapture={(event) => {
@@ -212,7 +311,12 @@ export function SwipeActions({
         {trailing && <div className="flex shrink-0 mouse:order-last">{trailing}</div>}
       </div>
       <div
-        className={`flex shrink-0 snap-end mouse:pointer-events-none mouse:items-center mouse:gap-2 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none ${LIST_EDGE_END} ${trailing ? 'mouse:pr-2' : ''}`}
+        className={`hidden shrink-0 items-center mouse:flex ${trailing ? 'pr-2' : LIST_EDGE_END}`}
+      >
+        <RowActionMenu actions={actions} label={label} />
+      </div>
+      <div
+        className={`flex shrink-0 snap-end mouse:hidden ${LIST_EDGE_END}`}
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >
@@ -222,12 +326,12 @@ export function SwipeActions({
             type="button"
             aria-label={action.name ?? action.label}
             title={action.name ?? action.label}
-            className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:size-7 mouse:rounded-full mouse:border-l-0 mouse:bg-transparent mouse:text-white ${
+            className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
               action.tone === 'danger'
-                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white mouse:hover:bg-transparent mouse:hover:text-err-ink mouse:hover:[&>span:first-child]:bg-err-surface'
+                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white'
                 : action.tone === 'accent'
-                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground mouse:hover:bg-transparent mouse:hover:[&>span:first-child]:bg-panel'
-                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover mouse:hover:bg-transparent mouse:hover:[&>span:first-child]:bg-panel'
+                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground'
+                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover'
             }`}
             onClick={(event) => {
               const anchor = event.currentTarget;
@@ -235,13 +339,8 @@ export function SwipeActions({
               action.onSelect(anchor);
             }}
           >
-            <span
-              aria-hidden="true"
-              className="mouse:grid mouse:size-5 mouse:place-items-center mouse:rounded-full mouse:transition-colors mouse:duration-150 mouse:[&>svg]:size-3.5 motion-reduce:transition-none"
-            >
-              {action.icon}
-            </span>
-            <span className="mouse:sr-only">{action.label}</span>
+            <span aria-hidden="true">{action.icon}</span>
+            <span>{action.label}</span>
           </button>
         ))}
       </div>

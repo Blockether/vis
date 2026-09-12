@@ -356,31 +356,19 @@ export function ProjectCrumb({
  * pinned because "back to the start" and "the oldest sessions" are the two jumps
  * a reader actually asks for.
  */
-export function pageWindow(page: number, pageCount: number, span = 1): (number | null)[] {
-  const shown = new Set<number>([1, pageCount]);
-  for (let n = page - span; n <= page + span; n += 1) {
-    if (n >= 1 && n <= pageCount) shown.add(n);
+export function pageWindow(page: number, pageCount: number): (number | null)[] {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
+  if (page <= 4) return [1, 2, 3, 4, 5, null, pageCount];
+  if (page >= pageCount - 3) {
+    return [1, null, pageCount - 4, pageCount - 3, pageCount - 2, pageCount - 1, pageCount];
   }
-  // A gap marker that hides exactly ONE page is a lie that costs a tap: print the
-  // number instead, which also keeps the strip's width from jumping by a whole
-  // cell as the reader walks it.
-  for (const n of [...shown]) {
-    if (shown.has(n + 2)) shown.add(n + 1);
-  }
-  const numbers = [...shown].sort((a, b) => a - b);
-  const out: (number | null)[] = [];
-  numbers.forEach((n, index) => {
-    const previous = numbers[index - 1];
-    if (previous !== undefined && n - previous > 1) out.push(null);
-    out.push(n);
-  });
-  return out;
+  return [1, null, page - 1, page, page + 1, null, pageCount];
 }
 
 /**
- * Gateway-backed project pager. It lives in the sticky project band, disappears for one
- * page, omits unavailable arrows while preserving their slots, and shows numeric pages
- * only where width permits.
+ * Gateway-backed project pages, visible at every list width. The project band
+ * gives them their own line so numbers never take width from the project name.
+ * Both ends stay reachable; at most seven entries keep large histories compact.
  */
 export function Pager({
   page,
@@ -396,111 +384,33 @@ export function Pager({
   label: string;
 }) {
   if (pageCount <= 1) return null;
-  // `invisible` rather than absent: the slot keeps its exact box, so nothing on the
-  // band moves when the step arrives or leaves. Nothing is painted, nothing is
-  // announced, nothing is focusable.
-  const step = (to: number, isBack: boolean) => {
-    const can = to >= 1 && to <= pageCount;
-    return (
-      <IconButton
-        label={isBack ? 'Previous page' : 'Next page'}
-        variant="quiet"
-        onClick={() => onPage(to)}
-        className={can ? '' : 'invisible'}
-        aria-hidden={can ? undefined : true}
-        tabIndex={can ? undefined : -1}
-      >
-        <ChevronIcon back={isBack} className="size-3.5" />
-      </IconButton>
-    );
-  };
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      // The cluster is exactly as wide as its own content and never grows
-      // (`shrink-0`, no basis to negotiate): it stands in the band's trailing column
-      // beside the verb, and a control that negotiated for width there would take it
-      // from the project's own name — see the two forms below.
-      className="flex min-w-0 shrink-0 justify-end"
+      className="flex min-w-0 flex-wrap items-center justify-end gap-2"
     >
-      {/* The pager is LIVE: pressing a step or a number changes nothing else on the
-          shelf, so without this a screen reader hears silence after the press. It is
-          the ONE voice of the position — both visible forms below are drawn from it,
-          and neither is announced a second time. */}
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
-      {/* The band runs the width of the list; the CONTROL does not. Steps pinned to
-          the paper's two edges put `<` and `>` 360px apart on a phone, so paging is a
-          two-handed reach and no thumb can rest between them — you cannot tap `>`
-          twice without moving. The cluster is held in the band's trailing column
-          instead, which puts the two steps a thumb's width from the numbers they
-          belong to and in the column every other trailing control already uses.
-
-          It is sized by its CONTENT, and `>` is what that buys: `>` ends the cluster,
-          the cluster ends where the band's verb begins, so `>` is at the same x on
-          every page of every project and the window can only breathe to the LEFT. A
-          capped box (`w-full max-w-[19rem]`) promised the same thing and did not keep
-          it — measured at 768px, `1 2 3 4 5 … 80` needs 319px of a 304px cap, and
-          because a flex item cannot shrink below its own content the box simply
-          overflowed: on page 4, and only on page 4, `>` sat 15px right of where it
-          sits on every other page, outside the trailing column it shares with the
-          `⋯` of the rows below. The step the list is walked with does not move. */}
-      <div className="flex items-center gap-1">
-        {step(page - 1, true)}
-        {/* THE PHONE FORM: the position itself, printed between the two steps.
-
-            Reported from a phone, with a screenshot: on page 4 of a 798-session
-            project the shelf was two lines with a hole in it — the count alone on the
-            first beside 300px of empty paper, the numbers alone on the second — and
-            it CHANGED HEIGHT as the reader paged. Measured at 430px: page 1 asks for
-            277px and fits beside the 115px count on one 41px line, page 4 opens the
-            window to `1 2 3 4 5 … 80`, asks for 304px, and the shelf wraps to 59px.
-            A sticky strip grew 18px under the thumb that had just pressed it.
-
-            No phone line holds both: at 390px the count and the widest window want
-            431px of a 362px line. The numbers are the half that can be said in fewer
-            characters, so in a list under 42rem they become `4 / 80` — 56px, the SAME
-            56px on every page of every project, so the band holds one height for the
-            whole walk. `<` and `>` still step, and the strip comes back whole where the
-            LIST (`@container`, never the window: the desk's sidebar is a narrow list in a
-            wide window) has room for a number to be a tap and not a squeeze. */}
-        <span
-          aria-hidden="true"
-          // The desk's 20rem sidebar is a list narrower than any phone: there the
-          // count under the project's name and this position cannot both fit beside
-          // the verb, and the position is the one the arrows already imply.
-          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums @max-xs:hidden @2xl:hidden"
-        >
-          {page} / {pageCount}
-        </span>
-        <span className="hidden flex-1 items-center justify-center gap-1 @2xl:flex">
-          {pageWindow(page, pageCount).map((entry, index) =>
-            entry === null ? (
-              <span
-                key={`gap-${index}`}
-                aria-hidden
-                className="px-1 font-mono text-chip text-dialog-hint"
-              >
-                &#8230;
-              </span>
-            ) : (
-              <Button
-                key={entry}
-                variant={entry === page ? 'primary' : 'quiet'}
-                density="compact"
-                aria-label={`Page ${entry}`}
-                aria-current={entry === page ? 'page' : undefined}
-                onClick={() => onPage(entry)}
-                className="min-w-7 px-1 font-mono tabular-nums @2xl:min-w-8 @2xl:px-1.5"
-              >
-                {entry}
-              </Button>
-            ),
-          )}
-        </span>
-        {step(page + 1, false)}
-      </div>
+      {pageWindow(page, pageCount).map((entry, index) =>
+        entry === null ? (
+          <span key={`gap-${index}`} aria-hidden className="font-mono text-ui text-dialog-hint">
+            &#8230;
+          </span>
+        ) : (
+          <Button
+            key={entry}
+            variant={entry === page ? 'secondary' : 'quiet'}
+            density="page"
+            pressEffect="none"
+            aria-label={`Page ${entry}`}
+            aria-current={entry === page ? 'page' : undefined}
+            onClick={() => onPage(entry)}
+          >
+            {entry}
+          </Button>
+        ),
+      )}
     </nav>
   );
 }
@@ -532,8 +442,8 @@ export function HeaderActions({
  * "There is more inside this row", and there is only one of it.
  *
  * The permanent trailing control uses the same compact disc as the project's +.
- * Hover verbs occupy their own slot before it, so the two bands keep one visible
- * right edge instead of centring their glyphs in different gutter geometries.
+ * A desktop action menu occupies one slot before it, so project and session
+ * controls keep the same right edge regardless of how many actions they offer.
  * Quiet ink and an explicit expanded state keep it readable without hover.
  */
 export const RowDisclosure = forwardRef<

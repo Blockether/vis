@@ -71,6 +71,17 @@ export const Verbs: Story = {
   },
 };
 
+// Keep the destructive focus paint mounted for the all-theme contrast scan.
+export const DangerFocused: Story = {
+  ...Verbs,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const action = page.getByRole('button', { name: 'Delete session' });
+    action.focus();
+    await expect(action).toHaveFocus();
+  },
+};
+
 /** A band that also COMMITS: the cells stand beside the way out, never a Button. */
 export const BandWithCells: Story = {
   args: {

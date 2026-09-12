@@ -126,12 +126,14 @@ describe('where "New session" lives', () => {
   // projects`, which is the sheet the machine's own control opens anyway, and `Machine settings`,
   // which the Machines tab and the app bar's cog already open. A menu whose every answer
   // was one tap away without it.
-  it('leaves the list no overflow menu at all', async () => {
+  it('keeps machine navigation out of the row-action menus', async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText('First');
 
-    expect(named(/^Actions for/)).toHaveLength(0);
+    expect(
+      screen.getByRole('group', { name: 'Machines' }).querySelector('[aria-haspopup="dialog"]'),
+    ).toBeNull();
     expect(named(/^Remove /)).toHaveLength(0);
     expect(screen.queryByRole('menu')).toBeNull();
 

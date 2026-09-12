@@ -15,6 +15,13 @@ describe('menuPosition', () => {
     });
   });
 
+  it('places a measured short dropdown next to its trigger, including near the bottom', () => {
+    const middle = { top: 400, bottom: 428, right: 600 };
+    expect(menuPosition(middle, 320, DESKTOP, 150)).toEqual({ top: 434, left: 280 });
+    const bottom = { top: 800, bottom: 828, right: 600 };
+    expect(menuPosition(bottom, 320, DESKTOP, 150)).toEqual({ top: 644, left: 280 });
+  });
+
   it('keeps a menu wider than its anchor allows away from the left edge', () => {
     expect(menuPosition({ top: 60, bottom: 88, right: 200 }, 320, DESKTOP)).toEqual({
       top: 94,

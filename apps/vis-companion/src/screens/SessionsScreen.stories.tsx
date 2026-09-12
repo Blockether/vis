@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_FLEET_CONNS, STORY_GATEWAYS, storyFleetFetch } from '../dev/story-data';
 import { SessionsScreen } from './SessionsScreen';
@@ -80,8 +80,7 @@ export const Fleet: Story = {
     const folderBox = projects.getBoundingClientRect();
     const machinesBox = machines.getBoundingClientRect();
     await expect(folderBox.y + folderBox.height / 2).toBe(machinesBox.y + machinesBox.height / 2);
-    // Regression: the project has one hover action, a session has three. Neither
-    // strip may move the permanent + / disclosure off the list's shared right edge.
+    // Action counts must not move the permanent + / disclosure off the shared edge.
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;
     const create = within(project as HTMLElement).getByRole('button', { name: /^New session/ });
     const disclosure = (
@@ -101,22 +100,15 @@ export const Fleet: Story = {
 
     for (const control of [create, disclosure]) {
       const track = control.closest<HTMLElement>('[data-swipe-track]')!;
-      const strip = within(track).getByRole('group', { name: / actions$/ });
-      const controls = [control, ...within(strip).getAllByRole('button')];
+      const trigger = within(track).getByRole('button', { name: /^Actions for/ });
       const content = track.firstElementChild!.firstElementChild!;
-      await userEvent.hover(control);
-      control.focus();
-      await waitFor(() => expect(win.getComputedStyle(strip).opacity).toBe('1'));
+      await expect(trigger).toBeVisible();
       await expect(track.scrollWidth).toBe(track.clientWidth);
-      await expect(content.getBoundingClientRect().width).toBeGreaterThan(0);
-      await expect(content.getBoundingClientRect().right).toBeLessThanOrEqual(
-        strip.getBoundingClientRect().left,
-      );
-      await expect(strip.getBoundingClientRect().right).toBeLessThanOrEqual(
-        control.getBoundingClientRect().left,
-      );
-      // Geometry plus hit-testing catches content under a strip, which DOM clicks miss.
-      for (const button of controls) {
+      await expect(content.getBoundingClientRect().width).toBeGreaterThan(track.clientWidth - 90);
+      const start = content.getBoundingClientRect();
+      await userEvent.hover(control);
+      await expect(content.getBoundingClientRect().width).toBe(start.width);
+      for (const button of [trigger, control]) {
         const box = button.getBoundingClientRect();
         await expect(box.width).toBeGreaterThanOrEqual(28);
         await expect(box.height).toBeGreaterThanOrEqual(28);
@@ -124,11 +116,21 @@ export const Fleet: Story = {
           button.contains(doc.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)),
         ).toBe(true);
       }
-      control.blur();
-      await userEvent.unhover(control);
-      await waitFor(() => expect(win.getComputedStyle(strip).opacity).toBe('0'));
-      await expect(win.getComputedStyle(strip).pointerEvents).toBe('none');
+      await userEvent.click(trigger);
+      const menu = within(doc.body).getByRole('dialog');
+      await expect(menu).toBeVisible();
+      await expect(within(menu).getByRole('button', { name: 'Delete' })).toBeVisible();
+      await userEvent.keyboard('{Escape}');
+      await expect(trigger).toHaveFocus();
+      await expect(within(doc.body).queryByRole('dialog')).not.toBeInTheDocument();
     }
+    const pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
+    for (const n of [1, 2, 3, 4, 5]) {
+      await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
+    }
+    await expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(
+      canvasElement.getBoundingClientRect().right,
+    );
     for (const [index, control] of [create, disclosure].entries()) {
       await expect(control.getBoundingClientRect().x).toBe(before[index].x);
     }
@@ -167,23 +169,22 @@ export const DeleteProject: Story = {
     const project = await page.findByRole('region', { name: 'uberworkspace sessions' });
     const group = within(project);
     const ask = async () => {
-      const create = group.getByRole('button', { name: /^New session/ });
-      create.focus();
-      await userEvent.hover(create);
-      const actions = await group.findByRole('group', { name: 'uberworkspace actions' });
-      await waitFor(() => expect(getComputedStyle(actions).pointerEvents).toBe('auto'));
-      await userEvent.click(within(actions).getByRole('button', { name: 'Delete' }));
+      await userEvent.click(group.getByRole('button', { name: 'Actions for uberworkspace' }));
+      const menu = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+        name: 'uberworkspace actions',
+      });
+      await userEvent.click(within(menu).getByRole('button', { name: 'Delete' }));
     };
 
     await ask();
     await expect(group.getByRole('group', { name: 'Delete uberworkspace?' })).toBeVisible();
     await userEvent.click(group.getByRole('button', { name: 'No, keep' }));
-    await expect(group.getByRole('group', { name: 'uberworkspace actions' })).toBeInTheDocument();
+    await expect(group.getByRole('button', { name: 'Actions for uberworkspace' })).toBeVisible();
 
     await ask();
     await userEvent.click(group.getByRole('button', { name: 'Yes, delete' }));
     // Held same-root rows survive; without the saved name, the band uses its folder name.
-    await expect(await page.findByRole('group', { name: 'rewrite actions' })).toBeInTheDocument();
+    await expect(await page.findByRole('button', { name: 'Actions for rewrite' })).toBeVisible();
     await expect(page.queryByText('Deleting...')).toBeNull();
     await expect(page.queryByRole('group', { name: 'Delete rewrite?' })).toBeNull();
     await expect(page.getByRole('region', { name: 'reviewer sessions' })).toBeVisible();

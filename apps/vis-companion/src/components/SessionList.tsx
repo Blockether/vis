@@ -361,6 +361,7 @@ export const SessionRow = memo(function SessionRow({
                     />
                   ) : (
                     <span
+                      title={title}
                       className={`min-w-0 truncate text-title font-medium ${
                         session.title?.trim() ? 'text-white' : 'text-white/45'
                       }`}

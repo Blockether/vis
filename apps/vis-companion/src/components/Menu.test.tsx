@@ -96,9 +96,14 @@ describe('Menu parts', () => {
       expect(markup).toContain('Default');
     });
 
-    it('paints a destructive row in the app’s red, and it is still the same row', () => {
-      const markup = html({ tone: 'danger', title: 'Remove sessions' });
+    // The new row dropdown focuses Delete when it is a project's only action.
+    // A translucent error fill left its caption below 4.5:1 in several themes.
+    it('uses the paired error ink and surface for destructive hover and focus', () => {
+      const markup = html({ tone: 'danger', title: 'Remove sessions', icon: <svg /> });
       expect(markup).toContain('<button');
+      expect(markup).toContain('hover:bg-err-surface focus-visible:bg-err-surface');
+      expect(markup).toContain('text-err-ink');
+      expect(markup).not.toContain('bg-err/15');
     });
 
     // Regression, user report ("fix this misalignment of icons and text", on the

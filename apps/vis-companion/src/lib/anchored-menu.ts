@@ -52,8 +52,8 @@ function currentViewport(): Viewport {
  * whole sheet exists to reach was simply not on the screen.
  *
  * So a panel that does not fit below its anchor FLIPS above it, and one that fits in
- * neither direction is clamped to the taller side. The panel keeps the same
- * `70vh` budget either way, so what moves is only where it starts.
+ * neither direction is clamped to the taller side. A measured panel uses its real
+ * height, capped at `70vh`; an unmeasured panel reserves that maximum.
  *
  * `null` — close the menu — means only ONE thing: there is no anchor to hang from
  * any more. A live anchor always yields a position, including across a resize: a
@@ -65,6 +65,7 @@ export function menuPosition(
   anchor: AnchorBox | null | undefined,
   width: number,
   viewport: Viewport = currentViewport(),
+  panelHeight?: number,
 ): MenuPosition | null {
   if (!anchor) return null;
   const left = Math.round(Math.max(EDGE_MARGIN, anchor.right - width));
@@ -72,7 +73,7 @@ export function menuPosition(
   // plain drop, because clamping against nothing would pin every menu to the top.
   if (viewport.height <= 0) return { top: Math.round(anchor.bottom + ANCHOR_GAP), left };
 
-  const budget = viewport.height * MAX_HEIGHT_FRACTION;
+  const budget = Math.min(panelHeight ?? Infinity, viewport.height * MAX_HEIGHT_FRACTION);
   const below = viewport.height - EDGE_MARGIN - (anchor.bottom + ANCHOR_GAP);
   const above = anchor.top - ANCHOR_GAP - EDGE_MARGIN;
 

@@ -211,7 +211,7 @@ describe('starring a session', () => {
     await screen.findByText('Session 1');
     expect(rowOrder()).toHaveLength(15);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Page 2' }));
     expect(rowOrder()).toEqual(['s16', 's17']);
 
     await userEvent.click(
