@@ -320,6 +320,43 @@
           (expect (str/includes? css fragment) fragment))))))
 
 (defdescribe
+  portable-store-buttons-test
+  ;; GitHub does not load the docs stylesheet: linked images must carry the labels.
+  (it "keeps both store buttons readable without the documentation stylesheet"
+      (doseq [[source prefix]
+              [[(io/file "README.md") "resources/vis-docs/"] [(io/resource "vis-docs/index.md") ""]]
+
+              [name url label]
+              [["testflight" "https://testflight.apple.com/join/4anYT4Wk"
+                "TestFlight for iOS and iPadOS"]
+               ["google-play" "https://play.google.com/apps/testing/com.blockether.viscompanion"
+                "Google Play beta for Android"]]]
+
+        (let [md
+              (slurp source)
+
+              body
+              (some (fn [[_ attrs contents]]
+                      (when (str/includes? attrs (str "href=\"" url "\"")) contents))
+                    (re-seq #"(?s)<a\b([^>]*)>(.*?)</a>" md))]
+
+          (expect (str/includes? (or body "")
+                                 (str "src=\"" prefix "assets/install-" name ".png\"")))
+          (expect (str/includes? (or body "") (str "alt=\"" label "\"")))
+          (expect (str/includes? (or body "") "width=\"224\" height=\"56\"")))))
+  (it "serves and exports both image buttons"
+      (doseq [name ["testflight" "google-play"]]
+        (let [rel (str "install-" name ".png")
+              response (docs/handle {:uri (str "/docs/assets/" rel)})]
+
+          (expect (= 200 (:status response)))
+          (expect (= "image/png" (get-in response [:headers "content-type"])))
+          (expect (= (str "assets/" rel) (get @#'docs/asset-files (str "vis-docs/assets/" rel))))
+          (when-let [body (:body response)]
+            (with-open [^java.io.InputStream in body]
+              (expect (= [137 80 78 71 13 10 26 10] (vec (repeatedly 8 #(.read in)))))))))))
+
+(defdescribe
   reading-layout-test
   (it
     "justifies prose, aligns list markers, wraps shell commands and links mobile installs"

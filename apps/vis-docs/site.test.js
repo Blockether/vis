@@ -104,11 +104,7 @@ test('docs shortcuts and catalog buttons use one shared control and font contrac
     expect(control.style.getPropertyValue('font-size')).toBe('var(--text-small)');
     expect(control.style.getPropertyValue('font-weight')).toBe('500');
     expect(control.style.getPropertyValue('background')).toBe('var(--bg-soft)');
-    const primary = rules.find(
-      (rule) =>
-        rule.selectorText?.includes('button.primary') &&
-        rule.selectorText.includes('.store-links a'),
-    );
+    const primary = rules.find((rule) => rule.selectorText === 'button.primary');
     expect(primary.style.getPropertyValue('background')).toBe('var(--fg)');
     expect(readFileSync('dist/assets/fonts/jetbrains-mono.woff2')).toEqual(
       readFileSync('../../resources/vis-docs/assets/fonts/jetbrains-mono.woff2'),
@@ -191,12 +187,14 @@ test('the static upload contains only public output and the same security policy
   expect(config.assets.html_handling).toBe('none');
   expect(config.d1_databases[0].database_name).toBe('vis-extension-center');
 });
-test('the canonical stylesheet can load its embedded store icons without allowing inline scripts', () => {
-  expect(readFileSync('../../resources/vis-docs/assets/theme.css', 'utf8')).toContain(
-    'data:image/svg+xml;base64,',
-  );
+test('the static site exports sharp store badges without allowing inline scripts', () => {
+  for (const name of ['testflight', 'google-play']) {
+    const badge = readFileSync(`dist/assets/install-${name}.png`);
+    expect(badge).toEqual(readFileSync(`../../resources/vis-docs/assets/install-${name}.png`));
+    expect([badge.readUInt32BE(16), badge.readUInt32BE(20)]).toEqual([672, 168]);
+  }
   const policy = security['Content-Security-Policy'];
-  expect(policy.match(/img-src([^;]*)/)[1]).toContain('data:');
+  expect(policy.match(/img-src([^;]*)/)[1]).toContain("'self'");
   for (const directive of ['script-src', 'style-src']) {
     const sources = policy.match(new RegExp(directive + '([^;]*)'))[1];
     expect(sources).not.toContain('data:');

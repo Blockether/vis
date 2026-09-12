@@ -110,8 +110,11 @@ the address and token. See [Remote access and the Companion app](resources/vis-d
 
 Install the app and scan the pairing QR code to access the same sessions as the terminal UI. Both stores offer public testing without an invitation.
 
-- iOS / iPadOS — <https://testflight.apple.com/join/4anYT4Wk>
-- Android — <https://play.google.com/apps/testing/com.blockether.viscompanion>
+<p>
+<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="resources/vis-docs/assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
+<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
+</p>
 
 Questions and beta feedback: `contact@blockether.com`.
 

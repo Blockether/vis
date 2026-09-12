@@ -65,8 +65,9 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 ```
 
 <div class="store-links" aria-label="Install the Companion app">
-<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><span><small>iOS / iPadOS</small><strong>TestFlight</strong></span></a>
-<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><span><small>Android</small><strong>Google Play beta</strong></span></a>
+<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><img src="assets/install-testflight.png" alt="TestFlight for iOS and iPadOS" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
+<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
 </div>
 
 Public beta apps. Connect them to your Vis gateway: [pairing instructions](gateway.md).
