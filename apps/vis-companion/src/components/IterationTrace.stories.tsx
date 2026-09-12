@@ -13,6 +13,8 @@ import {
   STORY_THINKING_AND_CODE,
 } from '../dev/story-data';
 import { AssistantMessage, IterationTrace, UserMessage } from './ChatContent';
+import { ActivityHistoryContext } from './ActivityPanel';
+import { GROUPED_ACTIVITY_HISTORY_IDS, groupedActivityHistoryPage } from '../dev/activity-history';
 
 /**
  * A TURN, DRAWN AS JOINED EXECUTION BANDS.
@@ -546,6 +548,54 @@ export const MessageSpacing: Story = {
   ),
   play: async ({ canvasElement }) => {
     await expectRoleSpacing(canvasElement);
+  },
+};
+
+/** Retained histories share the same band and operation groups as inline receipts. */
+export const GroupedActivityHistories: Story = {
+  args: {
+    live: false,
+    showCode: true,
+    iterations: GROUPED_ACTIVITY_HISTORY_IDS.map((id, index) => ({
+      id: `history-${index}`,
+      position: index + 1,
+      forms: [
+        {
+          source: `print(cat('src/review-${index + 1}-1.clj'))`,
+          duration_ms: 100,
+          activity: groupedActivityHistoryPage(id),
+        },
+      ],
+    })),
+  },
+  decorators: [
+    (Story) => (
+      <ActivityHistoryContext.Provider
+        value={{
+          load: async (id, after, query) => groupedActivityHistoryPage(id, after, query),
+          export: async () => 'Saved fixture activity.',
+        }}
+      >
+        <Story />
+      </ActivityHistoryContext.Provider>
+    ),
+  ],
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getAllByRole('button', { name: 'Expand code' })).toHaveLength(1);
+    const toggle = canvas.getByRole('button', { name: 'Expand Activity' });
+    await expect(toggle).toHaveTextContent('7 operations');
+    toggle.focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(canvas.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
+    await userEvent.click(canvas.getByRole('button', { name: /Read ×6/ }));
+    await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(6);
+    await userEvent.click(canvas.getByRole('button', { name: 'Next operations' }));
+    await expect(await canvas.findByText('review-3-3.clj')).toBeVisible();
+    await expect(canvasElement.querySelectorAll('[data-activity-row]')).toHaveLength(1);
+    await userEvent.click(canvas.getByRole('button', { name: 'First operations' }));
+    await canvas.findByRole('button', { name: /Read ×6/ });
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   },
 };
 

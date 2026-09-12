@@ -1876,14 +1876,14 @@ it('keeps independently paged Activity sources addressable in a combined executi
     </ActivityHistoryContext.Provider>,
   );
   const expands = view.getAllByRole('button', { name: 'Expand Activity' });
-  expect(expands).toHaveLength(2);
-  fireEvent.click(expands[1]);
-  const next = view
-    .getAllByRole('button', { name: 'Next operations' })
-    .find((button) => !button.closest('[hidden]'))!;
-  fireEvent.click(next);
-  await waitFor(() =>
-    expect(load).toHaveBeenCalledWith(second.history!.id, 32, '', expect.any(AbortSignal)),
-  );
+  expect(expands).toHaveLength(1);
+  expect(expands[0]).toHaveTextContent('320 operations');
+  fireEvent.click(expands[0]);
+  fireEvent.click(view.getByRole('button', { name: 'Next operations' }));
+  await waitFor(() => {
+    expect(load).toHaveBeenCalledWith(first.history!.id, 32, '', expect.any(AbortSignal));
+    expect(load).toHaveBeenCalledWith(second.history!.id, 32, '', expect.any(AbortSignal));
+  });
+  expect(view.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
   view.unmount();
 });

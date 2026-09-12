@@ -17,7 +17,7 @@ import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunRow } from './LiveArtifact';
 import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
-import type { ActivityProjection } from '../lib/activity';
+import { mergeActivity, type ActivityProjection } from '../lib/activity';
 import { usePythonCodeShown } from '../lib/transcript-display';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
@@ -1461,33 +1461,6 @@ function executionGroup(forms: TranscriptForm[], live: boolean): TranscriptForm 
       : states.some((state) => state === 'CANCELLED' || state === 'INTERRUPTED')
         ? 'cancelled'
         : 'succeeded';
-  const counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0 };
-  const omitted: ActivityProjection['omitted'] = {
-    rows: 0,
-    by_classification: {},
-  };
-  const rows: ActivityProjection['rows'] = [];
-  const scopedRow = (
-    row: ActivityProjection['rows'][number],
-    scope: string,
-  ): ActivityProjection['rows'][number] => ({
-    ...row,
-    id: `${scope}:${row.id}`,
-    ...(row.children ? { children: row.children.map((child) => scopedRow(child, scope)) } : {}),
-  });
-  forms.forEach((form, index) => {
-    const activity = form.activity;
-    if (!activity) return;
-    for (const key of Object.keys(counts) as Array<keyof typeof counts>)
-      counts[key] += activity.counts[key];
-    omitted.rows += activity.omitted.rows;
-    for (const [signal, count] of Object.entries(activity.omitted.by_classification)) {
-      omitted.by_classification[signal] = (omitted.by_classification[signal] ?? 0) + count;
-    }
-    for (const row of [...activity.rows].sort((a, b) => a.sequence - b.sequence)) {
-      rows.push({ ...scopedRow(row, String(index)), sequence: rows.length });
-    }
-  });
   return {
     source: forms.map(formCode).filter(Boolean).join('\n\n'),
     display_language: formCodeLanguage(forms[0]),
@@ -1495,7 +1468,7 @@ function executionGroup(forms: TranscriptForm[], live: boolean): TranscriptForm 
     duration_ms: forms.every((form) => formatDuration(form.duration_ms) != null)
       ? forms.reduce((total, form) => total + form.duration_ms!, 0)
       : undefined,
-    activity: { state, counts, rows, omitted },
+    activity: { ...mergeActivity(forms.flatMap((form) => form.activity ?? [])), state },
   };
 }
 
@@ -1520,7 +1493,7 @@ const FormTrace = memo(function FormTrace({
     .map((card) => card.stdout?.trimEnd())
     .filter(Boolean)
     .join('\n');
-  const { activity, detected: detectedActivity, running, status } = formStep(form, live);
+  const { detected: detectedActivity, running, status } = formStep(form, live);
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {forms[0].comment?.trim() && (
@@ -1553,18 +1526,9 @@ const FormTrace = memo(function FormTrace({
         aria-label="Execution trace"
       >
         {status && <span className="sr-only">{status}</span>}
-        {detectedActivity &&
-          (forms.some((source) => source.activity?.history)
-            ? forms.map(
-                (source, index) =>
-                  source.activity && (
-                    <ActivityPanel
-                      key={source.activity.history?.id ?? index}
-                      activity={source.activity}
-                    />
-                  ),
-              )
-            : activity && <ActivityPanel activity={activity} />)}
+        {detectedActivity && (
+          <ActivityPanel activity={forms.flatMap((source) => source.activity ?? [])} />
+        )}
       </div>
     </div>
   );

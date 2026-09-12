@@ -14,6 +14,7 @@ import {
   activityCopyText,
   argumentGroups,
   operationGroups,
+  mergeActivity,
   type OperationGroup,
 } from '../lib/activity';
 import { workspaceRelativePath } from '../lib/path';
@@ -930,16 +931,25 @@ export interface ActivityHistorySource {
     query: string,
     signal: AbortSignal,
   ) => Promise<ActivityProjection>;
-  export: (id: string, signal: AbortSignal) => Promise<string>;
+  export: (activities: readonly ActivityProjection[], signal: AbortSignal) => Promise<string>;
 }
 
 /** SessionScreen owns authenticated retrieval; stories replace only this boundary. */
 export const ActivityHistoryContext = createContext<ActivityHistorySource | null>(null);
 
-/** A single bounded window. Changing history revision remounts this state, not its band. */
-function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
+function operationCount(activity: ActivityProjection): number {
+  return Math.max(
+    activity.history?.total ?? 0,
+    activity.rows.length + activity.omitted.rows,
+    Object.values(activity.counts).reduce((sum, count) => sum + count, 0),
+  );
+}
+
+/** One bounded page per source, with shared grouping, search, copy and navigation. */
+function ActivityHistoryWindow({ activities }: { activities: ActivityProjection[] }) {
   const source = useContext(ActivityHistoryContext);
-  const [page, setPage] = useState(activity);
+  const [loaded, setLoaded] = useState<Array<ActivityProjection | undefined>>([]);
+  const [later, setLater] = useState(false);
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState('');
@@ -947,7 +957,28 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
   const [error, setError] = useState('');
   const pending = useRef<AbortController | null>(null);
   useEffect(() => () => pending.current?.abort(), []);
-  const history = page.history!;
+  const pages = activities.map((activity, index) => {
+    if (activity.history) return loaded[index] ?? activity;
+    if (!later && !search) return activity;
+    return {
+      ...activity,
+      rows: later
+        ? []
+        : activity.rows.filter((row) =>
+            activityCopyText({
+              ...activity,
+              rows: [row],
+              omitted: { rows: 0, by_classification: {} },
+            })
+              .toLowerCase()
+              .includes(search.toLowerCase()),
+          ),
+      omitted: { rows: 0, by_classification: {} },
+    };
+  });
+  const page = mergeActivity(pages);
+  const hasMore = pages.some((page) => page.history?.next_after != null);
+  const total = activities.reduce((sum, activity) => sum + operationCount(activity), 0);
   const run = async (label: string, action: (signal: AbortSignal) => Promise<void>) => {
     pending.current?.abort();
     const controller = new AbortController();
@@ -969,15 +1000,29 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
       }
     }
   };
-  const load = (after: number, q = search) =>
+  const load = (next: boolean, q = search) =>
     void run('Loading operations…', async (signal) => {
       if (!source) throw new Error('Reconnect to load retained operations.');
-      const result = await source.load(history.id, after, q, signal);
+      const results = await Promise.all(
+        pages.map(async (page) => {
+          const history = page.history;
+          if (!history) return undefined;
+          const after = next ? history.next_after : 0;
+          if (after === null) return { ...page, rows: [] };
+          const result = await source.load(history.id, after, q, signal);
+          if (
+            result.history?.id !== history.id ||
+            result.history.after !== after ||
+            (after > 0 && result.history.revision !== history.revision)
+          ) {
+            throw new Error('Activity changed. Choose First to load its latest revision.');
+          }
+          return result;
+        }),
+      );
       if (signal.aborted) return;
-      if (after > 0 && result.history?.revision !== history.revision) {
-        throw new Error('Activity changed. Choose First to load its latest revision.');
-      }
-      setPage(result);
+      setLoaded(results);
+      setLater(next);
       setSearch(q);
     });
   const copy = () =>
@@ -986,28 +1031,35 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
       // Clipboard APIs require a complete string. This explicit operation allocates it;
       // ordinary navigation retains just one page and never accumulates detail bodies.
       const chunks: string[] = [];
-      let after = 0;
-      let revision: number | undefined;
-      while (true) {
-        const result = await source.load(history.id, after, '', signal);
-        if (signal.aborted) return;
-        const next = result.history;
-        if (
-          !next ||
-          next.id !== history.id ||
-          next.after !== after ||
-          (revision !== undefined && next.revision !== revision)
-        ) {
-          throw new Error(
-            'Activity changed while copying. Try Copy all again. Nothing was copied.',
-          );
+      for (const activity of activities) {
+        const history = activity.history;
+        if (!history) {
+          chunks.push(activityCopyText(activity));
+          continue;
         }
-        revision = next.revision;
-        chunks.push(activityCopyText(result));
-        if (next.next_after === null) break;
-        if (next.next_after <= after)
-          throw new Error('Activity cursor did not advance. Nothing was copied.');
-        after = next.next_after;
+        let after = 0;
+        let revision: number | undefined;
+        while (true) {
+          const result = await source.load(history.id, after, '', signal);
+          if (signal.aborted) return;
+          const next = result.history;
+          if (
+            !next ||
+            next.id !== history.id ||
+            next.after !== after ||
+            (revision !== undefined && next.revision !== revision)
+          ) {
+            throw new Error(
+              'Activity changed while copying. Try Copy all again. Nothing was copied.',
+            );
+          }
+          revision = next.revision;
+          chunks.push(activityCopyText(result));
+          if (next.next_after === null) break;
+          if (next.next_after <= after)
+            throw new Error('Activity cursor did not advance. Nothing was copied.');
+          after = next.next_after;
+        }
       }
       if (signal.aborted) return;
       await navigator.clipboard.writeText(chunks.join('\n\n'));
@@ -1019,7 +1071,7 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
         className="flex min-w-0 items-center gap-4 py-3"
         onSubmit={(event) => {
           event.preventDefault();
-          load(0, query);
+          load(false, query);
         }}
       >
         <Input
@@ -1031,7 +1083,7 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               setQuery('');
-              load(0, '');
+              load(false, '');
             }
           }}
         />
@@ -1050,7 +1102,7 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
           variant="quiet"
           density="compact"
           disabled={!!busy || !source}
-          onClick={() => load(0)}
+          onClick={() => load(false)}
           aria-label="First operations"
         >
           First
@@ -1058,8 +1110,8 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
         <Button
           variant="quiet"
           density="compact"
-          disabled={!!busy || !source || history.next_after === null}
-          onClick={() => load(history.next_after!)}
+          disabled={!!busy || !source || !hasMore}
+          onClick={() => load(true)}
           aria-label="Next operations"
         >
           Next
@@ -1079,7 +1131,7 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
           disabled={!!busy || !source}
           onClick={() =>
             void run('Exporting all operations…', async (signal) => {
-              const message = await source!.export(history.id, signal);
+              const message = await source!.export(activities, signal);
               if (!signal.aborted) setNotice(message);
             })
           }
@@ -1105,7 +1157,7 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
       <p className="pb-2 text-ui text-dialog-hint" role="status">
         {busy ||
           notice ||
-          `${page.rows.length} ${page.rows.length === 1 ? 'row' : 'rows'} shown · ${history.total} operations retained${history.next_after !== null ? ' · More available' : ' · End of results'}`}
+          `${page.rows.length} ${page.rows.length === 1 ? 'row' : 'rows'} shown · ${total} operations retained${hasMore ? ' · More available' : ' · End of results'}`}
       </p>
       {!source && (
         <p className="pb-2 text-ui text-dialog-hint">
@@ -1123,7 +1175,7 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
         </p>
       )}
       <ActivityThread
-        key={`${history.id}:${history.revision}:${history.after}:${search}`}
+        key={`${pages.map((page) => page.history?.after ?? 0).join(':')}:${search}`}
         activity={page}
       />
     </div>
@@ -1131,20 +1183,17 @@ function ActivityHistoryWindow({ activity }: { activity: ActivityProjection }) {
 }
 
 /** Joined execution band. Hiding it retains disclosure state and silences live re-announcements. */
-export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
+export function ActivityPanel({
+  activity: input,
+}: {
+  activity?: ActivityProjection | ActivityProjection[];
+}) {
   const [open, setOpen] = useState(false);
-  if (
-    !activity ||
-    (!activity.rows.length &&
-      !activity.omitted.rows &&
-      !Object.values(activity.counts).some(Boolean))
-  )
-    return null;
-  const total = Math.max(
-    activity.history?.total ?? 0,
-    activity.rows.length + activity.omitted.rows,
-    Object.values(activity.counts).reduce((sum, count) => sum + count, 0),
-  );
+  const activities = Array.isArray(input) ? input : input ? [input] : [];
+  const activity = mergeActivity(activities);
+  const total = activities.reduce((sum, activity) => sum + operationCount(activity), 0);
+  const hasHistory = activities.some((activity) => activity.history);
+  if (!total) return null;
   const summary = `${total} ${total === 1 ? 'operation' : 'operations'}`;
   const states = (['running', 'failed', 'cancelled'] as const).flatMap((state) =>
     activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
@@ -1172,7 +1221,7 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
             </span>
           </span>
         </Disclosure>
-        {!activity.history && (
+        {!hasHistory && (
           <CopyChip
             value={activityCopyText(activity)}
             label="Copy activity"
@@ -1182,10 +1231,14 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
         )}
       </div>
       <div hidden={!open}>
-        {activity.history ? (
+        {hasHistory ? (
           <ActivityHistoryWindow
-            key={`${activity.history.id}:${activity.history.revision}`}
-            activity={activity}
+            key={activities
+              .map((activity) =>
+                activity.history ? `${activity.history.id}:${activity.history.revision}` : 'inline',
+              )
+              .join(':')}
+            activities={activities}
           />
         ) : (
           <ActivityThread activity={activity} />

@@ -327,6 +327,35 @@ export interface ActivityProjection {
   };
 }
 
+/** Merge display receipts without replacing their source histories or mutating wire data. */
+export function mergeActivity(activities: readonly ActivityProjection[]): ActivityProjection {
+  if (activities.length === 1) return activities[0];
+  const counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0 };
+  const omitted: ActivityProjection['omitted'] = { rows: 0, by_classification: {} };
+  const rows: ActivityRow[] = [];
+  const scopedRow = (row: ActivityRow, scope: number): ActivityRow => ({
+    ...row,
+    id: `${scope}:${row.id}`,
+    ...(row.children ? { children: row.children.map((child) => scopedRow(child, scope)) } : {}),
+  });
+  activities.forEach((activity, index) => {
+    for (const key of Object.keys(counts) as Array<keyof typeof counts>)
+      counts[key] += activity.counts[key];
+    omitted.rows += activity.omitted.rows;
+    for (const [signal, count] of Object.entries(activity.omitted.by_classification)) {
+      omitted.by_classification[signal] = (omitted.by_classification[signal] ?? 0) + count;
+    }
+    for (const row of [...activity.rows].sort((a, b) => a.sequence - b.sequence)) {
+      rows.push({ ...scopedRow(row, index), sequence: rows.length });
+    }
+  });
+  const state =
+    (['running', 'failed', 'cancelled', 'succeeded'] as const).find((state) =>
+      activities.some((activity) => activity.state === state),
+    ) ?? 'idle';
+  return { state, counts, rows, omitted };
+}
+
 /** Copy retained invocations, not the visible grouping or viewport. Never include identity keys. */
 export function activityCopyText(activity: ActivityProjection): string {
   const contentText = (block: ActivityContent): string => {

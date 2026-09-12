@@ -183,6 +183,62 @@ describe('execution grouping', () => {
     expect(view.container.textContent).not.toContain('print(42)');
     expect(view.container.textContent).toContain('first stage');
   });
+
+  it.each(['inline', 'history', 'mixed'] as const)(
+    'joins every %s receipt into the same Activity band and operation list',
+    (mode) => {
+      const forms = [2, 2, 3].map((count, index) => {
+        const receipt = activity('succeeded', `stage ${index + 1}`);
+        receipt.counts.succeeded = count;
+        receipt.rows = Array.from({ length: count }, (_, row) => ({
+          ...receipt.rows[0],
+          id: `call-${row}`,
+          sequence: row,
+          summary: `stage ${index + 1}, operation ${row + 1}`,
+        }));
+        if (mode === 'history' || (mode === 'mixed' && index !== 1)) {
+          receipt.history = {
+            id: `12345678-1234-1234-1234-12345678901${index}`,
+            revision: 1,
+            total: count,
+            after: 0,
+            next_after: null,
+          };
+        }
+        return { source: `stage_${index + 1}()`, duration_ms: 10, activity: receipt };
+      });
+      const original = JSON.stringify(forms);
+      const data = forms.map((form, index) => ({
+        id: String(index),
+        position: index + 1,
+        forms: [form],
+      }));
+      const view = render(<IterationTrace whole iterations={data} />);
+      expect(view.getAllByRole('button', { name: 'Expand code' })).toHaveLength(1);
+      expect(view.getAllByRole('button', { name: 'Expand Activity' })).toHaveLength(1);
+      const toggle = view.getByRole('button', { name: 'Expand Activity' });
+      expect(toggle).toHaveTextContent('7 operations');
+      fireEvent.click(toggle);
+      expect(view.getAllByRole('list', { name: 'Operation groups' })).toHaveLength(1);
+      fireEvent.click(view.getByRole('button', { name: /Search ×7/ }));
+      const rows = [...view.container.querySelectorAll('[data-activity-row]')];
+      expect(rows).toHaveLength(7);
+      expect(new Set(rows.map((row) => row.getAttribute('data-activity-row'))).size).toBe(7);
+      expect(rows.map((row) => row.textContent)).toEqual(
+        forms.flatMap((form) =>
+          form.activity.rows.map((row) => expect.stringContaining(row.summary)),
+        ),
+      );
+      view.rerender(<IterationTrace whole showCode={false} iterations={data} />);
+      expect(view.getAllByRole('button', { name: 'Collapse Activity' })).toHaveLength(1);
+      expect(view.getByRole('button', { name: /Search ×7/ })).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      );
+      expect(JSON.stringify(forms)).toBe(original);
+    },
+  );
+
   it('preserves ordered stages and scopes repeated invocation ids without changing wire data', () => {
     const forms = [
       {
