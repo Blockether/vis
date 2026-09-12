@@ -127,8 +127,14 @@ and reconstructing completed history solely from the live event ring.
    shell/raw-log cases, 40 Python-runner cases, all 38 native cases on fresh engine
    and TUI images, 621 SDK source cases (13 opt-in skips) and all 634 installed SDK
    cases, including HTTP and stdio integration. Formatting, lint/reflection,
-   actionlint and diff review pass. Main CI and the v0.2.2 release workflow remain
-   to be verified. No live service was restarted.
+   actionlint and diff review pass. Main CI 34693438404 is green after one
+   unchanged-source retry of a macOS Maven classpath failure. Release v0.2.2
+   (`4e492e067`) is published: workflow 34694984081 passes source verification,
+   all three native targets, mobile and desktop packaging. SDK publication
+   34697843244 is green. All 15 GitHub assets, both Clojars packages and the
+   PyPI wheel/source distributions are public; downloaded SDK hashes match.
+   Issues #210, #211 and #212 are closed and have final release updates.
+   No live service was restarted.
 
 # Privacy-safe screenshot gallery
 
