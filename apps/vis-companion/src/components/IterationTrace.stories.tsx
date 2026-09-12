@@ -458,13 +458,27 @@ export const Forking: Story = {
   },
 };
 
-/** Council wakes share the request rail without attributing the prompt to the user. */
+const councilRequest = {
+  entry_id: 831,
+  thread_id: 831,
+  kind: 'coordination' as const,
+  content: [
+    'Can you confirm which checks cover Council notifications in the terminal and Companion?',
+    'Please share the exact test paths and any findings from the previous implementation.',
+    'The transcript should show this actual request, not the synthetic instruction used to wake the agent.',
+    'Persist the request origin and Council entry kind so reopening a session keeps the same attribution.',
+    'Keep long requests collapsed after four rendered lines, with the full message available on demand.',
+    'Include any remaining uncertainty in your reply.',
+  ].join('\n'),
+};
+
+/** Production request rail with durable Council provenance and a four-line preview. */
 export const CouncilWake: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
   render: (args) => (
     <>
-      <UserMessage>
-        {'Council wake — a peer session has asked for your knowledge. Read the attributed Council input.'}
+      <UserMessage requestKind="council" council={councilRequest}>
+        {councilRequest.content}
       </UserMessage>
       <AssistantMessage
         turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
@@ -476,7 +490,16 @@ export const CouncilWake: Story = {
     const canvas = within(canvasElement);
     await expect(canvas.getByText('Council', { exact: true })).toBeVisible();
     await expect(canvas.queryByText('You', { exact: true })).toBeNull();
-    await expect(canvas.getByText('Vis', { exact: true })).toBeVisible();
+    const toggle = await canvas.findByRole('button', { name: 'Show full message' });
+    const body = canvasElement.querySelector('.line-clamp-4')!;
+    const lineHeight = Number.parseFloat(getComputedStyle(body).lineHeight);
+    await expect(body.getBoundingClientRect().height).toBeCloseTo(lineHeight * 4, 0);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(toggle);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(body.getBoundingClientRect().height).toBeGreaterThan(lineHeight * 4);
+    await userEvent.click(toggle);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   },
 };
 

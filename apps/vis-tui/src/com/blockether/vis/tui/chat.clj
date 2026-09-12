@@ -731,7 +731,10 @@
                                  ;; toggle every paste in the session. Stamp the gateway turn id (same one the
                                  ;; assistant message carries) so reloaded paste ids are turn-scoped, exactly
                                  ;; like the live send path scopes them by :client-turn-id.
-                                 :session-turn-id (get q "turn_id"))
+                                 :session-turn-id (get q "turn_id")
+                                 :request-kind (some-> (get q "request_kind")
+                                                       keyword)
+                                 :council (get q "council"))
                   ;; `:prior-outcome :cancelled` is how the
                   ;; persistance layer marks an aborted turn (the
                   ;; sweep + cancel paths both write that value).
@@ -1264,6 +1267,9 @@
                ;; sibling-started turn (state/:sibling-turn-started) with the real
                ;; user bubble, not a blank one.
                :request (event-get event :request)
+               :request-kind (some-> (event-get event :request-kind)
+                                     keyword)
+               :council (event-get event :council)
                :started-at-ms (event-get event :started-at)
                ;; `ts` is sampled by the gateway in the same event. Consumers derive
                ;; elapsed from ts-started_at, so a device clock cannot skew the timer.
@@ -1534,7 +1540,12 @@
           (assoc :running-client-id (get running-turn "idempotency_key"))
 
           (some? running-request)
-          (assoc :running-request running-request)
+          (assoc :running-request
+            running-request :running-request-kind
+            (some-> (or (get soul "running_request_kind") (get running-turn "request_kind"))
+                    keyword)
+            :running-council
+            (or (get soul "running_council") (get running-turn "council")))
 
           (nat-int? local-running-started-at)
           (assoc :running-started-at local-running-started-at)

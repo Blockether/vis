@@ -9645,7 +9645,11 @@
 
 (defn- turn-store-opts
   [env user-request loop-opts]
-  (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
+  (cond-> {:parent-session-id (:session-id env)
+           :user-request user-request
+           :request-kind (or (:request-kind loop-opts) :user)
+           :council-entry-id (:council-entry-id loop-opts)
+           :status :running}
     (some? (:session-turn-id loop-opts))
     (assoc :session-turn-id (:session-turn-id loop-opts))))
 

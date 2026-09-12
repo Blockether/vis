@@ -4577,7 +4577,10 @@
                        (update :messages
                                conj
                                (assoc (chat/user-message request-text)
-                                 :client-turn-id client-turn-id))
+                                 :client-turn-id client-turn-id
+                                 :session-turn-id tid
+                                 :request-kind (:running-request-kind session)
+                                 :council (:running-council session)))
                        (update :messages
                                conj
                                (assoc (pending-assistant-for request-text)
@@ -4612,7 +4615,7 @@
               ;; :attach-running-turn expects and hand off; its guards plus ours (already
               ;; loading / already attached) make this a no-op for the tab that started
               ;; or drained onto the turn itself.
-              (fn [db [_ workspace-id {:keys [turn-id request started-at-ms]}]]
+              (fn [db [_ workspace-id {:keys [turn-id request request-kind council started-at-ms]}]]
                 (let [workspace-id
                       (or workspace-id (current-tab-id db))
 
@@ -4640,10 +4643,12 @@
                         busy? {:db (update-tab db
                                                workspace-id
                                                #(assoc %
-                                                  :deferred-sibling-start {:turn-id turn-id
-                                                                           :request request
-                                                                           :started-at-ms
-                                                                           started-at-ms}))}
+                                                  :deferred-sibling-start
+                                                  {:turn-id turn-id
+                                                   :request request
+                                                   :request-kind request-kind
+                                                   :council council
+                                                   :started-at-ms started-at-ms}))}
                         :else {:db (update-tab db workspace-id #(dissoc % :deferred-sibling-start))
                                :fx [[:dispatch
                                      [:attach-running-turn workspace-id
@@ -4651,6 +4656,8 @@
                                         :status "running"
                                         :current-turn-id turn-id
                                         :running-request request
+                                        :running-request-kind request-kind
+                                        :running-council council
                                         :running-started-at started-at-ms)]]]}))))
 
 (reg-event-fx :restore-pending-to-input

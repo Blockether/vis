@@ -9,6 +9,8 @@ import { activityProjectionFromWire, type ActivityProjection } from './activity'
 import { eventBlockKey, eventFormKey, eventIterationPosition, eventString } from './session-stream';
 import type {
   ContentBlock,
+  CouncilRequest,
+  RequestKind,
   GatewayAttachment,
   IterationAttachment,
   SseEvent,
@@ -31,6 +33,8 @@ export interface TurnProgress {
 export interface RunningTurn {
   id?: string;
   request: string;
+  requestKind?: RequestKind;
+  council?: CouncilRequest;
   answer: string;
   iterations: TranscriptIteration[];
   /** Replay head announced before its older frames, so the ticker starts at NOW. */
@@ -143,6 +147,8 @@ export function reduceRunningTurnEvent(
     return {
       id: startedId,
       request: eventString(event, 'request'),
+      requestKind: event.request_kind,
+      council: event.council,
       answer: '',
       iterations: [],
       // `started_at` is the GATEWAY host's clock; the elapsed line under "Vis" is

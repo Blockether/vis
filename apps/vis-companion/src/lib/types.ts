@@ -90,6 +90,8 @@ export interface Session {
   is_awaiting_input?: boolean;
   /** In-flight facts and same-response gateway clock for clock-safe attachment. */
   running_request?: string;
+  running_request_kind?: RequestKind;
+  running_council?: CouncilRequest;
   running_started_at?: number;
   server_time_ms: number;
   turn_count: number;
@@ -1018,9 +1020,25 @@ export interface TranscriptIteration {
   [key: string]: unknown;
 }
 
+export type RequestKind = 'user' | 'council';
+
+/** Durable Council entry linked to the turn; never inferred from request text. */
+export interface CouncilRequest {
+  entry_id: number;
+  thread_id: number;
+  kind: 'coordination' | 'informational' | 'complain';
+  content: string;
+  title?: string | null;
+  author_session_id?: string;
+  source?: string;
+  reply_required?: boolean;
+}
+
 export interface TranscriptTurn {
   turn_id: string;
   request?: string;
+  request_kind?: RequestKind;
+  council?: CouncilRequest;
   status?: string;
   prior_outcome?: string;
   content?: ContentBlock[];
@@ -1099,6 +1117,8 @@ export interface QueuePausedInfo {
 
 export interface SseEvent {
   type: string;
+  request_kind?: RequestKind;
+  council?: CouncilRequest;
   sid?: string;
   session_id?: string;
   seq?: number;

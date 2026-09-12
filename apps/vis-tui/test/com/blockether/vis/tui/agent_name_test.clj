@@ -51,15 +51,14 @@
     (is (not (str/includes? (cap/frame-text captured) "Ada")))))
 
 (deftest council-wakes-have-their-own-speaker-label
-  ;; Council wake prompts use the request rail, but are not written by the user.
+  ;; Provenance is persisted metadata, never a request-text convention.
   (doseq [cols
           [40 100]
 
           [message label]
-          [[{:role :user :text "Council wake — a peer has asked for your knowledge."} "Council"]
-           [{:role :user :text "Council wake — a peer replied to your request."} "Council"]
-           [{:role :user :text "Council wake — an extension or SDK event notified this session."}
-            "Council"] [{:role :user :text "Hello"} "You"]
+          [[{:role :user :request-kind :council :text "Actual peer request"} "Council"]
+           [{:role :user :text "Council wake — literal user text"} "You"]
+           [{:role :user :text "Hello"} "You"]
            [{:role :user :text "Explain Council wake — messages."} "You"]
            [{:role :user :text ""} "You"] [{:role :user :text "Hello" :status :queued} "Queued"]
            [{:role :assistant :text "Council wake — quoted in an answer."} "Ada"]]]

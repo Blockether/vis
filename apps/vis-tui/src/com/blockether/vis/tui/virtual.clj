@@ -484,6 +484,12 @@
          (long (+ (count (:runs message)) (if (some #(nil? (:anchor %)) (:runs message)) 1 0)))]
 
      (cond
+       (and (= role :user) (= :council (:request-kind message)))
+       ;; Council previews reserve only four body rows and the disclosure, not the full request.
+       (long (+ 5
+                (if (any-details-expanded? message detail-expansions session-id)
+                  (prose-rows-est text prose-w)
+                  (min 4 (prose-rows-est text prose-w)))))
        (= role :user)
        ;; label + top/bottom pad + gap (see bubble-height*) + 2 rows of
        ;; markdown block-gap slack — pasted JSON/log blobs grow a couple of
@@ -800,7 +806,19 @@
               (#{:assistant :user} (:role message))
               (not (str/blank? (:text message))))]
 
-     (cond windowed?
+     (cond (and (= :user (:role message)) (= :council (:request-kind message)))
+           (let [{:keys [text lines line-meta]} (render/format-council-request-data
+                                                  (:text message)
+                                                  bubble-w
+                                                  {:session-id session-id
+                                                   :session-turn-id (turn-identity message)
+                                                   :detail-expansions detail-expansions})]
+             (-> message
+                 (assoc :text text
+                        :prewrapped-lines lines
+                        :line-meta line-meta)
+                 strip-ts))
+           windowed?
            (let [ast
                  (ast/markdown->ast (:text message))
 

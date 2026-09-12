@@ -4415,12 +4415,19 @@
                                (fn [_ _]
                                  nil)]
 
-                   (reset! state/app-db {:session {:id "s1"} :active-tab-id "s1" :render-version 0})
+                   (reset! state/app-db
+                     {:session {:id "s1"} :active-tab-id "s1" :messages [] :render-version 0})
                    (state/dispatch [:sibling-turn-started nil
-                                    {:turn-id "t9" :request "from web" :started-at-ms 777}])
+                                    {:turn-id "t9"
+                                     :request "from web"
+                                     :started-at-ms 777
+                                     :request-kind :council
+                                     :council {"kind" "coordination"}}])
                    (let [db @state/app-db]
                      (expect (true? (:loading? db)))
                      (expect (= "t9" (:gateway-turn-id db)))
+                     (expect (= :council (:request-kind (first (:messages db)))))
+                     (expect (= {"kind" "coordination"} (:council (first (:messages db)))))
                      (expect (= 777 (:turn-start-ms db))))))
              (it "no-ops when the tab is already mid-turn"
                  (reset! state/app-db {:session {:id "s1"}

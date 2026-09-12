@@ -2945,8 +2945,14 @@
    iteration) so resume + history re-render survive a restart even after the source file moves or is
    deleted.
 
+   `:request-kind` is explicit provenance (`:user` by default or `:council`).
+   Council turns require `:council-entry-id`: the immutable entry owns the actual
+   request content, author and kind. The user-request remains the model instruction.
+
    Returns the session-turn-soul UUID."
-  [db-info {:keys [parent-session-id session-turn-id user-request status attachments]}]
+  [db-info
+   {:keys [parent-session-id session-turn-id user-request status attachments request-kind
+           council-entry-id]}]
   (when (ds db-info)
     (sqlite-write-tx!
       db-info
@@ -2980,6 +2986,8 @@
                                :session_state_id state-id-s
                                :position turn-position
                                :user_request user-request-s
+                               :request_kind (name (or request-kind :user))
+                               :council_entry_id council-entry-id
                                :created_at now}]})
           (execute! tx-info
                     {:insert-into :session_turn_state
@@ -3950,6 +3958,7 @@
            :session-state-id (->uuid (:session_state_id row))
            :position (:position row)
            :user-request (:user_request row)
+           :request-kind (->kw-back (:request_kind row))
            :status (->kw-back (:status row))
            :created-at (->date (:soul_created_at row))
            :iteration-count (long (or (:iteration_count row) 0))
@@ -3968,6 +3977,17 @@
     ;; turn label or read the session-level title via `:title`
     ;; on the session map.
     ;; (intentionally no `(:title row)` branch)
+    (:council_entry_id row)
+    (assoc :council
+      {:entry-id (:council_entry_id row)
+       :thread-id (or (:council_thread_id row) (:council_entry_id row))
+       :kind (->kw-back (:council_kind row))
+       :content (:council_content row)
+       :title (:council_title row)
+       :author-session-id (:council_author_sid row)
+       :source (:council_source row)
+       :reply-required (= 1 (:council_reply_required row))})
+
     (:content_json row)
     (assoc :content (json/read-json (:content_json row)))
 
@@ -3988,15 +4008,19 @@
   ;; `:qs.title` intentionally absent: `session_turn_soul` has
   ;; no `title` column. Display layers fall back to `:user_request`
   ;; or the session-level title.
-  {:select [:qs.id :qs.session_state_id :qs.position :qs.user_request
-            [:qs.created_at :soul_created_at] [:qs.id :soul_id] :qst.status :qst.content_json
-            :qst.iteration_count :qst.duration_ms
+  {:select [:qs.id :qs.session_state_id :qs.position :qs.user_request :qs.request_kind
+            :qs.council_entry_id [:ce.thread_id :council_thread_id] [:ce.kind :council_kind]
+            [:ce.content :council_content] [:ce.title :council_title]
+            [:ce.author_sid :council_author_sid] [:ce.source :council_source]
+            [:ce.reply_required :council_reply_required] [:qs.created_at :soul_created_at]
+            [:qs.id :soul_id] :qst.status :qst.content_json :qst.iteration_count :qst.duration_ms
             ;; Phase B canonical columns on session_turn_state.
             :qst.input_tokens :qst.input_regular_tokens :qst.input_cache_write_tokens
             :qst.input_cache_read_tokens :qst.output_tokens :qst.output_reasoning_tokens
             :qst.total_cost_usd :qst.llm_root_provider :qst.llm_root_model :qst.error]
    :from [[:session_turn_soul :qs]]
    :join [[:session_turn_state :qst] [:= :qst.session_turn_soul_id :qs.id]]
+   :left-join [[:council_entry :ce] [:= :ce.id :qs.council_entry_id]]
    :where [:and where-clause
            [:= :qst.version
             {:select [[[:max :version]]]

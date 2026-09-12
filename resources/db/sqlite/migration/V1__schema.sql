@@ -250,8 +250,13 @@ CREATE TABLE session_turn_soul (
                          REFERENCES session_state(id) ON DELETE CASCADE,
   position               INTEGER NOT NULL CHECK (position >= 1),
   user_request           TEXT,
+  request_kind           TEXT NOT NULL DEFAULT 'user'
+                         CHECK (request_kind IN ('user', 'council')),
+  council_entry_id       INTEGER REFERENCES council_entry(id),
   created_at             INTEGER NOT NULL,
 
+  CHECK ((request_kind = 'council' AND council_entry_id IS NOT NULL)
+      OR (request_kind = 'user' AND council_entry_id IS NULL)),
   UNIQUE (session_state_id, position)
 );
 

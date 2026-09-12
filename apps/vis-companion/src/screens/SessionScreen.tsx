@@ -1567,6 +1567,8 @@ export function SessionScreen({
       const adopted: RunningTurn = {
         id: tid,
         request: row?.running_request ?? persisted?.request ?? '',
+        requestKind: row?.running_request_kind ?? persisted?.request_kind,
+        council: row?.running_council ?? persisted?.council,
         answer: '',
         iterations,
         startedAt,
@@ -3924,7 +3926,13 @@ export function SessionScreen({
         return (
           <div className={index === 0 ? '' : 'mt-10'} key={turn.turn_id}>
             {(request || (turn.attachments?.length ?? 0) > 0) && (
-              <UserMessage attachments={turn.attachments}>{request}</UserMessage>
+              <UserMessage
+                requestKind={turn.request_kind}
+                council={turn.council}
+                attachments={turn.attachments}
+              >
+                {request}
+              </UserMessage>
             )}
             <AssistantMessage
               agentName={session?.agent_name}
@@ -3984,7 +3992,13 @@ export function SessionScreen({
     return (
       <div className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`} data-live="true">
         {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
-          <UserMessage attachments={liveAttachments}>{runningTurn.request}</UserMessage>
+          <UserMessage
+            requestKind={runningTurn.requestKind}
+            council={runningTurn.council}
+            attachments={liveAttachments}
+          >
+            {runningTurn.request}
+          </UserMessage>
         )}
         <AssistantMessage
           agentName={session?.agent_name}

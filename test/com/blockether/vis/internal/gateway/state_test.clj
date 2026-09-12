@@ -4155,6 +4155,8 @@
                         {:parent-session-id sid
                          :session-turn-id tid
                          :user-request "stop this turn"
+                         :request-kind :user
+                         :council-entry-id nil
                          :status :running
                          :attachments attachments}]]
                       @stores))

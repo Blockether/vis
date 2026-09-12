@@ -873,12 +873,15 @@
                     :turn-id "t1"
                     :client-id "cid-1"
                     :request "hi"
+                    :request-kind :user
+                    :council nil
                     :started-at-ms 1234
                     :server-at-ms nil}
                    (g->c {"type" "turn.started"
                           "turn_id" "t1"
                           "idempotency_key" "cid-1"
                           "request" "hi"
+                          "request_kind" "user"
                           "started_at" 1234}))))))
 
 (defdescribe

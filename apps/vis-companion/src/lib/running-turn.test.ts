@@ -44,6 +44,26 @@ function thought(turn: ReturnType<typeof reduceRunningTurnEvent>): string | unde
   return turn?.iterations[0]?.thinking;
 }
 
+describe('Council request provenance', () => {
+  it('preserves the actual entry and kind from the live event', () => {
+    const council = { entry_id: 42, thread_id: 42, kind: 'coordination', content: 'Actual request' };
+    const turn = reduceRunningTurnEvent(
+      null,
+      event({
+        type: 'turn.started',
+        turn_id: 'council-turn',
+        request: council.content,
+        request_kind: 'council',
+        council,
+      }),
+    );
+    expect(turn?.requestKind).toBe('council');
+    expect(turn?.request).toBe(council.content);
+    expect(turn?.council).toEqual(council);
+    expect(reduceRunningTurnEvent(turn, event({ type: 'turn.completed' }))?.council).toEqual(council);
+  });
+});
+
 // Shared-settlement contract, task td-a972c8: the Companion retained its raw streamed fragment when
 // the shared settled boundary deliberately returned no reasoning, while the TUI
 // removed it. A complete Markdown heading disappeared from the TUI instead.

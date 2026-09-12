@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -73,6 +74,8 @@ import type {
   TranscriptForm,
   TranscriptIteration,
   TranscriptTurn,
+  RequestKind,
+  CouncilRequest,
 } from '../lib/types';
 import type { GatewayClient } from '../lib/gateway';
 import { speechOutput } from '../lib/speech';
@@ -3599,12 +3602,61 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
   );
 }
 
+function CouncilRequestBody({ children }: { children: string }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [collapsible, setCollapsible] = useState(false);
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const measure = () => {
+      if (isPaintSkipped(body)) return;
+      const lineHeight = Number.parseFloat(window.getComputedStyle(body).lineHeight) || 20;
+      const overflows = body.scrollHeight > lineHeight * 4 + 1;
+      return () => setCollapsible(overflows);
+    };
+    measure()?.();
+    return observeBox(body, measure);
+  }, [children]);
+
+  return (
+    <>
+      <div id={bodyId} ref={bodyRef} className={expanded ? '' : 'line-clamp-4'}>
+        {children}
+      </div>
+      {collapsible && (
+        <Disclosure
+          isOpen={expanded}
+          aria-controls={bodyId}
+          density="comfortable"
+          className="mt-1 whitespace-normal"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? 'Show less' : 'Show full message'}
+        </Disclosure>
+      )}
+    </>
+  );
+}
+
+const councilKindLabel: Record<CouncilRequest['kind'], string> = {
+  coordination: 'Coordination',
+  informational: 'Information',
+  complain: 'Complaint',
+};
+
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
+  requestKind = 'user',
+  council,
 }: {
   children: string;
   attachments?: GatewayAttachment[];
+  requestKind?: RequestKind;
+  council?: CouncilRequest;
 }) {
   const parts = parseUserMessage(children);
   // Persisted user images re-render from DB-owned base64 (survives a restart even
@@ -3647,40 +3699,49 @@ export const UserMessage = memo(function UserMessage({
   return (
     <article className="mt-4 w-full">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">
-        {children.startsWith('Council wake — ') ? 'Council' : 'You'}
+        {requestKind === 'council' ? 'Council' : 'You'}
+        {requestKind === 'council' && council && (
+          <span className="ml-2 font-normal text-dialog-hint">
+            {councilKindLabel[council.kind]} · #{council.entry_id}
+          </span>
+        )}
       </div>
       <div
         className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}
       >
-        {parts.map((part) =>
-          part.type === 'text' ? (
-            <span key={part.key}>{part.text}</span>
-          ) : part.type === 'image' ? (
-            <span
-              key={part.key}
-              className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
-            >
-              {part.summary}
-            </span>
-          ) : (
-            // Full-bleed to the bubble's own `px-3`: the rules then read as the
-            // bubble's dividers instead of a stray box hairline-close to the
-            // sentence above and below it. Vertical margin is the paste's ONLY
-            // separation from that prose, so it stays wider than the block's own
-            // padding.
-            <details
-              key={part.key}
-              className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
-            >
-              <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
-                <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
+        {requestKind === 'council' ? (
+          <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>
+        ) : (
+          parts.map((part) =>
+            part.type === 'text' ? (
+              <span key={part.key}>{part.text}</span>
+            ) : part.type === 'image' ? (
+              <span
+                key={part.key}
+                className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
+              >
                 {part.summary}
-              </summary>
-              <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
-                <code>{part.content}</code>
-              </pre>
-            </details>
-          ),
+              </span>
+            ) : (
+              // Full-bleed to the bubble's own `px-3`: the rules then read as the
+              // bubble's dividers instead of a stray box hairline-close to the
+              // sentence above and below it. Vertical margin is the paste's ONLY
+              // separation from that prose, so it stays wider than the block's own
+              // padding.
+              <details
+                key={part.key}
+                className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
+              >
+                <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
+                  <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
+                  {part.summary}
+                </summary>
+                <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
+                  <code>{part.content}</code>
+                </pre>
+              </details>
+            ),
+          )
         )}
       </div>
       {files.length > 0 && (

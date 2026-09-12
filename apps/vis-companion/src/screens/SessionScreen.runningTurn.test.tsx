@@ -7,6 +7,45 @@ import activityFixture from '../../../../packages/vis-contract/resources/vis-con
 import { reduceRunningTurnEvent } from '../lib/running-turn';
 import type { SseEvent } from '../lib/types';
 
+describe('Council transcript requests', () => {
+  it.each([false, true])('keeps persisted provenance when live=%s', async (live) => {
+    const council = {
+      entry_id: 42,
+      thread_id: 42,
+      kind: 'coordination' as const,
+      content: 'Actual peer request',
+    };
+    renderSessionScreen({
+      session: sessionFixture({
+        live,
+        current_turn_id: live ? 'council-turn' : null,
+        running_request: live ? council.content : undefined,
+        running_request_kind: live ? 'council' : undefined,
+        running_council: live ? council : undefined,
+      }),
+      client: {
+        transcript: () => Promise.resolve([
+          {
+            turn_id: 'council-turn',
+            request: council.content,
+            request_kind: 'council',
+            council,
+            status: live ? 'running' : 'done',
+            iterations: [],
+            content: [],
+          },
+        ]),
+      },
+    });
+    expect(await screen.findByText('Actual peer request')).toBeInTheDocument();
+    await waitFor(() => {
+      const heading = document.querySelector('article .text-you-role');
+      expect(heading).toHaveTextContent('Council');
+      expect(heading).toHaveTextContent('Coordination');
+    });
+  });
+});
+
 // A transcript row is durable content, not a liveness lease. If the canonical
 // session read fails, the client must not invent a running turn from stale SQL.
 describe('a running transcript row without canonical session state', () => {

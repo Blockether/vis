@@ -1826,7 +1826,19 @@
 
         label
         (cond queued? "Queued"
-              (and user? (str/starts-with? (or text "") "Council wake — ")) "Council"
+              (and user? (= :council (:request-kind message)))
+              (str "Council"
+                   (when-let [kind (get-in message [:council "kind"])]
+                     (str " · "
+                          (case kind
+                            "coordination"
+                            "Coordination"
+
+                            "informational"
+                            "Information"
+
+                            "complain"
+                            "Complaint"))))
               user? "You"
               :else agent-name)
 
@@ -8229,6 +8241,40 @@
 (defn format-answer-markdown
   ([answer bubble-w] (format-answer-markdown answer bubble-w nil))
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))
+
+(defn format-council-request-data
+  "Council requests preview four wrapped rows and use the ordinary per-turn disclosure controls."
+  [text bubble-w {:keys [session-id session-turn-id detail-expansions]}]
+  (let [content-w
+        (max 10 (- (long bubble-w) 4))
+
+        lines
+        (vec (mapcat #(wrap-text % content-w) (str/split (or text "") #"\n" -1)))
+
+        collapsible?
+        (> (count lines) 4)
+
+        node-id
+        (detail-node-id {:session-turn-id session-turn-id :section :user :kind :council})
+
+        expanded?
+        (detail-expanded? detail-expansions session-id node-id false)
+
+        body
+        (mapv (fn [line]
+                {:line line :meta nil})
+              (if (and collapsible? (not expanded?)) (subvec lines 0 4) lines))
+
+        control
+        (when collapsible?
+          (detail-summary-entries {:marker md-summary-marker
+                                   :max-w content-w
+                                   :summary (if expanded? "Show less" "Show full message")
+                                   :collapsed? (not expanded?)
+                                   :session-id session-id
+                                   :node-id node-id}))]
+
+    (entries->payload (into body control))))
 
 ;;; Messages area
 ;; `screen.clj` derives width from these public constants so formatting and paint agree.

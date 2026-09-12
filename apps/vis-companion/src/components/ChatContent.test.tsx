@@ -462,19 +462,56 @@ describe('compact diff blocks', () => {
 });
 
 describe('request speaker labels', () => {
-  // Council wake prompts use the request rail, but are not written by the user.
-  it.each([
-    ['Council wake — a peer session has asked for your knowledge.', 'Council'],
-    ['Council wake — a peer replied to your request.', 'Council'],
-    ['Council wake — an extension or SDK event notified this session.', 'Council'],
-    ['Hello', 'You'],
-    ['Explain Council wake — messages.', 'You'],
-    ['', 'You'],
-  ])('labels %j as %s without changing the request', (request, label) => {
+  // Provenance is persisted metadata, never a request-text convention.
+  it.each(['Council wake — literal user text', 'Hello', ''])('keeps %j on the user rail', (request) => {
     const view = render(<UserMessage>{request}</UserMessage>);
     const article = view.container.querySelector('article')!;
-    expect(article.firstElementChild).toHaveTextContent(new RegExp(`^${label}$`));
+    expect(article.firstElementChild).toHaveTextContent(/^You$/);
     expect(article.children[1].textContent).toBe(request);
+  });
+
+  it.each(['coordination', 'informational', 'complain'] as const)('labels explicit Council %s', (kind) => {
+    const view = render(
+      <UserMessage
+        requestKind="council"
+        council={{ entry_id: 42, thread_id: 42, kind, content: 'Actual peer request' }}
+      >
+        Council notification #42. Read the attributed Council input.
+      </UserMessage>,
+    );
+    expect(view.container.querySelector('article')!.firstElementChild).toHaveTextContent('Council');
+    expect(view.getByText('Actual peer request')).toBeInTheDocument();
+    expect(view.queryByText(/Council notification/)).toBeNull();
+  });
+
+  it('collapses after four rendered lines and expands without losing the original content', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(200);
+    const request = 'Actual request\nLine two\nLine three\nLine four\nLast line';
+    try {
+      const view = render(<UserMessage requestKind="council">{request}</UserMessage>);
+      const body = view.container.querySelector('.line-clamp-4')!;
+      const button = view.getByRole('button', { name: 'Show full message' });
+      expect(body.textContent).toBe(request);
+      expect(button).toHaveAttribute('aria-expanded', 'false');
+      expect(button).toHaveAttribute('aria-controls', body.id);
+      fireEvent.click(button);
+      expect(body).not.toHaveClass('line-clamp-4');
+      expect(button).toHaveAttribute('aria-expanded', 'true');
+      fireEvent.click(button);
+      expect(body).toHaveClass('line-clamp-4');
+    } finally {
+      height.mockRestore();
+    }
+  });
+
+  it('does not offer expansion for a short Council request', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(40);
+    try {
+      const view = render(<UserMessage requestKind="council">Short request</UserMessage>);
+      expect(view.queryByRole('button', { name: 'Show full message' })).toBeNull();
+    } finally {
+      height.mockRestore();
+    }
   });
 });
 
