@@ -138,7 +138,11 @@ await writeFile(
     '  Cache-Control: public, max-age=0, must-revalidate\n',
 );
 // Keep / and explicit .html URLs static without spending a Worker request on the home page.
-await writeFile(new URL('_redirects', dist), '/ /index.html 200\n');
+// The app setup guide is now part of Getting started; keep existing bookmarks working.
+await writeFile(
+  new URL('_redirects', dist),
+  '/ /index.html 200\n/gateway / 301\n/gateway.html / 301\n/gateway.md /index.md 301\n',
+);
 // A mismatch must fail the build, not silently introduce another theme.
 const source = await readFile(
   new URL('../../resources/vis-docs/assets/theme.css', import.meta.url),

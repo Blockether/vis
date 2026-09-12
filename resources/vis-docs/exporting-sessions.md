@@ -33,4 +33,4 @@ Exports are not redacted. Read one before sharing it; see
 ## See also
 
 - [Reporting a bug](reporting-bugs.md) — remove private information before sharing an export.
-- [Remote access and the Companion app](gateway.md) — access sessions on another machine.
+- [Desktop and mobile setup](index.md#connecting-the-companion-app) — access sessions on another machine.

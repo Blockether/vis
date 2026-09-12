@@ -1,17 +1,13 @@
 {:nav
  [{:pages
    [{:blurb
-     "Install Vis, open the terminal or desktop app and try your first task with a model you choose."
+     "Install Vis, connect the desktop or phone app and try your first task with a model you choose."
      :page "index"
      :title "Getting started"}
     {:blurb
      "Why I chose reusable tools over more reminders, Python to connect the steps and a shared view across devices."
      :page "motivation"
-     :title "Why I built Vis"}
-    {:blurb
-     "Download Vis for macOS, Linux, iPhone or Android, connect to a gateway and follow the same sessions."
-     :page "gateway"
-     :title "Desktop and mobile apps"}]
+     :title "Why I built Vis"}]
    :section nil}
   {:pages
    [{:blurb

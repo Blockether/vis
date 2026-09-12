@@ -253,32 +253,67 @@
                        (expect (some? (io/resource
                                         "vis-docs/assets/fonts/jetbrains-mono.woff2"))))))))
 
-(defdescribe getting-started-page-test
-             (it "uses ordinary documentation links and one install command in both outputs"
-                 (let [{:keys [pages] :as site}
-                       (docs/collect)
+(defdescribe
+  getting-started-page-test
+  (it "uses ordinary documentation links and one install command in both outputs"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
 
-                       home
-                       (first (filter #(= "index" (:slug %)) pages))]
+            home
+            (first (filter #(= "index" (:slug %)) pages))]
 
-                   (doseq [mode
-                           [:static :live]
+        (doseq [mode
+                [:static :live]
 
-                           :let [html
-                                 (docs/page-html site home mode)]]
+                :let [html
+                      (docs/page-html site home mode)]]
 
-                     (expect (= 1 (count (re-seq #"curl</span>|curl -fsSL" html))))
-                     (expect (str/includes? html "href=\"#install\""))
-                     (expect (re-find #"class=\"brand\"[^>]*>Vis</a>" html))
-                     (expect (not (str/includes? html "role=\"tablist\"")))
-                     (expect (not (str/includes? html "hero-install")))
-                     (expect (not (str/includes? html "data-copy-active")))
-                     (expect (str/includes? html "id=\"first-session\"")))))
-             (it "puts motivation and app setup next to getting started"
-                 (let [slugs (mapv :slug (:pages (docs/collect)))]
-                   (expect (= ["index" "motivation" "gateway"] (subvec slugs 0 3)))
-                   (expect (< (.indexOf slugs "queue-and-cancel")
-                              (.indexOf slugs "python-sandbox"))))))
+          (expect (= 1 (count (re-seq #"curl -fsSL" html))))
+          (expect (str/includes? html "href=\"#install\""))
+          (expect (re-find #"class=\"brand\"[^>]*>Vis</a>" html))
+          (expect (not (str/includes? html "role=\"tablist\"")))
+          (expect (not (str/includes? html "hero-install")))
+          (expect (not (str/includes? html "data-copy-active")))
+          (expect (str/includes? html "id=\"first-session\"")))))
+  (it "keeps motivation next to getting started without a separate app guide"
+      (let [slugs (mapv :slug (:pages (docs/collect)))]
+        (expect (= ["index" "motivation"] (subvec slugs 0 2)))
+        (expect (not (some #{"gateway"} slugs)))
+        (expect (nil? (io/resource "vis-docs/gateway.md")))
+        (expect (< (.indexOf slugs "queue-and-cancel") (.indexOf slugs "python-sandbox")))))
+  (it "keeps app setup and gateway reference in the landing page"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            home
+            (first (filter #(= "index" (:slug %)) pages))
+
+            md
+            (:md home)]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site home mode)]
+                anchor
+                ["connecting-the-companion-app" "connect-the-desktop-app" "pair-a-phone"
+                 "access-from-anywhere-with-tailscale" "gateway-reference" "starting-the-gateway"
+                 "using-a-remote-gateway-from-the-cli" "tokens-and-http-401" "http-api" "python-sdk"
+                 "resource-limits" "see-also"]]
+
+          (expect (str/includes? html (str "id=\"" anchor "\"")) anchor))
+        (doseq [content ["vis-agent gateway start --host 127.0.0.1"
+                         "vis-agent gateway start --host 10.0.0.5 --require-token --pair"
+                         "vis-agent gateway pair" "vis-agent gateway stop --if-idle"
+                         "VIS_GATEWAY_URL" "VIS_GATEWAY_TOKEN" "HTTP 401" "HTTP 426"
+                         "VIS_GATEWAY_MAX_CONCURRENT_TURNS" "VIS_GATEWAY_EVENT_RING_MAX"
+                         "VIS_ENV_CACHE_MAX" "VIS_ENV_MAX_TURNS_PER_CTX" "VIS_ENV_RSS_BUDGET_MB"
+                         "GatewayClient" "LocalEngine" "does not encrypt HTTP"
+                         "Stopping a busy gateway interrupts"]]
+          (expect (str/includes? md content) content))
+        (expect (< (str/index-of md "## First session") (str/index-of md "## Gateway reference")))
+        (expect (not (str/includes? md "gateway.md"))))))
 
 (defdescribe
   reader-first-onboarding-test
@@ -293,14 +328,22 @@
               ["python_execution" "await gather" "apropos()" "Path.write_text()" "toggles.shell"]]
 
         (expect (not (str/includes? intro term)) (str source " introduces " term " before setup"))))
-  (it "connects the landing page and app guide to desktop downloads and setup in both outputs"
-      (let [{:keys [pages] :as site} (docs/collect)]
-        (doseq [slug ["index" "gateway"]
-                mode [:static :live]
-                :let [page (first (filter #(= slug (:slug %)) pages))
-                      html (docs/page-html site page mode)
-                      setup (str (if (= mode :static) "distributions.html" "/docs/distributions")
-                                 "#open-the-desktop-app")]]
+  (it "connects the landing page to desktop downloads and setup in both outputs"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            page
+            (first (filter #(= "index" (:slug %)) pages))]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site page mode)
+
+                      setup
+                      (str (if (= mode :static) "distributions.html" "/docs/distributions")
+                           "#open-the-desktop-app")]]
 
           (expect (str/includes? html "href=\"https://github.com/Blockether/vis/releases/latest\""))
           (expect (str/includes? html (str "href=\"" setup "\"")))))))
@@ -339,7 +382,7 @@
 
         (expect (= [[(if (= mode :static) "motivation.html" "/docs/motivation") "Motivation"]
                     ["#install" "Install"] ["#first-session" "First session"]
-                    [(if (= mode :static) "gateway.html" "/docs/gateway") "Desktop and mobile"]]
+                    ["#connecting-the-companion-app" "Desktop and mobile"]]
                    links))
         (expect (not (str/includes? (or navigation "") "·")))
         (expect (not (str/includes? html "<p><nav class=\"quick-links\"")))
@@ -459,6 +502,12 @@
                  (let [resp (docs/handle {:uri "/docs/skills.md" :headers {}})]
                    (expect (= 301 (:status resp)))
                    (expect (= "/docs/skills" (get-in resp [:headers "location"])))))
+             (it "redirects old app-guide URLs to getting started without replacing their fragments"
+                 (doseq [uri ["/docs/gateway" "/docs/gateway/" "/docs/gateway.md"
+                              "/docs/gateway.html"]]
+                   (expect (= {:status 301 :headers {"location" "/docs"} :body ""}
+                              (docs/handle {:uri uri :headers {}}))
+                           uri)))
              (it "an unknown .md path still falls through as nil"
                  (expect (nil? (docs/handle {:uri "/docs/nope-zzz.md" :headers {}})))))
 

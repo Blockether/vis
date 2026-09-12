@@ -158,7 +158,7 @@ use `vis-agent tui` for automatic local lifecycle management.
 You can [download the stable desktop app from GitHub Releases](https://github.com/Blockether/vis/releases/latest)
 or use the launcher below. Choose the universal macOS `.dmg`, or the Linux
 `.AppImage` for x64 or ARM64. The app needs a running gateway;
-[Desktop and mobile apps](gateway.md) explains how to connect on the same
+[Desktop and mobile setup](index.md#connecting-the-companion-app) explains how to connect on the same
 computer or from another device.
 
 Open the desktop Companion for your selected release track:
@@ -229,7 +229,7 @@ Installing the app in this cache needs no administrator access. Desktop launches
 do not require Java, change your engine track, or start or restart a gateway.
 
 On first launch, pair with your gateway in the app using its URL and bearer token.
-See [Desktop and mobile apps](gateway.md) for connection options.
+See [Desktop and mobile setup](index.md#connecting-the-companion-app) for connection options.
 
 ## Automatic native betas
 
@@ -287,5 +287,5 @@ container machine and engine. Use the dev track on platforms without native bund
 ## See also
 
 - [Building the native binary](jvm-native-image.md)
-- [Desktop and mobile apps](gateway.md) — download a client and connect to your sessions.
+- [Getting started](index.md#connecting-the-companion-app) — download a client and connect to your sessions.
 - [Configuration](configuration.md)

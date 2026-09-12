@@ -496,6 +496,8 @@
         (get headers "accept-encoding")]
 
     (cond (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
+          (#{"gateway" "gateway.md" "gateway.html"} path)
+          {:status 301 :headers {"location" "/docs"} :body ""}
           (or (= path "") (= path "index"))
           (ok-html (page-html site-data
                               (or (first (filter #(= "index" (:slug %)) pages)) (first pages))

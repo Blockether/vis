@@ -89,7 +89,7 @@ check progress or respond while I am away.
 All of these connect to the same gateway, the service running your sessions.
 The work stays on that computer. Switching devices does not start a second
 agent or copy a conversation: you return to the same work. The
-[desktop and mobile guide](gateway.md) has the downloads and connection steps.
+[Getting started guide](index.md#install) has the downloads and connection steps.
 
 For me, these choices belong together. Your tools express how the work should
 happen. Python lets the model combine them. Activities let you see what happened,
@@ -97,8 +97,7 @@ and the different apps let you stay involved wherever you are.
 
 ## See also
 
-- [Getting started](index.md) — install Vis and try your first task.
-- [Desktop and mobile apps](gateway.md) — download an app and connect to your sessions.
+- [Getting started](index.md) — install Vis, connect an app and try your first task.
 - [Extending Vis](extending.md) — turn a repeated task into a tool.
 - [Extension design](extension-design.md) — working examples of checks and Activities.
 - [How Vis manages context](token-optimization.md) — how long sessions retain useful work.

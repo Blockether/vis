@@ -52,6 +52,23 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
   }
 });
 
+test('Getting started is the only app setup guide in the published indexes', () => {
+  expect(htmlFiles).not.toContain('gateway.html');
+  expect(existsSync('dist/gateway.md')).toBe(false);
+  for (const file of ['sitemap-docs.xml', 'llms.txt', 'llms-full.txt']) {
+    expect(readFileSync(`dist/${file}`, 'utf8'), file).not.toMatch(/\/gateway\.(?:html|md)/);
+  }
+  const dom = new JSDOM(readFileSync('dist/index.html', 'utf8'));
+  try {
+    for (const anchor of ['connecting-the-companion-app', 'pair-a-phone', 'gateway-reference']) {
+      expect(dom.window.document.getElementById(anchor), anchor).not.toBeNull();
+    }
+    expect(dom.window.document.querySelector('a[href="gateway.html"]')).toBeNull();
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('Council diagrams are accessible, self-contained and match their Mermaid sources', () => {
   const font = readFileSync('../../resources/vis-docs/assets/fonts/jetbrains-mono.woff2').toString(
     'base64',
@@ -245,6 +262,21 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
         expect(response.headers.get('content-type')).toMatch(/(?:application|text)\/xml/);
       if (path.endsWith('.txt'))
         expect(response.headers.get('content-type')).toContain('text/plain');
+    }
+    for (const method of ['GET', 'HEAD']) {
+      for (const [path, target] of [
+        ['/gateway', '/'],
+        ['/gateway.html', '/'],
+        ['/gateway.md', '/index.md'],
+      ]) {
+        const moved = await site.fetch(path, { method, redirect: 'manual' });
+        await moved.arrayBuffer();
+        expect(moved.status, `${method} ${path}`).toBe(301);
+        const location = new URL(moved.headers.get('location'), 'https://gateway.example.com');
+        expect(location.pathname, path).toBe(target);
+        // No replacement fragment: browsers retain bookmarks such as #pair-a-phone.
+        expect(location.hash, path).toBe('');
+      }
     }
     const head = await site.fetch('/', { method: 'HEAD' });
     expect(head.status).toBe(200);

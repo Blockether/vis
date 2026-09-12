@@ -96,7 +96,7 @@
 (defn normalize-name
   "Coerce a caller's target to a comparable handle: unwrap the map/kwargs shape,
    trim, drop a trailing `.md` (pages cross-link by filename), lower-case. This
-   is why `doc(\"Gateway.md\")` and `doc(\"gateway\")` are the same ask."
+   is why `doc(\"Index.md\")` and `doc(\"index\")` are the same ask."
   [target]
   (-> (if (map? target) (or (get target "name") (get target :name) (get target "slug") "") target)
       str

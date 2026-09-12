@@ -852,12 +852,12 @@
           (expect (str/includes? out "body=0"))
           (expect (str/includes? out "exact=python-sandbox"))))
     (it "doc retrieves a documentation page by slug, forgiving case and `.md`"
-        (let [out (run (str "a = doc('gateway')\n"
-                            "b = doc('Gateway.MD')\n" "print('same='+str(a == b))\n"
+        (let [out (run (str "a = doc('index')\n"
+                            "b = doc('Index.MD')\n" "print('same='+str(a == b))\n"
                             "print('head='+a.splitlines()[0])\n"
                             "print('body='+str('pairing' in a.lower()))"))]
           (expect (str/includes? out "same=True"))
-          (expect (str/includes? out "head=# gateway"))
+          (expect (str/includes? out "head=# index"))
           (expect (str/includes? out "body=True"))))
     ;; A skill is a document like any other: `doc` prints the complete source and
     ;; there is no verb to call, so the entry carries no call line at all.

@@ -118,7 +118,7 @@ Already installed the command? `vis-agent desktop --track release` downloads and
 opens the stable app for you. The app connects to a **gateway**, the Vis service
 running your sessions; opening the app does not start that service.
 Follow [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app)
-and [Desktop and mobile apps](resources/vis-docs/gateway.md) to connect it.
+and the [app connection guide](resources/vis-docs/index.md#connecting-the-companion-app) to connect it.
 
 ## Companion app (iPhone / Android)
 
@@ -131,7 +131,7 @@ Both stores offer public testing without an invitation.
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="resources/vis-docs/assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
 </p>
 
-Follow the [phone pairing guide](resources/vis-docs/gateway.md#pair-a-phone).
+Follow the [phone pairing guide](resources/vis-docs/index.md#pair-a-phone).
 Questions and beta feedback: `contact@blockether.com`.
 
 ## Update

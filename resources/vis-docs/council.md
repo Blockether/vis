@@ -395,4 +395,4 @@ agent scheduler or synchronous call between sessions.
 
 - [Configuration](configuration.md) — persistent feature toggles.
 - [Python sandbox](python-sandbox.md) — host tools and session context.
-- [Remote access and the Companion app](gateway.md) — gateway scope and authentication.
+- [Gateway reference](index.md#gateway-reference) — gateway scope and authentication.

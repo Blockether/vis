@@ -6,7 +6,7 @@ in the terminal or desktop app, then follow the same session from your phone.
   <a href="motivation.md">Motivation</a>
   <a href="#install">Install</a>
   <a href="#first-session">First session</a>
-  <a href="gateway.md">Desktop and mobile</a>
+  <a href="#connecting-the-companion-app">Desktop and mobile</a>
 </nav>
 
 ## Why Vis
@@ -128,6 +128,7 @@ runs your sessions and works with your files.
 Download the latest stable app from
 [GitHub Releases](https://github.com/Blockether/vis/releases/latest).
 Choose the universal macOS `.dmg`, or the Linux `.AppImage` for x64 or ARM64.
+Windows is not a desktop target.
 
 <div class="store-links" aria-label="Download the desktop app">
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
@@ -136,14 +137,14 @@ Choose the universal macOS `.dmg`, or the Linux `.AppImage` for x64 or ARM64.
 </div>
 
 Or run `vis-agent desktop --track release` to download and open it automatically.
-Opening the app does not start a gateway. Follow
-[Desktop and mobile apps](gateway.md) to connect it, or see
+Opening the app does not start a gateway. Follow the
+[connection steps below](#connecting-the-companion-app), or see
 [Desktop setup](distributions.md#open-the-desktop-app) for launcher options.
 
 ### Get the phone app
 
 The iPhone, iPad and Android apps are public betas. Install one, then
-[pair it with your gateway](gateway.md#pair-a-phone) to see the same projects
+[pair it with your gateway](#pair-a-phone) to see the same projects
 and sessions.
 
 <div class="store-links" aria-label="Install the Companion app">
@@ -151,6 +152,91 @@ and sessions.
 <span aria-hidden="true">&nbsp;&nbsp;</span>
 <a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><img src="assets/install-google-play.png" alt="Google Play beta for Android" width="224" height="56"></a>
 </div>
+
+## Connecting the Companion app
+
+Use the desktop or phone app to follow the same work from another device.
+The apps connect to a **gateway**, the service running Vis on the computer where
+your projects live. Your files, commands and sessions stay on that computer.
+
+The app does not install or start the engine. [Install Vis](#install) on the
+computer that will run your work first. You do not need a separate Vis account
+to connect an app; model providers may require their own account or API key.
+
+### Connect the desktop app
+
+For an app and gateway on the same computer, use the local address
+`http://127.0.0.1:7890`. If a gateway is already running, check its address with
+`vis-agent gateway status` and reuse it. Otherwise, start one:
+
+```bash
+vis-agent gateway start --host 127.0.0.1
+```
+
+Keep that terminal open: this command runs the gateway in the foreground.
+Open the desktop app, or use another terminal to run:
+
+```bash
+vis-agent desktop --track release
+```
+
+In **Add a machine**, paste the gateway's address (`http://127.0.0.1:7890` for
+the command above). Leave the bearer token empty for the default local gateway;
+if you enabled token authentication, supply its token. Once connected, open
+your project and start or resume a session. The
+[first-session guide](#first-session) covers choosing a model and a task.
+
+An Intel Mac can use the desktop app with a remote gateway, or run a local
+engine from the [JVM source distribution](distributions.md). There is no native
+Intel macOS engine bundle.
+
+For a gateway on another computer, follow the phone pairing steps below and
+paste the pairing link instead of scanning its QR code. `127.0.0.1` always means
+the device you are using; it cannot reach a different computer.
+
+### Pair a phone
+
+Your phone needs an address it can reach over your local network or a private
+VPN such as Tailscale. A local-only gateway on `127.0.0.1` is not reachable from
+your phone. Keep token authentication enabled for remote access. The pairing
+link and QR code contain that token: treat them like a password and do not share
+them publicly. Use a trusted network, VPN or HTTPS for remote connections.
+
+On the computer running Vis, start a gateway on its network address. Replace
+`10.0.0.5` with that computer's address:
+
+```bash
+vis-agent gateway start --host 10.0.0.5 --require-token --pair
+```
+
+In the app, open **Add a machine** and scan the QR, or paste the
+`vis://gateway?url=…&token=…` link printed under it. Both fill in the address and
+token. Once connected, you can open the same projects and sessions as in the
+terminal or desktop app.
+
+For a gateway that is already running, print a new pairing QR without restarting:
+
+```bash
+vis-agent gateway pair
+```
+
+If that gateway is bound to `127.0.0.1`, the command asks you to restart with a
+reachable address. Check that other clients and sessions can be interrupted
+before stopping it; see [Starting the gateway](#starting-the-gateway).
+
+You can also type a reachable address and supply the token from
+`~/.vis/gateway.token` on the gateway's computer. Each saved machine shows its
+connection state: green online, red offline, amber wrong or missing token.
+
+### Access from anywhere with Tailscale
+
+Put both devices on a [Tailscale](https://tailscale.com) tailnet to reach your
+gateway away from the local network. Listen on the computer's Tailscale address,
+then pair the app. The pairing QR prefers the machine's `100.x` Tailscale address.
+
+You can use `--host 0.0.0.0` to listen on all IPv4 interfaces, but that includes
+public interfaces if present. Bind to a specific private address when you only
+need private access. A bearer token controls access; it does not encrypt HTTP.
 
 ## First session
 
@@ -180,7 +266,7 @@ Vis starts a local gateway if needed.
 
 ### In the desktop or phone app
 
-[Connect to your gateway](gateway.md), open your project and start a session.
+[Connect to your gateway](#connecting-the-companion-app), open your project and start a session.
 Choose a provider and model there. The files and commands belong to the
 computer running the gateway, not the phone or computer displaying the app.
 
@@ -211,7 +297,7 @@ make those operations useful for your environment.
 ### Follow the work on every screen
 
 Activities show actions and their results in the conversation. Use
-[Desktop and mobile apps](gateway.md) to follow the same session from another
+[desktop and mobile apps](#connecting-the-companion-app) to follow the same session from another
 device. You can send a follow-up or stop a task while it runs; see
 [Controlling a session](queue-and-cancel.md).
 
@@ -238,6 +324,109 @@ The default native release is the everyday option. Use the JVM source build
 when developing Vis or trying the latest code. See the
 [runtime comparison](distributions.md#native-vs-jvm) for requirements and measurements.
 
+## Gateway reference
+
+Use this reference when you need to manage a gateway, connect another CLI client
+or build an integration. You do not need it to try your first task.
+
+### Starting the gateway
+
+The terminal client finds a local gateway and starts one in the background if
+needed. This managed gateway stops after the last client disconnects and no
+work remains. Opening the desktop app does not start a gateway.
+
+Stopping a busy gateway interrupts its clients and work. The unconditional stop
+can escalate to SIGTERM/SIGKILL. Use `--if-idle` when you do not want to interrupt
+another session.
+
+```bash
+vis-agent gateway status          # show the address and connected clients
+vis-agent gateway stop --if-idle  # stop only when nobody is using it
+vis-agent gateway stop            # stop even if clients are connected
+```
+
+`vis-agent gateway start` runs in the foreground and does not stop on its own.
+For a gateway you want to keep available, run it under a process supervisor
+such as systemd or launchd, or in a terminal multiplexer such as tmux.
+
+`vis-agent update` stops an idle managed gateway so the next client starts the
+new build. Use `--keep-gateway` if you want to leave it running.
+
+### Using a remote gateway from the CLI
+
+The terminal client can also connect to another computer. Supply its address
+and token with these root flags:
+
+```bash
+vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
+vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
+```
+
+`--gateway` accepts `HOST`, `HOST:PORT` or a full URL; a bare host means HTTP on
+port `7890`. You can instead set `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` in
+your shell. To reach a local-only gateway through an SSH tunnel:
+
+```bash
+ssh -N -L 7890:127.0.0.1:7890 you@10.0.0.5 &
+vis-agent --gateway 127.0.0.1 tui
+```
+
+Supply a token if that gateway requires one. With `--gateway`, Vis never starts,
+restarts or stops a replacement gateway. An unreachable target is an error,
+not a fallback to a local one. The `sessions` commands (`list`, `show`, `fork`,
+`delete`, `export`) still read the local database.
+
+### Tokens and HTTP 401
+
+| Gateway address | Token required? |
+| --- | --- |
+| `127.0.0.1` (default) | No |
+| Any other address (`0.0.0.0`, LAN, Tailscale) | Yes |
+| `127.0.0.1 --require-token` | Yes |
+
+Vis creates the token in `~/.vis/gateway.token` with owner-only permissions
+(mode `600`). `--token-file PATH` chooses a different file. Local CLI clients
+read it automatically; remote clients receive it through pairing. In the
+desktop app, supply it when adding a token-protected local gateway.
+
+An `HTTP 401` error means the gateway is reachable but the token is missing or
+incorrect. Pair the client again or check that you supplied the token for the
+right gateway. Do not disable remote authentication to work around the error.
+
+### HTTP API
+
+The gateway serves its OpenAPI 3.1 schema without a token:
+
+```bash
+curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
+```
+
+Use the schema for routes, request formats and responses. Protected routes
+require the gateway token. An incompatible client receives `HTTP 426`;
+update the client or gateway to a compatible version.
+
+### Python SDK
+
+`blockether.vis.engine.GatewayClient` connects to a gateway by URL and token.
+`LocalEngine` runs a Vis executable as a subprocess without a gateway. See
+the [Python SDK](https://pypi.org/project/vis-agent/).
+
+### Resource limits
+
+Set these environment variables before starting the gateway:
+
+| Variable | Default | Purpose |
+| --- | ---: | --- |
+| `VIS_GATEWAY_MAX_CONCURRENT_TURNS` | `50` | Turns executing at once across all sessions |
+| `VIS_GATEWAY_EVENT_RING_MAX` | `2000` | Events kept per session for SSE replay |
+| `VIS_ENV_CACHE_MAX` | `8` | Idle session environments kept resident |
+| `VIS_ENV_MAX_TURNS_PER_CTX` | `5` | Turns before a Python session is recycled |
+| `VIS_ENV_RSS_BUDGET_MB` | `3072` native / `5120` JVM | Process memory threshold for eviction |
+
+A value `<= 0` disables an eviction threshold.
+
+<span id="see-also"></span>
+
 ## Learn more
 
 ### Guides
@@ -248,7 +437,6 @@ when developing Vis or trying the latest code. See the
 - [Controlling a session](queue-and-cancel.md) — send follow-ups, cancel a task and exit.
 - [Drafts](drafts.md) — try a change in an isolated working copy and review it before approval.
 - [Exporting sessions](exporting-sessions.md) — save or share a session.
-- [Desktop and mobile apps](gateway.md) — download an app and connect to the same sessions.
 - [Council](council.md) — ask another session for help or a second review.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 

@@ -570,4 +570,4 @@ Run `/reload` after editing.
 - [Process jail and network policy](jail.md) — the `jail` block in full.
 - [Project instructions](context-and-prompts.md) — AGENTS.md, SYSTEM.md and prompt templates.
 - [Extending Vis](extending.md) — configuring providers, tools and toggles.
-- [Remote access and the Companion app](gateway.md) — gateway keys and tokens.
+- [Gateway reference](index.md#gateway-reference) — gateway connections and tokens.

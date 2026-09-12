@@ -210,14 +210,13 @@ Whole skill body."}
    nothing about it."
   (it "accepts the two shapes the store carries"
       (expect (dc/record? {:name "pandas.read_csv" :kind "function" :text "Read a CSV file."}))
-      (expect (dc/record? {:name "gateway" :kind "doc" :resource "vis-docs/gateway.md"})))
+      (expect (dc/record? {:name "index" :kind "doc" :resource "vis-docs/index.md"})))
   (it "refuses a record no reader could use, naming the resource it came from"
-      (doseq [bad [{:kind "doc" :resource "vis-docs/gateway.md"}
-                   {:name "" :kind "function" :text "x"} {:name "x" :kind "page" :text "x"}
-                   {:name "x" :kind "function"}
-                   {:name "x" :kind "function" :text "x" :resource "vis-docs/gateway.md"}
+      (doseq [bad [{:kind "doc" :resource "vis-docs/index.md"} {:name "" :kind "function" :text "x"}
+                   {:name "x" :kind "page" :text "x"} {:name "x" :kind "function"}
+                   {:name "x" :kind "function" :text "x" :resource "vis-docs/index.md"}
                    ;; Site navigation is the docs site's own resource, never a record.
-                   {:name "x" :kind "doc" :resource "vis-docs/gateway.md" :blurb "One sentence."}]]
+                   {:name "x" :kind "doc" :resource "vis-docs/index.md" :blurb "One sentence."}]]
         (expect (not (dc/record? bad)) (pr-str bad))
         (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" bad))
                 (pr-str bad))))

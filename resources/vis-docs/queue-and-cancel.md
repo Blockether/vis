@@ -39,5 +39,5 @@ draft. To run them, submit the draft again.
 
 ## See also
 
-- [Remote access and the Companion app](gateway.md) — the same queue from the Companion app or another machine.
+- [Desktop and mobile setup](index.md#connecting-the-companion-app) — the same queue from the Companion app or another machine.
 - [Project instructions](context-and-prompts.md) — slash commands and shell shortcuts you can queue.
