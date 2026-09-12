@@ -7311,6 +7311,186 @@ h = 8"
         (expect (not (str/includes? text "Execution")))
         (expect (str/includes? text "RESULT")))))
 
+(defn- grouped-activity-forms
+  "The app's 2 + 2 + 3 grouping case, with a two-row retained-history window."
+  [retained]
+  (mapv (fn [idx total]
+          (let [history? (contains? retained idx)]
+            {:code (str "read_source_" idx "()")
+             :success? true
+             :activity (cond-> {:state "succeeded"
+                                :counts {:running 0 :succeeded total :failed 0 :cancelled 0}
+                                :rows (mapv (fn [n]
+                                              {:id (str "op-" n)
+                                               :sequence n
+                                               :operation "cat"
+                                               :state "succeeded"
+                                               :summary (str "source-" idx "-" n)
+                                               :resources [{:type "file"
+                                                            :id (str "source-" idx "-" n)}]
+                                               :evidence []})
+                                            (range 1 (inc (if history? (min 2 total) total))))
+                                :omitted {:rows 0}}
+                         history?
+                         (assoc :history
+                           {:id (str "history-" idx)
+                            :revision 4
+                            :total total
+                            :after 0
+                            :next-after (when (> total 2) 2)}))}))
+        (range 3)
+        [2 2 3]))
+
+(defdescribe
+  grouped-activity-parity-test
+  ;; Regression after #212: retained histories must not split a joined CODE group.
+  (let [entries
+        (fn [forms opts]
+          (#'render/trace-render-entries
+           (merge {:iterations [{:forms forms}]
+                   :content-w 76
+                   :session-id "s"
+                   :session-turn-id "t"
+                   :settings {:show-python-code true}}
+                  opts)))
+
+        bands
+        (fn [painted]
+          (filter #(= :activity-header (get-in % [:meta :kind])) painted))
+
+        paint
+        (fn [painted cols]
+          (cap/capture! {:cols cols
+                         :rows 24
+                         :paint! (fn [{:keys [g]}]
+                                   (render/draw-chat-bubble! g
+                                                             {:role :assistant
+                                                              :prewrapped-lines (mapv :line painted)
+                                                              :line-meta (mapv :meta painted)}
+                                                             0
+                                                             0
+                                                             (- cols 4)
+                                                             {:viewport-h 24}))}))]
+
+    (it
+      "paints one Activity for one Code group, live or restored, inline or retained"
+      (doseq [retained
+              [#{} #{0 1 2}]
+
+              cols
+              [40 80 120]
+
+              live?
+              [false true]
+
+              show-code?
+              [false true]
+
+              separate?
+              [false true]]
+
+        (let [forms
+              (grouped-activity-forms retained)
+
+              painted
+              (entries forms
+                       {:content-w (- cols 4)
+                        :live? live?
+                        :settings {:show-python-code show-code?}
+                        :iterations
+                        (if separate? (mapv #(hash-map :forms [%]) forms) [{:forms forms}])})
+
+              header
+              (first (bands painted))
+
+              codes
+              (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") painted)
+
+              captured
+              (paint painted cols)
+
+              text
+              (cap/frame-text captured)]
+
+          (expect (= 1 (count (bands painted))))
+          (expect (= (if show-code? 1 0) (count codes)))
+          (expect (nil? (:error captured)))
+          (expect (= 1 (count (re-seq #"ACTIVITY" text))))
+          (when (>= cols 80)
+            (expect (str/includes? (:line header)
+                                   (if (seq retained) "6 of 7 operations" "7 operations")))))))
+    (it "counts inline operations as well as every retained record in the joined band"
+        (doseq [cols
+                [40 80 120]
+
+                live?
+                [false true]]
+
+          (let [painted
+                (entries (grouped-activity-forms #{1 2}) {:content-w (- cols 4) :live? live?})
+
+                header
+                (first (bands painted))
+
+                captured
+                (paint painted cols)]
+
+            (expect (= 1 (count (bands painted))))
+            (expect (nil? (:error captured)))
+            (when (>= cols 80)
+              (expect (str/includes? (:line header) "6 of 7 operations"))
+              (expect (str/includes? (cap/frame-text captured) "6 of 7 operations"))))))
+    (it
+      "retains one disclosure and original history cursors through live settling and code hiding"
+      (let [forms
+            (grouped-activity-forms #{0 1 2})
+
+            running
+            (-> forms
+                (assoc-in [2 :success?] nil)
+                (assoc-in [2 :activity :state] "running")
+                (assoc-in [2 :activity :rows 1 :state] "running"))
+
+            header
+            (first (bands (entries running {:live? true})))
+
+            node-id
+            (get-in header [:meta :node-id])
+
+            expanded
+            {["s" node-id] true}
+
+            settled
+            (-> forms
+                (assoc-in [1 :activity :state] "failed")
+                (assoc-in [1 :activity :rows 0 :state] "failed")
+                (assoc-in [2 :activity :state] "cancelled")
+                (assoc-in [2 :activity :history :revision] 5)
+                (assoc-in [2 :activity :rows 1 :state] "cancelled"))
+
+            painted
+            (entries settled {:settings {:show-python-code false} :detail-expansions expanded})
+
+            settled-header
+            (first (bands painted))
+
+            pages
+            (filter #(= :activity-page (get-in % [:meta :kind])) painted)]
+
+        (expect (str/includes? (:line header) "running"))
+        (expect (= 1 (count (bands painted))))
+        (expect (= node-id (get-in settled-header [:meta :node-id])))
+        (expect (false? (get-in settled-header [:meta :collapsed?])))
+        (expect (str/includes? (:line settled-header) "failed"))
+        (expect (str/includes? (:line settled-header) "cancelled"))
+        (expect (= ["history-0" "history-1" "history-2"]
+                   (mapv :id (get-in settled-header [:meta :copy-history]))))
+        (expect (some #(and (= "history-2" (get-in % [:meta :history-id]))
+                            (= 2 (get-in % [:meta :after]))
+                            (= 5 (get-in % [:meta :revision])))
+                      pages))
+        (expect (= forms (grouped-activity-forms #{0 1 2})))))))
+
 (defdescribe
   execution-group-integrity-test
   (it "scopes duplicate ids and adds counts and measured execution times"

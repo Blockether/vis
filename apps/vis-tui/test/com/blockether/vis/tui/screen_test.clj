@@ -3167,6 +3167,61 @@ therapy line 2"
           (expect (= "export sid 0f3f2a1e-0000-4000-8000-000000000001 r4"
                      (deref copied 1000 ::timeout)))
           (expect (= "✓ Copied Activity history" (first (deref notified 1000 ::timeout))))))))
+  (it
+    "copies inline and retained sources together in their original order, or nothing on failure"
+    (doseq [fail? [false true]]
+      (let [form (fn [idx retained?]
+                   {:code (str "read_" idx "()")
+                    :success? true
+                    :activity (cond-> {:state "succeeded"
+                                       :counts {:succeeded 2}
+                                       :rows [{:id "op-1"
+                                               :sequence 1
+                                               :operation "cat"
+                                               :state "succeeded"
+                                               :summary (str "source-" idx)
+                                               :resources []
+                                               :evidence []}]
+                                       :omitted {:rows 0}}
+                                retained?
+                                (assoc :history
+                                  {:id (str "history-" idx) :revision 4 :total 2 :after 0}))})
+            payload (render/format-answer-with-thinking-data
+                      ""
+                      [{:forms [(form 0 false) (form 1 true) (form 2 false) (form 3 true)]}]
+                      76
+                      {}
+                      nil
+                      false
+                      {:session-id "sid" :session-turn-id "turn"})
+            message
+            {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
+            copy (first
+                   (filter
+                     #(str/ends-with? (str (:node-id %)) ":#band")
+                     (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)))
+            exports (atom [])
+            copied (promise)]
+
+        (with-redefs-fn {#'chat/activity-export (fn [session-id activity-id revision]
+                                                  (swap! exports conj
+                                                    [session-id activity-id revision])
+                                                  (if (and fail? (= "history-3" activity-id))
+                                                    {:failed true}
+                                                    {:text (str "export " activity-id)}))
+                         #'input/clipboard-copy! (fn [text]
+                                                   (deliver copied text)
+                                                   true)
+                         #'vis/notify! (fn [& _])}
+          (fn []
+            (expect (= (not fail?) (deref (copy-disclosure! copy) 1000 ::timeout)))
+            (expect (= [["sid" "history-1" 4] ["sid" "history-3" 4]] @exports))
+            (if fail?
+              (expect (not (realized? copied)))
+              (let [text (deref copied 1000 ::timeout)]
+                (expect (string? text))
+                (expect (= ["source-0" "export history-1" "source-2" "export history-3"]
+                           (re-seq #"source-[02]|export history-[13]" text))))))))))
   (it "never substitutes the painted window when the whole history cannot be had"
       (let [copied
             (promise)

@@ -549,21 +549,23 @@
    An Activity band paints one WINDOW of a record that keeps more, so its header
    copies what the RECORD holds — the gateway's whole-history export
    (`chat/activity-export`, one body per retained run), pinned to the revision the
-   band is showing.
+   band is showing. Inline sources in a joined band remain between those exports.
 
    Anything short of the whole history is not what was asked for. A failed export,
    or one the gateway itself marked incomplete, leaves the clipboard UNTOUCHED and
    says so: quietly substituting the visible page is exactly the silent loss this
    copy exists to undo."
   [hit]
-  (if-let [histories (seq (:history hit))]
+  (if-let [sources (seq (:history hit))]
     (let [session-id (:session-id hit)
           failure (volatile! nil)]
 
       (copy-text-async!
         "vis-tui-copy-activity-history"
         (fn []
-          (let [exports (mapv #(chat/activity-export session-id (:id %) (:revision %)) histories)]
+          (let [exports (mapv (fn [{:keys [id revision] :as source}]
+                                (if id (chat/activity-export session-id id revision) source))
+                              sources)]
             (if (some :failed exports)
               (do (vreset! failure (if (some :stale exports) :stale :unavailable)) nil)
               (str/join "\n\n" (map :text exports)))))

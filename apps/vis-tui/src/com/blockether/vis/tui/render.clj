@@ -5822,7 +5822,7 @@
    #band is open; group contents start shut. Live/failure context survives manual folding.
    Row, file and group keys retain reader choices."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts
-           activity-histories activity-fetch]} max-w session-id]
+           activity-histories activity-sources activity-fetch]} max-w session-id]
   (let [rows
         (activity-operation-rows activity-rows)
 
@@ -6311,6 +6311,12 @@
         histories
         (vec (remove nil? activity-histories))
 
+        sources
+        (or (seq activity-sources)
+            (map (fn [history]
+                   {:history history})
+                 histories))
+
         ;; A merged display block joins several runs into one band, and each run
         ;; keeps its OWN record and cursor: one rule per record that still has
         ;; something to show, named by the run when there is more than one.
@@ -6428,7 +6434,13 @@
                         (str (get states state) " " (name state))))
 
             retained
-            (reduce + 0 (map #(long (or (:total %) 0)) histories))
+            (reduce +
+                    0
+                    (map (fn [{:keys [history rows counts omitted]}]
+                           (max (long (or (:total history) 0))
+                                (long (reduce + 0 (vals counts)))
+                                (+ (count rows) (long (or (:rows omitted) 0)))))
+                         sources))
 
             ;; One search reads the whole record, so the band says what it is
             ;; showing a filtered view OF, not merely how many rows survived it.
@@ -6483,14 +6495,16 @@
                            :item-id "#band"
                            :copy-text (activity-contract/copy-text
                                         {:rows activity-rows :omitted {:rows activity-omitted}})
-                           ;; Copy means ALL of it. The window's own text is the
-                           ;; fallback for a record that has nothing else to give.
+                           ;; Copy every source in order, including receipts without
+                           ;; retained history between the gateway-backed records.
                            :copy-history (when (seq histories)
-                                           (mapv (fn [history]
-                                                   {:id (str (:id history))
-                                                    :revision (:revision history)
-                                                    :total (long (or (:total history) 0))})
-                                                 histories))
+                                           (mapv (fn [source]
+                                                   (if-let [history (:history source)]
+                                                     {:id (str (:id history))
+                                                      :revision (:revision history)
+                                                      :total (long (or (:total history) 0))}
+                                                     {:text (activity-contract/copy-text source)}))
+                                                 sources))
                            :copy-width (when copy? (p/display-width code-copy-label))
                            :collapsed? (not band-open?)
                            :operation-col 0
@@ -6636,6 +6650,8 @@
         ;; cursor could only ever address one of them, so the band carries them
         ;; all and pages whichever the reader presses.
         :histories (vec (keep :history activities))
+        ;; Totals and copying also include the inline sources, in their original order.
+        :sources (vec activities)
         :vis.channel-tui/fetch (apply merge {} (keep :vis.channel-tui/fetch activities))}})))
 
 (defn- execution-groups
@@ -6944,6 +6960,7 @@
                    :activity-histories (vec (or (seq (:histories activity))
                                                 (when-let [history (:history activity)]
                                                   [history])))
+                   :activity-sources (or (:sources activity) [activity])
                    :activity-fetch (:vis.channel-tui/fetch activity)
                    :activity-expanded? (fn [item-key default-open?]
                                          (detail-expanded? detail-expansions

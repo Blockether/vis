@@ -5846,6 +5846,36 @@
 
 (defdescribe
   activity-paging-test
+  (it "pages one joined source in live, pending and restored traces without changing its neighbors"
+      (let [forms
+            (mapv (fn [idx]
+                    {:code (str "read_" idx "()")
+                     :activity (assoc-in (paged-activity 0 32 [{:id (str "source-" idx)}])
+                                 [:history :id]
+                                 (str "a" idx))})
+                  [1 2 3])
+
+            trace
+            [{:forms forms}]
+
+            expected
+            (assoc-in forms
+              [1 :activity]
+              (assoc-in (paged-activity 32 64 [{:id "next-source-2"}]) [:history :id] "a2"))]
+
+        (state/reg-fx :load-activity-page
+                      (fn [& _]))
+        (reset! state/app-db {:session {:id "cid"}
+                              :render-version 0
+                              :progress {:iterations trace}
+                              :messages
+                              [{:role :agent :traces trace :terminal-pending {:trace trace}}]})
+        (state/dispatch [:activity-page "cid" "a2" 32 4])
+        (state/dispatch [:activity-page-loaded "cid" "a2" (get-in expected [1 :activity])
+                         {:after 32 :revision 4}])
+        (doseq [path [[:progress :iterations 0 :forms] [:messages 0 :traces 0 :forms]
+                      [:messages 0 :terminal-pending :trace 0 :forms]]]
+          (expect (= expected (get-in @state/app-db path))))))
   (it "asks the record for the pressed window and marks that rule loading"
       (let [asked (atom [])]
         (state/reg-fx :load-activity-page
