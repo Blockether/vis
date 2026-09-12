@@ -22,6 +22,18 @@ class ScenarioFilesTest(unittest.TestCase):
             self.assertEqual(["library"], config["jail"]["filesystem"]["allow"])
             self.assertIn("return 0", (Path(work) / "library/value.py").read_text())
 
+    def test_namespace_rename_uses_anchored_edits_and_checks_the_moved_source(self):
+        scenario = run.load_scenarios(["clj-ns-rename"])[0]
+        self.assertEqual(["patch"], scenario["want_tools"])
+        self.assertNotIn("symbol_rename", scenario["prompt"])
+        self.assertIn("(ns foo.core)", scenario["want"]["src/foo/core.clj"])
+
+    def test_project_computation_explicitly_requires_the_managed_repl(self):
+        scenario = run.load_scenarios(["py-repl-compute"])[0]
+        self.assertEqual(["repl_eval"], scenario["want_tools"])
+        self.assertIn("repl_eval", scenario["prompt"])
+        self.assertIn("repl_stop", scenario["prompt"])
+
 
 class CacheMetricValidationTest(unittest.TestCase):
     def usage(self):

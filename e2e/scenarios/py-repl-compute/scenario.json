@@ -1,6 +1,6 @@
 {
   "lang": "python",
-  "prompt": "The project has a module secret.py with a function compute(). Using the PROJECT's Python (import the module and call it — do not reimplement it by hand), tell me exactly what compute() returns.",
+  "prompt": "The project has a module secret.py with a function compute(). Start the project Python REPL with repl_start, then use repl_eval to import the module and call compute(). Do not execute the module in the sandbox, use shell, or reimplement it by hand. Tell me exactly what compute() returns, and stop the REPL you started with repl_stop when finished.",
   "want": {},
   "wantnot": {},
   "want_answer": ["338350"],
