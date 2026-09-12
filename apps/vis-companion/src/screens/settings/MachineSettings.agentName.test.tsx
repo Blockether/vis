@@ -43,6 +43,22 @@ async function open() {
   );
   return screen.findByRole<HTMLInputElement>('textbox', { name: 'Agent name' });
 }
+it('shows Save only after the agent name changes', async () => {
+  const field = await open();
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+  fireEvent.focus(field);
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+
+  fireEvent.change(field, { target: { value: 'Grace' } });
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+
+  fireEvent.change(field, { target: { value: 'Ada' } });
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+});
+
 it('saves explicitly to this gateway and adopts its normalized response', async () => {
   let finish!: (value: typeof setting) => void;
   const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockImplementation(function (
@@ -61,11 +77,12 @@ it('saves explicitly to this gateway and adopts its normalized response', async 
   fireEvent.submit(field.closest('form')!);
   expect(save).toHaveBeenCalledExactlyOnceWith('agent_name', 'value', '  Grace  ');
   expect(field).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
   finish({ ...setting, value: 'Grace' });
   await waitFor(() =>
     expect(screen.getByRole('textbox', { name: 'Agent name' })).toHaveValue('Grace'),
   );
-  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
 });
 it('cancels a draft, rejects a blank name locally and retries a failed write', async () => {
   const save = vi
@@ -76,6 +93,7 @@ it('cancels a draft, rejects a blank name locally and retries a failed write', a
   fireEvent.change(field, { target: { value: 'Other' } });
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(field).toHaveValue('Ada');
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
   expect(save).not.toHaveBeenCalled();
   fireEvent.change(field, { target: { value: '   ' } });
   expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();

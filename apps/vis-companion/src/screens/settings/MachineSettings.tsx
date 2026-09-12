@@ -122,14 +122,16 @@ export function StringSetting({
           className="flex-1"
           onChange={(event) => setDraft(event.target.value)}
         />
-        <Button
-          type="submit"
-          density="panel"
-          disabled={busy || !changed || !draft.trim()}
-          aria-busy={busy}
-        >
-          {busy ? 'Saving…' : 'Save'}
-        </Button>
+        {(changed || busy) && (
+          <Button
+            type="submit"
+            density="panel"
+            disabled={busy || !draft.trim()}
+            aria-busy={busy}
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+        )}
         {changed && (
           <Button
             type="button"
