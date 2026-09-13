@@ -387,6 +387,105 @@
             (expect (= column (str/last-index-of painted label))))))))
 
 (defdescribe
+  activity-complete-history-test
+  (it "does not add a search rule for every complete run in a merged Activity band"
+      ;; Regression: fifteen retained runs added fifteen rules below nineteen operations.
+      (let [rows
+            (mapv (fn [index]
+                    {:id (str "row-" index)
+                     :sequence (inc index)
+                     :operation "grep"
+                     :state "succeeded"
+                     :summary (str "match " index)
+                     :resources []
+                     :evidence []})
+                  (range 19))
+
+            histories
+            (mapv (fn [index]
+                    {:id (str "history-" index)
+                     :revision 1
+                     :total (if (zero? index) 5 1)
+                     :after 0
+                     :next-after nil})
+                  (range 15))
+
+            opts
+            {:node-id "activity"
+             :activity-rows rows
+             :activity-expanded? (fn [key _]
+                                   (= "#band" key))}]
+
+        (doseq [cols [40 80 160]]
+          (let [entries (#'render/activity-detail-entries
+                         (assoc opts :activity-histories histories)
+                         (- cols 4)
+                         "fixture")
+                plain (#'render/activity-detail-entries opts (- cols 4) "fixture")
+                header (first entries)
+                captured (cap/capture!
+                           {:cols cols
+                            :rows 30
+                            :paint! (fn [{:keys [screen]}]
+                                      (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                        (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                  {:role :assistant
+                                                                   :prewrapped-lines (mapv :line
+                                                                                           entries)
+                                                                   :line-meta (mapv :meta entries)}
+                                                                  0
+                                                                  0
+                                                                  cols
+                                                                  {:viewport-h 30})
+                                        (.refresh s)))})
+                text (cap/frame-text captured)]
+
+            (expect (= (mapv :line plain) (mapv :line entries)))
+            (expect (= 15 (count (get-in header [:meta :copy-history]))))
+            (expect (nil? (:error captured)))
+            (expect (str/includes? text "19 operations"))
+            (expect (not (str/includes? text "search every operation")))
+            (expect (not (str/includes? text "from run")))))))
+  (it "does not offer search for an empty complete record"
+      (let [entries (#'render/activity-detail-entries
+                     {:node-id "activity"
+                      :activity-rows []
+                      :activity-expanded? (fn [key _]
+                                            (= "#band" key))
+                      :activity-histories [{:id "empty" :total 0 :after 0 :next-after nil}]}
+                     72
+                     "fixture")]
+        (expect (empty? (filter #(contains? #{:activity-page :activity-search}
+                                            (get-in % [:meta :kind]))
+                                entries)))))
+  (it "keeps controls for incomplete and searched runs without renumbering them"
+      (let [entries
+            (#'render/activity-detail-entries
+             {:node-id "activity"
+              :activity-rows []
+              :activity-expanded? (fn [key _]
+                                    (= "#band" key))
+              :activity-histories [{:id "complete" :total 1 :after 0 :next-after nil}
+                                   {:id "partial" :revision 2 :total 90 :after 0 :next-after 32}
+                                   {:id "searched" :total 1 :after 0 :next-after nil}]
+              :activity-fetch {"searched" {:query "patch"}}}
+             100
+             "fixture")
+
+            controls
+            (filterv #(contains? #{:activity-page :activity-search} (get-in % [:meta :kind]))
+              entries)]
+
+        (expect (= [[:activity-page "partial" 32] [:activity-search "partial" nil]
+                    [:activity-page "searched" 0]]
+                   (mapv #(mapv (:meta %) [:kind :history-id :after]) controls)))
+        (expect (str/includes? (get-in controls [0 :meta :label]) "from run 2"))
+        (expect (str/includes? (get-in controls [1 :meta :label]) "from run 2"))
+        (expect (= "clear search · show every operation from run 3"
+                   (get-in controls [2 :meta :label])))
+        (expect (nil? (get-in controls [2 :meta :query]))))))
+
+(defdescribe
   direct-activity-result-test
   (it "does not render generic result summaries or offer empty disclosures"
       (let [row {:state "succeeded"

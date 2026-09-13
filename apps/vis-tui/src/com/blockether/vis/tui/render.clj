@@ -6402,7 +6402,8 @@
                                   (str "show the earliest operations again" run)
                                   {:kind :activity-page :history-id id :after 0 :query query}))
 
-                          :always
+                          ;; Complete, unfiltered records need no search footer.
+                          (or next-after (pos? after) (seq query))
                           (conj search-rule)))))
             (range)
             histories))
