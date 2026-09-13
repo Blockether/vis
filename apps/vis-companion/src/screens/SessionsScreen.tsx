@@ -1782,7 +1782,9 @@ export function SessionsScreen({
             sheet's own paper on a phone, a round there would have cut paper out of
             the same paper, so the projects were square on the glass and sheets on the
             desk for no reason a reader could see. */}
-      <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-page sm:max-h-full sm:border-0">
+      {/* Overlay the viewport edge so it stays visible while headers scroll underneath.
+          Sharing the first header's pixel avoids a doubled rule or a layout shift. */}
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-page before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:z-20 before:border-t before:border-white sm:max-h-full">
         {/* The pull reports itself where the search door lives: it takes over the app bar
             until the finger releases, instead of inserting a new band above the list. */}
         <PullToSearchHint phase={pullPhase} ref={hintRef} />

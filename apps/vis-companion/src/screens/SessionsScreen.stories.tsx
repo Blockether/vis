@@ -309,3 +309,31 @@ export const SharingDesktop: Story = {
     ),
   ],
 };
+
+/** The viewport seam must not scroll away or add a second layout border. */
+export const FixedViewportSeam: Story = {
+  ...NarrowRail,
+  play: async ({ canvasElement }) => {
+    const screen = within(canvasElement).getByRole('region', { name: 'Sessions' });
+    const scroller = screen.querySelector<HTMLElement>('.overflow-y-auto')!;
+    const viewport = scroller.parentElement!;
+    const top = viewport.getBoundingClientRect().top;
+    await expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight);
+    for (const offset of [0, 48, scroller.scrollHeight]) {
+      scroller.scrollTo({ top: offset, behavior: 'instant' });
+      await expect(scroller.scrollTop).toBe(
+        Math.min(offset, scroller.scrollHeight - scroller.clientHeight),
+      );
+      const seam = getComputedStyle(viewport, '::before');
+      await expect(seam.position).toBe('absolute');
+      await expect(seam.top).toBe('0px');
+      await expect(seam.borderTopWidth).toBe('1px');
+      await expect(seam.borderTopStyle).toBe('solid');
+      await expect(seam.zIndex).toBe('20');
+      await expect(seam.pointerEvents).toBe('none');
+      await expect(viewport.getBoundingClientRect().top).toBe(top);
+      await expect(scroller.getBoundingClientRect().top).toBe(top);
+      await expect(Math.round(parseFloat(seam.width))).toBe(viewport.clientWidth);
+    }
+  },
+};

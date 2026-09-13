@@ -115,6 +115,26 @@ describe('sessions feature boundaries', () => {
     expect(list?.[1]).toContain('pb-[calc(0.75rem+env(safe-area-inset-bottom))]');
   });
 
+  it('keeps one fixed top seam above scrolling project headings', () => {
+    const viewport = sessionsScreenSource.match(
+      /<div className="([^"]*overflow-hidden[^"]*bg-page[^"]*)">/,
+    );
+    expect(viewport, 'list viewport').not.toBeNull();
+    const classes = viewport?.[1].split(' ');
+    expect(classes).not.toContain('border-t');
+    expect(classes).toEqual(
+      expect.arrayContaining([
+        'before:absolute',
+        'before:inset-x-0',
+        'before:top-0',
+        'before:z-20',
+        'before:border-t',
+        'before:border-white',
+        'before:pointer-events-none',
+      ]),
+    );
+  });
+
   it('keeps session rename inside the row', () => {
     expect(sessionListSource).toContain('renameDraft');
     expect(sessionListSource).toContain('commitRename');
