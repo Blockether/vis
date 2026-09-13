@@ -1,5 +1,27 @@
 # Vis Companion — release notes
 
+## 0.2.3 (5984) — 2026-09-13
+<!-- commit: 20f4b93bf44e7b53a863ee2e98965e6e0f704b6f -->
+
+- Split phone and desktop project paging
+- Align project paging with header controls
+- Remove the Activity toolbar (#212)
+- V0.2.3
+- Warm gateway fixtures before timed cases
+- Merge retained Activity groups after #212
+- Restore compact mobile pagination
+- V0.2.2
+- Align adjacent result tables in both clients
+- V0.2.1
+- Resolve #210 #211 and #212 without Activity loss
+- Add safe streaming log styles for #209
+- Hide Save until the agent name changes
+- Honor release tracks and build dev from source
+- Support shared Markdown documents
+- Align app bar controls to window edges
+- Use row menus and numbered project pages
+- Record companion build 5927
+
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
 ## 0.2.0 (5927) — 2026-09-12
