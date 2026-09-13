@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.provider.vendor.github-copilot-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.svar.core :as svar]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.provider.vendor.github-copilot :as sut]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -20,10 +21,30 @@
                    (doseq [provider providers]
                      (expect (= expected (get-in provider [:provider/preset :network])))))))
 
+(defdescribe copilot-luna-input-budget-test
+             (it "uses Luna's 200K input cap through the pinned Svar dependency"
+                 ;; Copilot advertises 328K total, including up to 128K output.
+                 ;; The old Svar overlay incorrectly allowed 922K input.
+                 (doseq [provider (mapcat @#'sut/provider-entries
+                                          [:individual :business :enterprise])]
+                   (let [router (svar/make-router [(assoc (:provider/preset provider)
+                                                     :id (:provider/id provider)
+                                                     :api-key "test"
+                                                     :models [{:name "gpt-5.6-luna"}])])
+                         model (-> router
+                                   :providers
+                                   first
+                                   :models
+                                   first)]
+
+                     (expect (= 200000 (:context model)))
+                     (expect (= 200000 (:input-limit model)))
+                     (expect (= 128000 (:output-limit model)))))))
+
 (defdescribe
   provider-registration-test
   (it "registers ONE transparent provider per Copilot account (no per-wire sub-providers)"
-      (require 'com.blockether.vis.internal.provider.vendor.github-copilot :reload)
+      (sut/register!)
       (let [business
             (vis/provider-by-id :github-copilot-business)
 
@@ -76,7 +97,7 @@
             (expect (contains? @requested "claude-fable-5.1"))))))
   (describe "active-tier-detect"
             (it "surfaces credentials for ONLY the active Copilot tier (issue #48)"
-                (require 'com.blockether.vis.internal.provider.vendor.github-copilot :reload)
+                (sut/register!)
                 (let [detect? (fn [pid]
                                 (boolean ((:provider/detect-fn (vis/provider-by-id pid)))))]
                   ;; The three tiers share ONE OAuth token file. Even with a token present
@@ -290,7 +311,7 @@
   ;; so the tier the user picked was never recorded in that file.
   (describe "status"
             (it "authenticates ONLY the tier the credential was minted for"
-                (require 'com.blockether.vis.internal.provider.vendor.github-copilot :reload)
+                (sut/register!)
                 (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"
                                                                        :source :auth-file})
                                  #'sut/env-account-type (constantly nil)
@@ -312,7 +333,7 @@
                       (expect (nil? (:oauth-token-preview individual))))))))
   (describe "limits"
             (it "reports no quota for a tier that does not hold the credential"
-                (require 'com.blockether.vis.internal.provider.vendor.github-copilot :reload)
+                (sut/register!)
                 (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"})
                                  #'sut/env-account-type (constantly nil)
                                  #'sut/auth-account-type (constantly :enterprise)
@@ -335,7 +356,7 @@
   (describe
     "sign-in"
     (it "runs the device flow when the credential belongs to ANOTHER tier"
-        (require 'com.blockether.vis.internal.provider.vendor.github-copilot :reload)
+        (sut/register!)
         (let [flows (atom [])]
           (with-redefs-fn
             {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test" :source :auth-file})
@@ -361,7 +382,7 @@
                 ;; the flow ran FOR ENTERPRISE, which is what records that tier
                 (expect (= [:enterprise] @flows)))))))
     (it "still short-circuits when THIS tier already holds the credential"
-        (require 'com.blockether.vis.internal.provider.vendor.github-copilot :reload)
+        (sut/register!)
         (let [flows (atom [])]
           (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"
                                                                  :source :auth-file})
