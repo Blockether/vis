@@ -32,11 +32,28 @@ export const Inventory: Story = {
   args: { onChoose: choose, onCancel: close },
   play: async ({ args, canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
+    const panel = page.getByRole('dialog', { name: 'Manage projects on tower' });
+    const inventory = panel.lastElementChild!;
+    // A short project list must fit without either scrollbar, including the trailing actions.
+    await expect(inventory.scrollWidth).toBe(inventory.clientWidth);
+    await expect(inventory.scrollHeight).toBe(inventory.clientHeight);
+    for (const action of page.getAllByRole('button', { name: /^Remove every transcript/ })) {
+      await expect(action.getBoundingClientRect().right).toBeLessThanOrEqual(
+        inventory.getBoundingClientRect().right,
+      );
+    }
     await userEvent.click(page.getByRole('button', { name: /^vis/i }));
     await userEvent.click(page.getByRole('button', { name: 'Close projects on tower' }));
     await expect(args.onChoose).toHaveBeenCalledWith(STORY_PROJECTS[0].root);
     await expect(args.onCancel).toHaveBeenCalledOnce();
   },
+};
+
+/** The desktop gutter must fit just as it does in the phone sheet. */
+export const DesktopInventory: Story = {
+  ...Inventory,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  args: { ...Inventory.args, at: { top: 46, left: 34 } },
 };
 
 /** Project removal stays in the selected row and never grows into a second line. */

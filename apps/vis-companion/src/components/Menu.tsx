@@ -310,11 +310,9 @@ export function MenuItem({
   );
   if (!action) return row;
   return (
-    // The wrapper owns the row's TRAILING GUTTER, exactly as `LIST_TRAIL` does for the
-    // list: an `edge` action reclaims it with its own negative margin, so the glyph is
-    // `px-3` from the paper just like the title is on the other side. Without it the
-    // trash's `-mr-3` had nothing to cancel and hung 12px past the sheet's own edge.
-    <div className="flex items-stretch border-b border-dialog-edge pr-3">
+    // Match the edge action's negative margin at both breakpoints. A 12px gutter
+    // against its 16px desktop margin overflows even a two-project inventory.
+    <div className="flex items-stretch border-b border-dialog-edge pr-3 sm:pr-4">
       {row}
       {action}
     </div>
