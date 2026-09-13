@@ -21,6 +21,20 @@
    desktop rhythm. Layout — which columns exist, how wide the paper is — stays
    on `sm:`, because that really is a question about room. */
 @custom-variant mouse (@media (width >= 40rem) and (pointer: fine));
+
+/* Desktop hides scrollbar chrome everywhere, without disabling scrolling.
+   Keep this outside the layers so local scrollbar utilities cannot restore it. */
+@media (width >= 40rem) and (pointer: fine) {
+  * {
+    scrollbar-width: none;
+    scrollbar-gutter: auto;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* The two Blockether palettes put branded paper under a dialog close, and they carry the
    SAME amber pair mirrored: Light's dark title band takes an amber face with dark ink,
    Dark's amber title band takes that pair swapped — an ink face with an amber mark. The
