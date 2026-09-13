@@ -35,6 +35,7 @@
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.provider.error :as provider-error]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.util :as util]
@@ -5923,6 +5924,15 @@
     (append-event! other
                    "session.title_updated"
                    {:titled_session_id (str sid) :title (str title)})))
+
+(defn- broadcast-provider-limits-change!
+  "Wake limits readers after a credential transition, including polling clients."
+  [provider-id]
+  (doseq [sid (keys @registry)]
+    (append-event! sid "provider.limits_changed" {:provider-id provider-id})))
+
+(defonce provider-limits-listener
+  (swap! provider-limits/auth-change-listeners conj #'broadcast-provider-limits-change!))
 
 (defonce bus-wiring
   ;; Wire the cross-process bus ONCE at namespace load: foreign events tailed

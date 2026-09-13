@@ -4795,6 +4795,10 @@
                   (state/dispatch [:set-title (or (:title chunk) "")
                                    (or (:session-id chunk) session-id)])
 
+                  ;; Auth can complete while this tab is idle or waiting for its first token.
+                  :provider-limits-changed
+                  (state/dispatch [:force-provider-limits-refresh])
+
                   ;; Model preference changed for THIS session somewhere else —
                   ;; keep the tab's chip in sync with the shared store.
                   :model-sync

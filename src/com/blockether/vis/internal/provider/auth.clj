@@ -80,7 +80,7 @@
   "Auth landed: drop cached fleet and limits views once, before publishing success."
   [provider-id]
   (refresh-fleet!)
-  (try (provider-limits/flush-limits-cache! provider-id) (catch Throwable _ nil))
+  (provider-limits/auth-changed! provider-id)
   nil)
 
 (defn- provider-view

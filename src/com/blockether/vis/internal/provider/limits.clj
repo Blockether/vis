@@ -131,6 +131,22 @@
   ([] (reset! limits-cache {}))
   ([provider-id] (swap! limits-cache dissoc provider-id)))
 
+(defonce
+  ^{:doc
+    "Process-local callbacks receiving a provider id after credential changes.
+                  Register stable function Vars; callbacks must not block on provider IO."}
+  auth-change-listeners
+  (atom #{}))
+
+(defn auth-changed!
+  "Invalidate a provider's limits before notifying connected views to re-poll.
+   Listener failures cannot turn a successful credential change into an auth failure."
+  [provider-id]
+  (flush-limits-cache! provider-id)
+  (doseq [notify! @auth-change-listeners]
+    (try (notify! provider-id) (catch Throwable _ nil)))
+  nil)
+
 (defn- throttled-report?
   "True when the provider answered \"ask later\" instead of a quota."
   [report]

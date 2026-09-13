@@ -44,6 +44,7 @@
     [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
     [com.blockether.vis.internal.provider.error :as perr]
     [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.config.runtime-settings :as rt]
     [com.blockether.vis.internal.gateway.resources :as resources]
@@ -6097,6 +6098,7 @@
       (when (and f (= :auth (:category (perr/svar-classification t))) (auth-refresh-allowed? pid))
         (let [rejected (config/baked-token pid)]
           (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+               (provider-limits/auth-changed! pid)
                (tel/log! {:level :warn :id ::boot-auth-token-refreshed :data {:provider pid}}
                          (str "Provider build hit auth error — force-refreshed OAuth token for "
                               pid
@@ -6954,7 +6956,7 @@
                          (do (auth-fn (constantly nil)) (get-token-fn)))]
 
                    (if (usable-token-envelope? envelope rejected)
-                     {:value envelope}
+                     (do (provider-limits/auth-changed! pid) {:value envelope})
                      {:error (managed-auth-failure
                                pid
                                "was cancelled or did not produce a usable credential."
@@ -7224,7 +7226,8 @@
     (boolean (or (and refreshed?
                       (or (not managed-auth?)
                           (usable-token-envelope? (try (get-token-fn) (catch Throwable _ nil))
-                                                  rejected)))
+                                                  rejected))
+                      (do (provider-limits/auth-changed! pid) true))
                  (when managed-auth?
                    ;; A failed refresh does not revoke the extension's interactive login contract.
                    ;; The rejected nonblank token is not a usable credential (issue #204).
