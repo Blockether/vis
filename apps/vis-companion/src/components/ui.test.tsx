@@ -654,7 +654,7 @@ describe('Pager', () => {
     ).toBe('');
   });
 
-  // Regression: desktop rails need numbers without replacing the phone's compact steps.
+  // Wide bands keep direct jumps; phones and narrow rails use the compact steps.
   it('offers both responsive forms and announces the position once', () => {
     const html = renderToStaticMarkup(
       <Pager page={1} pageCount={80} onPage={() => {}} label="vis sessions" />,
@@ -663,7 +663,6 @@ describe('Pager', () => {
     expect(html.match(/Page 1 of 80/g)).toHaveLength(1);
     expect(html).toContain('Next page');
     expect(html).toContain('Previous page');
-    expect(html).not.toMatch(/@[^" ]*:hidden/);
     for (const n of [1, 2, 3, 4, 5, 80]) {
       expect(html).toContain(`aria-label="Page ${n}"`);
     }

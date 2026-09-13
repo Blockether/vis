@@ -502,7 +502,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 accent line that used to close this header was the fourth yellow on a screen the
                 contract gives one to, and it drew the boundary at the wrong end: under a name is
                 where the rows it heads begin. */}
-                  <div className="flex bg-level-project">
+                  <div className="flex gap-2 bg-level-project">
                     {/* The leading half NAMES the project and FOLDS it: folder name, the path that
                   tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
                   the band already reserves, so the name keeps the list's one leading edge
@@ -559,18 +559,18 @@ export const ProjectGroup = memo(function ProjectGroup({
                           : null
                       }
                     />
+                    {isShowing && pageCount > 1 && (
+                      <div className="flex shrink-0 items-center pr-2">
+                        <Pager
+                          page={shownPage}
+                          pageCount={pageCount}
+                          onPage={goToPage}
+                          label={`${project} sessions`}
+                        />
+                      </div>
+                    )}
                   </div>
                 </SwipeActions>
-                {isShowing && pageCount > 1 && (
-                  <div className="px-3 pb-2 pt-1 sm:px-4">
-                    <Pager
-                      page={shownPage}
-                      pageCount={pageCount}
-                      onPage={goToPage}
-                      label={`${project} sessions`}
-                    />
-                  </div>
-                )}
               </div>
             </SectionHeader>
           )}

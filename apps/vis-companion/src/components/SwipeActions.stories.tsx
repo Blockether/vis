@@ -105,9 +105,6 @@ export const ProjectHeader: Story = {
           <div className="grid min-w-0 flex-1">
             <Story />
           </div>
-          <div className="px-3 pb-2 pt-1 sm:px-4">
-            <Pager page={1} pageCount={5} label={STORY_SESSION.project} onPage={onPage} />
-          </div>
         </SectionHeader>
       </div>
     ),
@@ -125,12 +122,15 @@ export const ProjectHeader: Story = {
       },
     ],
     children: (
-      <div className="flex bg-level-project">
+      <div className="flex gap-2 bg-level-project">
         <ProjectCrumb
           name={STORY_SESSION.project}
           qualifier={STORY_SESSION.where}
           disclosure={null}
         />
+        <div className="flex shrink-0 items-center pr-2">
+          <Pager page={1} pageCount={5} label={STORY_SESSION.project} onPage={onPage} />
+        </div>
       </div>
     ),
     trailing: (
@@ -146,9 +146,7 @@ export const ProjectHeader: Story = {
     const track = create.closest<HTMLElement>('[data-swipe-track]')!;
     const doc = canvasElement.ownerDocument;
     const win = doc.defaultView!;
-    const second = canvas.getByRole('button', {
-      name: win.matchMedia('(min-width: 640px)').matches ? 'Page 2' : 'Next page',
-    });
+    const second = canvas.getByRole('button', { name: 'Next page' });
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       await expect(track.scrollWidth).toBeGreaterThan(track.clientWidth);
       await userEvent.click(second);

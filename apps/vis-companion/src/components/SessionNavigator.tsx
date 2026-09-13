@@ -37,7 +37,7 @@ const HEADER_TYPE = 'text-title';
  * pointer column reached zero while it still spelled 36.
  */
 const HEADER_BAND =
-  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-t border-dialog-edge bg-level-project';
+  '@container/project flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-t border-dialog-edge bg-level-project';
 
 /** The session list's pull gesture takes over the app bar with the action a release would take. */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
@@ -363,9 +363,9 @@ export function pageWindow(page: number, pageCount: number): (number | null)[] {
 }
 
 /**
- * Gateway-backed project pages: compact steps on phones, numbered jumps on larger
- * viewports, including narrow desktop sidebars. The project band gives navigation
- * its own line so it never takes width from the project name.
+ * Gateway-backed project pages stay beside the project name and new-session control.
+ * Compact steps fit phones and narrow desktop rails; wide project bands show numbered
+ * jumps. The band's available width decides, not the viewport around a narrow sidebar.
  */
 export function Pager({
   page,
@@ -402,19 +402,19 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className="flex min-w-0 items-center justify-end"
+      className="flex shrink-0 items-center justify-end whitespace-nowrap"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
-      <div className="flex items-center gap-2 sm:hidden">
+      <div className="flex items-center gap-2 @3xl/project:hidden">
         {step(page - 1, true)}
         <span aria-hidden="true" className="font-mono text-ui text-dialog-hint tabular-nums">
           {page} / {pageCount}
         </span>
         {step(page + 1, false)}
       </div>
-      <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
+      <div className="hidden items-center justify-end gap-2 @3xl/project:flex">
         {pageWindow(page, pageCount).map((entry, index) =>
           entry === null ? (
             <span key={`gap-${index}`} aria-hidden className="font-mono text-ui text-dialog-hint">

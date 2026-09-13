@@ -83,11 +83,46 @@ export const Fleet: Story = {
     // Action counts must not move the permanent + / disclosure off the shared edge.
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;
     const create = within(project as HTMLElement).getByRole('button', { name: /^New session/ });
-    const disclosure = (
-      await within(project as HTMLElement).findAllByRole('button', {
-        name: /^Show details for/,
-      })
-    )[0];
+    // Regression: paging belongs beside the project and +, never on a second row.
+    const pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
+    const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
+    const centerY = (node: Element) => {
+      const box = node.getBoundingClientRect();
+      return box.y + box.height / 2;
+    };
+    await expect(centerY(pager)).toBe(centerY(create));
+    await expect(centerY(pager)).toBe(centerY(fold));
+    await expect(pager.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      fold.getBoundingClientRect().right + 8,
+    );
+    await expect(pager.getBoundingClientRect().right + 8).toBeLessThanOrEqual(
+      create.getBoundingClientRect().left,
+    );
+    for (const control of within(pager).getAllByRole('button')) {
+      await expect(centerY(control)).toBe(centerY(create));
+    }
+    const numbered = project.getBoundingClientRect().width >= 768;
+    if (numbered) {
+      for (const n of [1, 2, 3, 4, 5]) {
+        await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
+      }
+      expect(within(pager).queryByRole('button', { name: 'Next page' })).toBeNull();
+    } else {
+      await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeVisible();
+      expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
+    }
+    await userEvent.click(
+      within(pager).getByRole('button', { name: numbered ? 'Page 2' : 'Next page' }),
+    );
+    await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute('aria-live', 'polite');
+    await expect(fold).toHaveAttribute('aria-expanded', 'true');
+    for (const control of within(pager).getAllByRole('button')) {
+      await expect(centerY(control)).toBe(centerY(create));
+    }
+    await userEvent.click(
+      within(pager).getByRole('button', { name: numbered ? 'Page 1' : 'Previous page' }),
+    );
+    await expect(await within(pager).findByText(/^Page 1 of /)).toBeInTheDocument();
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       // The permanent controls must keep the project's paper, not the session panel's.
       await expect(win.getComputedStyle(create.parentElement!.parentElement!).backgroundColor).toBe(
@@ -95,6 +130,11 @@ export const Fleet: Story = {
       );
       return;
     }
+    const disclosure = (
+      await within(project as HTMLElement).findAllByRole('button', {
+        name: /^Show details for/,
+      })
+    )[0];
     const before = [create, disclosure].map((control) => control.getBoundingClientRect());
     await expect(before[0].right).toBe(before[1].right);
 
@@ -124,19 +164,6 @@ export const Fleet: Story = {
       await expect(trigger).toHaveFocus();
       await expect(within(doc.body).queryByRole('dialog')).not.toBeInTheDocument();
     }
-    const pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
-    if (win.matchMedia('(min-width: 640px)').matches) {
-      for (const n of [1, 2, 3, 4, 5]) {
-        await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
-      }
-      expect(within(pager).queryByRole('button', { name: 'Next page' })).toBeNull();
-    } else {
-      await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeVisible();
-      expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
-    }
-    await expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(
-      canvasElement.getBoundingClientRect().right,
-    );
     for (const [index, control] of [create, disclosure].entries()) {
       await expect(control.getBoundingClientRect().x).toBe(before[index].x);
     }

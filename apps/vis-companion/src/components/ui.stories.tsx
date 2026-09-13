@@ -651,10 +651,14 @@ function HeaderRenameDemo() {
 
 function PagerDemo() {
   const [page, setPage] = useState(1);
-  return <Pager page={page} pageCount={80} onPage={setPage} label="vis sessions" />;
+  return (
+    <div className="@container/project w-full">
+      <Pager page={page} pageCount={80} onPage={setPage} label="vis sessions" />
+    </div>
+  );
 }
 
-// Regression: fixing narrow desktop rails must not replace the phone's arrow controls.
+// The available band width, not the viewport, selects numbered jumps or compact steps.
 export const ProjectPages: Story = {
   render: () => (
     <Sheet>
@@ -662,8 +666,8 @@ export const ProjectPages: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const desktop = matchMedia('(min-width: 640px)').matches;
-    if (desktop) {
+    const band = canvas.getByRole('navigation', { name: 'Pages of vis sessions' }).parentElement!;
+    if (band.getBoundingClientRect().width >= 768) {
       expect(canvas.queryByRole('button', { name: 'Next page' })).toBeNull();
       for (const page of [1, 2, 3, 4, 5, 80]) {
         await expect(canvas.getByRole('button', { name: `Page ${page}` })).toBeVisible();
