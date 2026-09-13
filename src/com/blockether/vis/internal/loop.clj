@@ -5180,8 +5180,7 @@
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages &
    [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
-            llm-headers active-extensions answer-validation-context request-context on-response
-            goal-at-turn-start]}]]
+            llm-headers active-extensions answer-validation-context request-context on-response]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
@@ -5300,10 +5299,7 @@
           provider-watchdog-timeouts (assoc provider-deadlines
                                        :first-output-timeout-ms (+ first-output-timeout-ms 10000))
           goal-at-request-start (let [goal (goals/check-goal environment)]
-                                  (when (or (= "active" (get goal "status"))
-                                            (and (= "active" (get goal-at-turn-start "status"))
-                                                 (= (get goal "id") (get goal-at-turn-start "id"))))
-                                    goal))
+                                  (when (= "active" (get goal "status")) goal))
           provider-started-at-ms (util/now-ms)
           _ (when on-chunk
               (on-chunk (provider-call-chunk iteration-position
@@ -5539,7 +5535,13 @@
           answer-md (when (and (empty? tool-calls) (= :end (:stop-reason ask-result))) prose-md)
           ;; Show the prose ONLY when it adds something the code doesn't already
           ;; say — otherwise it's a dim duplicate of the python_execution block.
-          assistant-prose (when (seq tool-calls) (prose-beyond-code prose-md tool-calls))
+          ;; #216: persist and stream why a reasoning-only/empty response did no work.
+          ;; This is engine feedback, not fabricated provider prose or a Python error.
+          assistant-prose
+          (if (seq tool-calls)
+            (prose-beyond-code prose-md tool-calls)
+            (when-not prose-md
+              "Provider returned no executable tool call or answer text; nothing was executed."))
           ;; Keep useful prose for a later stop without finalizing the turn before validation
           ;; or while an explicit goal still has work to do.
           _ (when answer-md
@@ -8642,7 +8644,8 @@
           (let [{:keys [iteration trace trailer-iters llm-provider]} loop-state
                 goal-halt (goals/request-halt-result environment goal-at-turn-start)]
 
-            (ctx-loop/set-turn-state! environment :iteration (inc (long iteration)))
+            (when-not goal-halt
+              (ctx-loop/set-turn-state! environment :iteration (inc (long iteration))))
             (cond
               (when cancel-atom @cancel-atom)
               (do (log-stage! :error
@@ -8666,6 +8669,9 @@
                     result))
               goal-halt (merge goal-halt
                                {:status-id (status->id (:status goal-halt))
+                                :answer (if (= :success (:status goal-halt))
+                                          (finalize-answer! environment (:answer goal-halt))
+                                          (:answer goal-halt))
                                 :trace trace
                                 :iteration-count iteration}
                                (finalize-cost))
@@ -8850,7 +8856,6 @@
                               attempt-env
                               @effective-messages-atom
                               {:iteration iteration
-                               :goal-at-turn-start goal-at-turn-start
                                :request-context request-context
                                :reasoning-level reasoning-level
                                :reasoning-effort reasoning-effort

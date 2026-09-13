@@ -98,8 +98,9 @@ scheduler to restart it without a new user message.
 
 `--budget N` limits **model responses, not tokens**. One response and its tool
 calls count as one iteration, even if it calls several tools. Prose-only or empty
-responses, rejected final answers and the completion summary also count. Provider
-retries within a request do not count separately.
+responses and rejected final answers also count. Provider retries within a request
+do not count separately. The recorded completion or blocker summary does not require
+a separate model response or consume another iteration.
 
 The final allowed iteration can still run tools and update the goal. Vis checks
 the limit before making another model request. If the goal remains unresolved,
@@ -129,6 +130,8 @@ The agent can set only `complete` or `blocked`. It cannot use this command to
 create, cancel, replace, resume or enlarge a goal. Stale goal IDs and lifecycle
 versions are rejected. Saying "complete" in a reply does not update the goal;
 even a recorded completion is the model's assessment, not an independent check.
+After the current iteration's tools finish, Vis returns the recorded evidence or
+blocker as the final reply without another model request, even with no budget limit.
 
 While the goal is active, you can receive a progress reply without ending the
 work. Vis keeps that reply and automatically continues the same turn; it does

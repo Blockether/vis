@@ -4989,6 +4989,53 @@
           (expect (empty? (image-msgs suffix)))
           (expect (empty? (notes suffix)))))))
 
+;; #216: empty provider responses need an honest diagnostic in live and durable history.
+(defdescribe
+  empty-provider-response-diagnostic-test
+  (it
+    "keeps reasoning and usage while explaining why no tool or answer was produced"
+    (doseq [reply [{:stop-reason :end}
+                   {:stop-reason :end :content "  " :reasoning "Reasoning without an answer."}]]
+      (let [env (lp/create-environment (svar/make-router [{:id :fixture
+                                                           :api-key "test"
+                                                           :base-url "http://127.0.0.1:1/v1"
+                                                           :models [{:name "model"}]}])
+                                       {:db :memory})
+            requests (atom 0)
+            chunks (atom [])
+            diagnostic
+            "Provider returned no executable tool call or answer text; nothing was executed."]
+
+        (try (with-redefs [svar/ask-code!
+                           (fn [_ _]
+                             (case (swap! requests inc)
+                               1
+                               (assoc reply :api-usage {:input-tokens 10 :output-tokens 221})
+
+                               2
+                               {:stop-reason :end :content "A useful answer."}
+
+                               (throw (AssertionError. "Unexpected empty-response continuation"))))]
+               (let [result (lp/run-turn! env
+                                          "Answer the question"
+                                          {:hooks {:on-chunk #(swap! chunks conj %)}})
+                     rows (persistance/db-list-session-turn-iterations (:db-info env)
+                                                                       (:session-turn-id result))
+                     empty-row (first rows)
+                     final-row (second rows)]
+
+                 (expect (= 2 @requests))
+                 (expect (= diagnostic (:assistant-prose empty-row)))
+                 (expect (= diagnostic (:assistant-prose (first (:trace result)))))
+                 (expect (= [diagnostic]
+                            (mapv :text (filter #(= :assistant-prose (:phase %)) @chunks))))
+                 (expect (empty? (:forms empty-row)))
+                 (expect (= 221 (:output-tokens empty-row)))
+                 (expect (= (:reasoning reply) (not-empty (:thinking empty-row))))
+                 (expect (str/blank? (:assistant-prose final-row)))
+                 (expect (= "A useful answer." (get-in result [:answer :answer])))))
+             (finally (lp/dispose-environment! env)))))))
+
 (defdescribe
   finalize-answer-test
   "The ANSWER is the model's own prose and NOTHING else: `finalize-answer!` stores

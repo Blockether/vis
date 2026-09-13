@@ -50,6 +50,24 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+/** Regression #216: completed tool-only work remains visible when Python source is hidden. */
+export const HiddenSourceWithoutOutput: Story = {
+  args: {
+    live: false,
+    showCode: false,
+    iterations: [1, 2, 3].map((position) => ({
+      position,
+      forms: [{ source: 'value = 42', success: true, duration_ms: 10, stdout: '' }],
+    })),
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('CODE')).toBeVisible();
+    await expect(canvas.getByText('30ms')).toBeVisible();
+    await expect(canvas.queryByRole('button', { name: 'Expand code' })).toBeNull();
+    await expect(canvas.queryByText('value = 42')).toBeNull();
+  },
+};
+
 /** The turn while it is being written: the last step is open, so the line runs past it. */
 export const Running: Story = {
   args: { live: true },

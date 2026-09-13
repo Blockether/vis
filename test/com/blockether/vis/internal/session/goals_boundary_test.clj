@@ -61,18 +61,14 @@
                 {:code
                  "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All requested checks passed.'))"}}]}
 
-             3
-             {:stop-reason :end
-              :content "Verified and complete."
-              :api-usage {:input-tokens 8 :output-tokens 2}}
-
              (throw (ex-info "Unexpected continuation" {}))))]
         (let [result (lp/run-turn! env "/goal Verify goal integration" {})]
-          (is (= "Verified and complete." (get-in result [:answer :answer])))
-          (is (= 3 @requests))
+          ;; #216: terminal tool evidence is the summary, not another model request.
+          (is (= "Goal complete: All requested checks passed." (get-in result [:answer :answer])))
+          (is (= 2 @requests))
           (is (= "complete" (get (goals/check-goal env) "status")))
-          (is (= 26 (get (goals/check-goal env) "tokens_used")))
-          (is (= 3 (get (goals/check-goal env) "iterations_used")))
+          (is (= 16 (get (goals/check-goal env) "tokens_used")))
+          (is (= 2 (get (goals/check-goal env) "iterations_used")))
           (is (str/includes? (str @snapshots) "Verify goal integration"))))
       (finally (lp/dispose-environment! env)))))
 
@@ -113,31 +109,50 @@
                (is (str/includes? (str (:answer result)) "iteration budget reached"))))
            (finally (lp/dispose-environment! env))))))
 
-(deftest last-iteration-can-resolve-goal-test
-  (doseq [status ["complete" "blocked"]]
-    (let [env (environment)
-          requests (atom 0)]
+(deftest terminal-goal-finishes-current-tools-without-next-request-test
+  ;; #216: terminal goals stop with unlimited, remaining or exhausted iteration budgets.
+  (doseq [status
+          ["complete" "blocked"]
+
+          budget
+          [nil 10 1]]
+
+    (let [env
+          (environment)
+
+          requests
+          (atom 0)]
 
       (try (with-redefs [svar/ask-code!
                          (fn [_ _]
-                           (when (> (swap! requests inc) 1)
-                             (throw (AssertionError. "Exceeded iteration budget")))
-                           {:stop-reason :tool-calls
-                            :tool-calls
-                            [{:id "resolve"
-                              :name "python_execution"
-                              :input
-                              {:code
-                               (str
-                                 "g = session['goal']\nprint(update_goal(g['id'], g['version'], '"
-                                 status
-                                 "', 'Verified result or external blocker.'))")}}]})]
-             (let [result (lp/run-turn! env "/goal --budget 1 Resolve on last iteration" {})]
-               (is (= :success (:status result)))
+                           (if (> (swap! requests inc) 1)
+                             {:stop-reason :end :content "Unexpected extra summary."}
+                             {:stop-reason :tool-calls
+                              :tool-calls
+                              [{:id "resolve"
+                                :name "python_execution"
+                                :input
+                                {:code
+                                 (str
+                                   "g = session['goal']\nprint(update_goal(g['id'], g['version'], '"
+                                   status
+                                   "', 'Verified result or external blocker.'))")}}
+                               {:id "finish-current-tools"
+                                :name "python_execution"
+                                :input {:code "print('Current iteration tools finished.')"}}]}))]
+             (let [result (lp/run-turn!
+                            env
+                            (str "/goal " (when budget (str "--budget " budget " ")) "Resolve goal")
+                            {})]
                (is (= 1 @requests))
+               (is (= :success (:status result)))
+               (is (= 1 (:iteration-count result)))
+               (is (= 1 (count (:trace result))))
                (is (= status (get (goals/check-goal env) "status")))
                (is (= 1 (get (goals/check-goal env) "iterations_used")))
-               (is (str/includes? (str (:answer result)) "Verified result or external blocker."))))
+               (is (= (str "Goal " status ": Verified result or external blocker.")
+                      (get-in result [:answer :answer])))
+               (is (str/includes? (str (:trace result)) "Current iteration tools finished."))))
            (finally (lp/dispose-environment! env))))))
 
 (deftest prose-and-empty-replies-consume-iterations-without-token-usage-test
@@ -223,24 +238,22 @@
                       {:code
                        "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All acceptance criteria verified.'))"}}]}
 
-                   3
-                   {:stop-reason :end :content "Verified and complete."}
-
                    (throw (AssertionError. "Unexpected goal continuation"))))]
               (let [result (lp/run-turn! env "Use this new information and continue" {})
                     resumed (first @snapshots)
                     preserved ["id" "objective" "iteration_budget" "iterations_used" "tokens_used"
                                "time_used_ms" "created_at"]]
 
-                (is (= "Verified and complete." (get-in result [:answer :answer])))
-                (is (= 3 @requests))
+                (is (= "Goal complete: All acceptance criteria verified."
+                       (get-in result [:answer :answer])))
+                (is (= 2 @requests))
                 (is (= "active" (get resumed "status")))
                 (is (nil? (get resumed "reason")))
                 (is (= (inc (get before "version")) (get resumed "version")))
                 (is (= (inc (get before "revision")) (get resumed "revision")))
                 (is (= (select-keys before preserved) (select-keys resumed preserved)))
                 (is (= "complete" (get (goals/check-goal env) "status")))
-                (is (= 4 (get (goals/check-goal env) "iterations_used")))))))
+                (is (= 3 (get (goals/check-goal env) "iterations_used")))))))
         (finally (lp/dispose-environment! env))))))
 
 (deftest non-user-and-cancelled-turns-do-not-resume-goal-test
@@ -376,7 +389,6 @@
                   :input
                   {:code
                    "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All requested checks passed.'))"}}]}
-               (= n (+ progress-count 2)) {:stop-reason :end :content "Verified and complete."}
                :else (throw (AssertionError. "Unexpected goal continuation")))))]
 
         (let [result
@@ -390,9 +402,9 @@
               progress-chunks
               (filterv :assistant-prose @chunks)]
 
-          (is (= "Verified and complete." (get-in result [:answer :answer])))
+          (is (= "Goal complete: All requested checks passed." (get-in result [:answer :answer])))
           (is (= "complete" (get (goals/check-goal env) "status")))
-          (is (= (+ progress-count 2) @requests))
+          (is (= (inc progress-count) @requests))
           (is (= @requests (get (goals/check-goal env) "iterations_used")))
           (is (= 1 @finalizations))
           (is (every? #(and (zero? (:finalizations %)) (nil? (:answer %))) @request-states))

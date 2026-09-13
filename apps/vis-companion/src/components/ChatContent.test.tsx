@@ -1764,6 +1764,40 @@ describe('a turn drawn as one thread', () => {
 });
 
 describe('compact execution groups', () => {
+  // Regression #216: hiding source must not erase a successful, output-free tool run.
+  it('keeps one compact receipt for tool-only iterations with hidden source and no output', () => {
+    const painted = render(
+      <IterationTrace
+        whole
+        showCode={false}
+        iterations={[1, 2, 3].map((position) => ({
+          position,
+          forms: [{ source: 'value = 42', success: true, duration_ms: 10, stdout: '' }],
+        }))}
+      />,
+    );
+    expect(painted.container.querySelectorAll('[data-execution-code]')).toHaveLength(1);
+    expect(painted.container.textContent).toContain('CODE');
+    expect(painted.container.textContent).toContain('30ms');
+    expect(painted.container.textContent).not.toContain('value = 42');
+    expect(painted.queryByRole('button', { name: 'Expand code' })).toBeNull();
+    expect(painted.container.querySelector('[data-execution-activity]')).toBeNull();
+  });
+
+  // Regression #216: the engine's empty-response explanation must survive trace filtering.
+  it('shows an empty-response diagnosis without inventing a tool execution', () => {
+    const diagnosis = 'Provider returned no executable tool call or answer text; nothing was executed.';
+    const painted = render(
+      <IterationTrace
+        whole
+        iterations={[{ position: 1, assistant_prose: diagnosis, forms: [] }]}
+      />,
+    );
+    expect(painted.getByText(diagnosis)).toBeVisible();
+    expect(painted.container.querySelector('[data-execution-code]')).toBeNull();
+    expect(painted.container.querySelector('[data-execution-activity]')).toBeNull();
+  });
+
   it('shows one code line before one activity for adjacent Python calls', () => {
     const painted = render(
       <IterationTrace

@@ -139,7 +139,9 @@
    'complete' or 'blocked', and a concise evidence/reason string. Complete means
    every requirement is verified; blocked means no meaningful authorized action
    remains without user input or an external change after the goal blocker audit.
-   Never lower the objective or mark blocked merely to deliver a progress reply."
+   Never lower the objective or mark blocked merely to deliver a progress reply.
+   After this iteration's tools finish, the reason becomes the final reply without
+   another model request."
   [env goal-id version status reason]
   (when-not (contains? #{"complete" "blocked"} status)
     (fail! "Only complete or blocked may be declared by the model."))
@@ -161,11 +163,11 @@
 
 (defn account!
   "Attribute one loop response to the goal/version current when its request started.
-   Includes empty/prose responses and the same turn's completion summary. Provider
-   retries inside that request are not separate loop iterations. Tokens are statistics
-   only. Active wall time is checkpointed by every mutation, including tool boundaries."
+   Includes empty/prose responses and the response whose tools complete the goal.
+   Provider retries inside that request are not separate loop iterations. Tokens are
+   statistics only. Active wall time includes tool execution."
   [env started-goal usage]
-  (when (contains? #{"active" "complete" "blocked"} (get started-goal "status"))
+  (when (= "active" (get started-goal "status"))
     (change! (:db-info env)
              (:session-id env)
              (fn [goal]
@@ -222,9 +224,9 @@
         {:status :cancelled :answer "Goal stopped by the user."}))))
 
 (defn request-halt-result
-  "Enforce the iteration budget between iterations, after the previous tools finish.
-   A final allowed tool can complete/block the goal; return its evidence without an
-   extra model request when the budget is spent. User stops/replacements still win."
+  "Stop resolved goals and enforce iteration budgets after the previous tools finish.
+   Completion/blocking returns its recorded evidence without another model request,
+   whether or not the budget is spent. User stops/replacements still win."
   [env started-goal]
   (when (= "active" (get started-goal "status"))
     (let [goal (change! (:db-info env)
@@ -241,8 +243,7 @@
                             goal)))]
       (or (halt-result env started-goal)
           (when (and (= (get started-goal "id") (get goal "id"))
-                     (contains? #{"complete" "blocked"} (get goal "status"))
-                     (budget-reached? goal))
+                     (contains? #{"complete" "blocked"} (get goal "status")))
             {:status :success
              :answer (str "Goal " (get goal "status") ": " (get goal "reason"))})))))
 
@@ -284,11 +285,13 @@ cancel, replace, resume or enlarge a goal; /goal --pause, --resume and --cancel 
 A new user message resumes an existing paused or blocked goal if its iteration budget remains.
 Command-only turns and Council wakes do not resume goals; completed or cancelled goals stay stopped.
 iteration_budget is a count of loop iterations, not tokens; null means no goal-specific limit.
-iterations_used counts each model response and its tools, including prose, empty responses
-and the completion summary. Provider retries within one request are not separate iterations.
-The final allowed iteration may execute its tools and update_goal; no next request starts
-at the limit. Tokens are statistics only. time_used_ms records active wall time through
-updated_at, including tool execution. Inactive goals stop the clock. Resume preserves usage.
+iterations_used counts each model response and its tools, including prose and empty responses.
+Provider retries within one request are not separate iterations. After update_goal completes
+or blocks the goal, the current iteration's tools finish and its reason is returned as the
+final reply without another model request. The final allowed iteration may execute its tools
+and update_goal; no next request starts at the limit. Tokens are statistics only.
+time_used_ms records active wall time through updated_at, including tool execution.
+Inactive goals stop the clock. Resume preserves usage.
 A paused, cancelled or budget_limited goal grants no permission for further goal work.
 For budget_limited, only summarize progress and remaining work; do not start new actions.
 Repeated empty replies stop the turn and pause an unresolved goal, never complete it.

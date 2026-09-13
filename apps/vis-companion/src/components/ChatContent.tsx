@@ -1501,7 +1501,7 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
-      {((showCode && code) || cards.length > 0) && (
+      {((code && (showCode || !detectedActivity)) || cards.length > 0) && (
         <CollapsibleFormCode
           value={code}
           language={formCodeLanguage(form)}

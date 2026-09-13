@@ -1262,6 +1262,51 @@
 
 (defn- strip-ansi [s] (str/replace (or s "") #"\u001b\[[0-9;]*m" ""))
 
+(defdescribe
+  tool-only-hidden-source-test
+  ;; Regression #216: a duration alone does not identify completed tool work.
+  (it "keeps a named receipt when Python source and empty output are hidden"
+      (doseq [width [40 80 120]]
+        (let [entry (iteration/canonicalize
+                      {:position 0
+                       :forms [{:code "value = 42" :stdout "" :success? true :duration-ms 30}]})
+              lines (format-iteration-entry entry
+                                            (- width 8)
+                                            1
+                                            {:session-id "goal-216" :show-python-code? false})
+              captured (cap/capture! {:cols width
+                                      :rows 12
+                                      :paint! (fn [{:keys [g]}]
+                                                (render/draw-chat-bubble!
+                                                  g
+                                                  {:role :assistant :prewrapped-lines lines}
+                                                  0
+                                                  0
+                                                  (- width 4)
+                                                  {:viewport-top 0 :viewport-h 12}))})
+              visible (cap/frame-text captured)]
+
+          (expect (nil? (:error captured)))
+          (expect (str/includes? visible "CODE"))
+          (expect (str/includes? visible "30ms"))
+          (expect (not (str/includes? visible "value = 42")))))))
+
+(defdescribe
+  empty-response-diagnosis-test
+  ;; Regression #216: an engine diagnosis is visible prose, not a fake Python execution.
+  (it "renders the diagnosis when a provider response contains no executable block"
+      (let [diagnosis
+            "Provider returned no executable tool call or answer text; nothing was executed."
+
+            lines
+            (format-iteration-entry {:position 0 :assistant-prose diagnosis :forms []} 120 1)
+
+            visible
+            (str/join "\n" (map (comp strip-sentinels strip-ansi) lines))]
+
+        (expect (str/includes? visible diagnosis))
+        (expect (not (str/includes? visible "CODE"))))))
+
 (defn- body-of
   "Drop the leading marker (PUA codepoint) and return the visible text.
    Tolerates empty input - a blank line in `:answer` mode renders as

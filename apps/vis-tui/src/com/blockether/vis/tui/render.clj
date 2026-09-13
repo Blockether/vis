@@ -7149,7 +7149,10 @@
                                   (vis/format-duration result-duration-ms))]
                   {:line (str result-marker
                               " "
-                              (format-detail-summary-line "" d (max 1 (dec (long fill-w)))))
+                              (format-detail-summary-line
+                                (if show-python-code? "" (band-label "CODE"))
+                                d
+                                (max 1 (dec (long fill-w)))))
                    :meta {:kind :result-headline}})
 
                 ;; Stdout renders as Markdown through the same IR pipeline as the answer, in
@@ -7238,8 +7241,8 @@
                           :else (cond-> entries
                                   duration-stamp
                                   (conj duration-stamp))))
-                      ;; A call that printed nothing can still have a duration. Its band is
-                      ;; the figure and nothing else, matching the companion's bodyless card.
+                      ;; An output-free call retains its measured duration; with source hidden,
+                      ;; the named receipt still identifies the work without inventing output.
                       duration-stamp [duration-stamp])
 
                 ;; Failure status stays visible; diagnostics have an independent disclosure.
