@@ -282,6 +282,10 @@
    "council.get" ["Read message" "Read message" false]
    "council.threads" ["List threads" "Listed threads" false]
    "council.members" ["List members" "Listed members" false]
+   "council.publish_spawn" ["Spawn subagent" "Spawned subagent" true]
+   "council.subagents" ["List subagents" "Listed subagents" false]
+   "council.cancel" ["Cancel subagent" "Cancelled subagent" false]
+   "council.route" ["Choose agent model" "Chose agent model" false]
    "repl_start" ["Start REPL" "Started REPL" true]
    "repl_status" ["Check REPL status" "Checked REPL status" false]
    "repl_connect" ["Connect to REPL" "Connected to REPL" true]
@@ -310,6 +314,11 @@
    "draft_approve" ["status" "published" "branch" "target_branch" "files"]
    "draft_discard" ["status" "label" "root" "approved_ahead"]
    "update_goal" ["goal" "status"]
+   "council.publish_spawn" ["session_id" "task" "status" "model" "iteration_budget"]
+   "council.subagents" ["session_id" "parent_id" "task" "status" "model" "iterations_used"
+                        "iteration_budget" "pending_input"]
+   "council.cancel" ["session_id" "status" "cancelled"]
+   "council.route" ["session_id" "provider" "model" "effective"]
    "mcp__call" ["server" "tool" "content" "is_error" "tools"]})
 
 (defn- select-result
@@ -406,6 +415,18 @@
                                           (when-let [target (field value "path")]
                                             (str " · " target)))
                 (= op "lint_code") (lint-summary (or result value))
+                (= op "council.subagents")
+                (let [n (count (or result value))]
+                  (if (zero? n) "No subagents" (counted-label n "subagent")))
+                (contains? #{"council.publish_spawn" "council.cancel"} op)
+                (str (or (field value "status") "")
+                     (when-let [sid (field value "session_id")]
+                       (str " · " sid)))
+                (= op "council.route") (str (field value "provider")
+                                            "/"
+                                            (field value "model")
+                                            (when-let [effective (field value "effective")]
+                                              (str " · " effective)))
                 (and (= op "run_tests") (number? (field value "total")))
                 (str (or (field value "total") 0) " tests · " (or (field value "fail") 0) " failed")
                 :else (str (or (field value "summary") (field value "title") "")))
@@ -437,6 +458,9 @@
 
                     ("council.read" "council.threads")
                     "Thread"
+
+                    ("council.publish_spawn" "council.subagents" "council.cancel" "council.route")
+                    "Subagent"
 
                     "council.members"
                     "Member"

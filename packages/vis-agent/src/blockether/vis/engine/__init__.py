@@ -6,6 +6,7 @@ process. Importing these starts nothing and never binds an extension host.
 """
 
 from ._agent import Agent
+from ._agents import Subagent
 from ._client import (
     Event,
     Events,
@@ -36,6 +37,7 @@ from ._local import LocalEngine
 
 __all__ = [
     "Agent",
+    "Subagent",
     "Council",
     "CouncilEntry",
     "CouncilKind",

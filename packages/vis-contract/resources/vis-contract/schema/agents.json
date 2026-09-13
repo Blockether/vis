@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/agents.json",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "limits": {
+      "const": {
+        "depth": 2,
+        "team_children": 32,
+        "active_children": 8,
+        "default_iterations": 32,
+        "max_iterations": 200,
+        "task_chars": 8192
+      }
+    }
+  },
+  "required": [
+    "version",
+    "limits"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "spawn": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "pattern": "\\S"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iteration_budget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "allowed_models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/model_pair"
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "dependentRequired": {
+        "model": [
+          "provider"
+        ],
+        "provider": [
+          "model"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "list": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "cancel": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "route": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "model",
+        "provider"
+      ],
+      "additionalProperties": false
+    },
+    "model_pair": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "leader_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "team_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "budget_limited"
+          ]
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "iteration_budget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "iterations_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "routing_locked": {
+          "type": "boolean"
+        },
+        "pending_input": {
+          "type": "boolean"
+        },
+        "usage": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "parent_id",
+        "leader_id",
+        "team_id",
+        "task",
+        "status",
+        "depth",
+        "iteration_budget",
+        "iterations_used"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

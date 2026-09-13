@@ -431,6 +431,20 @@
 
 (defdelegate db-fork-session-at-turn! [db-info session-id opts])
 
+(defdelegate db-agent-info [db-info session-id])
+
+(defdelegate db-agent-list [db-info leader-id])
+
+(defdelegate db-agent-checkpoint [db-info session-id])
+
+(defdelegate db-agent-update! [db-info session-id changes])
+
+(defdelegate db-agent-claim-iteration! [db-info session-id])
+
+(defdelegate db-routing-locked? [db-info session-id])
+
+(defdelegate db-lock-routing! [db-info session-id locked?])
+
 (defdelegate db-list-session-states [db-info session-id])
 
 (defdelegate db-latest-session-state-id [db-info session-id])
@@ -680,8 +694,6 @@
 (defdelegate db-council-source [db-info sid source])
 
 (defdelegate db-council-get [db-info id])
-
-(defdelegate db-council-exchanged? [db-info thread a b])
 
 (defdelegate db-council-replay [db-info sid key])
 

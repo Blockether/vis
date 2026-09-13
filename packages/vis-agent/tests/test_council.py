@@ -164,18 +164,26 @@ def test_council_explicit_group_and_read_only_handle():
         )
 
 
-def test_bound_default_group_is_not_resolved_again():
+@pytest.mark.parametrize("activation", [None, "original-run"])
+def test_bound_default_group_is_not_resolved_again(activation):
+    binding = {"activation_id": activation, "default_group_id": "original"}
+
     def respond(method, path, body):
         if result := compatible(method, path, body):
             return result
         if path == "/v1/sessions/A/council":
-            return 200, {"activation_id": None, "default_group_id": "original"}
+            return 200, dict(binding)
         return 200, {"entries": [], "after": 0, "has_more": False}
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         council = client.session("A").council()
+        assert any("/council" in path for _, path, _, _ in calls)
+        binding.update(activation_id="later-run", default_group_id="later-group")
+        assert council._activation_id == activation
+        assert council.group_id == "original"
         council.read()
         council.threads()
+        assert sum(path == "/v1/sessions/A/council" for _, path, _, _ in calls) == 1
         assert all(
             "group_id=original" in path
             for _, path, _, _ in calls

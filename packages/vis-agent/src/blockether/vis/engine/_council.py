@@ -1,12 +1,14 @@
-"""Session-bound Council; explicit pings can wake idle peers without rebinding the author."""
+"""Session-bound Council; only managed teams can automatically wake idle sessions."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from uuid import uuid4
 
 from blockether.vis._contracts import validate
+
+from ._agents import Subagent
 
 CouncilKind = Literal["complain", "coordination", "informational"]
 
@@ -116,9 +118,19 @@ class CouncilPage:
 
 @dataclass(frozen=True, slots=True)
 class Council:
+    """Session controls and a communication binding captured when the handle is acquired."""
+
     _session: Any
-    group_id: str
+    _group_id: str
     _activation_id: str | None
+    _binding_error: Exception | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def group_id(self) -> str:
+        """Return the captured group or report why communication is unavailable."""
+        if self._binding_error is not None:
+            raise self._binding_error
+        return self._group_id
 
     def _call(self, method, suffix, **kwargs):
         if method == "GET":
@@ -163,7 +175,7 @@ class Council:
         A no-ping thread continuation answers the latest addressed entry only if it
         is an unanswered request, notifying its author. reply_to selects a request
         explicitly. Follow-ups and acknowledgements do not fall back to older requests.
-        Explicit IDs can wake idle peers; 'all' selects active peers only. Required
+        Explicit IDs wake only managed teammates, never independent leaders; 'all' selects active peers.
         requests report per-recipient states in replies; unavailable is not success.
         Retry uncertain IO with the same idempotency_key; it never notifies twice.
         """
@@ -194,6 +206,71 @@ class Council:
         validate("council", "publish", body)
         return CouncilEntry.from_wire(self._call("POST", "/entries", body=body))
 
+    def publish_spawn(
+        self,
+        task: str,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        iteration_budget: int = 32,
+        allowed_models: list[dict[str, str]] | None = None,
+        key: str | None = None,
+    ) -> Subagent:
+        """Create a subagent and publish its delegated task through Council.
+
+        Council must be enabled and the parent active with a complete checkpoint
+        in its live runtime. Context is copied, not Python handles. Children share
+        the checkout, inherit authorization, and consume their own bounded model
+        iterations. A key makes retries idempotent within the parent turn; reusing
+        it with different input is rejected. This is not an ordinary independent
+        fork and does not grant broader permissions.
+        """
+        body = {"task": task, "iteration_budget": iteration_budget}
+        body.update(
+            {
+                name: value
+                for name, value in {
+                    "provider": provider,
+                    "model": model,
+                    "allowed_models": allowed_models,
+                    "key": key,
+                }.items()
+                if value is not None
+            }
+        )
+        validate("agents", "spawn", body)
+        return Subagent.from_wire(self._session._call("POST", "/agents", body=body))
+
+    def subagents(self) -> tuple[Subagent, ...]:
+        """Inspect team lineage, task, model, lifecycle, budget and human-input state.
+
+        This lists the bound session's managed team, not all Council group members.
+        The handle's group_id does not change session ownership.
+        """
+        return tuple(
+            Subagent.from_wire(row) for row in self._session._call("GET", "/agents")
+        )
+
+    def cancel(self, session_id: str) -> dict[str, Any]:
+        """Cancel an owned child and its descendants, including queued work."""
+        body = {"session_id": session_id}
+        validate("agents", "cancel", body)
+        return self._session._call("POST", "/agents/cancel", body=body)
+
+    def route(
+        self, model: str, *, provider: str, session_id: str | None = None
+    ) -> dict[str, Any]:
+        """Change this session or an owned child at the next request boundary.
+
+        Human model locks and inherited allowlists remain authoritative. The
+        shared router is unchanged; cross-model cache reuse is not guaranteed.
+        """
+        body = {"model": model, "provider": provider}
+        if session_id is not None:
+            body["session_id"] = session_id
+        validate("agents", "route", body)
+        return self._session._call("POST", "/agents/route", body=body)
+
     def wake(
         self,
         content: str,
@@ -205,9 +282,9 @@ class Council:
     ) -> CouncilEntry:
         """Notify this bound session, including after the handle's activation ends.
 
-        No target or activation ID is needed. An eligible idle session starts a turn;
-        an active session receives a ping. Held queues are not resumed. Reusing an
-        idempotency key returns the original entry without delivering another wake.
+        An active session receives a ping. Only a managed subagent may self-wake;
+        an idle independent leader stays idle. Held queues are not resumed. Reusing
+        an idempotency key returns the original entry without another delivery.
         """
         body = {
             "content": content,

@@ -3323,14 +3323,27 @@
         (try (swap! registry assoc
                sid
                {:next-seq 0 :turns {tid {:turn_id tid :status "running" :idempotency_key "cid-1"}}})
-             (expect (= [{:turn_id tid :status "completed" :idempotency_key "cid-1"}
-                         {:turn_id tid :status "failed" :idempotency_key "cid-1"}
-                         {:turn_id tid :status "cancelled" :idempotency_key "cid-1"}]
-                        (mapv #(#'state/turn-terminal-payload sid tid %)
-                              ["completed" "failed" "cancelled"])))
+             (expect
+               (= [{:turn_id tid
+                    :status "completed"
+                    :idempotency_key "cid-1"
+                    :request_kind "user"
+                    :subagent false}
+                   {:turn_id tid
+                    :status "failed"
+                    :idempotency_key "cid-1"
+                    :request_kind "user"
+                    :subagent false}
+                   {:turn_id tid
+                    :status "cancelled"
+                    :idempotency_key "cid-1"
+                    :request_kind "user"
+                    :subagent false}]
+                  (mapv #(#'state/turn-terminal-payload sid tid %)
+                        ["completed" "failed" "cancelled"])))
              ;; A turn with no recorded key stays key-free instead of shipping an
              ;; explicit nil correlation id that would match another tab's nil.
-             (expect (= {:turn_id "ghost" :status "failed"}
+             (expect (= {:turn_id "ghost" :status "failed" :request_kind "user" :subagent false}
                         (#'state/turn-terminal-payload sid "ghost" "failed")))
              ;; The terminal frame is the only answer guaranteed to reach a web
              ;; client whose throttled body deltas race completion. It carries

@@ -656,6 +656,40 @@
           "response": "json"
         }
       },
+      "path": "/v1/sessions/:sid/agents"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/cancel"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/route"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
       "path": "/v1/sessions/:sid/council/entries"
     },
     {

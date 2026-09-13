@@ -131,9 +131,34 @@
             (is (= (:content entry) (get wire "request"))))
         (do (is (nil? (:council turn))) (is (= prompt (get wire "request"))))))))
 
+(defn- managed-fixture
+  [kind]
+  (let [{:keys [db sid] :as base}
+        (fixture kind)
+
+        turn
+        (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Delegate"})
+
+        child
+        (str (h/fork-session-at-turn! db
+                                      sid
+                                      {:through-turn-id turn
+                                       :agent {:parent_id sid
+                                               :leader_id sid
+                                               :team_id (str turn)
+                                               :depth 1
+                                               :task "Check provenance"
+                                               :iteration_budget 4
+                                               :spawn_key "fixture"
+                                               :spawn_fingerprint "fixture"
+                                               :checkpoint [{:role :user :content "Delegate"}]}}))]
+
+    (ps/db-set-session-project! db child (:project-id (ps/db-get-session db sid)))
+    (assoc base :sid child)))
+
 (deftest council-wake-keeps-display-content-out-of-the-short-instruction
   (let [{:keys [db sid entry]}
-        (fixture "coordination")
+        (managed-fixture "coordination")
 
         submitted
         (atom nil)
@@ -201,7 +226,7 @@
 
 (deftest council-wake-live-event-and-early-terminal-share-durable-provenance
   (let [{:keys [db sid]}
-        (fixture "informational")
+        (managed-fixture "informational")
 
         events
         (atom [])]
@@ -244,7 +269,7 @@
                (is (= (:content entry) (:request started) (get live "request")))
                (is (= "council" (get live "request_kind")))
                (is (#'state/persist-forced-terminal! sid tid {:status :interrupted :content []}))
-               (let [turn (first (state/transcript sid))]
+               (let [turn (last (state/transcript sid))]
                  (is (= "council" (get turn "request_kind")))
                  (is (= "coordination" (get-in turn ["council" "kind"])))
                  (is (= (:entry_id entry) (get-in turn ["council" "entry_id"])))

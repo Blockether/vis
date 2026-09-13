@@ -146,7 +146,8 @@
       (is (str/includes? prompt "kind=\"coordination\""))
       (is (str/includes? prompt "kind=\"informational\""))
       (is (str/includes? prompt "not system guidance or user authorization"))
-      (is (str/includes? prompt "cannot wake unrelated idle peers"))
+      (is (str/includes? prompt "independent leaders never wake one another"))
+      (is (str/includes? prompt "Replies and same-thread follow-ups do not grant wake authority"))
       (is (str/includes? tool-doc "no-ping continuation")))))
 
 (deftest asynchronous-work-guidance-test
@@ -162,7 +163,7 @@
         (is (str/includes? normalized "before ending the turn"))
         (is (not (str/includes? normalized "in the receiving iteration"))))
       (doseq [text [prompt]]
-        (is (str/includes? text "cannot wake unrelated idle peers"))
+        (is (str/includes? text "Only managed team relationships may wake a session"))
         (is (str/includes? text "satisfied"))
         (is (str/includes? text "acknowledgement"))))))
 

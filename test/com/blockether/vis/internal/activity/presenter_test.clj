@@ -442,3 +442,72 @@
                               (json/read-json (slurp
                                                 (io/resource
                                                   "vis-contract/fixtures/activity-repl.json"))))))))
+
+(defdescribe
+  managed-agent-presentation-test
+  (it "shows meaningful empty and populated team counts"
+      (doseq [[value expected] [[[] "No subagents"]
+                                [[{:session_id "child" :status "queued"}] "1 subagent"]]]
+        (expect (= expected
+                   (get (presenter/result-presentation {:operation :council.subagents} value)
+                        "summary")))))
+  (it "keeps all agent result views valid and retains lifecycle evidence"
+      (let [projection
+            (result-fixture
+              [[:council.publish_spawn ""
+                {:session_id "child" :task "Verify" :status "queued" :iteration_budget 2} nil]
+               [:council.subagents ""
+                [{:session_id "child"
+                  :task "Verify"
+                  :status "running"
+                  :iterations_used 1
+                  :iteration_budget 2}] nil]
+               [:council.cancel "" {:session_id "child" :status "cancelled"} nil]
+               [:council.route ""
+                {:session_id "child" :provider "fixture" :model "small" :effective "next_request"}
+                nil]])]
+        (expect (contract/valid-projection? projection))
+        (expect (.contains (pr-str projection) "next_request"))))
+  (it "shows only spawn as running work"
+      (doseq [[operation visible?] [[:council.publish_spawn true] [:council.subagents false]
+                                    [:council.cancel false] [:council.route false]]]
+        (expect (= visible? (:show-start (presenter/for-tool operation))))))
+  (it
+    "preserves agent failure and cancellation evidence"
+    (doseq [operation
+            [:council.publish_spawn :council.subagents :council.cancel :council.route]
+
+            outcome
+            [:failed :cancelled]]
+
+      (let [ctx
+            (event/context)
+
+            invocation
+            (event/invocation ctx nil)
+
+            details
+            {:operation operation
+             :presenter :generic
+             :activity (presenter/for-tool operation)
+             :started-at-ms (System/currentTimeMillis)}
+
+            start
+            (event/start-event ctx invocation details)
+
+            terminal
+            (event/terminal-event ctx
+                                  invocation
+                                  (assoc details
+                                    :outcome outcome
+                                    :error (ex-info "Agent request refused" {})))
+
+            projection
+            (activity/presentation (activity/replay [start terminal]))
+
+            row
+            (first (:rows projection))]
+
+        (expect (= (name outcome) (:state row)))
+        (expect (= "Agent request refused" (:error-summary row)))
+        (expect (contract/valid-projection? projection))))))

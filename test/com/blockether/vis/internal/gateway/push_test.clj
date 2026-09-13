@@ -230,6 +230,11 @@
         (testing "a non-terminal event pushes nothing"
           (push/on-event! sid {"type" "content.block.delta" "turn_id" "t1"})
           (is (= [] @sent)))
+        (testing "Council and managed children never create completion alerts"
+          (push/on-event! sid {"type" "turn.completed" "turn_id" "c" "request_kind" "council"})
+          (push/on-event! sid {"type" "turn.failed" "turn_id" "a" "subagent" true})
+          (Thread/sleep 50)
+          (is (= [] @sent)))
         (testing "a completed turn pushes one alert carrying the ANSWER, title and ids"
           (push/on-event! sid {"type" "turn.completed" "turn_id" "t1" "status" "completed"})
           (is (await-count sent 1) "completed-turn push arrives")

@@ -66,6 +66,9 @@
      (get view "session_council")
      (assoc "council" (get view "session_council"))
 
+     (get view "session_agent")
+     (assoc "agent" (get view "session_agent"))
+
      (get view "session_env")
      (assoc "env" (get view "session_env"))
 
@@ -78,7 +81,7 @@
 (def ^:private static-context-keys
   "Ambient session keys embedded once in the cached prefix. Runtime changes are
    emitted as structural deltas; access changes only on reload or workspace overlay updates."
-  ["workspace" "access" "env" "routing" "symbols" "council" "goal"])
+  ["workspace" "access" "env" "routing" "symbols" "council" "goal" "agent"])
 
 (defn project-ctx-static
   "`project-ctx` limited to `static-context-keys`, canonical order preserved.

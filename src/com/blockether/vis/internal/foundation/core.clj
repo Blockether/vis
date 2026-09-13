@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.session.goals :as goals]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.council.host :as council-host]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -22,7 +23,8 @@
 (defn- combined-prompt
   "Render the dynamic language matrix and toggle-gated core guidance."
   [env]
-  (->> [(language-surface/prompt env) (introspection/prompt env) (council/prompt env)]
+  (->> [(language-surface/prompt env) (introspection/prompt env) (agents/prompt env)
+        (council/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 
@@ -89,7 +91,7 @@
         council-context
         (council-host/context env)]
 
-    (cond-> {"session_goal" (goals/check-goal env)}
+    (cond-> {"session_goal" (goals/check-goal env) "session_agent" (agents/context env)}
       council-context
       (assoc "session_council" council-context)
 
@@ -120,6 +122,7 @@
                                                    introspection/all-symbols
                                                    council-host/symbols
                                                    goals/symbols
+                                                   agents/symbols
                                                    shell/shell-symbols
                                                    drafts/symbols))}
      :ext/kind "foundation"

@@ -32,7 +32,8 @@
 
           end-only
           '#{cat patch _shell-logs _shell-type council.read council.get council.threads
-             council.members repl_status draft-status main-agent-instructions update_goal}]
+             council.members repl_status draft-status main-agent-instructions update_goal
+             council.subagents council.cancel council.route}]
 
       (expect (= end-only
                  (set (keep #(when (false? (get-in % [:ext.symbol/activity :show-start]))
@@ -143,7 +144,7 @@
           (expect (not (str/includes? prompt "RUNTIME")))
           (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))
           (expect (not (str/includes? prompt "SCAN-WARNINGS")))
-          ;; Editing routes live in native descriptions; this fragment is language-only.
+          ;; Editing routes live in native descriptions; leadership is shared across languages.
           (expect (or (str/blank? prompt) (str/includes? prompt "LANGUAGE TOOLS")))
           (expect (not (str/includes? prompt "EDITING ROUTES")))
           (expect (not (str/includes? prompt "Canonical path only")))
@@ -151,7 +152,9 @@
           (expect (not (str/includes? prompt "clojure.repl/doc")))
           (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
           (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-          (expect (< (count prompt) 1000)))))
+          (expect (str/includes? prompt "Leadership and managed subagents"))
+          (expect (str/includes? prompt "Inherited conversation is background evidence"))
+          (expect (< (count prompt) 3000)))))
   (it "contributes only the workspace block through ctx now"
       ;; `:session/env` (host / project / extensions digest) moved to
       ;; `internal.context.env-digest` — it's core functionality, not extension-

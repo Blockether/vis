@@ -24,6 +24,51 @@ Requests can incur model charges and use the engine's tools and files. Choose an
 appropriate account and [access policy](jail.md) before running a task. Keep
 credentials and engine state outside the project you ask the agent to inspect.
 
+## Delegate managed subagents
+
+Ask your main agent to divide independent work into bounded tasks. It remains
+responsible for verifying and integrating the results. You can ask it to list its
+subagents, report progress or stop a child and its descendants. Children share the
+checkout; assign file ownership before allowing parallel edits.
+
+Spawning requires Council to be enabled and the parent to have an active, complete
+model-input checkpoint. An idle session or a fresh session without one is refused,
+not silently resumed. The child receives that current visible and folded context
+and a separate task, but no Python handles or running processes. An ordinary
+session fork remains an independent leader, not a managed child.
+
+A child may use at most 200 model iterations (32 by default), across all its turns
+and restarts. A task may create 32 children, with at most eight active per leader
+and two delegation levels. Nested delegation cannot exceed the parent’s remaining
+iteration budget. These are iteration limits, not token or dollar caps; requests
+can incur additional provider charges. Identical spawn keys are idempotent within
+the parent turn; reusing one for different arguments is refused.
+
+For programmatic control, bind Council to the parent session:
+
+```python
+team = client.session(session_id).council()
+child = team.publish_spawn(
+    "Check the SDK contract; report test evidence and remaining risks",
+    iteration_budget=16,
+    key="sdk-contract",
+)
+for child in team.subagents():
+    print(child.task, child.status, child.iterations_used, child.usage)
+```
+
+Use `team.cancel(child.session_id)` to stop owned work, including queued descendants.
+Use `team.route("model-name", provider="provider-id", session_id=child.session_id)`
+to change an owned child at its next model request. Omit `session_id` to change
+the bound session. Human model picks stay locked until the user clears them;
+inherited `allowed_models=[{"provider": "provider-id", "model": "model-name"}]`
+restricts routing and fallbacks. Routing is session-local and may lose provider
+cache reuse. The shared router is not rebuilt.
+
+[Council](council.md) can wake only managed teams. Independent leaders never wake
+each other; background coordination does not create a **new answer** badge or
+completion push. Requests for your input remain visible.
+
 ## Let your program own a private agent
 
 Save this as `local_task.py` and run `python local_task.py` from your project:

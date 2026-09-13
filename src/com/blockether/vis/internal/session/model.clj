@@ -184,6 +184,7 @@
            k
            (str sid)]
 
+       (when (nil? reason) (persistance/db-lock-routing! db-info sid (boolean model)))
        (if (= before result)
          result
          (do (swap! pending assoc k {:db-info db-info :provider provider :model model})

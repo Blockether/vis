@@ -2125,14 +2125,23 @@ class Session:
         return response.json() if response.content else None
 
     def council(self, *, group_id: str | None = None):
-        """Bind Council to this session; publish pins the activation, wake works while idle."""
+        """Bind communication to the current run without blocking session-only controls.
+
+        Disabled or unavailable Council groups are reported when using communication
+        or group_id. Successful bindings retain their acquisition-time activation.
+        """
         from ._council import Council
 
-        binding = self._call(
-            "GET",
-            "/council",
-            query={"group_id": group_id} if group_id is not None else {},
-        )
+        try:
+            binding = self._call(
+                "GET",
+                "/council",
+                query={"group_id": group_id} if group_id is not None else {},
+            )
+        except GatewayError as error:
+            if error.code not in {"disabled", "group-not-found"}:
+                raise
+            return Council(self, "", None, error)
         validate("council", "binding", binding)
         return Council(self, binding["default_group_id"], binding["activation_id"])
 

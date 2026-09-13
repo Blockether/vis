@@ -18,9 +18,9 @@ contact the other agent. To ask for its help, be explicit:
 > Ask that session whether it tested empty input. Use its findings to check
 > whether we need another regression test.
 
-Vis sends the question to the relevant session. If that session is idle and can
-be started, it resumes with its saved context. The two agents do not have to be
-working at the same time. Vis can continue other work while waiting for the answer.
+Vis sends the question to an active relevant session. Independent sessions are
+leaders: they never start one another automatically. For work that should start
+now, ask your leader to create a managed subagent with a bounded task.
 
 A sent message is not an answer. If the other session cannot be reached or has
 not replied, Vis should tell you rather than claim that it agreed. Earlier
@@ -200,6 +200,41 @@ The requesting agent can continue independent work rather than poll for a reply.
 If no useful answer arrives, it can investigate locally or report the remaining
 unknowns.
 
+### Create and manage subagents
+
+Use `council.publish_spawn` to create a child session and publish its delegated
+task in one call. Council must be enabled, and the parent must be active with
+a complete model-input checkpoint. Each child can incur model charges and
+shares your checkout; give it a bounded task and explicit file ownership.
+
+```python
+child = await council.publish_spawn(
+    "Review the parser tests and report missing cases. Do not change files.",
+    iteration_budget=8,
+    key="parser-review",
+)
+print(child["session_id"])
+print(await council.subagents())
+```
+
+You do not need a second `council.publish` to send this task. The child receives
+your current visible and folded context, but not Python handles. Use
+`council.publish` for questions, replies and progress after delegation.
+
+`council.subagents()` shows your managed team, including lineage, task, status,
+model, iteration usage and pending input. It is different from
+`council.members()`, which lists active participants in the Council group.
+
+To stop owned work, call `await council.cancel(child["session_id"])`. This also
+cancels its descendants and queued work. To choose a model for that child, call
+`await council.route("model-name", provider="provider-id", session_id=child["session_id"])`,
+using a configured provider and model. Omit `session_id` to change your own
+session. The change applies at the next model call, respects human model locks
+and inherited allowlists, and does not change the shared router.
+
+For context inheritance, iteration limits, retry keys and the session-bound
+SDK equivalent, see [Delegate managed subagents](python-sdk.md#delegate-managed-subagents).
+
 ### Delegate work and review results
 
 A work request needs the goal, acceptance criteria, existing user authorization,
@@ -248,8 +283,8 @@ group and thread filter. Reading the log does not consume notifications.
 
 ### Choose who to notify
 
-- **`ping=[session_id]`** targets specific sessions in the same group. An eligible
-  idle recipient can wake with its saved context and model selection.
+- **`ping=[session_id]`** targets specific sessions in the same group. An idle
+  recipient can wake only through its persisted managed-team relationship.
 - **`ping="all"`** targets active peers in the group, excluding the author. It does
   not wake saved sessions from the archive. With no active peers, it notifies nobody.
 - **No ping** normally just records a message. A continuation can also answer a
@@ -264,10 +299,10 @@ message does not prove the recipient ran, and ordinary pings are not replayed
 after cancellation or restart. Return notifications from `reply_to` can wait for
 the requester's next eligible invocation, even after its current run ends.
 
-A session woken by Council can notify active peers, return a reply, or wake a
-previous request/reply partner with an explicit ping in that same thread. It
-cannot wake unrelated idle sessions. Reading a thread, sharing a group or
-receiving a broadcast does not establish that request/reply relationship.
+Only managed teams can wake idle sessions: leader to child, child to parent or
+leader, and children sharing a task team. Independent leaders never wake one
+another, including `reply_to` and same-thread follow-ups. Group membership and
+conversation history do not grant wake authority.
 
 ### Automatic replies
 
@@ -326,6 +361,12 @@ For ordinary `publish`, acquire the handle while the session is active. It stays
 bound to that group and active run; acquire a new handle for a later run. Reads
 and `wake` do not require an active publishing handle.
 
+If Council is disabled or the session has no available group, the handle still
+allows `subagents`, `cancel` and `route`: these controls use session ownership,
+not group membership. Communication and `group_id` access report the captured
+binding error. Acquire a new handle after changing the Council configuration
+or session group. Creating a subagent still requires Council to be enabled.
+
 ### Wake the bound session
 
 An extension or SDK background worker can notify its own session when an event
@@ -343,8 +384,9 @@ print(event.entry_id)
 `wake` accepts `content`, required `kind`, and optional `thread_id`, `title` and
 `idempotency_key`. It uses the session and group already bound to the handle,
 even if the handle was acquired while idle or its publishing run has ended.
-An eligible idle session wakes; an active session receives a notification without
-an extra queued turn. Held or paused queues are not resumed.
+Only an eligible managed subagent self-wakes. An idle independent leader stays
+idle; an active session receives a notification without another queued turn.
+Held or paused queues and cancelled or exhausted children are not resumed.
 
 Installed extensions use `vis.council.wake(...)` with the same arguments, including
 from extension-owned background threads. It requires a bound session and is not
@@ -385,7 +427,7 @@ Attribution, JSON overhead and available model context can reduce a notification
 ### How Council works
 
 Council stores messages and reply relationships in SQLite. The gateway tracks
-active sessions and starts eligible idle recipients; the model loop delivers
+active sessions and starts eligible managed-team recipients; the model loop delivers
 messages and checks required replies before a turn ends. There is no separate
 agent scheduler or synchronous call between sessions.
 

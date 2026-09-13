@@ -802,7 +802,10 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport):
         tmp_path,
         monkeypatch,
         transport,
-        tool_code="assert 'council' not in session; assert 'council' not in globals(); print('disabled')",
+        tool_code=(
+            "assert 'council' not in session; assert not hasattr(council, 'publish'); "
+            "assert callable(council.subagents); print('disabled')"
+        ),
     ) as (client, work, requests):
         session = client.create_session(
             title="Council disabled", root=str(work), channel="app"
@@ -810,8 +813,10 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport):
         assert (
             session.send("Verify the default").wait(timeout=30)["status"] == "completed"
         )
+        team = session.council()
+        assert team.subagents() == ()
         with pytest.raises(GatewayError) as disabled:
-            session.council()
+            team.members()
         assert disabled.value.status == 409
         assert len(requests) == 2
         assert all(

@@ -2878,6 +2878,26 @@
     (json-response snapshot)
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- agents-handler
+  [operation]
+  (fn [request]
+    (try (let [opts (if (= :list operation) {} (body-json request))]
+           (when-not (map? opts)
+             (throw (ex-info "Expected an agents JSON object" {:error :invalid-request})))
+           (json-response
+             (state/agents-operation! (get-in request [:path-params :sid]) operation opts)))
+         (catch clojure.lang.ExceptionInfo e
+           (error-response (case (:error (ex-data e))
+                             :invalid-request
+                             400
+
+                             :session-not-found
+                             404
+
+                             409)
+                           (:error (ex-data e))
+                           (ex-message e))))))
+
 (defn- council-handler
   [operation]
   (fn [request]
@@ -4477,6 +4497,9 @@
         [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
+        [(sid-route "/agents") {:get (agents-handler :list) :post (agents-handler :spawn)}]
+        [(sid-route "/agents/cancel") {:post (agents-handler :cancel)}]
+        [(sid-route "/agents/route") {:post (agents-handler :route)}]
         [(sid-route "/council") {:get (council-handler :binding)}]
         [(sid-route "/council/wake") {:post (council-handler :wake)}]
         [(sid-route "/council/members") {:get (council-handler :members)}]

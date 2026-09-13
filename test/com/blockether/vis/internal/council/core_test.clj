@@ -13,6 +13,7 @@
             [honey.sql :as sql]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [next.jdbc :as jdbc]
+            [taoensso.nippy :as nippy]
             [taoensso.telemere :as tel]))
 
 (h/use-mem-store!)
@@ -59,6 +60,40 @@
          {:session-id sid :activation-id (get-in @fleet [sid :activation-id]) :source "host"}]
 
      {:db db :gid gid :ids ids :fleet fleet :actor actor})))
+
+(defn- team-world
+  ([] (team-world 3))
+  ([n] (team-world n 0 [1]))
+  ([n leader-index child-indices]
+   (let [{:keys [db ids] :as w}
+         (world n)
+
+         leader
+         (nth ids leader-index)]
+
+     (doseq [index
+             child-indices
+
+             :let [sid
+                   (nth ids index)]]
+
+       (h/raw-query db
+                    {:insert-into :session_agent
+                     :values [{:session_id sid
+                               :parent_id leader
+                               :leader_id leader
+                               :team_id leader
+                               :task "Scoped test delegation"
+                               :status "running"
+                               :depth 1
+                               :iteration_budget 32
+                               :iterations_used 0
+                               :inherited_turns 0
+                               :spawn_key sid
+                               :spawn_fingerprint "fixture"
+                               :created_at 1
+                               :checkpoint (nippy/freeze [])}]}))
+     w)))
 
 (defn- publish [{:keys [db fleet actor]} opts] (council 'publish! db #(deref fleet) actor opts))
 
@@ -1293,10 +1328,10 @@
                     (is (rejected? :invalid-request #(council 'binding-info db sid opts)))))))
 
 (deftest bound-session-self-wake-test
-  ;; #202: an extension/SDK event wakes its bound session without an active author.
+  ;; #202: an extension/SDK event may wake its bound managed child, not a leader.
   (with-council
     (let [{:keys [db ids gid]}
-          (world)
+          (team-world 3 1 [0])
 
           [sid other]
           ids
@@ -1376,10 +1411,10 @@
             (finally (run! drop! ids))))))))
 
 (deftest explicit-idle-ping-wakes-once-test
-  ;; Explicit IDs may start a turn; broadcasts and idempotent retries may not.
+  ;; Explicit child IDs may start a turn; independent leaders and retries may not.
   (with-council
     (let [{:keys [db ids gid]}
-          (world)
+          (team-world)
 
           [a b c]
           ids
@@ -1477,7 +1512,7 @@
   (with-council
     (doseq [scenario [:concurrent :active-race :held :paused-idle :foreign-runtime :invalid-target
                       :idempotency-collision]]
-      (let [{:keys [db ids gid]} (world)
+      (let [{:keys [db ids gid]} (team-world)
             [a b] ids
             update! (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
             drop! (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
@@ -1586,7 +1621,7 @@
   ;; Finishing peers must not prevent the remaining session from replying in the thread.
   (with-council
     (doseq [scenario [:woken-author :not-eligible :no-runtime :eligibility-failure :wake-failure]]
-      (let [{:keys [ids fleet] :as w} (world)
+      (let [{:keys [ids fleet] :as w} (team-world 3 0 [1 2])
             [a b c] ids
             entry (publish w {:kind "coordination" :content "Research question" :ping "all"})
             attempted (atom [])
@@ -1614,7 +1649,7 @@
               (is (= (:entry_id entry) (:thread_id reply)))
               (is (= (set [b c]) (set (:ping reply))))
               (is (= [(:entry_id entry) (:entry_id reply)] (mapv :entry_id (:entries (page w {})))))
-              (is (= (if (= :wake-failure scenario) (vec targets) []) @attempted))
+              (is (= (if (#{:wake-failure :woken-author} scenario) (vec targets) []) @attempted))
               (is (empty? (:ping (publish w
                                           {:kind "coordination"
                                            :content "Nobody else active"
@@ -1625,7 +1660,8 @@
                                            :thread_id (:entry_id entry)}))))
               (reset! fleet {})
               (is (= reply (publish w request)))
-              (is (= (if (= :wake-failure scenario) (vec targets) []) @attempted)))))))))
+              (is (= (if (#{:wake-failure :woken-author} scenario) (vec targets) [])
+                     @attempted)))))))))
 
 (deftest sparse-thread-seeks-and-batched-pings-test
   ;; Explain the actual production queries. Fifty continuations cover a full page;
@@ -1953,7 +1989,7 @@
 (deftest required-reply-idle-return-and-acknowledgement-test
   (with-council
     (let [{:keys [db gid ids fleet] :as w}
-          (world)
+          (team-world)
 
           [a b]
           ids
@@ -2015,7 +2051,7 @@
 (deftest same-thread-follow-up-wake-test
   (with-council
     (let [{:keys [db ids fleet] :as w}
-          (world 4)
+          (team-world 4)
 
           [a b c d]
           ids
@@ -2096,11 +2132,13 @@
               (publish
                 receiver
                 {:kind "coordination" :content "Unrelated peer" :thread_id thread :ping [target]}))
-            (publish
-              receiver
-              {:kind "coordination" :content "Wrong thread" :thread_id (:entry_id other) :ping [a]})
-            (is (= 2 (count @wakes)))
-            ;; Prior conversation does not override hold/cancellation eligibility.
+            (publish receiver
+                     {:kind "coordination"
+                      :content "Another team thread"
+                      :thread_id (:entry_id other)
+                      :ping [a]})
+            (is (= 3 (count @wakes)))
+            ;; Team ownership does not override hold/cancellation eligibility.
             (reset! eligible? false)
             (let [blocked (publish receiver
                                    {:kind "coordination"
@@ -2109,7 +2147,7 @@
                                     :ping [a]
                                     :reply_required true})]
               (is (= "unavailable" (get-in blocked [:replies 0 :state])))
-              (is (= 2 (count @wakes))))
+              (is (= 3 (count @wakes))))
             (reset! eligible? true)
             ;; A requester woken by the answer can ask a concrete follow-up in the same thread.
             (swap! fleet assoc a {:activation-id "review" :group-id (:gid w) :wake? true})
@@ -2138,7 +2176,7 @@
             [false true]]
 
       (let [{:keys [db ids gid]}
-            (world)
+            (team-world)
 
             [a b c]
             ids

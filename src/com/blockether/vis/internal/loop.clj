@@ -39,6 +39,7 @@
     [com.blockether.vis.internal.persistance.core :as persistance]
     [com.blockether.vis.internal.session.model :as session-model]
     [com.blockether.vis.internal.session.goals :as goals]
+    [com.blockether.vis.internal.session.agents :as agents]
     [com.blockether.vis.internal.context.prompt :as prompt]
     [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
     [com.blockether.vis.internal.provider.error :as perr]
@@ -5502,6 +5503,7 @@
                                        {:outcome :succeeded
                                         :route-source :response
                                         :provider-input-tokens (:input-tokens api-usage)})
+          _agent-checkpoint (agents/checkpoint! environment messages)
           prompt-cache-sample (note-prompt-cache-request!
                                 (:prompt-cache-history-atom environment)
                                 actual-provider
@@ -8331,6 +8333,9 @@
         summaries-at-turn-start
         (current-session-summaries environment)
 
+        routing-pref-at-turn-start
+        (session-model/model-of (:db-info environment) (:session-id environment))
+
         resumed-message-base
         (resumable-prompt-message-base (:prompt-cache-history-atom environment)
                                        (:provider initial-resolved-model)
@@ -8343,7 +8348,11 @@
 
         message-base-atom
         (atom
-          (or resumed-message-base
+          (or (agents/inherited-base environment
+                                     (or turn-position 1)
+                                     current-turn-messages
+                                     summaries-at-turn-start)
+              resumed-message-base
               {:messages (canonical-messages) :summaries summaries-at-turn-start :resumed? false}))
 
         ;; Transport folds survive subsequent iterations without changing the semantic ledger.
@@ -8675,17 +8684,38 @@
                                 :trace trace
                                 :iteration-count iteration}
                                (finalize-cost))
+              (not (agents/claim-iteration! environment))
+              (merge
+                {:status :error
+                 :status-id (status->id :error)
+                 :answer
+                 "Subagent stopped: cancelled, iteration budget exhausted, or active-team capacity reached. Retry when capacity is available."
+                 :trace trace
+                 :iteration-count iteration}
+                (finalize-cost))
               :else
               (let
-                [raw-reasoning-level (when has-reasoning? base-reasoning-level)
-                 reasoning-level
-                 (copilot-claude-reasoning-level resolved-model user-request raw-reasoning-level)
-                 pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
+                [route-change (agents/routing-change environment routing-pref-at-turn-start)
+                 environment (if route-change
+                               (assoc environment
+                                 :router (agents/restrict-router environment (get-router)))
+                               environment)
+                 routing (if route-change
+                           (merge (dissoc routing :provider :model)
+                                  (some-> (:preference route-change)
+                                          (update :provider keyword)))
+                           routing)
+                 pre-resolved-model
+                 (resolve-model-info (:router environment) (:provider routing) (:model routing))
+                 raw-reasoning-level (when has-reasoning? base-reasoning-level)
+                 reasoning-level (copilot-claude-reasoning-level pre-resolved-model
+                                                                 user-request
+                                                                 raw-reasoning-level)
                  iteration-extra-body (provider-extra-body extra-body)
                  ;; The window the NEXT request is actually measured against —
                  ;; the rescued peer's when this turn moved, else the pin's.
                  ;; Priority and history live on `iteration-context-limit`.
-                 served-model (turn-served-model environment)
+                 served-model (when-not route-change (turn-served-model environment))
                  effective-context-limit
                  (iteration-context-limit max-context-tokens served-model pre-resolved-model)
                  effective-fold-budget (context-fold-budget effective-context-limit)
@@ -8813,6 +8843,8 @@
                  effective-routing (apply-auth-cooldown-routing routing)
                  ;; Mutates once only when exhausted auth recovery releases a dead provider.
                  iteration-routing (atom effective-routing)
+                 applied-routing-preference
+                 (atom (if route-change (:preference route-change) routing-pref-at-turn-start))
                  iteration-result
                  ;; Per-iteration retry state. `:max-tokens-attempt` is separate
                  ;; from auth/context recovery so those policies do not consume
@@ -8831,7 +8863,27 @@
                             env environment]
 
                        (let
-                         [attempt-env (hydrate-environment-router env (:provider resolved-model))
+                         [route-change (agents/routing-change env @applied-routing-preference)
+                          attempt-routing (if route-change
+                                            (merge (dissoc @iteration-routing :provider :model)
+                                                   (some-> (:preference route-change)
+                                                           (update :provider keyword)))
+                                            @iteration-routing)
+                          env (if route-change
+                                (assoc env :router (agents/restrict-router env (get-router)))
+                                env)
+                          resolved-model (if route-change
+                                           (resolve-model-info (:router env)
+                                                               (:provider attempt-routing)
+                                                               (:model attempt-routing))
+                                           resolved-model)
+                          attempt-env (update
+                                        (hydrate-environment-router env (:provider resolved-model))
+                                        :router
+                                        #(agents/restrict-router env %))
+                          _ (when route-change
+                              (reset! applied-routing-preference (:preference route-change)))
+                          _ (reset! iteration-routing attempt-routing)
                           attempt-base @message-base-atom
                           attempt-summaries (into @emergency-summaries-atom summaries)
                           attempt-trailer (apply-summaries trailer-iters attempt-summaries)
@@ -10599,7 +10651,8 @@
           ;; A pick may name a model only the provider's LIVE catalog lists (the
           ;; picker offers those); materialise it on the pinned provider or the pin
           ;; validates away and the turn silently runs the default model.
-          pref-router (router-with-pinned-model (:router env) pref-provider model)
+          pref-router
+          (agents/restrict-router env (router-with-pinned-model (:router env) pref-provider model))
           pref-forced (forced-routing-for-pref pref-router pref-provider model)
           ;; The pin names a provider this router cannot serve — its build failed
           ;; (absent or expired credential) or it left the fleet. FAIL the turn:

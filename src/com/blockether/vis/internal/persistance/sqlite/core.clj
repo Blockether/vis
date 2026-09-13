@@ -1751,50 +1751,51 @@
   [db-info channel query]
   (mapv :id (db-search-session-matches db-info channel query)))
 
+(def ^:private human-answer-expression
+  [:sum
+   [:case
+    [:and [:= :ts.request_kind "user"]
+     [:exists
+      {:select [1]
+       :from [[:session_turn_state :answer]]
+       :where [:and [:= :answer.session_turn_soul_id :ts.id]
+               [:in :answer.status (mapv normalize-status [:success :failed])]
+               [:= :answer.version
+                {:select [[[:max :latest_answer.version]]]
+                 :from [[:session_turn_state :latest_answer]]
+                 :where [:= :latest_answer.session_turn_soul_id :ts.id]}]]}]] 1 :else 0]])
+
+(defn- turn-stats-row
+  [row]
+  {:turn-count (long (or (:n row) 0))
+   :answer-count (long (or (:answers row) 0))
+   :latest-turn-at (->date (:latest row))})
+
 (defn db-session-turn-stats
-  "Per-session turn aggregates: `{:turn-count n :latest-turn-at Date}`.
-
-   1-arity: the WHOLE store in ONE grouped query, keyed by soul-id string —
-   `{soul-id-str stats}`. Powers the session picker summaries (`turn_count` +
-   `modified_at` folded into list-sessions) without an N+1 per-session
-   `db-list-session-turns` hydration.
-
-   2-arity: the SAME aggregate for ONE session, returned unwrapped (nil when
-   the session has no state rows). `GET /v1/sessions/:id` needs these two facts
-   as much as the list does — without them a client cannot tell that a session
-   moved — and a detail poll must not scan every session to learn them.
-
-   COUNTS AND CLOCKS ONLY, never turn TEXT. This runs on EVERY list read, and a
-   second grouped query for each session's opening `user_request` pulled half a
-   megabyte of prose (1041 rows, 32ms measured) out of the store to decorate a
-   20-row window — where it was a quarter of the bytes on the wire and no client
-   painted it. Turn text is a session-scoped read.
-
-   Counts every turn soul across ALL of a session's states (forks included) — an
-   upper bound of the chain view, but exact for `has any turns?` and for
-   latest-activity ordering."
+  "Counts and clocks only. answer-count counts settled human turns, excluding Council,
+   incomplete turns and superseded retries. turn-count remains the transcript freshness
+   count. The all-session arity uses one grouped query, never N+1 transcript reads."
   ([db-info]
    (if (ds db-info)
      (into {}
            (map (fn [row]
-                  [(str (:sid row))
-                   {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))}]))
+                  [(str (:sid row)) (turn-stats-row row)]))
            (query! db-info
                    {:select [[:ss.session_soul_id :sid] [[:count :ts.id] :n]
-                             [[:max :ts.created_at] :latest]]
+                             [human-answer-expression :answers] [[:max :ts.created_at] :latest]]
                     :from [[:session_turn_soul :ts]]
                     :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
                     :group-by [:ss.session_soul_id]}))
      {}))
   ([db-info session-id]
    (when (and (ds db-info) session-id)
-     (let [soul-id-s (->ref session-id)]
-       (when-let [row (query-one! db-info
-                                  {:select [[[:count :ts.id] :n] [[:max :ts.created_at] :latest]]
-                                   :from [[:session_turn_soul :ts]]
-                                   :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
-                                   :where [:= :ss.session_soul_id soul-id-s]})]
-         {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))})))))
+     (when-let [row (query-one! db-info
+                                {:select [[[:count :ts.id] :n] [human-answer-expression :answers]
+                                          [[:max :ts.created_at] :latest]]
+                                 :from [[:session_turn_soul :ts]]
+                                 :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
+                                 :where [:= :ss.session_soul_id (->ref session-id)]})]
+       (turn-stats-row row)))))
 
 (defn- session-usage-scope
   "Honeysql `[from join where]` fragments selecting the CURRENT chain of the
@@ -1807,6 +1808,12 @@
    [[:session_turn_soul :ts] [:= :ts.id :sts.session_turn_soul_id] [:session_state :ss]
     [:= :ss.id :ts.session_state_id]]
    [:and [:= :ss.session_soul_id soul-id-s]
+    ;; Only the root state contains the copied parent transcript. Later folds
+    ;; restart local turn positions, but every turn in those states is child work.
+    [:or [:not= :ss.parent_state_id nil]
+     [:> :ts.position
+      [:coalesce {:select [:inherited_turns] :from :session_agent :where [:= :session_id soul-id-s]}
+       0]]]
     [:= :sts.version
      {:select [[[:max :s2.version]]]
       :from [[:session_turn_state :s2]]
@@ -4118,9 +4125,95 @@
                       form))
                   (<-blob tool-calls)))))
 
+(defn db-routing-locked?
+  [db sid]
+  (= 1
+     (:locked (when (ds db)
+                (query-one! db
+                            {:select [:locked]
+                             :from :session_routing_policy
+                             :where [:= :session_id (str sid)]})))))
+
+(defn db-lock-routing!
+  [db sid locked?]
+  (when (ds db)
+    (execute! db
+              {:insert-into :session_routing_policy
+               :values [{:session_id (str sid) :locked (if locked? 1 0)}]
+               :on-conflict [:session_id]
+               :do-update-set [:locked]})))
+
+(def ^:private agent-columns
+  [:session_id :parent_id :leader_id :team_id :task :status :depth :iteration_budget
+   :iterations_used :inherited_turns :allowed_models :spawn_key :spawn_fingerprint :created_at])
+
+(defn- agent-row
+  [row]
+  (when row
+    (update row
+            :allowed_models
+            (fn [value]
+              (some->> (<-json value)
+                       (mapv #(update-keys % keyword)))))))
+
+(defn db-agent-info
+  "Managed-child metadata, without its potentially large context snapshot."
+  [db sid]
+  (when (ds db)
+    (agent-row (query-one!
+                 db
+                 {:select agent-columns :from :session_agent :where [:= :session_id (str sid)]}))))
+
+(defn db-agent-list
+  "One team's persisted children, or all children for a batched session list."
+  [db leader-id]
+  (if (ds db)
+    (mapv agent-row
+          (query! db
+                  (cond-> {:select agent-columns
+                           :from :session_agent
+                           :order-by [[:created_at :asc] [:session_id :asc]]}
+                    leader-id
+                    (assoc :where [:= :leader_id (str leader-id)]))))
+    []))
+
+(defn db-agent-checkpoint
+  [db sid]
+  (<-blob (:checkpoint (query-one! db
+                                   {:select [:checkpoint]
+                                    :from :session_agent
+                                    :where [:= :session_id (str sid)]}))))
+
+(defn db-agent-update!
+  [db sid changes]
+  (let [changes (select-keys changes [:status])]
+    (when (seq changes)
+      (execute! db {:update :session_agent :set changes :where [:= :session_id (str sid)]})))
+  (db-agent-info db sid))
+
+(defn db-agent-claim-iteration!
+  "Reserve one child model iteration atomically, including admission under the active-team cap."
+  [db sid]
+  (pos? (long (or (:next.jdbc/update-count
+                    (first (execute!
+                             db
+                             {:update :session_agent
+                              :set {:iterations_used [:+ :iterations_used 1] :status "running"}
+                              :where
+                              [:and [:= :session_id (str sid)]
+                               [:not-in :status ["cancelled" "budget_limited"]]
+                               [:< :iterations_used :iteration_budget]
+                               [:or [:in :status ["queued" "running"]]
+                                [:<
+                                 {:select [[[:count :*]]]
+                                  :from [[:session_agent :active]]
+                                  :where [:and [:= :active.leader_id :session_agent.leader_id]
+                                          [:in :active.status ["queued" "running"]]]} 8]]]})))
+                  0))))
+
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is
-   `:through-turn-id`, into a brand-new INDEPENDENT session.
+   `:through-turn-id`, into a new independent session by default.
 
    Unlike [[db-fork-session!]] (which adds a new `session_state` UNDER the same
    soul, so the soul's latest-leaf chain keeps ALL prior turns), this mints a
@@ -4132,12 +4225,17 @@
    completely untouched; the fork is a separate tab/session whose history is
    exactly those turns and which continues fresh from there.
 
+   Optional `:agent` metadata creates a managed child instead: it persists lineage,
+   budget and a complete model-input checkpoint, hides the child from the leader
+   list, copies model preferences and settles inherited running turns. The caller
+   validates delegation ownership and supplies a fresh shared-root workspace.
+
    Copies rows generically (`SELECT *` → re-insert with remapped id/FK columns),
    so it stays correct as columns evolve. Required opt: `:workspace-id`. Returns
    the new SESSION SOUL UUID (for `resume-session`, which resolves sessions by
    `session_soul.id`), or nil when `:through-turn-id`
    is not a turn of the source session (or the env has no datasource)."
-  [db-info session-id {:keys [title workspace-id through-turn-id]}]
+  [db-info session-id {:keys [title workspace-id through-turn-id agent]}]
   (when-not workspace-id
     (throw (ex-info "db-fork-session-at-turn! requires :workspace-id (1:1 invariant)"
                     {:type :persistance/missing-workspace-id})))
@@ -4152,9 +4250,10 @@
               (->ref session-id)
 
               src-soul
-              (query-one!
-                tx-info
-                {:select [:channel :owner_id] :from :session_soul :where [:= :id soul-id-s]})
+              (query-one! tx-info
+                          {:select [:channel :owner_id :llm_pref_provider :llm_pref_model]
+                           :from :session_soul
+                           :where [:= :id soul-id-s]})
 
               current
               (latest-state-for tx-info soul-id-s)
@@ -4188,14 +4287,34 @@
                   fork-title
                   (or title (str (:title current) " (fork)"))]
 
-              ;; Fresh INDEPENDENT session soul (claimed = a real conversation).
+              (when (and agent
+                         (>= (long (:n (query-one! tx-info
+                                                   {:select [[[:count :*] :n]]
+                                                    :from :session_agent
+                                                    :where [:= :team_id (:team_id agent)]})))
+                             32))
+                (throw (ex-info "A task may create at most 32 subagents." {:error :agent-limit})))
+              (when (and agent
+                         (>= (long (:n (query-one! tx-info
+                                                   {:select [[[:count :*] :n]]
+                                                    :from :session_agent
+                                                    :where [:and [:= :leader_id (:leader_id agent)]
+                                                            [:in :status ["queued" "running"]]]})))
+                             8))
+                (throw (ex-info "A leader may run at most 8 subagents." {:error :agent-limit})))
+              ;; A managed fork is hidden under its parent; an ordinary fork remains a leader.
               (execute! tx-info
                         {:insert-into :session_soul
-                         :values [{:id new-soul-id
-                                   :channel (:channel src-soul)
-                                   :created_at now
-                                   :owner_id (or (:owner_id src-soul) "local")
-                                   :claimed_at now}]})
+                         :values [(cond-> {:id new-soul-id
+                                           :channel (:channel src-soul)
+                                           :created_at now
+                                           :owner_id (or (:owner_id src-soul) "local")
+                                           :claimed_at now}
+                                    agent
+                                    (assoc :parent_state_id
+                                      (:id current) :llm_pref_provider
+                                      (:llm_pref_provider src-soul) :llm_pref_model
+                                      (:llm_pref_model src-soul)))]})
               ;; Root state: version 0, no parent — the fork's own history.
               (execute! tx-info
                         {:insert-into :session_state
@@ -4253,11 +4372,13 @@
                   (when ts-row
                     (execute! tx-info
                               {:insert-into :session_turn_state
-                               :values [(assoc ts-row
-                                          :id new-ts-id
-                                          :session_turn_soul_id new-turn-soul-id
-                                          :version 0
-                                          :forked_from_session_turn_state_id nil)]}))
+                               :values [(cond-> (assoc ts-row
+                                                  :id new-ts-id
+                                                  :session_turn_soul_id new-turn-soul-id
+                                                  :version 0
+                                                  :forked_from_session_turn_state_id nil)
+                                          (and agent (= "running" (:status ts-row)))
+                                          (assoc :status (normalize-status :cancelled)))]}))
                   (doseq [it iters
                           :let [forms (<-blob (:tool_calls it))
                                 history-id-map (fork-activity-histories! tx-info new-soul-id forms)]]
@@ -4284,8 +4405,16 @@
                                           :session_turn_soul_id new-turn-soul-id
                                           :session_turn_iteration_id (some-> it-id
                                                                              iter-id-map))]}))))
-              ;; Return the fork's SOUL id: resume-session/db-get-session key
-              ;; sessions by session_soul.id, so a state id can never be reopened.
+              (when agent
+                (execute! tx-info
+                          {:insert-into :session_agent
+                           :values [(assoc agent
+                                      :session_id new-soul-id
+                                      :inherited_turns (count cut)
+                                      :checkpoint (->blob (:checkpoint agent))
+                                      :allowed_models (->json (:allowed_models agent))
+                                      :created_at now)]}))
+              ;; Return the fork's soul, never a state id.
               new-soul-id)))))))
 
 (defn- normalize-routing-event
@@ -5055,19 +5184,6 @@
 (defn db-council-get
   [db id]
   (first (council-rows db (query! db {:select [:*] :from [:council_entry] :where [:= :id id]}))))
-
-(defn db-council-exchanged?
-  "Whether two sessions have a committed request/reply pair in this exact thread.
-   A shared broadcast, log read or unanswered outgoing ping is not an exchange."
-  [db thread a b]
-  (some? (query-one! db
-                     {:select [:e.id]
-                      :from [[:council_entry :e]]
-                      :join [[:council_entry :r] [:= :r.id :e.reply_to]]
-                      :where [:and [:= :e.thread_id thread]
-                              [:or [:and [:= :e.author_sid a] [:= :r.author_sid b]]
-                               [:and [:= :e.author_sid b] [:= :r.author_sid a]]]]
-                      :limit 1})))
 
 (defn db-council-replay
   [db sid key]

@@ -66,12 +66,9 @@ CREATE TABLE session_soul (
   id           TEXT PRIMARY KEY NOT NULL,
   channel      TEXT NOT NULL DEFAULT 'tui',
   external_id  TEXT,
-  -- A sub_loop CHILD session is a WHOLE separate soul whose work belongs to a
-  -- parent turn: this points at the parent's `session_state.id` (CROSS-soul).
-  -- Distinct from `session_state.parent_state_id`, which is WITHIN-soul fork/
-  -- retry versioning — so forks are untouched. NULL = a normal top-level
-  -- session (the only kind `db-list-sessions` shows); children hang off their
-  -- parent for a queryable sub-tree and cascade-delete with it.
+  -- Managed subagents belong to the parent's captured state. Ordinary forks
+  -- are independent leaders and leave this link NULL. Child sessions are
+  -- discoverable through their team, not the top-level conversation list.
   parent_state_id   TEXT REFERENCES session_state(id) ON DELETE CASCADE,
   -- Per-session model preference: the PROVIDER + MODEL this session routes
   -- through, set via the web picker or the TUI (Ctrl+T). Both NULL = router
@@ -106,6 +103,37 @@ CREATE TABLE session_soul (
   -- so the gaps unstarring leaves behind cost nothing. NULL = unstarred.
   favorite_rank     INTEGER
 );
+
+-- Human model picks lock automatic routing until the user clears the preference.
+CREATE TABLE session_routing_policy (
+  session_id TEXT PRIMARY KEY NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  locked INTEGER NOT NULL CHECK (locked IN (0, 1))
+);
+
+-- Managed delegation metadata. Context is a model-message snapshot, never runtime handles.
+CREATE TABLE session_agent (
+  session_id       TEXT PRIMARY KEY NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  parent_id        TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  leader_id        TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
+  team_id          TEXT NOT NULL,
+  task             TEXT NOT NULL CHECK (trim(task) <> ''),
+  status           TEXT NOT NULL DEFAULT 'queued'
+                   CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'budget_limited')),
+  depth            INTEGER NOT NULL CHECK (depth BETWEEN 1 AND 2),
+  iteration_budget INTEGER NOT NULL CHECK (iteration_budget BETWEEN 1 AND 200),
+  iterations_used  INTEGER NOT NULL DEFAULT 0 CHECK (iterations_used >= 0),
+  inherited_turns  INTEGER NOT NULL,
+  allowed_models   TEXT CHECK (allowed_models IS NULL OR json_valid(allowed_models)),
+  spawn_key        TEXT NOT NULL,
+  spawn_fingerprint TEXT NOT NULL,
+  checkpoint       BLOB NOT NULL,
+  created_at       INTEGER NOT NULL,
+  UNIQUE (parent_id, spawn_key),
+  CHECK (session_id <> parent_id AND session_id <> leader_id)
+);
+
+CREATE INDEX idx_session_agent_team ON session_agent(team_id, created_at);
+CREATE INDEX idx_session_agent_parent ON session_agent(parent_id, created_at);
 
 CREATE INDEX idx_session_soul_parent ON session_soul(parent_state_id)
   WHERE parent_state_id IS NOT NULL;

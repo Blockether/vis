@@ -668,7 +668,9 @@
              (and (= "view.open" event-type) (= "input" (get event "kind")))
 
              terminal?
-             (#{"turn.completed" "turn.failed"} event-type)]
+             (and (#{"turn.completed" "turn.failed"} event-type)
+                  (not= "council" (get event "request_kind"))
+                  (not (true? (get event "subagent"))))]
 
          (when (and (or input? terminal?) (pos? (device-count)) (any-configured?))
            (future (broadcast! (if input?

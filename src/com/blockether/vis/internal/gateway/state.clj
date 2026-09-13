@@ -27,6 +27,7 @@
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.session.goals :as goals]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.contract.wire :as wire]
@@ -2394,8 +2395,50 @@
   []
   (try (lp/db-sweep-orphaned-running-turns!) (catch Throwable _ nil)))
 
+(defn- report-agent-outcome!
+  [db sid tid patch]
+  (when-let [child (agents/info db sid)]
+    (when (council/enabled?)
+      (let [cancelled? (= "cancelled" (:status child))
+            text (str/join "\n"
+                           (keep #(or (:text %)
+                                      (:markdown %)
+                                      (:message %)
+                                      (get % "text")
+                                      (get % "markdown")
+                                      (get % "message"))
+                                 (:content patch)))
+            content (str "Subagent "
+                         sid
+                         " — "
+                         (:status child)
+                         "\nTask: "
+                         (subs (:task child) 0 (min 2000 (count (:task child))))
+                         (when (seq text) (str "\n" (subs text 0 (min 2000 (count text))))))]
+
+        ;; Runtime-owned outcome: fixed persisted owner, never an arbitrary peer.
+        ;; Cancellation records the result without restarting the stopped team.
+        (council/publish!
+          db
+          #(council/runtime db)
+          {:session-id (str sid)
+           :source "host"
+           :activation-id (str "agent-result:" tid)
+           :self-wake? true}
+          {:kind "informational"
+           :title "Subagent result"
+           :content content
+           :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
+           :idempotency_key (str "agent-result:" tid)})))))
+
 (defn- finish-turn!
   [sid tid patch]
+  (agents/finish! (lp/db-info) sid (:status patch))
+  (try (report-agent-outcome! (lp/db-info) sid tid patch)
+       (catch Exception e
+         (tel/log! {:level :warn
+                    :id ::agent-outcome-failed
+                    :data {:session-id sid :error-class (.getName (class e))}})))
   (update-session! sid
                    (fn [entry]
                      (cond-> (update-in entry [:turns tid] merge patch)
@@ -2437,7 +2480,10 @@
           (not-empty (some-> (:error turn)
                              str)))]
 
-    (cond-> {:turn_id tid :status status}
+    (cond-> {:turn_id tid
+             :status status
+             :request_kind (or (:request_kind turn) "user")
+             :subagent (boolean (agents/info (lp/db-info) sid))}
       key
       (assoc :idempotency_key key)
 
@@ -4131,7 +4177,8 @@
   (fn [db sid entry]
     (when-not (and (council/enabled?)
                    (council-wake-eligible? db sid)
-                   (= (:group_id entry) (council/default-group db sid)))
+                   (= (:group_id entry) (council/default-group db sid))
+                   (agents/wake-allowed? db (:author_session_id entry) sid))
       (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
     (let [result
           (submit-turn!
@@ -4496,18 +4543,39 @@
      (cond (nil? turn) {:error :turn-not-found}
            (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
            :else (do (tel/log! :info ["gateway: cancelling turn" tid (str "source=" (name source))])
-                     ;; Stamp the cancel wall-clock and arm the terminal backstop
-                     ;; BEFORE firing callbacks. A cancellation hook is allowed to
-                     ;; touch an uninterruptible runtime; it must not prevent the
-                     ;; daemon from resolving the turn or freeing its capacity.
+                     ;; Arm the parent's terminal backstop before any child cancellation hook.
                      (update-turn! sid tid #(assoc % :cancelling_at (util/now-ms)))
                      (start-cancel-terminal-backstop! sid
                                                       tid
                                                       (:cancel-token turn)
                                                       CANCEL_TERMINAL_GRACE_MS
                                                       cancel-waiting-turn!)
-                     (some-> (:cancel-token turn)
-                             (cancellation/cancel! source))
+                     (let [db (lp/db-info)
+                           owner (agents/info db sid)
+                           descendants (filter #(or (= (str sid) (:parent_id %))
+                                                    (and (nil? owner) (= (str sid) (:leader_id %))))
+                                               (persistance/db-agent-list db
+                                                                          (or (:leader_id owner)
+                                                                              (str sid))))]
+
+                       ;; Persist the stop before signalling workers so no new iteration can start.
+                       (when owner (persistance/db-agent-update! db sid {:status "cancelled"}))
+                       (some-> (:cancel-token turn)
+                               (cancellation/cancel! source))
+                       (doseq [child descendants
+                               :when (contains? #{"queued" "running"} (:status child))]
+
+                         (let [child-id (:session_id child)]
+                           (persistance/db-agent-update! db child-id {:status "cancelled"})
+                           (doseq [[child-tid child-turn] (:turns (session-entry child-id))]
+                             (case (:status child-turn)
+                               "queued"
+                               (delete-queued-turn! child-id child-tid)
+
+                               "running"
+                               (cancel-turn! child-id child-tid :parent-cancel)
+
+                               nil)))))
                      {:status "cancelling"})))))
 
 (defn cancel-session-turns!
@@ -4723,6 +4791,8 @@
                  :is_awaiting_input (bus/session-waiting? sid)
                  :current_turn_id current-turn-id
                  :turn_count (long (or (:turn-count stats) 0))
+                 :answer_count (long (or (:answer-count stats) 0))
+                 :agent (agents/context {:db-info (lp/db-info) :session-id sid})
                  :server_time_ms server-time-ms}
           model-pref
           (assoc :model_pref model-pref)
@@ -4761,6 +4831,274 @@
                              :council (:council row)
                              :created_at (date->ms (:created-at row))}))
           (or rows []))))
+
+(defn- agent-view
+  [db child]
+  (let [sid (:session_id child)]
+    (merge (dissoc child :spawn_key :spawn_fingerprint)
+           (smodel/model-of db sid)
+           {:routing_locked (persistance/db-routing-locked? db sid)
+            :pending_input (bus/session-waiting? sid)
+            :usage (session-usage-info sid)})))
+
+(defn- agent-list
+  [env _opts]
+  (let [db
+        (:db-info env)
+
+        sid
+        (str (:session-id env))
+
+        child
+        (agents/info db sid)
+
+        leader
+        (or (:leader_id child) sid)]
+
+    (mapv #(agent-view db %)
+          (cond->> (persistance/db-agent-list db leader)
+            child
+            (filter #(= (:team_id child) (:team_id %)))))))
+
+(defn- agent-model!
+  [router provider model]
+  (let [pair
+        (when (and provider model) {:provider (name provider) :model model})
+
+        found
+        (when pair
+          (some (fn [p]
+                  (when (= (name (:id p)) (:provider pair))
+                    (some #(when (= (if (map? %) (:name %) (str %)) model) pair) (:models p))))
+                (:providers router)))]
+
+    (or found
+        (agents/fail! :invalid-request "Provider/model is not available on the shared router"))))
+
+(defn- allowed-agent-model!
+  [child pair]
+  (when (and (seq (:allowed_models child))
+             (not (some #(= pair (select-keys % [:provider :model])) (:allowed_models child))))
+    (agents/fail! :model-not-allowed "The delegated model allowlist excludes this provider/model"))
+  pair)
+
+(defn- agent-route
+  [env opts]
+  (let [db
+        (:db-info env)
+
+        sid
+        (str (or (:session_id opts) (:session-id env)))
+
+        _
+        (when (persistance/db-routing-locked? db sid)
+          (agents/fail! :routing-locked
+                        "The human model pick is locked; only the user can clear it"))
+
+        pair
+        (agent-model! (lp/get-router) (:provider opts) (:model opts))]
+
+    (allowed-agent-model! (agents/info db sid) pair)
+    (smodel/set-model! db sid (:provider pair) (:model pair) :agent-routing)
+    (assoc pair
+      :session_id sid
+      :effective "next_request")))
+
+(defn- agent-cancel
+  [env opts]
+  (let [db
+        (:db-info env)
+
+        sid
+        (str (:session_id opts))
+
+        child
+        (or (agents/info db sid)
+            (agents/fail! :not-owner "Only a managed subagent can be cancelled here"))
+
+        descendants
+        (filter #(or (= sid (:session_id %)) (= sid (:parent_id %)))
+                (persistance/db-agent-list db (:leader_id child)))
+
+        ids
+        (mapv :session_id descendants)]
+
+    (doseq [id ids]
+      ;; Persist before cancelling: delayed pings and queued work cannot resume it.
+      (persistance/db-agent-update! db id {:status "cancelled"})
+      (doseq [[tid turn] (:turns (session-entry id))
+              :when (= "queued" (:status turn))]
+
+        (delete-queued-turn! id tid))
+      (cancel-session-turns! id :agent-cancel))
+    {:session_id sid :status "cancelled" :cancelled ids}))
+
+(defonce ^:private agent-spawn-lock (Object.))
+
+(defn- agent-spawn
+  [env opts]
+  (locking agent-spawn-lock
+    (let [db
+          (:db-info env)
+
+          sid
+          (str (:session-id env))
+
+          parent
+          (agents/info db sid)
+
+          leader
+          (or (:leader_id parent) sid)
+
+          turns
+          (vec (persistance/db-list-session-turns db sid))
+
+          through
+          (some-> (peek turns)
+                  :id
+                  str)
+
+          team
+          (or (:team_id parent) through)
+
+          children
+          (persistance/db-agent-list db leader)
+
+          fingerprint
+          (util/sha256-hex (pr-str (into (sorted-map) opts)))
+
+          key
+          (str through ":" (or (:key opts) fingerprint))
+
+          previous
+          (some #(when (and (= sid (:parent_id %)) (= key (:spawn_key %))) %) children)]
+
+      (if previous
+        (if (= fingerprint (:spawn_fingerprint previous))
+          (agent-view db previous)
+          (agents/fail! :idempotency-conflict "The spawn key already names a different delegation"))
+        (let [depth
+              (inc (long (or (:depth parent) 0)))
+
+              checkpoint
+              (:agent-checkpoint (ctx-loop/read-turn-state env))
+
+              budget
+              (long (or (:iteration_budget opts) (get agents/limits "default_iterations")))
+
+              router
+              (or (:router env) (lp/get-router))
+
+              inherited
+              (or (smodel/model-of db sid)
+                  (let [m (lp/resolve-effective-model router)]
+                    {:provider (:provider m) :model (:name m)}))
+
+              pair
+              (agent-model! router
+                            (or (:provider opts) (:provider inherited))
+                            (or (:model opts) (:model inherited)))
+
+              allowed
+              (or (:allowed_models opts) (:allowed_models parent))]
+
+          (when-not (and (council/enabled?)
+                         (= (get-in (ctx-loop/read-turn-state env) [:council :activation-id])
+                            (:activation-id (get (council/runtime db) sid)))
+                         (get (council/runtime db) sid))
+            (agents/fail! :inactive-session "Spawn requires an active parent with Council enabled"))
+          (when-not (and through (seq checkpoint))
+            (agents/fail! :no-checkpoint
+                          "Spawn requires the parent's complete model-input checkpoint"))
+          (when (or (> depth (long (get agents/limits "depth")))
+                    (and parent
+                         (or (contains? #{"cancelled" "budget_limited"} (:status parent))
+                             (> budget
+                                (- (long (:iteration_budget parent))
+                                   (long (:iterations_used parent)))))))
+            (agents/fail! :budget-exceeded
+                          "Delegation exceeds the parent's depth or remaining iteration budget"))
+          (when (>= (count (filter #(= team (:team_id %)) children))
+                    (long (get agents/limits "team_children")))
+            (agents/fail! :budget-exceeded "The task already has the maximum number of subagents"))
+          (when (>= (count (filter #(contains? #{"queued" "running"} (:status %)) children))
+                    (long (get agents/limits "active_children")))
+            (agents/fail! :budget-exceeded "The leader already has the maximum active subagents"))
+          (doseq [candidate allowed]
+            (agent-model! router (:provider candidate) (:model candidate))
+            (allowed-agent-model! parent candidate))
+          (allowed-agent-model! parent pair)
+          (allowed-agent-model! {:allowed_models allowed} pair)
+          (let [current
+                (resolve-workspace db sid)
+
+                ws
+                (:id (workspace/create-trunk-at!
+                       db
+                       (or (:repo-root current) (:root current) (workspace/trunk-root))))
+
+                child-id
+                (str (persistance/db-fork-session-at-turn!
+                       db
+                       sid
+                       {:workspace-id ws
+                        :through-turn-id through
+                        :title (subs (:task opts) 0 (min 80 (count (:task opts))))
+                        :agent {:parent_id sid
+                                :leader_id leader
+                                :team_id team
+                                :task (:task opts)
+                                :depth depth
+                                :iteration_budget budget
+                                :allowed_models allowed
+                                :spawn_key key
+                                :spawn_fingerprint fingerprint
+                                :checkpoint checkpoint}}))]
+
+            (when-let [project-id (:project-id (persistance/db-get-session db sid))]
+              (persistance/db-set-session-project! db child-id project-id))
+            (put-session! child-id {:next-seq 0 :last-active (util/now-ms)})
+            (smodel/set-model! db child-id (:provider pair) (:model pair) :agent-spawn)
+            (try (let [entry (council/publish! db
+                                               #(council/runtime db)
+                                               {:session-id sid
+                                                :source "host"
+                                                :activation-id (get-in (ctx-loop/read-turn-state
+                                                                         env)
+                                                                       [:council :activation-id])}
+                                               {:kind "coordination"
+                                                :title "Delegated task"
+                                                :content (:task opts)
+                                                :ping [child-id]
+                                                :reply_required true
+                                                :idempotency_key (str "agent:" child-id)})]
+                   (when (= "unavailable" (get-in entry [:replies 0 :state]))
+                     (persistance/db-agent-update! db child-id {:status "failed"})))
+                 (catch Exception e
+                   (persistance/db-agent-update! db child-id {:status "failed"})
+                   (throw e)))
+            (agent-view db (agents/info db child-id))))))))
+
+(agents/install-runtime!
+  {:spawn agent-spawn :list agent-list :cancel agent-cancel :route agent-route})
+
+(defn agents-operation!
+  [sid operation opts]
+  (let [db
+        (lp/db-info)
+
+        sid
+        (str sid)]
+
+    (when-not (persistance/db-get-session db sid)
+      (agents/fail! :session-not-found "Unknown session"))
+    ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
+    ;; Only spawn consumes the running parent's safe model checkpoint.
+    (agents/operation! (assoc (when (= :spawn operation) (live-env sid))
+                         :db-info db
+                         :session-id sid)
+                       operation
+                       opts)))
 
 (defn fork-session!
   "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn
@@ -4847,7 +5185,9 @@
                                           :is-draft (boolean (workspace/draft? w))}))
                        (catch Throwable _ nil)))]
 
-            (cond-> (assoc s "turn_count" (long (or (:turn-count st) 0)))
+            (cond-> (assoc s
+                      "turn_count" (long (or (:turn-count st) 0))
+                      "answer_count" (long (or (:answer-count st) 0)))
               (:latest-turn-at st)
               (assoc "modified_at" (:latest-turn-at st))
 
