@@ -30,14 +30,16 @@
    classpath location directory, which native-image does not support (it can
    `getResource` a specific file but not enumerate a dir). So `build.clj` writes
    an `_index.edn` of filenames next to each migration dir, and here we feed
-   Flyway an explicit `ResourceProvider` built from those exact paths. On the
-   JVM (no index) we fall back to Flyway's normal location scanning."
+   Flyway an explicit `ResourceProvider` built from those exact paths, paired
+   with an empty Java migration `ClassProvider` for our SQL-only schema. Both
+   providers are required to bypass scanning. On the JVM (no index) we fall
+   back to Flyway's normal location scanning."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str])
   (:import [javax.sql DataSource]
            [java.nio.charset StandardCharsets]
-           [org.flywaydb.core.api Location ResourceProvider]
+           [org.flywaydb.core.api ClassProvider Location ResourceProvider]
            [org.flywaydb.core.internal.resource.classpath ClassPathResource]))
 
 (defn- strip-classpath
@@ -669,7 +671,10 @@
                     (.baselineVersion "0")
                     (.mixed true))
           rp
-          (.resourceProvider rp))]
+          (-> (.resourceProvider rp)
+              (.javaMigrationClassProvider (reify
+                                             ClassProvider
+                                               (getClasses [_] [])))))]
 
     (let [^org.flywaydb.core.Flyway flyway (.load cfg)]
       (try

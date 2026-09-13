@@ -343,71 +343,84 @@
                         (expect (re-find #"(?m)^vis-agent\s+\S+" output) output)
                         (finally (delete-tree! dir))))))
 
-(defdescribe native-binary-runs-a-whole-agent-turn-test
-             ;; The one-shot entrypoint boots the session store, the tool registry, config
-             ;; merging, provider selection and the HTTP transport. No unit test crosses
-             ;; all of that inside the LINKED image, and every one of those layers has a
-             ;; native-image failure mode of its own.
-             ;; Regression: YAMLStar 0.1.21's lazy reference plugin must be linked explicitly;
-             ;; otherwise the valid overlay is ignored and startup reports no provider.
-             ;;
-             ;; The provider is INVENTED HERE. No shipped provider extension is named, so
-             ;; this stays green when the set of bundled vendors changes, and it proves the
-             ;; thing a deployment actually relies on: an OpenAI-compatible endpoint put in
-             ;; config reaches a real model call out of the native image.
-             (it
-               "answers through a disk-backed session store with debug logging enabled"
-               (let [dir
-                     (temp-dir "vis-native-agent")
+(defdescribe
+  native-binary-runs-a-whole-agent-turn-test
+  ;; The one-shot entrypoint boots the session store, the tool registry, config
+  ;; merging, provider selection and the HTTP transport. No unit test crosses
+  ;; all of that inside the LINKED image, and every one of those layers has a
+  ;; native-image failure mode of its own.
+  ;; Regression: YAMLStar 0.1.21's lazy reference plugin must be linked explicitly;
+  ;; otherwise the valid overlay is ignored and startup reports no provider.
+  ;;
+  ;; The provider is INVENTED HERE. No shipped provider extension is named, so
+  ;; this stays green when the set of bundled vendors changes, and it proves the
+  ;; thing a deployment actually relies on: an OpenAI-compatible endpoint put in
+  ;; config reaches a real model call out of the native image.
+  (it
+    "answers through a disk-backed session store with debug logging enabled"
+    (let [dir
+          (temp-dir "vis-native-agent")
 
-                     {:keys [server asked port]}
-                     (start-stub-provider! "hello world")]
+          {:keys [server asked port]}
+          (start-stub-provider! "hello world")]
 
-                 (try (overlay! dir port)
-                      (let [{:keys [exit output]}
-                            (run-binary dir
-                                        [(.getAbsolutePath (require-binary))
-                                         (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                         (.getAbsolutePath (io/file dir "sessions")) "--debug"
-                                         "--raw" "Reply with exactly: hello world"]
-                                        180)
+      (try
+        (overlay! dir port)
+        (let [{:keys [exit output]}
+              (run-binary dir
+                          [(.getAbsolutePath (require-binary))
+                           (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                           (.getAbsolutePath (io/file dir "sessions")) "--debug" "--raw"
+                           "Reply with exactly: hello world"]
+                          180)
 
-                            requests
-                            @asked
+              requests
+              @asked
 
-                            {:keys [path body headers]}
-                            (first requests)
+              {:keys [path body headers]}
+              (first requests)
 
-                            ;; Whatever the transport spells the auth header as, what matters is
-                            ;; whether anything SECRET rode in it.
-                            credentials
-                            (->> ["authorization" "x-api-key"]
-                                 (mapcat #(get headers %))
-                                 (map #(str/trim (str/replace (str %) #"(?i)^bearer" "")))
-                                 (remove str/blank?))]
+              ;; Whatever the transport spells the auth header as, what matters is
+              ;; whether anything SECRET rode in it.
+              credentials
+              (->> ["authorization" "x-api-key"]
+                   (mapcat #(get headers %))
+                   (map #(str/trim (str/replace (str %) #"(?i)^bearer" "")))
+                   (remove str/blank?))
 
-                        (expect (= 0 exit) output)
-                        (expect (.isFile (io/file dir "sessions" "vis.db")))
-                        (expect (str/includes? output "hello world") output)
-                        ;; Without this the test would also pass on a machine whose own
-                        ;; ~/.vis holds a real credential, and would prove nothing.
-                        (expect (seq requests)
-                                (str "the binary never called the configured provider:\n" output))
-                        (expect (str/includes? path "/chat/completions")
-                                (str "unexpected provider route: " path))
-                        (expect (str/includes? body "\"stub-model\"")
-                                "the request did not carry the model the overlay names")
-                        (expect (str/includes? body "Reply with exactly: hello world")
-                                "the request did not carry the prompt")
-                        ;; The overlay names no key, so nothing may authenticate on its behalf.
-                        ;; MEASURED: the OpenAI-compatible transport still sends the header, and
-                        ;; it arrives as a bare `Bearer` with nothing after it. A value here
-                        ;; would be a credential from this machine attached to a provider that
-                        ;; never asked for one — which is exactly the way this test could pass
-                        ;; while proving nothing.
-                        (expect (empty? credentials)
-                                "the keyless provider authenticated with a credential of its own"))
-                      (finally (.stop server 0) (delete-tree! dir))))))
+              migration-logs
+              (->> (file-seq (io/file dir ".vis/logs"))
+                   (filter #(and (.isFile ^File %) (str/ends-with? (.getName ^File %) ".log")))
+                   (mapcat #(str/split-lines (slurp %)))
+                   (filter #(str/includes? % "org.flywaydb."))
+                   vec)]
+
+          (expect (= 0 exit) output)
+          (expect (.isFile (io/file dir "sessions" "vis.db")))
+          (expect (str/includes? output "hello world") output)
+          ;; Indexed SQL must migrate a fresh native store without Flyway
+          ;; trying to enumerate resource: URLs for Java migrations.
+          (expect (some #(str/includes? % "Successfully applied 1 migration") migration-logs)
+                  (pr-str migration-logs))
+          (expect (not-any? #(str/includes? % "Unable to scan location") migration-logs)
+                  (pr-str migration-logs))
+          ;; Without this the test would also pass on a machine whose own
+          ;; ~/.vis holds a real credential, and would prove nothing.
+          (expect (seq requests) (str "the binary never called the configured provider:\n" output))
+          (expect (str/includes? path "/chat/completions") (str "unexpected provider route: " path))
+          (expect (str/includes? body "\"stub-model\"")
+                  "the request did not carry the model the overlay names")
+          (expect (str/includes? body "Reply with exactly: hello world")
+                  "the request did not carry the prompt")
+          ;; The overlay names no key, so nothing may authenticate on its behalf.
+          ;; MEASURED: the OpenAI-compatible transport still sends the header, and
+          ;; it arrives as a bare `Bearer` with nothing after it. A value here
+          ;; would be a credential from this machine attached to a provider that
+          ;; never asked for one — which is exactly the way this test could pass
+          ;; while proving nothing.
+          (expect (empty? credentials)
+                  "the keyless provider authenticated with a credential of its own"))
+        (finally (.stop server 0) (delete-tree! dir))))))
 
 (defn- goal-update-body
   [stream? status]
