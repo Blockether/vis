@@ -1455,15 +1455,8 @@ export function SettingsDisclosure({
  * with the 44px finger target arriving as invisible reach above and below (32px on a
  * pointer, the floor) rather than as paint.
  *
- * OFF WEARS THE RESTING FRAME, because a switched-off toggle had NO BOX AT ALL.
- * It drew `border-transparent` over `bg-panel-2`, and `--panel2` is the same value
- * as `--surface` in both bundled palettes (#faf3eb light, #161820 dark): the fill
- * that was supposed to be the control's own paper measures 1.00:1 against the row
- * it sits in, and the border was transparent by name — so a settings row ended in
- * a grey word floating on the page, reported as "these off buttons are not visible
- * at all: why no border?". The track keeps `border-edge-strong` (1.38:1 light,
- * 1.40:1 dark), the hairline `Button`'s `secondary` already draws, and the knob is
- * that same ink, so an off switch is a filled circle on the row's own paper.
+ * Both states keep the theme foreground outline, so the accent fill never
+ * hides the track boundary. The off knob uses the quieter hint foreground.
  *
  * It reports its own work — the knob pulses and `aria-busy` says so — because a
  * setting is a round trip to a gateway and a control that snaps back a second later
@@ -1490,7 +1483,7 @@ export function Switch({
       aria-checked={isOn}
       aria-busy={isBusy}
       className={`relative inline-flex h-7 w-[2.875rem] shrink-0 items-center rounded-full border p-0.5 transition-colors duration-150 ease-out after:absolute after:inset-x-0 after:-top-2 after:-bottom-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:h-6 mouse:w-10 mouse:after:-top-1 mouse:after:-bottom-1 ${
-        isOn ? 'border-accent bg-accent' : 'border-dialog-hint bg-transparent hover:bg-hover'
+        isOn ? 'border-white bg-accent' : 'border-white bg-transparent hover:bg-hover'
       } ${className}`}
       {...props}
     >

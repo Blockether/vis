@@ -2583,9 +2583,10 @@ describe('a setting is picked and switched by one control each', () => {
     expect(off).not.toContain('border-edge-strong');
     expect(resting).not.toContain('bg-edge-strong');
     expect(off).not.toContain('hover:text-white');
-    // ON is the amber slab, framed in its own colour, so the box never changes.
+    // Both states keep the foreground outline, distinct from the accent fill.
     const on = classes(renderToStaticMarkup(<Switch label="Web search" isOn />));
-    expect(on).not.toContain('border-transparent');
+    expect(on).toContain('border-white');
+    expect(off).toContain('border-white');
   });
 });
 
