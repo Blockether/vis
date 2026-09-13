@@ -247,6 +247,17 @@ def _result_repr(result):
             return _shell(result)
         if op == "run_tests":
             return _tests(result)
+        if op == "format_code" and result.get("summary"):
+            scope = result.get("formatters") or [result.get("formatter")]
+            suffix = ", ".join(str(item) for item in scope if item)
+            lines = [
+                "format_code: " + result["summary"] + (" · " + suffix if suffix else "")
+            ]
+            for item in [result, *(result.get("files") or [])]:
+                for key in ("error", "unbalanced"):
+                    if item.get(key):
+                        lines.append(f"{item.get('path') or key}: {item[key]}")
+            return "\n".join(lines)
         if op == "read_session":
             return _session(result)
         if op in ("council.publish", "council.get", "council.read", "council.threads"):

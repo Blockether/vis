@@ -353,6 +353,22 @@
           (false? changed) "No formatting changes"
           :else "No formatting result")))
 
+(defn format-result
+  "Compact formatting evidence before activity bounds; complete per-file data stays in the result."
+  [value]
+  (let [files
+        (field value "files")
+
+        diagnostics
+        (filter #(or (field % "unbalanced") (field % "error")) files)]
+
+    (cond-> (assoc (select-result ["path" "formatter" "formatters" "repaired" "repairs" "unbalanced"
+                                   "error" "diagnostics"]
+                                  value)
+              "summary" (format-summary value))
+      (seq diagnostics)
+      (assoc "diagnostics" (vec diagnostics)))))
+
 (defn- lint-summary
   "Summarize complete severity counts before per-finding evidence is bounded."
   [value]
@@ -411,7 +427,8 @@
                                     (str " · lines " (first read-lines) "–" (last read-lines))))
                 (contains? #{"doc" "defs" "patch" "shell"} op) path
                 (= op "grep") (or (first (str/split-lines (or text ""))) "")
-                (= op "format_code") (str (format-summary (or result value))
+                (= op "format_code") (str (or (field value "summary")
+                                              (format-summary (or result value)))
                                           (when-let [target (field value "path")]
                                             (str " · " target)))
                 (= op "lint_code") (lint-summary (or result value))
@@ -433,6 +450,8 @@
 
           content
           (cond (= op "patch") []
+                (= op "format_code") (result-blocks (dissoc (format-result value) "summary" "path")
+                                                    "Detail")
                 (and (= op "council.publish") (number? value)) []
                 (and (= op "cat") text)
                 [{"type" "code" "language" (code-language path) "text" (read-content text)}]

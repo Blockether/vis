@@ -165,7 +165,8 @@
         (expect (contract/valid-projection? projection))
         (expect (= ["0 of 100 files changed" "0 errors · 100 warnings · 0 info · 20 files checked"]
                    (mapv #(get-in % ["presentation" "summary"]) rows)))
-        (expect (every? #(get % "is_truncated") rows))
+        (expect (not (get (first rows) "is_truncated")))
+        (expect (get (second rows) "is_truncated"))
         (expect (re-find #"Unused binding" (pr-str (get-in rows [1 "presentation" "content"]))))))
   (it "uses complete results for counts but only public values for displayed text"
       (doseq [[operation complete public expected]

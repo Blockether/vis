@@ -221,6 +221,17 @@
 
         (expect (= {"code" "(+ 1 2)"} @seen))
         (expect (= {:op :fake-format :text "(+ 1 2)"} (:result r)))))
+  (it "adds a concise format summary without removing per-file data"
+      (doseq [language ["clojure" "python"]]
+        (let [files (vec (repeat 100 {"path" "src/example" "changed" false}))
+              payload {"files" files "changed" 0 "formatters" ["formatter"]}
+              env (fake-env [{:language language
+                              :format-fn (fn [_ _]
+                                           {:success? true :result payload})}])
+              result (:result (language-surface/format-code env language {"paths" ["src"]}))]
+
+          (expect (= "0 of 100 files changed" (get result "summary")))
+          (expect (= payload (dissoc result "summary"))))))
   (it
     "accepts singular path and plural paths across file-oriented tools"
     (let [seen

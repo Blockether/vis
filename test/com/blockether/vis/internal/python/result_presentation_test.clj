@@ -91,6 +91,23 @@
         (doseq [text ["exit=1" "first diagnostic" "last diagnostic" "omitted" "r['out']"]]
           (expect (str/includes? out text))))))
 
+(defdescribe compact-format-result-test
+             (it "prints only the formatting summary while preserving the complete mapping"
+                 (let [out (check-result
+                             {"op" "format_code"
+                              "summary" "2 of 100 files changed"
+                              "formatters" ["zprint"]
+                              "files" (vec (repeat 100 {"path" "src/example.clj" "changed" false}))}
+                             "assert len(r['files']) == 100\nprint(r)")]
+                   (expect (= "format_code: 2 of 100 files changed · zprint\n" out))))
+             (it "keeps formatting errors visible"
+                 (let [out (check-result {"op" "format_code"
+                                          "summary" "Formatting incomplete"
+                                          "files" [{"path" "src/broken.clj"
+                                                    "unbalanced" "Unmatched delimiter"}]}
+                                         "print(r)")]
+                   (expect (str/includes? out "src/broken.clj: Unmatched delimiter")))))
+
 (defdescribe
   compact-test-result-test
   (it "summarizes a green run without runner boilerplate"

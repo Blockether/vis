@@ -543,7 +543,21 @@
 (defn format-code
   "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Nonblank `code` and nonblank `path`/`paths` targets are mutually exclusive; conflicting selectors are rejected before any files change. Blank target selectors are ignored for explicit snippets. Omit code/paths for default source paths recursively. python also takes ruff's own `line_length` and `config`."
   [env & args]
-  (dispatch! env :format-fn args))
+  (dispatch!
+    env
+    :format-fn
+    args
+    (fn [_ envelope]
+      (if (and (map? (:result envelope))
+               (some #(contains? (:result envelope) %) ["changed" :changed "files" :files]))
+        (update envelope
+                :result
+                (fn [result]
+                  (assoc result
+                    "summary" (get (presenter/result-presentation {:operation :format_code}
+                                                                  (presenter/format-result result))
+                                   "summary"))))
+        envelope))))
 
 (defn lint-code
   "Lint through a pack: `lint_code(language,arg)`; omit `language` only for file/workspace inference. Source/`{\"code\":...}` lints a snippet; `{\"paths\":[...]}` (always a list) lints disk. Omit code/paths for defaults. Returns findings and severity counts. python also takes ruff's own `select`, `ignore`, `line_length` and `config` for this call."
@@ -642,7 +656,7 @@
      :result
      (str
        "String-keyed `op` result. Code/file: `changed` plus optional `chars,path,formatter,repaired`; "
-       "batch: `files,formatters`. No source text.")
+       "batch: `files,formatters`. Printing shows a short `summary`; mapping access retains all per-file data. No source text.")
      :description
      (str
        "Format through the active pack — `format_code({\"path\": \"src/a.clj\"})`, or "

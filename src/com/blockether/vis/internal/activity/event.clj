@@ -692,7 +692,10 @@
   "Retain a bounded result-specific view separately from the short diagnostic summary."
   [details]
   (let [{:keys [value is-truncated]}
-        (bounded-redact-result (:result details) 16384)
+        (bounded-redact-result (if (= :format_code (:operation details))
+                                 (presenter/format-result (:result details))
+                                 (:result details))
+                               16384)
 
         full
         (when-let [render (get-in details [:activity :render])]
