@@ -10547,7 +10547,7 @@
   [env messages opts]
   (let [{:keys [spec provider model max-context-tokens system-prompt debug? hooks cancel-token
                 eval-timeout-ms reasoning-default reasoning-effort routing extra-body
-                session-turn-id]
+                session-turn-id request-kind council-entry-id]
          :or {debug? false}}
         opts]
     (when-not (:db-info env)
@@ -10771,6 +10771,10 @@
        ;; made the durable row a SECOND id: the turn existed twice (gateway record +
        ;; persisted twin), and the trace behind the id the channels hold came back empty.
        :session-turn-id session-turn-id
+       ;; Keep explicit request provenance through preparation and execution;
+       ;; the stored Council entry owns the visible request, not the wake instruction.
+       :request-kind request-kind
+       :council-entry-id council-entry-id
        :spec spec
        :max-context-tokens max-context-tokens
        :system-prompt system-prompt
@@ -10791,7 +10795,7 @@
    Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
   [{:keys [environment user-request spec max-context-tokens system-prompt hooks cancel-atom
            cancel-token reasoning-default reasoning-effort routing extra-body turn-features
-           workspace-overrides session-turn-id]}]
+           workspace-overrides session-turn-id request-kind council-entry-id]}]
   (let [iteration-result
         (run-turn! environment
                    user-request
@@ -10802,7 +10806,9 @@
                             :reasoning-effort reasoning-effort
                             :hooks hooks
                             :cancel-atom cancel-atom
-                            :cancel-token cancel-token}
+                            :cancel-token cancel-token
+                            :request-kind request-kind
+                            :council-entry-id council-entry-id}
                      session-turn-id
                      (assoc :session-turn-id session-turn-id)
 
@@ -10928,6 +10934,8 @@
         Catalog-gated and threaded unchanged through every iteration.
       - :extra-body - Optional provider-specific request-body params merged into the
         upstream LLM call after auto max_tokens + reasoning translation.
+      - :request-kind - Request origin, :user (default) or :council.
+      - :council-entry-id - Required immutable Council entry id for :council requests.
 
     Returns:
    Map with:

@@ -2,12 +2,14 @@
   "Council requests retain their explicit provenance across the loop, SQLite and gateway."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.session.titling :as titling]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (h/use-mem-store!)
@@ -83,6 +85,51 @@
                {:select [:kind] :from :council_entry :where [:= :id (:entry_id entry)]})))
       (is (some? fork))
       (is (= (:council turn) (:council (first (ps/db-list-session-turns db fork))))))))
+
+;; Regression: completed Council wakes appeared as You after engine preparation
+;; discarded their provenance. Exercise both engine phases before the real write.
+(deftest council-provenance-survives-engine-phases
+  (doseq [kind [nil "coordination" "informational" "complain"]]
+    (let [{:keys [db sid entry]} (fixture (or kind "informational"))
+          tid (str (random-uuid))
+          prompt
+          (str "Council notification #" (:entry_id entry) ". Read the attributed Council input.")
+          env {:db-info db
+               :session-id sid
+               :turn-state-atom (ctx-loop/make-turn-state-atom)
+               :router {:providers [{:id :openai-codex :models [{:name "shared"}]}]}}
+          opts (cond-> {:model "shared" :session-turn-id tid}
+                 kind
+                 (assoc :request-kind
+                   :council :council-entry-id
+                   (:entry_id entry)))
+          ctx (#'lp/prepare-turn-context env [{:role "user" :content prompt}] opts)
+          phase (with-redefs [lp/iteration-loop (fn [_ request _]
+                                                  (is (= prompt request))
+                                                  {:status :success
+                                                   :answer "Acknowledged."
+                                                   :iteration-count 1
+                                                   :duration-ms 0})
+                              titling/maybe-auto-title! (fn [& _]
+                                                          nil)
+                              titling/after-turn-auto-title! (fn [& _]
+                                                               nil)]
+
+                  (#'lp/run-iteration-phase ctx))
+          [turn] (ps/db-list-session-turns db sid)
+          [wire] (with-redefs [lp/db-info (constantly db)]
+                   (state/transcript sid))]
+
+      (is (= tid (str (:session-turn-id phase)) (str (:id turn))))
+      (is (= prompt (:user-request turn)) "Keep the model instruction unchanged")
+      (is (= (if kind :council :user) (:request-kind turn)))
+      (is (= (if kind "council" "user") (get wire "request_kind")))
+      (if kind
+        (do (is (= (:entry_id entry) (get-in wire ["council" "entry_id"])))
+            (is (= (:thread_id entry) (get-in wire ["council" "thread_id"])))
+            (is (= kind (get-in wire ["council" "kind"])))
+            (is (= (:content entry) (get wire "request"))))
+        (do (is (nil? (:council turn))) (is (= prompt (get wire "request"))))))))
 
 (deftest council-wake-keeps-display-content-out-of-the-short-instruction
   (let [{:keys [db sid entry]}
