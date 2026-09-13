@@ -54,6 +54,7 @@ REPO = os.path.dirname(HERE)
 CLOJURE = os.environ.get("VIS_E2E_CLOJURE", "clojure")
 PROVIDER = os.environ.get("VIS_PROVIDER", "zai-coding-plan")
 MODEL = os.environ.get("VIS_MODEL", "glm-5.3-flash")
+REASONING_EFFORT = os.environ.get("VIS_REASONING_EFFORT", "").strip() or None
 # Cross-validation gate: a scenario passes only if EVERY model passes it.
 MODELS = [
     m.strip() for m in os.environ.get("VIS_MODELS", MODEL).split(",") if m.strip()
@@ -218,7 +219,10 @@ def fetch_session_usage(env, session_id, gateway_port):
         f'(let [response (gateway-client/request! :get "{path}" {{:timeout-ms 30000}})] '
         '(println (str "VIS_E2E_USAGE\t" (:status response) "\t" (:body response))))'
     )
-    result = gateway_eval(env, form, 60)
+    try:
+        result = gateway_eval(env, form, 60)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"usage query timed out after {exc.timeout}s") from exc
     marker = next(
         (
             line
@@ -371,8 +375,9 @@ def run_one(job):
                 "--model",
                 model,
             ]
-            if sc.get("want_cache_metrics") or sc.get("want_folded_prefix"):
-                command.append("--persist")
+            if REASONING_EFFORT:
+                command.extend(["--reasoning-effort", REASONING_EFFORT])
+            command.append("--persist")
             command.append(sc["prompt"])
             p = subprocess.run(
                 command,
@@ -409,6 +414,7 @@ def run_one(job):
         result_tokens = {}
         result_cost = {}
         result_session_id = None
+        result_eval = {}
         for line in out.splitlines():
             line = line.strip()
             if not line:
@@ -424,6 +430,13 @@ def run_one(job):
                 result_tokens = pl.get("tokens") or {}
                 result_cost = pl.get("cost") or {}
                 result_session_id = pl.get("session-id")
+                result_eval = pl.get("eval") or {}
+                content_errors = [
+                    block.get("message") or block.get("title") or "Provider error"
+                    for block in pl.get("content") or []
+                    if isinstance(block, dict) and block.get("type") == "error"
+                ]
+                errs.extend(content_errors)
                 a = pl.get("answer")
                 if isinstance(a, dict):
                     answer = a.get("answer", "")
@@ -436,7 +449,7 @@ def run_one(job):
                         else str(block)
                         for block in pl["content"]
                     )
-                if answer and not pl.get("error"):
+                if answer and not pl.get("error") and not content_errors:
                     done = True
                 continue
             ph = pl.get("phase")
@@ -508,7 +521,27 @@ def run_one(job):
                 correct = False
                 detail.append(f"form containing {needle!r} not used")
 
-        if sc.get("want_requested_route"):
+        if REASONING_EFFORT:
+            effort_evidence = result_eval.get("reasoning_effort") or {}
+            iterations = effort_evidence.get("iterations") or []
+            if (
+                result_eval.get("is_valid") is not True
+                or result_eval.get("invalid_reasons")
+                or effort_evidence.get("requested") != REASONING_EFFORT
+                or not iterations
+                or any(
+                    item.get("requested") != REASONING_EFFORT
+                    or item.get("effective") != REASONING_EFFORT
+                    or (item.get("provider"), item.get("model")) != (PROVIDER, model)
+                    or item.get("selected") != {"provider": PROVIDER, "model": model}
+                    or item.get("is_fallback") is not False
+                    for item in iterations
+                )
+            ):
+                correct = False
+                detail.append(f"invalid reasoning-effort evidence: {result_eval!r}")
+
+        if sc.get("want_requested_route") or REASONING_EFFORT:
             expected_route = (PROVIDER, model)
             actual_routes = [
                 (call["provider"], call["model"]) for call in provider_calls
@@ -617,8 +650,12 @@ def run_one(job):
                 "tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset))
             )
         evidence = []
-        if sc.get("want_requested_route"):
-            evidence.append(f"route={PROVIDER}/{model} calls={len(provider_calls)}")
+        if REASONING_EFFORT:
+            evidence.append(f"reasoning-effort={REASONING_EFFORT}")
+        if sc.get("want_requested_route") or REASONING_EFFORT:
+            evidence.append(
+                f"requested-route={PROVIDER}/{model} calls={len(provider_calls)}"
+            )
         if sc.get("want_folded_prefix") and fold_forms:
             evidence.append(f"fold={fold_forms[0]['scope']}→prior-prefix")
         if sc.get("want_cache_read"):
@@ -682,6 +719,7 @@ def main():
     print(
         f"running {len(scs)} scenarios × {len(MODELS)} model(s) {MODELS} on {PROVIDER} "
         f"through source gateway 127.0.0.1:{gateway['port']} "
+        f"(reasoning-effort={REASONING_EFFORT or 'default'}) "
         f"(workers={WORKERS}, default timeout={TIMEOUT}s)\n"
     )
     results = []

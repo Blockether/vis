@@ -100,6 +100,21 @@ class CacheMetricValidationTest(unittest.TestCase):
         self.assertEqual(0, usage_percent(0, 0))
         self.assertEqual(100, usage_percent(9, 8))
 
+    def test_usage_query_timeout_does_not_expose_the_command(self):
+        with patch.object(
+            run,
+            "gateway_eval",
+            side_effect=run.subprocess.TimeoutExpired(
+                ["clojure", "-Scp", "/deps.jar"], 60
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "^usage query timed out after 60s$"
+            ):
+                run.fetch_session_usage(
+                    {}, "00000000-0000-0000-0000-000000000000", 12344
+                )
+
     def test_decodes_public_usage_envelope(self):
         self.assertEqual(
             {"input_tokens": 12}, decode_usage_body('{"usage":{"input_tokens":12}}')
@@ -286,6 +301,144 @@ class ActivityToolEvidenceTest(unittest.TestCase):
                 self.assertEqual(expected, result["correct"])
                 if expected:
                     self.assertIn("tools=ls×1", result["detail"])
+
+
+class ReasoningEffortTest(unittest.TestCase):
+    def run_scenario(
+        self,
+        effort=None,
+        evaluation=None,
+        scenario_id="py-fix-body",
+        *,
+        usage_error=None,
+        provider=None,
+        content=None,
+    ):
+        scenario = run.load_scenarios([scenario_id])[0].copy()
+        scenario.update(want={}, wantnot={})
+        route = {"provider": provider or run.PROVIDER, "model": "test-model"}
+        events = [
+            {"event": "trace-chunk", "payload": {"phase": "provider-call", **route}},
+            {
+                "event": "result",
+                "payload": {
+                    "answer": "done",
+                    "content": content,
+                    "session-id": "00000000-0000-0000-0000-000000000000",
+                    "cost": route,
+                    "eval": evaluation,
+                },
+            },
+        ]
+        with (
+            tempfile.TemporaryDirectory() as traces,
+            patch.object(run, "TRACES", traces),
+            patch.object(run, "REASONING_EFFORT", effort),
+            patch.object(run, "source_classpath", return_value="/checkout/src"),
+            patch.object(run, "fetch_session_usage", side_effect=usage_error),
+            patch.object(run.subprocess, "run") as invoke,
+        ):
+            invoke.return_value.returncode = 0
+            invoke.return_value.stdout = "\n".join(
+                json.dumps(event) for event in events
+            )
+            result = run.run_one((scenario, "test-model", {}, 12344))
+            return invoke.call_args.args[0], result
+
+    def evaluation(self):
+        return {
+            "is_valid": True,
+            "invalid_reasons": [],
+            "reasoning_effort": {
+                "requested": "low",
+                "iterations": [
+                    {
+                        "requested": "low",
+                        "effective": "low",
+                        "provider": run.PROVIDER,
+                        "model": "test-model",
+                        "selected": {"provider": run.PROVIDER, "model": "test-model"},
+                        "is_fallback": False,
+                    }
+                ],
+            },
+        }
+
+    def test_ordinary_editing_scenarios_use_persistent_gateway_sessions(self):
+        for scenario_id in ("py-fix-body", "js-rename-var"):
+            with self.subTest(scenario_id=scenario_id):
+                command, _ = self.run_scenario(scenario_id=scenario_id)
+                self.assertEqual(1, command.count("--persist"))
+
+    def test_unset_effort_preserves_default_command_and_validation(self):
+        command, result = self.run_scenario()
+        self.assertNotIn("--reasoning-effort", command)
+        self.assertTrue(result["correct"])
+
+    def test_low_is_forwarded_exactly_and_reported_with_route(self):
+        command, result = self.run_scenario("low", self.evaluation())
+        index = command.index("--reasoning-effort")
+        self.assertEqual("low", command[index + 1])
+        self.assertTrue(result["correct"], result["detail"])
+        self.assertIn("reasoning-effort=low", result["evidence"])
+        self.assertIn(
+            f"requested-route={run.PROVIDER}/test-model calls=1", result["evidence"]
+        )
+
+    def test_missing_or_invalid_evaluation_fails_even_with_zero_exit(self):
+        for evaluation in (None, {"is_valid": False, "invalid_reasons": []}):
+            with self.subTest(evaluation=evaluation):
+                _, result = self.run_scenario("low", evaluation)
+                self.assertFalse(result["correct"])
+                self.assertTrue(any("reasoning" in item for item in result["detail"]))
+
+    def test_mismatched_effort_or_route_evidence_fails(self):
+        for change in (
+            {"effective": "high"},
+            {"requested": "high"},
+            {"provider": "other-provider"},
+            {"model": "other-model"},
+            {"is_fallback": True},
+            {"selected": {"provider": "other-provider", "model": "test-model"}},
+        ):
+            with self.subTest(change=change):
+                evaluation = self.evaluation()
+                evaluation["reasoning_effort"]["iterations"][0].update(change)
+                _, result = self.run_scenario("low", evaluation)
+                self.assertFalse(result["correct"])
+
+    def test_requested_route_is_not_presented_as_an_observed_route(self):
+        _, result = self.run_scenario(
+            "low", self.evaluation(), provider="other-provider"
+        )
+        self.assertFalse(result["correct"])
+        self.assertIn(
+            f"requested-route={run.PROVIDER}/test-model calls=1", result["evidence"]
+        )
+        self.assertTrue(any("other-provider" in item for item in result["detail"]))
+
+    def test_usage_failure_preserves_the_scenario_result(self):
+        _, result = self.run_scenario(
+            "low",
+            self.evaluation(),
+            scenario_id="context-folding",
+            usage_error=RuntimeError("usage query timed out after 60s"),
+        )
+        self.assertFalse(result["correct"])
+        self.assertIn(
+            "could not read persisted usage metrics: usage query timed out after 60s",
+            result["detail"],
+        )
+
+    def test_provider_error_content_is_counted_and_not_converged(self):
+        _, result = self.run_scenario(
+            "low",
+            self.evaluation(),
+            content=[{"type": "error", "message": "Provider model unavailable"}],
+        )
+        self.assertFalse(result["converged"])
+        self.assertEqual(1, result["errors"])
+        self.assertEqual(["Provider model unavailable"], result["err_msgs"])
 
 
 if __name__ == "__main__":

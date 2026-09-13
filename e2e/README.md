@@ -4,6 +4,8 @@ End-to-end tests run `vis-agent` on editing tasks and check completion, file
 contents, errors and use of anchored `patch` edits. See `run.py`'s module
 docstring for the full contract. Each invocation starts a gateway from the
 current classpath with a temporary database, independent of installed daemons.
+Every scenario passes `--persist` to use gateway session/turn handling rather than
+the ephemeral CLI engine path. Sessions stay in that temporary database.
 These tests use real model calls and incur provider costs.
 
 ## Layout
@@ -51,6 +53,9 @@ VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash python3 e2e/run.py
 # Run each scenario on multiple models. The command succeeds only if every
 # model passes every selected scenario:
 VIS_MODELS=glm-5.3-flash,glm-5.3 python3 e2e/run.py
+
+# Pin exact native effort and reject missing evidence or a changed route:
+VIS_PROVIDER=github-copilot-individual VIS_MODEL=gpt-6-astra VIS_REASONING_EFFORT=low python3 e2e/run.py py-fix-body py-repl-compute
 ```
 
 Environment variables: `VIS_MODELS` (comma-separated models, default
@@ -58,6 +63,12 @@ Environment variables: `VIS_MODELS` (comma-separated models, default
 `VIS_E2E_WORKERS` (parallel runs, default 5), `VIS_E2E_TRACES` (JSON trace
 directory; multiple-model runs use `<id>__<model>.jsonl`), and
 `VIS_E2E_KEEP=1` (retain temporary working directories).
+
+`VIS_REASONING_EFFORT` optionally forwards an exact provider-native effort to
+`--reasoning-effort`. With it set, every run must report valid evaluation evidence
+for that effort on the requested provider and model, without fallback. The run
+summary includes the requested effort and route. Omit it to retain the configured
+reasoning behavior.
 
 Without `VIS_E2E_TIMEOUT`, each scenario uses its `timeout_s` or the 300-second
 default. These budgets include model requests and all tool calls; they do not

@@ -135,6 +135,33 @@
                      (expect (= "wire-session" @submitted))))))
 
 (defdescribe
+  persistent-one-shot-route-test
+  (it "forwards explicit provider and model selection to gateway turn submission"
+      (doseq [[opts expected] [[{:provider "github-copilot-individual" :model "gpt-6-astra"}
+                                {:provider :github-copilot-individual :model "gpt-6-astra"}]
+                               [{:provider "github-copilot-individual"}
+                                {:provider :github-copilot-individual}]
+                               [{:model "gpt-6-astra"} {:model "gpt-6-astra"}]
+                               [{:model "github-copilot-individual/gpt-6-astra"}
+                                {:provider :github-copilot-individual :model "gpt-6-astra"}]]]
+        (let [submitted (atom nil)
+              config {:providers [{:id :openai-codex :models [{:name "gpt-6-astra"}]}
+                                  {:id :github-copilot-individual
+                                   :models [{:name "gpt-6-astra"}]}]}]
+
+          (with-redefs [lp/rebuild-router! (constantly nil)
+                        gateway-state/create-session! (constantly {"id" "wire-session"})
+                        gateway-state/submit-turn-sync! (fn [_ request]
+                                                          (reset! submitted request)
+                                                          {"content" []})]
+
+            (main/run! {} "hi" (merge {:config config :persist? true :reasoning-effort "low"} opts))
+            (expect (= expected (select-keys @submitted [:provider :model])) (pr-str opts))
+            (expect (= "low" (get-in @submitted [:engine-opts :reasoning-effort])))
+            (when (:model expected)
+              (expect (= (:model expected) (get-in @submitted [:engine-opts :model])))))))))
+
+(defdescribe
   fast-help-test
   (it "does not swallow unknown root commands that also ask for help"
       (expect (nil? (#'main/fast-help-dispatched? false ["missing" "--help"]))))

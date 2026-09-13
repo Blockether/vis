@@ -420,7 +420,7 @@
    - :spec        - Output spec for structured responses
    - :provider    - Override provider (keyword or string, e.g. :openai)
    - :model       - Override model
-   - :reasoning-effort - Exact provider-native effort (`high` or `max`)
+   - :reasoning-effort - Exact provider-native effort (for example, `low`, `high` or `max`)
    - :on-chunk    - Streaming callback fn
    - :debug?      - Enable debug logging (default false)
    - :config      - Provider config override (skips ~/.vis/config.edn)
@@ -457,6 +457,19 @@
           mdl
           (config-with-model-override mdl))
 
+        requested-provider
+        (when (or provider (split-provider-model mdl)) (:id (first (:providers cfg))))
+
+        requested-model
+        (when mdl
+          (or (some-> cfg
+                      :providers
+                      first
+                      :models
+                      first
+                      config/model-name)
+              mdl))
+
         local-router?
         (boolean (or config mdl provider))
 
@@ -476,8 +489,8 @@
           spec
           (assoc :spec spec)
 
-          mdl
-          (assoc :model mdl)
+          requested-model
+          (assoc :model requested-model)
 
           reasoning-effort
           (assoc :reasoning-effort reasoning-effort)
@@ -577,7 +590,12 @@
 
         (try (let [result (gateway-state/submit-turn-sync!
                             session-id
-                            {:request prompt-s :messages messages :engine-opts q-opts})]
+                            (cond-> {:request prompt-s :messages messages :engine-opts q-opts}
+                              requested-provider
+                              (assoc :provider requested-provider)
+
+                              requested-model
+                              (assoc :model requested-model)))]
                ;; The gateway result is canonical string-keyed; pick the
                ;; fields into the CLI envelope explicitly.
                (cond-> {:session-id session-id
@@ -1477,7 +1495,7 @@
   (stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
   (stdout! "  --model MODEL        Override the configured model. Also accepts")
   (stdout! "                       provider/name (e.g. openai/gpt-4o).")
-  (stdout! "  --reasoning-effort E  Exact provider-native effort: high or max.")
+  (stdout! "  --reasoning-effort E  Exact provider-native effort (e.g. low, high or max).")
   (stdout! "  --name NAME          Set the agent name (default: cli).")
   (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
   (stdout! "  --session-id ID      Continue an existing persisted session.")
