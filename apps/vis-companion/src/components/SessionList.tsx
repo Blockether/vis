@@ -210,7 +210,7 @@ export const SessionRow = memo(function SessionRow({
   );
 
   return (
-    <div className="[&+&]:border-t [&+&]:border-dialog-edge">
+    <div className="[&+&]:border-t [&+&]:border-edge">
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
       {deletion ? (
@@ -729,7 +729,7 @@ export function NavigatorSkeleton() {
               {rows.map((width, row) => (
                 <div
                   key={row}
-                  className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
+                  className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
                   <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] @3xl:gap-y-0">
                     <span className="col-start-1 row-start-1 @3xl:col-start-auto @3xl:row-start-auto">

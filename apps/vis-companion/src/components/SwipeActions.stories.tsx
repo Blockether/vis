@@ -109,7 +109,7 @@ export const ProjectHeader: Story = {
         <SectionHeader>
           <div className="grid min-w-0 flex-1">
             <SwipeActions {...args}>
-              <div className="flex gap-2 bg-level-project sm:min-h-13 mouse:min-h-12">
+              <div className="flex gap-2 bg-project-header sm:min-h-13 mouse:min-h-12">
                 {args.children}
                 {!hasPageRow && (
                   <div className="flex shrink-0 items-center pr-2">{projectHeaderPager}</div>
@@ -142,7 +142,7 @@ export const ProjectHeader: Story = {
       />
     ),
     trailing: (
-      <div className="flex bg-level-project">
+      <div className="flex bg-project-header">
         <HeaderActions align="center">
           <NewSessionButton machine={STORY_SESSION.machine} onPress={onCreate} />
         </HeaderActions>

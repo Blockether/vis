@@ -449,18 +449,11 @@ export const ProjectGroup = memo(function ProjectGroup({
       {/* The rail's index finds this band by the two facts that identify it, and the
         only two a jump can be sure of: which machine, and which root. */}
       <section
-        /* THE PROJECT IS NOT AN OBJECT, IT IS A PASSAGE OF THE LIST.
-           It was a sheet: 12px lane, 16px corner, a hairline all the way round and the
-           card's own paper — so a phone showed four papers (page, machine, panel, band)
-           and two edges for every heading, and the reader reported the result as holes
-           and ugly seams while scrolling. A container that holds objects with their own
-           edges is not itself an object: the group spends nothing on paint of its own.
-           What separates it from the next project is the BAND that leads it — that band's
-           paper and its incoming rule (`HEADER_BAND`) — and nothing else: no air above
-           it, because 16px of blank paper between two hairlines read as an empty row. */
+        // A compact gap and the incoming header rule separate projects, not individual rows.
         aria-label={`${project} sessions`}
         data-machine={machineKey(conn)}
         data-project-root={root}
+        className="[&+&]:pt-2"
       >
         {/* Keep the normal band, swipe drawer and delete confirmation in one sticky layer. */}
         <div className="sticky top-0 z-10 [&_header]:static [&_header]:z-auto">
@@ -499,7 +492,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                     },
                   ]}
                   trailing={
-                    <div className="flex bg-level-project">
+                    <div className="flex bg-project-header">
                       <HeaderActions align="center">
                         <NewSessionButton
                           machine={machineLabel(conn)}
@@ -515,7 +508,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 accent line that used to close this header was the fourth yellow on a screen the
                 contract gives one to, and it drew the boundary at the wrong end: under a name is
                 where the rows it heads begin. */}
-                  <div className="flex gap-2 bg-level-project sm:min-h-13 mouse:min-h-12">
+                  <div className="flex gap-2 bg-project-header sm:min-h-13 mouse:min-h-12">
                     {/* The leading half NAMES the project and FOLDS it: folder name, the path that
                   tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
                   the band already reserves, so the name keeps the list's one leading edge

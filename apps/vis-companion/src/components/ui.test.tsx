@@ -274,7 +274,7 @@ describe('SectionHeader', () => {
   it('carries the boundary: its own paper, and one rule coming in', () => {
     const html = renderToStaticMarkup(<SectionHeader>rows</SectionHeader>);
 
-    expect(html).toContain('bg-level-project');
+    expect(html).toContain('bg-project-header');
     expect(html).toContain('border-t');
     // The edge comes IN, over the name. A rule under it would only repeat the hairline
     // that already separates two rows of the project it heads.
@@ -827,7 +827,7 @@ describe('HeaderTitle rename', () => {
   // The name and the facts under it share the app's one JetBrains Mono face; size,
   // weight and ink carry their hierarchy instead of a second font family.
   it('is INK, not a second control: the name keeps its own face', () => {
-    const face = 'font-semibold text-white';
+    const face = 'font-bold text-white';
     expect(resting).toContain(face);
     expect(editable).toContain(face);
     // No border, no box, no height of its own — anything that paints a frame

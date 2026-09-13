@@ -37,7 +37,7 @@ const HEADER_TYPE = 'text-title';
  * pointer column reached zero while it still spelled 36.
  */
 const HEADER_BAND =
-  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-t border-dialog-edge bg-level-project';
+  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-t border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
 
 /** The session list's pull gesture takes over the app bar with the action a release would take. */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
@@ -109,18 +109,8 @@ export function SectionHeader({ children }: { children: ReactNode }) {
 }
 
 /**
- * THE AIR BEFORE A NEW MACHINE, and it is air: this component PAINTS NOTHING.
- *
- * Two projects have nothing between them at all. The band that opens a project already
- * carries the boundary — its own paper, and the rule that comes in over the name
- * (`HEADER_BAND`) — so the 16px that used to precede it was an unpainted strip closed by
- * a hairline at each end, which reads as an empty ROW of the list. Reported twice as a
- * hole. A pause that separates nothing a line has not already separated is not structure.
- *
- * A MACHINE is the one break the bands cannot say, because the first project of the next
- * computer wears exactly the band a project inside this one wears. 32px of the list's own
- * paper says it without a second colour, a rail or a legend. It is a `div` and not a
- * margin because a margin collapses and this distance is structural.
+ * Separate machines more strongly than projects. Project groups use a compact gap
+ * and a heading rule; machines retain their larger, unpainted break.
  */
 export function MachineGap() {
   return <div aria-hidden="true" className="h-8" />;
@@ -275,13 +265,13 @@ export function HeaderTitle({
       <span className="flex min-w-0 flex-1 flex-col items-start overflow-hidden">
         {onRename ? (
           <EditableName
-            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-semibold text-white ${HEADER_TYPE}`}
+            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-bold text-white ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
           />
         ) : (
-          <span className={`max-w-[100%] min-w-0 truncate font-semibold text-white ${HEADER_TYPE}`}>
+          <span className={`max-w-[100%] min-w-0 truncate font-bold text-white ${HEADER_TYPE}`}>
             {name}
           </span>
         )}
@@ -534,7 +524,7 @@ export function ProjectStatusCounts({
     running > 0
       ? {
           label: `${running} live`,
-          tone: 'text-ok-ink',
+          tone: 'text-project-live',
           dot: 'animate-pulse bg-ok motion-reduce:animate-none',
         }
       : null,
