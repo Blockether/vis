@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Pager, pageWindow } from './SessionNavigator';
 
-// Wide project bands offer direct jumps; compact bands keep previous/next steps.
+// Desktop rails offer direct jumps; phones keep previous/next steps.
 describe('project pages', () => {
-  it('offers the first five pages as direct jumps in a wide band', () => {
+  it('offers the first five pages as direct jumps on desktop', () => {
     const onPage = vi.fn();
     render(<Pager page={1} pageCount={80} label="vis sessions" onPage={onPage} />);
     for (const page of [1, 2, 3, 4, 5, 80]) {

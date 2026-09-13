@@ -651,14 +651,10 @@ function HeaderRenameDemo() {
 
 function PagerDemo() {
   const [page, setPage] = useState(1);
-  return (
-    <div className="@container/project w-full">
-      <Pager page={page} pageCount={80} onPage={setPage} label="vis sessions" />
-    </div>
-  );
+  return <Pager page={page} pageCount={80} onPage={setPage} label="vis sessions" />;
 }
 
-// The available band width, not the viewport, selects numbered jumps or compact steps.
+// Desktop rails keep numbered jumps; phones use compact previous/next steps.
 export const ProjectPages: Story = {
   render: () => (
     <Sheet>
@@ -666,8 +662,8 @@ export const ProjectPages: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const band = canvas.getByRole('navigation', { name: 'Pages of vis sessions' }).parentElement!;
-    if (band.getBoundingClientRect().width >= 768) {
+    const pager = canvas.getByRole('navigation', { name: 'Pages of vis sessions' });
+    if (pager.ownerDocument.defaultView!.innerWidth >= 640) {
       expect(canvas.queryByRole('button', { name: 'Next page' })).toBeNull();
       for (const page of [1, 2, 3, 4, 5, 80]) {
         await expect(canvas.getByRole('button', { name: `Page ${page}` })).toBeVisible();

@@ -27,6 +27,7 @@ import {
   type DraftMessageStore,
 } from '../../lib/draft-messages';
 import { isFavorite } from '../../lib/favorites';
+import { useMediaMatch } from '../../lib/fit-rows';
 import {
   machineKey,
   machineLabel,
@@ -106,6 +107,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   const { getClient, drafts, matches, needle, actions: rowActions } = context;
   const { pageSize, epoch, admitted, isVisible } = reading;
   const { state: creating, start: onNewSession } = creation;
+  const hasPageRow = useMediaMatch('(width >= 40rem)');
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
     rowActions.deletion.target && machineKey(rowActions.deletion.target.conn) === machineKey(conn)
@@ -431,6 +433,17 @@ export const ProjectGroup = memo(function ProjectGroup({
       behavior: 'auto',
     });
   }, [rows]);
+
+  const pager =
+    isShowing && pageCount > 1 ? (
+      <Pager
+        page={shownPage}
+        pageCount={pageCount}
+        onPage={goToPage}
+        label={`${project} sessions`}
+      />
+    ) : null;
+
   return (
     <>
       {/* The rail's index finds this band by the two facts that identify it, and the
@@ -502,7 +515,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 accent line that used to close this header was the fourth yellow on a screen the
                 contract gives one to, and it drew the boundary at the wrong end: under a name is
                 where the rows it heads begin. */}
-                  <div className="flex gap-2 bg-level-project">
+                  <div className="flex gap-2 bg-level-project sm:min-h-13 mouse:min-h-12">
                     {/* The leading half NAMES the project and FOLDS it: folder name, the path that
                   tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
                   the band already reserves, so the name keeps the list's one leading edge
@@ -559,18 +572,12 @@ export const ProjectGroup = memo(function ProjectGroup({
                           : null
                       }
                     />
-                    {isShowing && pageCount > 1 && (
-                      <div className="flex shrink-0 items-center pr-2">
-                        <Pager
-                          page={shownPage}
-                          pageCount={pageCount}
-                          onPage={goToPage}
-                          label={`${project} sessions`}
-                        />
-                      </div>
+                    {pager && !hasPageRow && (
+                      <div className="flex shrink-0 items-center pr-2">{pager}</div>
                     )}
                   </div>
                 </SwipeActions>
+                {pager && hasPageRow && <div className="px-4 pb-2 pt-1">{pager}</div>}
               </div>
             </SectionHeader>
           )}

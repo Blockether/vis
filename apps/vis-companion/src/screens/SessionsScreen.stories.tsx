@@ -83,25 +83,44 @@ export const Fleet: Story = {
     // Action counts must not move the permanent + / disclosure off the shared edge.
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;
     const create = within(project as HTMLElement).getByRole('button', { name: /^New session/ });
-    // Regression: paging belongs beside the project and +, never on a second row.
+    // Phones keep paging inline; desktop rails reserve a row for direct numbered jumps.
     const pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
     const centerY = (node: Element) => {
       const box = node.getBoundingClientRect();
       return box.y + box.height / 2;
     };
-    await expect(centerY(pager)).toBe(centerY(create));
-    await expect(centerY(pager)).toBe(centerY(fold));
-    await expect(pager.getBoundingClientRect().left).toBeGreaterThanOrEqual(
-      fold.getBoundingClientRect().right + 8,
+    await expect(
+      project.querySelectorAll('nav[aria-label="Pages of uberworkspace sessions"]'),
+    ).toHaveLength(1);
+    await expect(centerY(fold)).toBe(centerY(create));
+    // A separate pager row must not shrink the heading below its touch target.
+    await expect(fold.getBoundingClientRect().height).toBeGreaterThanOrEqual(
+      win.matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44,
     );
-    await expect(pager.getBoundingClientRect().right + 8).toBeLessThanOrEqual(
-      create.getBoundingClientRect().left,
-    );
-    for (const control of within(pager).getAllByRole('button')) {
-      await expect(centerY(control)).toBe(centerY(create));
+    const numbered = win.innerWidth >= 640;
+    if (numbered) {
+      await expect(pager.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        fold.getBoundingClientRect().bottom + 4,
+      );
+      await expect(pager.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+        project.getBoundingClientRect().left + 16,
+      );
+      await expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(
+        project.getBoundingClientRect().right - 16,
+      );
+    } else {
+      await expect(centerY(pager)).toBe(centerY(create));
+      await expect(pager.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+        fold.getBoundingClientRect().right + 8,
+      );
+      await expect(pager.getBoundingClientRect().right + 8).toBeLessThanOrEqual(
+        create.getBoundingClientRect().left,
+      );
     }
-    const numbered = project.getBoundingClientRect().width >= 768;
+    for (const control of within(pager).getAllByRole('button')) {
+      await expect(centerY(control)).toBe(centerY(pager));
+    }
     if (numbered) {
       for (const n of [1, 2, 3, 4, 5]) {
         await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
@@ -117,7 +136,7 @@ export const Fleet: Story = {
     await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute('aria-live', 'polite');
     await expect(fold).toHaveAttribute('aria-expanded', 'true');
     for (const control of within(pager).getAllByRole('button')) {
-      await expect(centerY(control)).toBe(centerY(create));
+      await expect(centerY(control)).toBe(centerY(pager));
     }
     await userEvent.click(
       within(pager).getByRole('button', { name: numbered ? 'Page 1' : 'Previous page' }),

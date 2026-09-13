@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { SESSION_VERBS, STORY_SESSION } from '../dev/story-data';
+import { useMediaMatch } from '../lib/fit-rows';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import { ListRow } from './ui';
@@ -94,21 +95,33 @@ export const SelectedRow: Story = {
 const onCreate = fn();
 const onPage = fn();
 const onDelete = fn();
+const projectHeaderPager = (
+  <Pager page={1} pageCount={5} label={STORY_SESSION.project} onPage={onPage} />
+);
 
 /** Regression: desktop hover must not put Delete over the project's pager or +. */
 export const ProjectHeader: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
-  decorators: [
-    (Story) => (
+  render: function Render(args) {
+    const hasPageRow = useMediaMatch('(width >= 40rem)');
+    return (
       <div className="@container max-w-sm">
         <SectionHeader>
           <div className="grid min-w-0 flex-1">
-            <Story />
+            <SwipeActions {...args}>
+              <div className="flex gap-2 bg-level-project sm:min-h-13 mouse:min-h-12">
+                {args.children}
+                {!hasPageRow && (
+                  <div className="flex shrink-0 items-center pr-2">{projectHeaderPager}</div>
+                )}
+              </div>
+            </SwipeActions>
+            {hasPageRow && <div className="px-4 pb-2 pt-1">{projectHeaderPager}</div>}
           </div>
         </SectionHeader>
       </div>
-    ),
-  ],
+    );
+  },
   args: {
     label: STORY_SESSION.project,
     actions: [
@@ -122,16 +135,11 @@ export const ProjectHeader: Story = {
       },
     ],
     children: (
-      <div className="flex gap-2 bg-level-project">
-        <ProjectCrumb
-          name={STORY_SESSION.project}
-          qualifier={STORY_SESSION.where}
-          disclosure={null}
-        />
-        <div className="flex shrink-0 items-center pr-2">
-          <Pager page={1} pageCount={5} label={STORY_SESSION.project} onPage={onPage} />
-        </div>
-      </div>
+      <ProjectCrumb
+        name={STORY_SESSION.project}
+        qualifier={STORY_SESSION.where}
+        disclosure={null}
+      />
     ),
     trailing: (
       <div className="flex bg-level-project">
@@ -146,7 +154,9 @@ export const ProjectHeader: Story = {
     const track = create.closest<HTMLElement>('[data-swipe-track]')!;
     const doc = canvasElement.ownerDocument;
     const win = doc.defaultView!;
-    const second = canvas.getByRole('button', { name: 'Next page' });
+    const second = canvas.getByRole('button', {
+      name: win.innerWidth >= 640 ? 'Page 2' : 'Next page',
+    });
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       await expect(track.scrollWidth).toBeGreaterThan(track.clientWidth);
       await userEvent.click(second);

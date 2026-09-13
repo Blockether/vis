@@ -111,7 +111,7 @@ export function useFitRows(geometry: ListGeometry): number {
 export const MOUSE_DENSITY = '(width >= 40rem) and (pointer: fine)';
 
 /** True while `query` matches this screen, and it keeps up when the window changes. */
-function useMediaMatch(query: string): boolean {
+export function useMediaMatch(query: string): boolean {
   const [isMatch, setMatch] = useState(() =>
     typeof window === 'undefined' ? false : (window.matchMedia?.(query).matches ?? false),
   );

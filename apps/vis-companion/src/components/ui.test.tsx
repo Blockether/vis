@@ -654,7 +654,7 @@ describe('Pager', () => {
     ).toBe('');
   });
 
-  // Wide bands keep direct jumps; phones and narrow rails use the compact steps.
+  // Desktop rails keep direct jumps; phones use compact steps.
   it('offers both responsive forms and announces the position once', () => {
     const html = renderToStaticMarkup(
       <Pager page={1} pageCount={80} onPage={() => {}} label="vis sessions" />,
@@ -698,11 +698,12 @@ describe('a project band carries its own count and its own pager', () => {
   const qualifier = band.slice(band.indexOf('qualifier={'), band.indexOf('qualifierTitle='));
   const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? '';
 
-  it('keeps numeric pages inside the band but outside its action cluster', () => {
-    expect(band).toMatch(/<Pager\s+page=\{shownPage\}/);
-    expect(cluster).not.toContain('<Pager');
+  it('keeps project pages inside the band but outside its action cluster', () => {
+    expect(sessionsListSource).toMatch(/<Pager\s+page=\{shownPage\}/);
+    expect(band).toContain('{pager}');
+    expect(cluster).not.toContain('{pager}');
     expect(cluster).toContain('<NewSessionButton');
-    // ...and it is the ONLY pager on this screen.
+    // Both responsive placements share the same paging state and callbacks.
     expect(sessionsListSource.match(/<Pager\b/g)?.length).toBe(1);
   });
 
