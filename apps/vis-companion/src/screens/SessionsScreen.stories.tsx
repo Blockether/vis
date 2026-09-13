@@ -84,8 +84,29 @@ export const Fleet: Story = {
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;
     const create = within(project as HTMLElement).getByRole('button', { name: /^New session/ });
     // Phones keep paging inline; desktop rails reserve a row for direct numbered jumps.
-    const pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
+    let pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
+    // The project band stays uniform across its disclosure, paging and open menu.
+    const header = fold.closest('header')!;
+    await expect(win.getComputedStyle(header).borderBottomWidth).toBe('0px');
+    await userEvent.click(fold);
+    await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
+    await userEvent.click(fold);
+    await expect(win.getComputedStyle(header).borderBottomWidth).toBe('0px');
+    pager = within(header).getByRole('navigation');
+    if (win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
+      const trigger = within(header).getByRole('button', { name: 'Actions for uberworkspace' });
+      await userEvent.hover(fold);
+      const band = win.getComputedStyle(header).backgroundColor;
+      await expect(win.getComputedStyle(fold).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+      await userEvent.unhover(fold);
+      await userEvent.hover(trigger);
+      await expect(win.getComputedStyle(header).backgroundColor).toBe(band);
+      await userEvent.click(trigger);
+      await userEvent.unhover(trigger);
+      await expect(win.getComputedStyle(header).backgroundColor).toBe(band);
+      await userEvent.keyboard('{Escape}');
+    }
     const centerY = (node: Element) => {
       const box = node.getBoundingClientRect();
       return box.y + box.height / 2;
@@ -143,9 +164,9 @@ export const Fleet: Story = {
     );
     await expect(await within(pager).findByText(/^Page 1 of /)).toBeInTheDocument();
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
-      // The permanent controls must keep the project's paper, not the session panel's.
+      // Transparent controls expose the same project band on touch.
       await expect(win.getComputedStyle(create.parentElement!.parentElement!).backgroundColor).toBe(
-        win.getComputedStyle(create.closest('header')!).backgroundColor,
+        'rgba(0, 0, 0, 0)',
       );
       return;
     }

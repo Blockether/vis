@@ -104,8 +104,20 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
  * the band that wore it — the fleet-wide pin for runs waiting on an answer — is gone.
  * Every session is in a project, so the list has ONE kind of section.
  */
-export function SectionHeader({ children }: { children: ReactNode }) {
-  return <header className={HEADER_BAND}>{children}</header>;
+export function SectionHeader({
+  children,
+  isCollapsed = false,
+}: {
+  children: ReactNode;
+  isCollapsed?: boolean;
+}) {
+  return (
+    <header
+      className={`${HEADER_BAND} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:hover:bg-hover mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover ${isCollapsed ? 'border-b' : ''}`}
+    >
+      {children}
+    </header>
+  );
 }
 
 /**
@@ -329,7 +341,7 @@ export function ProjectCrumb({
       aria-expanded={disclosure.isOpen}
       aria-label={disclosure.label}
       onClick={disclosure.onToggle}
-      className="flex min-w-0 flex-1 items-center text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none"
+      className="flex min-w-0 flex-1 items-center text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
     >
       {title}
     </button>
@@ -524,17 +536,16 @@ export function ProjectStatusCounts({
     running > 0
       ? {
           label: `${running} live`,
-          tone: 'text-project-live',
+          tone: 'text-white',
           dot: 'animate-pulse bg-ok motion-reduce:animate-none',
         }
       : null,
     awaiting > 0
       ? {
           label: `${awaiting} needs input`,
-          // The amber INK is `--warning`; `--warning-border` is an EDGE and misses 4.5:1
-          // as 10px text (measured 4.37:1 on the light papers). The dot keeps it: a mark
-          // is not read, and it pairs with the row chip's own dot.
-          tone: 'text-warn',
+          // Neutral ink stays readable on both the project band and its hover.
+          // The colored dot and label preserve the status distinction.
+          tone: 'text-white',
           dot: 'animate-pulse bg-warn-strong motion-reduce:animate-none',
         }
       : null,

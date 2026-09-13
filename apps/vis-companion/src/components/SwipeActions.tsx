@@ -168,12 +168,15 @@ export function SwipeActions({
   children,
   label,
   trailing,
+  surface = 'row',
 }: {
   actions: SwipeAction[];
   children: ReactNode;
   label?: string;
   /** Permanent row controls: inside the touch panel, after the desktop menu trigger. */
   trailing?: ReactNode;
+  /** Project headers own their background; session rows paint their own hover. */
+  surface?: 'row' | 'project';
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -289,15 +292,15 @@ export function SwipeActions({
         }
         setOpen((current) => (current === next ? current : next));
       }}
-      // Under a pointer the TRACK is the row's hover slab: the strip and the row are two
-      // panels of one track, and a hover that belongs to only one of them leaves a seam
-      // — the row went back to plain paper the moment the cursor reached its own verbs.
-      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden mouse:transition-colors mouse:duration-150 mouse:hover:bg-hover mouse:motion-reduce:transition-none"
+      // Project headers paint one continuous surface behind all controls.
+      className={`group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden mouse:transition-colors mouse:duration-150 mouse:motion-reduce:transition-none ${
+        surface === 'project' ? '' : 'mouse:hover:bg-hover'
+      }`}
     >
       {/* Touch keeps content and permanent controls in one full-width snap panel.
           Desktop reserves just one menu trigger before the permanent trailing edge. */}
       <div
-        className="grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start bg-panel mouse:contents"
+        className={`grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start mouse:contents ${surface === 'project' ? 'bg-transparent' : 'bg-panel'}`}
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.

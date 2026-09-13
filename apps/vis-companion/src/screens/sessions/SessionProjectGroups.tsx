@@ -473,9 +473,10 @@ export const ProjectGroup = memo(function ProjectGroup({
               onConfirm={() => void commitRemove()}
             />
           ) : (
-            <SectionHeader>
+            <SectionHeader isCollapsed={!isShowing}>
               <div className="grid min-w-0 flex-1">
                 <SwipeActions
+                  surface="project"
                   label={project}
                   actions={[
                     {
@@ -492,7 +493,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                     },
                   ]}
                   trailing={
-                    <div className="flex bg-project-header">
+                    <div className="flex">
                       <HeaderActions align="center">
                         <NewSessionButton
                           machine={machineLabel(conn)}
@@ -508,7 +509,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                 accent line that used to close this header was the fourth yellow on a screen the
                 contract gives one to, and it drew the boundary at the wrong end: under a name is
                 where the rows it heads begin. */}
-                  <div className="flex gap-2 bg-project-header sm:min-h-13 mouse:min-h-12">
+                  <div className="flex gap-2 sm:min-h-13 mouse:min-h-12">
                     {/* The leading half NAMES the project and FOLDS it: folder name, the path that
                   tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
                   the band already reserves, so the name keeps the list's one leading edge
