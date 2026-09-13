@@ -1326,16 +1326,13 @@
    :measure
    (fn [state cols rows]
      (let [content-w
-           (min 92 (default-content-width cols))
+           (max 1 (min 120 (- (long cols) 12)))
 
-           content-h
-           (adaptive-content-height rows nil)
-
-           bounds
-           (dialog-bounds cols rows content-w content-h)
+           width-bounds
+           (dialog-bounds cols rows content-w 1)
 
            text-w
-           (max 1 (- (long (:inner-w bounds)) 3))
+           (max 1 (- (long (:inner-w width-bounds)) 3))
 
            lines
            (vec
@@ -1359,8 +1356,14 @@
                                   (if (str/blank? text) [""] (render/wrap-text text text-w)))))
                (session-metric-rows session state)))
 
+           content-h
+           (adaptive-content-height rows (count lines))
+
+           bounds
+           (dialog-bounds cols rows content-w content-h)
+
            layout
-           (dialog-layout bounds (count lines))]
+           (dialog-layout bounds)]
 
        (merge layout
               {:cols cols

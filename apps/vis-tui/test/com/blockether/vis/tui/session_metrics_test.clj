@@ -196,7 +196,7 @@
         rows
         (mapv :text (:lines geom))]
 
-    (is (= 92 (:content-w geom)))
+    (is (= 120 (:content-w geom)))
     (doseq [path (map #(get % "path") (get-in measured-usage ["health" "roots"]))]
       (let [index (.indexOf ^java.util.List rows path)]
         (is (pos? index))
@@ -233,6 +233,21 @@
     (is (str/includes? text "pinned-model"))
     (is (str/includes? text "—"))
     (is (not (str/includes? text "0%")))))
+
+(deftest metrics-compact-top-aligned-layout
+  (let [component
+        (review-component)
+
+        geom
+        ((:measure component) (:init component) 120 70)
+
+        bounds
+        (:bounds geom)]
+
+    (is (> (:content-w geom) (dlg/default-content-width 120)))
+    (is (= (+ (:top bounds) 3) (:content-top geom)))
+    (is (= (count (:lines geom)) (:content-h geom)))
+    (is (< (- (:bottom bounds) (:top bounds)) 50))))
 
 (deftest metrics-keyboard-pointer-and-resize
   (let [component
