@@ -161,6 +161,49 @@ export const RemoveAsks: Story = {
   },
 };
 
+/** Home paths stay compact, and long detail values wrap without breaking every word. */
+export const HomePaths: Story = {
+  args: {
+    servers: [
+      {
+        name: 'opennews',
+        transport: 'stdio',
+        enabled: true,
+        is_connected: true,
+        is_managed: false,
+        is_killed: false,
+        tools: 24,
+        command: '/Users/ana/.vis/mcp-servers/opennews/.venv/bin/opennews-mcp',
+        args: ['--label', 'daily news', '--collection', 'international-market-news-archive'.repeat(4)],
+        cwd: '/Users/ana/.vis/mcp-servers/opennews',
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const row = canvas.getByRole('button', { name: /^opennews/ });
+    await userEvent.click(row);
+    const details = canvas.getByRole('region', { name: 'opennews details' });
+    const command = within(details).getByText(/opennews-mcp$/);
+    await expect(getComputedStyle(command).wordBreak).toBe('normal');
+    await expect(getComputedStyle(command).overflowWrap).toBe('anywhere');
+    await expect(command).toHaveTextContent('~/.vis/mcp-servers/opennews/.venv/bin/opennews-mcp');
+    // Prefer folder boundaries over a short first line ending at the first hyphen.
+    await expect(command.querySelectorAll('wbr')).toHaveLength(6);
+    await expect(
+      within(row).getByText('~/.vis/mcp-servers/opennews/.venv/bin/opennews-mcp'),
+    ).toBeVisible();
+    await expect(details).toHaveTextContent('~/.vis/mcp-servers/opennews');
+    for (const value of details.querySelectorAll('span:nth-child(even)')) {
+      await expect(value.scrollWidth).toBeLessThanOrEqual(value.clientWidth + 1);
+    }
+    await expect(details.scrollWidth).toBeLessThanOrEqual(details.clientWidth + 1);
+    await userEvent.click(row);
+    await expect(canvas.queryByRole('region', { name: 'opennews details' })).not.toBeInTheDocument();
+    await userEvent.click(row);
+  },
+};
+
 /** Nothing configured yet: the list says so, and the band's ＋ is the way in. */
 export const Empty: Story = {
   args: { servers: [] },

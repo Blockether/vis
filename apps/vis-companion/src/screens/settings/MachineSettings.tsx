@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { reserveAuthTab, watchAuth, type AuthTab, type AuthWatch } from '../../lib/oauth';
+import { homeifyPath } from '../../lib/path';
 import { SwipeActions, type SwipeAction } from '../../components/SwipeActions';
 
 import {
@@ -1055,8 +1056,11 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                           </span>
                         )}
                       </span>
-                      <span className="block truncate font-mono text-meta text-dialog-hint">
-                        {server.transport === 'stdio' ? server.command : server.url}
+                      <span
+                        className="block truncate font-mono text-meta text-dialog-hint"
+                        title={server.transport === 'stdio' ? server.command : server.url}
+                      >
+                        {server.transport === 'stdio' ? homeifyPath(server.command) : server.url}
                       </span>
                     </span>
                     <span
@@ -1175,7 +1179,19 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
           <span className="font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
             {term}
           </span>
-          <span className="break-all font-mono text-meta text-dialog-foreground">{value}</span>
+          <span
+            className="min-w-0 wrap-anywhere font-mono text-meta text-dialog-foreground"
+            title={value}
+          >
+            {(term === 'Command' || term === 'Directory' ? homeifyPath(value) : value)
+              .split(/(\/)/)
+              .map((part, index) => (
+                <Fragment key={index}>
+                  {part}
+                  {part === '/' && <wbr />}
+                </Fragment>
+              ))}
+          </span>
         </Fragment>
       ))}
     </div>
