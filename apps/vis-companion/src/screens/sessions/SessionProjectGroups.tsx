@@ -576,8 +576,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             </SectionHeader>
           )}
         </div>
-        {/* The rows carry no bottom rule of their own: the next project's incoming edge,
-          or the final machine edge around the whole passage, closes the group. */}
+        {/* Collapsed headers own their closing edge; expanded rows have no outer frame. */}
         {isShowing && rows.length > 0 && (
           <div ref={rowsRef}>
             {rows.map((session) => {

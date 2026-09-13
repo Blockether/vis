@@ -1859,11 +1859,6 @@ export function SessionsScreen({
                   <section
                     key={key}
                     aria-label={`${machineLabel(machine.conn)} projects`}
-                    className={
-                      sectionIndex === sections.length - 1
-                        ? 'border-b-2 border-dialog-edge'
-                        : undefined
-                    }
                   >
                     {/* Every machine keeps its own named panel and landmark, even when it
                       is the only one in the fleet: the landmark is a NAME, not ink. */}

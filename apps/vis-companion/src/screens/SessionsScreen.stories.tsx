@@ -337,3 +337,25 @@ export const FixedViewportSeam: Story = {
     }
   },
 };
+
+/** A collapsed final project must not stack its edge with a machine frame. */
+export const CollapsedProjectEdges: Story = {
+  ...Desktop,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const machine = await page.findByRole('region', { name: 'tower projects' });
+    for (const toggle of page.getAllByRole('button', { name: /^Collapse / })) {
+      await userEvent.click(toggle);
+    }
+    const headers = machine.querySelectorAll('header');
+    await expect(headers.length).toBeGreaterThan(1);
+    for (const header of headers) {
+      await expect(getComputedStyle(header).borderBottomWidth).toBe('1px');
+    }
+    await expect(getComputedStyle(machine).borderBottomWidth).toBe('0px');
+    const last = headers[headers.length - 1];
+    await userEvent.click(within(last).getByRole('button', { name: /^Expand / }));
+    await expect(getComputedStyle(last).borderBottomWidth).toBe('0px');
+    await expect(getComputedStyle(machine).borderBottomWidth).toBe('0px');
+  },
+};
