@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.runtime-test
-  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+  (:require [clojure.java.io :as io]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.runtime :as protocol]))
@@ -95,6 +96,24 @@
                 @handshake-atom))
          (is (= "client-too-old" (:reason (client/compatibility))))
          (finally (reset! handshake-atom previous)))))
+
+(deftest release-version-is-loaded-once-test
+  ;; JVM SDK profiling found repeated classpath probes for immutable build metadata.
+  (let [expected
+        (protocol/release-version)
+
+        resource
+        io/resource
+
+        lookups
+        (atom 0)]
+
+    (with-redefs [io/resource (fn [& args]
+                                (swap! lookups inc)
+                                (apply resource args))]
+      (dotimes [_ 10]
+        (is (= expected (protocol/release-version)))))
+    (is (zero? @lookups) "version reads after the first one must not probe the classpath")))
 
 ;; The order that decides whether a running daemon is stale after `vis-agent update`.
 (deftest release-version-ordering-test

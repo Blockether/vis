@@ -39,10 +39,11 @@
    The bundled SDK is versioned with Vis, never with an editable or pip package.
    Source builds report dev; an unavailable commit is nil, not a guessed release."
   []
-  {"VIS_PYTHON_RUNTIME_VERSION" runtime/version
-   "VIS_SHA_RELEASE" (gateway-runtime/release-sha)
-   "VIS_VERSION" (gateway-runtime/release-version)
-   "VIS_PYTHON_SDK_VERSION" (gateway-runtime/release-version)})
+  (let [version (gateway-runtime/release-version)]
+    {"VIS_PYTHON_RUNTIME_VERSION" runtime/version
+     "VIS_SHA_RELEASE" (gateway-runtime/release-sha)
+     "VIS_VERSION" version
+     "VIS_PYTHON_SDK_VERSION" version}))
 
 (defn version-globals-python
   "Python bootstrap statement for the host's build metadata, encoded as JSON."

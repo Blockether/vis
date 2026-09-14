@@ -110,3 +110,72 @@
         (expect (some? ex))
         (expect (str/includes? (ex-message ex) "Unknown persistence backend"))
         (expect (= [:sqlite] (:known (ex-data ex)))))))
+
+(defdescribe backend-load-fast-path-test
+             (it "does not require an already fully loaded backend again"
+                 (let [calls (atom 0)]
+                   (with-redefs [clojure.core/loaded-libs (constantly #{'loaded.backend})
+                                 clojure.core/require (fn [& _]
+                                                        (swap! calls inc))]
+
+                     (dotimes [_ 10]
+                       (#'persistance/require-backend-ns! :sqlite 'loaded.backend)))
+                   (expect (zero? @calls))))
+             (it "does not treat an existing but unfinished namespace as loaded"
+                 (let [calls (atom [])]
+                   (with-redefs [clojure.core/loaded-libs (constantly #{})
+                                 clojure.core/require
+                                 (fn [ns-sym]
+                                   (swap! calls conj
+                                     [ns-sym (Thread/holdsLock clojure.lang.RT/REQUIRE_LOCK)]))]
+
+                     (#'persistance/require-backend-ns! :sqlite 'clojure.core))
+                   (expect (= [['clojure.core true]] @calls))))
+             (it "rechecks completion under the global require lock for concurrent first use"
+                 (let [loaded
+                       (atom #{})
+
+                       calls
+                       (atom 0)
+
+                       start
+                       (promise)]
+
+                   (with-redefs [clojure.core/loaded-libs
+                                 (fn []
+                                   @loaded)
+
+                                 clojure.core/require
+                                 (fn [ns-sym]
+                                   (expect (Thread/holdsLock clojure.lang.RT/REQUIRE_LOCK))
+                                   (swap! calls inc)
+                                   (swap! loaded conj ns-sym))]
+
+                     (let [workers
+                           (mapv (fn [_]
+                                   (future @start
+                                           (#'persistance/require-backend-ns! :sqlite 'cold.backend)
+                                           :done))
+                                 (range 12))]
+                       (try (deliver start true)
+                            (expect (every? #(= :done (deref % 5000 :timeout)) workers))
+                            (finally (run! future-cancel workers)))))
+                   (expect (= 1 @calls))))
+             (it "retains the backend identity and original cause on failed loading"
+                 (let [cause
+                       (Exception. "Load failed")
+
+                       failure
+                       (with-redefs [clojure.core/loaded-libs
+                                     (constantly #{})
+
+                                     clojure.core/require
+                                     (fn [& _]
+                                       (throw cause))]
+
+                         (try (#'persistance/require-backend-ns! :sqlite 'failed.backend)
+                              nil
+                              (catch clojure.lang.ExceptionInfo e e)))]
+
+                   (expect (= {:backend :sqlite :ns 'failed.backend} (ex-data failure)))
+                   (expect (identical? cause (ex-cause failure))))))

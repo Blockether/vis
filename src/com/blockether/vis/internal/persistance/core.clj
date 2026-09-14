@@ -157,10 +157,9 @@
     bid))
 
 (defn- require-backend-ns!
-  "Ensure the backend's heavyweight namespace has been loaded: the deferred
-   `(require ...)` behind every delegated call, so callers don't pay the load
-   cost until they actually dispatch one. Silent no-op when the ns is already
-   loaded.
+  "Ensure the backend's heavyweight namespace has finished loading. Fully loaded
+   libraries bypass require and its global lock; namespace existence alone does
+   not prove that initialization completed. Defer the initial load until dispatch.
 
    SERIALIZED under Clojure's global require lock (what
    `requiring-resolve` uses): plain `require` is not thread-safe, and
@@ -170,7 +169,9 @@
    \"Backend :sqlite ... does not implement 'db-open!'\" and as an
    unbound `taoensso.nippy/freeze` mid-turn."
   [bid ns-sym]
-  (try (locking clojure.lang.RT/REQUIRE_LOCK (require ns-sym))
+  (try (when-not (contains? (loaded-libs) ns-sym)
+         (locking clojure.lang.RT/REQUIRE_LOCK
+           (when-not (contains? (loaded-libs) ns-sym) (require ns-sym))))
        (catch Throwable t
          (throw (ex-info
                   (str "Backend " bid " (" ns-sym ") failed to load: " (or (ex-message t) (str t)))
@@ -519,6 +520,10 @@
 (defdelegate db-list-session-attachments-meta [db-info session-id])
 
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
+
+(defdelegate db-list-session-turns-iterations [db-info session-turn-ids])
+
+(defdelegate db-latest-turn-request-usage [db-info session-turn-id])
 
 (defdelegate db-list-iteration-attachments [db-info iteration-id])
 

@@ -79,8 +79,9 @@
             ;; one convention answers `core.clj` and `core.clj::adds`.
             var-hit?
             (fn [nsn nm entry]
-              (and (or (nil? (:ns entry)) (= (:ns entry) nsn))
-                   (or (= (:name entry) nm) (= (str (:name entry) "-test") nm))))
+              (and
+                (or (nil? (:ns entry)) (= (:ns entry) nsn))
+                (or (nil? (:name entry)) (= (:name entry) nm) (= (str (:name entry) "-test") nm))))
 
             keep?
             (fn [v]
@@ -716,7 +717,7 @@
 (defn- resolve-selection
   "Resolve the CALL's selector entries into what a run needs: `:nses`, the test
    namespaces to load, `:vars`, the var filter to apply inside them
-   (`{:ns <ns-or-nil> :name <test-name>}`), `:files`, the test file each
+   (`{:ns <ns-or-nil> :name <test-name-or-nil>}`), `:files`, the test file each
    NAMESPACE entry resolved to — a path entry already names its own location, a
    namespace entry does not, and the run must still be rooted at the project the
    tests live in — and `:ns-files`, the file EVERY selected namespace was read
@@ -729,9 +730,10 @@
    pair each name with its OWN file instead of cross-producting into both. An
    entry with no location (`::x`, or a bare `only` name) names a var wherever it
    lives — nil :ns, and no namespace of its own, so the other entries (or the
-   whole-workspace default) decide where to look. Paths are relative to root or
-   absolute; files AND directories are accepted, and SOURCE files/dirs map to
-   their *_test namespaces."
+   whole-workspace default) decide where to look and remain narrowed by that name.
+   A nil :name with a namespace preserves a whole-file selection alongside scoped
+   vars. Paths are relative to root or absolute; files AND directories are accepted,
+   and SOURCE files/dirs map to their *_test namespaces."
   [root path-entries ns-entries test-file?]
   (let [test-index
         (delay (all-test-files root test-file?))
@@ -749,6 +751,9 @@
                                             (index-test-file m ns file))
                                           index
                                           entries))))
+              (nil? var)
+              (update :whole-nses into nses)
+
               var
               (update :vars
                       into
@@ -767,7 +772,7 @@
                                            (pr-str path))
                                       {:type :clj/bad-args})))
                     (add acc entries var)))
-                {:nses [] :vars [] :files [] :ns-files {}}
+                {:nses [] :vars [] :whole-nses [] :files [] :ns-files {}}
                 path-entries)
 
         acc
@@ -779,7 +784,11 @@
                 ns-entries)]
 
     {:nses (vec (sort (distinct (:nses acc))))
-     :vars (vec (distinct (:vars acc)))
+     :vars (vec (distinct (cond-> (:vars acc)
+                            (and (seq (:vars acc)) (every? :ns (:vars acc)))
+                            (into (map (fn [n]
+                                         {:ns n :name nil})
+                                       (:whole-nses acc))))))
      :files (vec (distinct (:files acc)))
      :ns-files (:ns-files acc)}))
 
@@ -1152,19 +1161,22 @@
    A node id may name the SOURCE var it covers, so the `-test` spelling is passed
    ALONGSIDE it: the repl path resolves that against LIVE vars, while a shelled
    runner can only be handed both (lazytest DROPS a --var that matches nothing,
-   it does not fail). With no vars, --namespace filters at namespace level.
+   it does not fail). A nil name becomes --namespace, unioned with scoped vars.
+   With no vars, --namespace filters at namespace level.
    --include and --exclude are always passed when present."
   [{:keys [nses vars include exclude]}]
   (vec
     (concat (if (seq vars)
               (mapcat (fn [{:keys [ns name]}]
-                        (mapcat (fn [n]
-                                  (mapcat (fn [nm]
-                                            ["--var" (str n "/" nm)])
-                                          (if (str/ends-with? (str name) "-test")
-                                            [name]
-                                            [name (str name "-test")])))
-                                (if ns [ns] nses)))
+                        (if (nil? name)
+                          ["--namespace" ns]
+                          (mapcat (fn [n]
+                                    (mapcat (fn [nm]
+                                              ["--var" (str n "/" nm)])
+                                            (if (str/ends-with? (str name) "-test")
+                                              [name]
+                                              [name (str name "-test")])))
+                                  (if ns [ns] nses))))
                       vars)
               (mapcat (fn [ns]
                         ["--namespace" (str ns)])

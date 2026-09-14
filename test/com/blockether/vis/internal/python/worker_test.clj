@@ -1,7 +1,9 @@
 (ns com.blockether.vis.internal.python.worker-test
   "The session-worker process boundary: control messages are bounded and a
    retired interpreter can never be entered again."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.loop :as loop]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -65,6 +67,36 @@ print(worker_value)"))))
                                          (env/py-json-literal
                                            (vec (com.blockether.vispython.Sources/roots)))))]
                        (expect (= "True" result) (str result)))))))
+
+(defdescribe worker-runtime-source-snapshot-test
+             (it "uses one runtime-source snapshot for the boot policy and Python imports"
+                 (let [boot
+                       #'worker/boot-read-paths
+
+                       resolve-paths
+                       @boot
+
+                       snapshots
+                       (atom [])]
+
+                   (with-redefs-fn {boot (fn [& args]
+                                           (swap! snapshots conj (nth args 2 nil))
+                                           (apply resolve-paths args))}
+                     (fn []
+                       (with-worker-context
+                         (fn [session]
+                           (expect (= 1 (count @snapshots)))
+                           (let [roots
+                                 (first @snapshots)
+
+                                 result
+                                 (worker/eval-str session
+                                                  com.blockether.vis-python-runtime/default-session
+                                                  (str "__vis_runtime_roots__ == "
+                                                       (env/py-json-literal roots)))]
+
+                             (expect (vector? roots))
+                             (expect (= "True" result) (str result))))))))))
 
 (defdescribe
   shared-packages-install-authority-test
@@ -205,7 +237,7 @@ print(worker_value)"))))
                                                                0))
 
           dir
-          (.toFile (.resolve base (apply str (repeat 110 "x"))))
+          (.toFile (.resolve base ^String (apply str (repeat 110 "x"))))
 
           socket
           (atom nil)
@@ -288,34 +320,39 @@ print(worker_value)"))))
 
 (defdescribe
   worker-entrypoint-test
-  (it "launches the runtime Java worker with the control socket and host modules"
+  (it "uses the Java entrypoint when the selected runtime has no packaged worker"
       (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
         (let [argv (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")]
           (expect (= ["com.blockether.vispython.Worker" "/tmp/control.sock" "/tmp/host-modules"]
                      (vec (take-last 3 argv)))))))
   (it "makes runtime sources and their extraction marker readable at worker boot"
-      (let [paths (set (#'worker/boot-read-paths nil "/tmp/host-modules"))]
+      (let [roots
+            (vec (com.blockether.vispython.Sources/roots))
+
+            paths
+            (set (#'worker/boot-read-paths nil "/tmp/host-modules" roots))]
+
         (expect (contains? paths
                            (.getCanonicalPath (java.io.File.
                                                 (com.blockether.vispython.Locations/sourcesDir)))))
-        (doseq [path (com.blockether.vispython.Sources/roots)]
+        (doseq [path roots]
           (expect (contains? paths (.getCanonicalPath (java.io.File. ^String path)))))))
-  (it "launches the runtime executable with the parent's home in native Vis"
-      (with-redefs [com.blockether.vis.internal.util/native-image?
-                    (constantly true)
+  (it "launches the selected runtime executable from either a JVM or native host"
+      ;; JVM dogfooding: starting another JVM needlessly tripled per-worker RSS.
+      (doseq [native? [false true]]
+        (with-redefs [com.blockether.vis.internal.util/native-image? (constantly native?)
+                      com.blockether.vis-python-runtime/resolve-worker
+                      (fn [library]
+                        (expect (= {:path "/runtime/libvispython.so"} library))
+                        "/runtime/vis-python-worker")]
 
-                    com.blockether.vis-python-runtime/resolve-worker
-                    (fn [library]
-                      (expect (= {:path "/runtime/libvispython.so"} library))
-                      "/runtime/vis-python-worker")]
-
-        (expect (= ["/runtime/vis-python-worker"
-                    (str "-Duser.home=" (System/getProperty "user.home")) "/tmp/control.sock"
-                    "/tmp/host-modules"]
-                   (#'worker/child-argv
-                    "/runtime/libvispython.so"
-                    "/tmp/control.sock"
-                    "/tmp/host-modules")))))
+          (expect (= ["/runtime/vis-python-worker"
+                      (str "-Duser.home=" (System/getProperty "user.home")) "/tmp/control.sock"
+                      "/tmp/host-modules"]
+                     (#'worker/child-argv
+                      "/runtime/libvispython.so"
+                      "/tmp/control.sock"
+                      "/tmp/host-modules"))))))
   (it "refuses a native runtime without its worker instead of starting Vis again"
       (with-redefs [com.blockether.vis.internal.util/native-image?
                     (constantly true)
@@ -521,6 +558,65 @@ print(worker_value)"))))
                  (assert-trusted-cancellation true))
              (it "preserves both interpreters and subsequent work after cancelling a host wait"
                  (assert-trusted-cancellation false)))
+
+(defdescribe worker-message-framing-test
+             (it "leaves the channel untouched on encoding failure and frames concurrent replies"
+                 (let [out
+                       (java.io.StringWriter.)
+
+                       bad
+                       (reify
+                         json/PToJSON
+                           (->json-data [_] (throw (ex-info "fixture conversion failed" {}))))]
+
+                   (with-open [writer (java.io.BufferedWriter. out)]
+                     (let [peer {:writer writer}
+                           messages (mapv (fn [id]
+                                            {"id" id "value" "Zażółć / 😀\na second line"})
+                                          (range 32))]
+
+                       (expect (= "fixture conversion failed"
+                                  (try (worker-peer/send-line! peer {"before" [1 2] "bad" bad})
+                                       ::no-error
+                                       (catch clojure.lang.ExceptionInfo error
+                                         (ex-message error)))))
+                       (expect (= "" (.toString out)))
+                       (let [calls (mapv (fn [message]
+                                           (future (worker-peer/send-line! peer message) true))
+                                         messages)]
+                         (try (doseq [call calls]
+                                (expect (true? (deref call 10000 false))))
+                              (let [lines (str/split-lines (.toString out))]
+                                (expect (= (count messages) (count lines)))
+                                (expect (= (set messages) (set (map json/read-json lines)))))
+                              (finally (run! future-cancel calls)))))))))
+
+(defdescribe worker-message-allocation-test
+             (it "does not allocate a file-sized buffer for every small IPC message"
+                 ;; JVM SDK profiling attributed 125 MiB to send-line! for twenty tasks.
+                 ;; Measure allocations, not elapsed time: JIT/scheduler speed is not the contract.
+                 (let [^com.sun.management.ThreadMXBean bean
+                       (java.lang.management.ManagementFactory/getThreadMXBean)
+
+                       tid
+                       (.threadId (Thread/currentThread))
+
+                       message
+                       {"op" "eval" "id" 1 "code" "print(42)"}]
+
+                   (expect (.isThreadAllocatedMemorySupported bean))
+                   (let [enabled? (.isThreadAllocatedMemoryEnabled bean)]
+                     (try (.setThreadAllocatedMemoryEnabled bean true)
+                          (with-open [writer (java.io.BufferedWriter. (java.io.Writer/nullWriter))]
+                            (let [peer {:writer writer}]
+                              (dotimes [_ 2000]
+                                (worker-peer/send-line! peer message))
+                              (let [before (.getThreadAllocatedBytes bean tid)]
+                                (dotimes [_ 1000]
+                                  (worker-peer/send-line! peer message))
+                                (expect (< (- (.getThreadAllocatedBytes bean tid) before)
+                                           (* 1000 4096))))))
+                          (finally (.setThreadAllocatedMemoryEnabled bean enabled?)))))))
 
 (defdescribe
   worker-reply-lifetime-test
@@ -820,7 +916,12 @@ print(worker_value)"))))
 ;; still waited sixty seconds for a connection that could never arrive.
 (defdescribe worker-startup-exit-test
              (it "reports an exited worker without waiting for the connection deadline"
-                 (let [process (.start (ProcessBuilder. ^java.util.List ["sh" "-c" "exit 2"]))]
+                 (let [^java.util.List command
+                       ["sh" "-c" "exit 2"]
+
+                       process
+                       (.start (ProcessBuilder. command))]
+
                    (.waitFor process)
                    (with-redefs-fn {#'com.blockether.vis.internal.python.runtime/ensure-library!
                                     (constantly nil)

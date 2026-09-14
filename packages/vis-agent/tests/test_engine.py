@@ -7,14 +7,17 @@ sessions, remote models or user configuration are used. Only the model is a doub
 import json
 import os
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import count
 from pathlib import Path
 
 import pytest
@@ -93,6 +96,7 @@ def activity_rows(projection):
 @contextmanager
 def model_endpoint(*, tool_code=None, before_reply=None):
     requests = []
+    positions = count(1)
 
     class Model(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -106,16 +110,25 @@ def model_endpoint(*, tool_code=None, before_reply=None):
                 body["_test_headers"] = dict(self.headers)
                 body["_test_path"] = self.path
                 requests.append(body)
-                position = len(requests)
+                position = next(positions)
                 # The default flow completes, cancels without a final model reply,
                 # then completes again in the same session.
                 tool_reply = (
-                    position in (1, 3, 4) if tool_code is None else position % 2
+                    position in (1, 3, 4)
+                    if tool_code is None
+                    else body["messages"][-1]["role"] != "tool"
                 )
                 if tool_reply:
                     mode = "cancel" if position == 3 else "complete"
                     if before_reply is not None:
                         before_reply(position)
+                    code = (
+                        tool_code(position)
+                        if callable(tool_code)
+                        else tool_code
+                        if tool_code is not None
+                        else f"print(await sdk_flow({mode!r}))"
+                    )
                     delta = {
                         "tool_calls": [
                             {
@@ -124,13 +137,7 @@ def model_endpoint(*, tool_code=None, before_reply=None):
                                 "type": "function",
                                 "function": {
                                     "name": "python_execution",
-                                    "arguments": json.dumps(
-                                        {
-                                            "code": tool_code
-                                            if tool_code is not None
-                                            else f"print(await sdk_flow({mode!r}))"
-                                        }
-                                    ),
+                                    "arguments": json.dumps({"code": code}),
                                 },
                             }
                         ]
@@ -163,13 +170,15 @@ def model_endpoint(*, tool_code=None, before_reply=None):
 
 
 @contextmanager
-def real_client(transport, command, work):
+def real_client(transport, command, work, *, on_process=None):
     if transport == "stdio":
         engine = LocalEngine(
             executable=command, root=work, timeout=60, startup_timeout=180
         )
         try:
             with engine:
+                if on_process is not None:
+                    on_process(engine._process)
                 yield engine
         finally:
             engine.close()
@@ -222,6 +231,8 @@ def real_client(transport, command, work):
                 GatewayClient(url, token="not-the-fixture-token").connect()
             assert unauthorized.value.status == 401
             with GatewayClient(url, token="sdk-fixture-token", timeout=60) as client:
+                if on_process is not None:
+                    on_process(process)
                 yield client
             # SDK close releases its lease, not somebody else's server.
             assert process.poll() is None
@@ -248,6 +259,7 @@ def sdk_fixture(
     tool_code=None,
     before_reply=None,
     project_extensions=None,
+    on_process=None,
 ):
     raw = os.environ.get("VIS_TEST_LOCAL_COMMAND")
     if not raw:
@@ -290,7 +302,7 @@ def sdk_fixture(
         command = shlex.split(raw)
         if len(command) == 1:
             command.append(f"-Duser.home={home}")
-        with real_client(transport, command, work) as client:
+        with real_client(transport, command, work, on_process=on_process) as client:
             yield client, work, requests
 
 
@@ -827,3 +839,122 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport):
         )
         assert "disabled" in str(session.transcript().content)
         session.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+@pytest.mark.parametrize("respond", [True, False], ids=["handshake", "timeout"])
+def test_real_mcp_stdio_probe_reclaims_process(
+    tmp_path, monkeypatch, transport, respond
+):
+    python = shutil.which("python3")
+    if not python:
+        pytest.skip("python3 is required for the stdio MCP fixture")
+    server = (
+        Path(__file__).resolve().parents[3] / "test/resources/mcp/fake_mcp_server.py"
+    )
+    with sdk_fixture(tmp_path, monkeypatch, transport) as (client, work, requests):
+        marker = work / "mcp.pid"
+        program = (
+            "import os, pathlib, runpy, sys, time; "
+            "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
+            + (
+                "runpy.run_path(sys.argv[2], run_name='__main__')"
+                if respond
+                else "time.sleep(60)"
+            )
+        )
+        try:
+            candidate = {
+                "name": "sdk-process-cleanup",
+                "server": {
+                    "transport": "stdio",
+                    "command": python,
+                    "args": ["-c", program, str(marker), str(server)],
+                    "timeout_ms": 1000,
+                },
+            }
+            if respond:
+                result = client.post_mcp_servers_test(body=candidate)
+                assert result["is_connected"] is True
+                assert [tool["name"] for tool in result["tools"]] == ["echo"]
+            else:
+                with pytest.raises(GatewayError) as failure:
+                    client.post_mcp_servers_test(body=candidate)
+                assert failure.value.code == "timeout"
+            assert marker.is_file(), "MCP fixture never started"
+            pid = int(marker.read_text())
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                assert time.monotonic() < deadline, "MCP probe left its child alive"
+                time.sleep(0.01)
+            assert not requests
+            assert not client.get_mcp_servers()["servers"], (
+                "Probe must not save a server"
+            )
+        finally:
+            # Also reap a child when transport setup fails before returning a connection.
+            deadline = time.monotonic() + 2
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            if marker.exists():
+                try:
+                    os.kill(int(marker.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+
+def test_real_concurrent_sessions_keep_repeated_turns_isolated(tmp_path, monkeypatch):
+    with sdk_fixture(
+        tmp_path, monkeypatch, "http", tool_code="print(sum(range(1000)))"
+    ) as (client, work, requests):
+        # SDK clients belong to one calling thread. Share only the fixture origin.
+        url = client._url
+        markers = [f"isolated-sdk-project-{index}" for index in range(4)]
+        ready = threading.Barrier(len(markers), timeout=30)
+
+        def exercise(index):
+            with GatewayClient(url, token="sdk-fixture-token", timeout=60) as peer:
+                session = peer.create_session(root=str(work), channel="app")
+                try:
+                    ready.wait()
+                    for turn_index in range(3):
+                        turn = session.send(
+                            f"{markers[index]} turn {turn_index}: compute sum"
+                        )
+                        if index % 2 == 0:
+                            with session.events(
+                                cursor=turn.cursor, reconnects=0
+                            ) as events:
+                                for event in events:
+                                    assert event.type != "iteration.error", event.data
+                                    if event.type in {
+                                        "turn.completed",
+                                        "turn.failed",
+                                        "turn.cancelled",
+                                    }:
+                                        assert event.type == "turn.completed", (
+                                            event.data
+                                        )
+                                        break
+                        assert turn.wait(timeout=60)["status"] == "completed"
+                    transcript = str(session.transcript().content)
+                    assert "499500" in transcript
+                    assert all(
+                        f"{markers[index]} turn {turn_index}" in transcript
+                        for turn_index in range(3)
+                    )
+                    assert all(
+                        marker not in transcript
+                        for other, marker in enumerate(markers)
+                        if other != index
+                    )
+                finally:
+                    session.delete()
+
+        with ThreadPoolExecutor(max_workers=len(markers)) as executor:
+            list(executor.map(exercise, range(len(markers))))
+        assert len(requests) == 24

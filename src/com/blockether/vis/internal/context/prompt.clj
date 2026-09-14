@@ -910,20 +910,43 @@
       (throw (ex-info "Prepared request components unavailable" {})))
     parts))
 
+(defn request-token-counter
+  "Create one iteration's exact Svar message counter. Reuse each model/message's
+   marginal count across budgeting and health without retaining a cross-request
+   cache. Keep this function local to the iteration, not in persisted state."
+  []
+  (let [priming
+        (memoize #(svar-router/count-messages % []))
+
+        message-tokens
+        (memoize (fn [model message]
+                   (- (svar-router/count-messages model [message]) (long (priming model)))))]
+
+    (fn ^long [model messages]
+      (long (reduce (fn [^long total message]
+                      (+ total (long (message-tokens model message))))
+                    (long (priming model))
+                    messages)))))
+
 (defn request-health
   "Content-free provenance for one request. Prefer Svar's final :request-accounting
    over recounting canonical messages: Responses replay filtering, tool shaping and
    body overrides have already happened. Its components are not rescaled to usage.
    Wires without prepared accounting retain explicitly labelled logical estimates.
    Neither estimate replaces same-request provider usage for utilization. Root
-   guidance is disk-only; logical metadata attributes guidance without rereading it."
-  [environment messages tools & [model accounting]]
+   guidance is disk-only; logical metadata attributes guidance without rereading it.
+   An optional iteration-local message counter shares exact logical estimates with
+   budgeting; prepared accounting never invokes it."
+  [environment messages tools & [model accounting message-token-counter]]
   (try
     (let [model
           (or model "unknown")
 
+          count-messages
+          (or message-token-counter svar-router/count-messages)
+
           priming
-          (if accounting 0 (svar-router/count-messages model []))
+          (if accounting 0 (long (count-messages model [])))
 
           parts
           (if accounting
@@ -931,25 +954,30 @@
             (mapcat
               (fn [message]
                 (let [total
-                      (- (svar-router/count-messages model [message]) priming)
+                      (- (long (count-messages model [message])) priming)
 
                       overhead
-                      (- (svar-router/count-messages model [(assoc message :content "")]) priming)
+                      (- (long (count-messages model [(assoc message :content "")])) priming)
 
                       [known remainder]
-                      (reduce
-                        (fn [[rows left] part]
-                          (let [tokens (min (long left)
-                                            (max 0
-                                                 (- (svar-router/count-messages
-                                                      model
-                                                      [(assoc message :content (:content part))])
-                                                    priming
-                                                    overhead)))]
-                            [(conj rows (assoc (select-keys part [:label :path]) :tokens tokens))
-                             (- (long left) tokens)]))
-                        [[] total]
-                        (::parts (meta message)))]
+                      (reduce (fn [[rows left] part]
+                                (let [content-tokens
+                                      (if (= (:content message) (:content part))
+                                        (- total overhead)
+                                        (- (long (count-messages model
+                                                                 [(assoc message
+                                                                    :content (:content part))]))
+                                           priming
+                                           overhead))
+
+                                      tokens
+                                      (min (long left) (max 0 content-tokens))]
+
+                                  [(conj rows
+                                         (assoc (select-keys part [:label :path]) :tokens tokens))
+                                   (- (long left) tokens)]))
+                              [[] total]
+                              (::parts (meta message)))]
 
                   (cond-> known
                     (pos? remainder)

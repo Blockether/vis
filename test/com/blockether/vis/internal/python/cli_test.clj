@@ -223,6 +223,46 @@
              (finally (env/dispose-python-context! python-context))))))
 
 (defdescribe
+  python-module-asyncio-test
+  (it "lets a synchronous module own its asyncio loop without breaking later blocks"
+      ;; JVM/SDK dogfooding: -m pytest failed tests that called asyncio.run.
+      (let [dir
+            (scratch-dir! "vis-python-module-asyncio-")
+
+            module-file
+            (.toFile (.resolve dir "async_cli_probe.py"))
+
+            _
+            (spit module-file
+                  (str "import asyncio, sys\n" "async def compute():\n"
+                       "    await asyncio.sleep(0)\n" "    return 42\n"
+                       "print('module-result', asyncio.run(compute()), sys.argv[1])\n"
+                       "raise SystemExit(7)\n"))
+
+            ctx
+            (python-cli-context {:network? false
+                                 :argv ["async_cli_probe" "argument"]
+                                 :env {"PYTHONPATH" (.toString dir)}})]
+
+        (try
+          (with-open [baos
+                      (java.io.ByteArrayOutputStream.)
+
+                      ps
+                      (java.io.PrintStream. baos true "UTF-8")]
+
+            (let [exit
+                  (with-redefs [config/original-stdout ps]
+                    (#'com.blockether.vis.internal.main/run-python-module! ctx "async_cli_probe"))]
+              (expect (= 7 exit) (.toString baos "UTF-8"))
+              (expect (re-find #"module-result 42 argument" (.toString baos "UTF-8")))))
+          (let [{:keys [exit out]}
+                (run-src ctx "import asyncio\nawait asyncio.sleep(0)\nprint('await-still-works')")]
+            (expect (= 0 exit) out)
+            (expect (re-find #"await-still-works" out)))
+          (finally (env/dispose-python-context! ctx) (delete-tree! dir))))))
+
+(defdescribe
   python-module-exit-test
   (it "preserves a bundled pytest collection failure's non-zero exit status"
       (let [dir

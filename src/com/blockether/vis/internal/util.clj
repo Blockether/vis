@@ -13,9 +13,30 @@
 
    A name earns a place here when a THIRD namespace needs it. A helper with one
    caller belongs beside its caller, not in this file."
-  (:require [clojure.string :as str])
-  (:import (java.nio.charset StandardCharsets)
-           (java.security MessageDigest)))
+  (:require [charred.api :as json]
+            [clojure.string :as str])
+  (:import (charred JSONWriter)
+           (java.io StringWriter)
+           (java.nio.charset StandardCharsets)
+           (java.security MessageDigest)
+           (java.util.function BiConsumer)))
+
+(def ^:private json-object-writer
+  (reify
+    BiConsumer
+      (accept [_ writer value] (json/default-object-writer writer value))))
+
+(defn json-str
+  "Encode raw data with Charred's default escaping and object conversion.
+   Gateway payloads still use contract.wire/json-str for canonical key/value shapes.
+
+   Write directly to the in-memory sink: Charred's convenience function wraps it
+   in a BufferedWriter, allocating an unnecessary 16 KiB buffer for every message."
+  ^String [value]
+  (let [out (StringWriter.)]
+    (with-open [writer (JSONWriter. out true true true nil json-object-writer)]
+      (.writeObject writer value))
+    (.toString out)))
 
 (def ^:private secret-key-pattern
   #"(?i)(?:password|passwd|passphrase|secret|token|authorization|cookie|otp|(?:api|private|access)[_-]?key|credentials?)")

@@ -2,7 +2,8 @@
   "Host-side client of the runtime worker's JSON-line protocol.
    Dispatch and cancellation stay in Vis; interpreter operations live in the runtime."
   (:require [charred.api :as json]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io BufferedReader BufferedWriter InputStreamReader OutputStreamWriter)
            (java.nio.channels Channels SocketChannel)
            (java.nio.charset StandardCharsets)
@@ -35,7 +36,7 @@
   [peer message]
   (let [^BufferedWriter writer (:writer peer)]
     (locking writer
-      (.write writer ^String (json/write-json-str message))
+      (.write writer ^String (util/json-str message))
       (.write writer "\n")
       (.flush writer))))
 

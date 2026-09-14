@@ -1006,6 +1006,38 @@
    turn-messages))
 
 (defdescribe
+  prompt-cache-prefix-weight-reuse-test
+  (it "serializes only the changed suffix of a same-context request"
+      (let [prefix
+            [{:role "system" :content "stable"} {:role "user" :content "first"}]
+
+            appended
+            (conj prefix {:role "assistant" :content "answer"})
+
+            rewritten
+            [(first prefix) {:role "user" :content "different"}]
+
+            render
+            pr-str]
+
+        (doseq [[messages context expected-renders]
+                [[prefix test-prompt-cache-context 0] [appended test-prompt-cache-context 1]
+                 [rewritten test-prompt-cache-context 1]
+                 [prefix (assoc test-prompt-cache-context :id "changed") 2]
+                 [[] test-prompt-cache-context 0]]]
+          (let [history (atom {})
+                calls (atom 0)]
+
+            (sample-prompt-cache! history :fixture "model" prefix 100 0 0)
+            (with-redefs [clojure.core/pr-str (fn [& values]
+                                                (swap! calls inc)
+                                                (apply render values))]
+              (#'lp/note-prompt-cache-request! history :fixture "model" context messages 120 0 1))
+            (expect (= expected-renders @calls))
+            (expect (= (mapv #(count (render %)) messages)
+                       (get-in @history [[:fixture "model"] :weights]))))))))
+
+(defdescribe
   prompt-cache-reusable-prefix-test
   "The reuse denominator is what the previous same-route request could still have
    left in the provider cache. A fold, a rewrite or an expiry is CLASSIFIED and
@@ -3682,17 +3714,16 @@
                                  [{:id "t1" :position 1} {:id "t2" :position 2}
                                   {:id "t3" :position 3 :status :running}])
 
-                               persistance/db-list-session-turn-iterations
+                               persistance/db-latest-turn-request-usage
                                (fn [_db-info turn-id]
                                  (case turn-id
                                    "t2"
-                                   [{:position 1 :input-tokens 42000}
-                                    {:position 2 :input-tokens 51000}]
+                                   {:position 2 :input-tokens 51000}
 
                                    "t1"
-                                   [{:position 1 :input-tokens 10000}]
+                                   {:position 1 :input-tokens 10000}
 
-                                   []))]
+                                   nil))]
 
                    (expect (= {:last-request-tokens 51000
                                :last-request-turn-id "t2"
@@ -3703,8 +3734,8 @@
                  (with-redefs [persistance/db-list-session-turns
                                (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
 
-                               persistance/db-list-session-turn-iterations
-                               (constantly [{:position 1 :input-tokens 0}])]
+                               persistance/db-latest-turn-request-usage
+                               (constantly nil)]
 
                    (expect (nil? (previous-request-usage {:session-id "s1" :db-info ::db} "t2"))))))
 
@@ -7709,17 +7740,17 @@
           (with-redefs [persistance/db-list-session-turns (constantly [{:id "t1" :position 1}
                                                                        {:id "t2" :position 2}
                                                                        {:id "t3" :position 3}])
-                        persistance/db-list-session-turn-iterations
+                        persistance/db-latest-turn-request-usage
                         (fn [_db-info turn-id]
                           (swap! asked conj turn-id)
                           (case turn-id
                             "t2"
-                            [{:position 4 :input-tokens 2000 :input-cache-read-tokens 1800}]
+                            {:position 4 :input-tokens 2000 :input-cache-read-tokens 1800}
 
                             "t1"
-                            [{:position 1 :input-tokens 1000 :input-cache-read-tokens 900}]
+                            {:position 1 :input-tokens 1000 :input-cache-read-tokens 900}
 
-                            []))]
+                            nil))]
 
             (let [restored (previous-request-usage {:session-id "s1" :db-info ::db} "t3")]
               (expect (= {:last-request-tokens 2000
@@ -9197,6 +9228,55 @@
                      (expect (not (str/includes? (str messages) "SETTLED PAYLOAD")))
                      (expect (str/includes? (str messages) "Proactive transport fold")))
                    (expect (str/includes? (str (last requests)) "LIVE RESULT")))))
+
+(defdescribe
+  request-token-count-reuse-test
+  (it "counts an unchanged request message once across budgeting and health"
+      ;; JVM dogfooding: pre-request estimation and post-response health repeated BPE work.
+      (let [probe
+            (apply str (repeat 50 "REQUEST TOKEN COUNT PROBE ą中42; "))
+
+            router
+            (svar/make-router [{:id :fixture
+                                :api-key "test"
+                                :base-url "http://127.0.0.1:1/v1"
+                                :models [{:name "gpt-4o" :input-limit 200000}]}])
+
+            environment
+            (lp/create-environment router {:db :memory})
+
+            count-messages
+            svar-router/count-messages
+
+            counted
+            (atom [])]
+
+        (try (with-redefs [svar-router/count-messages
+                           (fn ^long [model messages]
+                             (swap! counted into
+                               (for [message
+                                     messages
+
+                                     :when (str/includes? (str (:content message)) probe)]
+
+                                 [model message]))
+                             (count-messages model messages))
+
+                           svar/ask-code!
+                           (fn [_ _]
+                             {:stop-reason :end
+                              :content "Done"
+                              :provider :fixture
+                              :model "gpt-4o"
+                              :api-usage {:input-tokens 2000 :output-tokens 1}})]
+
+               (let [result (lp/run-turn! environment
+                                          probe
+                                          {:routing {:provider :fixture :model "gpt-4o"}})]
+                 (expect (= "Done" (get-in result [:answer :answer])))
+                 (expect (seq @counted))
+                 (expect (= #{1} (set (vals (frequencies @counted)))))))
+             (finally (lp/dispose-environment! environment))))))
 
 (defdescribe
   request-context-estimator-test

@@ -190,6 +190,91 @@
                    (:breakdown health)))
         (expect (every? #(not (contains? % :instructions-loaded)) (:roots health))))))
 
+(defdescribe request-health-tokenization-test
+             (it "reuses a whole-message token count for an identical attribution"
+                 ;; JVM dogfooding: runtime/tool attribution tokenized the same large block twice.
+                 (doseq [content [(apply str (repeat 50 "ą中42={x:17};\n"))
+                                  [{:type "text" :text "Runtime instructions"}
+                                   {:type "text" :text "Tool declarations"}]]]
+                   (let [model "gpt-4o"
+                         count-messages svar-router/count-messages
+                         message {:role "system" :content content}
+                         total (count-messages model [message])
+                         overhead (count-messages model [(assoc message :content "")])
+                         calls (atom [])]
+
+                     (with-redefs [svar-router/count-messages (fn ^long [model messages]
+                                                                (swap! calls conj messages)
+                                                                (count-messages model messages))]
+                       (let [health (prompt/request-health {}
+                                                           [(with-meta message
+                                                              {::prompt/parts
+                                                               [{:label "Attributed content"
+                                                                 :content content}]})]
+                                                           []
+                                                           model)]
+                         (expect (= 1 (count (filter #(= [message] %) @calls))))
+                         (expect (= total (:estimated-input-tokens health)))
+                         (expect (= (- total overhead)
+                                    (:tokens (first (filter #(= "Attributed content" (:label %))
+                                                            (:breakdown health))))))))))))
+
+(defdescribe
+  request-token-counter-test
+  (it "preserves Svar counts for framing, repeated messages and structured content"
+      (let [messages
+            [{:role "system" :name "guide" :content "Zażółć 中\nStable instructions"}
+             {:role "assistant"
+              :content
+              [{:type "thinking" :thinking "Consider the result"}
+               {:type "tool_use" :id "call-1" :name "python_execution" :input {:code "print(42)"}}]}
+             {:role "user"
+              :content
+              [{:type "tool_result" :tool_use_id "call-1" :content [{:type "text" :text "42"}]}
+               {:type "image_url" :image_url {:url "data:image/png;base64,AAAA" :detail "low"}}]}]
+
+            counter
+            (prompt/request-token-counter)]
+
+        (doseq [model
+                ["gpt-4" "gpt-4o"]
+
+                selected
+                [nil [] [(first messages)] messages (conj messages (first messages))
+                 (reverse messages)]]
+
+          (expect (= (svar-router/count-messages model selected) (counter model selected))))))
+  (it "scopes reuse by model and message, and drops it with the counter"
+      (let [message
+            {:role "user" :content "Stable request"}
+
+            changed
+            (assoc message :content "Changed request")
+
+            count-messages
+            svar-router/count-messages
+
+            calls
+            (atom [])]
+
+        (with-redefs [svar-router/count-messages (fn ^long [model messages]
+                                                   (swap! calls conj [model (vec messages)])
+                                                   (count-messages model messages))]
+          (let [counter (prompt/request-token-counter)]
+            (doseq [messages [[message] [(with-meta message {:source :health})] [message message]
+                              [changed]]]
+              (counter "gpt-4o" messages))
+            (counter "gpt-4" [message])
+            (expect (= {["gpt-4o" []] 1
+                        ["gpt-4o" [message]] 1
+                        ["gpt-4o" [changed]] 1
+                        ["gpt-4" []] 1
+                        ["gpt-4" [message]] 1}
+                       (frequencies @calls)))
+            ((prompt/request-token-counter) "gpt-4o" [message])
+            (expect (= 2 (get (frequencies @calls) ["gpt-4o" [message]])))
+            (expect (= 2 (get (frequencies @calls) ["gpt-4o" []]))))))))
+
 (defdescribe
   linked-guidance-estimates-test
   (it "estimates available guidance without adding it to sent context or recording a model read"

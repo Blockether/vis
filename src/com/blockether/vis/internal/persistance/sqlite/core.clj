@@ -1157,16 +1157,24 @@
                                 (assoc :llm_root_provider (name (->kw provider))))]})
           soul-id)))))
 
+(def ^:private latest-state-sql
+  (str "SELECT id, title, version, system_prompt, llm_root_model, llm_root_provider "
+       "FROM session_state WHERE session_soul_id = ? "
+       "AND version = (SELECT MAX(version) FROM session_state WHERE session_soul_id = ?)"))
+
 (defn- latest-state-for
+  "Read state metadata without copying its potentially large prompt-cache BLOB."
   [db-info soul-id-s]
-  (query-one! db-info
-              {:select [:*]
-               :from :session_state
-               :where [:and [:= :session_soul_id soul-id-s]
-                       [:= :version
-                        {:select [[[:max :version]]]
-                         :from :session_state
-                         :where [:= :session_soul_id soul-id-s]}]]}))
+  ;; This hot query has a fixed shape; only its bound session id changes.
+  (first (query-sql! db-info [latest-state-sql soul-id-s soul-id-s])))
+
+(def ^:private latest-state-id-sql
+  (str "SELECT id FROM session_state WHERE session_soul_id = ? "
+       "AND version = (SELECT MAX(version) FROM session_state WHERE session_soul_id = ?)"))
+
+(defn- latest-state-id-for
+  [db-info soul-id-s]
+  (:id (first (query-sql! db-info [latest-state-id-sql soul-id-s soul-id-s]))))
 
 (defn db-get-session
   [db-info session-id]
@@ -2161,8 +2169,7 @@
   [db-info session-id]
   (when (and (ds db-info) session-id)
     (let [soul-id-s (->ref session-id)]
-      (some-> (latest-state-for db-info soul-id-s)
-              :id
+      (some-> (latest-state-id-for db-info soul-id-s)
               ->uuid))))
 
 (defn db-update-session-title!
@@ -2638,7 +2645,7 @@
   [db-info session-id]
   (when (ds db-info)
     (let [soul-id-s (->ref session-id)]
-      (:id (latest-state-for db-info soul-id-s)))))
+      (latest-state-id-for db-info soul-id-s))))
 
 (defn- session-state-chain
   "Return active branch state ids from root to latest leaf."
@@ -3087,12 +3094,13 @@
       (reduce (fn [m row]
                 (update m (:session_turn_soul_id row) (fnil conj []) (row->attachment row)))
               {}
-              (query! db-info
-                      {:select [:*]
-                       :from :session_attachment
-                       :where [:and [:in :session_turn_soul_id ids]
-                               [:= :session_turn_iteration_id nil]]
-                       :order-by [[:session_turn_soul_id :asc] [:position :asc]]})))))
+              (query-sql! db-info
+                          (into [(str "SELECT * FROM session_attachment "
+                                      "WHERE session_turn_soul_id IN ("
+                                      (str/join "," (repeat (count ids) "?"))
+                                      ") AND session_turn_iteration_id IS NULL "
+                                      "ORDER BY session_turn_soul_id ASC, position ASC")]
+                                ids))))))
 
 (defn db-list-iteration-attachments
   "Ordered OUTBOUND tool artifacts persisted for ONE `session_turn_iteration`
@@ -3191,18 +3199,20 @@
                  vec)]
     (if-not (and (ds db-info) (seq ids))
       {}
-      (reduce (fn [m row]
-                (update m
-                        (:session_turn_iteration_id row)
-                        (fnil conj [])
-                        (row->attachment-meta row)))
-              {}
-              (query! db-info
-                      {:select attachment-meta-select
-                       :from :session_attachment
-                       :where [:in :session_turn_iteration_id ids]
-                       :order-by [[:session_turn_iteration_id :asc] [:tool_call_id :asc]
-                                  [:position :asc]]})))))
+      (reduce
+        (fn [m row]
+          (update m (:session_turn_iteration_id row) (fnil conj []) (row->attachment-meta row)))
+        {}
+        (query-sql!
+          db-info
+          (into [(str "SELECT id, session_turn_soul_id, session_turn_iteration_id, "
+                      "tool_call_id, position, kind, media_type, filename, view_id, "
+                      "version, audience, commentable, storage_uri, size_bytes, transcription, "
+                      "CASE WHEN bytes IS NULL THEN 0 ELSE 1 END AS has_bytes "
+                      "FROM session_attachment WHERE session_turn_iteration_id IN ("
+                      (str/join "," (repeat (count ids) "?"))
+                      ") ORDER BY session_turn_iteration_id ASC, tool_call_id ASC, position ASC")]
+                ids))))))
 
 (defn db-list-turn-all-attachments
   "EVERY attachment hanging off one TURN - user images AND tool artifacts
@@ -3310,16 +3320,15 @@
                                {:select [:*] :from :session_attachment :where [:= :id id-s]})]
       (row->attachment row))))
 
+(def ^:private latest-turn-state-sql
+  (str "SELECT * FROM session_turn_state WHERE session_turn_soul_id = ? "
+       "AND version = (SELECT MAX(version) FROM session_turn_state "
+       "WHERE session_turn_soul_id = ?)"))
+
 (defn- latest-session-turn-state
   [db-info session-turn-soul-id-s]
-  (query-one! db-info
-              {:select [:*]
-               :from :session_turn_state
-               :where [:and [:= :session_turn_soul_id session-turn-soul-id-s]
-                       [:= :version
-                        {:select [[[:max :version]]]
-                         :from :session_turn_state
-                         :where [:= :session_turn_soul_id session-turn-soul-id-s]}]]}))
+  (first (query-sql! db-info
+                     [latest-turn-state-sql session-turn-soul-id-s session-turn-soul-id-s])))
 
 (defn db-retry-session-turn!
   "Create a new session_turn_state (version N+1) for an existing session_turn_soul.
@@ -4129,10 +4138,9 @@
   [db sid]
   (= 1
      (:locked (when (ds db)
-                (query-one! db
-                            {:select [:locked]
-                             :from :session_routing_policy
-                             :where [:= :session_id (str sid)]})))))
+                (first (query-sql! db
+                                   ["SELECT locked FROM session_routing_policy WHERE session_id = ?"
+                                    (str sid)]))))))
 
 (defn db-lock-routing!
   [db sid locked?]
@@ -4468,59 +4476,66 @@
       (seq trace)
       (assoc :trace trace))))
 
-(defn- routing-events-for-iteration
-  [db-info iteration-id]
-  (try
-    (mapv
-      (fn [row]
-        (normalize-routing-event
-          (or (<-json (:event_json row))
-              (cond-> {:event/type (some-> (:event_type row)
-                                           keyword)}
-                (:provider row)
-                (assoc :provider (->kw-back (:provider row)))
+(defn- row->routing-event
+  [row]
+  (normalize-routing-event
+    (or (<-json (:event_json row))
+        (cond-> {:event/type (some-> (:event_type row)
+                                     keyword)}
+          (:provider row)
+          (assoc :provider (->kw-back (:provider row)))
 
-                (:model row)
-                (assoc :model (:model row))
+          (:model row)
+          (assoc :model (:model row))
 
-                (:from_provider row)
-                (assoc :from-provider (->kw-back (:from_provider row)))
+          (:from_provider row)
+          (assoc :from-provider (->kw-back (:from_provider row)))
 
-                (:from_model row)
-                (assoc :from-model (:from_model row))
+          (:from_model row)
+          (assoc :from-model (:from_model row))
 
-                (:to_provider row)
-                (assoc :to-provider (->kw-back (:to_provider row)))
+          (:to_provider row)
+          (assoc :to-provider (->kw-back (:to_provider row)))
 
-                (:to_model row)
-                (assoc :to-model (:to_model row))
+          (:to_model row)
+          (assoc :to-model (:to_model row))
 
-                (:status row)
-                (assoc :status (:status row))
+          (:status row)
+          (assoc :status (:status row))
 
-                (:reason row)
-                (assoc :reason (->kw-back (:reason row)))
+          (:reason row)
+          (assoc :reason (->kw-back (:reason row)))
 
-                (:error row)
-                (assoc :error (:error row))
+          (:error row)
+          (assoc :error (:error row))
 
-                (:attempt row)
-                (assoc :attempt (:attempt row))
+          (:attempt row)
+          (assoc :attempt (:attempt row))
 
-                (:delay_ms row)
-                (assoc :delay-ms (:delay_ms row))
+          (:delay_ms row)
+          (assoc :delay-ms (:delay_ms row))
 
-                (:elapsed_ms row)
-                (assoc :elapsed-ms (:elapsed_ms row))
+          (:elapsed_ms row)
+          (assoc :elapsed-ms (:elapsed_ms row))
 
-                (:at_ms row)
-                (assoc :at-ms (:at_ms row))))))
-      (query! db-info
-              {:select [:*]
-               :from :llm_routing_event
-               :where [:= :session_turn_iteration_id (->ref iteration-id)]
-               :order-by [[:position :asc]]}))
-    (catch SQLException _ [])))
+          (:at_ms row)
+          (assoc :at-ms (:at_ms row))))))
+
+(defn- routing-events-for-state
+  [db-info state-id-s]
+  (try (reduce
+         (fn [events row]
+           (update events (:session_turn_iteration_id row) (fnil conj []) (row->routing-event row)))
+         {}
+         (query! db-info
+                 {:select [:llm_routing_event.*]
+                  :from :llm_routing_event
+                  :join [:session_turn_iteration
+                         [:= :session_turn_iteration.id
+                          :llm_routing_event.session_turn_iteration_id]]
+                  :where [:= :session_turn_iteration.session_turn_state_id state-id-s]
+                  :order-by [[:llm_routing_event.position :asc]]}))
+       (catch SQLException _ {})))
 
 (defn- attach-routing
   [iteration routing]
@@ -4645,19 +4660,25 @@
 (defn- iterations-for-state-id
   "Iteration views for one concrete `session_turn_state.id`, position-ordered."
   [db-info state-id-s]
-  (mapv (fn [row]
-          (let [trace
-                (routing-events-for-iteration db-info (:id row))
-
-                routing
-                (row-routing-summary row trace)]
-
-            (attach-routing (row->iteration row) routing)))
+  (let [rows
         (query! db-info
                 {:select [:*]
                  :from :session_turn_iteration
                  :where [:= :session_turn_state_id state-id-s]
-                 :order-by [[:position :asc]]})))
+                 :order-by [[:position :asc]]})
+
+        traces
+        (when (seq rows) (routing-events-for-state db-info state-id-s))]
+
+    (mapv (fn [row]
+            (let [trace
+                  (get traces (:id row) [])
+
+                  routing
+                  (row-routing-summary row trace)]
+
+              (attach-routing (row->iteration row) routing)))
+          rows)))
 
 (defn db-list-session-turn-iterations
   "List the latest state's iterations for canonical turn soul `session-turn-id`."
@@ -4667,6 +4688,81 @@
       (iterations-for-state-id db-info (:id state))
       [])
     []))
+
+(defn db-list-session-turns-iterations
+  "Batch latest-state iteration views, keyed by string turn ID.
+
+  Nil IDs are ignored and duplicates are read once. Missing or empty turns map
+  to empty vectors. Iteration order and routing match the single-turn reader;
+  at most two SQL reads are needed regardless of the number of requested turns."
+  [db-info session-turn-ids]
+  (let [ids (into [] (comp (keep ->ref) (distinct)) session-turn-ids)]
+    (if (and (ds db-info) (seq ids))
+      (let [where-sql (str " WHERE s.session_turn_soul_id IN ("
+                           (str/join "," (repeat (count ids) "?"))
+                           ") AND s.version = (SELECT MAX(latest.version) "
+                           "FROM session_turn_state latest "
+                           "WHERE latest.session_turn_soul_id = s.session_turn_soul_id)")
+            rows (query-sql! db-info
+                             (into [(str
+                                      "SELECT i.*, s.session_turn_soul_id AS turn_id "
+                                      "FROM session_turn_iteration i "
+                                      "JOIN session_turn_state s ON s.id = i.session_turn_state_id"
+                                      where-sql
+                                      " ORDER BY i.position ASC")]
+                                   ids))
+            traces
+            (when (seq rows)
+              (try (reduce
+                     (fn [events row]
+                       (update events
+                               (:session_turn_iteration_id row)
+                               (fnil conj [])
+                               (row->routing-event row)))
+                     {}
+                     (query-sql!
+                       db-info
+                       (into
+                         [(str
+                            "SELECT e.* FROM llm_routing_event e "
+                            "JOIN session_turn_iteration i ON i.id = e.session_turn_iteration_id "
+                            "JOIN session_turn_state s ON s.id = i.session_turn_state_id"
+                            where-sql
+                            " ORDER BY e.position ASC")]
+                         ids)))
+                   (catch SQLException _ {})))]
+
+        (reduce (fn [result row]
+                  (update result
+                          (:turn_id row)
+                          conj
+                          (attach-routing (row->iteration row)
+                                          (row-routing-summary row (get traces (:id row) [])))))
+                (zipmap ids (repeat []))
+                rows))
+      {})))
+
+(defn db-latest-turn-request-usage
+  "Last positive-input request in the turn's latest state, or nil.
+
+   Reads only position and input tokens; iteration payloads and routing traces
+   are intentionally excluded. Retried states never contribute old usage."
+  [db-info session-turn-id]
+  (when (and (ds db-info) session-turn-id)
+    (let [turn-id
+          (->ref session-turn-id)
+
+          row
+          (first
+            (query-sql!
+              db-info
+              [(str "SELECT i.position, i.input_tokens FROM session_turn_iteration AS i "
+                    "INNER JOIN session_turn_state AS s ON s.id = i.session_turn_state_id "
+                    "WHERE s.session_turn_soul_id = ? AND s.version = "
+                    "(SELECT MAX(version) FROM session_turn_state WHERE session_turn_soul_id = ?) "
+                    "AND i.input_tokens > 0 ORDER BY i.position DESC LIMIT 1") turn-id turn-id]))]
+
+      (when row {:position (:position row) :input-tokens (long (:input_tokens row))}))))
 
 ;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,
 ;; `db-store-dependency!`, `db-list-dependencies`, `db-restore-blocks`,

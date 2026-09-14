@@ -180,18 +180,19 @@
     options))
 
 (defn- child-argv
-  "Start the runtime worker, never a second copy of Vis. JVM development uses
-   the same Java entrypoint; native Vis requires the packaged runtime executable."
+  "Prefer the selected runtime's packaged worker, including from a JVM host.
+   A source-only runtime uses its Java entrypoint; native Vis requires the executable."
   [library socket guest-dir]
-  (if (util/native-image?)
-    (if-let [executable (runtime/resolve-worker {:path library})]
-      [executable (str "-Duser.home=" (System/getProperty "user.home")) socket guest-dir]
+  (if-let [executable (runtime/resolve-worker {:path library})]
+    [executable (str "-Duser.home=" (System/getProperty "user.home")) socket guest-dir]
+    (if (util/native-image?)
       (throw (ex-info "The Python runtime archive has no worker executable"
-                      {:type :vis/python-worker-missing})))
-    (vec (concat [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
-                 (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
-                 ["-cp" (System/getProperty "java.class.path") "com.blockether.vispython.Worker"
-                  socket guest-dir]))))
+                      {:type :vis/python-worker-missing}))
+      (vec (concat
+             [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
+             (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
+             ["-cp" (System/getProperty "java.class.path") "com.blockether.vispython.Worker" socket
+              guest-dir])))))
 
 (defn- worker-dir
   ^File [stamp]
@@ -227,11 +228,10 @@
   "Existing working directory, JVM classpath, Java home, package cache, runtime
    tree and Vis guest modules needed before the child can connect. They are
    read-only, not session roots."
-  [library guest-dir]
+  [library guest-dir runtime-roots]
   (->> (concat [(System/getProperty "user.dir") (System/getProperty "java.home")
                 (runtime/packages-dir) (Locations/sourcesDir) guest-dir]
-               ;; Extract before confinement; workers only read the versioned cache.
-               (Sources/roots)
+               runtime-roots
                (str/split (System/getProperty "java.class.path" "")
                           (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))
                (when library
@@ -330,10 +330,12 @@
                   (Files/createDirectories (.toPath packages)
                                            (make-array java.nio.file.attribute.FileAttribute 0)))
               guest-dir (guest-source-dir)
+              ;; Resolve once before confinement; reuse the same roots for Python imports.
+              runtime-roots (vec (Sources/roots))
               policy (launch-policy! k
                                      (.getAbsolutePath dir)
                                      (.getAbsolutePath socket)
-                                     (boot-read-paths library guest-dir))
+                                     (boot-read-paths library guest-dir runtime-roots))
               extra (cond-> {"VIS_PYTHON_TLS_STRICT" (str (tls-strict?))}
                       packages
                       (assoc Locations/PACKAGES_ENV (.getCanonicalPath packages))
@@ -377,7 +379,7 @@
                   {"op" "exec"
                    "session" runtime/default-session
                    "code" (str "import json, sys\n__vis_runtime_roots__ = json.loads("
-                               (pr-str (json/write-json-str (vec (Sources/roots))))
+                               (pr-str (util/json-str runtime-roots))
                                ")\nsys.path[:] = __vis_runtime_roots__ + [p for p in sys.path"
                                " if p not in __vis_runtime_roots__]\n")})
                 (tel/log! {:level :debug :id ::started} (str "python worker pid " (.pid process)))

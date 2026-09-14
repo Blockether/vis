@@ -1,8 +1,30 @@
 (ns com.blockether.vis.internal.util-test
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe raw-json-encoding-test
+             (it "preserves Charred's escaping, keys, values and object conversion"
+                 (doseq [value
+                         [nil true false 42 1.25 12.5M
+                          (str "Zażółć / 😀" \newline \tab (char 0x2028) (char 0x2029))
+                          {"literal-key?" [nil true 1 "a\nb"] :named/key :value 'symbol "kept"}
+                          (long-array [1 2 3]) (java.time.Instant/parse "2026-01-01T00:00:00Z")
+                          (reify
+                            json/PToJSON
+                              (->json-data [_] {"converted" true}))]]
+                   (expect (= (json/write-json-str value) (util/json-str value)))))
+             (it "does not retain partial output or writer state after a conversion failure"
+                 (let [bad (reify
+                             json/PToJSON
+                               (->json-data [_] (throw (ex-info "fixture conversion failed" {}))))]
+                   (expect (= "fixture conversion failed"
+                              (try (util/json-str {"before" [1 2] "bad" bad})
+                                   ::no-error
+                                   (catch clojure.lang.ExceptionInfo error (ex-message error)))))
+                   (expect (= "{\"ok\":true}" (util/json-str {"ok" true}))))))
 
 (defdescribe
   secret-redaction-test

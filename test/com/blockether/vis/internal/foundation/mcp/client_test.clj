@@ -6,6 +6,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private server-path "test/resources/mcp/fake_mcp_server.py")
@@ -63,41 +64,38 @@
 
 (defdescribe
   mcp-stdio-kill-tree-test
-  (it
-    "closing a server kills its whole process tree, not just the launcher"
-    (let [py
-          (on-path "python3")
+  (it "closing a server kills its whole process tree, not just the launcher"
+      (let [py
+            (on-path "python3")
 
-          sh
-          (on-path "sh")
+            sh
+            (on-path "sh")
 
-          f
-          (io/file server-path)]
+            f
+            (io/file server-path)]
 
-      (if-not (and py sh (.exists f))
-        (expect true) ; prereqs absent — skip, don't fail CI
-        (let [conn
-              ;; What every real MCP server looks like: a launcher (`npx`, `uvx`,
-              ;; `docker run`) with the actual work under it. `sleep` stands in for
-              ;; the worker that outlives a bare `Process.destroy` of the parent.
-              (mcp/connect "fake"
-                           {:transport :stdio
-                            :command sh
-                            :args ["-c" (str "sleep 300 & exec " py " " (.getPath f))]})
+        (if-not (and py sh (.exists f))
+          (expect true) ; prereqs absent — skip, don't fail CI
+          (let [conn
+                ;; What every real MCP server looks like: a launcher (`npx`, `uvx`,
+                ;; `docker run`) with the actual work under it. `sleep` stands in for
+                ;; the worker that outlives a bare `Process.destroy` of the parent.
+                (mcp/connect "fake"
+                             {:transport :stdio
+                              :command sh
+                              :args ["-c" (str "sleep 300 & exec " py " " (.getPath f))]})
 
-              kids
-              (-> (java.lang.ProcessHandle/of (long (:pid conn)))
-                  (.orElse nil)
-                  .descendants
-                  .iterator
-                  iterator-seq
-                  vec)]
+                kids
+                (let [^java.lang.ProcessHandle handle
+                      (.orElse (java.lang.ProcessHandle/of (long (:pid conn))) nil)]
+                  (with-open [descendants (.descendants handle)]
+                    (vec (iterator-seq (.iterator descendants)))))]
 
-          (expect (= "fake" (get (:server-info conn) "name")))
-          (expect (= 1 (count kids)))
-          (mcp/close conn)
-          ;; Give SIGTERM→SIGKILL its grace window before judging.
-          (expect (all-dead-within? kids 8000)))))))
+            (expect (= "fake" (get (:server-info conn) "name")))
+            (expect (= 1 (count kids)))
+            (mcp/close conn)
+            ;; Give SIGTERM→SIGKILL its grace window before judging.
+            (expect (all-dead-within? kids 8000)))))))
 
 (defdescribe
   mcp-failed-stdio-handshake-cleanup-test
@@ -146,6 +144,75 @@
                                            (.orElse nil))]
                           (when (.isAlive handle) (.destroyForcibly handle))))
                       (.delete pid-file)))))))
+
+(defdescribe
+  mcp-stdio-stream-cleanup-test
+  (it "closes stdout after both a normal connection and a failed handshake"
+      ;; JVM dogfooding: twenty connect/close cycles leaked twenty descriptors.
+      ;; EOF is not close: runtime-owned pipe descriptors have no GC fallback.
+      (when-let [py (on-path "python3")]
+        (doseq [args [[server-path] ["-c" "import time; time.sleep(10)"]]]
+          (let [spawn! process-jail/spawn!
+                started (atom nil)]
+
+            (try (with-redefs [process-jail/spawn! (fn [& spawn-args]
+                                                     (let [proc (apply spawn! spawn-args)]
+                                                       (reset! started proc)
+                                                       proc))]
+                   (try (mcp/close (mcp/connect
+                                     "stream-cleanup"
+                                     {:transport :stdio :command py :args args :timeout-ms 500}))
+                        (catch clojure.lang.ExceptionInfo e
+                          (expect (= :mcp/timeout (:type (ex-data e)))))))
+                 (let [^Process proc @started
+                       stream (.getInputStream proc)]
+
+                   (expect (.waitFor proc 2 java.util.concurrent.TimeUnit/SECONDS))
+                   ;; The reader owns closing stdout. Allow its EOF/finally to finish.
+                   (expect (loop [remaining 100]
+                             (let [closed?
+                                   (try (.read stream) false (catch java.io.IOException _ true))]
+                               (cond closed? true
+                                     (pos? remaining) (do (Thread/sleep 10) (recur (dec remaining)))
+                                     :else false)))))
+                 (finally (when-let [^Process proc @started]
+                            (.destroyForcibly proc)
+                            (.close (.getInputStream proc))
+                            (.close (.getErrorStream proc))
+                            (.close (.getOutputStream proc))))))))))
+
+(defdescribe mcp-stdio-setup-failure-cleanup-test
+             (it "reclaims the process and available streams when transport setup throws"
+                 ;; A connection does not exist yet; connect's handshake cleanup cannot help.
+                 (doseq [stage [:stdout :stdin :stderr]]
+                   (let [alive (atom true)
+                         closed (atom #{})
+                         input (fn [kind]
+                                 (proxy [java.io.ByteArrayInputStream] [(byte-array 0)]
+                                   (close [] (swap! closed conj kind))))
+                         out (input :stdout)
+                         err (input :stderr)
+                         in (proxy [java.io.ByteArrayOutputStream] []
+                              (close [] (swap! closed conj :stdin)))
+                         failure (java.io.IOException. "fixture setup failure")
+                         proc (proxy [Process] []
+                                (getInputStream [] (if (= stage :stdout) (throw failure) out))
+                                (getOutputStream [] (if (= stage :stdin) (throw failure) in))
+                                (getErrorStream [] (if (= stage :stderr) (throw failure) err))
+                                (destroy [] (reset! alive false))
+                                (isAlive [] @alive)
+                                (waitFor ([] 0) ([timeout unit] true))
+                                (exitValue [] 0))]
+
+                     (with-redefs [process-jail/spawn! (fn [& _]
+                                                         proc)]
+                       (expect (identical? failure
+                                           (try (mcp/connect "setup-failure"
+                                                             {:transport :stdio :command "fixture"})
+                                                nil
+                                                (catch java.io.IOException e e)))))
+                     (expect (false? @alive))
+                     (expect (= (disj #{:stdout :stdin :stderr} stage) @closed))))))
 
 (defdescribe mcp-transport-normalization-test
              (it "accepts canonical external transport values and their internal keyword form"

@@ -417,6 +417,89 @@
          (finally (remove-ns ns-sym)))))
 
 (defdescribe
+  mixed-whole-and-var-selection-test
+  ;; Improve #2150: scoped vars must not silently discard a whole-file selection.
+  (it
+    "preserves selected identities in both the REPL form and a clean Lazytest JVM"
+    (let [files
+          (into {}
+                (for [part ["one" "two"]]
+                  [(str "test/vis/mixed/" part "_test.clj")
+                   (str "(ns vis.mixed."
+                        part
+                        "-test (:require [lazytest.core :refer [defdescribe it expect]]))\n"
+                        "(defdescribe ^:fast first-test (it \"first\" (println \"SELECTED "
+                        part
+                        "/first\") (expect true)))\n"
+                        "(defdescribe second-test (it \"second\" (println \"SELECTED "
+                        part
+                        "/second\") (expect true)))\n")]))
+
+          whole
+          "test/vis/mixed/one_test.clj"
+
+          scoped
+          "test/vis/mixed/two_test.clj::first"
+
+          identities
+          (fn [output]
+            (set (map second (re-seq #"SELECTED ([\w/-]+)" output))))]
+
+      (with-project
+        files
+        (fn [root]
+          (try
+            (doseq [[arg expected]
+                    [[{"paths" [whole scoped]} #{"one/first" "one/second" "two/first"}]
+                     [{"paths" [whole (str whole "::first")]} #{"one/first" "one/second"}]
+                     [{"paths" [whole "test/vis/mixed/two_test.clj" "::first"]}
+                      #{"one/first" "two/first"}] [{"paths" [whole] "only" "first"} #{"one/first"}]
+                     [{"paths" [whole scoped] "exclude" ["fast"]} #{"one/second"}]
+                     [{"paths" [whole scoped] "include" ["fast"]} #{"one/first" "two/first"}]]]
+              (let [{:keys [nses sel]} (run-capturing root arg)
+                    ns-files (into {}
+                                   (for [[path _] files]
+                                     [(str "vis.mixed."
+                                           (if (str/includes? path "one_") "one" "two")
+                                           "-test") (str (io/file root path))]))
+                    repl-result ((eval @#'tr/run-form) (mapv symbol nses) sel ns-files)
+                    flags (@#'tr/lazytest-selector-args (assoc sel :nses nses))
+                    classpath (str/join java.io.File/pathSeparator
+                                        (cons (str (io/file root "test"))
+                                              (map #(.getAbsolutePath (io/file %))
+                                                   (str/split (System/getProperty "java.class.path")
+                                                              (re-pattern
+                                                                java.io.File/pathSeparator)))))
+                    cli-result (apply shell/sh
+                                 (concat [(str
+                                            (io/file (System/getProperty "java.home") "bin" "java"))
+                                          "-cp" classpath "clojure.main" "-m" "lazytest.main"]
+                                         flags
+                                         [:dir root]))]
+
+                (expect (= (count expected) (get repl-result "selected")))
+                (expect (= expected (identities (get repl-result "output"))))
+                (expect (= 0 (get repl-result "fail")))
+                (expect (= 0 (:exit cli-result)) (:err cli-result))
+                (expect (str/includes? (:out cli-result)
+                                       (str "Ran " (count expected) " test cases")))
+                (expect (= expected (identities (:out cli-result))))))
+            (finally (doseq [n '[vis.mixed.one-test vis.mixed.two-test]]
+                       (when (find-ns n) (remove-ns n)))))))))
+  (it "preserves whole namespaces and scoped vars in both Kaocha adapters"
+      (let [sel
+            {:nses ["one-test" "two-test"]
+             :vars [{:ns "two-test" :name "first-test"} {:ns "one-test" :name nil}]}
+
+            args
+            @#'tr/runner-selector-args]
+
+        (expect (= {:args ["--focus" "two-test/first-test" "--focus" "one-test"]}
+                   (args {:framework :kaocha :mode "-M"} sel)))
+        (expect (= {:args [":kaocha.filter/focus" "[two-test/first-test one-test]"]}
+                   (args {:framework :kaocha :mode "-X"} sel))))))
+
+(defdescribe
   var-miss-output-test
   (it "reports a bounded selector miss without dumping namespaces or vars"
       (let [result

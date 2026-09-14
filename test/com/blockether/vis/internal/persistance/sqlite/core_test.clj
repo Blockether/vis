@@ -28,6 +28,433 @@
            (java.util.concurrent CountDownLatch TimeUnit)))
 
 (defdescribe
+  artifact-metadata-query-test
+  (it
+    "binds iteration ids and reads byte-free metadata without recompiling SQL"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "artifacts"})
+
+          store-iteration
+          (fn [filename]
+            (h/store-iteration!
+              s
+              {:session-turn-id tid
+               :status :done
+               :code "print(1)"
+               :attachments
+               [{:tool-call-id "call_B" :media-type "text/plain" :base64 "eA==" :filename filename}
+                {:tool-call-id "call_A"
+                 :media-type "text/plain"
+                 :base64 "eQ=="
+                 :filename (str filename ".second")}
+                {:tool-call-id "call_A"
+                 :media-type "text/plain"
+                 :base64 "eg=="
+                 :filename (str filename ".third")}]}))
+
+          first-id
+          (store-iteration "first.txt")
+
+          second-id
+          (store-iteration "second.txt")
+
+          foreign-id
+          (store-iteration "foreign.txt")
+
+          expected
+          {(str first-id) (vis/db-list-iteration-attachments-meta s first-id)
+           (str second-id) (vis/db-list-iteration-attachments-meta s second-id)}
+
+          format-sql
+          sql/format
+
+          formats
+          (atom 0)]
+
+      ;; Transcript hydration repeats this metadata lookup for every turn.
+      (with-redefs [sql/format (fn [& args]
+                                 (swap! formats inc)
+                                 (apply format-sql args))]
+        (let [rows (vis/db-list-iterations-attachments-meta s
+                                                            [second-id nil (str first-id) first-id
+                                                             "missing' OR 1=1 --"])]
+          (expect (= expected rows))
+          (expect (not (contains? rows (str foreign-id))))
+          (expect (every? #(and (:has-bytes %) (not (contains? % :base64))) (mapcat val rows))))
+        (expect (= {} (vis/db-list-iterations-attachments-meta s [])))
+        (expect (= {} (vis/db-list-iterations-attachments-meta s [nil])))
+        (expect (= {} (vis/db-list-iterations-attachments-meta nil [first-id])))
+        (expect (= {} (vis/db-list-iterations-attachments-meta s ["missing"]))))
+      (expect (zero? @formats)))))
+
+(defdescribe routing-lock-query-test
+             (it "reads current routing locks with bound ids and no SQL recompilation"
+                 ;; SDK profiling found repeated HoneySQL formatting in routing-lock reads.
+                 (let [s
+                       (h/store)
+
+                       sid
+                       (h/store-session! s {:channel :api})
+
+                       other-id
+                       (h/store-session! s {:channel :api})
+
+                       format-sql
+                       sql/format
+
+                       formats
+                       (atom 0)]
+
+                   (expect (false? (sqlite-core/db-routing-locked? s sid)))
+                   (sqlite-core/db-lock-routing! s sid true)
+                   (with-redefs [sql/format (fn [& args]
+                                              (swap! formats inc)
+                                              (apply format-sql args))]
+                     (expect (true? (sqlite-core/db-routing-locked? s sid)))
+                     (expect (true? (sqlite-core/db-routing-locked? s (str sid))))
+                     (expect (false? (sqlite-core/db-routing-locked? s other-id)))
+                     (expect (false? (sqlite-core/db-routing-locked? s "missing' OR 1=1 --")))
+                     (expect (false? (sqlite-core/db-routing-locked? s nil)))
+                     (expect (false? (sqlite-core/db-routing-locked? nil sid))))
+                   (sqlite-core/db-lock-routing! s sid false)
+                   (expect (false? (sqlite-core/db-routing-locked? s sid)))
+                   (expect (zero? @formats)))))
+
+(defdescribe
+  turn-attachments-query-test
+  (it "binds batched turn ids without repeatedly compiling the attachment query"
+      ;; SDK transcript profiling identified HoneySQL formatting on this hot path.
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            store-turn
+            (fn [filename]
+              (vis/db-store-session-turn!
+                s
+                {:parent-session-id sid
+                 :user-request filename
+                 :attachments
+                 [{:media-type "text/plain" :base64 "eA==" :filename filename}
+                  {:media-type "text/plain" :base64 "eQ==" :filename (str filename ".second")}]}))
+
+            first-id
+            (store-turn "first.txt")
+
+            second-id
+            (store-turn "second.txt")
+
+            foreign-id
+            (store-turn "foreign.txt")
+
+            expected
+            {(str first-id) (vis/db-list-turn-attachments s first-id)
+             (str second-id) (vis/db-list-turn-attachments s second-id)}
+
+            format-sql
+            sql/format
+
+            formats
+            (atom 0)]
+
+        (h/store-iteration! s
+                            {:session-turn-id first-id
+                             :status :done
+                             :code "print(1)"
+                             :attachments
+                             [{:media-type "text/plain" :base64 "eA==" :filename "tool.txt"}]})
+        (with-redefs [sql/format (fn [& args]
+                                   (swap! formats inc)
+                                   (apply format-sql args))]
+          (expect (= expected
+                     (sqlite-core/db-list-turns-attachments s
+                                                            [second-id nil first-id (str first-id)
+                                                             "missing' OR 1=1 --"])))
+          (expect (= {} (sqlite-core/db-list-turns-attachments s [])))
+          (expect (= {} (sqlite-core/db-list-turns-attachments s [nil])))
+          (expect (= {} (sqlite-core/db-list-turns-attachments nil [first-id]))))
+        (expect (zero? @formats)))))
+
+(defdescribe
+  previous-request-usage-query-test
+  (it
+    "seeds request size without reading routing traces or iteration payloads"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "prior"})
+
+          current
+          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "current"})
+
+          _
+          (doseq [tokens [10000 42000 0]]
+            (h/store-iteration!
+              s
+              {:session-turn-id tid :code "print(1)" :duration-ms 1 :tokens {"input" tokens}}))
+
+          execute!
+          jdbc/execute!
+
+          queries
+          (atom [])
+
+          previous-usage
+          (requiring-resolve 'com.blockether.vis.internal.loop/previous-request-usage)
+
+          result
+          (with-redefs [jdbc/execute! (fn [db statement & options]
+                                        (swap! queries conj (first statement))
+                                        (apply execute! db statement options))]
+            (previous-usage {:session-id sid :db-info s} current))]
+
+      (expect (= {:last-request-tokens 42000
+                  :last-request-turn-id tid
+                  :last-request-turn-position 1
+                  :last-request-iteration 2}
+                 result))
+      (expect (not-any? #(str/includes? % "llm_routing_event") @queries))
+      (expect (not-any? #(and (str/includes? % "session_turn_iteration")
+                              (str/includes? % "SELECT *"))
+                        @queries)))))
+
+(defdescribe latest-turn-request-usage-test
+             (it "ignores older retry states, empty turns and zero-token calls"
+                 (let [s
+                       (h/store)
+
+                       sid
+                       (h/store-session! s {:channel :api})
+
+                       tid
+                       (vis/db-store-session-turn! s
+                                                   {:parent-session-id sid :user-request "retry"})]
+
+                   (expect (nil? (persistance/db-latest-turn-request-usage s tid)))
+                   (expect (nil? (persistance/db-latest-turn-request-usage s nil)))
+                   (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 90000}})
+                   (expect (= {:position 1 :input-tokens 90000}
+                              (persistance/db-latest-turn-request-usage s tid)))
+                   (persistance/db-retry-session-turn! s tid {:status :running})
+                   (expect (nil? (persistance/db-latest-turn-request-usage s tid)))
+                   (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 4000}})
+                   (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 0}})
+                   (expect (= {:position 1 :input-tokens 4000}
+                              (persistance/db-latest-turn-request-usage s (str tid)))))))
+
+(defdescribe
+  latest-turn-state-sql-test
+  (it "reuses the fixed SQL shape for repeated latest turn-state reads"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (vis/db-store-session-turn! s {:parent-session-id sid :user-request "latest"})
+
+            format-sql
+            sql/format
+
+            formats
+            (atom 0)]
+
+        (with-redefs [sql/format (fn [query & options]
+                                   (when (= :session_turn_state (:from query)) (swap! formats inc))
+                                   (apply format-sql query options))]
+          (dotimes [_ 10]
+            (expect (= [] (vis/db-list-session-turn-iterations s tid)))))
+        (expect (= 0 @formats)))))
+
+(defdescribe
+  routing-event-batch-test
+  (it
+    "loads ordered routing traces for all turn iterations with one query"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "batch"})
+
+          other
+          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "other"})
+
+          trace
+          (fn [provider]
+            [{:event/type :llm.routing/provider-retry :provider provider :attempt 1}
+             {:event/type :llm.routing/provider-retry :provider provider :attempt 2}])
+
+          ids
+          (mapv (fn [provider]
+                  (h/store-iteration! s
+                                      {:session-turn-id tid
+                                       :code ""
+                                       :duration-ms 1
+                                       :llm-routing {:trace (when provider (trace provider))}}))
+                [:p1 nil :p2])
+
+          _
+          (h/store-iteration!
+            s
+            {:session-turn-id other :code "" :duration-ms 1 :llm-routing {:trace (trace :foreign)}})
+
+          execute!
+          jdbc/execute!
+
+          reads
+          (atom 0)
+
+          rows
+          (with-redefs [jdbc/execute! (fn [db statement & options]
+                                        (when (str/includes? (first statement) "llm_routing_event")
+                                          (swap! reads inc))
+                                        (apply execute! db statement options))]
+            (vis/db-list-session-turn-iterations s tid))]
+
+      (expect (= (mapv str ids) (mapv (comp str :id) rows)))
+      (expect (= [["p1" "p1"] [] ["p2" "p2"]] (mapv #(mapv :provider (:llm-routing-trace %)) rows)))
+      (expect (= [[1 2] [] [1 2]] (mapv #(mapv :attempt (:llm-routing-trace %)) rows)))
+      (expect (= 1 @reads)))))
+
+(defdescribe
+  prior-turn-iteration-batch-test
+  (it
+    "loads latest-state iteration views for multiple turns with bounded reads"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          turns
+          (mapv (fn [request]
+                  (vis/db-store-session-turn! s {:parent-session-id sid :user-request request}))
+                ["first" "second" "empty"])
+
+          store
+          (fn [tid provider]
+            (h/store-iteration! s
+                                {:session-turn-id tid
+                                 :code "print(1)"
+                                 :duration-ms 1
+                                 :llm-routing {:trace [{:event/type :llm.routing/provider-retry
+                                                        :provider provider
+                                                        :attempt 1}]}}))
+
+          _
+          (store (first turns) :obsolete)
+
+          _
+          (vis/db-retry-session-turn! s (first turns) {:status :running})
+
+          _
+          (store (first turns) :current)
+
+          _
+          (store (second turns) :second)
+
+          _
+          (store (second turns) :third)
+
+          expected
+          (into {}
+                (map (fn [tid]
+                       [(str tid) (vis/db-list-session-turn-iterations s tid)])
+                     turns))
+
+          execute!
+          jdbc/execute!
+
+          reads
+          (atom 0)
+
+          actual
+          (with-redefs [jdbc/execute! (fn [db statement & options]
+                                        (swap! reads inc)
+                                        (apply execute! db statement options))]
+            (persistance/db-list-session-turns-iterations s
+                                                          (concat turns
+                                                                  [nil (str (first turns))])))]
+
+      (expect (= expected actual))
+      (expect (= ["current"]
+                 (mapv :provider (:llm-routing-trace (first (get actual (str (first turns))))))))
+      (expect (<= @reads 2)))))
+
+(defdescribe
+  prior-turn-iteration-batch-empty-test
+  (it "does not query nil IDs or a missing datasource and does not load routing for empty turns"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (vis/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
+
+            execute!
+            jdbc/execute!
+
+            statements
+            (atom [])
+
+            unknown
+            "unknown' OR 1=1 --"]
+
+        (with-redefs [jdbc/execute! (fn [db statement & options]
+                                      (swap! statements conj statement)
+                                      (apply execute! db statement options))]
+          (expect (= {} (persistance/db-list-session-turns-iterations s [nil])))
+          (expect (= {} (persistance/db-list-session-turns-iterations nil [tid])))
+          (expect (empty? @statements))
+          (expect (= {(str tid) [] unknown []}
+                     (persistance/db-list-session-turns-iterations s [tid unknown])))
+          (expect (= 1 (count @statements)))
+          (expect (= [(str tid) unknown] (vec (rest (first @statements)))))
+          (expect (not (str/includes? (ffirst @statements) unknown)))))))
+
+(defdescribe routing-event-empty-turn-test
+             (it "does not read routing rows when the turn has no iterations"
+                 (let [s
+                       (h/store)
+
+                       sid
+                       (h/store-session! s {:channel :api})
+
+                       tid
+                       (vis/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
+
+                       query!
+                       sqlite-core/query!
+
+                       reads
+                       (atom 0)]
+
+                   (with-redefs [sqlite-core/query! (fn [db query]
+                                                      (when (= :llm_routing_event (:from query))
+                                                        (swap! reads inc))
+                                                      (query! db query))]
+                     (expect (= [] (vis/db-list-session-turn-iterations s tid))))
+                   (expect (= 0 @reads)))))
+
+(defdescribe
   session-health-test
   (it
     "keeps request input separate from totals and later unmeasured calls"
@@ -1386,6 +1813,93 @@
                       s
                       (persistance/db-latest-session-state-id s session-id))))
       (expect (= checkpoint (persistance/db-get-session-prompt-cache-state s state-id)))))
+  (it "does not fetch prompt checkpoints while reading or updating state metadata"
+      ;; JVM profiling: SELECT * copied the checkpoint BLOB on every metadata read.
+      (let [s
+            (h/store)
+
+            session-id
+            (h/store-session! s {:channel :api :title "Metadata" :system-prompt "Keep me"})
+
+            state-id
+            (persistance/db-latest-session-state-id s session-id)
+
+            checkpoint
+            {:entry {:messages [{:role "system" :content "Cached prefix"}]}}
+
+            execute!
+            jdbc/execute!
+
+            state-reads
+            (atom [])]
+
+        (persistance/db-set-session-prompt-cache-state! s state-id checkpoint)
+        (with-redefs [jdbc/execute! (fn [& args]
+                                      (let [rows (apply execute! args)]
+                                        (swap! state-reads into
+                                          (filter #(and (contains? % :system_prompt)
+                                                        (contains? % :version))
+                                                  rows))
+                                        rows))]
+          (expect (= "Metadata" (:title (persistance/db-get-session s session-id))))
+          (expect (= state-id (persistance/db-latest-session-state-id s session-id)))
+          (persistance/db-update-session-title! s session-id "Renamed")
+          (h/fork-session! s session-id {})
+          (let [session (persistance/db-get-session s session-id)]
+            (expect (= "Renamed (fork)" (:title session)))
+            (expect (= "Keep me" (:system-prompt session)))
+            (expect (= 1 (:version session)))))
+        (expect (seq @state-reads))
+        (expect (every? #(not (contains? % :prompt_cache_state)) @state-reads))
+        (expect (= checkpoint (persistance/db-get-session-prompt-cache-state s state-id)))))
+  (it "reuses the fixed SQL shape when resolving the latest state"
+      (let [s
+            (h/store)
+
+            session-id
+            (h/store-session! s {:channel :api})
+
+            state-id
+            (persistance/db-latest-session-state-id s session-id)
+
+            format-sql
+            sql/format
+
+            formats
+            (atom 0)]
+
+        (with-redefs [sql/format (fn [& args]
+                                   (swap! formats inc)
+                                   (apply format-sql args))]
+          (dotimes [_ 10]
+            (expect (= state-id (persistance/db-latest-session-state-id s session-id)))))
+        (expect (zero? @formats))))
+  (it "reads only the id when resolving the latest session state"
+      ;; JVM SDK profiling found repeated system-prompt copies in ID-only lookups.
+      (let [s
+            (h/store)
+
+            session-id
+            (h/store-session! s {:channel :api :system-prompt (apply str (repeat 65536 "x"))})
+
+            state-id
+            (persistance/db-latest-session-state-id s session-id)
+
+            execute!
+            jdbc/execute!
+
+            rows-read
+            (atom [])]
+
+        (with-redefs [jdbc/execute! (fn [& args]
+                                      (let [rows (apply execute! args)]
+                                        (swap! rows-read into rows)
+                                        rows))]
+          (expect (= state-id (persistance/db-latest-session-state-id s session-id)))
+          (expect (= state-id (persistance/db-latest-session-state-id s (str session-id)))))
+        (expect (= 2 (count @rows-read)))
+        (expect (every? #(= #{:id} (set (keys %))) @rows-read))
+        (expect (nil? (persistance/db-latest-session-state-id s nil)))))
   (it "resolves :latest"
       (let [s (h/store)]
         (h/store-session! s {:channel :tui})

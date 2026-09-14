@@ -65,12 +65,25 @@
                   (catch Throwable t (ex-message t)))
              (str "pytest could not be installed: " out))))))
 
+(defn- recurse-test-directory?
+  "Prune pytest's usual dependency/cache directories, Vis build output and venvs.
+   Explicit scan roots bypass this filter; it applies only while descending."
+  [^File dir]
+  (let [name (.getName dir)]
+    (not (or (str/starts-with? name ".")
+             (str/ends-with? name ".egg")
+             (contains? #{"_darcs" "build" "CVS" "dist" "node_modules" "venv" "{arch}" "__pycache__"
+                          "target"}
+                        name)
+             (.isFile (io/file dir "pyvenv.cfg"))
+             (.isFile (io/file dir "conda-meta" "history"))))))
+
 (defn- walk-py
-  "Every `*.py` under `d`, recursively, name-sorted."
+  "Project `*.py` files under `d`, recursively, name-sorted; prune generated trees."
   [^File d]
   (when (.isDirectory d)
     (mapcat (fn [^File f]
-              (cond (.isDirectory f) (walk-py f)
+              (cond (.isDirectory f) (when (recurse-test-directory? f) (walk-py f))
                     (str/ends-with? (.getName f) ".py") [f]
                     :else nil))
             (sort-by #(.getName ^File %) (.listFiles d)))))
@@ -79,8 +92,9 @@
   "`[scan-dir test-file]` pairs across the given roots, deduped on the test file's
    canonical path.
 
-   A DIRECTORY root contributes every `test_*.py` / `*_test.py` at any depth
-   (top-level single-file siblings AND inside package extensions). A root that
+   A DIRECTORY root contributes nested `test_*.py` / `*_test.py`, excluding
+   hidden directories, dependency/cache trees, build outputs and virtualenvs.
+   Explicit directory roots bypass that pruning at the root itself. A root that
    names a `*.py` FILE directly IS that test file, whatever it is called — an
    explicitly named target is honored (pytest behaves the same) instead of
    silently discovering nothing; its own directory is the scan root."

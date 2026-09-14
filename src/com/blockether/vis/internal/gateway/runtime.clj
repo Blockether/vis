@@ -9,17 +9,21 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as contract]))
 
+(def ^:private build-version
+  (delay (or (some-> (io/resource "vis/VERSION")
+                     slurp
+                     str/trim
+                     not-empty)
+             "dev")))
+
 (defn release-version
   "Human release version of this build: the `vis/VERSION` resource written at
    build time from the repo-root VIS_VERSION, verbatim (`0.1.28`), else
-   `dev`. Ordered ONLY for staleness ([[newer-release?]]) - never for
-   compatibility, which is [[contract/protocol-version]]'s job alone."
+   `dev`. Loaded once per process, like the build revision. Ordered ONLY for
+   staleness ([[newer-release?]]) - never for compatibility, which is
+   [[contract/protocol-version]]'s job alone."
   []
-  (or (some-> (io/resource "vis/VERSION")
-              slurp
-              str/trim
-              not-empty)
-      "dev"))
+  @build-version)
 
 (defn- version-parts
   "Numeric segments of a human release version, or nil when it carries no order at

@@ -6,6 +6,7 @@ import re
 import shlex
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import parse_qs, urlsplit
@@ -550,6 +551,89 @@ def test_live_python_recipes(recipe, live_project, monkeypatch, capsys, transpor
     assert "Status: completed" in output
     assert "sdk-fixture-token" not in output
     assert (work / "README.md").read_bytes() == before
+
+
+@pytest.mark.parametrize("transport", ["http", "stdio"])
+def test_live_agent_repairs_python_project(live_project, monkeypatch, transport):
+    """Dogfood file inspection, editing and tests with a real provider, opt-in only."""
+    work, command, state = live_project
+    monkeypatch.chdir(work)
+    (work / "README.md").write_text(
+        "Repair invoices.py using test_invoices.py. Only paid invoices count. "
+        "Use exact Decimal arithmetic, including negative adjustments. "
+        "Return Decimal zero for empty input; accept any iterable.\n"
+    )
+    module = work / "invoices.py"
+    module.write_text(
+        "def invoice_total(rows):\n"
+        "    return sum(float(row['amount']) for row in rows)\n"
+    )
+    tests = work / "test_invoices.py"
+    tests.write_text(
+        textwrap.dedent(
+            """\
+            import unittest
+            from decimal import Decimal
+            from invoices import invoice_total
+
+
+            class InvoiceTests(unittest.TestCase):
+                def test_paid_only(self):
+                    rows = [
+                        {"status": "paid", "amount": "19.95"},
+                        {"status": "open", "amount": "100.00"},
+                        {"status": "cancelled", "amount": "25.00"},
+                        {"status": "paid", "amount": "0.05"},
+                    ]
+                    self.assertEqual(invoice_total(rows), Decimal("20.00"))
+
+                def test_exact_decimal(self):
+                    rows = [{"status": "paid", "amount": x} for x in ["0.10", "0.20"]]
+                    result = invoice_total(rows)
+                    self.assertIsInstance(result, Decimal)
+                    self.assertEqual(result, Decimal("0.30"))
+
+                def test_empty(self):
+                    result = invoice_total([])
+                    self.assertIsInstance(result, Decimal)
+                    self.assertEqual(result, Decimal("0"))
+
+                def test_iterable_and_adjustment(self):
+                    rows = ({"status": "paid", "amount": x} for x in ["10.00", "-2.50"])
+                    self.assertEqual(invoice_total(rows), Decimal("7.50"))
+            """
+        )
+    )
+    protected = {path: path.read_bytes() for path in [tests, work / "README.md"]}
+    original = module.read_bytes()
+    test_command = [sys.executable, "-m", "unittest", "-v"]
+    baseline = subprocess.run(
+        test_command, cwd=work, capture_output=True, text=True, timeout=15
+    )
+    assert baseline.returncode != 0 and "FAILED" in baseline.stderr
+    with real_client(transport, command, state) as client:
+        session = client.create_session(root=str(work), channel="app")
+        try:
+            turn = session.send(
+                "Fix invoices.py to meet README.md and test_invoices.py. "
+                "First run python -m unittest -v to reproduce the failures, then "
+                "inspect and patch the implementation and rerun the tests. "
+                "Modify only invoices.py. Do not change tests or config, install "
+                "packages, commit, push, access the network, or read outside this project. "
+                "Finish with a short explanation of the bug and the test result."
+            )
+            assert turn.wait(timeout=240)["status"] == "completed"
+            assert module.read_bytes() != original
+            assert all(
+                path.read_bytes() == content for path, content in protected.items()
+            )
+            verified = subprocess.run(
+                test_command, cwd=work, capture_output=True, text=True, timeout=15
+            )
+            assert verified.returncode == 0, verified.stdout + verified.stderr
+            assert "Ran 4 tests" in verified.stderr
+        finally:
+            session.delete()
 
 
 @pytest.mark.parametrize("language", ["java", "clojure"])

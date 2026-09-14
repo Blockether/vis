@@ -661,6 +661,27 @@
              (expect (str/includes? output "seventy seven") output)
              (finally (delete-tree! dir))))))
 
+(defdescribe
+  native-python-module-asyncio-test
+  (it "lets a module own asyncio and preserves its output and exit code"
+      ;; JVM/SDK dogfooding: module execution must not nest asyncio event loops.
+      (let [dir (temp-dir "vis-native-module-asyncio")]
+        (try (spit (io/file dir "async_cli_probe.py")
+                   (str "import asyncio, sys\n"
+                        "async def compute():\n    await asyncio.sleep(0)\n    return 42\n"
+                        "print('module-result', asyncio.run(compute()), sys.argv[1])\n"
+                        "raise SystemExit(7)\n"))
+             (let [{:keys [exit output]} (run-binary dir
+                                                     [(.getAbsolutePath (require-binary))
+                                                      (str "-Duser.home=" (.getAbsolutePath dir))
+                                                      "python" "--no-env" "--no-network" "--env"
+                                                      (str "PYTHONPATH=" (.getAbsolutePath dir))
+                                                      "-m" "async_cli_probe" "argument"]
+                                                     60)]
+               (expect (= 7 exit) output)
+               (expect (str/includes? output "module-result 42 argument") output))
+             (finally (delete-tree! dir))))))
+
 (defn- pip-wheel
   "An offline pure-Python wheel, with no build backend or external dependency."
   []

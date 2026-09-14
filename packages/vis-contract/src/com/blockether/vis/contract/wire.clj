@@ -5,7 +5,10 @@
    filesystem, process or lifecycle work. Engine EDN becomes total JSON data;
    in-process readers receive exactly the shape a remote JSON reader receives."
   (:require [charred.api :as json]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import (charred JSONWriter)
+           (java.io StringWriter)
+           (java.util.function BiConsumer)))
 
 (defn wire-key
   "Keyword/symbol map key -> snake_case string. A boolean-style `foo?` key
@@ -96,10 +99,19 @@
   [x]
   (->wire x))
 
+(def ^:private json-object-writer
+  (reify
+    BiConsumer
+      (accept [_ writer value] (json/default-object-writer writer value))))
+
 (defn json-str
   "Encode any engine value as a JSON string via [[->wire]]."
   ^String [x]
-  (json/write-json-str (->wire x)))
+  ;; The sink is already in memory; Charred's convenience writer adds a redundant buffer.
+  (let [out (StringWriter.)]
+    (with-open [writer (JSONWriter. out true true true nil json-object-writer)]
+      (.writeObject writer (->wire x)))
+    (.toString out)))
 
 (defn parse-json
   "Parse a JSON string into the canonical wire shape: snake_case STRING map

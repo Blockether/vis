@@ -2322,8 +2322,8 @@
 
         (loop [remaining prior]
           (when-let [turn (first remaining)]
-            (let [iterations
-                  (try (persistance/db-list-session-turn-iterations db (:id turn))
+            (let [measured
+                  (try (persistance/db-latest-turn-request-usage db (:id turn))
                        (catch Throwable t
                          (tel/log! {:level :warn
                                     :id ::previous-request-iterations-failed
@@ -2331,10 +2331,8 @@
                                            :session-turn-id (:id turn)
                                            :error (ex-message t)}}
                                    "Could not load prior turn iterations while seeding utilization")
-                         []))
-                  measured (filter #(pos? (long (or (:input-tokens %) 0))) iterations)]
-
-              (if-let [it (last measured)]
+                         nil))]
+              (if-let [it measured]
                 {:last-request-tokens (long (:input-tokens it))
                  :last-request-turn-id (:id turn)
                  :last-request-turn-position (:position turn)
@@ -4672,9 +4670,6 @@
           messages
           (vec messages)
 
-          weights
-          (message-weights messages)
-
           input
           (long (or input-tokens 0))
 
@@ -4706,6 +4701,10 @@
 
                 prefix
                 (if same-context? (common-prefix-count prior-messages messages) 0)
+
+                weights
+                (into (into [] (take prefix) prior-weights)
+                      (message-weights (subvec messages prefix)))
 
                 exact?
                 (and same-context? (pos? prefix) (= prefix (count prior-messages)))
@@ -5182,7 +5181,8 @@
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages &
    [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
-            llm-headers active-extensions answer-validation-context request-context on-response]}]]
+            llm-headers active-extensions answer-validation-context request-context on-response
+            message-token-counter]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
@@ -5436,7 +5436,8 @@
                                                 messages
                                                 provider-tools
                                                 model
-                                                (:request-accounting (ex-data e)))
+                                                (:request-accounting (ex-data e))
+                                                message-token-counter)
                          (:provider resolved-model)
                          model
                          request-context
@@ -5493,7 +5494,8 @@
                                                         messages
                                                         provider-tools
                                                         actual-model
-                                                        (:request-accounting ask-result))
+                                                        (:request-accounting ask-result)
+                                                        message-token-counter)
                            fold-measurement
                            (assoc :fold-measurement fold-measurement))
           _ (log-context-token-counts! messages
@@ -7858,8 +7860,11 @@
    replay/tool/user tail once, not the previous response's output usage as well.
    Rewrites or changed tools/account/model invalidate the anchor. Measured usage
    replaces the local prefix estimate; cache hits never discount input tokens."
-  [history provider model prompt-cache-context]
-  (let [entry
+  [history provider model prompt-cache-context & [message-token-counter]]
+  (let [count-messages
+        (or message-token-counter svar-router/count-messages)
+
+        entry
         (get history [provider (str model)])
 
         prior
@@ -7875,12 +7880,12 @@
              (same-prompt-cache-context? (:prompt-cache-context entry) prompt-cache-context))
 
         priming
-        (svar-router/count-messages model [])]
+        (long (count-messages model []))]
 
     (fn [messages]
       (if-some [tail (when anchored? (session-message-suffix prior messages))]
-        (+ (long input) (- (svar-router/count-messages model tail) (long priming)))
-        (svar-router/count-messages model messages)))))
+        (+ (long input) (- (long (count-messages model tail)) priming))
+        (long (count-messages model messages))))))
 
 (defn- history-fold-projection
   "Return a strictly smaller, fitting projection; never mutate canonical history.
@@ -8585,6 +8590,9 @@
               (let [d (:db-info environment)
                     queries (persistance/db-list-session-turns d session-id)
                     current-turn-id-str (str session-turn-id)
+                    prior-turns (remove #(= (str (:id %)) current-turn-id-str) queries)
+                    iterations-by-turn
+                    (persistance/db-list-session-turns-iterations d (map :id prior-turns))
                     ;; Drop CURRENT turn rows (defensive: they should not
                     ;; exist yet at seed time, but a restart/recover path
                     ;; could leave partial rows) and PRIOR-turn iterations
@@ -8594,19 +8602,16 @@
                     ;; later turn's trailer. Carry only the iterations that
                     ;; landed a clean result; defs from earlier exploration
                     ;; survive independently via the def restore path.
-                    iters
-                    (->> queries
-                         (remove #(= (str (:id %)) current-turn-id-str))
-                         (mapcat (fn [q]
-                                   (map #(assoc % :cross-turn/turn-status (:status q))
-                                        (try (persistance/db-list-session-turn-iterations d (:id q))
-                                             (catch Throwable _ [])))))
-                         (filter #(= :done (:status %)))
-                         ;; Slash commands are local control-plane events. Keep
-                         ;; their rows for transcript/audit, never provider replay.
-                         (remove user-slash-iteration?)
-                         (sort-by :created-at)
-                         vec)
+                    iters (->> prior-turns
+                               (mapcat (fn [q]
+                                         (map #(assoc % :cross-turn/turn-status (:status q))
+                                              (get iterations-by-turn (str (:id q)) []))))
+                               (filter #(= :done (:status %)))
+                               ;; Slash commands are local control-plane events. Keep
+                               ;; their rows for transcript/audit, never provider replay.
+                               (remove user-slash-iteration?)
+                               (sort-by :created-at)
+                               vec)
                     iters-atts
                     ;; Batch-load OUTBOUND artifacts (figures/files) once for the
                     ;; whole carry so a later-turn vision model can SEE prior
@@ -8763,6 +8768,7 @@
                    {:describe-images
                     (replay-image-describer environment user-request (:provider replay-target))})
                  provider-base (into (vec messages) conversation-suffix-msgs)
+                 message-token-counter (prompt/request-token-counter)
                  council-active (when (council/enabled? environment)
                                   (get (council/runtime (:db-info environment)
                                                         (str (:session-id environment)))
@@ -8778,7 +8784,7 @@
                                    ;; Conservative: one UTF-8 byte per spare token, plus headroom.
                                    (max 0
                                         (- (long effective-fold-budget)
-                                           (long (svar-router/count-messages
+                                           (long (message-token-counter
                                                    (or (:name pre-resolved-model)
                                                        (:model pre-resolved-model))
                                                    provider-base))
@@ -8808,7 +8814,8 @@
                                      (resolved-prompt-cache-context environment
                                                                     pre-resolved-model
                                                                     routing
-                                                                    iteration-extra-body))
+                                                                    iteration-extra-body)
+                                     message-token-counter)
                  _pre-request-fold
                  (when-let [projection (pre-request-context-projection
                                          {:request-messages provider-messages
@@ -8912,6 +8919,7 @@
                               @effective-messages-atom
                               {:iteration iteration
                                :request-context request-context
+                               :message-token-counter message-token-counter
                                :reasoning-level reasoning-level
                                :reasoning-effort reasoning-effort
                                :routing @iteration-routing

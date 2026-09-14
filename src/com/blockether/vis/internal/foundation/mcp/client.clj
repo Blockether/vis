@@ -75,7 +75,7 @@
          (instance? java.util.Map x) (json-safe (into {} x) depth)
          :else (str x))))
 
-(defn- ->json ^String [m] (json/write-json-str (json-safe m)))
+(defn- ->json ^String [m] (util/json-str (json-safe m)))
 
 (defn- json-> [^String s] (json/read-json s))
 
@@ -110,26 +110,35 @@
     (.setDaemon true)
     (.start)))
 
-(defn- start-stdio!
-  "Spawn `command`+`args` (with extra `env`), wire newline-delimited JSON-RPC.
-   Returns `{:request-fn :notify-fn :close-fn :alive-fn :pid}`."
-  [name {:keys [command args env cwd]}]
-  (let [directory
-        (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) cwd)
+(defn- stop-stdio-process!
+  [^Process proc]
+  ;; Snapshot the tree BEFORE the parent dies. MCP launchers (`npx`, `uvx`,
+  ;; `bunx`) leave their server child behind if only the launcher is stopped.
+  (let [kids
+        (try (with-open [descendants (.descendants (.toHandle proc))]
+               (vec (iterator-seq (.iterator descendants))))
+             (catch Throwable _ []))
 
-        extra-env
-        (into {}
-              (map (fn [[k v]]
-                     [(str (clj-name k)) (str v)]))
-              env)
+        destroy-kids!
+        (fn [f]
+          (run! (fn [^java.lang.ProcessHandle h]
+                  (try (when (.isAlive h) (f h)) (catch Throwable _ nil)))
+                kids))]
 
-        proc
-        (process-jail/spawn! (vec (cons command (map str (or args []))))
-                             directory
-                             nil
-                             {:extra-environment extra-env})
+    ;; Closing stdin is the polite stop; the signals do not need consent.
+    (try (.close (.getOutputStream proc)) (catch Throwable _ nil))
+    (destroy-kids! (fn [^java.lang.ProcessHandle h]
+                     (.destroy h)))
+    (try (.destroy proc) (catch Throwable _ nil))
+    (try (when-not (.waitFor proc 2 java.util.concurrent.TimeUnit/SECONDS) (.destroyForcibly proc))
+         (catch Throwable _ nil))
+    (destroy-kids! (fn [^java.lang.ProcessHandle h]
+                     (.destroyForcibly h)))))
 
-        out
+(defn- stdio-transport
+  "Wire newline-delimited JSON-RPC around a process owned by start-stdio!."
+  [name ^Process proc]
+  (let [out
         (BufferedReader. (io/reader (.getInputStream proc)))
 
         in
@@ -166,6 +175,8 @@
                    (recur)))
                (catch Throwable _ nil)
                (finally (reset! closed? true)
+                        ;; EOF does not release runtime-owned pipe descriptors.
+                        (try (.close out) (catch Throwable _ nil))
                         (doseq [k (enumeration-seq (.keys pending))]
                           (when-let [p (.remove pending k)]
                             (deliver p {"error" {"message" "server stream closed"}}))))))]
@@ -200,36 +211,37 @@
                               (assoc "params" params)))))
      :close-fn (fn []
                  (reset! closed? true)
-                 ;; Snapshot the tree BEFORE the parent dies. Real MCP servers are
-                 ;; almost always reached through a launcher (`npx`, `uvx`, `bunx`,
-                 ;; `docker run`) that runs the server as its own CHILD: destroying
-                 ;; only `proc` reparents that grandchild to init, where it keeps
-                 ;; running — a "stopped" server still holding its port, its files,
-                 ;; and its memory. Once the parent is gone the handle no longer
-                 ;; lists them, so the list has to be taken first.
-                 (let [kids
-                       (try (vec (iterator-seq (.iterator (.descendants (.toHandle proc)))))
-                            (catch Throwable _ []))
-
-                       destroy-kids!
-                       (fn [f]
-                         (run! (fn [^java.lang.ProcessHandle h]
-                                 (try (when (.isAlive h) (f h)) (catch Throwable _ nil)))
-                               kids))]
-
-                   ;; Closing stdin is the polite stop an MCP server is specified to
-                   ;; honor; the signals below are the ones that do not need consent.
-                   (try (.close in) (catch Throwable _ nil))
-                   (destroy-kids! (fn [^java.lang.ProcessHandle h]
-                                    (.destroy h)))
-                   (try (.destroy proc) (catch Throwable _ nil))
-                   (try (when-not (.waitFor proc 2 java.util.concurrent.TimeUnit/SECONDS)
-                          (.destroyForcibly proc))
-                        (catch Throwable _ nil))
-                   (destroy-kids! (fn [^java.lang.ProcessHandle h]
-                                    (.destroyForcibly h)))))
+                 (stop-stdio-process! proc))
      :alive-fn (fn []
                  (and (not @closed?) (.isAlive proc)))}))
+
+(defn- start-stdio!
+  "Spawn `command`+`args` (with extra `env`), wire newline-delimited JSON-RPC.
+   Returns `{:request-fn :notify-fn :close-fn :alive-fn :pid}`."
+  [name {:keys [command args env cwd]}]
+  (let [directory
+        (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) cwd)
+
+        extra-env
+        (into {}
+              (map (fn [[k v]]
+                     [(str (clj-name k)) (str v)]))
+              env)
+
+        ^Process proc
+        (process-jail/spawn! (vec (cons command (map str (or args []))))
+                             directory
+                             nil
+                             {:extra-environment extra-env})]
+
+    (try (stdio-transport name proc)
+         (catch Throwable t
+           ;; Setup can fail before read-loop owns stdout or connect has a conn
+           ;; to close. Reclaim the process and every available pipe ourselves.
+           (stop-stdio-process! proc)
+           (try (.close (.getInputStream proc)) (catch Throwable _ nil))
+           (try (.close (.getErrorStream proc)) (catch Throwable _ nil))
+           (throw t)))))
 
 ;; Streamable-HTTP transport — POST → JSON | SSE; DELETE on close;
 ;; optional GET listen loop for server-pushed notifications.

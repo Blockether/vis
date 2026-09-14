@@ -3274,12 +3274,20 @@
   [ctx module]
   (if (str/blank? module)
     (do (stderr! "vis-agent python -m requires a MODULE argument.") 2)
-    (let [{:keys [stdout error]}
-          (env/run-python-block
-            ctx
-            (str python-module-runner-src "\n__vis_run_module__(" (pr-str module) ")\n"))]
+    (let [code
+          (str python-module-runner-src "\n__vis_run_module__(" (pr-str module) ")\n")
+
+          ;; Modules own their event loop; do not wrap runpy in the tool coroutine.
+          {:keys [stdout error]}
+          (json/read-json (pyrt/run ctx
+                                    (str "__import__('vis_runtime').run_sync_block("
+                                         (pr-str code)
+                                         ", globals())"))
+                          :key-fn
+                          keyword)]
+
       (when (seq stdout) (write-stdout! stdout))
-      (if error (do (stdout! (or (:message error) (pr-str error))) 1) (module-exit-code ctx)))))
+      (if error (do (stdout! error) 1) (module-exit-code ctx)))))
 
 (defn- cli-python!
   "`vis-agent python` -- run code in the embedded Python sandbox (no tool

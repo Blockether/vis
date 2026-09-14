@@ -3,7 +3,8 @@
    client holds after `parse-json` ∘ `json-str`; this gate keeps the two in
    lockstep. Canonical map keys are snake_case STRINGS — never keywords, never
    kebab, never a trailing `?` (boolean-style keys become `is_*`)."
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
             [clojure.walk :as walk]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -144,3 +145,30 @@
                  {:v #{1 2}} {:v \c} {:v Long/MAX_VALUE}]]
         (expect (= (wire/canonical x) (wire/parse-json (wire/json-str x)))
                 (str "roundtrip differs for " (pr-str x))))))
+
+(defdescribe json-writer-encoding-test
+             (it "preserves Charred's default escaping for small and large gateway frames"
+                 (doseq [payload [nil rich-fixture {:text "Zażółć / \" \n \t \u2028 😀"}
+                                  {:text (apply str (repeat 10000 "Zażółć / 😀\n"))}]]
+                   (expect (= (json/write-json-str (wire/->wire payload)) (wire/json-str payload)))
+                   (expect (= (wire/canonical payload)
+                              (wire/parse-json (wire/json-str payload)))))))
+
+(defdescribe json-writer-allocation-test
+             (it "small gateway frames do not allocate a redundant 16 KiB character buffer"
+                 (let [^com.sun.management.ThreadMXBean bean
+                       (java.lang.management.ManagementFactory/getThreadMXBean)
+
+                       thread-id
+                       (.getId (Thread/currentThread))
+
+                       payload
+                       {:type :iteration.completed :seq 1 :session-id "session"}]
+
+                   (dotimes [_ 2000]
+                     (wire/json-str payload))
+                   (let [before (.getThreadAllocatedBytes bean thread-id)]
+                     (dotimes [_ 1000]
+                       (wire/json-str payload))
+                     (expect (< (/ (- (.getThreadAllocatedBytes bean thread-id) before) 1000)
+                                8192))))))

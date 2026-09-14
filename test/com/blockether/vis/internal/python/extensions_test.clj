@@ -2793,6 +2793,9 @@ vis.register(vis.Extension(
                   "foo_test.py"
                   (str "def test_pass():\n    assert 1 + 1 == 2\n"
                        "def test_fail():\n    assert 2 + 2 == 5\n"))
+      (write-ext! ext-dir
+                  ".venv/lib/test_not_collected.py"
+                  "raise AssertionError('dependency tests must not be collected')\n")
       (binding [extension/*current-environment* {:db-info store}]
         (try (let [res (runner/test-python-extensions! {:dirs [(str ext-dir)]})]
                (expect (= 2 (:files res)))
@@ -2805,6 +2808,58 @@ vis.register(vis.Extension(
                  (expect (true? (get by-name "test_core.py")))
                  (expect (false? (get by-name "foo_test.py")))))
              (finally (ps/db-dispose-connection! store)))))))
+
+(defdescribe
+  python-test-discovery-test
+  (it "prunes dependency, environment and build trees before collecting nested tests"
+      ;; Council #2119: a repository scan executed installed dependency suites.
+      (let [dir
+            (temp-dir)
+
+            wanted
+            ["test_root.py" "package/tests/nested_test.py" "tmp-fixtures/test_real.py"]
+
+            excluded
+            [".venv" "venv" ".git" ".cache" "node_modules" "build" "dist" "target" "__pycache__"
+             "dependency.egg" "_darcs" "CVS" "{arch}"]]
+
+        (try (doseq [path wanted]
+               (write-ext! dir path "def test_ok(): pass\n"))
+             (doseq [path excluded]
+               (write-ext! dir
+                           (str path "/nested/test_dependency.py")
+                           "def test_bad(): assert False\n"))
+             (write-ext! dir "custom-environment/pyvenv.cfg" "home = python\n")
+             (write-ext! dir
+                         "custom-environment/lib/test_dependency.py"
+                         "def test_bad(): assert False\n")
+             (write-ext! dir "custom-conda/conda-meta/history" "# environment\n")
+             (write-ext! dir "custom-conda/lib/test_dependency.py" "def test_bad(): assert False\n")
+             (expect (= (set (map #(.getCanonicalPath (io/file dir %)) wanted))
+                        (set (map (fn [[_ ^java.io.File f]]
+                                    (.getCanonicalPath f))
+                                  (#'runner/discover-tests [(str dir)])))))
+             (finally (doseq [f (reverse (file-seq dir))]
+                        (io/delete-file f))))))
+  (it "honors explicit files and directory roots, including hidden extension roots"
+      (let [dir (temp-dir)]
+        (try (let [named (write-ext! dir ".venv/check.py" "def test_ok(): pass\n")
+                   explicit (write-ext! dir ".venv/test_explicit.py" "def test_ok(): pass\n")
+                   nested
+                   (write-ext! dir ".vis/extensions/package/test_ok.py" "def test_ok(): pass\n")
+                   _ (write-ext! dir ".venv/pyvenv.cfg" "home = python\n")
+                   found (#'runner/discover-tests
+                          [(str named) (str named) (str (io/file dir ".vis/extensions"))
+                           (str (io/file dir ".venv"))])]
+
+               (expect (= #{(.getCanonicalPath named) (.getCanonicalPath explicit)
+                            (.getCanonicalPath nested)}
+                          (set (map (fn [[_ ^java.io.File f]]
+                                      (.getCanonicalPath f))
+                                    found))))
+               (expect (= 3 (count found))))
+             (finally (doseq [f (reverse (file-seq dir))]
+                        (io/delete-file f)))))))
 
 ;; Structured counts — outcomes come from the shim, never scraped from stdout
 

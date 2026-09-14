@@ -411,7 +411,7 @@
    escapes `/` as `\\/`, which Python keeps VERBATIM, so JSON text pasted
    straight into Python source silently corrupts every path in it."
   ^String [data]
-  (str "__import__('json').loads(" (pr-str (json/write-json-str data)) ")"))
+  (str "__import__('json').loads(" (pr-str (util/json-str data)) ")"))
 
 (defn- exec!
   "Run `code` in `session` for its side effects, answering nil.
