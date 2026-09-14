@@ -13,6 +13,7 @@
  *   macOS    vis-companion-<v>-macos-universal.dmg     (Apple silicon + Intel)
  *   Linux    vis-companion-<v>-linux-x64.deb / .AppImage
  *   Linux    vis-companion-<v>-linux-arm64.deb / .AppImage
+ *   Windows  vis-companion-<v>-windows-x64.msi
  *
  * A release tag runs this on each OS runner (.github/workflows/desktop-companion.yml)
  * and attaches the files to the GitHub Release. Locally:
@@ -24,9 +25,10 @@
  * It does not need release signing credentials or cross-compilation targets.
  *
  * Pake needs Node >= 20 and a Rust toolchain (>= 1.85); on Linux the webkit2gtk-4.1
- * dev packages the workflow installs. The native window keeps its title bar on
- * purpose: with `--hide-title-bar` the macOS traffic lights sit on the app bar's
- * logo. Pake's `--app-version` is what the OS shows as the app version.
+ * dev packages the workflow installs. Windows needs the MSVC C++ build tools and
+ * WebView2. Invoke this script through npm on Windows. The native window keeps
+ * its title bar on purpose: with `--hide-title-bar` the macOS traffic lights sit
+ * on the app bar's logo. Pake's `--app-version` is what the OS shows as the app version.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
@@ -41,6 +43,8 @@ export const OUT_DIR = join(appDir, 'build', 'desktop');
 
 /** Release installers, or a single host-native dev installer; refuse other hosts. */
 export function desktopTargets(platform, arch, dev = false) {
+  if (platform === 'win32' && arch === 'x64')
+    return [{ targets: 'x64', ext: 'msi', asset: 'windows-x64' }];
   if (!['darwin', 'linux'].includes(platform) || !['x64', 'arm64'].includes(arch)) {
     throw new Error(`no desktop target for platform ${platform}/${arch}`);
   }
@@ -90,6 +94,12 @@ export function packageDesktop({
   log = console.log,
 } = {}) {
   const targets = desktopTargets(platform, arch, dev);
+  // npm exposes its JS entry point: launching it with Node avoids .cmd quoting
+  // and preserves paths with spaces without executing a Windows command shell.
+  const npmCli = process.env.npm_execpath;
+  if (platform === 'win32' && !npmCli) {
+    throw new Error('On Windows, run `npm run package:desktop` so npm supplies its CLI path');
+  }
   const distDir = join(appDir, 'dist');
   if (!existsSync(join(distDir, 'index.html'))) {
     throw new Error(`${distDir} has no index.html — run \`npm run build\` first`);
@@ -116,16 +126,22 @@ export function packageDesktop({
   const written = [];
   for (const target of targets) {
     const args = pakeArgs({ distDir, version, target, dev });
-    // Pake normalizes Linux package names to lowercase, unlike macOS.
+    // Pake normalizes Linux package names to lowercase, unlike macOS and Windows.
     const bundleName = platform === 'linux' ? APP_NAME.toLowerCase() : APP_NAME;
     const produced = join(outDir, `${bundleName}.${target.ext}`);
     rmSync(produced, { force: true });
     log(`▸ pake ${args.join(' ')}`);
-    const run = spawnSync('npx', ['-y', `pake-cli@${PAKE_VERSION}`, ...args], {
+    const command = platform === 'win32' ? process.execPath : 'npx';
+    const commandArgs =
+      platform === 'win32'
+        ? [npmCli, 'exec', '--yes', `--package=pake-cli@${PAKE_VERSION}`, '--', 'pake', ...args]
+        : ['-y', `pake-cli@${PAKE_VERSION}`, ...args];
+    const run = spawnSync(command, commandArgs, {
       cwd: outDir,
       stdio: 'inherit',
       env,
     });
+    if (run.error) throw run.error;
     if (run.status !== 0) throw new Error(`pake failed for --targets ${target.targets}`);
     if (!existsSync(produced)) throw new Error(`pake reported success but ${produced} is missing`);
     const asset = join(outDir, assetName(version, target));

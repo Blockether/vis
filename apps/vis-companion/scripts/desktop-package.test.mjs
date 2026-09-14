@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync } from 'node:fs';
-import { basename } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { basename, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { desktopTargets, assetName, pakeArgs, packageDesktop } from './desktop-package.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -14,6 +14,9 @@ vi.mock('node:fs', async (importOriginal) => ({
   rmSync: vi.fn(),
 }));
 vi.mock('./version.mjs', () => ({ appDir: '/app', syncPackageVersion: vi.fn(() => '1.0.0') }));
+
+beforeEach(() => vi.stubEnv('npm_execpath', String.raw`C:\Program Files\Node & Tools\npm-cli.js`));
+afterEach(() => vi.unstubAllEnvs());
 
 // The installers are release assets: a name must say which OS and arch it is for,
 // and every OS the workflow runs on must have at least one target to build.
@@ -33,9 +36,10 @@ describe('desktop package', () => {
       ['darwin', 'arm64'],
       ['linux', 'x64'],
       ['linux', 'arm64'],
+      ['win32', 'x64'],
     ].flatMap(([os, arch]) => desktopTargets(os, arch));
     const names = targets.map((t) => assetName('1.0.0', t));
-    expect(names).toHaveLength(5);
+    expect(names).toHaveLength(6);
     expect(new Set(names).size).toBe(names.length);
   });
 
@@ -72,7 +76,7 @@ describe('desktop package', () => {
 const workflow = readFileSync(
   new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url),
   'utf8',
-);
+).replace(/\r\n/g, '\n');
 
 describe('desktop release signing', () => {
   it('requires macOS signing credentials and notarization before uploading', () => {
@@ -114,7 +118,7 @@ describe('desktop release signing', () => {
         workflow.indexOf('uses: actions/upload-artifact'),
       );
     }
-    expect(workflow).toContain('name: Package Linux with Pake');
+    expect(workflow).toContain('name: Package Linux and Windows with Pake');
     expect(workflow).toContain("if: runner.os == 'Linux'");
   });
 });
@@ -156,8 +160,38 @@ describe('desktop release platforms', () => {
     expect(spawnSync.mock.calls[0][1]).toContain('--multi-arch');
   });
 
+  it('packages Windows x64 as an MSI without invoking a command shell', () => {
+    existsSync.mockImplementation((path) => ['index.html', 'Vis.msi'].includes(basename(path)));
+    const assets = packageDesktop({ platform: 'win32', arch: 'x64', log: vi.fn() });
+    expect(assets.map((asset) => basename(asset))).toEqual(['vis-companion-1.0.0-windows-x64.msi']);
+    expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual(['Vis.msi']);
+    expect(spawnSync).toHaveBeenCalledTimes(1);
+    const [command, args, options] = spawnSync.mock.calls[0];
+    expect(command).toBe(process.execPath);
+    expect(args.slice(0, 6)).toEqual([
+      process.env.npm_execpath,
+      'exec',
+      '--yes',
+      '--package=pake-cli@3.15.7',
+      '--',
+      'pake',
+    ]);
+    expect(args[6]).toBe(join('/app', 'dist'));
+    expect(args[args.indexOf('--targets') + 1]).toBe('x64');
+    expect(args).not.toContain('--multi-arch');
+    expect(options.shell).toBeUndefined();
+  });
+
+  it('explains how to invoke npm on Windows before touching the build', () => {
+    vi.stubEnv('npm_execpath', '');
+    expect(() => packageDesktop({ platform: 'win32', arch: 'x64' })).toThrow(
+      /npm run package:desktop/,
+    );
+    expect(existsSync).not.toHaveBeenCalled();
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ['win32', 'x64'],
     ['win32', 'arm64'],
     ['linux', 'ia32'],
     ['linux', 'arm'],
@@ -171,23 +205,33 @@ describe('desktop release platforms', () => {
     expect(spawnSync).not.toHaveBeenCalled();
   });
 
-  it('runs only universal macOS and native x64/ARM64 Linux builders', () => {
+  it('runs universal macOS, native x64/ARM64 Linux and Windows x64 builders', () => {
     expect([...workflow.matchAll(/^\s+label: (.+)$/gm)].map((match) => match[1])).toEqual([
       'macOS universal',
       'Linux x64',
       'Linux ARM64',
+      'Windows x64',
     ]);
-    // Only macOS is self-hosted; Linux must not depend on Mac emulation.
+    // Only macOS is self-hosted; other platforms use native hosted runners.
     expect(workflow).toContain('runs-on: ${{ matrix.runner }}');
     expect([...workflow.matchAll(/^\s+- runner: (.+)$/gm)].map((match) => match[1])).toEqual([
       '[self-hosted, macOS, ARM64, vis-macos-arm64]',
       'ubuntu-24.04',
       'ubuntu-24.04-arm',
+      'windows-2022',
     ]);
     expect(workflow).not.toMatch(/VIS_CONTAINER_|--linux|Podman|Docker/);
     expect(workflow).toContain('runner: ubuntu-24.04');
     expect(workflow).toContain('runner: ubuntu-24.04-arm');
-    expect(workflow).not.toMatch(/windows|win32/i);
+    expect(workflow).toContain('asset: windows-x64');
+    expect(workflow).toContain("if: runner.os != 'macOS'");
+    const smoke = workflow.indexOf('name: Smoke-test Windows installer');
+    expect(smoke).toBeGreaterThan(workflow.indexOf('name: Package Linux and Windows with Pake'));
+    expect(smoke).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
+    expect(workflow).toContain('shell: pwsh');
+    expect(workflow).toContain('msiexec.exe');
+    expect(workflow).toContain('MainWindowHandle');
+    expect(workflow).toContain('Stop-Process');
     expect(workflow).toContain('aarch64-apple-darwin,x86_64-apple-darwin');
     expect(workflow).toContain('name: vis-companion-desktop-${{ matrix.asset }}');
   });
@@ -220,16 +264,21 @@ describe('desktop development builds', () => {
     ['darwin', 'x64', 'dmg', 'macos-x64'],
     ['linux', 'arm64', 'AppImage', 'linux-arm64'],
     ['linux', 'x64', 'AppImage', 'linux-x64'],
+    ['win32', 'x64', 'msi', 'windows-x64'],
   ])('builds only the local %s/%s app with a distinct identity', (platform, arch, ext, asset) => {
     const assets = packageDesktop({ platform, arch, dev: true, log: vi.fn() });
-    expect(assets).toEqual([`/app/build/desktop-dev/vis-companion-1.0.0-${asset}.${ext}`]);
+    expect(assets).toEqual([
+      join('/app', 'build', 'desktop-dev', `vis-companion-1.0.0-${asset}.${ext}`),
+    ]);
     expect(spawnSync).toHaveBeenCalledTimes(1);
     const [command, args, options] = spawnSync.mock.calls[0];
-    expect(command).toBe('npx');
+    expect(command).toBe(platform === 'win32' ? process.execPath : 'npx');
     expect(args).not.toContain('--multi-arch');
-    expect(args).toContain(platform === 'darwin' ? 'dmg' : 'appimage');
+    expect(args).toContain(
+      platform === 'darwin' ? 'dmg' : platform === 'win32' ? 'x64' : 'appimage',
+    );
     expect(args[args.indexOf('--identifier') + 1]).toBe('com.blockether.viscompanion.desktop.dev');
-    expect(options.cwd).toBe('/app/build/desktop-dev');
+    expect(options.cwd).toBe(join('/app', 'build', 'desktop-dev'));
   });
 
   it('does not inherit release signing or notarization credentials', () => {
@@ -261,19 +310,23 @@ describe('desktop development builds', () => {
     }
   });
 
-  it('does not install a stale artifact when compilation fails', () => {
-    spawnSync.mockReturnValueOnce({ status: 1 });
-    expect(() =>
-      packageDesktop({ platform: 'linux', arch: 'x64', dev: true, log: vi.fn() }),
-    ).toThrow(/failed/);
-    expect(renameSync).not.toHaveBeenCalled();
-  });
+  it.each(['linux', 'win32'])(
+    'does not install a stale %s artifact when compilation fails',
+    (platform) => {
+      spawnSync.mockReturnValueOnce({ status: 1 });
+      expect(() => packageDesktop({ platform, arch: 'x64', dev: true, log: vi.fn() })).toThrow(
+        /failed/,
+      );
+      expect(renameSync).not.toHaveBeenCalled();
+    },
+  );
 
-  it('rejects a successful build with no installer instead of using an older asset', () => {
-    existsSync.mockImplementation((path) => basename(path) !== 'vis.AppImage');
-    expect(() =>
-      packageDesktop({ platform: 'linux', arch: 'x64', dev: true, log: vi.fn() }),
-    ).toThrow(/missing/);
+  it.each(['linux', 'win32'])('rejects a successful %s build with no installer', (platform) => {
+    const produced = platform === 'win32' ? 'Vis.msi' : 'vis.AppImage';
+    existsSync.mockImplementation((path) => basename(path) !== produced);
+    expect(() => packageDesktop({ platform, arch: 'x64', dev: true, log: vi.fn() })).toThrow(
+      /missing/,
+    );
     expect(renameSync).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 name: Desktop companion
 
-# Packages Vis Companion as a DESKTOP app for universal macOS and Linux x64/ARM64
+# Packages Vis Companion for universal macOS, Linux x64/ARM64 and Windows x64
 # with Pake — the same web bundle the phones get, wrapped in a Tauri window
 # (see apps/vis-companion/scripts/desktop-package.mjs for the flags and asset names).
 # A regular release attaches all installers to an unpublished draft. Only the
@@ -45,6 +45,9 @@ jobs:
           - runner: ubuntu-24.04-arm
             label: Linux ARM64
             asset: linux-arm64
+          - runner: windows-2022
+            label: Windows x64
+            asset: windows-x64
     defaults:
       run:
         working-directory: apps/vis-companion
@@ -103,8 +106,8 @@ jobs:
       - name: Build web bundle
         run: npm run build
 
-      - name: Package Linux with Pake
-        if: runner.os == 'Linux'
+      - name: Package Linux and Windows with Pake
+        if: runner.os != 'macOS'
         run: npm run package:desktop
 
       # Isolate CI signing from locked or duplicate identities in the login keychain.
@@ -174,6 +177,35 @@ jobs:
           codesign --verify -R='anchor apple generic and certificate leaf[subject.OU] = "JSZTFUBUBB" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$mount/Vis.app"
           xcrun stapler validate "$mount/Vis.app"
           spctl --assess --type execute --verbose=2 "$mount/Vis.app"
+
+      # Exercise the actual MSI and WebView2 host, not just the packaging helpers.
+      - name: Smoke-test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem build/desktop/*-windows-x64.msi)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows MSI' }
+          $destination = Join-Path $env:RUNNER_TEMP 'vis-windows-smoke'
+          $arguments = "/a `"$($installers[0].FullName)`" /qn TARGETDIR=`"$destination`""
+          $install = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "MSI extraction failed: $($install.ExitCode)" }
+          $executables = @(Get-ChildItem $destination -Recurse -Filter 'pake-vis.exe')
+          if ($executables.Count -ne 1) { throw 'Expected the packaged Vis executable' }
+          $app = Start-Process $executables[0].FullName -PassThru
+          try {
+            $ready = $false
+            foreach ($attempt in 1..30) {
+              Start-Sleep -Seconds 1
+              $app.Refresh()
+              if ($app.HasExited) { throw "Vis exited before opening its window: $($app.ExitCode)" }
+              if ($app.MainWindowHandle -ne 0 -and $app.Responding) { $ready = $true; break }
+            }
+            if (-not $ready) { throw 'Vis did not open a responsive window within 30 seconds' }
+            Write-Output 'Windows MSI extracted and Vis opened a responsive window.'
+          } finally {
+            if (-not $app.HasExited) { $app | Stop-Process -Force }
+          }
 
       - name: List installers
         run: ls -la build/desktop

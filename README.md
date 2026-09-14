@@ -103,7 +103,7 @@ Vis can edit files and run commands within its configured permissions. Review
 changes before using them. The [first-session guide](resources/vis-docs/index.md#first-session)
 covers setup and what to expect.
 
-## Desktop app (macOS / Linux)
+## Desktop app (Windows / macOS / Linux)
 
 Download the app from [GitHub Releases](https://github.com/Blockether/vis/releases/latest):
 the universal `.dmg` for macOS, or the `.AppImage` matching your Linux architecture.
@@ -114,10 +114,15 @@ the universal `.dmg` for macOS, or the `.AppImage` matching your Linux architect
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
 </p>
 
-Already installed the command? `vis-agent desktop --track release` downloads and
-opens the stable app for you. The app connects to a **gateway**, the Vis service
-running your sessions; opening the app does not start that service.
-Follow [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app)
+For Windows 10/11 x64, use the `.msi` installer from a build that includes Windows.
+See [Windows app setup](resources/vis-docs/distributions.md#windows-app) for download
+availability and connection instructions. The Windows app is a client: run its
+gateway in WSL2 or on another Linux/macOS computer, then open Vis from the Start menu.
+There is no native Windows engine or terminal client yet.
+
+On macOS and Linux, `vis-agent desktop --track release` downloads and opens the
+stable app for you. Opening an app does not start the **gateway**, the Vis service
+running your sessions. Follow [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app)
 and the [app connection guide](resources/vis-docs/index.md#connecting-the-companion-app) to connect it.
 
 ## Companion app (iPhone / Android)

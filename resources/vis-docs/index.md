@@ -128,7 +128,9 @@ runs your sessions and works with your files.
 Download the latest stable app from
 [GitHub Releases](https://github.com/Blockether/vis/releases/latest).
 Choose the universal macOS `.dmg`, or the Linux `.AppImage` for x64 or ARM64.
-Windows is not a desktop target.
+Windows 10/11 x64 builds use an `.msi` installer; see [Windows app setup](distributions.md#windows-app)
+for download availability. The Windows app connects to a gateway in WSL2 or on
+another Linux/macOS computer. It does not include a native Windows engine or TUI.
 
 <div class="store-links" aria-label="Download the desktop app">
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
@@ -136,9 +138,10 @@ Windows is not a desktop target.
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
 </div>
 
-Or run `vis-agent desktop --track release` to download and open it automatically.
-Opening the app does not start a gateway. Follow the
-[connection steps below](#connecting-the-companion-app), or see
+On macOS and Linux, run `vis-agent desktop --track release` to download and open
+the app automatically. On Windows, install the MSI and open Vis from the Start menu;
+`vis-agent desktop` is not a Windows launcher. Opening the app does not start a gateway.
+Follow the [connection steps below](#connecting-the-companion-app), or see
 [Desktop setup](distributions.md#open-the-desktop-app) for launcher options.
 
 ### Get the phone app
@@ -174,7 +177,7 @@ vis-agent gateway start --host 127.0.0.1
 ```
 
 Keep that terminal open: this command runs the gateway in the foreground.
-Open the desktop app, or use another terminal to run:
+Open Vis from the Windows Start menu, or use another terminal on macOS/Linux to run:
 
 ```bash
 vis-agent desktop --track release
