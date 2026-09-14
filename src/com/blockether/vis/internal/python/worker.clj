@@ -44,6 +44,7 @@
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.python.worker-peer :as child]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
@@ -54,7 +55,7 @@
            (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
            (java.nio.file CopyOption Files StandardCopyOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)
-           (java.util.concurrent TimeUnit)
+           (java.util.concurrent ExecutionException TimeUnit)
            (java.util.concurrent.locks ReentrantLock)))
 
 (set! *warn-on-reflection* true)
@@ -465,35 +466,32 @@
               started))))))
 
 (def ^:private INTERRUPT_REPLY_MS
-  "Maximum wait for the worker control plane to acknowledge an interrupt."
+  "Maximum wait for the whole interrupt exchange, including socket writes."
   1000)
 
 (defn- ask
-  ([k op session code] (ask k op session code nil))
-  ([k op session code timeout-ms]
-   (let [peer
-         (:peer (live k))
+  [k op session code]
+  (let [peer
+        (:peer (live k))
 
-         installing?
-         (= "install-runtime" op)
+        installing?
+        (= "install-runtime" op)
 
-         sessions
-         (:host-sessions peer)
+        sessions
+        (:host-sessions peer)
 
-         newly-assigned?
-         (and installing? (not (contains? @sessions session)))]
+        newly-assigned?
+        (and installing? (not (contains? @sessions session)))]
 
-     ;; Assign before bootstrap can call the host; revoke before closing a namespace.
-     (when installing? (swap! sessions conj session))
-     (when (= "close" op) (swap! sessions disj session))
-     (try (child/request! peer
-                          (cond-> {"op" op "session" session}
-                            code
-                            (assoc "code" code))
-                          timeout-ms)
-          (catch Throwable error
-            (when newly-assigned? (swap! sessions disj session))
-            (throw error))))))
+    ;; Assign before bootstrap can call the host; revoke before closing a namespace.
+    (when installing? (swap! sessions conj session))
+    (when (= "close" op) (swap! sessions disj session))
+    (try
+      (child/request! peer
+                      (cond-> {"op" op "session" session}
+                        code
+                        (assoc "code" code)))
+      (catch Throwable error (when newly-assigned? (swap! sessions disj session)) (throw error)))))
 
 (defn install-runtime!
   [k session]
@@ -529,19 +527,39 @@
           vec))
 
 (defn interrupt!
-  "Interrupt whatever `k`'s interpreter is running for `session` and answer
-   whether the child acknowledged it. A guest parked in a host call cannot take
-   the interrupt until that call answers, so every host call in flight is failed
-   here as well — whether or not the child answered in time."
+  "Interrupt the current worker for `session` without starting a replacement.
+   Fail its host calls too, so a guest parked in one can unwind. The entire
+   exchange is bounded, including writes; on timeout the caller must retire
+   the unresponsive worker. Answer whether the child acknowledged the interrupt."
   [k session]
   (when-let [state (let [state (get @workers k)]
                      (when (alive? state) state))]
-    (try
-      (ask k "interrupt" session nil INTERRUPT_REPLY_MS)
-      (finally
-        (fail-host-calls!
-          (:peer state)
-          "the block was interrupted while this host call was still running; its result is discarded")))))
+    (let
+      [peer (:peer state)
+       ;; A blocked writer must not park the cancellation caller or pin a
+       ;; virtual-thread carrier. Retirement closes this same peer on timeout.
+       control
+       (cancellation/worker-future
+         "vis-python-interrupt"
+         (bound-fn
+           []
+           (try
+             (child/request! peer {"op" "interrupt" "session" session})
+             (finally
+               (fail-host-calls!
+                 peer
+                 "the block was interrupted while this host call was still running; its result is discarded"))))
+         {:platform? true})]
+
+      (try (let [reply (deref control INTERRUPT_REPLY_MS ::interrupt-timed-out)]
+             (when (identical? ::interrupt-timed-out reply)
+               (throw (ex-info "the python worker did not answer interrupt"
+                               {:type :vis/python-worker-timeout
+                                :op "interrupt"
+                                :timeout-ms INTERRUPT_REPLY_MS})))
+             reply)
+           (catch ExecutionException error (throw (.getCause error)))
+           (finally (future-cancel control))))))
 
 (defn stdin! [k session text] (ask k "stdin" session (str text)))
 

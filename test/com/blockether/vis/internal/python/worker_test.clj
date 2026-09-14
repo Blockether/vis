@@ -513,7 +513,7 @@ print(worker_value)"))))
         (with-redefs-fn {#'worker/live (fn [_]
                                          {:peer peer})
                          #'worker-peer/request!
-                         (fn [_ message _]
+                         (fn [_ message]
                            (swap! observed conj [(get message "op") @sessions])
                            (when @fail? (throw (ex-info "bootstrap failure" {}))))}
           (fn []
@@ -715,6 +715,124 @@ print(worker_value)"))))
                         (finally (future-cancel call)))))
                (finally (.close ^java.io.BufferedReader (:reader peer))
                         (.shutdownNow ^java.util.concurrent.ExecutorService (:workers peer))))))))
+
+(defn- expect-stalled-interrupt-timeout
+  [blocked-op]
+  (let [key
+        (str (java.util.UUID/randomUUID))
+
+        entered
+        (promise)
+
+        released
+        (promise)
+
+        exited
+        (promise)
+
+        peer
+        {:pending (atom {})
+         :serving (atom (if blocked-op {} {"host-call" (Thread.)}))
+         :seq (AtomicLong. 0)}]
+
+    (swap! @#'worker/workers assoc key {:peer peer})
+    (try (with-redefs-fn {#'worker/alive? (fn [state]
+                                            (= peer (:peer state)))
+                          #'worker/INTERRUPT_REPLY_MS 100
+                          #'worker-peer/send-line!
+                          (fn [_ message]
+                            (when (= blocked-op (get message "op"))
+                              (deliver entered true)
+                              (try @released (finally (deliver exited true))))
+                            (when (= "interrupt" (get message "op"))
+                              (deliver (get @(:pending peer) (get message "id")) {"value" true})))}
+           (fn []
+             (let [call (future (try (worker/interrupt! key "sandbox")
+                                     (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+               (try (expect (true? (deref entered 1000 false)))
+                    ;; A reply-only timeout cannot help while either socket write stalls.
+                    (expect (= {:type :vis/python-worker-timeout :op "interrupt" :timeout-ms 100}
+                               (deref call 1500 ::blocked)))
+                    (expect (true? (deref exited 1000 false)))
+                    (finally
+                      ;; Release the pre-fix implementation too: failed tests must not leak tasks.
+                      (deliver released true)
+                      (deref call 1000 nil)
+                      (future-cancel call))))))
+         (finally (swap! @#'worker/workers dissoc key)))))
+
+(defdescribe
+  worker-interrupt-deadline-test
+  (it "bounds a stalled interrupt request write" (expect-stalled-interrupt-timeout "interrupt"))
+  (it "bounds a stalled host-call failure write after the interrupt reply"
+      (expect-stalled-interrupt-timeout nil))
+  (it "uses the observed peer on a platform thread and preserves bindings and errors"
+      (let [key
+            (str (java.util.UUID/randomUUID))
+
+            peer
+            {:serving (atom {})}
+
+            failure
+            (ex-info "control failed" {:type :vis/python-worker})
+
+            observed
+            (atom nil)]
+
+        (swap! @#'worker/workers assoc key {:peer peer})
+        (try (with-redefs-fn {#'worker/alive? (constantly true)
+                              #'worker/live (fn [_]
+                                              (throw (IllegalStateException.
+                                                       "must not start a worker")))
+                              #'worker-peer/request!
+                              (fn [actual-peer message]
+                                (reset! observed [actual-peer message *print-length*
+                                                  (.isVirtual (Thread/currentThread))])
+                                (throw failure))}
+               (fn []
+                 (binding [*print-length* 7]
+                   (expect (identical? failure
+                                       (try (worker/interrupt! key "sandbox")
+                                            (catch clojure.lang.ExceptionInfo error error)))))
+                 (expect (= [peer {"op" "interrupt" "session" "sandbox"} 7 false] @observed))))
+             (finally (swap! @#'worker/workers dissoc key)))))
+  (it
+    "cancels control work when the cancellation caller is interrupted"
+    (let [key
+          (str (java.util.UUID/randomUUID))
+
+          peer
+          {:serving (atom {})}
+
+          caller
+          (promise)
+
+          entered
+          (promise)
+
+          released
+          (promise)
+
+          exited
+          (promise)]
+
+      (swap! @#'worker/workers assoc key {:peer peer})
+      (try
+        (with-redefs-fn {#'worker/alive? (constantly true)
+                         #'worker/INTERRUPT_REPLY_MS 10000
+                         #'worker-peer/request! (fn [_ _]
+                                                  (deliver entered true)
+                                                  (try @released (finally (deliver exited true))))}
+          (fn []
+            (let [call (future (deliver caller (Thread/currentThread))
+                               (try (worker/interrupt! key "sandbox")
+                                    (catch InterruptedException _ ::interrupted)))]
+              (try (expect (true? (deref entered 1000 false)))
+                   (.interrupt ^Thread @caller)
+                   (expect (= ::interrupted (deref call 1000 ::blocked)))
+                   (expect (true? (deref exited 1000 false)))
+                   (finally (deliver released true) (deref call 1000 nil) (future-cancel call))))))
+        (finally (swap! @#'worker/workers dissoc key))))))
 
 (defdescribe
   worker-control-plane-test

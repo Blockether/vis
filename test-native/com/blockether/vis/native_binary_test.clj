@@ -723,6 +723,80 @@
                  " — `clojure -T:build native` stages vis-agent-python/ there. " build-it))
     (run-binary dir [(.getAbsolutePath bin) "python" "-c" code] 300)))
 
+(defn- python-tool-body
+  [code call-number stream?]
+  (let [call {:id (str "native-interrupt-" call-number)
+              :type "function"
+              :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}]
+    (if stream?
+      (str (json-chunk (json/write-json-str {:index 0
+                                             :delta {:role "assistant"
+                                                     :tool_calls [(assoc call :index 0)]}
+                                             :finish_reason nil}))
+           (json-chunk "{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}")
+           "data: [DONE]\n\n")
+      (json/write-json-str {:id "stub"
+                            :object "chat.completion"
+                            :model "stub-model"
+                            :choices [{:index 0
+                                       :message {:role "assistant" :content nil :tool_calls [call]}
+                                       :finish_reason "tool_calls"}]
+                            :usage {:prompt_tokens 1 :completion_tokens 2 :total_tokens 3}}))))
+
+(defdescribe
+  native-python-interrupt-control-test
+  (it
+    "unwinds a timed-out Python block and reuses its interpreter through the linked control plane"
+    (let [dir
+          (temp-dir "vis-native-interrupt")
+
+          original-stream
+          @#'stream-body
+
+          original-whole
+          @#'whole-body
+
+          calls
+          (atom 0)
+
+          fixtures
+          ["cancelled_value = 41\nwhile True:\n    pass"
+           "print('NATIVE_INTERRUPT_RECOVERED', cancelled_value + 1)"]
+
+          reply
+          (fn [stream? text]
+            (let [n (swap! calls inc)]
+              (if-let [code (get fixtures (dec n))]
+                (python-tool-body code n stream?)
+                ((if stream? original-stream original-whole) text))))]
+
+      (try (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
+             (fn []
+               (let [{:keys [server asked port]} (start-stub-provider! "NATIVE_INTERRUPT_COMPLETE")]
+                 (try (overlay! dir port)
+                      ;; The CLI uses the production five-minute eval budget. This slow
+                      ;; native-only proof must execute interrupt!, not just link it.
+                      (let [{:keys [finished? exit output]}
+                            (run-binary dir
+                                        [(.getAbsolutePath (require-binary))
+                                         (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                         (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                         "Run the supplied Python fixtures and finish."]
+                                        420)
+                            tools (->> @asked
+                                       (mapcat #(get (json/read-json (:body %)) "messages"))
+                                       (filter #(= "tool" (get % "role")))
+                                       (map #(str (get % "content"))))]
+
+                        (expect finished? "A Python timeout must not wedge the linked agent")
+                        (expect (= 0 exit) output)
+                        (expect (some #(str/includes? % "Timeout") tools) (pr-str tools))
+                        (expect (some #(str/includes? % "NATIVE_INTERRUPT_RECOVERED 42") tools)
+                                (pr-str tools))
+                        (expect (str/includes? output "NATIVE_INTERRUPT_COMPLETE") output))
+                      (finally (.stop server 0))))))
+           (finally (delete-tree! dir))))))
+
 ;; Regression, this branch: the interpreter reaches CPython through the JDK Foreign
 ;; Function & Memory API, and an image links no downcall stub it was not told about.
 ;; With the registrations missing the JVM suite stayed green while the binary died on
