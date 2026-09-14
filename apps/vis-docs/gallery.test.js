@@ -41,6 +41,10 @@ test('one gallery combines all nine screenshots with one README preview grid', a
   expect(gallery.getAttribute('aria-label')).toBe('Vis screenshots');
   expect(gallery.id).toBe('screenshot-gallery');
   expect(preview.window.document.querySelectorAll('table')).toHaveLength(1);
+  expect(preview.window.document.querySelector('table').getAttribute('width')).toBe('100%');
+  for (const row of preview.window.document.querySelectorAll('tr')) {
+    expect([...row.cells].map((cell) => cell.getAttribute('width'))).toEqual(['42%', '15%', '43%']);
+  }
   expect(preview.window.document.querySelectorAll('img')).toHaveLength(9);
   expect(readmeGallery).not.toMatch(/^### /m);
   expect(readmeGallery).toContain('https://vis.blockether.com/#screenshot-gallery');
@@ -73,6 +77,9 @@ test('one gallery combines all nine screenshots with one README preview grid', a
       `img[src="resources/vis-docs/${source}"]`,
     );
     expect(thumbnail.closest('a').getAttribute('href')).toBe(`resources/vis-docs/${source}`);
+    expect(thumbnail.getAttribute('width')).toBe('100%');
+    expect(thumbnail.hasAttribute('height')).toBe(false);
+    expect(thumbnail.alt).toBe(image.alt);
   }
   expect(platforms).toEqual([
     'desktop',

@@ -53,21 +53,21 @@ or [Getting started](resources/vis-docs/index.md) to try it.
 Fictional work in a fresh demo gateway, database and sessions—no personal work.
 [Browse the interactive gallery →](https://vis.blockether.com/#screenshot-gallery)
 
-<table>
+<table width="100%">
   <tr>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/desktop-conversation.png"><img src="resources/vis-docs/assets/screenshots/desktop-conversation.png" height="160" alt="Desktop Vis with the Fieldnotes project sidebar and a completed search task."></a></td>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/ios-conversation.png"><img src="resources/vis-docs/assets/screenshots/ios-conversation.png" height="160" alt="Vis on iOS showing a completed search task, its goal, and a table of example checks."></a></td>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/tui-conversation.png"><img src="resources/vis-docs/assets/screenshots/tui-conversation.png" height="160" alt="Vis TUI showing the search task, example check results, and a completed goal."></a></td>
+    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-conversation.png"><img src="resources/vis-docs/assets/screenshots/desktop-conversation.png" width="100%" alt="Desktop Vis with the Fieldnotes project sidebar and a completed search task."></a></td>
+    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-conversation.png"><img src="resources/vis-docs/assets/screenshots/ios-conversation.png" width="100%" alt="Vis on iOS showing a completed search task, its goal, and a table of example checks."></a></td>
+    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-conversation.png"><img src="resources/vis-docs/assets/screenshots/tui-conversation.png" width="100%" alt="Vis TUI showing the search task, example check results, and a completed goal."></a></td>
   </tr>
   <tr>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/desktop-project.png"><img src="resources/vis-docs/assets/screenshots/desktop-project.png" height="160" alt="Desktop Vis showing a project tour and a table of fictional source directories."></a></td>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/ios-project.png"><img src="resources/vis-docs/assets/screenshots/ios-project.png" height="160" alt="Vis on iOS showing a tour of the fictional Fieldnotes project."></a></td>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/tui-project.png"><img src="resources/vis-docs/assets/screenshots/tui-project.png" height="160" alt="Vis TUI with two session tabs and the fictional Fieldnotes project tour."></a></td>
+    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-project.png"><img src="resources/vis-docs/assets/screenshots/desktop-project.png" width="100%" alt="Desktop Vis showing a project tour and a table of fictional source directories."></a></td>
+    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-project.png"><img src="resources/vis-docs/assets/screenshots/ios-project.png" width="100%" alt="Vis on iOS showing a tour of the fictional Fieldnotes project."></a></td>
+    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-project.png"><img src="resources/vis-docs/assets/screenshots/tui-project.png" width="100%" alt="Vis TUI with two session tabs and the fictional Fieldnotes project tour."></a></td>
   </tr>
   <tr>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/desktop-release.png"><img src="resources/vis-docs/assets/screenshots/desktop-release.png" height="160" alt="Desktop Vis showing a fictional release checklist with verify, review, and publish steps."></a></td>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/ios-sessions.png"><img src="resources/vis-docs/assets/screenshots/ios-sessions.png" height="160" alt="Vis on iOS listing three fictional Fieldnotes sessions, with the search task starred."></a></td>
-    <td align="center"><a href="resources/vis-docs/assets/screenshots/tui-sessions.png"><img src="resources/vis-docs/assets/screenshots/tui-sessions.png" height="160" alt="Vis TUI session navigator listing only the three fictional Fieldnotes sessions."></a></td>
+    <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-release.png"><img src="resources/vis-docs/assets/screenshots/desktop-release.png" width="100%" alt="Desktop Vis showing a fictional release checklist with verify, review, and publish steps."></a></td>
+    <td width="15%" align="center"><a href="resources/vis-docs/assets/screenshots/ios-sessions.png"><img src="resources/vis-docs/assets/screenshots/ios-sessions.png" width="100%" alt="Vis on iOS listing three fictional Fieldnotes sessions, with the search task starred."></a></td>
+    <td width="43%" align="center"><a href="resources/vis-docs/assets/screenshots/tui-sessions.png"><img src="resources/vis-docs/assets/screenshots/tui-sessions.png" width="100%" alt="Vis TUI session navigator listing only the three fictional Fieldnotes sessions."></a></td>
   </tr>
 </table>
 
