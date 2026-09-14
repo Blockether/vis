@@ -292,6 +292,58 @@ export const ThinkingAndCode: Story = {
   },
 };
 
+/** The Thinking chevron stays beside its label, not at the far edge of the transcript. */
+export const ThinkingDisclosure: Story = {
+  args: {
+    ...ThinkingAndCode.args,
+    iterations: [
+      {
+        ...STORY_THINKING_AND_CODE[0],
+        thinking: [
+          'Inspect desktop screenshot',
+          'The thinking header is part of the disclosure.',
+          'Keep its chevron beside the label.',
+          'Preserve the collapsed preview and hidden-line count.',
+          'Check touch and keyboard interaction.',
+          'The expanded content should stay readable.',
+          'Confirm the code below keeps its own disclosure.',
+        ].join('\n'),
+      },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toggle = await canvas.findByRole('button', { name: /^THINKING/ });
+    const body = toggle.nextElementSibling as HTMLElement;
+    const closedHeight = body.getBoundingClientRect().height;
+    const header = toggle.getBoundingClientRect();
+    const assertChevron = async () => {
+      const label = toggle.firstElementChild!.getBoundingClientRect();
+      const chevron = toggle.querySelector('svg')!.getBoundingClientRect();
+      await expect(chevron.left - label.right).toBeCloseTo(6, 0);
+      await expect(toggle.getBoundingClientRect().width).toBe(header.width);
+      await expect(toggle.getBoundingClientRect().height).toBe(header.height);
+    };
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).toHaveTextContent(/\+\d+ more/);
+    await assertChevron();
+    toggle.focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(toggle).not.toHaveTextContent(/\+\d+ more/);
+    await expect(body.getBoundingClientRect().height).toBeGreaterThan(closedHeight);
+    await assertChevron();
+    await userEvent.keyboard('[Space]');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await assertChevron();
+    await userEvent.click(toggle);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.click(toggle);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).toHaveTextContent(/\+\d+ more/);
+  },
+};
+
 /** Metadata stays close to copy without moving the glyph or joining the controls. */
 export const TrailingMetadata: Story = {
   args: ThinkingAndCode.args,

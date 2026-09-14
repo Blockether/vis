@@ -1718,6 +1718,7 @@ export const ThinkingBand = memo(function ThinkingBand({
         <Disclosure
           isOpen={expanded}
           tone="thinking"
+          inlineChevron
           className="mb-1"
           onClick={() => setExpandRequested((value) => !value)}
         >
