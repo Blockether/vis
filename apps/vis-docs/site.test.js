@@ -52,6 +52,24 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
   }
 });
 
+test('the header keeps its controls within the centered page width', () => {
+  const dom = new JSDOM(
+    '<style>' + readFileSync('../../resources/vis-docs/assets/theme.css', 'utf8') + '</style>',
+  );
+  try {
+    const rules = [...dom.window.document.styleSheets[0].cssRules];
+    const header = rules.find((rule) => rule.selectorText === '.top').style;
+    const shell = rules.find((rule) => rule.selectorText === '.shell').style;
+    expect(shell.getPropertyValue('max-width')).toBe('var(--maxw)');
+    expect(header.getPropertyValue('padding')).toBe(
+      '0 max(clamp(1rem, 3vw, 2rem), calc((100% - var(--maxw)) / 2 + 1.1rem))',
+    );
+    expect(header.getPropertyValue('max-width')).toBe('');
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('Getting started is the only app setup guide in the published indexes', () => {
   expect(htmlFiles).not.toContain('gateway.html');
   expect(existsSync('dist/gateway.md')).toBe(false);

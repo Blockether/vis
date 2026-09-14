@@ -99,7 +99,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 0 clamp(1rem, 3vw, 2rem);
+  padding: 0 max(clamp(1rem, 3vw, 2rem), calc((100% - var(--maxw)) / 2 + 1.1rem));
   background: var(--header);
   backdrop-filter: saturate(160%) blur(10px);
   border-bottom: 1px solid var(--line);
