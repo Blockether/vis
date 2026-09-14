@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { JSDOM } from 'jsdom';
 import { security } from './headers.js';
 import { createTestHarness } from 'wrangler';
+import sharp from 'sharp';
 
 const htmlFiles = readdirSync('dist').filter((file) => file.endsWith('.html'));
 test('the canonical renderer builds documentation, with one exact CSS and no inline executables', () => {
@@ -222,8 +223,56 @@ test('the static upload contains only public output and the same security policy
   expect(config.assets.html_handling).toBe('none');
   expect(config.d1_databases[0].database_name).toBe('vis-extension-center');
 });
+
+test('desktop badge headings match the mobile font height and top inset', async () => {
+  // The desktop badges previously used larger type positioned above the mobile headings.
+  const headings = {};
+  const titles = [];
+  for (const name of ['testflight', 'google-play', 'macos', 'linux', 'windows']) {
+    const image = sharp(`../../resources/vis-docs/assets/install-${name}.png`);
+    const { data, info } = await image
+      .clone()
+      .extract({ left: 150, top: 3, width: 519, height: 81 })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const rows = [];
+    for (let y = 0; y < info.height; y++) {
+      for (let x = 0; x < info.width; x++) {
+        const offset = (y * info.width + x) * info.channels;
+        if (data[offset] > 200 && data[offset + 1] > 200 && data[offset + 2] > 200) {
+          rows.push(y + 3);
+          break;
+        }
+      }
+    }
+    headings[name] = [rows[0], rows.at(-1)];
+    if (!['testflight', 'google-play'].includes(name)) {
+      // Allow glyph overshoot plus one raster pixel (1/3 CSS px) of antialiasing.
+      for (const edge of [0, 1]) {
+        const reference = [headings.testflight[edge], headings['google-play'][edge]];
+        expect(headings[name][edge], `${name}: heading edge ${edge}`).toBeGreaterThanOrEqual(
+          Math.min(...reference) - 1,
+        );
+        expect(headings[name][edge], `${name}: heading edge ${edge}`).toBeLessThanOrEqual(
+          Math.max(...reference) + 1,
+        );
+      }
+      titles.push(
+        await image
+          .extract({ left: 150, top: 84, width: 519, height: 81 })
+          .removeAlpha()
+          .raw()
+          .toBuffer(),
+      );
+    }
+  }
+  expect(titles[1]).toEqual(titles[0]);
+  expect(titles[2]).toEqual(titles[0]);
+});
+
 test('the static site exports sharp store badges without allowing inline scripts', () => {
-  for (const name of ['testflight', 'google-play']) {
+  for (const name of ['testflight', 'google-play', 'windows', 'macos', 'linux']) {
     const badge = readFileSync(`dist/assets/install-${name}.png`);
     expect(badge).toEqual(readFileSync(`../../resources/vis-docs/assets/install-${name}.png`));
     expect([badge.readUInt32BE(16), badge.readUInt32BE(20)]).toEqual([672, 168]);

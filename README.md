@@ -106,6 +106,8 @@ Download the installer for your computer from [GitHub Releases](https://github.c
 the Windows 10/11 x64 `.msi`, universal macOS `.dmg`, or Linux `.AppImage` matching your architecture.
 
 <p>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-windows.png" alt="Latest desktop release for Windows" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>

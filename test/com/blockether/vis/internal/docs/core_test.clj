@@ -408,6 +408,8 @@
               "TestFlight for iOS and iPadOS"]
              ["google-play" "https://play.google.com/apps/testing/com.blockether.viscompanion"
               "Google Play beta for Android"]
+             ["windows" "https://github.com/Blockether/vis/releases/latest"
+              "Latest desktop release for Windows"]
              ["macos" "https://github.com/Blockether/vis/releases/latest"
               "Latest desktop release for macOS"]
              ["linux" "https://github.com/Blockether/vis/releases/latest"
@@ -427,7 +429,7 @@
         (expect (str/includes? (or body "") (str "alt=\"" label "\"")))
         (expect (str/includes? (or body "") "width=\"224\" height=\"56\"")))))
   (it "serves and exports all mobile and desktop image buttons"
-      (doseq [name ["testflight" "google-play" "macos" "linux"]]
+      (doseq [name ["testflight" "google-play" "windows" "macos" "linux"]]
         (let [rel (str "install-" name ".png")
               response (docs/handle {:uri (str "/docs/assets/" rel)})]
 

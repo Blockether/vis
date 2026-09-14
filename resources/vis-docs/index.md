@@ -127,6 +127,8 @@ Download the installer for your computer from
 `.msi`, universal macOS `.dmg`, or Linux `.AppImage` for x64 or ARM64.
 
 <div class="store-links" aria-label="Download the desktop app">
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-windows.png" alt="Latest desktop release for Windows" width="224" height="56"></a>
+<span aria-hidden="true">&nbsp;&nbsp;</span>
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
