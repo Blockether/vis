@@ -41,7 +41,7 @@ type Story = StoryObj<typeof meta>;
 
 export const MarkdownMatches: Story = {
   play: async ({ canvas, canvasElement, args }) => {
-    // Regression, user screenshot: internal snippet rules were stronger than session seams.
+    // Regression, user screenshots: inset preview rules stay lighter than session seams.
     const panels = canvas
       .getAllByRole('list', { name: 'Matching messages' })
       .map((list) => list.parentElement!);
@@ -49,7 +49,19 @@ export const MarkdownMatches: Story = {
     for (const panel of panels) {
       await expect(getComputedStyle(panel).borderTopWidth).toBe('0px');
       await expect(getComputedStyle(panel).borderBottomWidth).toBe('0px');
-      const hits = [...panel.firstElementChild!.children];
+      const list = panel.firstElementChild!;
+      await expect(getComputedStyle(list).borderTopWidth).toBe('1px');
+      await expect(list.getBoundingClientRect().left).toBeGreaterThan(
+        panel.getBoundingClientRect().left,
+      );
+      await expect(list.getBoundingClientRect().right).toBeLessThan(
+        panel.getBoundingClientRect().right,
+      );
+      const hits = [...list.children];
+      await expect(getComputedStyle(list).borderTopColor).toBe(
+        getComputedStyle(hits[0]).borderBottomColor,
+      );
+      await expect(getComputedStyle(hits[0]).borderTopWidth).toBe('0px');
       await expect(getComputedStyle(hits[0]).borderBottomWidth).toBe('1px');
       await expect(getComputedStyle(hits.at(-1)!).borderBottomWidth).toBe('0px');
       for (const hit of hits) {

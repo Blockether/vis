@@ -832,7 +832,11 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
   if (rows.length === 0) return null;
   return (
     <div className={`pb-1.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
-      <div role="list" aria-label="Matching messages" className="divide-y divide-edge">
+      <div
+        role="list"
+        aria-label="Matching messages"
+        className="divide-y divide-edge border-t border-edge"
+      >
         {rows.map((hit, index) => (
           <div
             key={`${hit.side}-${hit.at ?? index}`}
