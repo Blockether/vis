@@ -413,3 +413,81 @@
           (reset! answer {:status 500 :body ""})
           (is (nil? (client/activity-page "s1" "a1" {:after 0})))
           (is (nil? (client/activity-export "s1" "a1"))))))))
+
+(deftest human-artifact-revisions-use-the-existing-route
+  (let [calls
+        (atom [])
+
+        answer
+        (atom {"version" 4})]
+
+    (with-redefs-fn {#'client/send-json! (fn [& args]
+                                           (swap! calls conj args)
+                                           @answer)}
+      (fn []
+        (is (= {"version" 4}
+               (client/save-artifact-text! "s1" "i1" "PLAN-search.md" "text/markdown" "Zażółć")))
+        (let [[method path body] (first @calls)]
+          (is (= "POST" method))
+          (is (= "/v1/sessions/s1/iterations/i1/attachments" path))
+          (is (= "PLAN-search.md" (:filename body)))
+          (is (= "text/markdown" (:media_type body)))
+          (is (= "Zażółć"
+                 (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 body)) "UTF-8"))))
+        (doseq [invalid [nil {} {"version" 0} {"version" "4"} {"error" "unavailable"}]]
+          (reset! answer invalid)
+          (is (= :failed
+                 (try (client/save-artifact-text! "s1" "i1" "PLAN-search.md" "text/markdown" "text")
+                      :saved
+                      (catch clojure.lang.ExceptionInfo _ :failed)))))))))
+
+(deftest improve-reads-and-writes-use-the-improve-routes
+  ;; The Improve surface is the only TUI caller of these routes: a read asks for
+  ;; the filtered path the contract names, a write carries its own body, and a
+  ;; gateway that cannot answer arrives as nil so the register can say
+  ;; UNAVAILABLE instead of painting an empty project list.
+  (let [asked
+        (atom [])
+
+        answer
+        (atom {:status 200 :body "{\"records\":[]}"})]
+
+    (with-redefs-fn {#'client/request! (fn [method path opts]
+                                         (swap! asked conj [method path (:body opts)])
+                                         @answer)}
+      (fn []
+        (testing "a read carries only the filters the caller asked for"
+          (is (= {"records" []} (client/improve-records nil)))
+          (is (= {"records" []}
+                 (client/improve-records {:project-id "p 1" :status "open" :after 40 :limit 200})))
+          (is (= {"records" []} (client/improve-records {:project-id ""})))
+          (is (= {"records" []} (client/improve-record 7)))
+          (is (= {"records" []} (client/improve-settings)))
+          (is (= [[:get "/v1/improve" nil]
+                  [:get "/v1/improve?project_id=p+1&status=open&after=40&limit=200" nil]
+                  [:get "/v1/improve?project_id=" nil] [:get "/v1/improve/7" nil]
+                  [:get "/v1/improve/settings" nil]]
+                 @asked)))
+        (testing "a write reaches the route that owns it, body included"
+          (reset! asked [])
+          (reset! answer {:status 201 :body "{\"id\":9}"})
+          (is (= {"id" 9} (client/improve-create! {:title "Slow startup"})))
+          (reset! answer {:status 200 :body "{\"id\":9}"})
+          (is (= {"id" 9} (client/improve-update! 9 {:status "closed" :expected_version 3})))
+          (is (= {"id" 9} (client/improve-settings! {:mode "automatic"})))
+          (is (= {"id" 9} (client/improve-review!)))
+          (is (= [[:post "/v1/improve" {:title "Slow startup"}]
+                  [:patch "/v1/improve/9" {:status "closed" :expected_version 3}]
+                  [:patch "/v1/improve/settings" {:mode "automatic"}]
+                  [:post "/v1/improve/review" {}]]
+                 @asked)))
+        (testing "a refusal or an unreachable daemon is nil, never an empty register"
+          (doseq [refusal [{:status 404 :body ""} {:status 500 :body ""}]]
+            (reset! answer refusal)
+            (is (nil? (client/improve-records nil)))
+            (is (nil? (client/improve-record 7)))
+            (is (nil? (client/improve-settings)))
+            (is (nil? (client/improve-create! {"title" "x"})))
+            (is (nil? (client/improve-update! 9 {"status" "open"})))
+            (is (nil? (client/improve-settings! {"mode" "off"})))
+            (is (nil? (client/improve-review!)))))))))

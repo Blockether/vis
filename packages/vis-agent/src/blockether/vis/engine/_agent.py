@@ -5,16 +5,35 @@ from ._local import LocalEngine
 
 
 class Agent:
-    """Run one conversation through an execution layer.
+    """Run one conversation, with optional application-owned tools.
 
-    Agent() uses an owned LocalEngine in the current project. Session access,
-    context entry, send() or run() starts it. Closing stops that private process
-    and discards its temporary session database, not file edits.
+    Choose this entry point for sequential requests that should share history.
+    Use `send` to get a `blockether.vis.engine.Turn` immediately, or `run` to wait
+    for its result. Access `session` for transcripts, attachments and progress.
 
-    An explicitly supplied execution_layer is borrowed. The caller owns its
-    lifetime; closing an Agent never closes a shared layer or another Agent's
-    conversation. Configure launcher, gateway URL, credentials and transport
-    timeouts on the layer. Its session_options() defines project path rules.
+    Args:
+        project: Project directory. Local execution resolves an existing directory
+            immediately; gateway execution requires an absolute path on the gateway.
+        execution_layer: A `blockether.vis.engine.LocalEngine` or
+            `blockether.vis.engine.GatewayClient` to borrow. When omitted, the agent
+            creates and owns a local engine. Configure executable, credentials and
+            transport timeouts on an explicit layer.
+        extensions: Iterable of `blockether.vis.extension.Extension` declarations.
+            Their Python callables stay in your application and execute on the
+            calling thread while you read, wait or iterate events.
+
+    Construction does not start a process or connect. Session access, context
+    entry, `send` or `run` starts the conversation. Closing the default agent stops
+    its private process and discards its temporary session database, not file edits.
+    An explicitly supplied layer is borrowed: you must close it yourself, after
+    all agents using it have finished. An agent cannot be reused after `close`.
+
+    Raises:
+        TypeError: The supplied layer does not implement
+            `blockether.vis.engine.ExecutionLayer`, or an extension is unsupported.
+        ValueError: A project or extension declaration is invalid.
+        FileNotFoundError: The local project does not exist.
+        NotADirectoryError: The local project is not a directory.
     """
 
     def __init__(
@@ -87,26 +106,59 @@ class Agent:
         self._extensions = candidate
 
     def send(self, request: str, **options) -> Turn:
-        """Submit a request, returning a Turn for progress, waiting or cancellation.
+        """Submit a request without waiting for the model to finish.
 
-        Options are passed to Session.send(), including provider, model and
-        idempotency_key. Follow-up requests use this agent's existing session.
+        Args:
+            request: User message or an explicit slash command.
+            **options: Forwarded to `blockether.vis.engine.Session.send`, including
+                `provider`, `model`, `attachments` and `idempotency_key`.
+
+        Returns:
+            A `blockether.vis.engine.Turn` bound to this conversation. Call its
+            `read`, `wait` or `cancel` method to track or control this request.
+            Further calls reuse the same conversation and its history.
+
+        Submission can make network calls and raise transport or gateway errors.
+        No mutation is automatically retried. If you retry an uncertain submission,
+        reuse an explicit idempotency key rather than accidentally starting it twice.
         """
         conversation = self.session
         self._extensions.started = True
         return conversation.send(request, **options)
 
     def run(self, request: str, *, timeout=300, **options):
-        """Submit and wait, returning the canonical turn record, not a text string.
+        """Submit a request and return its final or suspended turn record.
 
-        Inspect status: failed, cancelled or suspended records are returned too.
-        A wait timeout raises VisTimeout without cancelling the turn. Closing
-        stops unfinished work only when this Agent owns its default local engine.
+        Args:
+            request: User message or slash command, as for `send`.
+            timeout: Positive finite wait deadline in seconds; defaults to 300.
+                This is separate from the layer's transport timeout.
+            **options: Submission options forwarded to `send`.
+
+        Returns:
+            The canonical turn dictionary, not a string. Inspect `status`:
+            `completed`, `failed`, `cancelled`, `suspended` and `error` all end the
+            wait. Failed model work is returned as a record, not raised as an
+            exception by this method.
+
+        Raises:
+            blockether.vis.engine.VisTimeout: The wait deadline expired. The turn
+                was not cancelled; use `send` followed by `Turn.wait` when you
+                need to retain a handle for cancellation or a later wait.
+
+        Transport and gateway errors also propagate. Closing this agent stops
+        unfinished work only when it owns the default local engine.
         """
         return self.send(request, **options).wait(timeout=timeout)
 
     def close(self):
-        """Detach this Agent's callbacks; close only an owned default layer."""
+        """Detach callbacks and release only resources owned by this agent.
+
+        Repeated calls are safe. The default local engine is stopped and its
+        temporary session database removed; project file edits remain. A borrowed
+        execution layer and other agents using it remain open. Requests through
+        this agent after closing raise `blockether.vis.engine.TransportError`.
+        """
         if not self._closed:
             self._closed = True
             try:

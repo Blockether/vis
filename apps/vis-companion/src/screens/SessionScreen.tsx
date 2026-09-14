@@ -13,6 +13,7 @@ import {
 } from 'react';
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
+import { AgentTeam } from '../components/AgentTeam';
 import {
   ComposerAttachmentPicker,
   type ComposerAttachmentCommands,
@@ -689,7 +690,7 @@ export function SessionScreen({
   // Finished turns visible on this screen count as read, including a terminal bubble
   // awaiting persistence. Never pre-read the running turn.
   const readTurns = useMemo(
-    () => visibleAnsweredTurnCount(session, turns, runningTurn?.status),
+    () => visibleAnsweredTurnCount(session, turns, runningTurn?.status, runningTurn?.requestKind),
     [session, turns, runningTurn],
   );
   useEffect(() => {
@@ -4268,7 +4269,20 @@ export function SessionScreen({
            is answered. The prompt portals its own overlay, so it sits here purely
            to be mounted for this session — the TUI shows the same form. */}
           <HumanInputPrompt client={client} subscriptions={subscriptions} sid={sid} />
-          <SessionHeader model={headerModel} commands={headerCommands} sidebar={sidebar} />
+          <SessionHeader
+            model={headerModel}
+            commands={headerCommands}
+            sidebar={sidebar}
+            team={
+              <AgentTeam
+                key={sid}
+                client={client}
+                sid={sid}
+                parentId={session?.agent?.parent_id}
+                onOpen={onOpenSession}
+              />
+            }
+          />
 
           {routerOpen && (
             <ProviderRouterDialog

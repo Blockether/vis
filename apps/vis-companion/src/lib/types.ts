@@ -53,6 +53,23 @@ export interface SessionGoal {
   updated_at: number;
 }
 
+export interface Subagent {
+  session_id: string;
+  parent_id: string;
+  leader_id: string;
+  team_id: string;
+  task: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_limited';
+  depth: number;
+  iteration_budget: number;
+  iterations_used: number;
+  provider?: string | null;
+  model?: string | null;
+  routing_locked?: boolean;
+  pending_input?: boolean;
+  usage?: SessionUsage | null;
+}
+
 export interface Session {
   id: string;
   title?: string;
@@ -61,6 +78,7 @@ export interface Session {
   channel?: string;
   /** Explicit objective; null means this session has no goal. */
   goal?: SessionGoal | null;
+  agent?: { role: 'leader' | 'subagent'; parent_id?: string; leader_id: string };
   /** The session state's ROOT model — a bare name, no provider, not the pin. */
   model?: string;
   /**
@@ -96,6 +114,8 @@ export interface Session {
   running_started_at?: number;
   server_time_ms: number;
   turn_count: number;
+  /** Settled answers addressed to the human; Council never advances this count. */
+  answer_count?: number;
   created_at?: string;
   modified_at?: string;
   workspace?: {
@@ -542,6 +562,8 @@ export interface IterationAttachment {
   kind?: string;
   media_type?: string;
   filename?: string;
+  /** Only an explicit true permits human comments or annotations. */
+  commentable?: boolean;
   /**
    * Which cut of THIS name it is, 1-based. Re-attaching a filename is the next
    * version of that artifact rather than a second artifact, so a gallery groups

@@ -26,7 +26,14 @@ import {
 } from '../lib/annotation-drafts';
 import { Markdown } from './ChatContent';
 import { readArtifactText } from './TextArtifact';
-import { CheckIcon, TrashIcon } from './icons';
+import { CheckIcon, CommentIcon, TrashIcon } from './icons';
+import {
+  actionRequest,
+  availableActions,
+  documentInfo,
+  planName,
+  type PlanAction,
+} from '../lib/plans';
 import { BandButton, Button, IconButton, PROSE, Spinner } from './ui';
 import { useSafeBottomStyle } from '../lib/viewport';
 
@@ -71,20 +78,9 @@ export function annotationWash(index: number): string {
 }
 
 /**
- * THE DOCUMENT'S ONE VERB BELONGS TO THE BAND THAT NAMES IT.
- *
- * A note is always read inside somebody else's chrome — the artifacts sheet's
- * stacked overlay, the transcript's full-screen one — and that chrome already
- * carries the band with the document's name and the one way out of it. Save
- * stood in a docked footer under the comments instead: a 28px face asking for
- * 53px of an 844px phone, at the far end of the column from the ✕, to say what
- * the band says in a cell. The app settled that once already, when the model
- * picker's `Refresh` and `Manage providers` left their footer for the band.
- *
- * So the annotator hands its cell UP and the chrome decides which band it is:
- * `actions` is the `BandButton`, `note` is what the band should REPORT (the
- * version this document just became, or why it did not), and `body` is the
- * column that scrolls under it.
+ * The annotator supplies header actions, metadata and the document column to its
+ * enclosing frame. Ordinary documents save from the header; specifications keep
+ * their single review action below the document and comments.
  */
 /**
  * What the band REPORTS while remarks are waiting to be saved.
@@ -123,7 +119,9 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   name,
   mediaType,
   source,
+  version,
   plain,
+  commentable = false,
   chrome,
 }: {
   client: GatewayClient;
@@ -132,6 +130,9 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   name: string;
   mediaType: string;
   source: Blob | string;
+  version?: number;
+  /** Missing or false is a reader, never an annotation surface. */
+  commentable?: boolean;
   /** A `.txt`/`.log` note: the same annotator, reading the file verbatim. */
   plain?: boolean;
   /** The band and the frame this document is read inside. */
@@ -139,6 +140,30 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
 }) {
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [plansEnabled, setPlansEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!commentable || !planName(name)) return;
+    const controller = new AbortController();
+    void client
+      .setting('plans', controller.signal)
+      .then((toggle) => setPlansEnabled(toggle.enabled === true))
+      .catch(() => setPlansEnabled(false));
+    return () => controller.abort();
+  }, [client, name, commentable]);
+
+  const sendPlan = useCallback(
+    async (action: PlanAction, savedVersion: number) => {
+      if ((await client.setting('plans')).enabled !== true) {
+        setPlansEnabled(false);
+        throw new Error(
+          'Plan before coding is off. Enable it in Settings and reopen this document.',
+        );
+      }
+      await client.submitTurn(sid, actionRequest(name, savedVersion, action));
+    },
+    [client, sid, name],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -181,13 +206,30 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
       ),
     });
   }
+  if (!commentable)
+    return chrome({
+      actions: null,
+      note: '',
+      body: (
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-panel px-3 py-3 text-body text-foreground sm:px-4">
+          {plain ? <PlainText text={loaded} /> : <Markdown>{loaded}</Markdown>}
+        </div>
+      ),
+    });
   return (
     <MarkdownAnnotator
+      key={`${name}:${version ?? source}`}
+      planning={plansEnabled && version ? { filename: name, version, onSend: sendPlan } : undefined}
       text={loaded}
       onSave={save}
       plain={plain}
       chrome={chrome}
-      draftKey={annotationDraftKey(client.base, sid, iterationId, name)}
+      draftKey={annotationDraftKey(
+        client.base,
+        sid,
+        iterationId,
+        planName(name) ? `${name}:v${version}` : name,
+      )}
     />
   );
 });
@@ -200,17 +242,48 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
  * quoted in a note. The lines are `<p>` for that reason — `QUOTABLE_BLOCKS` and
  * the mark painter then need no branch for plain text at all.
  */
-const PlainText = memo(function PlainText({ text }: { text: string }) {
+export const PlainText = memo(function PlainText({
+  text,
+  diff = false,
+}: {
+  text: string;
+  diff?: boolean;
+}) {
   return (
     <div className="font-mono text-body text-foreground">
+      {diff && !text ? <p>No changes in this snapshot.</p> : null}
       {text.split('\n').map((line, at) => (
-        <p key={at} className="min-h-[18px] break-words whitespace-pre-wrap">
+        <p
+          key={at}
+          className={`min-h-[18px] break-words whitespace-pre-wrap ${diff ? lineTone(line) : ''}`}
+        >
           {line}
         </p>
       ))}
     </div>
   );
 });
+
+function lineTone(line: string): string {
+  if (line.startsWith('+')) return 'text-ok';
+  if (line.startsWith('-')) return 'text-error';
+  if (line.startsWith('@@') || line.startsWith('diff --git')) return 'text-link-fg';
+  return '';
+}
+
+const PLAN_LABELS: Record<PlanAction, string> = {
+  revise: 'Send for revision',
+  approve: 'Approve and start',
+};
+
+const SPEC_STATUSES: Record<string, string> = {
+  draft: 'Draft',
+  'in-review': 'In review',
+  ready: 'Ready to implement',
+  accepted: 'Ready to implement',
+  implementing: 'Implementing',
+  done: 'Done',
+};
 
 /**
  * The rendered note plus its comments — pure apart from `onSave`, so the whole
@@ -222,10 +295,13 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   plain,
   chrome,
   draftKey,
+  planning,
+  review,
+  initialComments,
 }: {
   text: string;
   /** Persists the document and answers with the version it became. */
-  onSave: (text: string) => Promise<number | undefined>;
+  onSave: (text: string, comments?: MarkdownComment[]) => Promise<number | undefined>;
   /** Read the file verbatim, line by line, instead of rendering markdown. */
   plain?: boolean;
   /** The band and the frame this document is read inside. */
@@ -236,8 +312,20 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
    * memory alone, and leaving the screen throws them away.
    */
   draftKey?: string;
+  planning?: {
+    filename: string;
+    version: number;
+    onSend: (action: PlanAction, version: number) => Promise<void>;
+  };
+  /** A code diff keeps its patch separate from the comments being saved. */
+  initialComments?: MarkdownComment[];
+  review?: {
+    version: number;
+    sourceLabel: string;
+    onSend: (version: number) => Promise<void>;
+  };
 }) {
-  const parsed = parseAnnotated(text);
+  const parsed = initialComments ? { body: text, comments: initialComments } : parseAnnotated(text);
   const proseRef = useRef<HTMLDivElement | null>(null);
   const [body] = useState(parsed.body);
   // A DOCUMENT REOPENS ON THE WORK THAT WAS LEFT IN IT.
@@ -260,6 +348,22 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   const [dirty, setDirty] = useState(opened.isDraft);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
+  const [savedVersion, setSavedVersion] = useState<number>();
+  const [sent, setSent] = useState(false);
+  const operation = useRef(false);
+  const version = savedVersion ?? planning?.version ?? review?.version;
+  const plan = planning ? documentInfo(planning.filename, body) : null;
+  // A saved edit still needs review if sending fails, even when it removed the
+  // final comment. Retrying must not turn that revision request into approval.
+  const pendingReview =
+    comments.length > 0 || dirty || savedVersion !== undefined || quote !== null;
+  const actions: PlanAction[] = review
+    ? pendingReview
+      ? ['revise']
+      : []
+    : availableActions(plan, pendingReview);
+  const action = actions[0];
+  const hasReview = !!plan || !!review;
   // The column carries `--safe-bottom` itself rather than inheriting it from the
   // document root; see `useSafeBottomStyle`.
   const safeBottomStyle = useSafeBottomStyle();
@@ -407,6 +511,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       });
       if (hits.length === 0) continue;
       block.style.backgroundColor = annotationWash(hits[0]);
+      if (review) block.style.color = 'var(--foreground)';
       painted.push(block);
     }
     // THE PICKED PASSAGE IS SHOWN AS PICKED — BY ITS PAPER, AND BY NOTHING ELSE.
@@ -426,6 +531,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         if (painted.includes(block)) continue;
         if (quoteOf(block.textContent ?? '') !== quote) continue;
         block.style.backgroundColor = 'color-mix(in oklab, var(--accent) 24%, transparent)';
+        if (review) block.style.color = 'var(--foreground)';
         block.dataset.quotePending = 'true';
         painted.push(block);
       }
@@ -434,44 +540,68 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       for (const block of painted) {
         delete block.dataset.quotePending;
         block.style.backgroundColor = '';
+        if (review) block.style.color = '';
       }
     };
-  }, [comments, body, quote]);
+  }, [comments, body, quote, review]);
 
-  const save = useCallback(() => {
+  const perform = async (action?: PlanAction) => {
+    if (operation.current || sent || quote !== null) return;
+    if (action && ((!planning && !review) || !actions.includes(action))) return;
+    operation.current = true;
     setSaving(true);
-    setStatus('');
-    onSave(renderAnnotated(body, comments))
-      .then((version) => {
+    let nextVersion = version;
+    try {
+      if (dirty) {
+        setStatus('Saving changes…');
+        const nextText = renderAnnotated(body, comments);
+        nextVersion = await (initialComments ? onSave(nextText, comments) : onSave(nextText));
+        if (hasReview && (!Number.isSafeInteger(nextVersion) || !nextVersion || nextVersion < 1)) {
+          throw new Error('The saved version could not be confirmed. Nothing was sent.');
+        }
+        setSavedVersion(nextVersion);
         setDirty(false);
-        // The document now carries them: the device's copy is spent.
         if (draftKey) clearAnnotationDraft(draftKey);
-        setStatus(version ? `Saved as v${version}` : 'Saved');
-      })
-      .catch(() => setStatus('Could not save this revision.'))
-      .finally(() => setSaving(false));
-  }, [onSave, body, comments, draftKey]);
+      }
+      if (action && (planning || review)) {
+        if (!nextVersion) throw new Error('Open a saved version before sending a review action.');
+        setStatus(`Sending ${PLAN_LABELS[action].toLowerCase()} for v${nextVersion}…`);
+        if (review) await review.onSend(nextVersion);
+        else await planning!.onSend(action, nextVersion);
+        setSent(true);
+        setStatus(
+          action === 'approve'
+            ? `Implementation requested for v${nextVersion}. Follow progress in the session.`
+            : `Revision requested for v${nextVersion}. Reopen the next revision to continue.`,
+        );
+      } else {
+        setStatus(nextVersion ? `Saved as v${nextVersion}` : 'Saved');
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not save or send this revision.');
+    } finally {
+      operation.current = false;
+      setSaving(false);
+    }
+  };
 
   const column = (
     <div
       style={safeBottomStyle}
       className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-[var(--safe-bottom,env(safe-area-inset-bottom))]"
     >
-      {/* The prose is the only part that grows: everything under it is pinned, so
-          a long note scrolls inside its own box. The column ends at the home
-          indicator on its own now that no verb is docked under it — and at the
-          KEYBOARD when one is up: `--safe-bottom` is `0px` while the keyboard
-          covers the home indicator, so the composer sits on the keys instead of
-          reserving a dead band above them (`useSafeBottomStyle`). */}
+      {/* Prose scrolls independently; the composer, remarks and specification
+          action stay below it, above the keyboard and safe area. */}
       <div
         ref={proseRef}
+        inert={saving || sent}
         onPointerDown={beginTap}
         onPointerUp={pickSelection}
         onPointerCancel={endTap}
         onContextMenu={(event) => event.preventDefault()}
         className="min-h-0 min-w-0 flex-1 touch-manipulation overflow-y-auto overscroll-contain bg-panel px-3 py-3 font-sans text-body [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none] text-foreground select-none sm:px-4 mouse:select-text"
       >
-        {plain ? <PlainText text={body} /> : <Markdown>{body}</Markdown>}
+        {plain ? <PlainText text={body} diff={!!review} /> : <Markdown>{body}</Markdown>}
       </div>
 
       {quote !== null ? (
@@ -508,6 +638,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       {comments.length > 0 ? (
         <ul
           aria-label="Comments"
+          inert={saving || sent}
           className="flex max-h-[35vh] shrink-0 flex-col gap-2 overflow-y-auto border-t border-dialog-edge px-3 py-3 sm:px-4"
         >
           {comments.map((comment, at) => (
@@ -536,7 +667,9 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
                   {at + 1}
                 </sup>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-meta text-dialog-hint">
+                  <span
+                    className={`block truncate text-meta ${review ? 'text-foreground' : 'text-dialog-hint'}`}
+                  >
                     {comment.quote.length === 0 ? GENERAL_LABEL : `“${comment.quote}”`}
                   </span>
                   {/* A remark remains visually distinct from the document as italic
@@ -558,26 +691,57 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         </ul>
       ) : null}
 
-      {/* A live region is only announced when it was already standing, so the
-          outcome the band shows has a permanent, silent twin here. */}
-      <span className="sr-only" role="status">
-        {status}
-      </span>
+      {hasReview ? (
+        <section
+          aria-label={review ? 'Diff review' : 'Specification workflow'}
+          className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-3 py-3 font-mono text-ui sm:px-4"
+        >
+          <div className="min-w-0 flex-1 text-dialog-hint">
+            <span>
+              {sent
+                ? action === 'approve'
+                  ? 'Implementation requested'
+                  : 'Revision requested'
+                : comments.length > 0 || dirty || savedVersion !== undefined || quote !== null
+                  ? 'In review'
+                  : review
+                    ? 'Review changes'
+                    : SPEC_STATUSES[plan!.status]}{' '}
+              · v{version}
+            </span>
+            <p role="status">
+              {status ||
+                (quote !== null
+                  ? 'Finish or cancel your comment before continuing.'
+                  : comments.length > 0
+                    ? `${comments.length} unresolved comment${comments.length === 1 ? '' : 's'}`
+                    : dirty || savedVersion !== undefined
+                      ? 'Changes awaiting review'
+                      : '')}
+            </p>
+          </div>
+          {action && quote === null ? (
+            <Button
+              type="button"
+              variant="primary"
+              disabled={saving || sent}
+              onClick={() => void perform(action)}
+            >
+              {PLAN_LABELS[action]}
+            </Button>
+          ) : null}
+        </section>
+      ) : (
+        <span className="sr-only" role="status">
+          {status}
+        </span>
+      )}
     </div>
   );
 
   return chrome({
-    // THE BAND HOLDS WHAT IS DONE TO THE WHOLE DOCUMENT, AND THE COLUMN HOLDS
-    // NOTHING.
-    //
-    // Reported: the strip under the prose read `Tap a passage to comment on it.`
-    // beside a `Comment on the note` button — an instruction for the gesture the
-    // reader had just performed, kept on screen forever, and the one remark that
-    // is NOT about a passage standing at the opposite end of the screen from
-    // Save, which is the other thing done to the whole document. The strip is
-    // gone and the whole-document remark is a cell beside Save, one hairline from
-    // the way out. It closes while the composer is open, because the composer it
-    // would open is already there.
+    // Specifications submit the whole review round from their footer, not a
+    // second save control in the header.
     actions: (
       <>
         <BandButton
@@ -588,26 +752,33 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
             setEditing(null);
             setStatus('');
           }}
-          disabled={quote !== null}
-          aria-label={`Comment on the ${GENERAL_LABEL.toLowerCase()}`}
-          title={`Comment on the ${GENERAL_LABEL.toLowerCase()}`}
+          disabled={quote !== null || saving || sent}
+          label={`Comment on the ${GENERAL_LABEL.toLowerCase()}`}
         >
-          Comment all
+          <CommentIcon />
         </BandButton>
-        <BandButton
-          type="button"
-          label={saving ? 'Saving changes' : 'Save changes'}
-          isPrimary
-          onClick={save}
-          disabled={!dirty || saving}
-        >
-          {saving ? <Spinner /> : <CheckIcon />}
-        </BandButton>
+        {!hasReview ? (
+          <BandButton
+            type="button"
+            label={saving ? 'Saving changes' : 'Save changes'}
+            isPrimary
+            onClick={() => void perform()}
+            disabled={!dirty || saving || sent || quote !== null}
+          >
+            {saving ? <Spinner /> : <CheckIcon />}
+          </BandButton>
+        ) : null}
       </>
     ),
     // What just happened to this document, said under its name — and until it
     // does, that something is waiting to.
-    note: status || (dirty ? UNSAVED_NOTE : ''),
+    note: review
+      ? `Diff · ${review.sourceLabel}`
+      : plan
+        ? plan.kind === 'plan'
+          ? 'Specification'
+          : 'Implementation record'
+        : status || (dirty ? UNSAVED_NOTE : ''),
     body: column,
   });
 });

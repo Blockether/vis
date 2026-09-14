@@ -261,4 +261,178 @@ Keep unreleased client-callback development and local-only runtime work outside 
    tests with four paid-provider skips, formatting and lint/reflection checks.
    Issues #210, #211 and #212 remain closed; #212 has the v0.2.3 verification update.
    New client-callback development and the explicitly local-only runtime gather
-   fix remain excluded from this release.
+    fix remain excluded from this release.
+
+# JVM gateway and SDK dogfooding
+
+Measure real workloads before optimizing their CPU and memory costs.
+
+## Context
+
+The gateway runs on the JVM and the Python SDK drives its HTTP and stdio
+transports. Start from source revision `0c3d53f82`, use isolated engines and
+existing SDK integration fixtures, and leave the shared gateway running.
+The initial gateway baseline passes 365 tests; the project Python runner passes
+666 SDK tests with 24 opt-in skips. Older GraalPython profiling is not evidence
+about the current embedded CPython runtime. Avoid speculative caches, weakened
+validation and heap-flag tuning without workload measurements. Preserve the
+unrelated SDK plan and Companion review files already in the checkout.
+
+## 1. Establish repeatable workload measurements
+
+- Rationale: distinguish gateway overhead from provider latency and JVM warmup.
+- Data: existing SDK HTTP/stdio fixtures, real provider tasks, process CPU/RSS,
+  heap/GC and allocation profiles; idle, streamed and repeated-session workloads.
+- Acceptance criteria: measured baseline, verified task results and isolated
+  cleanup; persistent regression or opt-in workload tests rather than demos.
+- Unknowns: dominant allocations and retained resources under sustained use.
+
+## 2. Repair measured bottlenecks and correctness failures
+
+- Rationale: optimize the owner of a reproduced cost or error, not a guess.
+- Data: gateway event/state/transport paths and SDK client lifecycle.
+- Acceptance criteria: failing regression before each fix, passing affected
+  suites, and before/after measurements with unchanged workload semantics.
+- Unknowns: concurrency, replay and cancellation interactions revealed by tests.
+
+## 3. Verify combined behavior and resource recovery
+
+- Rationale: a faster individual operation must not regress real agent tasks.
+- Data: source suites, SDK integration, repeated load, formatting and lint,
+  including Clojure reflection checks and a scoped final diff review.
+- Acceptance criteria: real SDK tasks complete; CPU and memory results include
+  warmup and measurement limits; temporary processes stop and unrelated work
+  remains untouched. No release or live-service restart.
+- Unknowns: environmental verification limits and residual measured costs.
+
+## Plan state
+
+1. Repeatable baseline established. SDK HTTP/stdio integration and paid-provider
+   tasks pass, including invoice repairs whose four fixture unit tests fail before
+   the task and pass independently afterward. The HTTP/stdio repair pair passes
+   in 339.69 s without changing the protected tests or README.
+2. Measured fixes implemented:
+   - MCP reconnects no longer leak stdout descriptors (+20 for 20 reconnects
+     before, zero growth after). Failed transport setup also reclaims its process
+     and available streams. Regression coverage includes normal, timeout and
+     setup-failure paths; explicit process types remove 14 reflection sites.
+   - Raw Python/MCP JSON avoids a redundant 16 KiB writer buffer: identical small
+     messages allocate 1,888 instead of 18,288 bytes. Fidelity, failed conversion,
+     failure atomicity and concurrent framing have regression coverage.
+   - Build-version lookup is process-local (6,248 to zero allocated bytes per
+     repeated read). SQLite metadata omits the unused prompt checkpoint and
+     reuses its fixed query. With a 1 MiB checkpoint, get-session allocation falls
+     from 1,115,436 to 33,344 bytes; checkpoint retrieval remains unchanged.
+   - Worker startup shares one runtime-source snapshot between confinement and
+     imports. JVM hosts now prefer the selected runtime's packaged worker, with
+     the Java entrypoint retained for source-only runtimes. Controlled real-worker
+     samples show about 52 MiB RSS versus 164 MiB for Java, and 440–490 ms versus
+     810–820 ms CPU. Host/environment/worker checks pass 143 tests.
+3. Controlled combined measurement uses one immutable AOT jar and ABBA ordering,
+   with 100 measured tasks after 50 warmups per run. The control restores only the
+   old measured hot paths in that same jar. Mean main-process CPU falls from
+   31.55 to 27.09 s (about 14%); sampled allocation falls from 5,320.9 to 4,404.9 MiB
+   (about 17%). Collected heap remains about 108–109 MiB, and RSS is variable:
+   there is no demonstrated retained-memory improvement in the main JVM.
+   Worker CPU/RSS is excluded from those main-JVM totals. A second immutable-jar
+   ABBA comparison isolates worker selection: 100 tasks after 50 warmups per run
+   take 41.27 s with Java workers versus 28.07 s with packaged native workers
+   (about 32% less wall time). Shared-worker RSS is about 146 versus 64 MiB;
+   maximum sampled session-worker RSS is 199–210 versus 59 MiB. These are point
+   samples, not peaks. Observed CPU totals are lower bounds because workers can
+   exit before sampling; no exact whole-process-tree CPU reduction is claimed.
+4. Boundary verification passes: a fresh GraalVM CE 25.3.4.1 native build completes,
+   then eight real SDK HTTP/stdio agent, cancellation and MCP probes pass against
+   both the source JVM and the built native binary. Three native Python module
+   checks also pass. The shared-primitives invariant passes on rerun after its
+   owner fixes the concurrent Improve changes (the earlier combined suite passed
+   213 of 214 tests). No shared gateway was restarted.
+5. Further SDK dogfooding repairs missing Improve endpoint methods and managed-team
+   surface coverage. The project interpreter passes 691 SDK tests with 31 opt-in
+   skips; changed Python files pass Ruff format and lint. Python test discovery
+   now prunes nested dependency/build environments while preserving explicit roots;
+   its two discovery cases and real pytest collection regression pass.
+6. Logical request health no longer tokenizes a full-content attribution twice;
+   61 prompt tests and 16 affected loop cases pass. A frozen-input, four-run ABBA
+   comparison does not establish an end-to-end speedup: main CPU averages 22.68 s
+   before versus 23.78 s after, with sampled allocation about 3.92 versus 3.95 GiB.
+   Keep this distinct from the measured worker and earlier main-JVM improvements.
+7. The retained CLI regression shows that `python -m` cannot run modules owning
+   an `asyncio.run` loop. A local runtime-owned synchronous capture helper passes
+   five bridge tests (50 assertions). A temporary local dependency/entrypoint
+   override passes all 41 Vis CLI cases, including that regression and later
+   top-level await. The same temporary JVM CLI override passes 691 SDK tests with
+   31 opt-in skips, eliminating the four observed `asyncio.run` conflicts. The
+   default Vis pin and entrypoint are unchanged; publication, pin integration and
+   native execution remain unverified, not a shipped fix.
+8. Mixed Clojure test selection now preserves whole files beside scoped vars.
+   The affected suite passes 139 cases; an independent parent rerun passes the two
+   regression cases, including exact identities in REPL-form and clean-JVM runs.
+   The running host binding is unchanged; these checks load the edited source.
+9. Budgeting and request health now share an iteration-local, exact Svar message
+   counter. The unchanged reproduction passes; both complete prompt and loop suites
+   pass 601 cases. The four changed files pass lint and reflection checks without
+   warnings. Cache entries never enter persisted state or outlive the iteration.
+   End-to-end performance measurement on a frozen JVM artifact remains pending.
+10. Remaining work: combined SDK verification and controlled counter measurement.
+    Earlier transient SDK startup failures and the native Python lint binding's
+    FFM failure remain unclaimed. No commit, push or release is planned.
+
+# Improve workspace draft
+
+Make collected reports useful, project by project, with human or automatic review.
+
+## Context
+
+The existing Improve ledger retains immutable Council complaints and failed-tool
+coordinates. It has no editable issue workflow or client entry point. Extend that
+owner, keeping source evidence separate from Markdown analysis. Do not replay source
+commands or treat reports as permission to change code. This is a local first draft;
+no publishing, live service restart or paid model verification.
+
+## Phases
+
+1. **Persistent records and grouping**
+   - Rationale: preserve intake while adding editable project issues.
+   - Data: SQLite Improve ledger, new workflow records and portable contract.
+   - Acceptance criteria: populated-store backfill, provenance, same-project acyclic
+     groups, atomic descendant closure and stale-write protection have tests.
+   - Unknowns: settle the record version and paging contract with gateway ownership.
+2. **Governed review**
+   - Rationale: people choose who writes analysis and which model is used.
+   - Data: Off / Governed by human / Automatic; selected provider/model and interval.
+   - Acceptance criteria: authenticated routes, bounded periodic project review,
+     exact routing, safe cancellation and human-mode model restrictions are tested.
+   - Unknowns: safe reproduction execution is unavailable; reports must state that
+     reproduction was not attempted and provide an actionable plan.
+3. **Companion and TUI**
+   - Rationale: make issues accessible where the user works.
+   - Data: conditional global Improve icon, C-x e, project issue lists and Markdown.
+   - Acceptance criteria: editing, grouping, cascade-close confirmation and settings
+     work through the same API; deterministic stories and real TUI renderer tests.
+   - Unknowns: verify narrow-screen composition and chosen provider/model discovery.
+4. **Integrated verification**
+   - Rationale: a first draft must connect intake, persistence, review and both UIs.
+   - Data: affected tests, formatting/lint/reflection, rendered previews and diff.
+   - Acceptance criteria: required affected checks pass, unrelated changes are
+     preserved and limitations are reported without claiming live model execution.
+   - Unknowns: concurrent shared-checkout checks may expose unrelated failures.
+
+## Plan state
+
+1. Done — persistent records, immutable provenance, same-project hierarchy, atomic
+   closure and optimistic versions; storage and contract tests pass.
+2. Done — authenticated API, persisted modes, bounded rotating review worker and
+   exact provider/model routing. Reproduction execution remains explicitly deferred.
+3. Done — Companion and TUI use the canonical API, conditional entry points and
+   persisted modes. Markdown editing, paste, grouping and cascade confirmation are
+   covered; narrow layouts and the TUI's cell-aware caret were checked.
+4. Done — 335 affected Companion tests, 66 Improve/util backend tests and 166 affected
+   TUI/input tests pass. The full TUI suite passes 2,032 cases. Formatting, lint and
+   reflection are checked; Companion builds and all 270 stories across 12 themes
+   pass the contrast checks. Offline interactive HTML and rendered previews are attached.
+
+Reproduction execution remains outside this draft: automatic reviews write analysis
+and safe verification plans, explicitly marked not attempted. They do not run report
+commands, apply code fixes or close issues. No paid model call, native-image run,
+commit, push, deployment or live service restart was performed.

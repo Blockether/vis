@@ -39,7 +39,7 @@ const fresh = async () => {
   return { ...badge, ...unread };
 };
 
-const row = (id: string, turns: number) => ({ id, turn_count: turns, status: 'idle' });
+const row = (id: string, turns: number) => ({ id, turn_count: turns, answer_count: turns, status: 'idle' });
 const machine = (sessions: ReturnType<typeof row>[], error?: string) =>
   ({ sessions, error }) as unknown as FleetMachine;
 

@@ -696,6 +696,18 @@
     (try (db-dispose-connection! c) (catch Exception _ nil))
     (reset! shared-conn nil)))
 
+(defdelegate db-improve-list [db-info opts])
+
+(defdelegate db-improve-get [db-info id])
+
+(defdelegate db-improve-create! [db-info attrs])
+
+(defdelegate db-improve-update! [db-info id attrs])
+
+(defdelegate db-improve-project-ids [db-info])
+
+(defdelegate db-improve-apply-review! [db-info proposal still-current?])
+
 (defdelegate db-council-source [db-info sid source])
 
 (defdelegate db-council-get [db-info id])

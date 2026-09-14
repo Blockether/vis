@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { LIST_EDGE_END } from './SessionNavigator';
 import { DotsIcon } from './icons';
 import { IconButton } from './ui';
-import { Menu, MenuHeading, MenuItem, MENU_WIDTH } from './Menu';
+import { Menu, MenuItem, MENU_WIDTH } from './Menu';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 
 export interface SwipeAction {
@@ -80,8 +80,7 @@ function RowActionMenu({ actions, label }: { actions: SwipeAction[]; label?: str
 
   useEffect(() => {
     if (!at) return;
-    // Skip the heading's close control and focus the first action.
-    panelRef.current?.querySelectorAll('button')[1]?.focus({ preventScroll: true });
+    panelRef.current?.querySelector('button')?.focus({ preventScroll: true });
     const onScroll = (event: Event) => {
       if (
         event.target instanceof Node &&
@@ -135,9 +134,6 @@ function RowActionMenu({ actions, label }: { actions: SwipeAction[]; label?: str
               }
             }}
           >
-            <MenuHeading onClose={dismiss} closeLabel="Close row actions">
-              {label ?? 'Row actions'}
-            </MenuHeading>
             {actions.map((action) => (
               <MenuItem
                 key={action.key}

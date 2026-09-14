@@ -1,8 +1,41 @@
-"""Inert Vis manifest validation and explicit GitHub/local source installation.
+"""Validate extension packages and manage explicitly trusted source installations.
 
-The catalog stores links and metadata, never source distributions. A project has
-pyproject.toml and extension.py together, at repository root or in a selected
-subdirectory. Installation requires trust; dependency preparation runs on reload.
+For building your first package, follow the
+[extension package guide](https://vis.blockether.com/extension-packages.html).
+This module provides the lower-level operations used by package tooling.
+
+## Check a package without running it
+
+- `manifest_metadata` parses a `pyproject.toml` string and optionally checks
+  compatibility with a Vis and Python version.
+- `inspect_source` checks a selected local project folder, including its manifest
+  and `extension.py`, without importing publisher code.
+- `github_repository` and `project_subdirectory` validate source selectors.
+
+```python
+from blockether.vis.extension_package import github_repository, project_subdirectory
+
+repository = github_repository("Blockether/example-extension")
+folder = project_subdirectory("packages/tools")
+assert repository == "https://github.com/blockether/example-extension"
+assert folder == "packages/tools"
+```
+
+This example only normalizes names; it does not contact GitHub or install anything.
+A valid manifest is not proof that its publisher's code is safe.
+
+## Install only code you trust
+
+`install` requires an explicit trust decision. It accepts a linked local project,
+an approved release or an explicit Git commit; the default remote selector is
+an approved stable release, not a moving branch. Installation may read the
+network and write managed source directories. Dependency preparation happens on
+reload, where package code can execute. Prefer the normal Vis installation
+workflow unless you are implementing package management yourself.
+
+The catalog stores links and metadata, never source distributions. Select the
+folder that contains both `pyproject.toml` and `extension.py`, whether at the
+repository root or in a subdirectory.
 """
 
 import hashlib
@@ -79,7 +112,22 @@ def github_repository(value):
 
 
 def manifest_metadata(text, vis_version=None, python_version=None):
-    """Parse TOML without executing code; optionally check the installing runtime."""
+    """Parse and validate manifest metadata without importing publisher code.
+
+    Args:
+        text: Contents of `pyproject.toml`, at most 128 KiB when UTF-8 encoded.
+        vis_version: If supplied, require the declared `vis-agent` dependency to
+            accept this version.
+        python_version: If supplied, check the `requires-python` constraint.
+
+    Returns:
+        A metadata dictionary containing normalized name and version, description,
+        category, Python requirement, dependencies, source paths and skill paths.
+
+    Raises:
+        ValueError: Required metadata, dependency constraints or portable paths
+            are invalid, or a supplied runtime version is incompatible.
+    """
     if len(text.encode()) > MAX_METADATA:
         raise ValueError("pyproject.toml exceeds 128 KiB")
     try:
@@ -145,7 +193,21 @@ def manifest_metadata(text, vis_version=None, python_version=None):
 
 
 def inspect_source(directory, vis_version=None, python_version=None):
-    """Validate source without importing code; managed installs retain their GitHub identity."""
+    """Inspect a local project without importing or executing its Python code.
+
+    Args:
+        directory: Existing folder containing `pyproject.toml` and `extension.py`.
+        vis_version: Optional Vis version to check against its SDK requirement.
+        python_version: Optional Python version to check for compatibility.
+
+    Returns:
+        Validated metadata, including source information. Managed installations
+        retain their GitHub identity rather than becoming anonymous local paths.
+
+    Raises:
+        OSError: A path is missing or unreadable.
+        ValueError: The manifest or project layout is invalid or incompatible.
+    """
     directory = Path(directory).resolve(strict=True)
     for name in ("pyproject.toml", "extension.py"):
         file = directory / name

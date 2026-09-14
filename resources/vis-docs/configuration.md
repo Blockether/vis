@@ -519,10 +519,16 @@ toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
   council: true         # default true; classified project messages, replies and explicit pings
+  plans: false          # opt-in planning and review in interactive sessions
   draft_backend: auto   # auto | worktree | rift | off; how the agent isolates a draft (see drafts.md)
 ```
 
 Run `/reload` after editing.
+
+You can also switch **Plan before coding** on in Settings in either client. It
+adds one planning prompt to interactive sessions; it does not change one-shot
+CLI requests. See [Plan before coding](working-with-plans.md) for the review and
+approval workflow.
 
 ## Session titling
 

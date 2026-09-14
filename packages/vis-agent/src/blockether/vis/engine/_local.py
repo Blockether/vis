@@ -46,11 +46,39 @@ class _Reply(io.BytesIO):
 
 
 class LocalEngine(ExecutionLayer):
-    """Run a private engine via sdk-stdio; executable may be an argv sequence.
+    """Own a private Vis process without starting an HTTP server.
 
-    root is the working directory. startup_timeout bounds initial boot; timeout
-    bounds each operation. A pipe timeout stops the owned process because a late
-    reply must never be mistaken for the next request's answer.
+    Use this layer when you need to choose an executable, share one local process
+    between agents, or call the session API directly. The Vis executable must be
+    installed separately; this class never downloads it or discovers a gateway.
+    Supported platforms are Linux and macOS.
+
+    Args:
+        executable: Executable path/name or nonempty argument sequence. The SDK
+            appends `sdk-stdio`; no shell command parsing is performed.
+        root: Existing local working directory, resolved at construction.
+        timeout: Positive finite timeout in seconds for each transport operation.
+        startup_timeout: Positive finite deadline in seconds for initial boot.
+
+    Construction is lazy. `connect` or context entry starts the subprocess;
+    repeated connection calls reuse it. `close` stops only this owned process and
+    discards its temporary session database. It does not revert project edits or
+    stop any separately running Vis server. Explicitly injected agents borrow this
+    layer, so close those agents before leaving the layer's context.
+
+    ```python
+    from blockether.vis.engine import Agent, LocalEngine
+
+    with LocalEngine(executable="vis-agent", root=".") as layer:
+        with Agent(project=".", execution_layer=layer) as agent:
+            result = agent.run("Summarize this project without changing files.")
+            print(result["status"])
+    ```
+
+    A pipe timeout stops the process: a late reply must never be mistaken for the
+    next request's answer. This differs from a `blockether.vis.engine.Turn.wait`
+    deadline, which does not itself request cancellation. Startup, protocol and
+    transport failures propagate as the corresponding engine exception.
     """
 
     def __init__(
@@ -106,6 +134,12 @@ class LocalEngine(ExecutionLayer):
             raise ProtocolError("malformed local engine response") from None
 
     def connect(self):
+        """Start the owned process once and validate its protocol handshake.
+
+        Return this layer for chaining. A closed layer cannot be restarted; create
+        a new one after failure or closure. Startup failure cleans up the process
+        and temporary database before propagating the error.
+        """
         if self._closed:
             raise TransportError("client is closed")
         if self._process is not None:
@@ -198,6 +232,11 @@ class LocalEngine(ExecutionLayer):
         return _LocalJobEvents(self, route, job_id, event_name, snapshot, **options)
 
     def close(self):
+        """Stop this process, close its streams and remove its temporary database.
+
+        Repeated calls are safe. Unfinished local work cannot continue after the
+        process stops. File edits and separately running gateways are untouched.
+        """
         if self._closed:
             return
         self._closed = True

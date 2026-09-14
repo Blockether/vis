@@ -148,10 +148,12 @@ describe('an opened markdown note', () => {
     // on the one screen a keyboard is covering.
     expect(markup).not.toContain('Tap a passage');
     // The band offers both things done to the WHOLE document, side by side.
-    expect(markup).toContain('Comment all');
+    expect(markup).toContain('aria-label="Comment on the whole document"');
     expect(markup).toContain('aria-label="Save changes"');
     expect(markup).not.toContain('>Save<');
-    expect(markup.indexOf('Comment all')).toBeLessThan(markup.indexOf('Save changes'));
+    expect(markup.indexOf('Comment on the whole document')).toBeLessThan(
+      markup.indexOf('Save changes'),
+    );
   });
 
   it('shows the comments the note already carries, outside its prose', () => {

@@ -1757,13 +1757,12 @@
                 (assoc-in db [:detail-expansions [(str session-id) (str node-id)]] mode)))
 
 (reg-event-db :bump-render-version
-              (fn [db _]
-                ;; No-op state mutator. The dispatcher itself bumps `:render-version` and
-                ;; notifies the render monitor whenever an event lands (unless the event id is
-                ;; in `no-render-bump-events`), so simply dispatching this event is enough to
-                ;; wake the painter. Used by the mouse handler when a hover-state change needs
-                ;; the chrome row repainted with its hover background.
-                db))
+              (fn [db [_ repaint]]
+                ;; The dispatcher wakes the painter. External caches can additionally
+                ;; invalidate fast paths until this version has been painted.
+                (cond-> db
+                  (= :full-frame repaint)
+                  (update :full-frame-version (fnil inc 0)))))
 
 (reg-event-db
   :create-tab
@@ -2734,6 +2733,15 @@
                     :attachment-feedback (vec (:rejected result))
                     :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
                     :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments)))))))
+
+;; The Improve settings the gateway answered, ALREADY normalized by
+;; `improve/settings` (the caller owns that shaping, so state keeps no opinion
+;; about the wire document). Only `:mode` is read here — it decides whether the
+;; C-x e verb and the palette entry are advertised at all — and a missing
+;; document is Off, never a half-open surface.
+(reg-event-db :set-improve-settings
+              (fn [db [_ settings]]
+                (assoc db :improve (if (map? settings) settings {:mode :off}))))
 
 (reg-event-db :focus-attachments
               (fn [db _]
@@ -4365,6 +4373,8 @@
           options
           {:client-turn-id (:client-id terminal)
            :status (terminal-status (:status terminal))
+           :request-kind (:request-kind terminal)
+           :subagent (:subagent terminal)
            :terminal-sync? true
            :terminal-trace (:trace terminal)}]
 
@@ -5273,6 +5283,17 @@
           matching-pending-index
           (when client-turn-id (pending-assistant-index (:messages target) client-turn-id))
 
+          request-message
+          (last (filter #(and (= :user (:role %))
+                              (or (nil? client-turn-id) (= client-turn-id (:client-turn-id %))))
+                        (:messages target)))
+
+          human-answer?
+          (and (not (contains? #{:council "council"}
+                               (or (:request-kind completion) (:request-kind request-message))))
+               (not (:subagent completion))
+               (not (contains? #{:subagent "subagent"} (get-in target [:session :agent :role]))))
+
           skip-identified-completion?
           (boolean (and client-turn-id (nil? matching-pending-index)))
 
@@ -5463,7 +5484,8 @@
              ;; Persistent unread dot: a BACKGROUND tab that just FINISHED a
              ;; turn (same gate as the bell) lights a dot that stays until the
              ;; user focuses it (cleared in `activate-tab`).
-             (and (not skip-identified-completion?)
+             (and human-answer?
+                  (not skip-identified-completion?)
                   (not= workspace-id (current-tab-id db))
                   (not= :cancelled status))
              (update :tabs
@@ -5478,6 +5500,7 @@
              ;; cancelled or failed turn stays silent - that text is a verdict for the
              ;; eye, not an answer to what was asked.
              (and (:voice-conversation? (db-for-tab db' workspace-id))
+                  human-answer?
                   (not skip-identified-completion?)
                   (not (#{:cancelled :failed} status))
                   (not (str/blank? (str answer))))

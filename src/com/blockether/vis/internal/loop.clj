@@ -912,6 +912,7 @@
            :version (:version a)
            :media-type (:media-type a)
            :kind (:kind a)
+           :commentable (true? (:commentable a))
            :size (:size a)
            :position (:position a)
            :turn-id (:turn-soul-id a)

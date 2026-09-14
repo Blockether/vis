@@ -601,4 +601,24 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
+    (register-toggle!
+      {:id "plans"
+       :label "Plan before coding"
+       :description
+       "Clarify decisions, review a versioned plan, then explicitly start implementation."
+       :type :boolean
+       :default false
+       :owner :vis
+       :group :vis
+       :persist? true})
+    (register-toggle! {:id "improve_mode"
+                       :label "Improve"
+                       :description
+                       "Off, governed by human, or automatic periodic analysis and grouping."
+                       :type :enum
+                       :choices ["off" "human" "automatic"]
+                       :default "human"
+                       :owner :vis
+                       :group :vis
+                       :persist? true})
     true))

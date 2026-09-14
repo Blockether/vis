@@ -123,7 +123,12 @@
    {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
-   {:action :providers :key \o :label "providers" :group "Tools"}])
+   {:action :providers :key \o :label "providers" :group "Tools"}
+   ;; Improve is the register Vis keeps about its own behaviour. The verb is
+   ;; advertised only while that mode is not Off, so a surface nobody turned on
+   ;; cannot crowd the Tools pane; the chord, the palette and the help card
+   ;; still carry it.
+   {:action :improve :key \e :label "improve" :group "Tools" :show-when :improve}])
 
 (def prefix-groups
   "Heading order of the C-x hydra. A band taller than the terminal loses its LAST
@@ -239,7 +244,8 @@
   "Does a prefix-command's `:show-when` tag hold for the current `db`? Untagged
    verbs always apply; the tagged ones surface in the hydra ONLY where they can
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
-   fork at, `:never` is palette-only. The chord, palette, and help list every
+   fork at, `:improve` needs an Improve mode other than Off, and `:never` is
+   palette-only. The chord, palette, and help list every
    verb regardless."
   [db {:keys [show-when]}]
   (case show-when
@@ -248,6 +254,9 @@
 
     :has-turns
     (boolean (seq (:messages db)))
+
+    :improve
+    (not= :off (or (get-in db [:improve :mode]) :off))
 
     :never
     false

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import gatewayContract from '../../../../packages/vis-contract/resources/vis-contract/gateway.json';
 import type { SessionGoal } from '../lib/types';
 import { useDeskRail } from '../lib/fit-rows';
@@ -59,6 +59,7 @@ export function SessionHeader({
   model,
   commands,
   sidebar,
+  team,
 }: {
   model: SessionHeaderModel;
   commands: SessionHeaderCommands;
@@ -67,6 +68,7 @@ export function SessionHeader({
    * put away: it stands on the band's leading edge, where the phone's arrow does.
    */
   sidebar?: { isShown: boolean; onToggle: () => void };
+  team?: ReactNode;
 }) {
   // ON A DESK THE LIST IS BESIDE THIS HEADER, not behind it: there is nothing to go
   // back to, so the arrow goes. Its edge is not left bare, though — the toggle that
@@ -115,6 +117,7 @@ export function SessionHeader({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))] mouse:gap-1">
+        {team}
         <SessionIdChip sessionId={model.sessionId} />
         <ArtifactsChip
           count={model.artifacts.count}

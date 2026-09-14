@@ -3340,13 +3340,16 @@
         body
         {"filename" "PLAN.md"
          "media_type" "text/markdown"
+         "commentable" true
+         "kind" "diff"
          "base64" (.encodeToString (java.util.Base64/getEncoder)
                                    (.getBytes "# Release plan\n" "UTF-8"))}]
 
     (with-redefs-fn {(rv 'body-json) (constantly body)
-                     (rv 'path-sid) (constantly (str (random-uuid)))
-                     #'state/append-iteration-attachment!
-                     (fn [iteration-id attachment]
+                     (rv 'path-sid) (constantly "session-owner")
+                     #'state/revise-iteration-attachment!
+                     (fn [sid iteration-id attachment]
+                       (is (= "session-owner" sid))
                        (reset! seen [iteration-id attachment])
                        {:index 1 :filename "PLAN.md" :version 2})}
       (fn []
@@ -3357,7 +3360,21 @@
             (is (= iid iteration-id))
             (is (= "PLAN.md" (:filename attachment)))
             (is (= "text/markdown" (:media-type attachment)))
-            (is (= "user" (:audience attachment)))))))))
+            (is (not (contains? attachment :commentable)))))))))
+
+(deftest human-attachment-revision-refusals-have-client-statuses
+  (doseq [[reason status] [[:attachment/not-found 404] [:attachment/read-only 403]
+                           [:attachment/invalid-revision 400]]]
+    (with-redefs-fn {(rv 'body-json) (constantly {"filename" "note.md"
+                                                  "media_type" "text/markdown"
+                                                  "base64" "bm90ZQ=="})
+                     (rv 'path-sid) (constantly "session-owner")
+                     #'state/revise-iteration-attachment! (fn [& _]
+                                                            (throw (ex-info "Revision refused"
+                                                                            {:type reason})))}
+      (fn []
+        (is (= status
+               (:status ((rv 'append-attachment-handler) {:path-params {:iid "iteration"}}))))))))
 
 ;; The session-creation UX picks a workspace root by RECOGNITION, so the gateway
 ;; has to be able to show the machine's own folders. `/v1/fs` is that surface and

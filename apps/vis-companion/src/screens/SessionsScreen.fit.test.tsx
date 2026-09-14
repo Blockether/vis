@@ -106,9 +106,9 @@ describe('a desk cuts a page for the room it really has', () => {
     const view = onScreen(900);
     try {
       await waitFor(() => expect(view.getByText('alpha 00')).toBeTruthy());
-      // The numbered pager has its own line in the project band. With the single
-      // top inset, footer and next-project peek, this window still fits nineteen rows.
-      expect(shown(view)).toHaveLength(19);
+      // The wider sidebar exposes row metadata, while inline pages free their old band.
+      // Its footer and next-project peek leave room for thirteen two-line rows.
+      expect(shown(view)).toHaveLength(13);
     } finally {
       view.unmount();
       view.restore();

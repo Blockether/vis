@@ -839,3 +839,192 @@
                        (git! (:root draft) "rebase" "FETCH_HEAD")
                        (expect (true? (:published
                                         (drafts/approve! env {:workspace-id (:id draft)})))))))))
+
+(defdescribe
+  review-diff-test
+  (it
+    "captures fork and task snapshots without the working index, inherited dirt or moving trunk"
+    (doseq [backend [:worktree :rift]]
+      (with-repo
+        "vis-review-diff"
+        (fn [store base env]
+          (when (or (= backend :worktree) (rift-available? base))
+            (binding [ws/*draft-backend* backend]
+              (spit (io/file base ".gitignore") "secret.env\ntarget/\n")
+              (let [draft (drafts/create! env {:from (seed-trunk! store base) :label "review"})
+                    root (:root draft)
+                    first (drafts/diff env {:workspace-id (:id draft)})]
+
+                (expect (= "" (:patch first)))
+                (spit (io/file root "a.txt") "x\npending\ntask one\n")
+                (git! root "add" "a.txt")
+                (git! root "commit" "-q" "-m" "task one")
+                (let [one (drafts/diff env {:workspace-id (:id draft)})]
+                  (expect (str/includes? (:patch one) "+task one"))
+                  (expect (not (str/includes? (:patch one) "+pending")))
+                  (spit (io/file root "a.txt") "x\npending\ntask one\nstaged\n")
+                  (git! root "add" "a.txt")
+                  (spit (io/file root "a.txt") "x\npending\ntask one\nstaged\nunstaged\n")
+                  (spit (io/file root "with spaces.txt") "new without newline")
+                  (.renameTo (io/file root "new.txt") (io/file root "renamed.txt"))
+                  (spit (io/file root "secret.env") "do not publish\n")
+                  (.mkdirs (io/file root "target"))
+                  (spit (io/file root "target/cache.txt") "generated\n")
+                  (spit (io/file base "trunk-only.txt") "other work\n")
+                  (spit (io/file base "a.txt") "trunk moved\n")
+                  (let [index (io/file (git! root "rev-parse" "--git-path" "index"))
+                        index (if (.isAbsolute index) index (io/file root (.getPath index)))
+                        before (vec (java.nio.file.Files/readAllBytes (.toPath index)))
+                        two (drafts/diff env {:workspace-id (:id draft) :since (:checkpoint one)})
+                        all (drafts/diff env {:workspace-id (:id draft)})
+                        empty (drafts/diff env
+                                           {:workspace-id (:id draft) :since (:checkpoint two)})]
+
+                    (expect (= before (vec (java.nio.file.Files/readAllBytes (.toPath index)))))
+                    (expect (= "" (:patch empty)))
+                    (expect (str/includes? (:patch two) "+staged"))
+                    (expect (str/includes? (:patch two) "+unstaged"))
+                    (expect (not (str/includes? (:patch two) "+task one")))
+                    (expect (str/includes? (:patch all) "+task one"))
+                    (expect (str/includes? (:patch all) "with spaces.txt"))
+                    (expect (str/includes? (:patch all) "No newline at end of file"))
+                    (expect (str/includes? (:patch all) "deleted file mode"))
+                    (expect (str/includes? (:patch all) "renamed.txt"))
+                    (expect (not (re-find #"secret.env|cache.txt|trunk-only|trunk moved"
+                                          (:patch all))))
+                    (expect (= (:checkpoint one) (get-in two [:source "base_revision"])))
+                    (expect (= (:checkpoint two) (get-in two [:source "head_revision"]))))))))))))
+  (it "refuses a missing baseline and a foreign checkpoint rather than comparing mutable trunk"
+      (with-repo
+        "vis-review-refuse"
+        (fn [store base env]
+          (binding [ws/*draft-backend* :worktree]
+            (let [seed (seed-trunk! store base)
+                  first (drafts/create! env {:from seed :label "first"})
+                  second (drafts/create! env {:from seed :label "second"})
+                  _ (spit (io/file (:root second) "unique.txt") "only second\n")
+                  other (drafts/diff env {:workspace-id (:id second)})]
+
+              (expect (try (drafts/diff env {:workspace-id (:id first) :since (:checkpoint other)})
+                           false
+                           (catch clojure.lang.ExceptionInfo _ true)))
+              (expect (= :draft/diff-baseline-missing
+                         (try (ws/review-diff {:root base} nil)
+                              nil
+                              (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))))
+
+(defdescribe
+  review-diff-raw-files-test
+  (it
+    "Rift without Git keeps raw newlines, ignores generated secrets and never follows symlinks"
+    (let [base
+          (temp-dir "vis-review-raw")
+
+          store
+          (assoc (ps/db-open! :memory) :backend :sqlite)
+
+          outside
+          (io/file (str base "-outside"))]
+
+      (try (spit (io/file base "a.txt") "before\r\n")
+           (spit (io/file base ".gitignore") "secret.env\n")
+           (spit (io/file base ".gitattributes") "*.txt text eol=lf\n")
+           (spit outside "outside original\n")
+           (java.nio.file.Files/createSymbolicLink (.toPath (io/file base "external-link"))
+                                                   (.toPath outside)
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+           (when (rift-available? base)
+             (binding [ws/*drafts-home*
+                       (str base "-store")
+
+                       ws/*draft-backend*
+                       :rift]
+
+               (let [env
+                     {:db-info store :session-id "review-raw"}
+
+                     draft
+                     (drafts/create! env {:from (seed-trunk! store base) :label "raw"})
+
+                     root
+                     (:root draft)]
+
+                 (expect (= "" (:patch (drafts/diff env {:workspace-id (:id draft)}))))
+                 (spit (io/file root "a.txt") "after\r\n")
+                 (spit outside "outside changed\n")
+                 (spit (io/file root "secret.env") "never publish\n")
+                 (let [result (drafts/diff env {:workspace-id (:id draft)})]
+                   (expect (str/includes? (:patch result) "-before\r\n"))
+                   (expect (str/includes? (:patch result) "+after\r\n"))
+                   (expect (not (str/includes? (:patch result) "external-link")))
+                   (expect (not (str/includes? (:patch result) "secret.env"))))
+                 ;; A newly ignored baseline file must still be compared after deletion
+                 ;; and recreation, even when the previous task checkpoint omitted it.
+                 (.delete (io/file root "a.txt"))
+                 (drafts/diff env {:workspace-id (:id draft)})
+                 (spit (io/file root ".gitignore") "secret.env\na.txt\n")
+                 (spit (io/file root "a.txt") "restored\r\n")
+                 (expect (str/includes? (:patch (drafts/diff env {:workspace-id (:id draft)}))
+                                        "+restored\r\n")))))
+           (finally (ps/db-close! store)
+                    (delete-tree! (str base "-store"))
+                    (delete-tree! base)
+                    (.delete outside))))))
+
+(defdescribe
+  review-diff-confinement-test
+  (it "treats cached children under a replaced directory symlink as deleted, never external input"
+      (with-repo
+        "vis-review-symlink"
+        (fn [store base env]
+          (binding [ws/*draft-backend* :worktree]
+            (.mkdirs (io/file base "src"))
+            (spit (io/file base "src/code.txt") "inside\n")
+            (git! base "add" "src/code.txt")
+            (git! base "commit" "-q" "-m" "add source")
+            (let [draft (drafts/create! env {:from (seed-trunk! store base) :label "symlink"})
+                  root (:root draft)
+                  outside (io/file (str base "-outside"))]
+
+              (try (.mkdirs outside)
+                   (spit (io/file outside "code.txt") "external-private-content\n")
+                   (delete-tree! (io/file root "src"))
+                   (java.nio.file.Files/createSymbolicLink
+                     (.toPath (io/file root "src"))
+                     (.toPath outside)
+                     (make-array java.nio.file.attribute.FileAttribute 0))
+                   (let [result (drafts/diff env {:workspace-id (:id draft)})]
+                     (expect (str/includes? (:patch result) "deleted file mode"))
+                     (expect (str/includes? (:patch result) "new file mode 120000"))
+                     (expect (not (str/includes? (:patch result) "external-private-content"))))
+                   (finally
+                     ;; Delete the symlink before the fixture's recursive cleanup.
+                     (java.nio.file.Files/deleteIfExists (.toPath (io/file root "src")))
+                     (delete-tree! outside))))))))
+  (it "honors the source's global ignore file without routing writes into caller Git state"
+      (with-repo
+        "vis-review-global-ignore"
+        (fn [store base env]
+          (binding [ws/*draft-backend* :worktree]
+            (let [ignore (io/file base "global-ignore")
+                  config (io/file base "global-config")
+                  original @#'ws/git*]
+
+              (spit ignore "global-secret.env\n")
+              (spit config (str "[core]\n  excludesFile = " (.getPath ignore) "\n"))
+              (with-redefs-fn {#'ws/git* (fn [dir args & [environment input]]
+                                           (original dir
+                                                     args
+                                                     (merge {"GIT_CONFIG_GLOBAL" (.getPath config)}
+                                                            environment)
+                                                     input))}
+                (fn []
+                  (let [draft (drafts/create! env {:from (seed-trunk! store base) :label "ignored"})
+                        root (:root draft)]
+
+                    (spit (io/file root "global-secret.env") "never publish\n")
+                    (spit (io/file root "public.txt") "visible\n")
+                    (let [patch (:patch (drafts/diff env {:workspace-id (:id draft)}))]
+                      (expect (str/includes? patch "public.txt"))
+                      (expect (not (str/includes? patch "global-secret.env")))))))))))))

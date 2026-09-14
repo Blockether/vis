@@ -64,6 +64,29 @@
 (defn- ev [c code] (tpc/ev c code))
 
 (defdescribe
+  attachment-comment-capability-test
+  (it "defaults to read-only and explicitly opts each version into review"
+      (let [out
+            (block
+              (ctx-with-root (temp-root))
+              (str
+                "a = attach(b'# Spec', 'PLAN-feature.md')\n"
+                "b = attach(b'# Spec', 'PLAN-feature.md', commentable=True)\n"
+                "c = attach(b'# Report', 'IMPLEMENTATION-feature.md', commentable=False)\n"
+                "assert a['commentable'] is False\n"
+                "assert b['commentable'] is True\n" "assert c['commentable'] is False\n"
+                "assert get_attachment(b)['commentable'] is True\n"
+                "assert [a['commentable'] for a in list_attachments()] == [False, True, False]"))]
+        (expect (nil? (:error out)))
+        (expect (= [false true false] (mapv :commentable (:attachments out))))))
+  (it "rejects non-boolean capability values before capture"
+      (doseq [value ["1" "'true'" "None"]]
+        (let [out (block (ctx-with-root (temp-root))
+                         (str "attach(b'note', 'note.txt', commentable=" value ")"))]
+          (expect (some? (:error out)))
+          (expect (empty? (:attachments out)))))))
+
+(defdescribe
   attach-in-memory-capture-test
   (it "records an in-memory artifact and hands back its descriptor"
       (let [pctx

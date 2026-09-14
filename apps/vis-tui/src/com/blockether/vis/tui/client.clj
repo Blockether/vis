@@ -45,6 +45,12 @@
    which reads to a user exactly like the loss this export exists to undo."
   120000)
 
+(def ^:private improve-review-timeout-ms
+  "One canonical Improve review reads whole projects through a model before the
+   gateway answers. The page-sized read timeout would abandon a review that is
+   still running, and an abandoned read is indistinguishable from a refusal."
+  180000)
+
 (defonce ^:private http-client
   (delay (http/client {:follow-redirects :normal
                        :connect-timeout 2000
@@ -396,6 +402,20 @@
            (vec (get (wire/parse-json (:body response)) "artifacts" []))))
        (catch Throwable _ nil)))
 
+(defn save-artifact-text!
+  "Save a human text revision under its existing filename; return the new descriptor."
+  [sid iteration-id filename media-type text]
+  (let [result (send-json!
+                 "POST"
+                 (str "/v1/sessions/" (enc sid) "/iterations/" (enc iteration-id) "/attachments")
+                 {:filename filename
+                  :media_type media-type
+                  :base64 (.encodeToString (java.util.Base64/getEncoder)
+                                           (.getBytes ^String text StandardCharsets/UTF_8))})]
+    (when-not (and (integer? (get result "version")) (pos? (long (get result "version"))))
+      (throw (ex-info "The artifact revision could not be saved" {})))
+    result))
+
 (def ^:private activity-incomplete-export-marker
   "The gateway appends this line to an export whose record changed mid-stream, then
    drops the connection. The bytes already written are a TRUNCATED history, so a
@@ -454,6 +474,98 @@
             409 :activity-changed
             nil))
         (catch Throwable _ nil))))
+
+(defn- improve-query
+  "`/v1/improve` with only the filters and the window the caller asked for. An
+   EMPTY `:project-id` means the Unassigned project, so it is sent as an empty
+   value instead of being dropped."
+  [{:keys [project-id status after limit]}]
+  (let [params (cond-> []
+                 (some? project-id)
+                 (conj (str "project_id=" (enc (str project-id))))
+
+                 (seq (str status))
+                 (conj (str "status=" (enc (str status))))
+
+                 (some? after)
+                 (conj (str "after=" (enc (str after))))
+
+                 (some? limit)
+                 (conj (str "limit=" (enc (str limit)))))]
+    (cond-> "/v1/improve"
+      (seq params)
+      (str "?" (str/join "&" params)))))
+
+(defn improve-records
+  "The Improve register — the projects and issues Vis keeps about its own
+   behaviour — string-keyed, or nil when the daemon cannot answer. `opts` narrows
+   it (`:project-id`, `:status`) and windows it (`:after`, `:limit`); nil asks for
+   the first default window. nil is UNAVAILABLE: a channel must paint it
+   differently from an EMPTY register."
+  [opts]
+  (try (let [response (request! :get (improve-query opts) {:timeout-ms channel-read-timeout-ms})]
+         (when (= 200 (:status response)) (wire/parse-json (:body response))))
+       (catch Throwable _ nil)))
+
+(defn improve-record
+  "One Improve record with its whole Markdown analysis, or nil when the daemon
+   cannot answer."
+  [id]
+  (try (let [response (request! :get
+                                (str "/v1/improve/" (enc (str id)))
+                                {:timeout-ms channel-read-timeout-ms})]
+         (when (= 200 (:status response)) (wire/parse-json (:body response))))
+       (catch Throwable _ nil)))
+
+(defn- improve-write!
+  "One Improve mutation. Returns the gateway's refreshed document (an empty body
+   answers `{}`), or nil when it refused — a channel must never paint an
+   unwritten change as saved. The slow writes pass their own `timeout-ms`."
+  ([method path body] (improve-write! method path body channel-read-timeout-ms))
+  ([method path body timeout-ms]
+   (try (let [response (request! method
+                                 path
+                                 (cond-> {:timeout-ms timeout-ms}
+                                   (some? body)
+                                   (assoc :body body)))]
+          (when (#{200 201} (:status response))
+            (or (try (wire/parse-json (:body response)) (catch Throwable _ nil)) {})))
+        (catch Throwable _ nil))))
+
+(defn improve-create!
+  "Record a new improvement. `record` carries the wire keys the contract owns
+   (`title`, `content`, `project_id`, `parent_id`, …)."
+  [record]
+  (improve-write! :post "/v1/improve" record))
+
+(defn improve-update!
+  "Change one Improve record: its Markdown, its parent, or its open/closed status.
+   Pass `expected_version` to make a stale save lose to a newer one instead of
+   overwriting it. The GATEWAY owns the cascade: closing closes every descendant
+   and reopening opens every ancestor, atomically, inside this ONE write."
+  [id patch]
+  (improve-write! :patch (str "/v1/improve/" (enc (str id))) patch))
+
+(defn improve-settings
+  "The gateway's Improve settings (`mode`, `provider`, `model`,
+   `interval_minutes`), or nil when the daemon cannot answer."
+  []
+  (try (let [response (request! :get "/v1/improve/settings" {:timeout-ms channel-read-timeout-ms})]
+         (when (= 200 (:status response)) (wire/parse-json (:body response))))
+       (catch Throwable _ nil)))
+
+(defn improve-settings!
+  "Change the Improve settings and return the refreshed document, or nil when the
+   gateway refused. Mode, provider and model all live in this one document."
+  [patch]
+  (improve-write! :patch "/v1/improve/settings" patch))
+
+(defn improve-review!
+  "Ask for ONE Improve review now. Automatic only: this spends model calls, so
+   the gateway refuses it in the other modes and that refusal arrives as nil. A
+   canonical review works project by project, so it waits far longer than a read."
+  []
+  (improve-write! :post "/v1/improve/review" {} improve-review-timeout-ms))
 
 (defn toggle-setting!
   "Atomically flip one boolean setting in the gateway and return its refreshed

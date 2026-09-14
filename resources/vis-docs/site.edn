@@ -19,6 +19,10 @@
      :page "context-and-prompts"
      :title "Project instructions"}
     {:blurb
+     "Review a versioned specification, send your comments together and approve it to start implementation."
+     :page "working-with-plans"
+     :title "Plan before coding"}
+    {:blurb
      "Give Vis reusable instructions for reviews, releases and other tasks, with scripts and templates."
      :page "skills"
      :title "Skills"}

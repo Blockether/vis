@@ -84,7 +84,7 @@
    is deliberately no second way to hand one in."
   [m]
   (when-let [sink *attachment-sink*]
-    (try (let [rec (cond-> m
+    (try (let [rec (cond-> (assoc m :commentable (true? (:commentable m)))
                      (str/blank? (str (:id m)))
                      (assoc :id (str (java.util.UUID/randomUUID)))
 

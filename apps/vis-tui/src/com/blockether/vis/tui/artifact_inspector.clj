@@ -2,6 +2,8 @@
   "The TUI's session-wide attachment inspector. Composer files and durable model
    artifacts remain separate lifecycles, but share one discoverable C-x i surface."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.diff :as diff]
+            [com.blockether.vis.contract.plan :as plan]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.primitives :as p]
@@ -47,6 +49,7 @@
                                                        "application/octet-stream"))
                                   :size (field artifact "size")
                                   :version (field artifact "version")
+                                  :commentable (true? (field artifact "commentable"))
                                   :version-count (get counts filename 1)
                                   :iteration-id (str (field artifact "iteration_id"))
                                   :index (field artifact "index")
@@ -81,16 +84,25 @@
          (str "  ·  " label))))
 
 (defn- display-rows
-  [rows load-error]
+  [rows load-error plans?]
   (let [staged
         (filterv #(= :staged (:source %)) rows)
 
         produced
-        (filterv #(= :produced (:source %)) rows)]
+        (filterv #(= :produced (:source %)) rows)
+
+        plans
+        (when plans? (filterv #(plan/plan-name (:filename %)) produced))
+
+        produced
+        (if plans? (filterv #(not (plan/plan-name (:filename %))) produced) produced)]
 
     (cond-> []
       (seq staged)
       (into (cons {:header "Ready to send"} staged))
+
+      (seq plans)
+      (into (cons {:header "Specifications"} plans))
 
       (seq produced)
       (into (cons {:header "Produced in this session"} produced))
@@ -115,14 +127,18 @@
       0)))
 
 (defn inspector-modal-component
-  "Pure modal component for the unified attachment inspector. Enter returns an
-   `:open` action; Delete/Backspace returns `:remove` only for staged files."
-  [staged artifacts load-error]
+  "Pure attachment inspector. Text opens in the annotator; o keeps the external opener.
+   The plans option groups planning documents without hiding other artifacts."
+  [staged artifacts load-error & {:keys [plans?]}]
   (let [rows
-        (inspector-rows staged artifacts)
+        (vec (sort-by (fn [row]
+                        (cond (= :staged (:source row)) 0
+                              (and plans? (plan/plan-name (:filename row))) 1
+                              :else 2))
+                      (inspector-rows staged artifacts)))
 
         display
-        (display-rows rows load-error)
+        (display-rows rows load-error plans?)
 
         total
         (long (count rows))]
@@ -130,7 +146,7 @@
     {:init {:selected 0 :scroll 0}
      :measure (fn [_ cols rows-count]
                 (let [footer
-                      (cond-> [["↑/↓" "move"] ["Enter" "open"]]
+                      (cond-> [["↑/↓" "move"] ["Enter" "read"] ["o" "external"]]
                         (seq staged)
                         (conj ["Del" "remove"])
 
@@ -227,7 +243,20 @@
                    KeyType/ArrowDown (assoc state :selected (clamp-selected (inc (long selected))))
                    KeyType/Home (assoc state :selected 0)
                    KeyType/End (assoc state :selected (max 0 (dec (long total))))
-                   KeyType/Enter {::dlg/done (when selected-row {:action :open :row selected-row})}
+                   KeyType/Enter
+                   {::dlg/done
+                    (when selected-row
+                      {:action
+                       (if (and (= :produced (:source selected-row))
+                                (or (= diff/media-type (:media-type selected-row))
+                                    (#{"text/markdown" "text/plain"} (:media-type selected-row))
+                                    (re-find #"(?i)\.(md|txt|log)$" (:filename selected-row))))
+                         :annotate
+                         :open)
+                       :row selected-row})}
+                   KeyType/Character (if (and (= \o (.getCharacter key)) selected-row)
+                                       {::dlg/done {:action :open :row selected-row}}
+                                       state)
                    KeyType/Delete {::dlg/done (when (= :staged (:source selected-row))
                                                 {:action :remove :row selected-row})}
                    KeyType/Backspace {::dlg/done (when (= :staged (:source selected-row))
@@ -237,7 +266,9 @@
 (defn show!
   "Open the inspector and return its selected action, or nil on close."
   [^TerminalScreen screen staged artifacts load-error]
-  (dlg/run-modal! screen (inspector-modal-component staged artifacts load-error)))
+  (dlg/run-modal!
+    screen
+    (inspector-modal-component staged artifacts load-error :plans? (vis/toggle-enabled? "plans"))))
 
 (defn- artifact-link-row!
   [session-id url]

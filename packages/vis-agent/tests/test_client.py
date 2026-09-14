@@ -555,6 +555,34 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
     assert seen == expected
 
 
+@pytest.mark.parametrize(
+    "operation,args,method,route,has_body",
+    [
+        ("get_improve", (), "GET", "/v1/improve", False),
+        ("post_improve", (), "POST", "/v1/improve", True),
+        ("get_improve_settings", (), "GET", "/v1/improve/settings", False),
+        ("patch_improve_settings", (), "PATCH", "/v1/improve/settings", True),
+        ("post_improve_review", (), "POST", "/v1/improve/review", False),
+        ("get_improve_entry", (42,), "GET", "/v1/improve/42", False),
+        ("patch_improve_entry", (42,), "PATCH", "/v1/improve/42", True),
+    ],
+)
+def test_improve_operations_preserve_path_query_and_payload(
+    operation, args, method, route, has_body
+):
+    payload = {"content": "A reproducible report"}
+    with endpoint(lambda *_: (200, {"accepted": True})) as (url, calls):
+        options = {"query": {"limit": 5}, "timeout": 7}
+        if has_body:
+            options["body"] = payload
+        result = getattr(GatewayClient(url), operation)(*args, **options)
+        assert result == {"accepted": True}
+        assert calls[-1][:2] == (method, route + "?limit=5")
+        assert (json.loads(calls[-1][3]) if has_body else calls[-1][3]) == (
+            payload if has_body else b""
+        )
+
+
 def test_lease_is_renewed_while_idle_and_thread_stops(monkeypatch):
     monkeypatch.setitem(GATEWAY["client_lease"], "keepalive_ms", 20)
     renewed = threading.Event()

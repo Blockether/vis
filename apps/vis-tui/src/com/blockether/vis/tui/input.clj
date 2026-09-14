@@ -544,6 +544,10 @@
 
 (defn move-right [st] (buf-> st (.moveRight (->buf st))))
 
+(defn move-up [st] (buf-> st (.moveUp (->buf st))))
+
+(defn move-down [st] (buf-> st (.moveDown (->buf st))))
+
 (defn move-word-left [st] (buf-> st (.moveWordLeft (->buf st))))
 
 (defn move-word-right [st] (buf-> st (.moveWordRight (->buf st))))
@@ -552,7 +556,7 @@
 
 (defn move-line-end [st] (buf-> st (.moveLineEnd (->buf st))))
 
-(defn- emacs-edit
+(defn emacs-edit
   "Apply a lanterna Emacs editing chord (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d)
    to input state `st` via the SHARED `TextEditKeymap` — the SAME source of truth
    every lanterna `TextBox` uses, so the prompt and every dialog input behave

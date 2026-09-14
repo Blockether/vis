@@ -82,7 +82,7 @@
     (is (= (.indexOf ^String header " Fork at this turn ") (get-in hit [:bounds :col])))
     (is (= (count " Fork at this turn ") (get-in hit [:bounds :width])))))
 
-(deftest fork-hover-uses-readable-ink-and-only-highlights-the-target-turn
+(deftest fork-hover-matches-copy-and-only-highlights-the-target-turn
   (let [original @theme/active-theme-id]
     (try (doseq [id (keys shared/built-in-themes)]
            (theme/apply-theme! id)
@@ -93,8 +93,8 @@
                    (header-frame review-message width {:hover-turn-id turn-id})
                    col (get-in (first regions) [:bounds :col])
                    hovered? (= "turn-2" turn-id)
-                   ink (if hovered? theme/link-chrome-hover-fg theme/button-fg)
-                   background (if hovered? theme/link-chrome-hover-bg theme/button-bg)]
+                   ink (if hovered? theme/header-active-tab-fg theme/button-fg)
+                   background (if hovered? theme/header-active-tab-accent theme/button-bg)]
 
                (doseq [x (range col (+ col (get-in (first regions) [:bounds :width])))]
                  (let [cell (get-in capture [:frames 0 1 x])]

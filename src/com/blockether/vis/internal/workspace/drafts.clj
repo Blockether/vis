@@ -80,6 +80,11 @@
                       {:type :draft/not-active :workspace-id workspace-id :state (:state ws)})))
     ws))
 
+(defn diff
+  "Read the active draft's exact patch from its fork or a recorded checkpoint."
+  [env {:keys [workspace-id since]}]
+  (workspace/review-diff (require-draft (:db-info env) workspace-id) since))
+
 (defn- hook-ctx
   "Hook payload for `ws` — plain data, safe to stringify for Python."
   [ws extra]

@@ -64,7 +64,9 @@ export const Fleet: Story = {
     const expand = page.queryByRole('button', { name: 'Expand uberworkspace' });
     if (expand) await userEvent.click(expand);
     await expect(
-      await page.findByRole('navigation', { name: 'Pages of uberworkspace sessions' }),
+      await page.findByRole('navigation', {
+        name: 'Pages of uberworkspace sessions',
+      }),
     ).toBeVisible();
     const doc = canvasElement.ownerDocument;
     const win = doc.defaultView!;
@@ -82,9 +84,13 @@ export const Fleet: Story = {
     await expect(folderBox.y + folderBox.height / 2).toBe(machinesBox.y + machinesBox.height / 2);
     // Action counts must not move the permanent + / disclosure off the shared edge.
     const project = canvasElement.querySelector('[data-project-root="~/rewrite"]')!;
-    const create = within(project as HTMLElement).getByRole('button', { name: /^New session/ });
-    // Phones keep paging inline; desktop rails reserve a row for direct numbered jumps.
-    let pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
+    const create = within(project as HTMLElement).getByRole('button', {
+      name: /^New session/,
+    });
+    // Phones and desktop rails keep paging inline; tablets retain a separate numbered row.
+    let pager = page.getByRole('navigation', {
+      name: 'Pages of uberworkspace sessions',
+    });
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
     // The project band stays uniform across its disclosure, paging and creation control.
     const header = fold.closest('header')!;
@@ -118,7 +124,8 @@ export const Fleet: Story = {
       win.matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44,
     );
     const numbered = win.innerWidth >= 640;
-    if (numbered) {
+    const inline = !numbered || win.matchMedia('(min-width: 1024px) and (pointer: fine)').matches;
+    if (!inline) {
       await expect(pager.getBoundingClientRect().top).toBeGreaterThanOrEqual(
         fold.getBoundingClientRect().bottom + 4,
       );
@@ -139,6 +146,31 @@ export const Fleet: Story = {
     }
     for (const control of within(pager).getAllByRole('button')) {
       await expect(centerY(control)).toBe(centerY(pager));
+      await expect(win.getComputedStyle(control).fontSize).toBe(
+        win.matchMedia('(min-width: 640px) and (pointer: fine)').matches ? '10px' : '11px',
+      );
+    }
+    if (numbered && win.matchMedia('(pointer: fine)').matches) {
+      const controls = within(pager).getAllByRole('button');
+      for (const control of controls) {
+        const box = control.getBoundingClientRect();
+        await expect(box.height).toBeGreaterThanOrEqual(28);
+        await expect(box.width).toBeGreaterThanOrEqual(28);
+        await expect(box.height).toBe(create.getBoundingClientRect().height);
+      }
+      for (let index = 1; index < controls.length; index += 1) {
+        await expect(controls[index].getBoundingClientRect().left).toBeGreaterThanOrEqual(
+          controls[index - 1].getBoundingClientRect().right + 8,
+        );
+      }
+      if (inline) {
+        await expect(create.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+          pager.getBoundingClientRect().right + 16,
+        );
+        // Selected pages and hovered actions share the project's visible surface.
+        const selected = within(pager).getByRole('button', { name: 'Page 1' });
+        await expect(win.getComputedStyle(selected).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+      }
     }
     if (numbered) {
       for (const n of [1, 2]) {
@@ -152,9 +184,14 @@ export const Fleet: Story = {
       expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
     }
     await userEvent.click(
-      within(pager).getByRole('button', { name: numbered ? 'Page 2' : 'Next page' }),
+      within(pager).getByRole('button', {
+        name: numbered ? 'Page 2' : 'Next page',
+      }),
     );
-    await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute('aria-live', 'polite');
+    await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute(
+      'aria-live',
+      'polite',
+    );
     await expect(fold).toHaveAttribute('aria-expanded', 'true');
     for (const control of within(pager).getAllByRole('button')) {
       await expect(centerY(control)).toBe(centerY(pager));
@@ -172,7 +209,9 @@ export const Fleet: Story = {
       );
     }
     await userEvent.click(
-      within(pager).getByRole('button', { name: numbered ? 'Page 1' : 'Previous page' }),
+      within(pager).getByRole('button', {
+        name: numbered ? 'Page 1' : 'Previous page',
+      }),
     );
     await expect(await within(pager).findByText(/^Page 1 of /)).toBeInTheDocument();
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
@@ -192,7 +231,9 @@ export const Fleet: Story = {
 
     for (const control of [disclosure]) {
       const track = control.closest<HTMLElement>('[data-swipe-track]')!;
-      const trigger = within(track).getByRole('button', { name: /^Actions for/ });
+      const trigger = within(track).getByRole('button', {
+        name: /^Actions for/,
+      });
       const content = track.firstElementChild!.firstElementChild!;
       await expect(trigger).toBeVisible();
       await expect(track.scrollWidth).toBe(track.clientWidth);
@@ -228,11 +269,79 @@ export const NarrowRail: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   decorators: [
     (Story) => (
-      <div className="w-80">
+      <div className="h-full min-w-80 w-[33%]">
         <Story />
       </div>
     ),
   ],
+  play: async (context) => {
+    await Fleet.play!(context);
+    const page = within(context.canvasElement);
+    const screen = page.getByRole('region', { name: 'Sessions' });
+    const scroller = screen.querySelector<HTMLElement>('.overflow-y-auto')!;
+    const project = page.getByRole('region', {
+      name: 'uberworkspace sessions',
+    });
+    const pager = within(project).getByRole('navigation');
+    const fold = within(project).getByRole('button', {
+      name: 'Collapse uberworkspace',
+    });
+    const pageCount = Number(within(pager).getAllByRole('button').at(-1)!.textContent);
+    const centerY = (node: Element) => {
+      const box = node.getBoundingClientRect();
+      return box.y + box.height / 2;
+    };
+    const checkEdges = async () => {
+      const box = scroller.getBoundingClientRect();
+      for (const band of screen.querySelectorAll('[data-project-root] > div > header')) {
+        await expect(band.getBoundingClientRect().left).toBe(box.left);
+        await expect(Math.round(band.getBoundingClientRect().right - box.left)).toBe(
+          scroller.clientWidth,
+        );
+      }
+      for (const row of project.querySelectorAll('[data-swipe-track]')) {
+        await expect(Math.round(row.getBoundingClientRect().right - box.left)).toBe(
+          scroller.clientWidth,
+        );
+      }
+    };
+    // Regression: the old rail forced pages onto a second line and reserved an empty
+    // scrollbar lane even after every project was collapsed.
+    await expect(
+      screen.getBoundingClientRect().width / context.canvasElement.getBoundingClientRect().width,
+    ).toBeCloseTo(0.33, 2);
+    await expect(getComputedStyle(scroller).scrollbarGutter).toBe('auto');
+    // Regression: hide the scrollbar and its lane, not the scrollable content.
+    await expect(getComputedStyle(scroller).scrollbarWidth).toBe('none');
+    await expect(getComputedStyle(scroller, '::-webkit-scrollbar').display).toBe('none');
+    await expect(getComputedStyle(scroller).overflowY).toBe('auto');
+    await expect(scroller.clientWidth).toBe(Math.round(scroller.getBoundingClientRect().width));
+    await expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight);
+    scroller.scrollTo({ top: 48, behavior: 'instant' });
+    await expect(scroller.scrollTop).toBe(48);
+    scroller.scrollTo({ top: 0, behavior: 'instant' });
+    await expect(scroller.scrollTop).toBe(0);
+    await checkEdges();
+    for (const target of [3, 4, pageCount, 1]) {
+      await userEvent.click(
+        within(pager).getByRole('button', { name: new RegExp(`^(?:Page|Go to page) ${target}$`) }),
+      );
+      await expect(
+        await within(pager).findByText(`Page ${target} of ${pageCount}`),
+      ).toBeInTheDocument();
+      await expect(centerY(pager)).toBe(centerY(fold));
+      for (const control of within(pager).getAllByRole('button')) {
+        await expect(centerY(control)).toBe(centerY(fold));
+      }
+      await checkEdges();
+    }
+    for (const toggle of page.getAllByRole('button', { name: /^Collapse / })) {
+      await userEvent.click(toggle);
+    }
+    await expect(scroller.scrollHeight).toBe(scroller.clientHeight);
+    await expect(scroller.clientWidth).toBe(Math.round(scroller.getBoundingClientRect().width));
+    await checkEdges();
+  },
 };
 
 export const Desktop: Story = {
@@ -295,7 +404,9 @@ export const ResponsiveFleet: Story = {
 export const Sharing: Story = {
   args: {
     conns: STORY_GATEWAYS.slice(0, 2),
-    share: { files: [{ path: '/cache/PLAN.md', name: 'PLAN.md', type: 'text/markdown' }] },
+    share: {
+      files: [{ path: '/cache/PLAN.md', name: 'PLAN.md', type: 'text/markdown' }],
+    },
     onDiscardShare: fn(),
   },
   play: async ({ canvasElement, args }) => {
@@ -325,7 +436,7 @@ export const SharingDesktop: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   decorators: [
     (Story) => (
-      <div className="w-80">
+      <div className="h-full min-w-80 w-[33%]">
         <Story />
       </div>
     ),

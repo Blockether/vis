@@ -1,8 +1,45 @@
-"""Immutable input/live View documents and lifecycle events.
+"""Read input forms and live-view updates received from Vis.
 
-The canonical JSON Schema validates semantic nodes and operations. They remain
-immutable JSON mappings rather than a second, diverging node model hierarchy.
-Only the engine owns ids, sequence numbers, timeouts and terminal outcomes.
+These immutable records describe what the engine published. To *create* a form
+or live interface in an extension, use the
+[human-input guide](https://vis.blockether.com/human-input.html) or
+[live-view guide](https://vis.blockether.com/live-views.html), not these records.
+
+## Follow the view lifecycle
+
+1. `ViewEvent` decodes `view.open`, `view.patch` and `view.close` payloads.
+2. `InputView` describes a form; `LiveView` describes an open live interface.
+3. `LivePatch` carries ordered updates. `InputResult` and `LiveResult` describe
+   closure; `ViewSnapshot` is the final document when one is retained.
+
+`blockether.vis.engine.Event.view` already decodes these payloads for stream
+consumers. Use `from_wire` when you receive a raw JSON mapping yourself and
+`to_wire` when you need a fresh JSON-compatible copy. Nested nodes stay immutable
+mappings, validated by the same schema as Vis; they are not Python UI widgets.
+
+## Inspect a completed view
+
+```python
+from blockether.vis.views import LiveResult
+
+result = LiveResult.from_wire(
+    {
+        "view_id": "build-one",
+        "is_completed": True,
+        "reason": "completed",
+        "is_from_human": False,
+        "view": {
+            "title": "Build",
+            "nodes": [{"id": "status", "type": "status", "text": "Done", "tone": "ok"}],
+        },
+    }
+)
+assert result.view.nodes[0]["text"] == "Done"
+assert result.to_wire()["view"]["title"] == "Build"
+```
+
+Only the engine assigns IDs, sequence numbers, timeouts and terminal outcomes.
+The example decodes a receipt; it does not open a view or change an engine session.
 """
 
 from __future__ import annotations
@@ -22,15 +59,27 @@ class _ViewRecord:
 
     @classmethod
     def from_wire(cls, value: Any):
+        """Validate a raw mapping and return an immutable record.
+
+        Raises:
+            ValueError: The mapping violates this record's canonical View schema.
+        """
         validate("view", cls._definition, value)
         return cls(**freeze(value))
 
     def to_wire(self) -> dict[str, Any]:
+        """Return a fresh JSON-compatible copy, including nested mappings and lists."""
         return to_wire(self)
 
 
 @dataclass(frozen=True, slots=True)
 class InputView(_ViewRecord):
+    """An open input form, including field schemas and engine-owned timeout metadata.
+
+    This describes the form, not a person's answers. Submitted values are not
+    included in public close events; they belong to the waiting extension.
+    """
+
     _definition = "input_view"
     id: str
     title: str
@@ -47,6 +96,12 @@ class InputView(_ViewRecord):
 
 @dataclass(frozen=True, slots=True)
 class LiveView(_ViewRecord):
+    """An open live interface at sequence `seq`, with immutable semantic nodes.
+
+    Apply subsequent `LivePatch` operations in sequence order in your consumer;
+    this snapshot does not mutate itself when another event arrives.
+    """
+
     _definition = "live_view"
     id: str
     title: str
@@ -63,6 +118,8 @@ class LiveView(_ViewRecord):
 
 @dataclass(frozen=True, slots=True)
 class ViewSnapshot(_ViewRecord):
+    """A retained view document without open-session IDs or timeout metadata."""
+
     _definition = "view"
     title: str
     nodes: tuple[Mapping[str, Any], ...]
@@ -71,6 +128,12 @@ class ViewSnapshot(_ViewRecord):
 
 @dataclass(frozen=True, slots=True)
 class LivePatch(_ViewRecord):
+    """Ordered semantic updates for `view_id`, ending at sequence `seq`.
+
+    The containing `ViewEvent.first_seq` identifies the first sequence covered
+    by a patch event. Operations remain immutable schema-validated mappings.
+    """
+
     _definition = "live_patch"
     view_id: str
     seq: int
@@ -87,6 +150,13 @@ class InputResult(_ViewRecord):
 
 @dataclass(frozen=True, slots=True)
 class LiveResult(_ViewRecord):
+    """A live interface's final outcome and optional retained document.
+
+    Check `is_completed` and `reason` rather than assuming every close succeeds.
+    `is_from_human` distinguishes a person's closure from a programmatic one;
+    `view`, `summary`, `error` and attachment metadata may be absent.
+    """
+
     _definition = "live_close"
     view_id: str
     is_completed: bool
@@ -101,6 +171,11 @@ class LiveResult(_ViewRecord):
 
     @classmethod
     def from_wire(cls, value: Any) -> LiveResult:
+        """Validate a close receipt and decode its optional `ViewSnapshot`.
+
+        Raises:
+            ValueError: The receipt or its retained view violates the View schema.
+        """
         validate("view", cls._definition, value)
         picture = (
             {"view": ViewSnapshot.from_wire(value["view"])} if "view" in value else {}
@@ -121,6 +196,16 @@ class ViewEvent:
 
     @classmethod
     def from_wire(cls, event_type: str, value: Any) -> ViewEvent:
+        """Decode a View event payload, separate from its stream envelope.
+
+        Args:
+            event_type: `"view.open"`, `"view.patch"` or `"view.close"`.
+            value: The corresponding JSON payload, including its kind and view ID.
+
+        Raises:
+            KeyError: The event type is unsupported.
+            ValueError: The payload, view identity or patch sequence is invalid.
+        """
         definition = {
             "view.open": "open_event",
             "view.patch": "patch_event",
@@ -152,4 +237,5 @@ class ViewEvent:
         return cls(kind=value["kind"], view_id=identity, **payload)
 
     def to_wire(self) -> dict[str, Any]:
+        """Return this typed View payload as fresh JSON-compatible data."""
         return to_wire(self)

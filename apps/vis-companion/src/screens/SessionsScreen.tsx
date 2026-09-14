@@ -136,7 +136,11 @@ const SEARCH_REACH_MS = 8_000;
 // hits named that this page had not paged in yet, and whether the machine ANSWERED AT
 // ALL. `reached: false` is not an empty result — it is the absence of one, and the
 // screen prints it as such.
-type SearchAnswer = { matches: SessionMatch[]; rows: Session[]; reached: boolean };
+type SearchAnswer = {
+  matches: SessionMatch[];
+  rows: Session[];
+  reached: boolean;
+};
 
 // A machine that was asked and did not speak: dark before the question, or silent past
 // `SEARCH_REACH_MS`.
@@ -145,11 +149,19 @@ const UNREACHED: SearchAnswer = { matches: [], rows: [], reached: false };
 // The fleet's answer to ONE needle. `asked` is who the question went to, so
 // `asked.length - byMachine.size` is exactly how much of the search is still
 // outstanding — the progress the screen reports while it waits.
-type SearchAnswers = { needle: string; asked: string[]; byMachine: Map<string, SearchAnswer> };
+type SearchAnswers = {
+  needle: string;
+  asked: string[];
+  byMachine: Map<string, SearchAnswer>;
+};
 
 const NO_MACHINES: string[] = [];
 
-const NO_SEARCH: SearchAnswers = { needle: '', asked: NO_MACHINES, byMachine: new Map() };
+const NO_SEARCH: SearchAnswers = {
+  needle: '',
+  asked: NO_MACHINES,
+  byMachine: new Map(),
+};
 
 // A RETRY IS A GESTURE, so it answers on a gesture's clock. The transport gives every
 // request 30s (`REQUEST_TIMEOUT_MS`) and a list read can page, so a tile pressed on a
@@ -235,11 +247,11 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
 const LIST_PEEK = 40;
 const LIST_FOOT = 16;
 const LIST_GEOMETRY = {
-  // Numeric pages occupy their own line inside the project band.
+  // Outside the desk rail, numeric pages occupy their own line in the project band.
   touch: { row: 49, chrome: 211 + 44 + LIST_PEEK, min: 15 },
   mouse: { row: 33, chrome: 149 + 40 + LIST_FOOT + LIST_PEEK, min: 3 },
-  // The desk rail has one-line session rows and its own 28px footer.
-  desk: { row: 33, chrome: 149 + 40 + 28 + LIST_PEEK, min: 3 },
+  // The wider desk rail shows row metadata, inline pages and its own 28px footer.
+  desk: { row: 49, chrome: 149 + 28 + LIST_PEEK, min: 3 },
 } as const;
 
 /** Page size sent to the gateway for the current measured layout. */
@@ -353,7 +365,10 @@ export function SessionsScreen({
   const [searchAnswers, setSearchAnswers] = useState<SearchAnswers>(NO_SEARCH);
   // The create in flight and the project header that started it. Only that
   // header replaces its plus with the busy word.
-  const [creating, setCreating] = useState<{ at: string | null; label: string } | null>(null);
+  const [creating, setCreating] = useState<{
+    at: string | null;
+    label: string;
+  } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [manageProjects, setManageProjects] = useState<{
     machine: FleetMachine;
@@ -1553,21 +1568,6 @@ export function SessionsScreen({
           </Banner>
         </div>
       )}
-      {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
-          already draws the rule below the Vis mark. A `border-y` here stacked a
-          second hairline on top of it, so the Sessions tab wore a 2px seam while
-          Machines (which floats its cards below a gap) wore 1px. Bottom edge only;
-          the full box comes back once the panel detaches at `sm`. */}
-      {/* THE CARD OWNS ITS TOP EDGE ON A PHONE, AND NOTHING ELSE. Its left side used to
-          be a frame: a neutral 2px rule under the chrome bands, the machine's own hue
-          down everything that machine owned — because a rail beside a border is two lines
-          doing one job, and a rail that is a BORDER also steals 2px of layout the trailing
-          edge has no match for. Reported (paraphrased: no left rail on the phone either,
-          there is only ever one machine): with a fleet of one that frame ran the height of
-          the glass to say which of one. The hue is a comparison and paints only above a
-          fleet now, so under it the phone card is paper with rows on it, and the rows keep
-          the 2px the frame used to take. From `sm` up there is no card at all — the
-          projects are sheets standing on the page. */}
       {/* THE SWITCHER STANDS OUTSIDE WHAT IT SWITCHES, AND IT IS ONE OBJECT.
           The chips used to sit inside the machine card's own header, so the control
           that picks a machine looked like part of that machine's own answer. They are
@@ -1798,7 +1798,7 @@ export function SessionsScreen({
 
         <div
           ref={listRef}
-          className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] pb-[calc(0.75rem+env(safe-area-inset-bottom))] ${isDesk ? '' : 'sm:px-3'}`}
+          className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-color:color-mix(in_srgb,var(--dialog-hint)_12%,transparent)_transparent] pb-[calc(0.75rem+env(safe-area-inset-bottom))] ${isDesk ? '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'sm:px-3 [scrollbar-gutter:stable]'}`}
         >
           {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
             is where those rows go. Rows fresher than the oldest row on screen are

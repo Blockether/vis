@@ -30,7 +30,9 @@ import {
   Globe,
   Image,
   LoaderCircle,
+  Lightbulb,
   type LucideIcon,
+  MessageSquare,
   Mic,
   MicVocal,
   PanelLeft,
@@ -121,6 +123,11 @@ export function ClearIcon({ className }: { className?: string }) {
  */
 export function SearchIcon({ className }: { className?: string }) {
   return <Mark icon={Search} className={className} />;
+}
+
+/** Reports, ideas and reviewed improvements. */
+export function ImproveIcon({ className }: { className?: string }) {
+  return <Mark icon={Lightbulb} className={className} />;
 }
 
 /**
@@ -396,6 +403,11 @@ export function CopyIcon({ className }: { className?: string }) {
 /** Hand a picture to the platform share sheet. */
 export function ShareIcon({ className }: { className?: string }) {
   return <Mark icon={Share2} className={className} />;
+}
+
+/** Leave a remark on a document. */
+export function CommentIcon({ className }: { className?: string }) {
+  return <Mark icon={MessageSquare} className={className} />;
 }
 
 /** DONE. The tick that answers a press — the copy chip's second face. */

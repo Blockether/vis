@@ -94,6 +94,23 @@ file and returns its descriptor. Use `list_attachments()`, `get_attachment(...)`
 `read_attachment(...)` and `show_attachment(...)` to retrieve attachments by
 filename or id. Saving another file with the same name creates a new version.
 
+Attachments are read-only by default. Pass `commentable=True` when you want people
+to review an attachment in Companion or the TUI. This is a property of each version,
+not something inferred from its filename. For example, a specification allows
+comments, while its implementation report does not:
+
+```python
+attach(specification.encode("utf-8"), filename="PLAN-search.md", kind="doc",
+       media_type="text/markdown", commentable=True)
+attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
+       media_type="text/markdown", commentable=False)
+```
+
+Here `specification` and `report` are the Markdown strings you produced. Read-only
+prevents human comment saves, not a producer's later update under the same filename.
+See [specification review](working-with-plans.md) for the review workflow and
+[draft diffs](drafts.md) for reviewable patches from an isolated working copy.
+
 ## Sandbox versus project Python
 
 Use a project interpreter when code needs your project's dependencies. It has

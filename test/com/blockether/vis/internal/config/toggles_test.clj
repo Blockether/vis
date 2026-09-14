@@ -393,3 +393,13 @@
                           (expect (true? (t/enabled? "test_wire_bool")))
                           (t/set-value! "test_wire_bool" false)
                           (expect (false? (t/enabled? "test_wire_bool")))))))
+
+(defdescribe plans-toggle-test
+             (it "is one persisted opt-in switch exposed in both clients"
+                 (let [spec (t/toggle-spec "plans")]
+                   (expect (= :boolean (:type spec)))
+                   (expect (false? (:default spec)))
+                   (expect (true? (:persist? spec)))
+                   (expect (toggle-contract/settings-description? (:description spec)))
+                   (doseq [channel [:tui :web]]
+                     (expect (some #(= "plans" (:id %)) (t/toggles-for-channel channel)))))))

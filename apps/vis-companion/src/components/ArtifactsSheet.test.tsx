@@ -739,4 +739,30 @@ describe('an opened artifact', () => {
     view.unmount();
     vi.unstubAllGlobals();
   });
+  it.each([undefined, false, true])(
+    'honors explicit commentable=%s in the gallery',
+    async (commentable) => {
+      const view = render(
+        <ArtifactsSheet
+          client={client}
+          sid="s1"
+          artifacts={[{ ...note, commentable }]}
+          onClose={() => {}}
+        />,
+      );
+      await userEvent.click(
+        screen.getByRole('button', { name: /^Open vis-issue-115-comment\.md/ }),
+      );
+      await screen.findByText('A read that works.', { selector: 'p' });
+      expect(
+        screen.queryByRole('button', {
+          name: 'Comment on the whole document',
+        }) !== null,
+      ).toBe(commentable === true);
+      expect(screen.queryByRole('button', { name: 'Save changes' }) !== null).toBe(
+        commentable === true,
+      );
+      view.unmount();
+    },
+  );
 });

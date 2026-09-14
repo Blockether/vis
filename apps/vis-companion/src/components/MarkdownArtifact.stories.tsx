@@ -19,10 +19,12 @@ import { type DocumentChrome, MarkdownAnnotator } from './MarkdownArtifact';
  */
 const chrome: DocumentChrome = ({ actions, note, body }) => (
   <div className="flex h-[520px] min-h-0 flex-col gap-2">
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-meta text-muted">{note || 'plan.md'}</span>
-      {actions}
-    </div>
+    <header className="flex min-h-12 items-stretch justify-between gap-3 mouse:min-h-9">
+      <span className="flex min-w-0 flex-1 items-center text-meta text-muted">
+        {note || 'plan.md'}
+      </span>
+      <div className="flex shrink-0 items-stretch">{actions}</div>
+    </header>
     <div className="min-h-0 flex-1 overflow-auto">{body}</div>
   </div>
 );
@@ -90,5 +92,93 @@ export const StableHighlight: Story = {
     await userEvent.type(canvas.getByRole('textbox', { name: 'Comment' }), 'Keep this layout.');
     await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
     check();
+  },
+};
+
+const PLAN_TEXT =
+  '# Session search\n\n**Feature:** session-search\n**Status:** ready\n\n## Spec\nFind a session by title without leaving the current conversation.\n\n## Implementation plan\n1. Search titles end to end; verify empty results and keyboard selection.\n2. Restore the selected session and its scroll position.\n\n## Open questions\nNone.';
+const planning = { filename: 'PLAN-session-search.md', version: 3, onSend: fn(async () => {}) };
+const specification = { text: PLAN_TEXT, planning, onSave: fn(async () => 4) };
+
+/** One approval starts implementation of the viewed specification. */
+export const PlanReady: Story = {
+  args: specification,
+  play: async ({ canvas, args, canvasElement }) => {
+    await expect(canvas.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Send for revision' })).toBeNull();
+    const workflow = canvas.getByRole('region', { name: 'Specification workflow' });
+    await expect(workflow.querySelectorAll('button')).toHaveLength(1);
+    const prose = canvasElement.querySelector('h1')!;
+    await expect(workflow.getBoundingClientRect().top).toBeGreaterThan(
+      prose.getBoundingClientRect().bottom,
+    );
+    await userEvent.click(canvas.getByRole('button', { name: 'Approve and start' }));
+    await expect(args.planning!.onSend).toHaveBeenCalledTimes(1);
+    await expect(args.planning!.onSend).toHaveBeenCalledWith('approve', 3);
+    await expect(canvas.getByRole('status')).toHaveTextContent('Implementation requested for v3');
+  },
+};
+
+/** A review round is sent only after the reader finishes adding remarks. */
+export const SpecificationReviewRound: Story = {
+  args: { ...specification, planning: { ...planning, onSend: fn(async () => {}) } },
+  play: async ({ canvas, args }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Comment on the whole document' }));
+    await userEvent.type(
+      canvas.getByRole('textbox', { name: 'Comment' }),
+      'Include archived sessions.',
+    );
+    await expect(canvas.queryByRole('button', { name: 'Approve and start' })).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
+    await expect(args.planning!.onSend).not.toHaveBeenCalled();
+    await expect(args.onSave).not.toHaveBeenCalled();
+    await expect(canvas.getByRole('status')).toHaveTextContent('1 unresolved comment');
+    await userEvent.click(canvas.getByRole('button', { name: 'Send for revision' }));
+    await expect(args.onSave).toHaveBeenCalledTimes(1);
+    await expect(args.onSave).toHaveBeenCalledWith(
+      expect.stringContaining('Include archived sessions.'),
+    );
+    await expect(args.planning!.onSend).toHaveBeenCalledTimes(1);
+    await expect(args.planning!.onSend).toHaveBeenCalledWith('revise', 4);
+  },
+};
+
+export const SpecificationDraft: Story = {
+  args: { ...specification, text: PLAN_TEXT.replace('ready', 'draft') },
+};
+
+/** Remarks must be resolved before approval becomes available. */
+export const PlanCommented: Story = {
+  args: {
+    ...specification,
+    text: `${PLAN_TEXT}\n\n## Comments\n\n- **Whole document** — Include archived sessions.\n`,
+  },
+  play: async ({ canvas, args }) => {
+    await expect(canvas.queryByRole('button', { name: 'Approve and start' })).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Send for revision' }));
+    await expect(args.planning!.onSend).toHaveBeenCalledWith('revise', 3);
+  },
+};
+
+/** Accepted specifications use the same single approval-and-start action. */
+export const PlanAccepted: Story = {
+  args: { ...specification, text: PLAN_TEXT.replace('ready', 'accepted') },
+};
+
+export const PlanSendFailure: Story = {
+  args: {
+    ...specification,
+    planning: {
+      ...planning,
+      onSend: fn(async () => {
+        throw new Error('Connection lost. Retry when connected.');
+      }),
+    },
+  },
+  play: async ({ canvas }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Approve and start' }));
+    await expect(canvas.getByRole('status')).toHaveTextContent('Connection lost');
+    await expect(canvas.getByRole('button', { name: 'Approve and start' })).toBeEnabled();
   },
 };

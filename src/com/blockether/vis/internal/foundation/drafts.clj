@@ -6,10 +6,12 @@
    the boundary the daemon's HTTP routes use too, so an extension hook on
    `:draft/*` sees every surface alike."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.diff :as diff]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.mpl-capture :as capture]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.drafts :as drafts]))
@@ -100,6 +102,51 @@
                                                    :root (:root ws)
                                                    :backend-setting
                                                    (name (workspace/draft-backend-setting))}))})))
+
+(defn draft-diff
+  "Attach the active draft's immutable patch and return its reusable checkpoint."
+  [env & [filename since]]
+  (let [ws
+        (current-workspace env)
+
+        filename
+        (or filename (str "DIFF-" (:label ws) ".json"))]
+
+    (cond (not (workspace/draft? ws)) (not-in-draft "draft_diff()")
+          (nil? capture/*attachment-sink*) (failure
+                                             "draft_diff requires an active attachment collector.")
+          (or (not (string? filename))
+              (str/blank? filename)
+              (re-find #"[/\\]" filename)
+              (not (str/ends-with? filename ".json")))
+          (failure "Use a stable JSON filename, such as DIFF-feature.json.")
+          :else
+          (try (let [{:keys [patch source checkpoint]}
+                     (drafts/diff (boundary-env env) {:workspace-id (:id ws) :since since})
+
+                     text
+                     (diff/render {"schema_version" 1 "patch" patch "source" source "comments" []})
+
+                     bytes
+                     (.getBytes ^String text java.nio.charset.StandardCharsets/UTF_8)
+
+                     recorded
+                     (capture/record-attachment!
+                       {:kind "diff"
+                        :media-type diff/media-type
+                        :filename filename
+                        :audience "user"
+                        :commentable true
+                        :size (alength bytes)
+                        :base64 (.encodeToString (java.util.Base64/getEncoder) bytes)})]
+
+                 (if recorded
+                   (extension/success {:op :draft-diff
+                                       :result (wire/canonical (assoc (dissoc recorded :base64)
+                                                                 :checkpoint checkpoint
+                                                                 :empty (empty? patch)))})
+                   (failure "The draft diff could not be attached. Retry the capture.")))
+               (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (defn draft-create
   "Open a draft of the trunk and move the session into it."
@@ -209,6 +256,26 @@
      (str "String-keyed `{in_draft, root, ...}`; in a draft also `{workspace_id, label, repo_root, "
           "backend, mechanism, branch, target_branch, ahead, pending}`.")}))
 
+(def draft-diff-symbol
+  (vis/symbol
+    #'draft-diff
+    {:activity (presenter/for-tool :draft_diff)
+     :inject-env? true
+     :tag :observation
+     :description
+     (str
+       "Attach the active draft's exact changes as a reviewable diff. Defaults to changes since "
+       "the seeded fork; inherited pending work is excluded. Pass since=<checkpoint> from a "
+       "previous result for task-only changes. Neither the working index nor commits are changed. "
+       "Works with worktree and Rift drafts, including non-Git Rift directories; Git is required. "
+       "The same filename stores the next attachment version. Old drafts without a baseline refuse.")
+     :params [{:name "filename" :note "stable JSON filename; default DIFF-<draft-label>.json"}
+              {:name "since"
+               :note "snapshot checkpoint returned by this draft; omit for cumulative diff"}]
+     :call {:opt-pos ["filename" "since"]}
+     :result
+     "Attachment descriptor plus checkpoint and empty. Patch bytes stay in the attachment."}))
+
 (def draft-create-symbol
   (vis/symbol
     #'draft-create
@@ -271,4 +338,6 @@
                "String-keyed `{status: discarded, label, root, branch, approved_ahead}`; `root` is "
                "the trunk the session works in again.")}))
 
-(def symbols [draft-status-symbol draft-create-symbol draft-approve-symbol draft-discard-symbol])
+(def symbols
+  [draft-status-symbol draft-diff-symbol draft-create-symbol draft-approve-symbol
+   draft-discard-symbol])

@@ -699,6 +699,15 @@
   ^String []
   (try (.getCanonicalPath (drafts-home)) (catch Throwable _ nil)))
 
+(defn- review-store
+  "Private snapshot objects beside (never inside) the working copy."
+  ^File [root]
+  (let [root (io/file (file-path root))]
+    (io/file (.getParentFile root)
+             ".vis-review"
+             (str (java.util.UUID/nameUUIDFromBytes
+                    (.getBytes (.getPath root) java.nio.charset.StandardCharsets/UTF_8))))))
+
 (def ^:private ^"[Ljava.nio.file.CopyOption;" copy-opts
   ^"[Ljava.nio.file.CopyOption;"
   (into-array CopyOption
@@ -713,8 +722,9 @@
    close a load cycle — but it keeps `internal.git/git-argv`'s contract:
    `--no-optional-locks`, so a workspace read never takes `.git/index.lock`
    away from a concurrent git."
-  ([^File dir args] (git* dir args nil))
-  ([^File dir args env]
+  ([^File dir args] (git* dir args nil nil))
+  ([^File dir args env] (git* dir args env nil))
+  ([^File dir args env input]
    (try (let [pb
               (doto (ProcessBuilder. ^java.util.List
                                      (into ["git" "--no-optional-locks"] (map str) args))
@@ -723,10 +733,18 @@
 
               _
               (doseq [[k v] env]
-                (.put (.environment pb) (str k) (str v)))
+                (if (nil? v)
+                  (.remove (.environment pb) (str k))
+                  (.put (.environment pb) (str k) (str v))))
 
               p
               (.start pb)
+
+              _
+              (with-open [stream (.getOutputStream p)]
+                (when input
+                  (.write stream
+                          (.getBytes ^String input java.nio.charset.StandardCharsets/UTF_8))))
 
               out
               (slurp (.getInputStream p))
@@ -1100,7 +1118,8 @@
       :worktree
       (git-worktree-discard! root)
 
-      (rift-discard! {:root (file-path root)}))))
+      (rift-discard! {:root (file-path root)}))
+    (when (.exists (review-store root)) (rift-delete-tree! (review-store root)))))
 
 (defonce ^:private discard-executor
   ;; Single daemon thread: serializes physical clone reclamation OFF the request
@@ -1249,6 +1268,220 @@
                             FileVisitResult/CONTINUE)
                           (visitFileFailed [_file _exc] FileVisitResult/CONTINUE)))
     (vec acc)))
+
+(def ^:private review-git-environment
+  ;; Ignore inherited Git routing/configuration, especially a caller's index or
+  ;; object directory. Review owns its own objects, index and ref namespace.
+  {"GIT_DIR" nil
+   "GIT_WORK_TREE" nil
+   "GIT_INDEX_FILE" nil
+   "GIT_COMMON_DIR" nil
+   "GIT_OBJECT_DIRECTORY" nil
+   "GIT_ALTERNATE_OBJECT_DIRECTORIES" nil
+   "GIT_CONFIG" nil
+   "GIT_CONFIG_COUNT" "0"
+   "GIT_CONFIG_PARAMETERS" nil
+   "GIT_CONFIG_GLOBAL" "/dev/null"
+   "GIT_CONFIG_SYSTEM" "/dev/null"
+   "GIT_CONFIG_NOSYSTEM" "1"
+   "GIT_ATTR_NOSYSTEM" "1"})
+
+(defonce ^:private review-lock (Object.))
+
+(defn- review-git!
+  "Run plumbing against review's private index, returning untrimmed output."
+  ([root args] (review-git! root args nil))
+  ([root args input]
+   (let [store
+         (review-store root)
+
+         env
+         (assoc review-git-environment
+           "GIT_DIR" (.getPath store)
+           "GIT_WORK_TREE" (file-path root)
+           "GIT_INDEX_FILE" (.getPath (io/file store "index")))
+
+         {:keys [exit out]}
+         (git* (io/file root) args env input)]
+
+     (when-not (= 0 exit)
+       (throw (ex-info (str "Could not capture the draft diff: " (str/trim (str out)))
+                       {:type :draft/diff-failed :args args})))
+     (str out))))
+
+(defn- review-path-confined?
+  "A cached descendant of a directory replaced by a symlink is a deletion,
+   not permission to read the link's target. Check ancestors before any stat."
+  [root relative]
+  (let [path
+        (.toPath (io/file relative))
+
+        segments
+        (vec (iterator-seq (.iterator path)))]
+
+    (and (not (.isAbsolute path))
+         (not-any? #(= ".." (str %)) segments)
+         (loop [parent
+                (.toPath (io/file root))
+
+                remaining
+                (butlast segments)]
+
+           (if-let [segment (first remaining)]
+             (let [next-path (.resolve parent ^Path segment)]
+               (and (not (Files/isSymbolicLink next-path)) (recur next-path (next remaining))))
+             true)))))
+
+(defn- review-paths
+  "Current source files plus previous snapshot paths, without following symlinks."
+  [root]
+  (let [baseline
+        (io/file (review-store root) "vis-fork-tree")
+
+        fork-paths
+        (when (.isFile baseline)
+          (review-git! root
+                       ["ls-tree" "-r" "-z" "--name-only"
+                        (str/trim (slurp baseline :encoding "UTF-8"))]))
+
+        private-paths
+        (review-git! root ["ls-files" "-z" "--cached"])
+
+        source-env
+        (cond-> (dissoc review-git-environment
+                  "GIT_CONFIG_GLOBAL"
+                  "GIT_CONFIG_SYSTEM"
+                  "GIT_CONFIG_NOSYSTEM")
+          (not (git-managed? root))
+          (assoc "GIT_DIR"
+            (.getPath (review-store root)) "GIT_WORK_TREE"
+            (file-path root) "GIT_INDEX_FILE"
+            (.getPath (io/file (review-store root) "index"))))
+
+        source-paths
+        (let [{:keys [exit out]} (git* (io/file root)
+                                       ["-c" "core.fsmonitor=false" "ls-files" "-z" "--cached"
+                                        "--others" "--exclude-standard"]
+                                       source-env)]
+          (when-not (= 0 exit)
+            (throw (ex-info "Could not enumerate draft files" {:type :draft/diff-failed})))
+          out)]
+
+    (->> (str/split (str fork-paths private-paths source-paths) #"\u0000")
+         (remove str/blank?)
+         distinct
+         (remove #(prune-dir? (.toPath (io/file %))))
+         (filter #(review-path-confined? root %))
+         (filter #(Files/exists (.toPath (io/file root %))
+                                (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])))
+         sort
+         vec)))
+
+(defn- review-snapshot!
+  "Store exact working bytes as a tree: no clean filters, text conversion or commit."
+  [root]
+  (let [files
+        (review-paths root)
+
+        links
+        (filterv #(Files/isSymbolicLink (.toPath (io/file root %))) files)
+
+        regular
+        (filterv #(Files/isRegularFile (.toPath (io/file root %))
+                                       (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+          files)
+
+        _
+        (when-not (= (count files) (+ (count links) (count regular)))
+          (throw (ex-info "Draft diffs do not support nested repositories or special files"
+                          {:type :draft/diff-unsupported-file})))
+
+        entries
+        (concat (mapcat (fn [batch]
+                          (let [hashes (str/split-lines (review-git! root
+                                                                     (into ["hash-object" "-w"
+                                                                            "--no-filters" "--"]
+                                                                           batch)))]
+                            (when-not (= (count batch) (count hashes))
+                              (throw (ex-info "Incomplete draft snapshot"
+                                              {:type :draft/diff-failed})))
+                            (map (fn [path hash]
+                                   (str (if (.canExecute (io/file root path)) "100755" "100644")
+                                        " "
+                                        hash
+                                        "\t"
+                                        path
+                                        "\u0000"))
+                                 batch
+                                 hashes)))
+                        (partition-all 128 regular))
+                (map (fn [path]
+                       (let [target
+                             (str (Files/readSymbolicLink (.toPath (io/file root path))))
+
+                             hash
+                             (str/trim (review-git! root ["hash-object" "-w" "--stdin"] target))]
+
+                         (str "120000 " hash "\t" path "\u0000")))
+                     links))]
+
+    (review-git! root ["read-tree" "--empty"])
+    (when (seq files) (review-git! root ["update-index" "-z" "--index-info"] (apply str entries)))
+    (let [tree (str/trim (review-git! root ["write-tree"]))]
+      ;; Refs keep every returned checkpoint alive and prove which draft owns it.
+      (review-git! root ["update-ref" (str "refs/vis-review/" tree) tree])
+      tree)))
+
+(defn- initialize-review!
+  "Capture the seeded fork once; inherited pending work is part of the baseline."
+  [root]
+  (locking review-lock
+    (let [store (review-store root)]
+      (.mkdirs store)
+      (let [{:keys [exit out]} (git* (io/file root)
+                                     ["init" "--quiet" "--bare" "--object-format=sha1"
+                                      (.getPath store)]
+                                     review-git-environment)]
+        (when-not (= 0 exit)
+          (throw (ex-info (str "Could not initialize draft review: " (str/trim (str out)))
+                          {:type :draft/diff-failed}))))
+      (spit (io/file store "vis-fork-tree") (review-snapshot! root) :encoding "UTF-8"))))
+
+(defn review-diff
+  "Exact changes since the immutable fork or a checkpoint previously returned for
+   this draft. Only its primary working copy is read; shared roots and moving
+   trunk state never participate. Checkpoints are snapshot tree IDs, not commits."
+  [ws since]
+  (locking review-lock
+    (let [root
+          (:root ws)
+
+          baseline
+          (io/file (review-store root) "vis-fork-tree")]
+
+      (when-not (.isFile baseline)
+        (throw (ex-info "This draft has no review baseline. Create a new draft to capture diffs."
+                        {:type :draft/diff-baseline-missing})))
+      (let [before (or since (str/trim (slurp baseline :encoding "UTF-8")))]
+        (when-not (and (string? before)
+                       (re-matches #"[0-9a-f]{40}" before)
+                       (try (= before
+                               (str/trim (review-git! root
+                                                      ["rev-parse" "--verify"
+                                                       (str "refs/vis-review/" before)])))
+                            (catch clojure.lang.ExceptionInfo _ false)))
+          (throw (ex-info "The diff checkpoint does not belong to this draft"
+                          {:type :draft/diff-invalid-checkpoint})))
+        (let [after (review-snapshot! root)]
+          {:patch (review-git! root
+                               ["diff" "--no-ext-diff" "--no-textconv" "--no-color" "--binary"
+                                "--no-renames" before after "--"])
+           :checkpoint after
+           :source {"type" "draft"
+                    "backend" (name (backend-id (:workspace-backend ws)))
+                    "label" (str (:label ws))
+                    "base_revision" before
+                    "head_revision" after}})))))
 
 (defn- fork-ms-of [ws] (:fork-ms ws))
 
@@ -1706,6 +1939,7 @@
               (carry-pending-changes! (io/file (file-path parent)) (io/file root)))
 
             (when clean? (rift/clean! {:at root :commit "HEAD"})))
+          (initialize-review! root)
           (catch Throwable t (try (discard-root! backend root) (catch Throwable _ nil)) (throw t)))
 
         ;; Seeded files must be strictly older than the persisted baseline;

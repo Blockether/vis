@@ -42,6 +42,7 @@ import {
   IconButton,
   Input,
   ListRow,
+  Select,
   PROSE,
   Switch,
 } from '../../components/ui';
@@ -54,6 +55,7 @@ import {
 import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
+import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 
 /** Native closed-choice setting: keyboard/touch selection, with saving disabling input. */
 export function EnumSetting({
@@ -66,20 +68,22 @@ export function EnumSetting({
   onPick: (value: string) => void;
 }) {
   return (
-    <select
+    <Select
+      className="self-center"
       aria-label={toggle.label}
       aria-busy={busy}
       value={toggle.value}
       disabled={busy}
       onChange={(event) => onPick(event.target.value)}
-      className="min-h-11 min-w-0 max-w-full self-center appearance-auto rounded-control border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted mouse:min-h-7"
     >
       {toggle.choices?.map((choice) => (
         <option key={choice} value={choice}>
-          {choice}
+          {toggle.id === 'improve_mode'
+            ? (IMPROVE_MODE_LABELS[choice as ImproveMode] ?? choice)
+            : choice}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 

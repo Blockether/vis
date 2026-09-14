@@ -31,6 +31,7 @@ import {
   ARTIFACT_FILTERS,
   docKindLabel,
   isMarkdownMedia,
+  isDiffMedia,
   isPdfMedia,
   isTableMedia,
   isTextMedia,
@@ -47,6 +48,7 @@ import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { LiveArtifact } from './LiveArtifact';
 import { MarkdownArtifact } from './MarkdownArtifact';
+import { DiffArtifact } from './DiffArtifact';
 import { MediaRecording } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
@@ -851,21 +853,26 @@ function ArtifactDetail({
         src={url}
         name={artifact.name}
         onClose={onClose}
+        commentable={artifact.commentable === true}
         // Drawing on a picture is an ANSWER to it, so the ink is saved back
         // under the same filename — the next version of that artifact, the way
         // a commented note is — and the drawing is attached to the message too.
         // Its verb is the band's plain Save, like the note's: what saving MEANS
         // here belongs to this comment, not to a longer word on a title bar.
-        onApply={async (edited: Blob) => {
-          await client.saveArtifactBytes(
-            sid,
-            artifact.iterationId,
-            artifact.name,
-            artifact.mediaType || 'image/png',
-            new Uint8Array(await edited.arrayBuffer()),
-          );
-          if (attach) attach(edited, editedFilename(artifact.name));
-        }}
+        onApply={
+          artifact.commentable === true
+            ? async (edited: Blob) => {
+                await client.saveArtifactBytes(
+                  sid,
+                  artifact.iterationId,
+                  artifact.name,
+                  artifact.mediaType || 'image/png',
+                  new Uint8Array(await edited.arrayBuffer()),
+                );
+                if (attach) attach(edited, editedFilename(artifact.name));
+              }
+            : undefined
+        }
       />
     );
   }
@@ -946,9 +953,31 @@ function ArtifactDetail({
     );
   }
 
-  // A note and a log are the same document: markdown is RENDERED, plain text is
-  // read verbatim line by line, and either one can be commented on — the whole
-  // document saves back as the next version of the same filename.
+  if (isDiffMedia(artifact.mediaType)) {
+    return (
+      <DiffArtifact
+        client={client}
+        sid={sid}
+        iterationId={artifact.iterationId}
+        name={artifact.name}
+        source={blob}
+        version={artifact.version}
+        commentable={artifact.commentable === true}
+        chrome={({ actions, note, body }) => (
+          <DetailOverlay
+            name={artifact.name}
+            subtitle={note}
+            actions={actions}
+            share={share}
+            onClose={onClose}
+            fill
+          >
+            {body}
+          </DetailOverlay>
+        )}
+      />
+    );
+  }
   if (isTextMedia(artifact.mediaType, artifact.name)) {
     return (
       <MarkdownArtifact
@@ -958,6 +987,8 @@ function ArtifactDetail({
         name={artifact.name}
         mediaType={artifact.mediaType}
         source={blob}
+        version={artifact.version}
+        commentable={artifact.commentable === true}
         plain={!isMarkdownMedia(artifact.mediaType, artifact.name)}
         // The note's own verb stands in this overlay's band, one cell from the
         // ✕, and the band reports the version it saved as.
@@ -989,6 +1020,7 @@ function ArtifactDetail({
         name={artifact.name}
         mediaType={artifact.mediaType}
         url={url}
+        commentable={artifact.commentable === true}
         chrome={({ actions, note, body }) => (
           <DetailOverlay
             name={artifact.name}

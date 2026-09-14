@@ -4,6 +4,7 @@
             [com.blockether.svar.internal.llm :as svar-llm]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -1338,3 +1339,41 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "Create Python extensions only when asked"))
                    (expect (str/includes? text "first read `doc(\"extending\")`")))))
+
+(defdescribe
+  planning-prompt-test
+  (it "adds exactly one planning block to interactive channels only when enabled"
+      (doseq [channel
+              [:web :tui :cli]
+
+              enabled?
+              [false true]]
+
+        (with-redefs [toggles/enabled? (fn [id]
+                                         (and (= "plans" id) enabled?))]
+          (let [messages (prompt/assemble-stable-prompt-messages {:channel channel}
+                                                                 {:active-extensions []})
+                text (prompt/stable-prompt-text messages)]
+
+            (expect (= (if (and enabled? (not= :cli channel)) 1 0)
+                       (count (re-seq #";; -- PLANS --" text))))))))
+  (it "keeps review versioned and makes approval authorize implementation"
+      (with-redefs [toggles/enabled? (constantly true)]
+        (let [build #(prompt/assemble-stable-prompt-messages {:channel :tui}
+                                                             {:active-extensions []})]
+          (expect (= (build) (build)))
+          (doseq [instruction ["Blocked by" "end-to-end" "authorizes implementation immediately"
+                               "A document status is not permission"
+                               "explicitly says not to implement"
+                               "comments never authorize project edits" "newer revision exists"
+                               "complete review round" "## Implementation plan" "read_attachment"
+                               "SAME filename" "## Resolved comments" "IMPLEMENTATION-<feature>.md"
+                               "Do not publish tracker tickets" "Markdown is the source of truth"
+                               "normal chat" "workflow controls are optional shortcuts"]]
+            (expect (str/includes? prompt/planning-rules instruction))))))
+  (it "publishes reviewable specifications and diffs, but read-only implementation records"
+      (doseq [instruction ["commentable=True" "commentable=False" "read-only execution record"
+                           "kind=\"diff\"" "application/vnd.vis.diff+json" "draft_diff"
+                           "after each completed task" "final cumulative diff"
+                           "unrelated or pre-existing changes" "patch bytes unchanged"]]
+        (expect (str/includes? prompt/planning-rules instruction)))))

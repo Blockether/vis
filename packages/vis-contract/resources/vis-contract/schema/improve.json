@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vis.blockether.com/schema/improve.json",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "statuses": {
+      "const": [
+        "open",
+        "closed"
+      ]
+    },
+    "max_page_size": {
+      "const": 200
+    },
+    "analysis_format": {
+      "const": "markdown"
+    },
+    "source_policy": {
+      "const": "Council content and provenance are immutable; workflow content is separate editable analysis."
+    },
+    "hierarchy_policy": {
+      "const": "Parents and descendants share a project. Closing closes all descendants atomically. Reopening opens ancestors. Project moves include descendants."
+    },
+    "review_policy": {
+      "const": "Automatic reviews require every touched record version and a still-current settings gate in the write transaction. They do not authorize code execution or remediation."
+    }
+  },
+  "required": [
+    "version",
+    "statuses",
+    "max_page_size",
+    "analysis_format",
+    "source_policy",
+    "hierarchy_policy",
+    "review_policy"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "review-output": {
+      "type": "object",
+      "properties": {
+        "analyses": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "markdown": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 6000,
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "id",
+              "markdown"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "groups": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "\\S"
+              },
+              "markdown": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 6000,
+                "pattern": "\\S"
+              },
+              "children": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 10,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "required": [
+              "title",
+              "markdown",
+              "children"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "analyses",
+        "groups"
+      ],
+      "additionalProperties": false
+    },
+    "create": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "\\S"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "parent_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "update": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "\\S"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "parent_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "expected_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "list": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "\\S"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "status": {
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "parent_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "entry_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "created_at": {
+          "type": "integer"
+        },
+        "updated_at": {
+          "type": "integer"
+        },
+        "source_content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_ref": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "title",
+        "content",
+        "status",
+        "parent_id",
+        "id",
+        "entry_id",
+        "version",
+        "created_at",
+        "updated_at",
+        "source_content",
+        "source_ref",
+        "session_id"
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "filename_pattern": "^(PLAN|IMPLEMENTATION)-([a-z0-9]+(?:-[a-z0-9]+)*)\\.md$",
+  "statuses": [
+    "draft",
+    "in-review",
+    "ready",
+    "accepted",
+    "implementing",
+    "done"
+  ],
+  "actions": {
+    "revise": "Revise this document, resolve every human comment and attach the next version under the same filename. Do not implement or change project files.",
+    "approve": "I approve this specification and its implementation plan. Start implementation now. Check that this is the latest version, its status is ready or accepted, and no questions or comments remain before editing. If not, stop and explain what needs review. Otherwise start implementation of this exact reviewed scope, keep the versioned implementation record current and follow existing verification and permission rules."
+  }
+}

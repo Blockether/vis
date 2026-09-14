@@ -19,6 +19,8 @@
  * because a fixture may paint a backdrop the app itself never would.
  */
 
+import type { ImproveMode, ImproveRecord, ImproveSettings } from '../lib/improve';
+import type { ImproveClient } from '../screens/ImproveScreen';
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import activityGroupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
@@ -2149,4 +2151,197 @@ export function storySettingsFetch(): typeof fetch {
       headers: { 'Content-Type': 'application/json' },
     });
   }) as typeof fetch;
+}
+
+export const STORY_IMPROVE_PROJECT = '11111111-1111-4111-8111-111111111111';
+export const STORY_IMPROVE_RECORDS: ImproveRecord[] = [
+  {
+    id: 1,
+    entry_id: null,
+    project_id: STORY_IMPROVE_PROJECT,
+    title: 'Make collected reports actionable',
+    content:
+      '## Goal\nKeep related reports together, with clear evidence and a next step.\n\n## Suggested change\nGive each issue a Markdown review and preserve its original report.',
+    status: 'open',
+    parent_id: null,
+    version: 1,
+    created_at: 1780000000000,
+    updated_at: 1780000000000,
+    source_content: null,
+    source_ref: null,
+    session_id: null,
+  },
+  {
+    id: 2,
+    entry_id: 42,
+    project_id: STORY_IMPROVE_PROJECT,
+    title: 'A failed tool call needs reproduction notes',
+    content:
+      '## Reproduction\n**Not attempted.** Run the affected test in a disposable workspace.\n\n## Evidence\nThe source report identifies turn 3, iteration 2, form 1.\n\n## Suggested change\nKeep the failure coordinates beside the human review.',
+    status: 'open',
+    parent_id: 1,
+    version: 3,
+    created_at: 1780000000100,
+    updated_at: 1780000000200,
+    source_content: 'A tool call failed. Reproduction has not been attempted.',
+    source_ref: { turn: 3, iteration: 2, form: 1 },
+    session_id: '22222222-2222-4222-8222-222222222222',
+  },
+  {
+    id: 3,
+    entry_id: null,
+    project_id: STORY_IMPROVE_PROJECT,
+    title: 'Let people review reports without selecting a model',
+    content:
+      '## Acceptance criteria\n- Human mode has no model picker.\n- People can write notes and group issues.',
+    status: 'open',
+    parent_id: null,
+    version: 1,
+    created_at: 1780000000300,
+    updated_at: 1780000000300,
+    source_content: null,
+    source_ref: null,
+    session_id: null,
+  },
+  {
+    id: 4,
+    entry_id: null,
+    project_id: null,
+    title: 'Assign this report to a project',
+    content: '',
+    status: 'closed',
+    parent_id: null,
+    version: 1,
+    created_at: 1780000000400,
+    updated_at: 1780000000400,
+    source_content: null,
+    source_ref: null,
+    session_id: null,
+  },
+];
+
+/** Deterministic gateway boundary, never a network or model call. */
+export function storyImproveClient(mode: ImproveMode = 'human', empty = false): ImproveClient {
+  let settings: ImproveSettings = {
+    mode,
+    provider: mode === 'automatic' ? 'openai' : null,
+    model: mode === 'automatic' ? 'gpt-5.4' : null,
+    interval_minutes: 60,
+  };
+  let records = empty ? [] : STORY_IMPROVE_RECORDS.map((record) => ({ ...record }));
+  const projectRows = [
+    {
+      project_id: STORY_IMPROVE_PROJECT,
+      name: 'Vis',
+      root: '/workspace/vis',
+      session_count: 3,
+      live_count: 0,
+      awaiting_count: 0,
+      last_activity_ms: 1780000000000,
+    },
+  ];
+  return {
+    improveSettings: async () => ({ ...settings }),
+    setImproveSettings: async (next) => {
+      settings = { ...settings, ...next };
+      return { ...settings };
+    },
+    improveProjects: async () => ({
+      projects: projectRows,
+      project_count: 1,
+      session_count: 3,
+      live_count: 0,
+      awaiting_count: 0,
+    }),
+    improveRecords: async (project, after = 0) => {
+      const page = records.filter((record) => record.project_id === project && record.id > after);
+      return { records: page, after: page.at(-1)?.id ?? after, has_more: false };
+    },
+    improveRecord: async (id) => {
+      const record = records.find((item) => item.id === id);
+      if (!record) throw new Error('Issue not found');
+      return record;
+    },
+    createImproveRecord: async (attrs) => {
+      const record = {
+        ...STORY_IMPROVE_RECORDS[0],
+        ...attrs,
+        id: Math.max(0, ...records.map((item) => item.id)) + 1,
+        entry_id: null,
+        parent_id: attrs.parent_id ?? null,
+        version: 1,
+        source_content: null,
+        source_ref: null,
+        session_id: null,
+      };
+      records = [...records, record];
+      return record;
+    },
+    updateImproveRecord: async (id, attrs) => {
+      const current = records.find((item) => item.id === id);
+      if (!current) throw new Error('Issue not found');
+      const { expected_version: _expected, ...changes } = attrs;
+      const updated = { ...current, ...changes, version: current.version + 1 };
+      records = records.map((item) =>
+        item.id === id
+          ? updated
+          : changes.status === 'closed' && item.parent_id === id
+            ? { ...item, status: 'closed', version: item.version + 1 }
+            : item,
+      );
+      return updated;
+    },
+    reviewImprove: async () => ({ projects: [], reproduction: 'not_attempted' }),
+    router: async () => [
+      {
+        id: 'openai',
+        label: 'OpenAI',
+        is_managed: false,
+        models: ['gpt-5.4', 'gpt-5-mini'],
+        is_default: true,
+        default_model: 'gpt-5.4',
+        is_fallback: false,
+        fallback_model: null,
+      },
+    ],
+  };
+}
+
+/** Authenticated HTTP is the only mocked boundary in the Improve launcher story. */
+export function storyImproveFetch(mode: ImproveMode = 'human'): typeof fetch {
+  const client = storyImproveClient(mode);
+  return async (input, init) => {
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = new URL(href);
+    const attrs = init?.body ? JSON.parse(String(init.body)) : {};
+    const method = init?.method ?? 'GET';
+    let body: unknown;
+    if (url.pathname === '/v1/improve/settings')
+      body =
+        method === 'PATCH'
+          ? await client.setImproveSettings(attrs)
+          : await client.improveSettings();
+    else if (url.pathname === '/v1/projects/overview') body = await client.improveProjects();
+    else if (url.pathname === '/v1/router') body = { providers: await client.router() };
+    else if (url.pathname === '/v1/improve/review') body = await client.reviewImprove();
+    else if (url.pathname === '/v1/improve')
+      body =
+        method === 'POST'
+          ? await client.createImproveRecord(attrs)
+          : await client.improveRecords(
+              url.searchParams.get('project_id') || null,
+              Number(url.searchParams.get('after') ?? 0),
+            );
+    else if (/^\/v1\/improve\/\d+$/.test(url.pathname)) {
+      const id = Number(url.pathname.split('/').at(-1));
+      body =
+        method === 'PATCH'
+          ? await client.updateImproveRecord(id, attrs)
+          : await client.improveRecord(id);
+    } else throw new Error(`No Improve fixture for ${url.pathname}`);
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
 }

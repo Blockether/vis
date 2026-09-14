@@ -13,6 +13,7 @@ describe('session read mark', () => {
       current_turn_id: 'running',
       status: 'running',
       turn_count: 2,
+      answer_count: 1,
       server_time_ms: 0,
     } satisfies Session;
     const persistedTurns = [

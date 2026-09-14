@@ -60,7 +60,9 @@ describe('a desk keeps the list beside the conversation', () => {
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const sidebar = main.firstElementChild as HTMLElement;
     expect(within(sidebar).getByRole('region', { name: 'Sessions' })).toBeTruthy();
-    expect(sidebar.className).toContain('w-80');
+    // Regression: the desktop rail must fit project names and numbered pages together.
+    expect(sidebar.className).toContain('w-[33%]');
+    expect(sidebar.className).toContain('min-w-80');
     expect(screen.getByRole('region', { name: 'No session open' })).toBeTruthy();
     // The shell's own bar stays over both columns.
     expect(screen.getByRole('button', { name: 'Open preferences' })).toBeTruthy();
@@ -110,7 +112,8 @@ describe('a desk keeps the list beside the conversation', () => {
     expect(localStorage.getItem('vis.sidebar')).toBe('hidden');
 
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
-    expect((main.firstElementChild as HTMLElement).className).toContain('w-80');
+    expect((main.firstElementChild as HTMLElement).className).toContain('w-[33%]');
+    expect((main.firstElementChild as HTMLElement).className).toContain('min-w-80');
     fireEvent.click(screen.getByText('Alpha one'));
     await screen.findByLabelText('Message Vis');
 
@@ -120,7 +123,8 @@ describe('a desk keeps the list beside the conversation', () => {
     expect(screen.queryByRole('button', { name: 'Back to sessions' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show the session list' }));
     expect(screen.getByRole('region', { name: 'Sessions' })).toBeTruthy();
-    expect((main.firstElementChild as HTMLElement).className).toContain('w-80');
+    expect((main.firstElementChild as HTMLElement).className).toContain('w-[33%]');
+    expect((main.firstElementChild as HTMLElement).className).toContain('min-w-80');
     expect(screen.getByRole('button', { name: 'Hide the session list' })).toBeTruthy();
     view.unmount();
   });

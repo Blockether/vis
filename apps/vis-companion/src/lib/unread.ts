@@ -4,23 +4,18 @@ import { bridged } from './bridge';
 import type { Session, TranscriptTurn } from './types';
 
 /**
- * Per-session READ MARKS — "how many turns had this session finished the last
- * time I actually looked at it".
- *
- * A turn that completes while the session screen is closed is the one thing the
- * list has no way of announcing: the row's relative timestamp moves, which is
- * invisible unless you already knew the old value. The mark is the cheap fix —
- * the gateway's `turn_count` at the moment the transcript was on screen. Any
- * later growth is an answer the user has not read.
+ * Per-session read marks count completed answers addressed to the human.
+ * Council coordination and subagent results do not advance this watermark.
+ * The gateway owns answer_count; turn_count only invalidates transcript caches.
  *
  * Marks belong to this device, not to the gateway. localStorage supplies the
  * synchronous first frame; Capacitor Preferences is the durable copy that survives
  * iOS recycling or resetting the webview.
  */
 
-const KEY = 'vis.session-read.v1';
+const KEY = 'vis.session-answer-read.v1';
 
-/** Session id → turn count that was on screen when it was last read. */
+/** Session id → human-answer count visible when the session was last read. */
 type Marks = Record<string, number>;
 
 let marks: Marks | null = null;
@@ -109,27 +104,10 @@ function announce(): void {
   for (const listener of listeners) listener();
 }
 
-/**
- * Turns this session has ANSWERED — the only count an unread mark may use.
- *
- * The gateway persists a turn row the moment the turn STARTS (status
- * `running`), so `turn_count` moves at submit, not at completion, and never
- * moves again when the answer lands (proven against a live gateway: 7 -> 8 the
- * instant the turn went live, still 8 after it finished). Marking a session
- * read at the raw count while you watch your own turn run therefore already
- * covers the answer that arrives minutes later — every turn you started
- * yourself was silently pre-read, which is exactly "I was notified but the list
- * shows no badge".
- *
- * A session has at most one persisted in-flight turn (queued messages are not
- * written until they start), so discounting the live one is exact.
- */
+/** Settled human answers, already filtered by the gateway. */
 export function answeredTurnCount(session: Session | null | undefined): number {
-  if (!session) return 0;
-  const count = Number(session.turn_count ?? 0);
-  const total = Number.isFinite(count) && count > 0 ? count : 0;
-  const inFlight = session.live ? 1 : 0;
-  return Math.max(0, total - inFlight);
+  const count = Number(session?.answer_count ?? 0);
+  return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
 /**
@@ -140,11 +118,13 @@ export function visibleAnsweredTurnCount(
   session: Session | null | undefined,
   turns: readonly TranscriptTurn[],
   runningTurnStatus: string | null | undefined,
+  runningRequestKind: string | null | undefined = session?.running_request_kind,
 ): number {
   const settledTranscriptTurns = turns.filter(
-    (turn) => turn.status !== 'running' && turn.status !== 'pending',
+    (turn) => turn.request_kind !== 'council' && !['running', 'pending', 'cancelled', 'interrupted'].includes(turn.status ?? ''),
   ).length;
-  const settledRunningTurn = runningTurnStatus != null && runningTurnStatus !== 'running' ? 1 : 0;
+  const settledRunningTurn = runningRequestKind !== 'council' && runningTurnStatus != null
+    && !['running', 'pending', 'cancelled', 'interrupted'].includes(runningTurnStatus) ? 1 : 0;
   return Math.max(answeredTurnCount(session), settledTranscriptTurns + settledRunningTurn);
 }
 

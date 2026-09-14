@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "patch": "diff --git a/search.clj b/search.clj\n--- a/search.clj\n+++ b/search.clj\n@@ -1 +1 @@\n-(search title)\n+(search title {:archived true})\n",
+  "source": {
+    "type": "draft",
+    "backend": "worktree",
+    "label": "session-search",
+    "base_revision": "0123456789abcdef"
+  },
+  "comments": [
+    {
+      "quote": "+(search title {:archived true})",
+      "body": "Keep archived sessions optional."
+    }
+  ]
+}

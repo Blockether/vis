@@ -22,7 +22,7 @@ import {
   type DraftMessageStore,
 } from '../../lib/draft-messages';
 import { isFavorite } from '../../lib/favorites';
-import { useMediaMatch } from '../../lib/fit-rows';
+import { useDeskRail, useMediaMatch } from '../../lib/fit-rows';
 import {
   machineKey,
   machineLabel,
@@ -93,7 +93,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   const { getClient, drafts, matches, needle, actions: rowActions } = context;
   const { pageSize, epoch, admitted, isVisible } = reading;
   const { state: creating, start: onNewSession } = creation;
-  const hasPageRow = useMediaMatch('(width >= 40rem)');
+  const isDesk = useDeskRail();
+  const hasPageRow = useMediaMatch('(width >= 40rem)') && !isDesk;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
     rowActions.deletion.target && machineKey(rowActions.deletion.target.conn) === machineKey(conn)
@@ -476,7 +477,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   }
                 />
                 {pager && !hasPageRow && (
-                  <div className="flex shrink-0 items-center pr-2">{pager}</div>
+                  <div className="flex shrink-0 items-center pr-4">{pager}</div>
                 )}
               </div>
               <HeaderActions align="center">

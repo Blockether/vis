@@ -1448,14 +1448,13 @@
                                         :target (str "https://gateway.example.com/build/" i)})
                                      (range 1 7))})]
      (if recorded?
-       (lv/recorded-pane (str (wire/json-str {:kind :open :at 1000 :view view})
-                              "\n"
-                              (wire/json-str {:kind :close
-                                              :at 5000
-                                              :result
-                                              {:reason :completed :is-completed true :view view}})
-                              "\n")
-                         "s1")
+       (lv/recorded-pane
+         (str (wire/json-str {:kind :open :at 1000 :view view})
+              "\n"
+              (wire/json-str
+                {:kind :close :at 5000 :result {:reason :completed :is-completed true :view view}})
+              "\n")
+         "s1")
        (lv/opened view)))))
 
 (deftest live-link-grid-test

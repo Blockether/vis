@@ -294,6 +294,7 @@
    "get_session" ["Inspect session" "Inspected session" true]
    "list_sessions" ["Find sessions" "Found sessions" true]
    "draft_status" ["Check draft status" "Checked draft status" false]
+   "draft_diff" ["Capture draft diff" "Captured draft diff" true]
    "draft_create" ["Create draft" "Created draft" true]
    "draft_approve" ["Approve draft" "Approved draft" true]
    "draft_discard" ["Discard draft" "Discarded draft" true]
@@ -310,6 +311,7 @@
    "repl_connect" ["result" "status" "cwd" "host" "port" "external" "message"]
    "repl_stop" ["result" "status" "cwd"]
    "draft_status" ["in_draft" "label" "branch" "target_branch" "ahead" "pending"]
+   "draft_diff" ["filename" "version" "size" "checkpoint" "empty"]
    "draft_create" ["label" "root" "branch" "target_branch" "clean"]
    "draft_approve" ["status" "published" "branch" "target_branch" "files"]
    "draft_discard" ["status" "label" "root" "approved_ahead"]
@@ -487,8 +489,8 @@
                     (cond (contains? #{"read_session" "get_session" "list_sessions"} op) "Session"
                           (contains? #{"repl_start" "repl_status" "repl_connect" "repl_stop"} op)
                           "REPL"
-                          (contains? #{"draft_status" "draft_create" "draft_approve"
-                                       "draft_discard"}
+                          (contains? #{"draft_status" "draft_create" "draft_approve" "draft_discard"
+                                       "draft_diff"}
                                      op)
                           "Draft"
                           (= "update_goal" op) "Goal"

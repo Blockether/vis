@@ -288,8 +288,8 @@ export const SessionRow = memo(function SessionRow({
             on the second, each line's own trailing fact right-aligned against it.
             With room for the whole sentence on one line — and the ROOM IS THE LIST'S,
             asked of the scroller the rows are poured into (`@container`), never of the
-            window: a desk stands this list in a 20rem sidebar beside the transcript,
-            where a viewport `sm:` would still lay five fixed columns into 320px — the
+            window: a desk stands this list in a 32rem sidebar beside the transcript,
+            where a viewport `sm:` would still lay five fixed columns into 512px — the
             facts stop floating: the wrapper below turns to `contents` so its children
             become grid items of the row itself, and id / turns / status / time land on
             FIXED tracks. That is the difference between a list and a phone list
@@ -386,10 +386,9 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* `@3xl:contents` is what lets one dom order be THREE layouts. Under 24rem —
-              the desk's sidebar — the row is the TITLE and its status mark and nothing else,
-              the way a list of conversations beside the conversation reads; from 24rem the
-              id, the turns and the time come back as one line of prose under the title; at
+                {/* `@3xl:contents` lets one DOM order cover three layouts. Under 24rem the
+              row shows its title and status mark; from 24rem, including the desktop sidebar,
+              the id, turns and time appear as one line of prose under the title. At
               48rem that line dissolves so the id and the turn count become columns in their
               own right. The facts are never dropped from the tree, only from the paint. */}
                 {/* One rank, one ink: hierarchy is carried by SIZE (title 12px vs meta 10px),

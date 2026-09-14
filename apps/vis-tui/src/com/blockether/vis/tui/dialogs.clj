@@ -6039,7 +6039,12 @@
    {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
-   {:id :toggle-help :label "Keyboard Shortcuts"}])
+   {:id :toggle-help :label "Keyboard Shortcuts"}
+   ;; The register itself is offered only while Improve is on, but its MODE is
+   ;; always reachable — otherwise a register switched off could never be
+   ;; switched back on from the palette.
+   {:id :improve :label "Improve — Projects and Issues" :show-when :improve}
+   {:id :improve-settings :label "Improve Mode…"}])
 
 (defn fork-turn-items
   "Rows for the fork-at-turn palette (`searchable-select!`), one per turn of the
@@ -6096,13 +6101,17 @@
    Fork Session verbs) is DROPPED in a session with no turns — forking a
    turnless session is prohibited, so it must not even be discoverable.
 
-   `ctx` is `{:has-turns? bool}`; a missing/nil ctx is the conservative
-   turnless case. Untagged entries always survive."
-  [{:keys [has-turns?]}]
+   `ctx` is `{:has-turns? bool :improve? bool}`; a missing/nil ctx is the
+   conservative case — turnless, and with Improve off. Untagged entries always
+   survive."
+  [{:keys [has-turns? improve?]}]
   (filterv (fn [{:keys [show-when]}]
              (case show-when
                :has-turns
                (boolean has-turns?)
+
+               :improve
+               (boolean improve?)
 
                true))
     palette-commands))
@@ -6263,7 +6272,7 @@
               (recur))))))))
 
 ;;; ── Markdown viewer dialog ──────────────────────────────────────────────────
-(defn- md-run-paint!
+(defn md-run-paint!
   "Paint one styled IR run at column `x`; returns the next x. Style →
    dialog-palette mapping: headings title-accent bold, code/links/list
    markers hint-key accent, dim/quote hint, **bold**/_italic_ as SGR."

@@ -6,9 +6,15 @@
    drafts home."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.activity :as contract]
+            [com.blockether.vis.contract.diff :as diff]
+            [com.blockether.vis.internal.activity.core :as activity]
+            [com.blockether.vis.internal.activity.event :as event]
+            [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.drafts :as drafts]
+            [com.blockether.vis.internal.foundation.mpl-capture :as capture]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.workspace.core :as ws]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
@@ -260,9 +266,114 @@
 
 (defdescribe
   draft-symbols-test
+  (it "the sandbox names its four lifecycle tools plus draft_diff, without a draft slash command"
+      (expect (= ["draft-status" "draft-diff" "draft-create" "draft-approve" "draft-discard"]
+                 (mapv (comp name :ext.symbol/symbol) drafts/symbols)))
+      (expect (empty? (filter #(#{"draft" "approve" "discard"} (:slash/name %))
+                              (:ext/slash-commands foundation/vis-extension))))))
+
+(defdescribe
+  draft-diff-symbol-test
   (it
-    "the sandbox names draft_create, draft_status, draft_approve and draft_discard, and nothing else manages drafts"
-    (expect (= ["draft-status" "draft-create" "draft-approve" "draft-discard"]
-               (mapv (comp name :ext.symbol/symbol) drafts/symbols)))
-    (expect (empty? (filter #(#{"draft" "approve" "discard"} (:slash/name %))
-                            (:ext/slash-commands foundation/vis-extension))))))
+    "captures durable versioned diff bytes and returns only their descriptor and checkpoint"
+    (with-session
+      "vis-fdraft-diff"
+      (fn [_base env]
+        (let [opened
+              (drafts/draft-create env "review")
+
+              root
+              (get-in opened [:result "root"])
+
+              sink
+              (atom [])]
+
+          (binding [capture/*attachment-sink* sink]
+            (let [initial (drafts/draft-diff env "DIFF-feature.json")
+                  _ (spit (io/file root "a.txt") "changed\n")
+                  next (drafts/draft-diff env
+                                          "DIFF-feature.json"
+                                          (get-in initial [:result "checkpoint"]))
+                  recorded (last @sink)
+                  document (diff/parse! (String. (.decode (java.util.Base64/getDecoder)
+                                                          ^String (:base64 recorded))
+                                                 java.nio.charset.StandardCharsets/UTF_8))]
+
+              (expect (extension/envelope-success? initial))
+              (expect (true? (get-in initial [:result "empty"])))
+              (expect (extension/envelope-success? next))
+              (expect (= 2 (get-in next [:result "version"])))
+              (expect (= "diff" (:kind recorded)))
+              (expect (true? (:commentable recorded)))
+              (expect (= diff/media-type (:media-type recorded)))
+              (expect (str/includes? (get document "patch") "+changed"))
+              (expect (not (contains? (:result next) "base64")))
+              (expect (= [] (get document "comments")))
+              (expect (= (get-in next [:result "checkpoint"])
+                         (get-in document ["source" "head_revision"])))))))))
+  (it "refuses calls without a draft, collector or a safe attachment filename"
+      (with-session "vis-fdraft-diff-refuse"
+                    (fn [_base env]
+                      (expect (not (extension/envelope-success? (drafts/draft-diff env))))
+                      (drafts/draft-create env "review")
+                      (expect (not (extension/envelope-success? (drafts/draft-diff env))))
+                      (binding [capture/*attachment-sink* (atom [])]
+                        (expect (not (extension/envelope-success?
+                                       (drafts/draft-diff env "../other.json")))))))))
+
+(defdescribe
+  draft-diff-activity-test
+  (it
+    "declares running progress and preserves successful, empty and failed captures"
+    (let [declared (:ext.symbol/activity drafts/draft-diff-symbol)]
+      (expect (= "Capture draft diff" (:headline declared)))
+      (expect (true? (:show-start declared)))
+      (expect (= (:headline (presenter/for-tool :draft_diff)) (:headline declared)))
+      (doseq [empty? [false true]]
+        (let [ctx (event/context)
+              invocation (event/invocation ctx nil)
+              details {:operation :draft_diff
+                       :presenter :generic
+                       :activity declared
+                       :started-at-ms (System/currentTimeMillis)}
+              start (event/start-event ctx invocation details)
+              result {"filename" "DIFF-feature.json"
+                      "version" 2
+                      "size" 123
+                      "checkpoint" "snapshot-tree"
+                      "empty" empty?}
+              terminal (event/terminal-event ctx
+                                             invocation
+                                             (assoc details
+                                               :outcome :succeeded
+                                               :result result))
+              projection (activity/presentation (activity/replay [start terminal]))
+              row (first (:rows projection))
+              rendered (pr-str (:presentation row))]
+
+          (expect (= "Capture draft diff" (get-in start [:presentation "headline"])))
+          (expect (= "succeeded" (:state row)))
+          (expect (contract/valid-projection? projection))
+          (expect (str/includes? rendered "Captured draft diff"))
+          (expect (str/includes? rendered "DIFF-feature.json"))
+          (expect (str/includes? rendered "snapshot-tree"))
+          (expect (str/includes? rendered "Empty"))
+          (expect (str/includes? rendered (str empty?)))))
+      (let [ctx (event/context)
+            invocation (event/invocation ctx nil)
+            details {:operation :draft_diff
+                     :presenter :generic
+                     :activity declared
+                     :started-at-ms (System/currentTimeMillis)}
+            start (event/start-event ctx invocation details)
+            terminal (event/terminal-event ctx
+                                           invocation
+                                           (assoc details
+                                             :outcome :failed
+                                             :error (ex-info "No draft is active" {})))
+            projection (activity/presentation (activity/replay [start terminal]))
+            row (first (:rows projection))]
+
+        (expect (= "failed" (:state row)))
+        (expect (= "No draft is active" (:error-summary row)))
+        (expect (contract/valid-projection? projection))))))

@@ -62,6 +62,7 @@ interface ExpandableImageProps {
    * That is what makes a not-yet-sent attachment editable rather than read-only.
    */
   onApply?: (edited: Blob) => void | Promise<void>;
+  commentable?: boolean;
   /**
    * Where this picture sits in the gallery its call site laid out. Given, and
    * inside an {@link ImageGallery}, the viewer it opens can walk to its
@@ -75,6 +76,7 @@ interface ImageViewerProps {
   name: string;
   onClose: () => void;
   onApply?: (edited: Blob) => void | Promise<void>;
+  commentable?: boolean;
   /**
    * What the band's verb says when the picture can go back. "Save" replaces the
    * attachment it came from; a capture of a document has no slot yet, so it says
@@ -103,6 +105,7 @@ export function ExpandableImage({
   onError,
   onApply,
   galleryAt,
+  commentable = false,
 }: ExpandableImageProps) {
   // The picture is identified by its BYTES, not by this instance: when a turn
   // settles, the transcript re-mounts the row that owns this trigger, and a
@@ -120,6 +123,7 @@ export function ExpandableImage({
   const step = useGalleryStep(onApply ? undefined : galleryAt, {
     src,
     name: alt,
+    commentable,
   });
 
   return (
@@ -149,6 +153,7 @@ export function ExpandableImage({
           pictures={step?.pictures}
           at={step?.at}
           onApply={onApply}
+          commentable={commentable}
           onClose={() => setOpen(false)}
         />
       )}
@@ -186,6 +191,7 @@ export function ImageViewer({
   applyLabel = 'Save',
   pictures,
   at,
+  commentable = false,
 }: ImageViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const transformedRef = useRef<HTMLDivElement | null>(null);
@@ -196,7 +202,7 @@ export function ImageViewer({
   const pointersRef = useRef(new Map<number, Point>());
   const gestureRef = useRef<Gesture>(null);
   const shiftRef = useRef(0);
-  const [drawing, setDrawing] = useState(false);
+  const [drawingRequested, setDrawing] = useState(false);
   const [drawingToolsOpen, setDrawingToolsOpen] = useState(true);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
@@ -229,7 +235,9 @@ export function ImageViewer({
   useEffect(() => dropTrim, [dropTrim]);
   const found = gallery ? gallery.findIndex((picture) => picture.src === shownSrc) : -1;
   const step = found < 0 ? (at ?? 0) : found;
-  const untrimmed = (found < 0 ? undefined : gallery?.[found]) ?? { src, name };
+  const untrimmed = (found < 0 ? undefined : gallery?.[found]) ?? { src, name, commentable };
+  const editable = untrimmed.commentable === true || onApply !== undefined;
+  const drawing = editable && drawingRequested;
   const shown = trimmed ?? untrimmed;
   const hasEdits = strokeCount > 0 || trimmed !== null;
 
@@ -642,7 +650,7 @@ export function ImageViewer({
         className="absolute inset-x-0 top-0 z-20"
       />
 
-      {drawing && (
+      {editable && drawing && (
         <div className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 sm:right-4">
           <IconButton
             variant="overlay"
@@ -704,14 +712,16 @@ export function ImageViewer({
             onLoad={fitAnnotations}
             className="block max-h-full max-w-[calc(100vw-2rem)] select-none object-contain"
           />
-          <AnnotationLayer
-            ref={annotationRef}
-            active={drawing}
-            color={penColor}
-            onStrokesChange={setStrokeCount}
-            label="Image annotation layer"
-            className="absolute inset-0 size-full"
-          />
+          {editable ? (
+            <AnnotationLayer
+              ref={annotationRef}
+              active={drawing}
+              color={penColor}
+              onStrokesChange={setStrokeCount}
+              label="Image annotation layer"
+              className="absolute inset-0 size-full"
+            />
+          ) : null}
         </div>
       </div>
 
@@ -741,58 +751,62 @@ export function ImageViewer({
             </Button>
           </div>
 
-          <IconButton
-            variant={onApply && hasEdits ? 'primary' : 'secondary'}
-            label={
-              onApply && (drawing || hasEdits)
-                ? applyLabel === 'Save'
-                  ? busy === 'apply'
-                    ? 'Saving changes'
-                    : 'Save changes'
-                  : applyLabel
-                : drawing
-                  ? 'Finish drawing'
-                  : 'Draw on image'
-            }
-            title={
-              onApply && (drawing || hasEdits)
-                ? applyLabel === 'Save'
-                  ? 'Save changes'
-                  : applyLabel
-                : drawing
-                  ? 'Finish drawing'
-                  : 'Draw on image'
-            }
-            onClick={() => {
-              if (onApply && (drawing || hasEdits)) {
-                void applyEdit();
-                return;
+          {editable ? (
+            <IconButton
+              variant={onApply && hasEdits ? 'primary' : 'secondary'}
+              label={
+                onApply && (drawing || hasEdits)
+                  ? applyLabel === 'Save'
+                    ? busy === 'apply'
+                      ? 'Saving changes'
+                      : 'Save changes'
+                    : applyLabel
+                  : drawing
+                    ? 'Finish drawing'
+                    : 'Draw on image'
               }
-              resetTransform();
-              setDrawing((current) => !current);
-              setStatus('');
-            }}
-            aria-pressed={drawing}
-            disabled={busy !== null}
-          >
-            {busy === 'apply' ? (
-              <Spinner />
-            ) : drawing || (onApply && hasEdits) ? (
-              <CheckIcon />
-            ) : (
-              <DrawIcon />
-            )}
-          </IconButton>
+              title={
+                onApply && (drawing || hasEdits)
+                  ? applyLabel === 'Save'
+                    ? 'Save changes'
+                    : applyLabel
+                  : drawing
+                    ? 'Finish drawing'
+                    : 'Draw on image'
+              }
+              onClick={() => {
+                if (onApply && (drawing || hasEdits)) {
+                  void applyEdit();
+                  return;
+                }
+                resetTransform();
+                setDrawing((current) => !current);
+                setStatus('');
+              }}
+              aria-pressed={drawing}
+              disabled={busy !== null}
+            >
+              {busy === 'apply' ? (
+                <Spinner />
+              ) : drawing || (onApply && hasEdits) ? (
+                <CheckIcon />
+              ) : (
+                <DrawIcon />
+              )}
+            </IconButton>
+          ) : null}
 
-          <IconButton
-            variant="secondary"
-            label="Trim to view"
-            title="Trim to view"
-            onClick={trimToView}
-            disabled={drawing || busy !== null}
-          >
-            <TrimIcon />
-          </IconButton>
+          {editable ? (
+            <IconButton
+              variant="secondary"
+              label="Trim to view"
+              title="Trim to view"
+              onClick={trimToView}
+              disabled={drawing || busy !== null}
+            >
+              <TrimIcon />
+            </IconButton>
+          ) : null}
 
           {trimmed && (
             <Button

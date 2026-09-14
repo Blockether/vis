@@ -422,20 +422,11 @@
                   "the keyless provider authenticated with a credential of its own"))
         (finally (.stop server 0) (delete-tree! dir))))))
 
-(defn- goal-update-body
-  [stream? status]
-  (let [code
-        (str "g = session['goal']\n"
-             "assert g['status'] == 'active', g\n"
-             "print(update_goal(g['id'], g['version'], '"
-             status
-             "', 'Native fixture verified the terminal condition.'))")
-
-        call
-        {:id "native-goal-update"
-         :type "function"
-         :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}]
-
+(defn- python-call-body
+  [stream? call-id code]
+  (let [call {:id call-id
+              :type "function"
+              :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}]
     (if stream?
       (str (json-chunk (json/write-json-str {:index 0
                                              :delta {:role "assistant"
@@ -450,6 +441,16 @@
                                        :message {:role "assistant" :content nil :tool_calls [call]}
                                        :finish_reason "tool_calls"}]
                             :usage {:prompt_tokens 1 :completion_tokens 2 :total_tokens 3}}))))
+
+(defn- goal-update-body
+  [stream? status]
+  (python-call-body stream?
+                    "native-goal-update"
+                    (str "g = session['goal']\n"
+                         "assert g['status'] == 'active', g\n"
+                         "print(update_goal(g['id'], g['version'], '"
+                         status
+                         "', 'Native fixture verified the terminal condition.'))")))
 
 (defn- native-goal-case!
   [{:keys [progress-count resolution budget status iterations]}]
@@ -558,6 +559,137 @@
       (native-goal-case! {:progress-count 1 :budget 1 :status "budget_limited" :iterations 1}))
   (it "still pauses an unresolved goal after genuinely empty replies"
       (native-goal-case! {:progress-count 0 :budget 8 :status "paused" :iterations 3})))
+
+(defdescribe
+  native-attachment-review-capability-test
+  (it
+    "preserves review capabilities and draft checkpoints through native agent turns"
+    (let [dir
+          (temp-dir "vis-native-attachment-review")
+
+          project
+          (io/file dir "workspace")
+
+          calls
+          (atom 0)
+
+          stream-response
+          stream-body
+
+          whole-response
+          whole-body
+
+          code
+          (str
+            "report = attach(\n"
+            "    b'# Implementation report\\n', filename='IMPLEMENTATION-native.md',\n"
+            "    kind='doc', media_type='text/markdown')\n"
+            "assert report['commentable'] is False\n" "spec = attach(\n"
+            "    b'# Specification\\n', filename='PLAN-native.md', kind='doc',\n"
+            "    media_type='text/markdown', commentable=True)\n"
+            "assert spec['commentable'] is True\n" "payload = {\n"
+            "    'schema_version': 1,\n"
+            "    'patch': '--- a/code.txt\\n+++ b/code.txt\\n@@ -1 +1 @@\\n-old\\n+new\\n',\n"
+            "    'source': {'type': 'workspace', 'label': 'Native fixture'}, 'comments': []}\n"
+            "change = attach(\n"
+            "    json.dumps(payload).encode('utf-8'), filename='DIFF-native.json', kind='diff',\n"
+            "    media_type='application/vnd.vis.diff+json', commentable=True)\n"
+            "assert change['commentable'] is True\n"
+            "assert get_attachment(spec)['commentable'] is True\n"
+            "assert get_attachment(change)['kind'] == 'diff'\n"
+            "assert json.loads(read_attachment(change))['patch'] == payload['patch']\n"
+            "assert draft_status()['in_draft'] is True\n"
+            "(project_root_path / 'code.txt').write_text('new\\n', encoding='utf-8')\n"
+            "draft_change = draft_diff(filename='DIFF-draft-native.json')\n"
+            "assert draft_change['commentable'] is True\n"
+            "assert draft_change['empty'] is False\n"
+            "draft_body = json.loads(read_attachment(draft_change))\n"
+            "assert draft_body['source']['type'] == 'draft'\n"
+            "assert draft_body['source']['backend'] == 'worktree'\n"
+            "assert '-old\\n' in draft_body['patch'] and '+new\\n' in draft_body['patch']\n"
+            "empty_change = draft_diff(\n"
+            "    filename='DIFF-draft-empty-native.json', since=draft_change['checkpoint'])\n"
+            "assert empty_change['empty'] is True\n"
+            "empty_body = json.loads(read_attachment(empty_change))\n"
+            "assert empty_body['patch'] == ''\n"
+            "assert empty_body['source']['base_revision'] == draft_change['checkpoint']\n"
+            "print('Native attachment review verified')\n")
+
+          respond
+          (fn [stream? reply]
+            (case (swap! calls inc)
+              1
+              (python-call-body stream?
+                                "native-draft-create"
+                                "print(draft_create('native-review'))")
+
+              2
+              (python-call-body stream? "native-attachment-review" code)
+
+              ((if stream? stream-response whole-response) reply)))]
+
+      (try
+        (with-redefs [stream-body
+                      #(respond true %)
+
+                      whole-body
+                      #(respond false %)]
+
+          (let [{:keys [server port]} (start-stub-provider! "Native attachment review complete.")]
+            (try
+              (.mkdirs project)
+              (spit (io/file project "code.txt") "old\n")
+              (spit (io/file project ".gitignore") ".vis/\nrun.log\n")
+              (doseq [argv [["git" "init" "--quiet" "-b" "main"]
+                            ["git" "add" "--" "code.txt" ".gitignore"]
+                            ["git" "-c" "user.name=Native fixture" "-c"
+                             "user.email=native@example.com" "-c" "commit.gpgsign=false" "commit"
+                             "--quiet" "-m" "test: seed native draft"]]]
+                (let [{:keys [finished? exit output]} (run-binary project argv 30)]
+                  (expect finished? output)
+                  (expect (= 0 exit) output)))
+              (overlay! project port)
+              (spit (io/file project ".vis/config.yml")
+                    "\ntoggles:\n  draft_backend: worktree\n"
+                    :append
+                    true)
+              (let [database (io/file dir "sessions")
+                    {:keys [finished? exit output]}
+                    (run-binary
+                      project
+                      [(.getAbsolutePath (require-binary))
+                       (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                       (.getAbsolutePath database) "--raw"
+                       "Create a disposable draft; produce a specification, report and diffs"]
+                      180)]
+
+                (expect finished? output)
+                (expect (= 0 exit) output)
+                (expect (= "old\n" (slurp (io/file project "code.txt"))))
+                (let [store (ps/db-create-connection! (.getAbsolutePath database))]
+                  (try
+                    (let [sid (:id (first (ps/db-list-sessions store :all)))
+                          iterations (mapcat #(ps/db-list-session-turn-iterations store (:id %))
+                                             (ps/db-list-session-turns store sid))
+                          rows (mapcat #(ps/db-list-iteration-attachments store (:id %)) iterations)
+                          artifacts (into {} (map (juxt :filename identity)) rows)]
+
+                      (expect (= #{"IMPLEMENTATION-native.md" "PLAN-native.md" "DIFF-native.json"
+                                   "DIFF-draft-native.json" "DIFF-draft-empty-native.json"}
+                                 (set (keys artifacts))))
+                      (expect (false? (:commentable (get artifacts "IMPLEMENTATION-native.md"))))
+                      (expect (true? (:commentable (get artifacts "PLAN-native.md"))))
+                      (expect (true? (:commentable (get artifacts "DIFF-native.json"))))
+                      (expect (= "diff" (:kind (get artifacts "DIFF-native.json"))))
+                      (expect (true? (:commentable (get artifacts "DIFF-draft-native.json"))))
+                      (expect (true? (:commentable (get artifacts "DIFF-draft-empty-native.json"))))
+                      (expect (every? #(nil? (:error %)) (mapcat :forms iterations)))
+                      (expect (some #(str/includes? (str (:stdout %))
+                                                    "Native attachment review verified")
+                                    (mapcat :forms iterations))))
+                    (finally (ps/db-dispose-connection! store)))))
+              (finally (.stop ^HttpServer server 0)))))
+        (finally (delete-tree! dir))))))
 
 (defdescribe native-linked-report-delivery-test
              ;; #193: exercise CommonMark source spans and secure directory handles in the image.

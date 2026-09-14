@@ -65,6 +65,20 @@
         (expect (str/includes? text "Produced in this session"))
         (expect (str/includes? text "decision.html  v2  ·  2 versions"))
         (expect (str/includes? text "notes.pdf"))))
+  (it
+    "labels the specification group without hiding other artifacts"
+    (let [artifacts
+          (conj produced {"filename" "PLAN-search.md" "media_type" "text/markdown" "version" 1})
+
+          text
+          (cap/frame-text (paint-component
+                            (inspector/inspector-modal-component [] artifacts nil :plans? true)))]
+
+      (expect (str/includes? text "Specifications"))
+      (expect (str/includes? text "PLAN-search.md"))
+      (expect (str/includes? text "Produced in this session"))
+      (expect (str/includes? text "notes.pdf"))
+      (expect (not (str/includes? text "Plans")))))
   (it "shows an explicit empty state instead of silently doing nothing"
       (let [text (cap/frame-text (paint-component (inspector/inspector-modal-component [] [] nil)))]
         (expect (str/includes? text "No attachments in this session"))))
@@ -135,3 +149,34 @@
                           (expect (= "<html>decision</html>"
                                      (String. (Files/readAllBytes (.toPath file)) "UTF-8")))
                           (finally (.delete file) (.delete (.getParentFile file))))))))
+
+(defdescribe
+  explicit-comment-capability
+  (it "retains only the latest version's explicit boolean"
+      (let [versions
+            [{"filename" "PLAN-search.md" "version" 1 "commentable" true}
+             {"filename" "PLAN-search.md" "version" 2 "commentable" false}]
+
+            rows
+            (inspector/inspector-rows [] versions)]
+
+        (expect (= 2 (:version (first rows))))
+        (expect (false? (:commentable (first rows)))))
+      (doseq [flag [nil false "true"]]
+        (expect (false? (:commentable (first (inspector/inspector-rows []
+                                                                       [{"filename" "PLAN-search.md"
+                                                                         "commentable" flag}])))))))
+  (it "opens specialized diffs in the terminal for both capabilities"
+      (doseq [flag [true false]]
+        (let [component (inspector/inspector-modal-component []
+                                                             [{"filename" "DIFF-search.json"
+                                                               "media_type"
+                                                               "application/vnd.vis.diff+json"
+                                                               "version" 1
+                                                               "commentable" flag}]
+                                                             nil)
+              action ((:on-key component) (:init component) (KeyStroke. KeyType/Enter) {})]
+
+          (expect (= :annotate (get-in action [:com.blockether.vis.tui.dialogs/done :action])))
+          (expect (= flag
+                     (get-in action [:com.blockether.vis.tui.dialogs/done :row :commentable])))))))

@@ -1,0 +1,96 @@
+{% extends "default/module.html.jinja2" %}
+
+{% set topics = {
+    "blockether.vis": "Overview",
+    "blockether.vis.engine": "Agents and sessions",
+    "blockether.vis.extension": "Extensions",
+    "blockether.vis.activity": "Activities",
+    "blockether.vis.views": "Views",
+    "blockether.vis.extension_package": "Package validation"
+} %}
+{% set page_title = "Python SDK" if module.modulename == "blockether.vis" else topics.get(module.modulename, module.modulename) %}
+
+{% block title %}{{ topics.get(module.modulename, module.modulename) }} API documentation{% endblock %}
+
+{% block body %}
+    <a class="api-skip" href="#api-title">Skip to content</a>
+    <nav class="pdoc" aria-label="Python SDK">
+        <details class="api-navigation" open>
+            <summary>Browse Python SDK</summary>
+            <div>{{ self.nav() }}</div>
+        </details>
+    </nav>
+    {{ self.content() }}
+    <script>{% include "navigation.js" %}</script>
+{% endblock %}
+
+{% block module_list_link %}
+    <a class="api-home" href="/">Vis documentation</a>
+{% endblock %}
+
+{% block nav_title %}<p class="api-label">Python SDK reference</p>{% endblock %}
+
+{% block search_box %}
+    <input type="search" placeholder="Find a class or method…" aria-label="Search Python SDK" pattern=".+" required>
+    <ul class="api-modules">
+        {% for name, title in topics.items() if name in all_modules %}
+            <li><a href="/python-sdk-api/{{ name.replace('.', '/') }}.html"{% if name == module.modulename %} aria-current="page"{% endif %}>{{ title }}</a></li>
+        {% endfor %}
+    </ul>
+    <div class="api-guides">
+        <a href="/python-sdk.html">Installation and examples</a>
+        <a href="/extending.html">Write an extension</a>
+    </div>
+{% endblock %}
+
+{% block nav_submodules %}{% endblock %}
+
+{% block nav_members %}
+    {% if module.own_members | rejectattr("kind", "equalto", "module") | list %}
+        <h2>API symbols</h2>
+        <div class="api-symbols">{{ nav_members(module.own_members) }}</div>
+    {% endif %}
+{% endblock %}
+
+{% block attribution %}<a class="api-generator" href="https://pdoc.dev/">Generated with pdoc</a>{% endblock %}
+
+{% block module_info %}
+    <section class="module-info">
+        <h1 id="api-title" tabindex="-1">{{ page_title }}</h1>
+        <p class="api-module-name"><code>{{ module.modulename }}</code></p>
+        {{ docstring(module) }}
+    </section>
+{% endblock %}
+
+{% block module_contents %}
+    {% for m in module.flattened_own_members if is_public(m) | trim %}
+        <section id="{{ m.qualname or m.name }}">
+            {{ member(m) }}
+            {% if m.kind == "class" %}
+                {# Public SDK methods must not disappear because their base is private. #}
+                {% for attr in m.members.values() if attr.kind != "class" and is_public(attr) | trim and attr.taken_from[0].startswith("blockether.vis") %}
+                    <div id="{{ attr.qualname }}" class="classattr">{{ member(attr) }}</div>
+                {% endfor %}
+            {% endif %}
+        </section>
+    {% endfor %}
+{% endblock %}
+
+{% macro nav_members(members) %}
+    <ul class="memberlist">
+        {% for m in members if m.kind != "module" and is_public(m) | trim and m.taken_from[0].startswith("blockether.vis") %}
+            <li>
+                {% if m.kind == "class" %}
+                    <details>
+                        <summary><a href="#{{ m.qualname }}">{{ m.name }}</a></summary>
+                        {{ nav_members(m.members.values()) }}
+                    </details>
+                {% elif m.name == "__init__" %}
+                    <a href="#{{ m.qualname }}">Constructor</a>
+                {% else %}
+                    <a href="#{{ m.qualname }}">{{ m.name }}</a>
+                {% endif %}
+            </li>
+        {% endfor %}
+    </ul>
+{% endmacro %}

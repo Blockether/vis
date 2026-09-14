@@ -252,7 +252,7 @@ def __vis_install_attach__():
         # shape.
         return {str(k).replace("-", "_"): v for k, v in row.items()}
 
-    def __vis_attach_data(data, name, kind, media_type, label, audience):
+    def __vis_attach_data(data, name, kind, media_type, label, audience, commentable):
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
         cap = __vis_caption(label)
@@ -261,7 +261,7 @@ def __vis_install_attach__():
         rec = globals().get("__vis_record_attachment__")
         if rec is None:
             raise RuntimeError("attach: capture bridge not bound in this sandbox")
-        payload = rec(knd, mt, b64, name, len(data), aud, cap)
+        payload = rec(knd, mt, b64, name, len(data), aud, cap, commentable)
         import json as _json
 
         # The stored artifact's own DESCRIPTOR: its id and version exist from
@@ -338,6 +338,7 @@ def __vis_install_attach__():
         "media_type",
         "label",
         "audience",
+        "commentable",
     )
 
     __vis_attach_kwarg_aliases = {
@@ -364,8 +365,11 @@ def __vis_install_attach__():
         media_type=None,
         label=None,
         audience="both",
+        commentable=False,
         **aliases,
     ):
+        if type(commentable) is not bool:
+            raise TypeError("attach: commentable must be a boolean")
         if aliases:
             given = {
                 "source": source,
@@ -420,6 +424,7 @@ def __vis_install_attach__():
                 media_type,
                 label,
                 audience,
+                commentable,
             )
         if hasattr(source, "savefig"):
             import io
@@ -433,6 +438,7 @@ def __vis_install_attach__():
                 media_type,
                 label,
                 audience,
+                commentable,
             )
         if __vis_is_pil_image(source):
             name = str(filename) if filename else "image.png"
@@ -443,6 +449,7 @@ def __vis_install_attach__():
                 media_type,
                 label,
                 audience,
+                commentable,
             )
         # Everything left has to be a PATH. An object that is neither one nor a
         # producer we know is REFUSED by name here: str()-ing it would report a
@@ -467,7 +474,9 @@ def __vis_install_attach__():
         except FileNotFoundError:
             raise FileNotFoundError("attach: no such file: " + path) from None
         name = filename or _os.path.basename(path) or "artifact"
-        return __vis_attach_data(data, str(name), kind, media_type, label, audience)
+        return __vis_attach_data(
+            data, str(name), kind, media_type, label, audience, commentable
+        )
 
     def __vis_attachment_rows():
         lst = globals().get("__vis_list_attachments__")
@@ -559,14 +568,17 @@ def __vis_install_attach__():
             " · filename (same name stores the next version)"
             " · kind · media_type (overrides what the bytes sniff as)"
             " · label (one-line caption)"
-            " · audience ('both', 'user' or 'model')",
+            " · audience ('both', 'user' or 'model')"
+            " · commentable (boolean, default False)",
             "Persist a produced artifact as a durable attachment, across restarts. "
             "source is a confined PATH, in-memory BYTES (name them with filename), "
             "a PIL image, or a matplotlib figure. SAME DOCUMENT, SAME NAME: "
             "re-attaching a filename stores the next VERSION of that artifact, never "
             "report_v2.png beside report.png; a new name is a different document. "
             "Attach one or two artifacts per turn - compose many images into ONE "
-            "sheet. audience routes it: 'both' (default), 'user' (human only), "
+            "sheet. Set commentable=True to allow human review; otherwise the attachment "
+            "is read-only. Capability is explicit for each version, never inferred from its name. "
+            "audience routes it: 'both' (default), 'user' (human only), "
             "'model' (context only). A CSV/TSV becomes a transcript table whose rows "
             "stay out of the model's context; a *.pdf/*.html is a human-only document "
             "and refuses audience='model'. kind, media_type and filename override "
@@ -576,7 +588,7 @@ def __vis_install_attach__():
             "label, mime/mime_type/content_type -> media_type, type -> kind. Naming "
             "one idea twice - canonical and alias in the same call - is refused."
             "\n\nRaw result: that artifact's DESCRIPTOR dict - id, filename, version, "
-            "media_type, kind, size, audience - which every read verb here takes as "
+            "media_type, kind, size, audience, commentable - which every read verb here takes as "
             "its target, in this same block.",
         ),
         (

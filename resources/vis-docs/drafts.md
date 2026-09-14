@@ -27,6 +27,7 @@ confirm what will be lost before discarding.
 |---|---|
 | `draft_create("name")` | Open a draft from committed `HEAD` and move the session into it. `clean=False` explicitly copies pending trunk changes; those may overlap on approval. One draft at a time. |
 | `draft_status()` | Report the draft branch, `target_branch`, draft commits the target lacks (`ahead`) and pending paths (`pending`). |
+| `draft_diff(...)` | Attach a reviewable diff of the draft's changes and return a checkpoint for the next task. No commit, approval or push. |
 | `draft_approve()` | Commit pending work, fast-forward the default branch and publish to origin if configured. `draft_approve("subject")` sets the subject. The draft stays open. |
 | `draft_discard()` | Return to the original checkout and remove the draft working copy. Approved work stays on the default branch; unapproved changes are lost. A merged draft branch may be removed. |
 
@@ -34,6 +35,51 @@ Inside the turn that opens or discards a draft, sandbox confinement changes at
 once. `session["workspace"]` and `project_root_path` follow from the next block.
 While in a draft, `session["workspace"]["draft"]` includes `label`, `backend`,
 `branch`, `target_branch`, `approved_ahead` and `pending_paths`.
+
+## Review changes before approval
+
+Ask Vis to attach the draft's diff, or to include a diff with each completed task's
+implementation report. Open it in Companion or the TUI to read file changes and
+comment on them. Sending a review round does not approve the draft or publish code.
+
+A diff compares immutable snapshots. The first snapshot is captured after the draft
+is created, so changes copied with `clean=False` are part of its starting point,
+not new implementation work. Later changes to the original checkout cannot alter
+that baseline. Both worktree and Rift drafts use this review path; it does not
+modify either working copy's Git index, branches or commits.
+
+By default the diff covers all changes since the draft began. A checkpoint lets the
+next diff show only the following task, including later edits to the same files.
+The final cumulative diff still uses the original starting point. File contents,
+additions and deletions come from the draft; comments are saved separately and
+never rewrite the patch. Ignored untracked files and backend bookkeeping are not
+review material.
+
+### Diff tool reference
+
+`draft_diff(filename=None, since=None)` attaches `DIFF-<draft-label>.json` by default.
+Its result includes the attachment descriptor, a `checkpoint` snapshot tree ID and
+an `empty` flag. Use a different filename for each task and keep one stable filename
+for revisions of that task's diff:
+
+```python
+first = draft_diff(filename="DIFF-search-task-1.json")
+print(first)
+# After completing the next task:
+second = draft_diff(filename="DIFF-search-task-2.json", since=first["checkpoint"])
+print(second)
+# The whole implementation, still measured from the draft's starting point:
+print(draft_diff(filename="DIFF-search.json"))
+```
+
+A checkpoint must have been recorded by this draft. Snapshot IDs are not Git commits.
+A diff with no changes still records its checkpoint and clearly reports that it is
+empty. The tool does not approve the draft, commit, push or run an implementation.
+
+The snapshot store uses Git even for a Rift directory without Git history. It is
+private to the draft and removed when the draft is discarded. A draft created
+without a saved baseline cannot supply a trustworthy historical diff; Vis refuses
+rather than using today's original checkout as yesterday's starting point.
 
 ## Approval
 

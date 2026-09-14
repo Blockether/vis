@@ -932,15 +932,21 @@
              (let [g->c @#'chat/gateway-event->chunk]
                (it "projects all canonical terminal event variants"
                    (expect
-                     (= [{:phase :turn-terminal :turn-id "t1" :client-id "c1" :status "completed"}
-                         {:phase :turn-terminal :turn-id "t2" :client-id nil :status "failed"}
-                         {:phase :turn-terminal :turn-id "t3" :client-id nil :status "cancelled"}]
+                     (= [{:phase :turn-terminal :turn-id "t1" :client-id "c1" :status "completed"
+                          :request-kind :council :subagent true}
+                         {:phase :turn-terminal :turn-id "t2" :client-id nil :status "failed"
+                          :request-kind :user :subagent false}
+                         {:phase :turn-terminal :turn-id "t3" :client-id nil :status "cancelled"
+                          :request-kind :user :subagent false}]
                         (mapv g->c
                               [{"type" "turn.completed"
                                 "turn_id" "t1"
                                 "idempotency_key" "c1"
-                                "status" "completed"} {"type" "turn.failed" "turn_id" "t2"}
-                               {"type" "turn.cancelled" "turn_id" "t3"}]))))))
+                                "request_kind" "council"
+                                "subagent" true
+                                "status" "completed"}
+                               {"type" "turn.failed" "turn_id" "t2" "request_kind" "user" "subagent" false}
+                               {"type" "turn.cancelled" "turn_id" "t3" "request_kind" "user" "subagent" false}]))))))
 
 (it "rehydrates a structured iteration error for the transient retry row"
     (let [g->c

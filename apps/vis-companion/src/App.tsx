@@ -53,6 +53,7 @@ import { applyTheme, resolveTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
 import { BackButton, CloseButton, IconButton, Input } from './components/ui';
 import { SearchIcon, SettingsIcon } from './components/icons';
+import { ImproveLauncher } from './components/ImproveLauncher';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -1093,6 +1094,13 @@ export function App() {
             setQuery('');
           }}
           onAppSettings={openSettings}
+          improve={
+            <ImproveLauncher
+              gateways={conns}
+              primaryUrl={primary?.url}
+              refreshKey={!!settingsDestination}
+            />
+          }
         />
       )}
 
@@ -1100,7 +1108,7 @@ export function App() {
         className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? 'flex' : ''} ${shellView === 'session' ? 'overflow-hidden' : 'overflow-y-auto'}`}
       >
         {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
-            on a desk it is a 20rem column the transcript stands beside, so the list
+            on a desk it uses 33% of the width with a 20rem minimum, so the list
             is up in BOTH shell states and the same mounted component simply changes
             width — its scroll, scope and folds are the reader's frame either way. */}
         {sessionsMounted && (
@@ -1109,7 +1117,7 @@ export function App() {
               !sessionsVisible
                 ? 'hidden'
                 : isSplit
-                  ? 'h-full w-80 shrink-0 border-r border-dialog-edge'
+                  ? 'h-full min-w-80 w-[33%] shrink-0 border-r border-dialog-edge'
                   : 'h-full'
             }
           >
@@ -1265,6 +1273,7 @@ export function Header({
   onSearch,
   onCloseSearch,
   onAppSettings,
+  improve,
 }: {
   query: string;
   onQuery: (next: string) => void;
@@ -1273,6 +1282,7 @@ export function Header({
   onSearch: () => void;
   onCloseSearch: () => void;
   onAppSettings: () => void;
+  improve?: ReactNode;
 }) {
   // `/` opens the search from anywhere on the shell — unannounced on purpose, and
   // never stolen from someone already typing. Escape closes it again, because a page
@@ -1348,14 +1358,7 @@ export function Header({
               VIS
             </span>
           </div>
-          {/* TWO MARKS, ONE MEANING EACH.
-              The bar carries the app's own two verbs and nothing else: the glass that
-              opens the search page, and the one cog on the whole app, which means
-              PREFERENCES — this device's own settings, never a gateway's. A machine's
-              settings hang off that machine, in the list's own `⋯`, so two gears can
-              never sit 40px apart meaning different things.
-              They are named where a name is read: `aria-label` for the screen reader,
-              `title` for the pointer. An icon-only control without one is a bug. */}
+          {/* Global destinations share the same labelled icon controls. */}
           <div className="ml-auto flex h-12 items-center gap-2">
             <IconButton
               type="button"
@@ -1365,6 +1368,7 @@ export function Header({
             >
               <SearchIcon className="size-4" />
             </IconButton>
+            {improve}
             <IconButton
               type="button"
               label="Open preferences"

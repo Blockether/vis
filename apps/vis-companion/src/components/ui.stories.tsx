@@ -48,6 +48,7 @@ import {
   SettingsDisclosure,
   SidebarToggle,
   Spinner,
+  Select,
   Switch,
   TextButton,
   ViewHeading,
@@ -567,6 +568,9 @@ export const Feedback: Story = {
       <Group of="Banner, four kinds">
         <Banner kind="neutral">The machine is paired and idle.</Banner>
       </Group>
+      <Group of="Untitled success">
+        <Banner kind="ok">The issue was saved.</Banner>
+      </Group>
       <Group of=" ">
         <Banner kind="ok" title="Signed in">
           The provider accepted the device code.
@@ -1046,6 +1050,32 @@ export const Gestures: Story = {
       ))}
     </Sheet>
   ),
+};
+
+/** Native choices retain touch targets and announce their selected value. */
+export const ClosedChoices: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="Select — review mode">
+        <Select aria-label="Review mode" defaultValue="human">
+          <option value="off">Off</option>
+          <option value="human">Governed by human</option>
+          <option value="automatic">Automatic</option>
+        </Select>
+      </Group>
+      <Group of="Select — saving">
+        <Select aria-label="Saving review mode" defaultValue="human" disabled aria-busy="true">
+          <option value="human">Governed by human</option>
+        </Select>
+      </Group>
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    const mode = canvas.getByRole('combobox', { name: 'Review mode' });
+    await userEvent.selectOptions(mode, 'automatic');
+    await expect(mode).toHaveValue('automatic');
+    await expect(canvas.getByRole('combobox', { name: 'Saving review mode' })).toBeDisabled();
+  },
 };
 
 /** The same layouts serve forms and live output, including narrow nested columns. */

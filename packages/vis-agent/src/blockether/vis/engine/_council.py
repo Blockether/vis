@@ -118,7 +118,23 @@ class CouncilPage:
 
 @dataclass(frozen=True, slots=True)
 class Council:
-    """Session controls and a communication binding captured when the handle is acquired."""
+    """Communicate with other sessions and control a managed agent team.
+
+    Obtain this handle with `Session.council`, rather than constructing it with
+    internal binding fields. The handle captures its session's group and current
+    activation when acquired; it is not a live alias for whichever run is latest.
+
+    Use `members` to discover active peers, `publish` to send a message and `get`
+    to inspect replies. Publication, delivery and a completed answer are separate
+    states. `threads` and `read` return cursor-based pages of conversation history.
+    Use `publish_spawn` for a delegated child and `subagents` for the managed team;
+    group membership alone does not confer ownership of another session.
+
+    Communication requires an available Council group. Session-level team controls
+    remain accessible when Council communication is disabled. A disabled or missing
+    group is reported when a communication operation or `group_id` needs it.
+    Host policy still governs wake eligibility, permissions and model routing.
+    """
 
     _session: Any
     _group_id: str
@@ -156,28 +172,36 @@ class Council:
         reply_required: bool = False,
         reply_to: int | None = None,
     ) -> CouncilEntry:
-        """Publish with an explicit per-message kind, independently of ping/reply policy.
+        """Publish a message, optionally requesting replies from selected sessions.
 
-        complain records failures or concrete improvements in the persistent improve
-        register; coordination covers work/questions and informational findings/decisions.
-        Include the goal, environment/version, preconditions, minimal reproduction steps
-        and sanitized input/tool arguments, expected versus actual behavior, diagnostics,
-        frequency, impact and workaround. Separate evidence from hypotheses; mark missing
-        facts unknown or not attempted. Identify the affected session and turn/iteration/form.
-        Every entry has host-owned source_ref for this publication, not another execution.
-        Inspect original evidence with read_session(session_id); never copy secrets or
-        private data into the report or replay unsafe operations. Select individual pings,
-        all, or none; no kind creates a tracker issue. Failed python_execution calls are
-        already recorded as autocomplain without pings, with failure/timeout, duration and
-        a source-session lookup. Enrich their thread with an informational continuation
-        instead of duplicating the report.
+        Args:
+            content: Message text. Keep secrets and private data out of messages.
+            kind: `coordination` for work and questions, `informational` for
+                findings, or `complain` for failures and concrete improvements.
+                Complaints enter the persistent improve register, not an external
+                issue tracker. Include sanitized evidence, expected versus actual
+                behavior, impact and a workaround; distinguish facts from guesses.
+            thread_id: Existing thread to continue; omit to start a new thread.
+            title: Optional readable title for the message.
+            ping: Session IDs, `"all"` for active peers, or no recipients. Explicit
+                IDs wake only eligible managed teammates, not independent leaders.
+            idempotency_key: Reuse this key when retrying uncertain IO. The same
+                publication is returned without notifying recipients twice.
+            reply_required: Track an answer obligation for each addressed recipient.
+            reply_to: Explicit unanswered request to answer. A no-ping thread
+                continuation otherwise answers only the latest addressed entry if
+                it is an unanswered request; it never falls back to older requests.
 
-        A no-ping thread continuation answers the latest addressed entry only if it
-        is an unanswered request, notifying its author. reply_to selects a request
-        explicitly. Follow-ups and acknowledgements do not fall back to older requests.
-        Explicit IDs wake only managed teammates, never independent leaders; 'all' selects active peers.
-        requests report per-recipient states in replies; unavailable is not success.
-        Retry uncertain IO with the same idempotency_key; it never notifies twice.
+        Returns:
+            `CouncilEntry` with its entry/thread IDs and per-recipient `replies`.
+            Pending, delivered and unavailable states are not completed answers.
+            Inspect the entry later with `get` to see replies and their states.
+
+        Each message owns its kind and host-generated `source_ref`. That reference
+        identifies this publication, not a reported incident: include the original
+        session and turn/iteration/form when reporting one. Failed Python tool
+        executions already have an autocomplain entry; enrich its thread instead
+        of duplicating it. Follow-ups and acknowledgements do not grant wake rights.
         """
         body = {
             "content": content,

@@ -2026,8 +2026,8 @@
                    (= turn-id (:turn-id hovered)))]
 
           (p/set-colors! g
-                         (if hovered? t/link-chrome-hover-fg t/button-fg)
-                         (if hovered? t/link-chrome-hover-bg t/button-bg))
+                         (if hovered? t/header-active-tab-fg t/button-fg)
+                         (if hovered? t/header-active-tab-accent t/button-bg))
           (p/styled g (if hovered? [p/BOLD] []) (p/put-str! g fork-x label-row fork-label)))
         (when (< -1 label-row (long viewport-h))
           (.register interactions/hit-map

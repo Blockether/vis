@@ -44,6 +44,7 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
+  type SelectHTMLAttributes,
 } from 'react';
 
 import { createPortal } from 'react-dom';
@@ -201,7 +202,7 @@ export const Button = forwardRef<
     default: `${touchReach} min-h-8 px-2.5 text-ui sm:px-3 mouse:min-h-7`,
     compact: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui sm:px-3 mouse:h-7 mouse:min-h-7 mouse:text-meta`,
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
-    page: `${touchReach} min-h-8 min-w-11 px-1.5 font-mono text-ui tabular-nums mouse:min-h-7 mouse:min-w-7`,
+    page: `${touchReach} min-h-8 min-w-11 px-1.5 font-mono text-ui tabular-nums aria-[current=page]:bg-hover aria-[current=page]:text-white mouse:min-h-7 mouse:min-w-7 mouse:px-1.5 mouse:text-meta`,
   }[density];
   const joined = isJoined ? 'border-x-0' : '';
   // THE DISC IS THE BOX THAT NEVER LEARNED A WORD. It keeps the header's own 32px
@@ -1820,6 +1821,19 @@ export const Input = forwardRef<
   );
 });
 
+/** Native closed choices shared by machine settings and project workflows. */
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
+  function Select({ className = '', ...props }, ref) {
+    return (
+      <select
+        ref={ref}
+        className={`min-h-11 min-w-0 max-w-full appearance-auto rounded-control border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted mouse:min-h-7 ${className}`}
+        {...props}
+      />
+    );
+  },
+);
+
 /**
  * A SHORT STATE MESSAGE, with one optional title band and one way out.
  *
@@ -1841,7 +1855,7 @@ export function Banner({
 }) {
   const colors = {
     neutral: 'border-edge-strong bg-level-project text-footer-strong',
-    ok: 'border-ok/50 bg-ok/10 text-ok',
+    ok: 'border-ok/50 bg-ok/10 text-footer-strong',
     warn: 'border-warn-strong/60 bg-warn-surface text-warn',
     err: 'border-err/50 bg-err/10 text-err',
   }[kind];

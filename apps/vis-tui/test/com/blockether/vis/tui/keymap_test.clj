@@ -31,7 +31,8 @@
                  (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
                  (expect (nil? (keymap/prefix-action-for \d)))
-                 (expect (nil? (keymap/prefix-action-for \e)))
+                 ;; `e` is the Improve register; it only ACTS when a mode is chosen.
+                 (expect (= :improve (keymap/prefix-action-for \e)))
                  (expect (= :pick-model (keymap/prefix-action-for \c)))
                  (expect (= :show-sessions (keymap/prefix-action-for \s)))
                  (expect (= :fork-session (keymap/prefix-action-for \y)))

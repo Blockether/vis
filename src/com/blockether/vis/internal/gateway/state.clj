@@ -14,6 +14,9 @@
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.improve :as improve-settings]
+            [com.blockether.vis.internal.improve.core :as improve]
+            [com.blockether.vis.internal.improve.review :as improve-review]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
@@ -1412,7 +1415,7 @@
         (map-indexed
           (fn [idx
                {:keys [id tool-call-id kind media-type filename size audience version transcription
-                       transcription-status view-id owner]}]
+                       transcription-status view-id owner commentable]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
                      :tool_call_id tool-call-id
@@ -1424,7 +1427,8 @@
                      ;; shows the newest version with its history behind it.
                      :version (long (or version 1))
                      :audience (attachments/normalize-audience audience)
-                     :size (long (or size 0))}
+                     :size (long (or size 0))
+                     :commentable (true? commentable)}
               id
               (assoc :attachment_id (str id))
 
@@ -1459,8 +1463,7 @@
   (attachment-descriptors iteration-id (user-iteration-attachments iteration-id)))
 
 (defn append-iteration-attachment!
-  "Store a HUMAN's revision of an artifact the model produced, into the very
-   iteration that produced it, and hand back its wire descriptor.
+  "Store a produced artifact or authorized revision and return its wire descriptor.
 
    The version rule is the engine's own and lives in the writer: re-using the
    filename is the next CUT of that artifact, so a note the human annotated in
@@ -1482,9 +1485,15 @@
                                           rows))]
 
              (when idx (nth (attachment-descriptors iid rows) idx nil)))))
+       (catch clojure.lang.ExceptionInfo e (throw e))
        (catch Throwable t
          (tel/log! :warn ["gateway: append-iteration-attachment! failed" (str iid) (ex-message t)])
          nil)))
+
+(defn revise-iteration-attachment!
+  "Save a human review only when its session-owned artifact explicitly allows comments."
+  [sid iid att]
+  (append-iteration-attachment! iid (assoc att :revision-session-id sid)))
 
 ;; A live View a human stops AFTER the block that opened it returned has no
 ;; collector left to file into — the block's was drained the moment it returned.
@@ -5998,6 +6007,41 @@
   (try (lp/db-info)
        true
        (catch Throwable t (tel/log! :warn ["gateway: db warmup failed" (ex-message t)]) false)))
+
+(defn improve-operation!
+  "Machine-level Improve workflow; record payload keys retain canonical snake_case."
+  [operation opts]
+  (let [db (lp/db-info)]
+    (case operation
+      :settings
+      (improve-settings/settings)
+
+      :save-settings
+      (improve-settings/update-settings! opts)
+
+      :review
+      (improve-review/run! db)
+
+      :list
+      (let [records (improve/list-records db opts)
+            after (or (:id (last records)) (:after opts) 0)]
+
+        {:records records
+         :after after
+         :has_more (boolean (seq (improve/list-records db
+                                                       (assoc opts
+                                                         :after after
+                                                         :limit 1))))})
+
+      :create
+      (improve/create! db opts)
+
+      :get
+      (or (improve/get-record db (:id opts))
+          (throw (ex-info "Improve record not found" {:type :improve/not-found :status 404})))
+
+      :update
+      (improve/update! db (:id opts) (dissoc opts :id)))))
 
 (defn council-operation!
   "Transport adapter. Derive publication identity from the owning runtime; idle pings may dispatch a turn."

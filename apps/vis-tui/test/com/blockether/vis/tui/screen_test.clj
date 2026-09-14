@@ -36,6 +36,39 @@
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
+(defdescribe team-refresh-frame-test
+             (it
+               "forces one full frame, then restores fast paths without changing the debug override"
+               (let [db
+                     (atom {})
+
+                     choose-frame-path
+                     #'screen/choose-frame-path
+
+                     frame-change-flags
+                     #'screen/frame-change-flags]
+
+                 (with-redefs [state/app-db db]
+                   (state/dispatch [:bump-render-version :full-frame])
+                   (let [refreshed @db
+                         frame {:last-db {}
+                                :db refreshed
+                                :last-layout {:total-h 10 :inner-h 5}
+                                :same-size? true
+                                :cols 80}]
+
+                     (with-redefs-fn {#'screen/force-full-frame? (delay false)
+                                      #'screen/header-hover-only-change? (constantly true)}
+                       #(do (expect (= :full (choose-frame-path (frame-change-flags frame))))
+                            (expect (= :header-hover
+                                       (choose-frame-path (frame-change-flags
+                                                            (assoc frame :last-db refreshed)))))))
+                     (with-redefs-fn {#'screen/force-full-frame? (delay true)
+                                      #'screen/header-hover-only-change? (constantly true)}
+                       #(expect (= :full
+                                   (choose-frame-path (frame-change-flags
+                                                        (assoc frame :last-db refreshed)))))))))))
+
 (defdescribe
   attachment-picker-gateway-test
   ;; Regression: /pick-file reported no supported files after the standalone TUI split.
@@ -599,7 +632,7 @@
       (with-redefs [vis/registered-slashes
                     (constantly [{:slash/name "voice" :slash/doc "Voice toggle"}
                                  {:slash/name "workspace" :slash/doc "Workspace ops"}])]
-        (expect (= [] (command-palette-extra-commands))))))
+        (expect (= [:agent-team] (mapv :id (command-palette-extra-commands)))))))
 
 (defdescribe channel-status-error-routing-test
              (it "routes error status events to the notification lane only"

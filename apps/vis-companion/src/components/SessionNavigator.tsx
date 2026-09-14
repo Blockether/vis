@@ -367,7 +367,7 @@ export function pageWindow(page: number, pageCount: number): (number | null)[] {
 
 /**
  * Phones use compact steps beside the project name and new-session control.
- * Larger viewports keep numbered jumps on a separate row, including narrow desktop rails.
+ * Numbered jumps share the project band on desktop; tablets give them a separate row.
  */
 export function Pager({
   page,
@@ -425,7 +425,7 @@ export function Pager({
           return (
             <Button
               key={entry ?? (index === 1 ? 'previous-gap' : 'next-gap')}
-              variant={entry === page ? 'secondary' : 'quiet'}
+              variant="quiet"
               density="page"
               pressEffect="none"
               aria-label={label}

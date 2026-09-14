@@ -76,8 +76,17 @@ export function isTextMedia(mime: string | undefined, filename?: string): boolea
 
 export function isDocMedia(mime: string | undefined, filename?: string): boolean {
   return (
-    FRAME_MEDIA.has(baseMedia(mime)) || isTableMedia(mime, filename) || isTextMedia(mime, filename)
+    isDiffMedia(mime) ||
+    FRAME_MEDIA.has(baseMedia(mime)) ||
+    isTableMedia(mime, filename) ||
+    isTextMedia(mime, filename)
   );
+}
+
+export const DIFF_MEDIA = 'application/vnd.vis.diff+json';
+
+export function isDiffMedia(mime: string | undefined): boolean {
+  return baseMedia(mime) === DIFF_MEDIA;
 }
 
 export function isPdfMedia(mime: string | undefined): boolean {
@@ -86,6 +95,7 @@ export function isPdfMedia(mime: string | undefined): boolean {
 
 /** The chip beside the name: what KIND of document this is. */
 export function docKindLabel(mime: string | undefined, filename?: string): string {
+  if (isDiffMedia(mime)) return 'DIFF';
   if (isPdfMedia(mime)) return 'PDF';
   if (isTableMedia(mime, filename))
     return extensionOf(filename) === 'tsv' || baseMedia(mime) === 'text/tab-separated-values'
@@ -115,7 +125,11 @@ export function attachmentIsAudio(attachment: IterationAttachment): boolean {
 // `audience: "user"`, so its bytes never reach the model and the app owes the
 // human a reader for them instead of one more line in the recorded-files row.
 export function attachmentIsDoc(attachment: IterationAttachment): boolean {
-  return isDocMedia(attachment.media_type, attachment.filename) || attachment.kind === 'doc';
+  return (
+    isDocMedia(attachment.media_type, attachment.filename) ||
+    attachment.kind === 'doc' ||
+    attachment.kind === 'diff'
+  );
 }
 
 /**
@@ -195,6 +209,8 @@ export interface SessionArtifact {
   index: number;
   /** Which cut of this NAME it is, 1-based; 1 when the row carries no version. */
   version: number;
+  /** Human review is opt-in for each version. */
+  commentable?: boolean;
   /**
    * What a RECORDING says, when the gateway's speech engine could read it. Carried
    * on the row so the sheet can offer the words under the player without fetching a
@@ -241,6 +257,7 @@ function toArtifact(
     iterationId: where.iterationId,
     index,
     version: attachment.version ?? 1,
+    commentable: attachment.commentable === true,
     transcription: attachment.transcription,
     transcriptionStatus: attachment.transcription_status,
   };

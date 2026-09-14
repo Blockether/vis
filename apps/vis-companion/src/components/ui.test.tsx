@@ -591,7 +591,7 @@ describe('BandButton', () => {
   // drawing is different: its check replaces the pencil that entered the local tool.
   it('keeps a document verb in its band and a tool verb in its tool slot', () => {
     expect(markdownArtifactSource).toContain('<BandButton');
-    expect(markdownArtifactSource.match(/onClick={save}/g)).toHaveLength(1);
+    expect(markdownArtifactSource.match(/onClick=\{\(\) => void perform\(\)\}/g)).toHaveLength(1);
     expect(markdownArtifactSource).not.toContain('border-t border-dialog-edge px-3 py-3 pb-[max(');
     expect(markdownArtifactSource).toContain('isPrimary');
     expect(imageViewerSource).not.toContain('<BandButton');

@@ -98,7 +98,8 @@
    :size (:size att)
    :position position
    :is-pending true
-   :audience (attachments/attachment-audience att)})
+   :audience (attachments/attachment-audience att)
+   :commentable (true? (:commentable att))})
 
 (defn- pending-descriptors
   "Descriptors for everything the RUNNING block has attached so far, in call
@@ -185,8 +186,10 @@
    `record-attachment!` minted — `:id` and `:version` — so `attach` returns a
    HANDLE to what it just stored and every read verb can address it inside the
    same block."
-  [kind media-type b64 filename size audience label]
-  (cond (str/blank? (str b64)) (throw (ex-info "attach: empty payload." {}))
+  [kind media-type b64 filename size audience label commentable]
+  (cond (not (instance? Boolean commentable))
+        (throw (ex-info "attach: commentable must be a boolean" {}))
+        (str/blank? (str b64)) (throw (ex-info "attach: empty payload." {}))
         (str/blank? (str media-type)) (throw (ex-info "attach: missing media type" {}))
         (> (long (or size 0)) mpl-capture/max-capture-bytes)
         (throw (ex-info (str "attach: payload "
@@ -206,6 +209,7 @@
                                :media-type (str media-type)
                                :base64 (str b64)
                                :size (long (or size 0))
+                               :commentable commentable
                                ;; One funnel: a PDF/HTML document is clamped to "user" by
                                ;; `attachment-audience` itself, so no caller can put a
                                ;; document on the wire as an image block.
@@ -310,19 +314,21 @@
        :shim/globals ["attach" "list_attachments" "get_attachment" "read_attachment"
                       "show_attachment"]
        :shim/docs
-       (str "`attach` persists artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable "
-            "DB-owned iteration attachments with sniffed media types, surviving restarts. "
-            "SAME DOCUMENT, SAME NAME — a revision goes back under its OWN filename as that "
-            "artifact's next VERSION, never `report_v2.png` beside `report.png`; a fresh name "
-            "is a different document, and `list_attachments(name)` walks the thread. Compose "
-            "many images into one sheet per call; `audience='both'|'user'|'model'` routes who "
-            "sees it. ONE ADDRESSING RULE on the read side: `get_attachment(target, "
-            "version=None)`, `read_attachment` and `show_attachment` take the FILENAME (latest "
-            "cut unless you name a version) or an `id` from a descriptor — `attach` RETURNS "
-            "that descriptor, and an artifact this block just attached is addressable at once. "
-            "`read_attachment` is "
-            "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
-            "the MODEL for the next request. Vis-native; no upstream library.")
+       (str
+         "`attach` persists artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable "
+         "DB-owned iteration attachments with sniffed media types, surviving restarts. "
+         "SAME DOCUMENT, SAME NAME — a revision goes back under its OWN filename as that "
+         "artifact's next VERSION, never `report_v2.png` beside `report.png`; a fresh name "
+         "is a different document, and `list_attachments(name)` walks the thread. Compose "
+         "many images into one sheet per call; `audience='both'|'user'|'model'` routes who "
+         "sees it. Human review is opt-in per version: `commentable=True`; the default "
+         "is read-only, independent of filename. ONE ADDRESSING RULE on the read side: `get_attachment(target, "
+         "version=None)`, `read_attachment` and `show_attachment` take the FILENAME (latest "
+         "cut unless you name a version) or an `id` from a descriptor — `attach` RETURNS "
+         "that descriptor, and an artifact this block just attached is addressable at once. "
+         "`read_attachment` is "
+         "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
+         "the MODEL for the next request. Vis-native; no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

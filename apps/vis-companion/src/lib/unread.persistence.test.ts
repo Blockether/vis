@@ -24,7 +24,8 @@ const session = {
   status: 'idle',
   live: false,
   current_turn_id: null,
-  turn_count: 3,
+  turn_count: 7,
+  answer_count: 3,
   server_time_ms: 0,
 } satisfies Session;
 

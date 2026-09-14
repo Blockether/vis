@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 /** One step of a gallery: the bytes to show and the name to title them with. */
-export type GalleryPicture = { src: string; name: string };
+export type GalleryPicture = { src: string; name: string; commentable?: boolean };
 
 /**
  * Registration and CONTENT are two contexts on purpose.
@@ -38,7 +38,12 @@ export function ImageGallery({ children }: { children: ReactNode }) {
       register(at, picture) {
         setPictures((current) => {
           const seen = current.get(at);
-          if (seen && seen.src === picture.src && seen.name === picture.name) {
+          if (
+            seen &&
+            seen.src === picture.src &&
+            seen.name === picture.name &&
+            seen.commentable === picture.commentable
+          ) {
             return current;
           }
           const next = new Map(current);
@@ -76,13 +81,13 @@ export function useGalleryStep(
 ): { pictures: GalleryPicture[]; at: number } | null {
   const registrar = useContext(RegistrarContext);
   const registered = useContext(PicturesContext);
-  const { src, name } = picture;
+  const { src, name, commentable } = picture;
 
   useEffect(() => {
     if (!registrar || at === undefined || !src) return;
-    registrar.register(at, { src, name });
+    registrar.register(at, { src, name, commentable });
     return () => registrar.forget(at);
-  }, [registrar, at, src, name]);
+  }, [registrar, at, src, name, commentable]);
 
   return useMemo(() => {
     if (!registered || at === undefined || registered.size < 2) return null;

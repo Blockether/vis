@@ -23,6 +23,8 @@
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.contract.diff :as diff]
+            [com.blockether.vis.contract.improve :as improve-contract]
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -30,6 +32,7 @@
             [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
             [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
             [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.core :as vis]
             [honey.sql :as sql]
@@ -218,7 +221,20 @@
 
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
 
-(defn- install-schema! [^DataSource ds] (migration/migrate! ds MIGRATIONS))
+(def ^:private improve-intake-sql
+  "INSERT INTO improve_record (entry_id, project_id, title, created_at, updated_at)
+   SELECT i.entry_id, s.project_id,
+          substr('Complaint #' || i.entry_id || COALESCE(': ' || c.title, ''), 1, 256),
+          c.created_at, c.created_at
+   FROM improve i JOIN council_entry c ON c.id = i.entry_id
+   LEFT JOIN session_soul s ON s.id = i.session_soul_id
+   WHERE NOT EXISTS (SELECT 1 FROM improve_record r WHERE r.entry_id = i.entry_id)")
+
+(defn- install-schema!
+  [^DataSource ds]
+  (migration/migrate! ds MIGRATIONS)
+  ;; Backfill only missing workflow rows. Reopening never overwrites human analysis or state.
+  (jdbc/execute! ds [improve-intake-sql]))
 
 ;; Connection management
 ;;
@@ -3056,6 +3072,7 @@
              ;; but never a wire image block; "model" is sent and never shown. Normalized
              ;; on read so the send-time gate never sees a legacy or NULL value.
              :audience (attachments/normalize-audience (:audience row))
+             :commentable (= 1 (:commentable row))
              ;; TRANSCRIPTION: what a recording SAYS. Present only for audio, and only when
              ;; something could read it; every other row carries nil rather than "".
              :transcription (not-empty (str (:transcription row)))
@@ -3168,8 +3185,8 @@
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :view_id :live_invocation_id :live_activity_id :version :audience :storage_uri
-   :size_bytes :transcription [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
+   :filename :view_id :live_invocation_id :live_activity_id :version :audience :commentable
+   :storage_uri :size_bytes :transcription [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
   "[[row->attachment]] for a bytes-free row: the same envelope minus `:base64`,
@@ -3224,7 +3241,7 @@
             [(str
                "SELECT id, session_turn_soul_id, session_turn_iteration_id, "
                "tool_call_id, position, kind, media_type, filename, view_id, live_invocation_id, live_activity_id, "
-               "version, audience, storage_uri, size_bytes, transcription, "
+               "version, audience, commentable, storage_uri, size_bytes, transcription, "
                "CASE WHEN bytes IS NULL THEN 0 ELSE 1 END AS has_bytes "
                "FROM session_attachment WHERE session_turn_iteration_id IN ("
                (str/join "," (repeat (count ids) "?"))
@@ -3294,7 +3311,8 @@
          [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
          [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
          [:a.live_activity_id :live_activity_id] [:a.version :version] [:a.audience :audience]
-         [:a.storage_uri :storage_uri] [:a.transcription :transcription] [:a.size_bytes :size_bytes]
+         [:a.commentable :commentable] [:a.storage_uri :storage_uri]
+         [:a.transcription :transcription] [:a.size_bytes :size_bytes]
          [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
         [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))
 
@@ -3651,6 +3669,7 @@
                                       ;; producer was told which cut this is.
                                       :version (or (:version att) (next-version (:filename att)))
                                       :audience (attachments/normalize-audience (:audience att))
+                                      :commentable (if (true? (:commentable att)) 1 0)
                                       :transcription (not-empty (str (:transcription att)))
                                       :created_at now}
                                      (attachment-live-view-cols att)
@@ -3685,6 +3704,50 @@
                                     [:= :session_turn_iteration_id nil] [:= :position position]]})
                  true)))))
 
+(defn- human-attachment-revision
+  "Authorize a human revision inside the append transaction, retaining producer capabilities."
+  [tx-info iteration-id att]
+  (let [rows
+        (->> (db-list-session-attachments-meta tx-info (:revision-session-id att))
+             (filter #(and (:iteration-id %) (= (:filename att) (:filename %)))))
+
+        original
+        (last (sort-by :version (filter #(= (str iteration-id) (str (:iteration-id %))) rows)))
+
+        latest
+        (last (sort-by :version rows))]
+
+    (when-not original
+      (throw (ex-info "Unknown artifact in this session and iteration"
+                      {:type :attachment/not-found})))
+    (when-not (and (true? (:commentable original)) (true? (:commentable latest)))
+      (throw (ex-info "This attachment is read-only" {:type :attachment/read-only})))
+    (when-not (= (:media-type latest) (:media-type att))
+      (throw (ex-info "A review cannot change the attachment format"
+                      {:type :attachment/invalid-revision})))
+    (when (= diff/media-type (:media-type latest))
+      (let [read-diff
+            (fn [attachment]
+              (try (diff/parse! (String. (.decode (java.util.Base64/getDecoder)
+                                                  ^String
+                                                  (:base64 (attachment-storage/hydrate attachment)))
+                                         "UTF-8"))
+                   (catch Exception _
+                     (throw (ex-info "Invalid diff attachment"
+                                     {:type :attachment/invalid-revision})))))
+
+            before
+            (read-diff (db-read-attachment tx-info (:id latest)))
+
+            after
+            (read-diff att)]
+
+        (when-not (= (dissoc before "comments") (dissoc after "comments"))
+          (throw (ex-info "Diff reviews may change comments only"
+                          {:type :attachment/invalid-revision})))))
+    (merge (select-keys att [:filename :media-type :base64])
+           (select-keys latest [:kind :audience :commentable]))))
+
 (defn db-append-iteration-attachment!
   "Append ONE artifact to an EXISTING iteration - a human's own revision of a
    document the model produced (a markdown note annotated in the companion).
@@ -3702,7 +3765,9 @@
    the FIRST artifact that iteration ever gets, and reading the soul off a
    sibling row would drop it for having no siblings.
 
-   `att` is `{:media-type :base64 :filename? :kind? :audience?}`. Returns
+   Human callers supply trusted `:revision-session-id`; capability and ownership are
+   checked in this transaction. Internal late artifact filing omits it.
+   `att` is `{:media-type :base64 :filename? :kind? :audience? :commentable?}`. Returns
    `{:id :version :position}` for the stored row, or nil when the iteration is
    unknown or the payload does not decode."
   [db-info iteration-id att]
@@ -3721,6 +3786,11 @@
                                                             [:= :sts.id :it.session_turn_state_id]]
                                                      :where [:= :it.id iter-id-s]
                                                      :limit 1})))
+
+              att
+              (if (contains? att :revision-session-id)
+                (human-attachment-revision tx-info iteration-id att)
+                att)
 
               payload
               (attachment-payload-cols att)]
@@ -3754,6 +3824,7 @@
                                           :media_type (str (:media-type att))
                                           :filename (:filename att)
                                           :version version
+                                          :commentable (if (true? (:commentable att)) 1 0)
                                           :audience (attachments/normalize-audience
                                                       (or (:audience att) "user"))
                                           :created_at (now-ms)}
@@ -3816,7 +3887,8 @@
                                   :session_soul_id (:author_sid row)
                                   :turn (:turn scope)
                                   :iteration (:iter scope)
-                                  :form (:next_form scope)})]}))))
+                                  :form (:next_form scope)})]})
+      (jdbc/execute! (ds db) [(str improve-intake-sql " AND i.entry_id = ?") id]))))
 
 (defn- link-council-iteration!
   "Attach the final iteration identity to publications made during its execution."
@@ -5653,3 +5725,239 @@
                           (long (get activity-contract/limits "max_page_bytes"))))
                 projection
                 (recur (pop selected))))))))))
+
+;; Improve workflow: mutable analysis/hierarchy over immutable Council intake.
+
+(defn- improve-error!
+  [type message]
+  (throw (ex-info message
+                  {:type type
+                   :status (case type
+                             :improve/not-found
+                             404
+
+                             :improve/conflict
+                             409
+
+                             400)})))
+
+(def ^:private improve-select
+  {:select [:r.* [:c.content :source_content] [:c.source_ref :source_ref]
+            [:i.session_soul_id :session_id]]
+   :from [[:improve_record :r]]
+   :left-join [[:improve :i] [:= :i.entry_id :r.entry_id] [:council_entry :c]
+               [:= :c.id :i.entry_id]]})
+
+(defn- improve-rows
+  [db q]
+  (mapv #(update % :source_ref <-blob) (query! db (merge improve-select q))))
+
+(defn db-improve-get
+  [db id]
+  (when-not (and (integer? id) (pos? (long id)))
+    (improve-error! :improve/invalid "Improve id must be a positive integer"))
+  (first (improve-rows db {:where [:= :r.id id]})))
+
+(defn db-improve-list
+  [db opts]
+  (improve-contract/validate! :list opts)
+  (improve-rows db
+                {:where (cond-> [:and [:> :r.id (:after opts 0)]]
+                          (contains? opts :project_id)
+                          (conj [:= :r.project_id (:project_id opts)])
+
+                          (:status opts)
+                          (conj [:= :r.status (:status opts)]))
+                 :order-by [:r.id]
+                 :limit (:limit opts 100)}))
+
+(defn db-improve-project-ids
+  [db]
+  (mapv :project_id
+        (query! db
+                {:select-distinct [:project_id]
+                 :from [:improve_record]
+                 :where [:= :status "open"]
+                 :order-by [:project_id]})))
+
+(defn- require-improve
+  [db id]
+  (or (db-improve-get db id) (improve-error! :improve/not-found "Improve record not found")))
+
+(defn- improve-family
+  "Return the root and its descendants/ancestors. UNION bounds traversal even in a damaged store."
+  [db id ancestors?]
+  (query-sql!
+    db
+    [(str
+       "WITH RECURSIVE family(id, parent_id) AS (
+                        SELECT id, parent_id FROM improve_record WHERE id = ? UNION
+                        SELECT r.id, r.parent_id FROM improve_record r JOIN family f ON "
+       (if ancestors? "r.id = f.parent_id" "r.parent_id = f.id")
+       ") SELECT id FROM family") id]))
+
+(defn- improve-family-ids [db id ancestors?] (mapv :id (improve-family db id ancestors?)))
+
+(defn- improve-project!
+  [db project-id]
+  (when (and project-id
+             (not (query-one! db {:select [:id] :from [:project] :where [:= :id project-id]})))
+    (improve-error! :improve/invalid "Improve project does not exist")))
+
+(defn- improve-parent!
+  [db record descendant-ids]
+  (when-let [parent-id (:parent_id record)]
+    (let [parent (require-improve db parent-id)]
+      (when (some #{parent-id} descendant-ids)
+        (improve-error! :improve/invalid "Improve grouping cannot contain a cycle"))
+      (when-not (= (:project_id record) (:project_id parent))
+        (improve-error! :improve/invalid "Improve grouping must stay in one project"))
+      (when (and (= "open" (:status record)) (= "closed" (:status parent)))
+        (improve-error! :improve/invalid
+                        "An open Improve record cannot be grouped under a closed parent")))))
+
+(defn- improve-change!
+  [db ids attrs]
+  (when (seq ids)
+    (execute! db
+              {:update :improve_record
+               :set (assoc attrs
+                      :updated_at (now-ms)
+                      :version [:+ :version 1])
+               :where [:in :id ids]})))
+
+(defn db-improve-create!
+  [db attrs]
+  (improve-contract/validate! :create attrs)
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (let [now
+                            (now-ms)
+
+                            record
+                            (merge {:entry_id nil
+                                    :project_id nil
+                                    :content ""
+                                    :status "open"
+                                    :parent_id nil
+                                    :version 1
+                                    :created_at now
+                                    :updated_at now}
+                                   attrs)]
+
+                        (improve-project! tx (:project_id record))
+                        (improve-parent! tx record [])
+                        (let [id (:id (query-one! tx
+                                                  {:insert-into :improve_record
+                                                   :values [record]
+                                                   :returning [:id]}))]
+                          (db-improve-get tx id))))))
+
+(defn db-improve-update!
+  [db id attrs]
+  (improve-contract/validate! :update attrs)
+  (sqlite-write-tx!
+    db
+    (fn [tx]
+      (let [old
+            (require-improve tx id)
+
+            _
+            (when (and (:expected_version attrs) (not= (:expected_version attrs) (:version old)))
+              (improve-error! :improve/conflict "Improve record changed; reload before editing"))
+
+            changes
+            (dissoc attrs :expected_version)
+
+            record
+            (merge old changes)
+
+            descendants
+            (improve-family-ids tx id false)]
+
+        (improve-project! tx (:project_id record))
+        ;; Reopening an existing child opens its ancestors. A new parent must already be open.
+        (when (and (= "open" (:status attrs)) (= (:parent_id old) (:parent_id record)))
+          (let [ancestors (remove #{id} (improve-family-ids tx id true))]
+            (when (seq ancestors)
+              (let [closed (mapv :id
+                                 (query! tx
+                                         {:select [:id]
+                                          :from [:improve_record]
+                                          :where [:and [:in :id ancestors]
+                                                  [:= :status "closed"]]}))]
+                (improve-change! tx closed {:status "open"})))))
+        (improve-parent! tx record descendants)
+        (when (not= (:project_id old) (:project_id record))
+          (improve-change! tx (vec (remove #{id} descendants)) {:project_id (:project_id record)}))
+        (when (= "closed" (:status attrs))
+          (improve-change! tx (vec (remove #{id} descendants)) {:status "closed"}))
+        (when (seq changes) (improve-change! tx [id] changes))
+        (db-improve-get tx id)))))
+
+(defn- improve-review-current!
+  [still-current?]
+  (when-not (still-current?)
+    (improve-error! :improve/conflict "Improve review settings changed; proposal discarded")))
+
+(defn db-improve-apply-review!
+  [db {:keys [expected updates groups] :as proposal} still-current?]
+  (when-not (and (map? proposal)
+                 (every? #{:expected :updates :groups} (keys proposal))
+                 (map? expected)
+                 (every?
+                   (fn [[id version]]
+                     (and (integer? id) (pos? (long id)) (integer? version) (pos? (long version))))
+                   expected)
+                 (or (nil? updates) (vector? updates))
+                 (or (nil? groups) (vector? groups))
+                 (<= (count expected) 200)
+                 (<= (count updates) 200)
+                 (<= (count groups) 200)
+                 (ifn? still-current?))
+    (improve-error! :improve/invalid "Invalid Improve review proposal"))
+  (doseq [row updates]
+    (when-not (and (map? row) (= #{:id :content} (set (keys row))) (contains? expected (:id row)))
+      (improve-error! :improve/invalid
+                      "Automatic Improve updates may only edit snapshotted analysis"))
+    (improve-contract/validate! :update (dissoc row :id)))
+  (doseq [group groups]
+    (when-not (and (map? group)
+                   (every? #{:title :content :project_id :children} (keys group))
+                   (vector? (:children group))
+                   (seq (:children group))
+                   (= (count (:children group)) (count (distinct (:children group)))))
+      (improve-error! :improve/invalid "Invalid Improve review group"))
+    (improve-contract/validate! :create (dissoc group :children)))
+  (sqlite-write-tx!
+    db
+    (fn [tx]
+      (improve-review-current! still-current?)
+      (doseq [[id version] expected]
+        (when-not (= version (:version (require-improve tx id)))
+          (improve-error! :improve/conflict "Improve record changed; review proposal discarded")))
+      (let [children (mapcat :children groups)]
+        (when-not (= (count children) (count (distinct children)))
+          (improve-error! :improve/invalid "A record may appear in only one review group"))
+        (doseq [id children]
+          (when-not (contains? expected id)
+            (improve-error! :improve/invalid "Review group children require an expected version"))
+          (let [record (require-improve tx id)]
+            (when-not (and (= "open" (:status record)) (nil? (:parent_id record)))
+              (improve-error! :improve/conflict
+                              "Only open root records may be automatically grouped")))))
+      (doseq [{:keys [id] :as row} updates]
+        (db-improve-update! tx id (dissoc row :id)))
+      (let [created
+            (mapv (fn [{:keys [children] :as group}]
+                    (let [parent (db-improve-create! tx (dissoc group :children))]
+                      (doseq [id children]
+                        (db-improve-update! tx id {:parent_id (:id parent)}))
+                      (:id parent)))
+                  groups)
+
+            changed
+            (distinct (concat (map :id updates) (mapcat :children groups) created))]
+
+        (improve-review-current! still-current?)
+        {:records (mapv #(db-improve-get tx %) changed)}))))

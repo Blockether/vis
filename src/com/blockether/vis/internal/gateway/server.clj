@@ -26,6 +26,7 @@
     [com.blockether.vis.internal.attachment.core :as attachments]
     [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.improve.review :as improve-review]
     [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.docs.core :as docs]
     [com.blockether.vis.internal.extension.core :as extension]
@@ -2957,6 +2958,42 @@
                            (:error (ex-data e))
                            (ex-message e))))))
 
+(defn- improve-handler
+  [operation]
+  (fn [request]
+    (try (let [raw
+               (if (contains? #{:create :update :save-settings} operation)
+                 (try (body-json request) (catch Exception _ nil))
+                 (or (:query-params request) {}))
+
+               _
+               (when-not (map? raw)
+                 (throw (ex-info "Expected an Improve JSON object"
+                                 {:status 400 :type :improve/invalid})))
+
+               opts
+               (into {}
+                     (map (fn [[k v]]
+                            [(keyword k)
+                             (cond (and (= operation :list) (#{"after" "limit"} k) (string? v))
+                                   (Long/parseLong v)
+                                   (and (= k "project_id") (= v "")) nil
+                                   :else v)]))
+                     raw)
+
+               opts
+               (cond-> opts
+                 (#{:get :update} operation)
+                 (assoc :id (Long/parseLong (get-in request [:path-params :id]))))]
+
+           (json-response (state/improve-operation! operation opts)))
+         (catch NumberFormatException _
+           (error-response 400 :improve/invalid "Improve ids and cursors must be integers"))
+         (catch clojure.lang.ExceptionInfo e
+           (if-let [status (:status (ex-data e))]
+             (error-response status (:type (ex-data e)) (ex-message e))
+             (throw e))))))
+
 (defn- council-handler
   [operation]
   (fn [request]
@@ -3278,32 +3315,38 @@
    descriptor shape the transcript and the byte endpoint already speak, so the
    client re-reads the revision through the paths it already has."
   [request]
-  (if (path-sid request)
-    (let [body
-          (body-json request)
-
-          filename
-          (some-> (get body "filename")
-                  str
-                  str/trim)
-
-          base64
-          (get body "base64")]
+  (if-let [sid (path-sid request)]
+    (let [body (body-json request)
+          filename (some-> (get body "filename")
+                           str
+                           str/trim)
+          base64 (get body "base64")]
 
       (if (or (str/blank? filename) (str/blank? (str base64)))
         (error-response 400 :invalid-attachment "filename and base64 are required")
-        (if-let [descriptor (state/append-iteration-attachment!
-                              (path-iid request)
-                              {:filename filename
-                               :media-type (or (not-empty (str (get body "media_type")))
-                                               "application/octet-stream")
-                               :base64 (str base64)
-                               :kind "doc"
-                               :audience "user"})]
-          (json-response 201 descriptor)
-          (error-response 404
-                          :attachment-not-stored "unknown iteration"
-                          :iteration_id (str (path-iid request))))))
+        (try (if-let [descriptor (state/revise-iteration-attachment!
+                                   sid
+                                   (path-iid request)
+                                   {:filename filename
+                                    :media-type (or (not-empty (str (get body "media_type")))
+                                                    "application/octet-stream")
+                                    :base64 (str base64)})]
+               (json-response 201 descriptor)
+               (error-response 404
+                               :attachment-not-stored "unknown iteration"
+                               :iteration_id (str (path-iid request))))
+             (catch clojure.lang.ExceptionInfo e
+               (case (:type (ex-data e))
+                 :attachment/not-found
+                 (error-response 404 :attachment-not-found (ex-message e))
+
+                 :attachment/read-only
+                 (error-response 403 :attachment-read-only (ex-message e))
+
+                 :attachment/invalid-revision
+                 (error-response 400 :invalid-attachment (ex-message e))
+
+                 (throw e))))))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- turn-attachments-handler
@@ -4478,6 +4521,15 @@
         ["/devices/:token" {:delete delete-device-handler}]
         ["/machines/order" {:post machine-order-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
+        ["/improve" {:get (improve-handler :list) :post (improve-handler :create)}]
+        ;; Fixed settings/review paths intentionally take precedence over the record id.
+        ["/improve/settings"
+         {:conflicting true
+          :get (improve-handler :settings)
+          :patch (improve-handler :save-settings)}]
+        ["/improve/review" {:conflicting true :post (improve-handler :review)}]
+        ["/improve/:id"
+         {:conflicting true :get (improve-handler :get) :patch (improve-handler :update)}]
         ["/mcp/servers" {:get mcp-servers-handler :post save-mcp-server-handler}]
         ["/mcp/servers/actions/test" {:post test-mcp-server-handler}]
         ["/mcp/servers/:name" {:put save-mcp-server-handler :delete delete-mcp-server-handler}]
@@ -5027,6 +5079,7 @@
      (try (discovery/register-self! db {:port port :host host :secret token})
           (catch Throwable t
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
+     (swap! server-state assoc :stop-improve! (improve-review/start! db))
      (when managed? (ensure-idle-reaper!))
      (tel/log! :info
                ["gateway: listening" (str host ":" port)
@@ -5058,7 +5111,8 @@
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
-  (when-let [{:keys [^Server server db]} @server-state]
+  (when-let [{:keys [^Server server db stop-improve!]} @server-state]
+    (when stop-improve! (stop-improve!))
     ;; Release the listening socket FIRST so a successor daemon racing this
     ;; close-then-reopen handoff can bind the port immediately. The slow reap
     ;; below (killing every session's background `shell` children + REPLs) can eat

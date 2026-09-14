@@ -98,11 +98,19 @@ def _field(data: Any, name: str, kind: type) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class Response:
+    """Response bytes with their status and headers, before content decoding.
+
+    Returned by binary and transcript APIs. Use `content` directly for files,
+    inspect `headers` for their media type, or call `json` for JSON transcripts.
+    `json` raises `ProtocolError` for malformed or non-JSON content.
+    """
+
     status: int
     content: bytes
     headers: dict[str, str]
 
     def json(self) -> Any:
+        """Decode `content` as JSON, or raise `ProtocolError` if it is invalid."""
         try:
             return json.loads(self.content)
         except (ValueError, UnicodeError):
@@ -111,7 +119,22 @@ class Response:
 
 @dataclass(frozen=True, slots=True)
 class Event:
-    """Validated event envelope; only event-specific payload remains dynamic."""
+    """Typed envelope yielded by `Events`; payload fields depend on `type`.
+
+    Attributes:
+        type: Event name identifying how to interpret the payload.
+        session_id: Conversation that emitted the event.
+        seq: Sequence number for a journal event, when supplied.
+        cursor: Replay position from a subscription control event, when supplied.
+        turn_id: Request associated with this event, or `None` for session events.
+        data: Event-specific dictionary; not a final turn result by itself.
+        activity: Validated activity projection, when this event carries one.
+        view: Validated view event, when this event carries one.
+
+    Stream readers validate wire records through `from_wire`. Use `Turn.read` or
+    `Turn.wait` for a request's canonical result instead of treating each event as
+    a completed response.
+    """
 
     type: str
     session_id: str
@@ -170,12 +193,28 @@ class Event:
 
 
 class ExecutionLayer(ABC):
-    """Transport-neutral session API shared by local engines and gateway clients.
+    """Shared session API for local processes and explicit gateway connections.
 
-    Implement connect(), close(), session_options() and _open() for a transport.
-    _open() returns a context-managed binary response with status and headers.
-    Session paths and channel defaults belong to the layer, not to Agent.
-    Instances and their session handles use one calling thread.
+    Applications normally choose `blockether.vis.engine.LocalEngine` or
+    `blockether.vis.engine.GatewayClient`, then use `create_session` to start a
+    conversation or `session` to attach to an existing session ID. `Agent` wraps
+    this API when you only need one conversation.
+
+    The named HTTP methods below expose lower-level engine routes. Their `body`
+    and `query` values use the gateway's canonical wire schema, not arbitrary
+    Python objects. Prefer `Session` and `Turn` methods for ordinary workflows.
+    Route failures raise `GatewayError`; IO and malformed replies raise
+    `TransportError` or its subclasses. Mutations are not automatically retried.
+
+    Args:
+        timeout: Positive finite transport timeout in seconds; defaults to 30.
+            This is independent of a turn's wait deadline.
+
+    Use each layer and its session handles on one calling thread. Context entry
+    calls `connect`; context exit calls `close`. A custom transport implements
+    `connect`, `close`, `session_options` and `_open`. The latter returns a
+    context-managed binary response with status and headers. Path and channel
+    defaults belong to the layer, not to `Agent`.
     """
 
     def __init__(self, *, timeout: float = 30):
@@ -275,9 +314,26 @@ class ExecutionLayer(ABC):
             raise TransportError("gateway response interrupted") from None
 
     def session(self, sid: str) -> Session:
+        """Return a lightweight handle for an existing session ID.
+
+        This does not fetch or validate the remote session. Use `Session.read`
+        to retrieve its state; a missing session is reported by that request.
+        The handle borrows this layer and does not own its lifetime.
+        """
         return Session(self, sid)
 
     def create_session(self, *, timeout=None, **options) -> Session:
+        """Create a conversation and return a `Session` handle.
+
+        Args:
+            timeout: Optional timeout in seconds for this creation request.
+            **options: Canonical session creation fields. For a project path,
+                pass `**layer.session_options(project)` so local and gateway
+                path rules and channel defaults are applied correctly.
+
+        This sends a creation request immediately. Unlike `session`, it creates
+        a new record; use the returned handle's `id` to attach to it later.
+        """
         data = self._request(
             "POST", "/v1/sessions", body=options, timeout=timeout
         ).json()
@@ -427,6 +483,96 @@ class ExecutionLayer(ABC):
             "POST",
             "/v1/fs/actions/mkdir",
             path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def get_improve(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/improve — json response."""
+        response = self._request(
+            "GET", "/v1/improve", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def post_improve(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/improve — json response."""
+        response = self._request(
+            "POST", "/v1/improve", path={}, query=query, timeout=timeout, body=body
+        )
+        return response.json()
+
+    def get_improve_settings(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/improve/settings — json response."""
+        response = self._request(
+            "GET", "/v1/improve/settings", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def patch_improve_settings(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PATCH /v1/improve/settings — json response."""
+        response = self._request(
+            "PATCH",
+            "/v1/improve/settings",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def post_improve_review(
+        self, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """POST /v1/improve/review — json response."""
+        response = self._request(
+            "POST", "/v1/improve/review", path={}, query=query, timeout=timeout
+        )
+        return response.json()
+
+    def get_improve_entry(
+        self, entry_id: int, *, query: Query | None = None, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/improve/:id — json response."""
+        response = self._request(
+            "GET",
+            "/v1/improve/:id",
+            path={"id": entry_id},
+            query=query,
+            timeout=timeout,
+        )
+        return response.json()
+
+    def patch_improve_entry(
+        self,
+        entry_id: int,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PATCH /v1/improve/:id — json response."""
+        response = self._request(
+            "PATCH",
+            "/v1/improve/:id",
+            path={"id": entry_id},
             query=query,
             timeout=timeout,
             body=body,
@@ -2089,11 +2235,42 @@ class ExecutionLayer(ABC):
 
 
 class GatewayClient(ExecutionLayer):
-    """Connect to an explicit HTTP(S) origin using an optional bearer token.
+    """Use an existing Vis gateway through an explicit HTTP(S) origin.
 
-    TLS certificate verification is enabled. Redirects are refused so credentials
-    cannot follow a redirect to another origin. No local credentials are read.
-    Instances and their session handles are intended for one calling thread.
+    Choose this layer when sessions should outlive your Python process or the
+    engine runs on another machine. It never starts or discovers a gateway and
+    never reads locally saved credentials. Obtain an authorized gateway URL and
+    token separately; keep tokens out of source code and logs.
+
+    Args:
+        url: HTTP(S) origin such as `https://gateway.example.com`, without a
+            path, query, fragment or embedded credentials.
+        token: Optional bearer token supplied by your application.
+        timeout: Positive finite transport timeout in seconds; defaults to 30.
+
+    Construction makes no network request. Context entry calls `connect` to
+    check protocol compatibility and acquire a client lease. Closing releases
+    this client's lease and streams, not the gateway or its stored sessions.
+    Reuse the same layer for multiple agents, then close it after those agents.
+
+    ```python
+    import os
+    from blockether.vis.engine import Agent, GatewayClient
+
+    with GatewayClient(
+        "https://gateway.example.com", token=os.environ["VIS_GATEWAY_TOKEN"]
+    ) as layer:
+        with Agent(project="/workspace/project", execution_layer=layer) as agent:
+            result = agent.run("Summarize this project without changing files.")
+            print(result["status"])
+    ```
+
+    The project path is absolute and belongs to the gateway machine, not this
+    Python process. TLS certificate verification is enabled; redirects are
+    refused so credentials cannot follow them to another origin. Each instance
+    and its session handles use one calling thread. HTTP failures raise
+    `GatewayError`; connection, deadline and protocol failures use the
+    `TransportError` exception family.
     """
 
     def __init__(self, url: str, *, token: str | None = None, timeout: float = 30):
@@ -2160,6 +2337,13 @@ class GatewayClient(ExecutionLayer):
             raise TransportError("gateway connection failed") from None
 
     def connect(self) -> GatewayClient:
+        """Check protocol compatibility and acquire this client's lease once.
+
+        Return this client. Repeated calls reuse its lease. An incompatible
+        gateway raises `ProtocolError`; authentication and other HTTP failures
+        raise `GatewayError`. A failed keepalive requires a new client rather
+        than silently resuming work under a different lease.
+        """
         if self._lease_error:
             raise TransportError("client lease keepalive failed; create a new client")
         if self._lease:
@@ -2204,6 +2388,12 @@ class GatewayClient(ExecutionLayer):
                 return
 
     def close(self) -> None:
+        """Close streams and release this client's lease without stopping the gateway.
+
+        Stored remote sessions are not deleted. Repeated calls are safe, but
+        this closed client cannot be reused. Use `Turn.cancel` when you need
+        explicit cancellation rather than merely detaching a client.
+        """
         if self._closed:
             return
         self._heartbeat_stop.set()
@@ -2231,6 +2421,23 @@ class GatewayClient(ExecutionLayer):
 
 @dataclass(frozen=True, slots=True)
 class Session:
+    """A conversation handle bound to one execution layer and session ID.
+
+    Obtain it from `Agent.session`, `ExecutionLayer.create_session` or
+    `ExecutionLayer.session`. Constructing a handle does not read the session.
+    It borrows the layer; keep the layer open while using it.
+
+    Use `send` for a new turn and `turns` for history. `read` fetches current
+    session state. `events` follows progress; `input_views` and `answer` let your
+    application handle pending human input. `transcript`, `artifacts`, `upload`
+    and `download_attachment` cover content exchange. `council` binds messaging
+    and managed-agent controls to this conversation.
+
+    Requests return canonical dictionaries unless a method documents a typed
+    handle or `Response`. HTTP errors raise `GatewayError`, including missing
+    or inaccessible session IDs; no method automatically retries mutations.
+    """
+
     client: ExecutionLayer
     id: str
 
@@ -2263,13 +2470,29 @@ class Session:
         return Council(self, binding["default_group_id"], binding["activation_id"])
 
     def read(self):
+        """Fetch the current canonical session record as a dictionary.
+
+        Pending application-owned tool calls are serviced on the calling thread
+        before fetching state. This is a fresh read, not a cached snapshot.
+        """
         self.client._pump_client_extensions(self.id)
         return self._call("GET")
 
     def update(self, **fields):
+        """Patch canonical session fields and return the engine's JSON response.
+
+        Field names and validation follow the gateway session-update contract;
+        unknown or invalid fields are rejected by the engine.
+        """
         return self._call("PATCH", body=fields)
 
     def delete(self):
+        """Ask the engine to delete this conversation and return its response.
+
+        This is a destructive session operation, not a connection close. It does
+        not undo changes already made to project files. Do not use this handle
+        for further conversation requests after successful deletion.
+        """
         return self._call("DELETE")
 
     def turns(self, **query):
@@ -2343,6 +2566,22 @@ class Session:
     def send(
         self, request: str, *, idempotency_key: str | None = None, **options
     ) -> Turn:
+        """Submit a user message or slash command and return its `Turn` handle.
+
+        Args:
+            request: Message text sent to this conversation.
+            idempotency_key: Stable key for retrying the same submission after
+                uncertain IO. Omission creates a new key for each call.
+            **options: Canonical turn submission fields such as `provider`,
+                `model` and `attachments`. Upload attachment bytes first with
+                `upload` and pass the returned upload IDs in `attachments`.
+
+        Return does not mean the model has finished: use `Turn.wait` or
+        `Turn.read`. The returned cursor marks the event position before this
+        submission; pass it to `events` to follow subsequent progress.
+        Model requests may incur costs and change project files. Submission
+        failures propagate; the SDK never automatically retries this mutation.
+        """
         extensions = self.client._client_extensions.get(self.id)
         if extensions is not None:
             extensions.started = True
@@ -2359,6 +2598,11 @@ class Session:
         return Turn(self, _field(data, "turn_id", str), cursor)
 
     def input_views(self) -> list[InputView]:
+        """Read pending input requests as typed `blockether.vis.views.InputView` records.
+
+        Use their view IDs with `answer` to submit values. An empty list means no
+        input requests were returned in this snapshot.
+        """
         data = _field(self._call("GET", "/views/input"), "requests", list)
         try:
             return [InputView.from_wire(item) for item in data]
@@ -2366,6 +2610,11 @@ class Session:
             raise ProtocolError("invalid input View response") from None
 
     def live_views(self) -> list[LiveView]:
+        """Read current live views as typed `blockether.vis.views.LiveView` records.
+
+        This fetches a snapshot rather than subscribing to future updates; use
+        `events` to follow view events. Malformed view data raises `ProtocolError`.
+        """
         data = _field(self._call("GET", "/views/live"), "views", list)
         try:
             return [LiveView.from_wire(item) for item in data]
@@ -2373,6 +2622,12 @@ class Session:
             raise ProtocolError("invalid live View response") from None
 
     def view_action(self, view_id: str, action: str, **values):
+        """Send an operator action to a view and return the engine's JSON response.
+
+        `values` supplies the action-specific fields of the canonical operator
+        action schema. The request is validated before submission. Use `answer`
+        for the common case of submitting input values.
+        """
         body = {**values, "action": action}
         validate("view", "operator_action", body)
         return self._call(
@@ -2383,9 +2638,26 @@ class Session:
         )
 
     def answer(self, view_id, values):
+        """Submit input values to a view, returning the engine's response.
+
+        Pass a view ID from `input_views` and values matching that input request.
+        This is shorthand for `view_action(view_id, "submit", values=values)`.
+        """
         return self.view_action(view_id, "submit", values=values)
 
     def events(self, **options) -> Events:
+        """Follow this conversation's progress as an iterable of `Event` records.
+
+        Options are `cursor` (nonnegative replay position, default 0),
+        `reconnects` (default 3) and `retry_delay` (seconds, default 0.2).
+        Use a context manager to close the stream when you stop iterating.
+        The stream spans the conversation, not just one turn; filter `turn_id`
+        when tracking a specific request. Closing it does not cancel work.
+
+        Gateway sessions normally use SSE. Local execution and application-owned
+        callbacks use finite event-page polling so Python callbacks run on the
+        calling thread. Both expose the same event interface.
+        """
         extensions = self.client._client_extensions.get(self.id)
         if extensions is not None and extensions.manifest:
             return _SessionPollingEvents(self, **options)
@@ -2394,21 +2666,56 @@ class Session:
 
 @dataclass(frozen=True, slots=True)
 class Turn:
+    """Handle for one submitted request, independent of other session turns.
+
+    Returned by `Agent.send` or `Session.send`. `id` identifies this request;
+    `cursor` is the session event position captured before submission. The handle
+    borrows its session and execution layer. Keep that layer open while calling
+    `read`, `wait` or `cancel`.
+    """
+
     session: Session
     id: str
     cursor: int = 0
 
     def read(self, *, timeout=None):
+        """Fetch this turn's current canonical record, including its `status`.
+
+        `timeout` optionally overrides this request's transport deadline in
+        seconds. Application-owned callbacks are serviced before reading state.
+        """
         self.session.client._pump_client_extensions(self.session.id)
         return self.session._call(
             "GET", "/turns/:tid", path={"tid": self.id}, timeout=timeout
         )
 
     def cancel(self):
+        """Request cancellation of this turn and return the engine's response.
+
+        Use `read` or `wait` to inspect the resulting status. Cancellation does
+        not revert file edits or other side effects already performed.
+        """
         return self.session._call("POST", "/turns/:tid/cancel", path={"tid": self.id})
 
     def wait(self, *, timeout: float = 300):
-        """Wait for this turn only; deadline expiration does not cancel it."""
+        """Poll this turn until it finishes or suspends, returning its record.
+
+        Args:
+            timeout: Positive finite overall wait deadline in seconds.
+
+        Returns:
+            A canonical dictionary whose `status` is `completed`, `failed`,
+            `cancelled`, `suspended` or `error`. A failure status is data, not a
+            raised model-work exception; inspect it before using the result.
+
+        Raises:
+            VisTimeout: The deadline expired. This method does not request
+                cancellation; you can wait again or explicitly call `cancel`.
+
+        Transport and HTTP errors also propagate. For a local engine, a timeout
+        of the underlying pipe operation closes that process to prevent replies
+        getting out of order; this is distinct from merely ending the poll loop.
+        """
         end = time.monotonic() + _duration(timeout)
         while True:
             remaining = end - time.monotonic()
@@ -2459,6 +2766,12 @@ class _EventStream:
         return next(self._iterator)
 
     def close(self):
+        """Release this event subscription without cancelling conversation work.
+
+        Close the active response and iterator and detach the stream from its
+        client. Repeated calls are safe; further iteration stops. The client and
+        session remain open. Context exit calls this method automatically.
+        """
         self._closed = True
         if self._raw is not None:
             self._raw.close()
@@ -2547,10 +2860,25 @@ class _PollingEvents:
 
 
 class Events(_EventStream):
-    """Session SSE with cursor resume, duplicate suppression and bounded reconnects.
+    """Iterate typed session events, with replay and bounded reconnection.
 
-    subscription.ready resets the cursor, including after a daemon restart.
-    The idle timeout is the client's timeout. Closing never cancels a turn.
+    Obtain a stream from `Session.events`. It yields `Event` objects; inspect
+    `type`, `turn_id` and the event-specific `data` rather than parsing raw SSE.
+    The stream covers the whole conversation and does not stop when one turn
+    completes. Use it in a `with` block or call `close` when done.
+
+    Args:
+        session: Conversation whose events you want to follow.
+        cursor: Nonnegative replay position, normally a saved cursor or the
+            cursor from `Session.send`. Defaults to 0.
+        **options: `reconnects` bounds retries (default 3); `retry_delay` is a
+            nonnegative finite delay in seconds (default 0.2).
+
+    Duplicate events are suppressed. `subscription.ready` resets the cursor,
+    including after a daemon restart, so persist the stream's current `cursor`
+    rather than assuming it is always increasing. The idle timeout is the
+    client's timeout. Closing the stream never cancels a turn. Invalid replay
+    options raise `ValueError`; malformed events raise `ProtocolError`.
     """
 
     def __init__(self, session: Session, *, cursor=0, **options):

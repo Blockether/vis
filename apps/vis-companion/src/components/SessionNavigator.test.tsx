@@ -10,9 +10,16 @@ describe('project pages', () => {
     const onPage = vi.fn();
     render(<Pager page={1} pageCount={102} label="vis sessions" onPage={onPage} />);
     for (const page of [1, 2, 102]) {
-      expect(screen.getByRole('button', { name: `Page ${page}` })).toBeInTheDocument();
+      const button = screen.getByRole('button', { name: `Page ${page}` });
+      expect(button).toBeInTheDocument();
+      // Regression: page targets must match the adjacent header controls, not 24px chips.
+      expect(button).toHaveClass('mouse:min-h-7', 'mouse:min-w-7', 'mouse:px-1.5');
+      expect(button).toHaveClass('border-transparent', 'hover:bg-hover');
     }
     expect(screen.getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
+    const numbers = screen.getByRole('button', { name: 'Page 1' }).parentElement;
+    expect(numbers).toHaveClass('gap-2');
+    expect(numbers).not.toHaveClass('mouse:gap-0');
     expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
     fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));
     expect(onPage).toHaveBeenCalledExactlyOnceWith(2);

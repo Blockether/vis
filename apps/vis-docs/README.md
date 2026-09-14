@@ -29,12 +29,17 @@ an SDK runtime dependency. The generated HTML and search index are published at
 so the reference can include APIs not yet released on PyPI.
 
 `python-api.mjs` documents public modules, including the engine's re-exported API,
-and excludes private implementation modules. It keeps pdoc's layout and search,
-extracting inline CSS and JavaScript into content-addressed assets to preserve the
-site's Content Security Policy. No engine, gateway or model call is needed.
+and excludes private implementation modules. The template in `pdoc/` adds task
+navigation, a compact class/member index and the manual's typography. Public methods
+inherited from private SDK bases are rendered on the public class, rather than
+silently omitted. pdoc still owns signatures, cross-references and search.
+
+Inline CSS and JavaScript are extracted into content-addressed assets to preserve
+the site's Content Security Policy. No engine, gateway or model call is needed.
 Generated files stay in ignored `dist/`; edit SDK docstrings and type annotations
-rather than the HTML. The [SDK guide](../../resources/vis-docs/python-sdk.md)
-remains the place for installation and task examples.
+rather than the HTML. Module introductions explain which API to choose; examples
+are checked offline against the SDK. The [SDK guide](../../resources/vis-docs/python-sdk.md)
+remains the place for installation and complete application walkthroughs.
 
 The docs workflow installs the extra, builds and tests the reference, and publishes
 it with the site after verification on `main`. SDK source changes trigger that workflow.

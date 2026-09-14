@@ -1186,6 +1186,58 @@
           "response": "json"
         }
       },
+      "path": "/v1/improve"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/improve/settings"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/improve/review"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/improve/:id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
       "path": "/v1/settings"
     },
     {

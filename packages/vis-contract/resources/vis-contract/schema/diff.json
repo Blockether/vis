@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vis.dev/contracts/diff.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "media_type",
+    "revision_request"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "media_type": {
+      "const": "application/vnd.vis.diff+json"
+    },
+    "revision_request": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "comment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quote",
+        "body"
+      ],
+      "properties": {
+        "quote": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "draft",
+            "workspace"
+          ]
+        },
+        "backend": {
+          "enum": [
+            "worktree",
+            "rift"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head_revision": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "patch",
+        "source",
+        "comments"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "patch": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comment"
+          }
+        }
+      }
+    }
+  }
+}

@@ -8,10 +8,12 @@ import {
   isMarkdownMedia,
   isPdfMedia,
   isTextMedia,
+  isDiffMedia,
 } from '../lib/artifacts';
 import { parseAnnotated } from '../lib/markdown-annotations';
 import type { IterationAttachment } from '../lib/types';
 import { type DocumentChrome, MarkdownArtifact } from './MarkdownArtifact';
+import { DiffArtifact } from './DiffArtifact';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText, TextFrame } from './TextArtifact';
 import { ChevronIcon } from './icons';
@@ -191,6 +193,7 @@ export const DocOverlay = memo(function DocOverlay({
   url,
   failed,
   annotate,
+  commentable = false,
   versions,
   shownAt = 0,
   onPick,
@@ -203,6 +206,7 @@ export const DocOverlay = memo(function DocOverlay({
   failed: boolean;
   /** Present when the human may mark this artifact up. */
   annotate?: AnnotateContext;
+  commentable?: boolean;
   /** Every cut of this name, newest first and the head included. */
   versions?: IterationAttachment[];
   /** Which cut is being read, an index into `versions`. */
@@ -222,6 +226,7 @@ export const DocOverlay = memo(function DocOverlay({
   const [isHistory, setHistory] = useState(false);
   const cuts = versions ?? [];
   const shown = cuts[shownAt];
+  const canComment = shown ? shown.commentable === true : commentable === true;
   const shownLabel = shown ? attachmentBytes(shown.size) : sizeLabel;
   const versionCell =
     cuts.length > 1 ? (
@@ -292,8 +297,20 @@ export const DocOverlay = memo(function DocOverlay({
       ),
     });
 
-  // Opened, the artifact is not only READ: a note can be commented on and a PDF
-  // drawn on, and either one saves as the next version of the same filename.
+  if (annotate && url && !failed && isDiffMedia(mime)) {
+    return (
+      <DiffArtifact
+        client={annotate.client}
+        sid={annotate.sid}
+        iterationId={annotate.iterationId}
+        name={name}
+        source={url}
+        version={shown?.version}
+        commentable={canComment}
+        chrome={chrome}
+      />
+    );
+  }
   if (annotate && url && !failed && isTextMedia(mime, name)) {
     return (
       <MarkdownArtifact
@@ -303,6 +320,8 @@ export const DocOverlay = memo(function DocOverlay({
         name={name}
         mediaType={mime}
         source={url}
+        version={shown?.version}
+        commentable={canComment}
         plain={!isMarkdownMedia(mime, name)}
         chrome={chrome}
       />
@@ -320,6 +339,7 @@ export const DocOverlay = memo(function DocOverlay({
         name={name}
         mediaType={mime}
         url={url}
+        commentable={canComment}
         chrome={chrome}
       />
     );
@@ -352,6 +372,7 @@ export const DocPreview = memo(function DocPreview({
   url,
   failed,
   annotate,
+  commentable = false,
   versions,
   shownAt = 0,
   onPick,
@@ -365,6 +386,7 @@ export const DocPreview = memo(function DocPreview({
   failed: boolean;
   /** Present when the opened artifact may be marked up. */
   annotate?: AnnotateContext;
+  commentable?: boolean;
   /** Every cut of this name, newest first — one entry for a file written once. */
   versions?: IterationAttachment[];
   /** Which cut the opened document is reading, an index into `versions`. */
@@ -452,6 +474,7 @@ export const DocPreview = memo(function DocPreview({
             url={url}
             failed={failed}
             annotate={annotate}
+            commentable={commentable}
             versions={versions}
             shownAt={shownAt}
             onPick={onPick}

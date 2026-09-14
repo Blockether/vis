@@ -1,0 +1,179 @@
+@import url('/assets/theme.css');
+
+/* Use the manual's typography and tokens without its page layout. */
+.pdoc {
+  --pdoc-background: var(--bg);
+  --pdoc-background-alt: var(--panel);
+  --pdoc-text: var(--fg);
+  --pdoc-text-muted: var(--dim);
+  --pdoc-link: var(--link);
+  --pdoc-code: var(--code-bg);
+  font-family: var(--font);
+  font-size: var(--text-body);
+}
+nav.pdoc {
+  width: 18rem;
+  padding: 0;
+  border-right: 1px solid var(--line);
+  box-shadow: none;
+  font-size: var(--text-small);
+}
+nav.pdoc .api-navigation > div {
+  padding: 1.5rem;
+}
+.api-navigation > summary {
+  display: none;
+}
+nav.pdoc h2,
+nav.pdoc .api-label {
+  margin: 1.5rem 0 0.5rem;
+  padding: 0;
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+nav.pdoc .api-label {
+  margin-top: 0.75rem;
+}
+nav.pdoc ul {
+  margin: 0;
+  padding: 0;
+}
+nav.pdoc li {
+  margin: 0;
+  list-style: none;
+}
+nav.pdoc li a,
+.api-guides a {
+  display: block;
+  min-height: 28px;
+  padding: 0.25rem 0;
+  color: var(--link);
+}
+nav.pdoc a[aria-current='page'] {
+  color: var(--fg);
+  font-weight: 700;
+  text-decoration: underline;
+}
+nav.pdoc input[type='search'] {
+  width: 100%;
+  min-height: 2.75rem;
+  margin: 0.5rem 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: inherit;
+}
+.api-guides {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.api-symbols summary {
+  cursor: pointer;
+  min-height: 28px;
+}
+.api-symbols summary a {
+  display: inline;
+}
+.api-symbols .memberlist .memberlist {
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+}
+.api-generator,
+nav.pdoc footer {
+  display: block;
+  margin: 1.5rem 0 0;
+  color: var(--dim);
+  font-size: var(--text-small);
+}
+main.pdoc {
+  width: auto;
+  max-width: calc(62rem + 18rem);
+  margin-left: 18rem;
+  padding: 2.5rem 3rem;
+}
+.pdoc h1 {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 700;
+  line-height: 1.3;
+}
+.pdoc h2,
+.pdoc h3 {
+  font-size: var(--text-heading);
+  font-weight: 700;
+}
+.pdoc .api-module-name {
+  margin: 0.75rem 0 1.5rem;
+  color: var(--dim);
+  font-size: var(--text-small);
+}
+.pdoc .docstring {
+  margin-left: 0;
+}
+.pdoc pre,
+.pdoc code {
+  font-family: var(--font);
+}
+.pdoc pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.pdoc .docstring table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: var(--text-small);
+}
+.pdoc section {
+  scroll-margin-top: 1rem;
+}
+.api-skip {
+  position: fixed;
+  top: -10rem;
+  left: 1rem;
+  z-index: 10;
+  padding: 0.75rem;
+  background: var(--bg);
+}
+.api-skip:focus {
+  top: 0.5rem;
+}
+.pdoc :focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+@media (max-width: 800px) {
+  nav.pdoc {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    max-height: 75vh;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+    z-index: 2;
+  }
+  .api-navigation > summary {
+    display: list-item;
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+    cursor: pointer;
+  }
+  main.pdoc {
+    margin-left: 0;
+    padding: 1.5rem 1.25rem;
+  }
+  .pdoc section {
+    scroll-margin-top: 4rem;
+  }
+}
+@media (pointer: coarse) {
+  nav.pdoc li a,
+  .api-guides a,
+  .api-symbols summary {
+    min-height: 44px;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+}

@@ -531,9 +531,10 @@ store identity separately from temporary invocation bindings and Python's mutabl
 session dictionary. The result is a Council entry mapping. Optional `thread_id`
 continues an existing thread; `title` is only for a new thread.
 
-An eligible idle session starts a Council turn; an active session receives a ping
-without an extra queued turn. Held or paused queues stay held. Publication and
-wake delivery follow [Council's best-effort policy](council.md#wake-the-bound-session).
+Only an eligible managed subagent can start an idle Council turn. An independent
+leader stays idle; an active session receives a ping without an extra turn. Held
+or paused queues stay held. Publication and wake delivery follow
+[Council’s managed-team policy](council.md#wake-the-bound-session).
 Reuse an event's `idempotency_key` for retries, not for different events.
 
 Council must be enabled, but general model shell access need not be. The shared

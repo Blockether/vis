@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "filename_pattern",
+    "statuses",
+    "actions"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "filename_pattern": {
+      "type": "string"
+    },
+    "statuses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revise",
+        "approve"
+      ],
+      "properties": {
+        "revise": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approve": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

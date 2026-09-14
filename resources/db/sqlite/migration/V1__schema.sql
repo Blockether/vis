@@ -742,6 +742,7 @@ CREATE TABLE session_attachment (
   size_bytes                INTEGER NOT NULL CHECK (size_bytes >= 0),
   audience                  TEXT NOT NULL DEFAULT 'both'
                             CHECK (audience IN ('both', 'user', 'model')),
+  commentable               INTEGER NOT NULL DEFAULT 0 CHECK (commentable IN (0, 1)),
 
   -- TRANSCRIPTION: what a RECORDING says, in words. No provider wire carries
   -- audio, so a voice memo is transcribed once by the local speech engine on the
@@ -924,6 +925,23 @@ CREATE TABLE improve (
 );
 CREATE INDEX idx_improve_session ON improve(session_soul_id, entry_id);
 CREATE INDEX idx_improve_iteration ON improve(session_turn_iteration_id, entry_id);
+
+-- Editable workflow records reference immutable complaint intake; manual groups have no source.
+CREATE TABLE improve_record (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entry_id INTEGER UNIQUE REFERENCES improve(entry_id),
+  project_id TEXT REFERENCES project(id) ON DELETE SET NULL,
+  title TEXT NOT NULL CHECK (length(trim(title)) BETWEEN 1 AND 256),
+  content TEXT NOT NULL DEFAULT '' CHECK (length(content) <= 262144),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+  parent_id INTEGER REFERENCES improve_record(id),
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (parent_id IS NULL OR parent_id <> id)
+);
+CREATE INDEX idx_improve_record_project ON improve_record(project_id, status, id);
+CREATE INDEX idx_improve_record_parent ON improve_record(parent_id, id);
 
 -- Activity keeps admitted invocation details independently of transcript page budgets.
 CREATE TABLE activity_history (

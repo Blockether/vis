@@ -1345,12 +1345,16 @@
       {:phase :turn-terminal
        :turn-id (event-get event :turn-id)
        :client-id (event-get event :idempotency-key)
+       :request-kind (some-> (event-get event :request-kind) keyword)
+       :subagent (event-get event :subagent)
        :status (event-get event :status)}
 
       "turn.failed"
       (cond-> {:phase :turn-terminal
                :turn-id (event-get event :turn-id)
                :client-id (event-get event :idempotency-key)
+               :request-kind (some-> (event-get event :request-kind) keyword)
+               :subagent (event-get event :subagent)
                :status (or (event-get event :status) "failed")}
         ;; The settled failure content (the styled provider card). Without it the
         ;; independent terminal path can only invent a bare "Turn failed." row.
@@ -1361,6 +1365,8 @@
       {:phase :turn-terminal
        :turn-id (event-get event :turn-id)
        :client-id (event-get event :idempotency-key)
+       :request-kind (some-> (event-get event :request-kind) keyword)
+       :subagent (event-get event :subagent)
        :status (or (event-get event :status) "cancelled")}
 
       ;; A session's title changed — auto-title or a rename, possibly produced
@@ -1591,6 +1597,9 @@
         (cond-> {:id resolved-id
                  :history (:messages page)
                  :goal (gateway-contract/newer-session-goal nil (get soul "goal"))
+                 :agent (when-let [agent (get soul "agent")]
+                          {:role (get agent "role") :parent-id (get agent "parent_id")
+                           :leader-id (get agent "leader_id")})
                  ;; Cursor for the lazy scroll-up loader. It rides INSIDE the
                  ;; session map, so it is tab-scoped for free (`:session` is
                  ;; already per-tab state).

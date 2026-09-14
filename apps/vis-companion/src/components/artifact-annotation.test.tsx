@@ -149,6 +149,7 @@ describe('an artifact opened from the transcript', () => {
           mime="text/markdown"
           url="blob:note"
           failed={false}
+          commentable
           annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
           onClose={() => undefined}
         />,
@@ -175,6 +176,7 @@ describe('an artifact opened from the transcript', () => {
           mime="text/markdown"
           url="blob:note"
           failed={false}
+          commentable
           annotate={{ client, sid: 's1', iterationId: 'i1' }}
           onClose={() => undefined}
         />,
@@ -195,7 +197,7 @@ describe('an artifact opened from the transcript', () => {
     expect(saves()[0].closest('header')).toBe(band());
     expect(saves()[0].disabled).toBe(true);
 
-    pressText('Comment all');
+    press('[aria-label="Comment on the whole document"]');
     type('Stale.');
     pressText('Add comment');
     expect(saves()[0].disabled).toBe(false);
@@ -230,6 +232,7 @@ describe('an artifact opened from the transcript', () => {
           mime="application/pdf"
           url="blob:pdf"
           failed={false}
+          commentable
           annotate={{ client, sid: 's1', iterationId: 'i1' }}
           onClose={() => undefined}
         />,
@@ -270,6 +273,7 @@ describe('an artifact opened from the transcript', () => {
           mime="application/pdf"
           url="blob:pdf"
           failed={false}
+          commentable
           annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
           onClose={() => undefined}
         />,
@@ -303,6 +307,7 @@ describe('an artifact opened from the transcript', () => {
           mime="application/pdf"
           url="blob:pdf"
           failed={false}
+          commentable
           annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
           onClose={() => undefined}
         />,

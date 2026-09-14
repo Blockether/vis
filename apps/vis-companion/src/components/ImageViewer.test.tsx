@@ -22,7 +22,9 @@ beforeEach(() => {
   root = createRoot(host);
   HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never;
   act(() =>
-    root.render(<ImageViewer src="blob:picture" name="chart.png" onClose={() => undefined} />),
+    root.render(
+      <ImageViewer commentable src="blob:picture" name="chart.png" onClose={() => undefined} />,
+    ),
   );
 });
 
@@ -46,6 +48,26 @@ function named(text: string): HTMLButtonElement {
 }
 
 describe('ImageViewer', () => {
+  it("uses the selected gallery picture's capability, not the opener's", () => {
+    act(() =>
+      root.render(
+        <ImageViewer
+          src="blob:one"
+          name="one.png"
+          commentable
+          pictures={[
+            { src: 'blob:one', name: 'one.png', commentable: true },
+            { src: 'blob:two', name: 'two.png' },
+          ]}
+          onClose={() => undefined}
+        />,
+      ),
+    );
+    expect(document.querySelector('[aria-label="Draw on image"]')).not.toBeNull();
+    act(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' })));
+    expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
+  });
+
   it('opens as a modal named after the picture, fitted at 100%', () => {
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog?.getAttribute('aria-label')).toBe('chart.png image viewer');
@@ -721,6 +743,7 @@ describe('the grid is the gallery', () => {
                 alt={`pic-${at}.png`}
                 className="size-8"
                 galleryAt={at}
+                commentable={at === 0}
               />
             </MediaTile>
           ))}
@@ -730,11 +753,12 @@ describe('the grid is the gallery', () => {
 
     act(() => control('Open pic-0.png full screen').click());
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('1 of 2');
-
+    expect(document.querySelector('[aria-label="Draw on image"]')).not.toBeNull();
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
     });
     expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe('pic-1.png');
+    expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
   });
 
   // The viewer hands the flattened result back to the slot the trigger owns, so

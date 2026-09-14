@@ -1,0 +1,117 @@
+{
+  "documents": [
+    {
+      "filename": "PLAN-search.md",
+      "text": "# Search\n\n**Feature:** search\n**Status:** ready\n\n## Spec\nFind sessions.\n",
+      "expected": {
+        "kind": "plan",
+        "feature": "search",
+        "status": "ready"
+      },
+      "actions": [
+        "approve"
+      ]
+    },
+    {
+      "filename": "PLAN-search.md",
+      "text": "# Search\n**Feature:** search\n**Status:** accepted\n",
+      "expected": {
+        "kind": "plan",
+        "feature": "search",
+        "status": "accepted"
+      },
+      "actions": [
+        "approve"
+      ]
+    },
+    {
+      "filename": "IMPLEMENTATION-search.md",
+      "text": "# Search\n**Feature:** search\n**Status:** implementing\n",
+      "expected": {
+        "kind": "implementation",
+        "feature": "search",
+        "status": "implementing"
+      },
+      "actions": []
+    },
+    {
+      "filename": "PLAN-search.md",
+      "text": "# Search\n**Feature:** search\n**Status:** in-review\n",
+      "expected": {
+        "kind": "plan",
+        "feature": "search",
+        "status": "in-review"
+      },
+      "actions": []
+    },
+    {
+      "filename": "notes.md",
+      "text": "# Search\n**Feature:** search\n**Status:** ready\n",
+      "expected": null,
+      "actions": []
+    },
+    {
+      "filename": "PLAN-search.md",
+      "text": "# Search\n**Feature:** other\n**Status:** ready\n",
+      "expected": null,
+      "actions": []
+    },
+    {
+      "filename": "PLAN-search.md",
+      "text": "# Search\n**Feature:** search\n**Status:** ready\n**Status:** accepted\n",
+      "expected": null,
+      "actions": []
+    },
+    {
+      "filename": "PLAN-search.md",
+      "text": "# Search\n## Spec\n**Feature:** search\n**Status:** ready\n",
+      "expected": null,
+      "actions": []
+    }
+  ],
+  "annotations": [
+    {
+      "body": "# Plan\n\n## Resolved comments\n\n- **Whole document** — Earlier remark\n  - Resolved in v2: Kept.",
+      "comments": [
+        {
+          "quote": "",
+          "body": "Keep the review separate."
+        },
+        {
+          "quote": "A “passage”\n here",
+          "body": "A\n decision."
+        }
+      ],
+      "rendered": "# Plan\n\n## Resolved comments\n\n- **Whole document** — Earlier remark\n  - Resolved in v2: Kept.\n\n## Comments\n\n- **Whole document** — Keep the review separate.\n- **“A \"passage\" here”** — A decision.\n"
+    },
+    {
+      "body": "# Plan\n\n",
+      "comments": [
+        {
+          "quote": "x",
+          "body": "   "
+        }
+      ],
+      "rendered": "# Plan\n"
+    },
+    {
+      "body": "# Plan",
+      "comments": [],
+      "rendered": "# Plan\n"
+    }
+  ],
+  "unrecognized": [
+    "# Plan\n\n## Comments\n\nOrdinary prose.\n",
+    "# Plan\n\n## Resolved comments\n\nDecisions.\n"
+  ],
+  "quotes": [
+    {
+      "input": "  A “quote”\n with spaces  ",
+      "expected": "A \"quote\" with spaces"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}

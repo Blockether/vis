@@ -26,6 +26,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   mediaType,
   url,
   chrome,
+  commentable = false,
 }: {
   client: GatewayClient;
   sid: string;
@@ -33,6 +34,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   name: string;
   mediaType: string;
   url: string;
+  commentable?: boolean;
   /** The band and the frame this page is read inside. */
   chrome: DocumentChrome;
 }) {
@@ -157,14 +159,16 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         >
           <ChevronIcon className="size-3" />
         </BandButton>
-        <BandButton
-          aria-label={`Annotate page ${page}`}
-          title={`Annotate page ${page}`}
-          disabled={!rendered}
-          onClick={() => rendered && setDrawn(rendered.src)}
-        >
-          Annotate
-        </BandButton>
+        {commentable ? (
+          <BandButton
+            aria-label={`Annotate page ${page}`}
+            title={`Annotate page ${page}`}
+            disabled={!rendered}
+            onClick={() => rendered && setDrawn(rendered.src)}
+          >
+            Annotate
+          </BandButton>
+        ) : null}
       </>
     ),
     // Where the reader stands in the document, and what just became of it: the two
@@ -188,7 +192,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         <span className="sr-only" role="status">
           {status}
         </span>
-        {drawn ? (
+        {commentable && drawn ? (
           <ImageViewer
             src={drawn}
             name={`${name} — page ${page}`}

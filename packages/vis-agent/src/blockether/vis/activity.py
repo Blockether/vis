@@ -1,4 +1,30 @@
-"""Immutable Activity receipts from the canonical host-owned lifecycle contract."""
+"""Read tool progress, outcomes and evidence reported by Vis.
+
+This module is for consumers of Activity receipts. To *author* a tool's label,
+progress or result presentation, use `blockether.vis.extension.Activity` and
+`blockether.vis.extension.ActivityPresentation` instead. See the
+[Activity presentation guide](https://vis.blockether.com/extension-api.html#activity-presentation).
+
+## Read and group an Activity receipt
+
+`blockether.vis.engine.Event.activity` exposes an `ActivityProjection` for
+Activity-bearing stream events. A projection contains immutable `ActivityRow`
+records, outcome `ActivityCounts` and any `ActivityOmitted` information. Rows
+retain operation names, duration, resources and evidence, not just display text.
+
+Use `ActivityProjection.groups` to group an operation's invocations, or
+`ActivityProjection.argument_groups` to compare calls with identical arguments.
+These are computed reader views; they do not discard the original rows or change
+what `ActivityProjection.to_wire` serializes. A history-backed projection can be
+only one page: consult `history` and `omitted` before treating it as complete.
+
+## Decode portable data
+
+Call `ActivityProjection.from_wire` for a raw JSON mapping. It validates the
+canonical schema and receipt invariants, freezes nested data and raises
+`ValueError` for invalid input. `ActivityProjection.to_wire` returns a fresh
+JSON-compatible copy. Neither operation starts Vis or publishes an Activity.
+"""
 
 from __future__ import annotations
 
@@ -15,12 +41,16 @@ from ._wire import freeze, to_wire
 
 @dataclass(frozen=True, slots=True)
 class ActivityResource:
+    """A typed reference to a resource involved in an invocation, identified by `id`."""
+
     type: str
     id: str
 
 
 @dataclass(frozen=True, slots=True)
 class ActivityDiffLine:
+    """One classified diff line; `is_redacted` marks content withheld from the receipt."""
+
     kind: str
     text: str
     is_redacted: bool | None = None
@@ -28,6 +58,12 @@ class ActivityDiffLine:
 
 @dataclass(frozen=True, slots=True)
 class ActivityEvidence:
+    """Text or structured change evidence attached to an invocation.
+
+    Optional counts describe the observed changes; truncation and redaction flags
+    explain why the displayed evidence may not contain the full content.
+    """
+
     kind: str
     text: str
     lines: tuple[ActivityDiffLine, ...] | None = None
@@ -40,6 +76,14 @@ class ActivityEvidence:
 
 @dataclass(frozen=True, slots=True)
 class ActivityRow:
+    """One invocation's lifecycle, outcome and human-readable evidence.
+
+    `id` and `sequence` preserve identity and ordering. `state` describes the
+    outcome; `summary` is display text, not a replacement for status. Shell polls
+    can appear as `children`. `presentation` contains the extension's selected
+    content, while `evidence` retains engine-observed information.
+    """
+
     id: str
     sequence: int
     operation: str
@@ -154,6 +198,8 @@ class ActivityGroup:
 
 @dataclass(frozen=True, slots=True)
 class ActivityCounts:
+    """Invocation counts by lifecycle outcome, distinct from the visible row count."""
+
     running: int
     succeeded: int
     failed: int
@@ -162,13 +208,20 @@ class ActivityCounts:
 
 @dataclass(frozen=True, slots=True)
 class ActivityOmitted:
+    """Rows omitted from this projection, with counts by omission classification."""
+
     rows: int
     by_classification: Mapping[str, int]
 
 
 @dataclass(frozen=True, slots=True)
 class ActivityProjection:
-    """One form's Activity, optionally a window into its durable history."""
+    """One form's Activity receipt, optionally a page of its durable history.
+
+    Prefer `from_wire` to direct construction when accepting external data.
+    `rows` and nested values are immutable; `to_wire` produces an independent
+    mutable JSON-compatible copy. Grouping properties are computed, not stored.
+    """
 
     state: str
     counts: ActivityCounts
@@ -198,6 +251,12 @@ class ActivityProjection:
 
     @classmethod
     def from_wire(cls, value: Any) -> ActivityProjection:
+        """Validate a receipt and construct immutable rows and nested records.
+
+        Raises:
+            ValueError: The schema, identity uniqueness, presentation bounds or
+                history page limits are invalid.
+        """
         validate("activity", "projection", value)
         ids = []
         leaf_count = 0
@@ -263,4 +322,5 @@ class ActivityProjection:
         )
 
     def to_wire(self) -> dict[str, Any]:
+        """Return a fresh portable receipt without computed reader grouping fields."""
         return to_wire(self)

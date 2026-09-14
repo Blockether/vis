@@ -20,6 +20,8 @@ export async function buildPythonApi(dist) {
       '--docformat',
       'google',
       '--no-show-source',
+      '--template-directory',
+      fileURLToPath(new URL('pdoc/', import.meta.url)),
       '--footer-text',
       'Vis Python SDK · development API',
       '--favicon',
@@ -61,8 +63,8 @@ export async function buildPythonApi(dist) {
           node.src = '/python-sdk-api/' + asset;
         }
       }
-      // pdoc links inherited members to private bases that it does not render.
-      // Keep their names, without offering a broken jump into implementation details.
+      // A signature may name a private base even when its public methods are rendered.
+      // Keep the type name without linking to an intentionally hidden implementation.
       for (const link of document.querySelectorAll('a[href^="#_"]')) {
         if (!document.getElementById(link.getAttribute('href').slice(1)))
           link.replaceWith(...link.childNodes);

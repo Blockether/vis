@@ -1875,6 +1875,7 @@ const AttachmentTile = memo(function AttachmentTile({
       src={url}
       alt={name}
       galleryAt={galleryAt}
+      commentable={attachment.commentable === true}
       loading="lazy"
       decoding="async"
       frameClassName="h-full w-full"
@@ -1989,14 +1990,12 @@ const AttachmentDocTile = memo(function AttachmentDocTile({
   return (
     <DocPreview
       name={name}
-      mime={attachment.media_type ?? ''}
+      mime={cut.media_type ?? ''}
       sizeLabel={attachmentBytes(attachment.size)}
       url={url}
       failed={failed}
-      // Opened from the transcript, the artifact is markable up exactly as it is
-      // from the artifacts sheet: a note takes comments, a PDF takes ink, and
-      // saving either one is the next version of the same filename.
       annotate={{ client, sid, iterationId }}
+      commentable={cut.commentable === true}
       onNeeded={needed}
       versions={versions}
       shownAt={shownAt}

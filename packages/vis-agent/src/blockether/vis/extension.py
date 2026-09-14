@@ -1,7 +1,58 @@
-"""The Vis extension API.
+"""Build tools and extensions that Vis can call from a conversation.
 
-The engine injects the host declared by `vis-contract`; an installed wheel uses
-`blockether.vis._outside` for local behavior, terminal prompts, and explicit jail refusals.
+## Choose your starting point
+
+| You want to | Start with |
+| --- | --- |
+| Expose a Python function | `Symbol` with an `Activity` |
+| Expose an object's methods | `Symbol` and the `method` decorator |
+| Group tools under one name | `Extension` |
+| Show progress and results | `ActivityPresentation` and `publish_activity` |
+| Ask a person or show a live interface | [Human input](https://vis.blockether.com/human-input.html) and [live views](https://vis.blockether.com/live-views.html) |
+| Add a model provider | `Provider` and [provider extensions](https://vis.blockether.com/provider-extensions.html) |
+
+## Declare a tool without starting Vis
+
+Keep your Python function usable on its own. The declaration supplies its public
+name and human-facing Activity; annotations and its docstring describe the tool.
+
+```python
+from blockether.vis.extension import Activity, Extension, Symbol
+
+
+def greet(name: str) -> str:
+    "Return a greeting for the named person."
+    return f"Hello, {name}!"
+
+
+extension = Extension(
+    name="Greetings",
+    description="Greet a person by name.",
+    alias="greetings",
+    symbols=(Symbol(greet, activity=Activity(label="Greet person", show_start=False)),),
+)
+assert greet("Ada") == "Hello, Ada!"
+```
+
+Constructing declarations does not register a host, connect to a gateway or run a
+model. An application passes this object to
+`blockether.vis.engine.Agent` through `extensions=(extension,)`; its functions
+stay in the application's Python process. See the
+[application-owned tools example](https://vis.blockether.com/python-sdk.html).
+
+## Register an installed extension
+
+An extension package's entrypoint calls `register_extension` once. Vis then owns
+its host environment and lifecycle. Application-owned tools and installed
+extensions do not have identical capabilities: provider declarations, host
+hooks, environment declarations and activation belong to the installed host,
+not to an Agent's application-owned callback bridge. Standalone imports use
+local behavior where available and explicitly refuse engine-only operations;
+they do not create an embedded Vis session.
+
+Follow the [extension tutorial](https://vis.blockether.com/extension-development.html)
+for a complete package, or the [API guide](https://vis.blockether.com/extension-api.html)
+for registration, state, shell, permissions and Activity examples.
 """
 
 from __future__ import annotations
@@ -61,7 +112,7 @@ class Host(Protocol):
         """Show one notification on the user's channel."""
 
     def council_wake(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Publish an event to the bound session, waking it when eligible and idle."""
+        """Publish to the bound session; only an eligible managed subagent self-wakes."""
 
     def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
         """Run one canonical shell operation and return its result shape."""
@@ -125,8 +176,8 @@ class _Council:
         """Notify the bound session without a target ID or an active model turn.
 
         May run from extension-owned background Python after a tool returns.
-        An eligible idle session starts a Council turn; an active session receives
-        a ping. Held queues are not resumed. Retry an event with the same
+        Only a managed subagent can self-wake while idle; an independent leader
+        stays idle. Active sessions receive a ping. Held queues are not resumed. Retry with the same
         idempotency_key to avoid duplicate delivery. Registration-only contexts
         and an outside host have no bound session and refuse this operation.
         """
@@ -438,6 +489,16 @@ class Activity:
     (or None to keep the current presentation). It runs on success and failure,
     and on start only when show_start=True. Use publish_activity for intermediate
     stages of long-running tools. Rendering failures never change returns or errors.
+    Args:
+        presenter: Presentation category; leave `"generic"` for ordinary tools.
+        label: Optional nonblank, single-line label of at most 96 characters.
+        render: Synchronous callback accepting `phase`, `args`, `kwargs`, `result`
+            and `error` keyword arguments. Return an `ActivityPresentation` or None.
+        show_start: Whether readers see a running row before the call settles.
+
+    Raises:
+        TypeError: `show_start` is not boolean or `render` is not synchronous/callable.
+        ValueError: The presenter is unknown or the label is invalid.
     """
 
     presenter: str = "generic"
@@ -549,10 +610,34 @@ _registration = {"spec": None}
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Extension:
-    """A pure declaration; register_extension() binds its environment and host.
+    """Group tools and host capabilities in one immutable declaration.
 
-    Collection inputs are copied into tuples. Symbols require an explicit alias;
-    each child must be its corresponding SDK declaration, never a marker dict.
+    Args:
+        name: Human-readable, nonblank extension name.
+        description: Nonblank description of what the extension does.
+        alias: Python namespace for exported symbols; required with `symbols`.
+        symbols: `Symbol` declarations for functions or object namespaces.
+        version: Optional extension version string.
+        kind: Optional extension kind understood by the host.
+        activation: Optional host activation callback.
+        prompt: Instructions as text or a host callback.
+        slash_commands: `SlashCommand` declarations.
+        op_hooks: `OpHook` declarations for host lifecycle operations.
+        ctx: Optional host context callback.
+        providers: `Provider` declarations.
+        network_filters: `NetworkFilter` declarations.
+        env: Environment variable names resolved at host registration.
+
+    Collection inputs are copied into tuples. Constructing an Extension is pure;
+    it does not run callbacks or register anything. In an application, pass it to
+    `blockether.vis.engine.Agent` or its `register_extension` method. In an installed
+    extension entrypoint, call this module's `register_extension` once instead.
+    The application callback bridge rejects host-only fields before connecting.
+
+    Raises:
+        ValueError: A required name, alias, callback or environment name is invalid.
+        TypeError: A field has the wrong type or a collection contains something
+            other than its corresponding SDK declaration.
     """
 
     name: str
@@ -1070,7 +1155,40 @@ def method(
     is_hidden: bool = False,
     activity: Activity | None = None,
 ) -> _Method | _MethodDecorator:
-    """Declare per-method tool metadata for an object exported by vis.Symbol()."""
+    """Describe a public method on an object exported through `Symbol`.
+
+    Args:
+        fn: Method to annotate; omit it to use `@method(...)`.
+        tag: `"observation"` for reads or `"mutation"` for state-changing work.
+        is_hidden: Hide the method from discovery without removing the callable.
+        activity: This method's human-facing presentation. Declare it on each
+            exported method, not on the containing object namespace.
+
+    Returns:
+        The original method, or a decorator returning it. Calling your method
+        directly still uses normal Python behavior; this decorator adds metadata.
+
+    Raises:
+        ValueError: The tag is unsupported or the decorated value is not callable.
+        TypeError: The Activity declaration has the wrong type.
+
+    ```python
+    from blockether.vis.extension import Activity, Symbol, method
+
+
+    class Greeter:
+        @method(activity=Activity(label="Greet person", show_start=False))
+        def hello(self, name: str) -> str:
+            "Return a greeting for the named person."
+            return f"Hello, {name}!"
+
+
+    greeter = Greeter()
+    tool = Symbol(greeter, name="greeter")
+    assert greeter.hello("Ada") == "Hello, Ada!"
+    assert tool.contract["members"][0]["name"] == "greeter.hello"
+    ```
+    """
     if tag not in ("observation", "mutation"):
         raise ValueError(f"vis.method tag must be observation or mutation, got {tag!r}")
     _activity_spec(activity)
@@ -1173,7 +1291,30 @@ def _object_symbol_specs(obj, path, tag, is_hidden, seen):
 
 @dataclass(frozen=True, slots=True)
 class Symbol:
-    """Expose a function or object namespace. Object Activity belongs on each @method."""
+    """Expose a function or an object's public methods as typed tools.
+
+    Args:
+        fn: Function, or an object whose public methods form a namespace.
+        name: Override the function name; required for objects and must then be
+            a public Python identifier.
+        tag: Default operation classification: `"observation"` or `"mutation"`.
+        is_hidden: Hide the symbol from discovery without removing the callable.
+        activity: Human-facing presentation for a function; declare one on every
+            exported callable. For an object, leave this unset and put an Activity
+            on every exported `method` instead.
+
+    Construction validates the declaration and derives its `contract` without
+    calling the function or starting Vis. Function docstrings and type annotations
+    become tool documentation, not runtime argument validation. Export narrow
+    objects: public methods and nested namespace objects are traversed, not just
+    methods bearing the decorator.
+
+    Raises:
+        ValueError: A callable lacks a docstring, or the name, operation tag,
+            Activity placement or namespace is invalid, including cycles and
+            repeated object references.
+        TypeError: A declaration field has an unsupported type.
+    """
 
     fn: Callable[..., Any] | object
     name: str | None = None
