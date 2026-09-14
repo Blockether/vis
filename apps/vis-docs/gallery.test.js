@@ -47,7 +47,8 @@ test('one gallery combines all nine screenshots with one README preview grid', a
   }
   expect(preview.window.document.querySelectorAll('img')).toHaveLength(9);
   expect(readmeGallery).not.toMatch(/^### /m);
-  expect(readmeGallery).toContain('https://vis.blockether.com/#screenshot-gallery');
+  expect(readmeGallery.trimStart()).toMatch(/^<table\b/);
+  expect(gallery.previousElementSibling.tagName).toBe('H2');
   const ids = [...window.document.querySelectorAll('[id]')].map((node) => node.id);
   expect(new Set(ids).size).toBe(ids.length);
   expect(track.tabIndex).toBe(0);

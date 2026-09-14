@@ -24,9 +24,6 @@ terminal, desktop and phone let you follow the same work. Read
 
 ## See Vis in action
 
-Browse with the arrows, your keyboard or a swipe. All screenshots use fictional
-work in a fresh demo gateway, database and sessions—not personal work.
-
 <section class="screenshot-gallery" id="screenshot-gallery" data-screenshot-gallery role="region" aria-roledescription="carousel" aria-label="Vis screenshots">
   <div class="screenshot-gallery__track" id="screenshot-slides" tabindex="0" aria-label="Vis screenshots; use Left and Right arrow keys to browse">
 

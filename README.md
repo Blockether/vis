@@ -50,9 +50,6 @@ or [Getting started](resources/vis-docs/index.md) to try it.
 
 ## Screenshot gallery
 
-Fictional work in a fresh demo gateway, database and sessions—no personal work.
-[Browse the interactive gallery →](https://vis.blockether.com/#screenshot-gallery)
-
 <table width="100%">
   <tr>
     <td width="42%" align="center"><a href="resources/vis-docs/assets/screenshots/desktop-conversation.png"><img src="resources/vis-docs/assets/screenshots/desktop-conversation.png" width="100%" alt="Desktop Vis with the Fieldnotes project sidebar and a completed search task."></a></td>
