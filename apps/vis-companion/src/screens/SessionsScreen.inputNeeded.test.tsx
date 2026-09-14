@@ -88,7 +88,9 @@ describe('a session waiting on a human', () => {
     expect(shown()).toHaveLength(16);
 
     // On its own page it is painted ONCE, where the order puts it.
-    fireEvent.click(view.getByLabelText('Page 3'));
+    fireEvent.click(view.getByLabelText('Next page'));
+    await waitFor(() => expect(shown()).toContain('alpha 15'));
+    fireEvent.click(view.getByLabelText('Next page'));
     await waitFor(() => expect(shown()).toHaveLength(10));
     expect(shown().filter((title) => title === 'alpha 39')).toHaveLength(1);
     expect(screen.getAllByText('INPUT NEEDED')).toHaveLength(1);

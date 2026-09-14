@@ -87,7 +87,7 @@ export const Fleet: Story = {
     const create = within(project as HTMLElement).getByRole('button', {
       name: /^New session/,
     });
-    // Phones and desktop rails keep paging inline; tablets retain a separate numbered row.
+    // Compact paging stays beside the project identity and creation action on every device.
     let pager = page.getByRole('navigation', {
       name: 'Pages of uberworkspace sessions',
     });
@@ -119,100 +119,65 @@ export const Fleet: Story = {
       project.querySelectorAll('nav[aria-label="Pages of uberworkspace sessions"]'),
     ).toHaveLength(1);
     await expect(centerY(fold)).toBe(centerY(create));
-    // A separate pager row must not shrink the heading below its touch target.
-    await expect(fold.getBoundingClientRect().height).toBeGreaterThanOrEqual(
-      win.matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44,
-    );
-    const numbered = win.innerWidth >= 640;
-    const inline = !numbered || win.matchMedia('(min-width: 1024px) and (pointer: fine)').matches;
-    if (!inline) {
-      await expect(pager.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-        fold.getBoundingClientRect().bottom + 4,
-      );
-      await expect(pager.getBoundingClientRect().left).toBeGreaterThanOrEqual(
-        project.getBoundingClientRect().left + 16,
-      );
-      await expect(pager.getBoundingClientRect().right).toBeLessThanOrEqual(
-        project.getBoundingClientRect().right - 16,
-      );
-    } else {
-      await expect(centerY(pager)).toBe(centerY(create));
-      await expect(pager.getBoundingClientRect().left).toBeGreaterThanOrEqual(
-        fold.getBoundingClientRect().right + 8,
-      );
-      await expect(pager.getBoundingClientRect().right + 8).toBeLessThanOrEqual(
-        create.getBoundingClientRect().left,
-      );
-    }
-    for (const control of within(pager).getAllByRole('button')) {
+    const pointer = win.matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    await expect(fold.getBoundingClientRect().height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
+    await expect(centerY(pager)).toBe(centerY(create));
+    const previous = within(pager).getByRole('button', { name: 'Previous page' });
+    const next = within(pager).getByRole('button', { name: 'Next page' });
+    expect(within(pager).getAllByRole('button')).toHaveLength(2);
+    expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
+    expect(within(pager).queryByText('…')).toBeNull();
+    await expect(within(pager).getByText(/^1 \/ /)).toBeVisible();
+    for (const control of [previous, next]) {
       await expect(centerY(control)).toBe(centerY(pager));
-      await expect(win.getComputedStyle(control).fontSize).toBe(
-        win.matchMedia('(min-width: 640px) and (pointer: fine)').matches ? '10px' : '11px',
+      await expect(control.getBoundingClientRect().height).toBe(
+        create.getBoundingClientRect().height,
       );
     }
-    if (numbered && win.matchMedia('(pointer: fine)').matches) {
-      const controls = within(pager).getAllByRole('button');
-      for (const control of controls) {
-        const box = control.getBoundingClientRect();
-        await expect(box.height).toBeGreaterThanOrEqual(28);
-        await expect(box.width).toBeGreaterThanOrEqual(28);
-        await expect(box.height).toBe(create.getBoundingClientRect().height);
-      }
-      for (let index = 1; index < controls.length; index += 1) {
-        await expect(controls[index].getBoundingClientRect().left).toBeGreaterThanOrEqual(
-          controls[index - 1].getBoundingClientRect().right + 8,
-        );
-      }
-      if (inline) {
-        await expect(create.getBoundingClientRect().left).toBeGreaterThanOrEqual(
-          pager.getBoundingClientRect().right + 16,
-        );
-        // Selection retains its surface; hovering an action must not select it.
-        const selected = within(pager).getByRole('button', { name: 'Page 1' });
-        await expect(win.getComputedStyle(selected).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
-      }
+    // Include invisible touch reach, not just the small visible arrow faces.
+    const targets = [fold, previous, next, create].map((control) => {
+      const box = control.getBoundingClientRect();
+      const reach = win.getComputedStyle(control, '::after');
+      const left = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.left) || 0);
+      const right = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.right) || 0);
+      const top = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.top) || 0);
+      const bottom = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.bottom) || 0);
+      return {
+        left: box.left + left,
+        right: box.right - right,
+        width: box.width - left - right,
+        height: box.height - top - bottom,
+      };
+    });
+    for (const target of targets) {
+      expect(target.width).toBeGreaterThanOrEqual(pointer ? 28 : 44);
+      expect(target.height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     }
-    if (numbered) {
-      for (const n of [1, 2]) {
-        await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
-      }
-      expect(within(pager).getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
-      expect(within(pager).queryByRole('button', { name: /Go to page/ })).toBeNull();
-    } else {
-      expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
+    for (let index = 1; index < targets.length; index += 1) {
+      expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(8);
     }
-    await expect(within(pager).getByRole('button', { name: 'Previous page' })).toBeDisabled();
-    await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeVisible();
-    await userEvent.click(
-      within(pager).getByRole('button', {
-        name: numbered ? 'Page 2' : 'Next page',
-      }),
+    expect(targets[3].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
+    await expect(previous).toBeDisabled();
+    await expect(next).toBeVisible();
+    const firstPageRows = [...project.querySelectorAll('[data-session-id]')].map((row) =>
+      row.getAttribute('data-session-id'),
     );
+    await userEvent.click(next);
     await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute(
       'aria-live',
       'polite',
     );
     await expect(fold).toHaveAttribute('aria-expanded', 'true');
-    for (const control of within(pager).getAllByRole('button')) {
-      await expect(centerY(control)).toBe(centerY(pager));
-    }
-    if (numbered) {
-      await userEvent.click(within(pager).getByRole('button', { name: 'Next page' }));
-      await expect(await within(pager).findByText(/^Page 3 of /)).toHaveAttribute(
-        'aria-live',
-        'polite',
-      );
-      await userEvent.click(within(pager).getByRole('button', { name: 'Previous page' }));
-      await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute(
-        'aria-live',
-        'polite',
-      );
-    }
-    await userEvent.click(
-      within(pager).getByRole('button', {
-        name: numbered ? 'Page 1' : 'Previous page',
-      }),
-    );
+    expect(
+      [...project.querySelectorAll('[data-session-id]')].map((row) =>
+        row.getAttribute('data-session-id'),
+      ),
+    ).not.toEqual(firstPageRows);
+    await userEvent.click(next);
+    await expect(await within(pager).findByText(/^Page 3 of /)).toBeInTheDocument();
+    await userEvent.click(previous);
+    await expect(await within(pager).findByText(/^Page 2 of /)).toBeInTheDocument();
+    await userEvent.click(previous);
     await expect(await within(pager).findByText(/^Page 1 of /)).toBeInTheDocument();
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       // Transparent controls expose the same project band on touch.
@@ -288,8 +253,8 @@ export const NarrowRail: Story = {
     });
     const pageCount = Number(
       within(pager)
-        .getAllByRole('button', { name: /^Page \d+$/ })
-        .at(-1)!.textContent,
+        .getByText(/^Page 1 of /)
+        .textContent!.split(' of ')[1],
     );
     const centerY = (node: Element) => {
       const box = node.getBoundingClientRect();
@@ -326,14 +291,16 @@ export const NarrowRail: Story = {
     scroller.scrollTo({ top: 0, behavior: 'instant' });
     await expect(scroller.scrollTop).toBe(0);
     await checkEdges();
-    for (const target of [2, 3, 4, pageCount, pageCount - 1, 1]) {
-      const label =
-        target === pageCount || target === 1
-          ? `Page ${target}`
-          : target === pageCount - 1
-            ? 'Previous page'
-            : 'Next page';
-      await userEvent.click(within(pager).getByRole('button', { name: label }));
+    const forward = Array.from({ length: pageCount - 1 }, (_, index) => index + 2);
+    const backward = Array.from({ length: pageCount - 1 }, (_, index) => pageCount - index - 1);
+    let current = 1;
+    for (const target of [...forward, ...backward]) {
+      await userEvent.click(
+        within(pager).getByRole('button', {
+          name: target > current ? 'Next page' : 'Previous page',
+        }),
+      );
+      current = target;
       await expect(
         await within(pager).findByText(`Page ${target} of ${pageCount}`),
       ).toBeInTheDocument();

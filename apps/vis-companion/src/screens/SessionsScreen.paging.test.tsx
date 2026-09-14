@@ -36,9 +36,7 @@ afterEach(() => {
 // page is the gateway's own window now (`GatewayClient.listProjectPage`), asked for at
 // the size this screen measured, so the header's count and the pager's arithmetic are
 // one number and no page needs the fleet downloaded first.
-describe.each(['numbers', 'arrows'])('gateway-backed project pages using %s', (navigation) => {
-  const pageLabel = (page: number) => (navigation === 'arrows' ? 'Next page' : `Page ${page}`);
-
+describe('gateway-backed project pages', () => {
   it('asks once for the page on screen, and reads the pages after it ahead', async () => {
     window.innerHeight = 844;
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
@@ -57,17 +55,19 @@ describe.each(['numbers', 'arrows'])('gateway-backed project pages using %s', (n
       expect(first.every((read) => read.includes('limit=15'))).toBe(true);
       expect(shown(view)[0]).toBe('alpha 00');
       expect(view.getAllByText('40 sessions').length).toBeGreaterThan(0);
+      expect(view.getByText('1 / 3')).toBeInTheDocument();
 
       // THE TURN COSTS NO ROUND TRIP: the page the reader steps onto is already
       // held, so it paints in the frame of the tap. It used to stand on the page
       // before it until the gateway answered.
-      fireEvent.click(view.getByLabelText(pageLabel(2)));
+      fireEvent.click(view.getByLabelText('Next page'));
       expect(shown(view)[0]).toBe('alpha 15');
+      expect(view.getByText('2 / 3')).toBeInTheDocument();
       await settle();
 
       // The last page, tapped from page two, paints the ten rows the header's
       // forty leaves, with no second paint under the thumb.
-      fireEvent.click(view.getByLabelText(pageLabel(3)));
+      fireEvent.click(view.getByLabelText('Next page'));
       await waitFor(() => expect(shown(view)).toHaveLength(10));
       await settle();
       expect(shown(view)).toEqual([
@@ -82,6 +82,8 @@ describe.each(['numbers', 'arrows'])('gateway-backed project pages using %s', (n
         'alpha 38',
         'alpha 39',
       ]);
+      expect(view.getByText('Page 3 of 3')).toHaveAttribute('aria-live', 'polite');
+      expect(view.getByLabelText('Next page')).toBeDisabled();
       // Every read is still one page of one project: no walk of the machine.
       expect(pageReads(view).every((read) => read.includes('limit=15'))).toBe(true);
     } finally {
@@ -103,17 +105,19 @@ describe.each(['numbers', 'arrows'])('gateway-backed project pages using %s', (n
       expect(shown(view)[0]).toBe('alpha 00');
       await waitFor(() => expect(pageReads(view)).toHaveLength(2));
 
-      fireEvent.click(view.getByLabelText(pageLabel(2)));
+      fireEvent.click(view.getByLabelText('Next page'));
 
       // Until the slow answer lands, both halves keep saying page one. It used to
       // announce page two over page one's rows for the whole network round trip.
       expect(shown(view)[0]).toBe('alpha 00');
-      expect(view.getByLabelText('Page 1')).toHaveAttribute('aria-current', 'page');
-      expect(view.getByLabelText('Page 2')).not.toHaveAttribute('aria-current');
+      expect(view.getByText('1 / 3')).toBeInTheDocument();
+      expect(view.getByText('Page 1 of 3')).toHaveAttribute('aria-live', 'polite');
+      expect(view.queryByText('Page 2 of 3')).not.toBeInTheDocument();
 
       view.releasePages();
       await waitFor(() => expect(shown(view)[0]).toBe('alpha 15'));
-      expect(view.getByLabelText('Page 2')).toHaveAttribute('aria-current', 'page');
+      expect(view.getByText('2 / 3')).toBeInTheDocument();
+      expect(view.getByText('Page 2 of 3')).toHaveAttribute('aria-live', 'polite');
     } finally {
       view.releasePages();
       view.unmount();

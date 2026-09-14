@@ -76,8 +76,9 @@ describe("a project's page is cut by the device", () => {
     const view = onScreen(844);
     try {
       await waitFor(() => expect(view.getByText('alpha 00')).toBeTruthy());
-      fireEvent.click(view.getByLabelText('Page 2'));
-      fireEvent.click(view.getByLabelText('Page 3'));
+      fireEvent.click(view.getByLabelText('Next page'));
+      await waitFor(() => expect(view.getByText('alpha 15')).toBeTruthy());
+      fireEvent.click(view.getByLabelText('Next page'));
       // Page 3 of 3 at fifteen rows a page: the reader is holding `alpha 30`.
       await waitFor(() => expect(view.getByText('alpha 30')).toBeTruthy());
 

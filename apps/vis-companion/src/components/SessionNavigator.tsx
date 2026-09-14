@@ -15,7 +15,7 @@ import {
 import type { MachineColor } from '../lib/machine-colors';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
-import { Button, IconButton } from './ui';
+import { IconButton } from './ui';
 
 const HEADER_TYPE = 'text-title';
 
@@ -316,25 +316,8 @@ export function ProjectCrumb({
 }
 
 /**
- * At most three page numbers: the first, the current (or nearest interior) page,
- * and the last, with a gap marker (`null`) wherever the run breaks.
- * Gaps are informational; Pager supplies explicit previous/next controls.
- */
-export function pageWindow(page: number, pageCount: number): (number | null)[] {
-  if (pageCount <= 3) return Array.from({ length: pageCount }, (_, index) => index + 1);
-  const current = Math.max(2, Math.min(page, pageCount - 1));
-  const pages: (number | null)[] = [1];
-  if (current > 2) pages.push(null);
-  pages.push(current);
-  if (current < pageCount - 1) pages.push(null);
-  pages.push(pageCount);
-  return pages;
-}
-
-/**
- * Previous/next steps stay available in every layout, disabled at either end.
- * Phones show the position between them; wider layouts add compact numbered jumps.
- * Ellipses only mark omitted pages and never hide a navigation action.
+ * Compact project navigation in every layout: previous, current / total, next.
+ * The counter reserves its final width so digit boundaries never move the arrows.
  */
 export function Pager({
   page,
@@ -363,7 +346,7 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap sm:gap-3.5 mouse:gap-2"
+      className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
@@ -371,35 +354,15 @@ export function Pager({
       {step(page - 1, true)}
       <span
         aria-hidden="true"
-        className="font-mono text-ui text-dialog-hint tabular-nums sm:hidden"
+        className="grid text-center font-mono text-ui tabular-nums text-white"
       >
-        {page} / {pageCount}
+        <span className="invisible col-start-1 row-start-1">
+          {pageCount} / {pageCount}
+        </span>
+        <span className="col-start-1 row-start-1">
+          {page} / {pageCount}
+        </span>
       </span>
-      <div className="hidden items-center gap-2 sm:flex">
-        {pageWindow(page, pageCount).map((entry, index) =>
-          entry === null ? (
-            <span
-              key={`gap-${index}`}
-              aria-hidden="true"
-              className="font-mono text-ui text-dialog-hint mouse:text-meta"
-            >
-              …
-            </span>
-          ) : (
-            <Button
-              key={entry}
-              variant="quiet"
-              density="page"
-              pressEffect="none"
-              aria-label={`Page ${entry}`}
-              aria-current={entry === page ? 'page' : undefined}
-              onClick={() => onPage(entry)}
-            >
-              {entry}
-            </Button>
-          ),
-        )}
-      </div>
       {step(page + 1, false)}
     </nav>
   );

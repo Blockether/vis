@@ -129,7 +129,6 @@ import {
   MachineTab,
   NewSessionButton,
   Pager,
-  pageWindow,
   ProjectCrumb,
   ProjectStatusCounts,
   RowDisclosure,
@@ -692,8 +691,7 @@ describe('Pager', () => {
     ).toBe('');
   });
 
-  // Desktop rails keep direct jumps; phones use compact steps.
-  it('offers both responsive forms and announces the position once', () => {
+  it('offers only previous/next steps and announces the position once', () => {
     const html = renderToStaticMarkup(
       <Pager page={1} pageCount={80} onPage={() => {}} label="vis sessions" />,
     );
@@ -701,29 +699,9 @@ describe('Pager', () => {
     expect(html.match(/Page 1 of 80/g)).toHaveLength(1);
     expect(html).toContain('Next page');
     expect(html).toContain('Previous page');
-    for (const n of [1, 2, 80]) {
-      expect(html).toContain(`aria-label="Page ${n}"`);
-    }
-  });
-
-  it('makes every printed page a one-tap jump, current one marked', () => {
-    const html = renderToStaticMarkup(
-      <Pager page={5} pageCount={73} onPage={() => {}} label="vis sessions" />,
-    );
-    for (const n of [1, 5, 73]) {
-      expect(html).toContain(`aria-label="Page ${n}"`);
-    }
-    expect(html).toContain('aria-current="page"');
-  });
-
-  // Keep three page numbers, including both ends, within a narrow sidebar.
-  it('windows the numbers around the current page and pins both ends', () => {
-    expect(pageWindow(1, 1)).toEqual([1]);
-    expect(pageWindow(3, 5)).toEqual([1, null, 3, null, 5]);
-    expect(pageWindow(5, 73)).toEqual([1, null, 5, null, 73]);
-    expect(pageWindow(1, 73)).toEqual([1, 2, null, 73]);
-    expect(pageWindow(72, 73)).toEqual([1, null, 72, 73]);
-    expect(pageWindow(4, 73)).toEqual([1, null, 4, null, 73]);
+    expect(html.match(/<button/g)).toHaveLength(2);
+    expect(html).not.toContain('aria-label="Page ');
+    expect(html).not.toContain('…');
   });
 });
 
@@ -740,8 +718,10 @@ describe('a project band carries its own count and its own pager', () => {
     expect(band).toContain('{pager}');
     expect(cluster).not.toContain('{pager}');
     expect(cluster).toContain('<NewSessionButton');
-    // Both responsive placements share the same paging state and callbacks.
+    // One placement owns the paging state and callbacks in every layout.
     expect(sessionsListSource.match(/<Pager\b/g)?.length).toBe(1);
+    expect(band.match(/\{pager\}/g)).toHaveLength(1);
+    expect(band).not.toContain('hasPageRow');
   });
 
   it('centers the creation control through the project heading', () => {
@@ -792,12 +772,6 @@ describe('a project band carries its own count and its own pager', () => {
     expect(pager).not.toContain('border-t border-dialog-edge');
     expect(pager).not.toContain('bg-level-project');
     expect(pager).not.toContain('sticky');
-  });
-
-  it('keeps three numbered jumps while crossing a large history', () => {
-    for (const page of [1, 4, 50, 100]) {
-      expect(pageWindow(page, 100).filter((entry) => entry !== null)).toHaveLength(3);
-    }
   });
 });
 

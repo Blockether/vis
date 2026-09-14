@@ -211,7 +211,7 @@ describe('starring a session', () => {
     await screen.findByText('Session 1');
     expect(rowOrder()).toHaveLength(15);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Page 2' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(rowOrder()).toEqual(['s16', 's17']);
 
     await userEvent.click(
@@ -224,6 +224,7 @@ describe('starring a session', () => {
     // where the pin put it, and at the top of its project. The gateway is what put
     // it there: the tap is answered by a read of the list it owns.
     await waitFor(() => expect(rowOrder()[0]).toBe('s17'));
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
     const row = document.querySelector('[data-session-id="s17"]')?.parentElement ?? null;
     expect(row).not.toBeNull();
     expect(row!.querySelector("svg[fill='currentColor']")).not.toBeNull();

@@ -25,7 +25,6 @@ import {
   type DraftMessageStore,
 } from '../../lib/draft-messages';
 import { isFavorite } from '../../lib/favorites';
-import { useDeskRail, useMediaMatch } from '../../lib/fit-rows';
 import {
   machineKey,
   machineLabel,
@@ -100,8 +99,6 @@ export const ProjectGroup = memo(function ProjectGroup({
   const pendingIds = pendingByRoot.get(root) ?? [];
   const hasPending = pendingIds.length > 0;
   const { state: creating, start: onNewSession } = creation;
-  const isDesk = useDeskRail();
-  const hasPageRow = useMediaMatch('(width >= 40rem)') && !isDesk;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
     rowActions.deletion.target && machineKey(rowActions.deletion.target.conn) === machineKey(conn)
@@ -438,7 +435,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           <div className={`grid min-w-0 flex-1 ${hasPending ? 'gap-2 py-2' : ''}`}>
             <div className="flex min-w-0">
               <div
-                className={`flex min-w-0 flex-1 gap-2 ${hasPending ? 'min-h-11 mouse:min-h-7' : 'sm:min-h-13 mouse:min-h-12'}`}
+                className={`flex min-w-0 flex-1 gap-3.5 mouse:gap-2 ${hasPending ? 'min-h-11 mouse:min-h-7' : 'sm:min-h-13 mouse:min-h-12'}`}
               >
                 {/* The leading half NAMES the project and FOLDS it: folder name, the path that
               tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
@@ -460,9 +457,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                       : null
                   }
                 />
-                {pager && !hasPageRow && (
-                  <div className="flex shrink-0 items-center pr-4">{pager}</div>
-                )}
+                {pager && <div className="flex shrink-0 items-center pr-5 mouse:pr-4">{pager}</div>}
               </div>
               <HeaderActions align="center">
                 <NewSessionButton
@@ -497,7 +492,6 @@ export const ProjectGroup = memo(function ProjectGroup({
                 </div>
               </div>
             )}
-            {pager && hasPageRow && <div className="px-4 pb-2 pt-1">{pager}</div>}
           </div>
         </SectionHeader>
         {/* The header closes the band; rows draw only separators between sessions. */}

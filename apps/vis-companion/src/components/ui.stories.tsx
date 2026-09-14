@@ -227,16 +227,13 @@ export const Buttons: Story = {
           Disabled
         </Button>
       </Group>
-      <Group of="Button, four densities">
+      <Group of="Button, three densities">
         <Button variant="secondary">Default</Button>
         <Button variant="secondary" density="compact">
           Compact
         </Button>
         <Button variant="secondary" density="panel">
           Panel
-        </Button>
-        <Button variant="secondary" density="page" aria-label="Page 5" aria-current="page">
-          5
         </Button>
       </Group>
       <Group of="The word-only verbs">
@@ -899,12 +896,12 @@ function HeaderRenameDemo() {
   return <HeaderTitle name={name} onRename={setName} renameLabel={`Rename ${name}`} />;
 }
 
-function PagerDemo() {
-  const [page, setPage] = useState(1);
-  return <Pager page={page} pageCount={80} onPage={setPage} label="vis sessions" />;
+function PagerDemo({ initialPage = 1 }: { initialPage?: number }) {
+  const [page, setPage] = useState(initialPage);
+  return <Pager page={page} pageCount={104} onPage={setPage} label="vis sessions" />;
 }
 
-// Explicit steps in every layout; numbered jumps only where there is room.
+// The same compact counter and explicit steps on phones, tablets and desktop rails.
 export const ProjectPages: Story = {
   render: () => (
     <Sheet>
@@ -918,68 +915,75 @@ export const ProjectPages: Story = {
     await expect(previous).toBeVisible();
     await expect(previous).toBeDisabled();
     await expect(next).toBeVisible();
+    await expect(canvas.getByText('1 / 104')).toBeVisible();
+    expect(within(pager).getAllByRole('button')).toHaveLength(2);
+    expect(canvas.queryByRole('button', { name: /^Page \d/ })).toBeNull();
+    expect(canvas.queryByText('…')).toBeNull();
     await userEvent.click(next);
-    await expect(canvas.getByText('Page 2 of 80')).toHaveAttribute('aria-live', 'polite');
+    await expect(canvas.getByText('Page 2 of 104')).toHaveAttribute('aria-live', 'polite');
     await expect(next).toHaveFocus();
     await userEvent.keyboard('{Enter}');
-    await expect(canvas.getByText('Page 3 of 80')).toBeInTheDocument();
+    await expect(canvas.getByText('Page 3 of 104')).toBeInTheDocument();
     await userEvent.keyboard(' ');
-    await expect(canvas.getByText('Page 4 of 80')).toBeInTheDocument();
+    await expect(canvas.getByText('Page 4 of 104')).toBeInTheDocument();
     await expect(next).toHaveFocus();
     await userEvent.click(previous);
-    await expect(canvas.getByText('Page 3 of 80')).toBeInTheDocument();
-
-    if (pager.ownerDocument.defaultView!.innerWidth >= 640) {
-      for (const page of [1, 3, 80]) {
-        await expect(canvas.getByRole('button', { name: `Page ${page}` })).toBeVisible();
-      }
-      expect(canvas.getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
-      const targets = within(pager)
-        .getAllByRole('button')
-        .map((button) => {
-          const { left, right } = button.getBoundingClientRect();
-          const reach = getComputedStyle(button, '::after');
-          return reach.content === 'none'
-            ? { left, right }
-            : {
-                left: left + Math.min(0, parseFloat(reach.left) || 0),
-                right: right - Math.min(0, parseFloat(reach.right) || 0),
-              };
-        });
-      for (let index = 1; index < targets.length; index += 1) {
-        expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(8);
-      }
-      await expect(canvas.getByRole('button', { name: 'Page 3' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
-      for (const gap of canvas.getAllByText('…')) {
-        expect(gap.closest('button')).toBeNull();
-      }
-      await userEvent.click(canvas.getByRole('button', { name: 'Page 80' }));
-      await expect(canvas.getByRole('button', { name: 'Page 80' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
-      await expect(next).toBeVisible();
-      await expect(next).toBeDisabled();
-      await userEvent.click(previous);
-      await expect(canvas.getByRole('button', { name: 'Page 79' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
-      await userEvent.click(canvas.getByRole('button', { name: 'Page 1' }));
-    } else {
-      expect(canvas.queryByRole('button', { name: /^Page \d/ })).toBeNull();
-      await expect(canvas.getByText('3 / 80')).toBeVisible();
-      await userEvent.click(previous);
-      await userEvent.click(previous);
-      await expect(canvas.getByText('1 / 80')).toBeVisible();
-    }
+    await expect(canvas.getByText('3 / 104')).toBeVisible();
+    await userEvent.click(previous);
+    await userEvent.click(previous);
+    await expect(canvas.getByText('1 / 104')).toBeVisible();
     await expect(previous).toBeDisabled();
-    // Touch hit targets extend beyond the face, but must stay within the viewport.
+
+    const targets = [previous, next].map((button) => {
+      const box = button.getBoundingClientRect();
+      const reach = getComputedStyle(button, '::after');
+      const left = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.left) || 0);
+      const right = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.right) || 0);
+      const top = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.top) || 0);
+      const bottom = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.bottom) || 0);
+      return {
+        left: box.left + left,
+        right: box.right - right,
+        width: box.width - left - right,
+        height: box.height - top - bottom,
+      };
+    });
+    const win = pager.ownerDocument.defaultView!;
+    const pointer = win.matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    for (const target of targets) {
+      expect(target.width).toBeGreaterThanOrEqual(pointer ? 28 : 44);
+      expect(target.height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
+    }
+    expect(targets[1].left - targets[0].right).toBeGreaterThanOrEqual(8);
     const document = pager.ownerDocument.documentElement;
     expect(document.scrollWidth).toBeLessThanOrEqual(document.clientWidth);
+    expect(targets[0].left).toBeGreaterThanOrEqual(0);
+    expect(targets[1].right).toBeLessThanOrEqual(document.clientWidth);
+  },
+};
+
+/** The arrows stay put when the counter grows, and stop at the final page. */
+export const ProjectPagesEnd: Story = {
+  globals: { viewport: { value: 'desktop' } },
+  render: () => (
+    <Sheet>
+      <PagerDemo initialPage={99} />
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    const previous = canvas.getByRole('button', { name: 'Previous page' });
+    const next = canvas.getByRole('button', { name: 'Next page' });
+    const positions = [previous, next].map((button) => button.getBoundingClientRect().x);
+    for (let page = 100; page <= 104; page += 1) {
+      await userEvent.click(next);
+      await expect(canvas.getByText(`Page ${page} of 104`)).toBeInTheDocument();
+      expect([previous, next].map((button) => button.getBoundingClientRect().x)).toEqual(positions);
+    }
+    await expect(next).toBeVisible();
+    await expect(next).toBeDisabled();
+    await userEvent.click(previous);
+    await expect(canvas.getByText('103 / 104')).toBeVisible();
+    await expect(next).toBeEnabled();
   },
 };
 
