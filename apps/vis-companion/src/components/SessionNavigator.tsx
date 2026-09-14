@@ -5,6 +5,7 @@
 import {
   Fragment,
   forwardRef,
+  useRef,
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -317,7 +318,8 @@ export function ProjectCrumb({
 
 /**
  * Compact project navigation in every layout: previous, current / total, next.
- * The counter reserves its final width so digit boundaries never move the arrows.
+ * Edit the current number to jump; Enter or blur commits, Escape restores it.
+ * The field reserves its final width so digit boundaries never move the arrows.
  */
 export function Pager({
   page,
@@ -332,6 +334,8 @@ export function Pager({
   /** What is being paged, for the screen reader: "vis sessions". */
   label: string;
 }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cancelled = useRef(false);
   if (pageCount <= 1) return null;
   const step = (target: number, isBack: boolean) => (
     <IconButton
@@ -346,23 +350,49 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap"
+      className="flex shrink-0 items-center justify-end gap-3.5 whitespace-nowrap mouse:gap-2"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
       {step(page - 1, true)}
-      <span
-        aria-hidden="true"
-        className="grid text-center font-mono text-ui tabular-nums text-white"
-      >
-        <span className="invisible col-start-1 row-start-1">
-          {pageCount} / {pageCount}
-        </span>
-        <span className="col-start-1 row-start-1">
-          {page} / {pageCount}
-        </span>
-      </span>
+      <label className="group flex min-h-11 min-w-11 cursor-text items-center justify-center font-mono text-ui tabular-nums text-white mouse:min-h-7 mouse:min-w-7">
+        <EditableNameField
+          aria-label="Current page"
+          aria-description={`Enter a page from 1 to ${pageCount}`}
+          inputMode="numeric"
+          enterKeyHint="go"
+          autoComplete="off"
+          spellCheck={false}
+          size={String(pageCount).length}
+          value={draft ?? String(page)}
+          onFocus={(event) => event.currentTarget.select()}
+          onClick={(event) => event.currentTarget.select()}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+          onBlur={(event) => {
+            const value = event.currentTarget.value.trim();
+            setDraft(null);
+            if (cancelled.current) {
+              cancelled.current = false;
+              return;
+            }
+            if (!/^\d+$/.test(value)) return;
+            const target = Math.min(pageCount, Math.max(1, Number(value)));
+            if (target !== page) onPage(target);
+          }}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === 'Enter' || event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              cancelled.current = event.key === 'Escape';
+              event.currentTarget.blur();
+            }
+          }}
+          face="min-w-0 text-center focus:underline focus:underline-offset-2 mouse:group-hover:not-focus:text-accent-ink"
+        />
+        <span aria-hidden="true"> / {pageCount}</span>
+      </label>
       {step(page + 1, false)}
     </nav>
   );

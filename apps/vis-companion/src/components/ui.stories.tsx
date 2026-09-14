@@ -912,10 +912,12 @@ export const ProjectPages: Story = {
     const pager = canvas.getByRole('navigation', { name: 'Pages of vis sessions' });
     const previous = canvas.getByRole('button', { name: 'Previous page' });
     const next = canvas.getByRole('button', { name: 'Next page' });
+    const current = canvas.getByRole('textbox', { name: 'Current page' }) as HTMLInputElement;
+    const pageTarget = current.closest('label')!;
     await expect(previous).toBeVisible();
     await expect(previous).toBeDisabled();
     await expect(next).toBeVisible();
-    await expect(canvas.getByText('1 / 104')).toBeVisible();
+    await expect(current).toHaveValue('1');
     expect(within(pager).getAllByRole('button')).toHaveLength(2);
     expect(canvas.queryByRole('button', { name: /^Page \d/ })).toBeNull();
     expect(canvas.queryByText('…')).toBeNull();
@@ -928,13 +930,32 @@ export const ProjectPages: Story = {
     await expect(canvas.getByText('Page 4 of 104')).toBeInTheDocument();
     await expect(next).toHaveFocus();
     await userEvent.click(previous);
-    await expect(canvas.getByText('3 / 104')).toBeVisible();
+    await expect(current).toHaveValue('3');
     await userEvent.click(previous);
     await userEvent.click(previous);
-    await expect(canvas.getByText('1 / 104')).toBeVisible();
+    await expect(current).toHaveValue('1');
     await expect(previous).toBeDisabled();
 
-    const targets = [previous, next].map((button) => {
+    // The whole counter is a hit target; only its current number is editable.
+    await userEvent.click(pageTarget);
+    await expect(current).toHaveFocus();
+    expect([current.selectionStart, current.selectionEnd]).toEqual([0, 1]);
+    await userEvent.keyboard('64');
+    await expect(canvas.getByText('Page 1 of 104')).toBeInTheDocument();
+    await userEvent.keyboard('{Enter}');
+    await expect(current).toHaveValue('64');
+    await expect(canvas.getByText('Page 64 of 104')).toBeInTheDocument();
+    await userEvent.click(current);
+    await userEvent.keyboard('7{Escape}');
+    await expect(current).toHaveValue('64');
+    await expect(current).not.toHaveFocus();
+    await userEvent.click(current);
+    await userEvent.keyboard('1');
+    await userEvent.tab();
+    await expect(current).toHaveValue('1');
+    await expect(previous).toBeDisabled();
+
+    const targets = [previous, pageTarget, next].map((button) => {
       const box = button.getBoundingClientRect();
       const reach = getComputedStyle(button, '::after');
       const left = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.left) || 0);
@@ -955,10 +976,11 @@ export const ProjectPages: Story = {
       expect(target.height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
     }
     expect(targets[1].left - targets[0].right).toBeGreaterThanOrEqual(8);
+    expect(targets[2].left - targets[1].right).toBeGreaterThanOrEqual(8);
     const document = pager.ownerDocument.documentElement;
     expect(document.scrollWidth).toBeLessThanOrEqual(document.clientWidth);
     expect(targets[0].left).toBeGreaterThanOrEqual(0);
-    expect(targets[1].right).toBeLessThanOrEqual(document.clientWidth);
+    expect(targets[2].right).toBeLessThanOrEqual(document.clientWidth);
   },
 };
 
@@ -982,7 +1004,7 @@ export const ProjectPagesEnd: Story = {
     await expect(next).toBeVisible();
     await expect(next).toBeDisabled();
     await userEvent.click(previous);
-    await expect(canvas.getByText('103 / 104')).toBeVisible();
+    await expect(canvas.getByRole('textbox', { name: 'Current page' })).toHaveValue('103');
     await expect(next).toBeEnabled();
   },
 };
@@ -990,6 +1012,18 @@ export const ProjectPagesEnd: Story = {
 export const ProjectPagesDesktop: Story = {
   ...ProjectPages,
   globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+export const ProjectPagesEditing: Story = {
+  ...ProjectPagesDesktop,
+  play: async ({ canvas }) => {
+    const current = canvas.getByRole('textbox', { name: 'Current page' });
+    await userEvent.click(current);
+    await userEvent.keyboard('42');
+    await expect(current).toHaveValue('42');
+    await expect(current).toHaveFocus();
+    await expect(canvas.getByText('Page 1 of 104')).toBeInTheDocument();
+  },
 };
 
 export const ProjectPagesNarrowRail: Story = {

@@ -6,12 +6,16 @@ import { Pager } from './SessionNavigator';
 
 // Regression: the chosen header layout is `previous · current / total · next` on every device.
 describe('project pages', () => {
-  it.each([1, 9, 10, 99])('shows only a counter and two step controls on page %s', (page) => {
+  it.each([1, 9, 10, 99])('shows an editable counter and two step controls on page %s', (page) => {
     render(<Pager page={page} pageCount={104} label="vis sessions" onPage={vi.fn()} />);
     expect(screen.getAllByRole('button')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: /^Page \d+$/ })).not.toBeInTheDocument();
     expect(screen.queryByText('…')).not.toBeInTheDocument();
-    expect(screen.getByText(`${page} / 104`)).toBeInTheDocument();
+    const current = screen.getByRole('textbox', { name: 'Current page' });
+    expect(current).toHaveValue(String(page));
+    // Keep hover ink off the focused field on the focused project band's background.
+    expect(current).toHaveClass('mouse:group-hover:not-focus:text-accent-ink');
+    expect(screen.getByText('/ 104')).toBeInTheDocument();
     expect(screen.getByText(`Page ${page} of 104`)).toHaveAttribute('aria-live', 'polite');
   });
 
@@ -72,5 +76,83 @@ describe('project pages', () => {
         onPage.mockClear();
       }
     }
+  });
+
+  it.each(['Enter', 'blur'])('jumps only when the edited number is committed with %s', (commit) => {
+    const onPage = vi.fn();
+    const { rerender } = render(
+      <Pager page={1} pageCount={104} label="vis sessions" onPage={onPage} />,
+    );
+    const field = screen.getByRole('textbox', { name: 'Current page' });
+    expect(field).toHaveAttribute('inputmode', 'numeric');
+    expect(field).toHaveAttribute('enterkeyhint', 'go');
+    field.focus();
+    fireEvent.change(field, { target: { value: '64' } });
+    expect(onPage).not.toHaveBeenCalled();
+    if (commit === 'Enter') fireEvent.keyDown(field, { key: 'Enter' });
+    else fireEvent.blur(field);
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(64);
+    // Keep the committed counter with the visible rows while a requested page is loading.
+    expect(field).toHaveValue('1');
+    rerender(<Pager page={64} pageCount={104} label="vis sessions" onPage={onPage} />);
+    expect(field).toHaveValue('64');
+    expect(screen.getByText('Page 64 of 104')).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('cancels with Escape without committing on blur or blocking the next edit', () => {
+    const onPage = vi.fn();
+    render(<Pager page={5} pageCount={104} label="vis sessions" onPage={onPage} />);
+    const field = screen.getByRole('textbox', { name: 'Current page' });
+    field.focus();
+    fireEvent.change(field, { target: { value: '64' } });
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(field).toHaveValue('5');
+    expect(field).not.toHaveFocus();
+    expect(onPage).not.toHaveBeenCalled();
+    field.focus();
+    fireEvent.change(field, { target: { value: '8' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(8);
+  });
+
+  it.each(['', 'invalid', '2.5', '1e2', '5'])(
+    'restores the current page without navigating for %j',
+    (value) => {
+      const onPage = vi.fn();
+      render(<Pager page={5} pageCount={104} label="vis sessions" onPage={onPage} />);
+      const field = screen.getByRole('textbox', { name: 'Current page' });
+      field.focus();
+      fireEvent.change(field, { target: { value } });
+      fireEvent.keyDown(field, { key: 'Enter' });
+      expect(onPage).not.toHaveBeenCalled();
+      expect(field).toHaveValue('5');
+    },
+  );
+
+  it.each([
+    ['0', 1],
+    ['999', 104],
+    ['0012', 12],
+  ])('normalizes %s to page %s', (value, target) => {
+    const onPage = vi.fn();
+    render(<Pager page={5} pageCount={104} label="vis sessions" onPage={onPage} />);
+    const field = screen.getByRole('textbox', { name: 'Current page' });
+    field.focus();
+    fireEvent.change(field, { target: { value } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(target);
+  });
+
+  it('uses the latest page count when the history shrinks during an edit', () => {
+    const onPage = vi.fn();
+    const { rerender } = render(
+      <Pager page={5} pageCount={104} label="vis sessions" onPage={onPage} />,
+    );
+    const field = screen.getByRole('textbox', { name: 'Current page' });
+    field.focus();
+    fireEvent.change(field, { target: { value: '64' } });
+    rerender(<Pager page={5} pageCount={7} label="vis sessions" onPage={onPage} />);
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(7);
   });
 });

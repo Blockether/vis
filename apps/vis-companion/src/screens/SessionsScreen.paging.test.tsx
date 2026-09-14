@@ -55,14 +55,14 @@ describe('gateway-backed project pages', () => {
       expect(first.every((read) => read.includes('limit=15'))).toBe(true);
       expect(shown(view)[0]).toBe('alpha 00');
       expect(view.getAllByText('40 sessions').length).toBeGreaterThan(0);
-      expect(view.getByText('1 / 3')).toBeInTheDocument();
+      expect(view.getByRole('textbox', { name: 'Current page' })).toHaveValue('1');
 
       // THE TURN COSTS NO ROUND TRIP: the page the reader steps onto is already
       // held, so it paints in the frame of the tap. It used to stand on the page
       // before it until the gateway answered.
       fireEvent.click(view.getByLabelText('Next page'));
       expect(shown(view)[0]).toBe('alpha 15');
-      expect(view.getByText('2 / 3')).toBeInTheDocument();
+      expect(view.getByRole('textbox', { name: 'Current page' })).toHaveValue('2');
       await settle();
 
       // The last page, tapped from page two, paints the ten rows the header's
@@ -95,31 +95,62 @@ describe('gateway-backed project pages', () => {
   // Regression, user report: on a slow connection the pager moved to the next
   // number while the rows still belonged to the previous page, making page turns
   // look ignored and sessions appear under the wrong page.
-  it('keeps a slow page turn attached to the rows the pager names', async () => {
+  it.each(['step', 'jump'])(
+    'keeps a slow page %s attached to the rows the pager names',
+    async (action) => {
+      window.innerHeight = 844;
+      const view = renderSessionsScreen({
+        machines: [{ sessions: rows, holdsDeeperPages: true }],
+      });
+      try {
+        await waitFor(() => expect(shown(view)).toHaveLength(15));
+        expect(shown(view)[0]).toBe('alpha 00');
+        await waitFor(() => expect(pageReads(view)).toHaveLength(2));
+
+        if (action === 'step') fireEvent.click(view.getByLabelText('Next page'));
+        else {
+          const current = view.getByRole('textbox', { name: 'Current page' });
+          current.focus();
+          fireEvent.change(current, { target: { value: '2' } });
+          fireEvent.keyDown(current, { key: 'Enter' });
+        }
+
+        // Until the slow answer lands, both halves keep saying page one. It used to
+        // announce page two over page one's rows for the whole network round trip.
+        expect(shown(view)[0]).toBe('alpha 00');
+        expect(view.getByRole('textbox', { name: 'Current page' })).toHaveValue('1');
+        expect(view.getByText('Page 1 of 3')).toHaveAttribute('aria-live', 'polite');
+        expect(view.queryByText('Page 2 of 3')).not.toBeInTheDocument();
+
+        view.releasePages();
+        await waitFor(() => expect(shown(view)[0]).toBe('alpha 15'));
+        expect(view.getByRole('textbox', { name: 'Current page' })).toHaveValue('2');
+        expect(view.getByText('Page 2 of 3')).toHaveAttribute('aria-live', 'polite');
+      } finally {
+        view.releasePages();
+        view.unmount();
+        view.restore();
+      }
+    },
+  );
+
+  it('jumps directly to a typed page without visiting the pages between', async () => {
     window.innerHeight = 844;
-    const view = renderSessionsScreen({
-      machines: [{ sessions: rows, holdsDeeperPages: true }],
-    });
+    const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
     try {
       await waitFor(() => expect(shown(view)).toHaveLength(15));
+      await settle();
+      const current = view.getByRole('textbox', { name: 'Current page' });
+      current.focus();
+      fireEvent.change(current, { target: { value: '3' } });
       expect(shown(view)[0]).toBe('alpha 00');
-      await waitFor(() => expect(pageReads(view)).toHaveLength(2));
-
-      fireEvent.click(view.getByLabelText('Next page'));
-
-      // Until the slow answer lands, both halves keep saying page one. It used to
-      // announce page two over page one's rows for the whole network round trip.
-      expect(shown(view)[0]).toBe('alpha 00');
-      expect(view.getByText('1 / 3')).toBeInTheDocument();
-      expect(view.getByText('Page 1 of 3')).toHaveAttribute('aria-live', 'polite');
-      expect(view.queryByText('Page 2 of 3')).not.toBeInTheDocument();
-
-      view.releasePages();
-      await waitFor(() => expect(shown(view)[0]).toBe('alpha 15'));
-      expect(view.getByText('2 / 3')).toBeInTheDocument();
-      expect(view.getByText('Page 2 of 3')).toHaveAttribute('aria-live', 'polite');
+      fireEvent.keyDown(current, { key: 'Enter' });
+      expect(shown(view)[0]).toBe('alpha 30');
+      expect(shown(view)).toHaveLength(10);
+      expect(current).toHaveValue('3');
+      expect(view.getByText('Page 3 of 3')).toHaveAttribute('aria-live', 'polite');
+      expect(view.getByLabelText('Next page')).toBeDisabled();
     } finally {
-      view.releasePages();
       view.unmount();
       view.restore();
     }

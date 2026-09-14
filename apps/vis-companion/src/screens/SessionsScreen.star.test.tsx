@@ -224,7 +224,7 @@ describe('starring a session', () => {
     // where the pin put it, and at the top of its project. The gateway is what put
     // it there: the tap is answered by a read of the list it owns.
     await waitFor(() => expect(rowOrder()[0]).toBe('s17'));
-    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Current page' })).toHaveValue('1');
     const row = document.querySelector('[data-session-id="s17"]')?.parentElement ?? null;
     expect(row).not.toBeNull();
     expect(row!.querySelector("svg[fill='currentColor']")).not.toBeNull();

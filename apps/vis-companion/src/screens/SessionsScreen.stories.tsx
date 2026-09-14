@@ -127,7 +127,9 @@ export const Fleet: Story = {
     expect(within(pager).getAllByRole('button')).toHaveLength(2);
     expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
     expect(within(pager).queryByText('…')).toBeNull();
-    await expect(within(pager).getByText(/^1 \/ /)).toBeVisible();
+    const current = within(pager).getByRole('textbox', { name: 'Current page' });
+    const pageTarget = current.closest('label')!;
+    await expect(current).toHaveValue('1');
     for (const control of [previous, next]) {
       await expect(centerY(control)).toBe(centerY(pager));
       await expect(control.getBoundingClientRect().height).toBe(
@@ -135,7 +137,7 @@ export const Fleet: Story = {
       );
     }
     // Include invisible touch reach, not just the small visible arrow faces.
-    const targets = [fold, previous, next, create].map((control) => {
+    const targets = [fold, previous, pageTarget, next, create].map((control) => {
       const box = control.getBoundingClientRect();
       const reach = win.getComputedStyle(control, '::after');
       const left = reach.content === 'none' ? 0 : Math.min(0, parseFloat(reach.left) || 0);
@@ -156,7 +158,7 @@ export const Fleet: Story = {
     for (let index = 1; index < targets.length; index += 1) {
       expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(8);
     }
-    expect(targets[3].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
+    expect(targets[4].right).toBeLessThanOrEqual(project.getBoundingClientRect().right);
     await expect(previous).toBeDisabled();
     await expect(next).toBeVisible();
     const firstPageRows = [...project.querySelectorAll('[data-session-id]')].map((row) =>
@@ -179,6 +181,22 @@ export const Fleet: Story = {
     await expect(await within(pager).findByText(/^Page 2 of /)).toBeInTheDocument();
     await userEvent.click(previous);
     await expect(await within(pager).findByText(/^Page 1 of /)).toBeInTheDocument();
+    await userEvent.click(pageTarget);
+    await userEvent.keyboard('3{Enter}');
+    await expect(await within(pager).findByText(/^Page 3 of /)).toBeInTheDocument();
+    expect(
+      [...project.querySelectorAll('[data-session-id]')].map((row) =>
+        row.getAttribute('data-session-id'),
+      ),
+    ).not.toEqual(firstPageRows);
+    await userEvent.click(pageTarget);
+    await userEvent.keyboard('1{Enter}');
+    await expect(await within(pager).findByText(/^Page 1 of /)).toBeInTheDocument();
+    expect(
+      [...project.querySelectorAll('[data-session-id]')].map((row) =>
+        row.getAttribute('data-session-id'),
+      ),
+    ).toEqual(firstPageRows);
     if (!win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
       // Transparent controls expose the same project band on touch.
       await expect(win.getComputedStyle(create.parentElement!.parentElement!).backgroundColor).toBe(
