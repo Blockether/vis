@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
             [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
@@ -329,20 +330,18 @@
 
 (defn- probe-entry?
   [{:keys [secret remote?] :as entry}]
-  (try (let [response
-             (gw-send! entry "GET" "/healthz" {:timeout-ms health-probe-timeout-ms})
+  (let [healthy? (try (let [response
+                            (gw-send! entry "GET" "/healthz" {:timeout-ms health-probe-timeout-ms})
+                            body (note-handshake! (parse-json-body (:body response)))]
 
-             body
-             (note-handshake! (parse-json-body (:body response)))]
-
-         (boolean (and (= 200 (:status response))
-                       (= "ok" (get body "status"))
-                       ;; `secret_match` is the daemon confirming OUR registry secret. A remote
-                       ;; target we hold no token for cannot match it and need not: an auth-free
-                       ;; gateway serves every route anyway, and a token-gated one answers 401.
-                       (or (true? (get body "secret_match"))
-                           (and remote? (str/blank? (str secret)))))))
-       (catch Throwable _ false)))
+                        (boolean (and (= 200 (:status response))
+                                      (= "ok" (get body "status"))
+                                      ;; A local daemon must prove our registry secret matched.
+                                      (or (true? (get body "secret_match"))
+                                          (and remote? (str/blank? (str secret)))))))
+                      (catch Throwable _ false))]
+    (diagnostics/observe-probe! entry healthy?)
+    healthy?))
 
 (defn- port-free?
   "True when nothing is accepting TCP connections on host:port — i.e. a previous

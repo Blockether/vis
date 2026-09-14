@@ -33,6 +33,7 @@
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.session.titling :as titling]
@@ -2836,33 +2837,35 @@
                                     (fn []
                                       nil)))
   ([sid tid cancel-token grace-ms land! release-capacity!]
-   (doto (Thread. ^Runnable
-                  (fn []
-                    (try (Thread/sleep (long grace-ms))
-                         ;; Capacity cannot wait behind the terminal landing itself:
-                         ;; persistence, fan-out, or engine condemnation may also be
-                         ;; the code that is wedged. The one-shot lease makes this
-                         ;; safe if the worker's own `finally` wins at the same time.
-                         (try (release-capacity!) (catch Throwable _ nil))
-                         (when (= tid (:current-turn (session-entry sid)))
-                           (tel/log!
-                             :warn
-                             ["gateway: cancelled turn never landed a terminal — backstopping" tid
-                              (str grace-ms "ms after cancel")])
-                           (land! sid tid cancel-token)
-                           ;; The terminal we just synthesized is only half the
-                           ;; truth: the worker never came back, so its thread may
-                           ;; still own this session's ENGINE lock. Landing the
-                           ;; event alone reports the session idle while every
-                           ;; later turn parks on that lock forever — started, no
-                           ;; events, deaf to its own cancel. Condemn the engine
-                           ;; so the next turn abandons the wedged context and
-                           ;; runs on a fresh one instead of queueing behind a
-                           ;; thread that is never coming back.
-                           (try (lp/condemn-env! sid) (catch Throwable _ nil)))
-                         (catch InterruptedException _ nil)
-                         (catch Throwable _ nil)))
-                  (str "gateway-turn-cancel-backstop-" tid))
+   (doto (Thread.
+           ^Runnable
+           (fn []
+             (try (Thread/sleep (long grace-ms))
+                  ;; Capacity cannot wait behind the terminal landing itself:
+                  ;; persistence, fan-out, or engine condemnation may also be
+                  ;; the code that is wedged. The one-shot lease makes this
+                  ;; safe if the worker's own `finally` wins at the same time.
+                  (try (release-capacity!) (catch Throwable _ nil))
+                  (when (= tid (:current-turn (session-entry sid)))
+                    (diagnostics/capture!
+                      {:session-id sid :turn-id tid :reason :cancel-backstop :grace-ms grace-ms})
+                    (tel/log! :warn
+                              ["gateway: cancelled turn never landed a terminal — backstopping" tid
+                               (str grace-ms "ms after cancel")])
+                    (land! sid tid cancel-token)
+                    ;; The terminal we just synthesized is only half the
+                    ;; truth: the worker never came back, so its thread may
+                    ;; still own this session's ENGINE lock. Landing the
+                    ;; event alone reports the session idle while every
+                    ;; later turn parks on that lock forever — started, no
+                    ;; events, deaf to its own cancel. Condemn the engine
+                    ;; so the next turn abandons the wedged context and
+                    ;; runs on a fresh one instead of queueing behind a
+                    ;; thread that is never coming back.
+                    (try (lp/condemn-env! sid) (catch Throwable _ nil)))
+                  (catch InterruptedException _ nil)
+                  (catch Throwable _ nil)))
+           (str "gateway-turn-cancel-backstop-" tid))
      (.setDaemon true)
      (.start))
    nil))
@@ -3029,6 +3032,11 @@
                                           (stall-failure-text stall)
                                           (str "turn never started running: " detail))]
 
+                             (diagnostics/capture! {:session-id sid
+                                                    :turn-id tid
+                                                    :reason :turn-stall
+                                                    :phase phase
+                                                    :idle-ms idle-ms})
                              (tel/log! :warn
                                        ["gateway: turn made no progress — force-cancelling" tid
                                         reason])
