@@ -39,6 +39,8 @@ import {
   CopyIcon,
   DownloadIcon,
   DrawIcon,
+  MinusIcon,
+  PlusIcon,
   ShareIcon,
   TrimIcon,
 } from './icons';
@@ -727,28 +729,31 @@ export function ImageViewer({
 
       <div className="absolute inset-x-0 bottom-0 z-20 border-t border-dialog-edge bg-panel pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2">
         <div className="mx-auto flex max-w-[1400px] items-center gap-2 overflow-x-auto overscroll-x-contain pb-1">
-          {/* One frame, three parts: the segmented group owns the corner and clips
-              it, so its segments stay square and no notch opens where two of them
-              meet. */}
-          <div
-            className="flex shrink-0 items-center overflow-hidden rounded-control border border-edge-strong [&>button]:rounded-none"
-            aria-label="Zoom controls"
-          >
-            <Button variant="secondary" onClick={() => zoomBy(1 / 1.35)} aria-label="Zoom out">
-              −
-            </Button>
+          <div className="flex shrink-0 items-center gap-2" role="group" aria-label="Zoom controls">
+            <IconButton
+              variant="secondary"
+              onClick={() => zoomBy(1 / 1.35)}
+              label="Zoom out"
+              title="Zoom out"
+            >
+              <MinusIcon className="size-3" />
+            </IconButton>
             <Button
               variant="secondary"
-              isJoined
               className="min-w-14"
               onClick={resetTransform}
               aria-label="Reset zoom"
             >
               <span ref={zoomLabelRef}>100%</span>
             </Button>
-            <Button variant="secondary" onClick={() => zoomBy(1.35)} aria-label="Zoom in">
-              +
-            </Button>
+            <IconButton
+              variant="secondary"
+              onClick={() => zoomBy(1.35)}
+              label="Zoom in"
+              title="Zoom in"
+            >
+              <PlusIcon className="size-3" />
+            </IconButton>
           </div>
 
           {editable ? (

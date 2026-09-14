@@ -143,17 +143,11 @@ export const PdfAnnotator = memo(function PdfAnnotator({
     // last page, and whether there is a page to draw on at all.
     actions: (
       <>
-        <BandButton
-          aria-label="Previous page"
-          title="Previous page"
-          disabled={page <= 1}
-          onClick={() => turn(-1)}
-        >
+        <BandButton label="Previous page" disabled={page <= 1} onClick={() => turn(-1)}>
           <ChevronIcon back className="size-3" />
         </BandButton>
         <BandButton
-          aria-label="Next page"
-          title="Next page"
+          label="Next page"
           disabled={pageCount === 0 || page >= pageCount}
           onClick={() => turn(1)}
         >

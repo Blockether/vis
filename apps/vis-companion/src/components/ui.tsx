@@ -91,14 +91,6 @@ export const Button = forwardRef<
      */
     density?: 'default' | 'compact' | 'panel' | 'page';
     /**
-     * This button stands INSIDE a segmented run — the image viewer's `− 100% +`.
-     * The middle of the run drops its side frames so the three boxes draw ONE
-     * outline rather than a doubled hairline in every seam. A frame is a face, so
-     * it is a prop: two `border` utilities meeting at a call site are settled by
-     * Tailwind's emission order and never by which one the call site typed.
-     */
-    isJoined?: boolean;
-    /**
      * A WORD SETS A CONTROL'S WIDTH; A MARK DOES NOT.
      *
      * `box` is the button with a word in it — the word measures it, so it is a
@@ -122,7 +114,6 @@ export const Button = forwardRef<
     variant = 'primary',
     pressEffect = 'scale',
     density = 'default',
-    isJoined = false,
     shape = 'box',
     className = '',
     disabled = false,
@@ -204,7 +195,6 @@ export const Button = forwardRef<
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
     page: `${touchReach} min-h-8 min-w-11 px-1.5 font-mono text-ui tabular-nums aria-[current=page]:bg-hover aria-[current=page]:text-white mouse:min-h-7 mouse:min-w-7 mouse:px-1.5 mouse:text-meta`,
   }[density];
-  const joined = isJoined ? 'border-x-0' : '';
   // THE DISC IS THE BOX THAT NEVER LEARNED A WORD. It keeps the header's own 32px
   // rhythm and the 6px of invisible reach above and below it that makes the 44px
   // finger target, and under a pointer it is 28px — square, where the rectangle it
@@ -219,7 +209,7 @@ export const Button = forwardRef<
     <button
       ref={ref}
       disabled={disabled}
-      className={`border text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none ${frame} ${joined} ${styles} ${className}`}
+      className={`border text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none ${frame} ${styles} ${className}`}
       {...tapPress}
       {...props}
     />
@@ -1087,11 +1077,9 @@ function useTapPress(
  * no rhythm at all. They also each re-spelled the same transition list and the
  * same `active:scale-[0.94]`, and none of them had a focus ring.
  *
- * `tone` is what the control MEANS, and the box follows from it: `quiet` is a
- * glyph in the strip, `send` is the verb the strip exists for, `stop` is the same
- * disc replacing send in its reserved slot, and `recording` is `quiet` while it is
- * listening. Nothing here is a `className` at the call site, because a strip whose
- * boxes disagree is exactly what this replaced.
+ * Every tone uses the same circular face: 32px on touch, 28px under a pointer.
+ * `tone` changes its meaning and colour, not its shape. An overlay keeps a full
+ * 44px face; a strip control reaches beyond its smaller face for touch.
  *
  * The PRESS itself is `useTapPress` above: this strip is tapped with the
  * keyboard up more than anything else in the app, and on iOS a tap is not
@@ -1124,32 +1112,25 @@ export function ComposerButton({
   isHolding?: boolean;
 }) {
   const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
-  const overlayFrame =
+  const frame =
     surface === 'overlay'
       ? 'size-11 border border-dialog-edge shadow-[4px_4px_0_var(--dialog-shadow)]'
-      : '';
+      : 'size-8 after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
   const face = {
-    quiet:
-      'h-8 w-7 text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted mouse:h-7 mouse:w-6',
-    recording: `${
-      surface === 'overlay' ? overlayFrame : 'h-8 w-7 mouse:h-7 mouse:w-6'
-    } animate-pulse bg-warn-surface text-err disabled:text-muted motion-reduce:animate-none`,
-    // The MODE, not an action: the button keeps the strip's box and changes its
-    // paper, so "which microphone am I holding" is answered by the control
-    // itself rather than by a badge stuck to its corner.
-    voice: `${
-      surface === 'overlay' ? overlayFrame : 'h-8 w-7 mouse:h-7 mouse:w-6'
-    } bg-accent text-accent-foreground hover:bg-accent-2 disabled:bg-button disabled:text-muted`,
+    quiet: 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted',
+    recording:
+      'animate-pulse bg-warn-surface text-err disabled:text-muted motion-reduce:animate-none',
+    // The mode changes the microphone's paper, not its shape.
+    voice:
+      'bg-accent text-accent-foreground hover:bg-accent-2 disabled:bg-button disabled:text-muted',
     // NOTHING TO SEND is a control with no PAPER, not a dimmed arrow on paper.
     // Dimming kept the filled square and greyed the mark inside it: hint ink on
     // button paper measures 1.96:1 in blockether-light, under the 3:1 floor, so
     // the reader could not see the thing being greyed. The paper is what leaves
     // — the state is a SHAPE — and the arrow, now on the field's own paper,
     // measures 5.27:1.
-    send: 'size-8 rounded-full border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:border-transparent disabled:bg-transparent disabled:text-dialog-hint mouse:size-7',
-    // It REPLACES send in the reserved slot, so it owns the same disc itself.
-    // Depending on the parent's dimensions made the gallery stretch it across a row.
-    stop: 'size-8 rounded-full border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0 mouse:size-7',
+    send: 'border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:border-transparent disabled:bg-transparent disabled:text-dialog-hint',
+    stop: 'border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0',
   }[tone];
   return (
     <button
@@ -1157,14 +1138,16 @@ export function ComposerButton({
       aria-label={label}
       disabled={disabled}
       {...press}
-      className={`relative grid shrink-0 place-items-center overflow-hidden ${tone === 'send' || tone === 'stop' ? '' : 'rounded-control'} transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
+      className={`relative grid shrink-0 place-items-center rounded-full transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${frame} ${face} ${className}`}
       {...props}
     >
       {isHolding && (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 origin-bottom scale-y-100 bg-accent/30 transition-transform duration-[450ms] ease-linear starting:scale-y-0 motion-reduce:hidden"
-        />
+          className="pointer-events-none absolute inset-0 overflow-hidden rounded-full"
+        >
+          <span className="absolute inset-0 origin-bottom scale-y-100 bg-accent/30 transition-transform duration-[450ms] ease-linear starting:scale-y-0 motion-reduce:hidden" />
+        </span>
       )}
       <span className="relative grid place-items-center">{children}</span>
     </button>
@@ -1726,15 +1709,10 @@ export function CloseButton({
 /**
  * A VERB IN A BAND, and there is only one of it.
  *
- * `CloseButton isBand` is the cell that ENDS a band; this is the same cell for what
- * the band also OFFERS. A domain verb earns its word. Universal chrome can replace
- * that word with a mark by supplying `label`; the label names it, the cell becomes
- * square, and the mark stays optically centred instead of inheriting the text nudge.
- *
- * It is not `Button`: a bordered box on a title band claims a rank chrome has not
- * earned, and a smaller face inside the band gives a finger less target than the X
- * one hairline away. The cell fills the band and, unless it is first in an open run,
- * is welded to what precedes it by its own left rule.
+ * Text actions fill the band and keep their dividing rule. Supplying `label`
+ * makes an action icon-only: its circular face matches the other icon controls,
+ * while the transparent cell keeps the band's full-height touch target.
+ * Hover and keyboard focus belong to that face, not the rectangular cell.
  *
  * A CELL WITH SOMETHING TO COMMIT WEARS THE ACCENT (`isPrimary`). The accent exists
  * only while the commit is live; a disabled cell drops it instead of dimming a false
@@ -1752,7 +1730,7 @@ export function BandButton({
   isFirst?: boolean;
   /** This cell COMMITS something, and wears the accent while it has something to commit. */
   isPrimary?: boolean;
-  /** The accessible name of an icon-only cell; providing it also gives the mark a square target. */
+  /** The accessible name of an icon-only action with a circular face. */
   label?: string;
 }) {
   const isLive = isPrimary && !props.disabled;
@@ -1760,20 +1738,32 @@ export function BandButton({
   return (
     <button
       type="button"
-      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap ${
-        isFirst ? '' : 'border-l border-current/20'
-      } font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:text-ui mouse:text-meta ${
-        isIconOnly ? 'w-12 px-0 mouse:w-9' : 'px-3 sm:px-4 mouse:px-3'
-      } ${
-        isLive
-          ? 'bg-accent text-accent-foreground hover:bg-accent-2 focus-visible:bg-accent-2'
-          : 'text-current hover:bg-current/10 focus-visible:bg-current/10'
+      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap font-mono text-meta font-bold focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 sm:text-ui mouse:text-meta ${
+        isIconOnly
+          ? 'group w-12 px-0 mouse:w-9'
+          : `${isFirst ? '' : 'border-l border-current/20'} px-3 transition-colors duration-150 disabled:hover:bg-transparent motion-reduce:transition-none sm:px-4 mouse:px-3 ${
+              isLive
+                ? 'bg-accent text-accent-foreground hover:bg-accent-2 focus-visible:bg-accent-2'
+                : 'text-current hover:bg-current/10 focus-visible:bg-current/10'
+            }`
       } ${className}`}
       aria-label={label}
       title={label}
       {...props}
     >
-      <span className={isIconOnly ? '' : 'translate-y-px'}>{children}</span>
+      <span
+        className={
+          isIconOnly
+            ? `pointer-events-none grid size-8 place-items-center rounded-full border border-current/20 transition-[background-color,box-shadow,transform] duration-150 group-focus-visible:ring-2 group-focus-visible:ring-current/60 group-active:scale-[0.94] group-disabled:scale-100 motion-reduce:transition-none mouse:size-7 ${
+                isLive
+                  ? 'bg-accent text-accent-foreground group-hover:bg-accent-2'
+                  : 'text-current group-hover:bg-current/10 group-disabled:bg-transparent'
+              }`
+            : 'translate-y-px'
+        }
+      >
+        {children}
+      </span>
     </button>
   );
 }

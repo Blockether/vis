@@ -35,6 +35,7 @@ import {
   MessageSquare,
   Mic,
   MicVocal,
+  Minus,
   PanelLeft,
   Paperclip,
   Pause,
@@ -209,6 +210,11 @@ export function SendIcon({ className }: { className?: string }) {
 /** Add. Rotated 45° by its caller, it is the same stroke saying "close". */
 export function PlusIcon({ className }: { className?: string }) {
   return <Mark icon={Plus} className={className} />;
+}
+
+/** Reduce a value, such as image zoom. */
+export function MinusIcon({ className }: { className?: string }) {
+  return <Mark icon={Minus} className={className} />;
 }
 
 /** Take a photo. */

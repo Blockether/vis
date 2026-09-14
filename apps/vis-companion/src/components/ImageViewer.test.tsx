@@ -75,7 +75,13 @@ describe('ImageViewer', () => {
   });
 
   it('draws the picture actions as named icons, not toolbar words', () => {
-    const actions = [control('Draw on image'), control('Trim to view'), control('Copy image')];
+    const actions = [
+      control('Zoom out'),
+      control('Zoom in'),
+      control('Draw on image'),
+      control('Trim to view'),
+      control('Copy image'),
+    ];
     const handoff = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Share image"], button[aria-label="Save image"]',
     );

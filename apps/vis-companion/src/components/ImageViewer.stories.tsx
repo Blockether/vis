@@ -39,3 +39,34 @@ export const DrawingToolsHidden: Story = {
     await expect(page.getByRole('button', { name: 'Show drawing tools' })).toBeInTheDocument();
   },
 };
+
+/** Regression: zoom marks use circular faces, without a segmented square override. */
+export const ZoomControls: Story = {
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const zoomIn = page.getByRole('button', { name: 'Zoom in' });
+    const zoomOut = page.getByRole('button', { name: 'Zoom out' });
+    for (const button of [zoomOut, zoomIn]) {
+      const assertCircle = async () => {
+        const box = button.getBoundingClientRect();
+        await expect(box.width).toBe(box.height);
+        await expect(box.width).toBeGreaterThanOrEqual(28);
+        await expect(parseFloat(getComputedStyle(button).borderRadius)).toBeGreaterThanOrEqual(
+          box.width / 2,
+        );
+      };
+      await assertCircle();
+      await userEvent.hover(button);
+      await assertCircle();
+      await userEvent.unhover(button);
+    }
+    const reset = page.getByRole('button', { name: 'Reset zoom' });
+    await userEvent.click(zoomIn);
+    await expect(reset).toHaveTextContent('135%');
+    await userEvent.click(zoomOut);
+    await expect(reset).toHaveTextContent('100%');
+    await userEvent.click(zoomIn);
+    await userEvent.click(reset);
+    await expect(reset).toHaveTextContent('100%');
+  },
+};

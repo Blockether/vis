@@ -219,6 +219,9 @@ export const Marks: Story = {
           <BandButton label="Save changes" isPrimary>
             <CheckIcon />
           </BandButton>
+          <BandButton label="Save unavailable" isPrimary disabled>
+            <CheckIcon />
+          </BandButton>
         </div>
       </Group>
       <Group of="Navigation and the ways out">
@@ -235,6 +238,23 @@ export const Marks: Story = {
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    // Regression: artifact actions painted rectangular cells instead of circular faces.
+    for (const name of ['Refresh models', 'Save changes', 'Save unavailable']) {
+      const button = canvas.getByRole('button', { name });
+      const face = button.firstElementChild!;
+      const box = face.getBoundingClientRect();
+      const radius = getComputedStyle(face).borderTopLeftRadius;
+      await expect(box.width).toBe(box.height);
+      await expect(radius === '50%' || parseFloat(radius) >= box.width / 2).toBe(true);
+      await expect(getComputedStyle(button).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    }
+    await expect(canvas.getByRole('button', { name: 'Save unavailable' })).toBeDisabled();
+    const refresh = canvas.getByRole('button', { name: 'Refresh models' });
+    refresh.focus();
+    await expect(refresh).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+  },
 };
 
 export const CodeCopy: Story = {
@@ -554,12 +574,53 @@ export const Composer: Story = {
           <SendIcon className="size-3.5" />
         </ComposerButton>
       </Group>
+      <Group of="Holding and voice overlays">
+        <ComposerButton label="Switching microphone" isHolding>
+          <MicIcon />
+        </ComposerButton>
+        <ComposerButton label="Voice overlay" tone="voice" surface="overlay">
+          <MicIcon />
+        </ComposerButton>
+        <ComposerButton label="Recording overlay" tone="recording" surface="overlay">
+          <MicIcon />
+        </ComposerButton>
+      </Group>
       <Group of="The meta line under it">
         <MetaButton isPicker>claude-opus-5</MetaButton>
         <MetaButton>high</MetaButton>
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    // Regression: attach and microphone faces were narrower than send/stop.
+    for (const name of [
+      'Attach',
+      'Dictate',
+      'Voice conversation',
+      'Stop recording',
+      'Stop response',
+      'Send message',
+      'Switching microphone',
+      'Voice overlay',
+      'Recording overlay',
+    ]) {
+      for (const button of canvas.getAllByRole('button', { name })) {
+        const box = button.getBoundingClientRect();
+        const radius = getComputedStyle(button).borderTopLeftRadius;
+        await expect(box.width).toBe(box.height);
+        await expect(radius === '50%' || parseFloat(radius) >= box.width / 2).toBe(true);
+        if (name.endsWith('overlay')) {
+          await expect(box.width).toBe(44);
+        } else {
+          const reach = getComputedStyle(button, '::after');
+          if (reach.content !== 'none') {
+            await expect(parseFloat(reach.width)).toBe(44);
+            await expect(parseFloat(reach.height)).toBe(44);
+          }
+        }
+      }
+    }
+  },
 };
 
 export const Feedback: Story = {

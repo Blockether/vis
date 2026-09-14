@@ -572,6 +572,15 @@ describe('BandButton', () => {
     expect(icon).toContain('aria-label="Refresh models"');
     expect(icon).toContain('title="Refresh models"');
     expect(icon).not.toContain('>Refresh models<');
+    expect(icon).toContain('rounded-full');
+    expect(icon).toContain('size-8');
+    expect(icon).toContain('mouse:size-7');
+    expect(icon).toContain('group-focus-visible:ring-2');
+    expect(icon).not.toContain('border-l');
+    expect(html({ label: 'Save changes', isPrimary: true })).toContain('bg-accent');
+    expect(html({ label: 'Save changes', isPrimary: true, disabled: true })).not.toContain(
+      'bg-accent',
+    );
   });
   it('takes only the ink of the band it stands in', () => {
     expect(html()).not.toContain('bg-dialog-title');
@@ -2340,6 +2349,11 @@ describe("the composer's own controls", () => {
     for (const tone of ['quiet', 'send', 'stop', 'recording', 'voice'] as const) {
       // None of the four had a focus ring when each was written by hand.
       expect(box(tone)).toContain('focus-visible:ring-accent/60');
+      expect(box(tone)).toContain('rounded-full');
+      expect(box(tone)).toContain('size-8');
+      expect(box(tone)).toContain('mouse:size-7');
+      expect(box(tone)).toContain('after:size-11');
+      expect(box(tone)).not.toContain('overflow-hidden');
     }
   });
 
@@ -3188,12 +3202,13 @@ describe('a call site positions, and the component paints', () => {
     );
   });
 
-  // The zoom group's own frame stays visible outside the clipped child buttons.
-  it('draws the zoom bar as one complete frame', () => {
-    expect(imageViewerSource).toContain('isJoined');
-    expect(imageViewerSource).toContain(
-      'overflow-hidden rounded-control border border-edge-strong [&>button]:rounded-none',
-    );
+  // Regression: a segmented wrapper squared the image viewer's zoom marks.
+  it('keeps the zoom marks circular beside the labelled reset', () => {
+    expect(imageViewerSource).toContain('label="Zoom out"');
+    expect(imageViewerSource).toContain('label="Zoom in"');
+    expect(imageViewerSource).toContain('aria-label="Reset zoom"');
+    expect(imageViewerSource).not.toContain('isJoined');
+    expect(imageViewerSource).not.toContain('[&>button]:rounded-none');
   });
 
   // The trash in "Manage projects" was the one destructive icon in the app that was
