@@ -364,6 +364,46 @@ needs a person's answer, use `conversation.input_views()` and
 `conversation.answer(view_id, values)`; see [Forms and user input](human-input.md).
 Do not automatically approve credential or permission requests.
 
+### Read Activity and view receipts
+
+Use `event.activity` to read an Activity receipt with immutable rows, outcome counts
+and evidence. Its `groups` property groups invocations by operation;
+`argument_groups` groups calls with identical arguments. These reader views leave
+`rows` and serialization unchanged. A receipt can be one page of history: check
+`history` and `omitted` before treating it as complete.
+
+`event.view` decodes view lifecycle events. The records describe input forms, live
+interfaces, patches and closure results; they are not Python UI widgets. To create
+an interface, follow [Forms and user input](human-input.md) or [Live views](live-views.md).
+
+When you have saved JSON rather than an event, use the record's `from_wire()` method.
+It validates the data and makes nested values immutable; `to_wire()` returns a fresh
+JSON-compatible copy. For example, this reads a completed live-view receipt without
+starting Vis, opening a view or making a model call:
+
+```python
+# view_receipt.py
+from blockether.vis.views import LiveResult
+
+result = LiveResult.from_wire(
+    {
+        "view_id": "build-one",
+        "is_completed": True,
+        "reason": "completed",
+        "is_from_human": False,
+        "view": {
+            "title": "Build",
+            "nodes": [{"id": "status", "type": "status", "text": "Done", "tone": "ok"}],
+        },
+    }
+)
+assert result.view.nodes[0]["text"] == "Done"
+assert result.to_wire()["view"]["title"] == "Build"
+```
+
+Both assertions pass for this receipt. Invalid data raises `ValueError`; decoding
+never assigns engine IDs, sequence numbers, timeouts or terminal outcomes.
+
 ## Handle failures and choose a lifecycle
 
 | Situation | Meaning and next step |

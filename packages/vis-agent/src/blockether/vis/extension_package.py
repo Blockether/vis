@@ -1,41 +1,7 @@
-"""Validate extension packages and manage explicitly trusted source installations.
+"""Extension manifest validation and trusted source installation APIs.
 
-For building your first package, follow the
+For building, distributing and installing packages, use the
 [extension package guide](https://vis.blockether.com/extension-packages.html).
-This module provides the lower-level operations used by package tooling.
-
-## Check a package without running it
-
-- `manifest_metadata` parses a `pyproject.toml` string and optionally checks
-  compatibility with a Vis and Python version.
-- `inspect_source` checks a selected local project folder, including its manifest
-  and `extension.py`, without importing publisher code.
-- `github_repository` and `project_subdirectory` validate source selectors.
-
-```python
-from blockether.vis.extension_package import github_repository, project_subdirectory
-
-repository = github_repository("Blockether/example-extension")
-folder = project_subdirectory("packages/tools")
-assert repository == "https://github.com/blockether/example-extension"
-assert folder == "packages/tools"
-```
-
-This example only normalizes names; it does not contact GitHub or install anything.
-A valid manifest is not proof that its publisher's code is safe.
-
-## Install only code you trust
-
-`install` requires an explicit trust decision. It accepts a linked local project,
-an approved release or an explicit Git commit; the default remote selector is
-an approved stable release, not a moving branch. Installation may read the
-network and write managed source directories. Dependency preparation happens on
-reload, where package code can execute. Prefer the normal Vis installation
-workflow unless you are implementing package management yourself.
-
-The catalog stores links and metadata, never source distributions. Select the
-folder that contains both `pyproject.toml` and `extension.py`, whether at the
-repository root or in a subdirectory.
 """
 
 import hashlib

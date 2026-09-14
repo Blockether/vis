@@ -8,13 +8,12 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import blockether.vis as sdk
 import pytest
-from blockether.vis import activity, extension, extension_package, views
+from blockether.vis import activity, engine, extension, extension_package, views
 
 
-@pytest.mark.parametrize(
-    "owner", [extension, extension.method, views, extension_package]
-)
+@pytest.mark.parametrize("owner", [extension.method])
 def test_reference_examples_execute_without_host_or_network(owner, monkeypatch):
     source = inspect.getdoc(owner)
     examples = re.findall(r"```python\n(.*?)\n```", source, re.S)
@@ -39,10 +38,12 @@ def test_reference_examples_execute_without_host_or_network(owner, monkeypatch):
     assert extension._registration["spec"] is before
 
 
-@pytest.mark.parametrize("module", [extension, activity, views, extension_package])
-def test_module_introductions_have_task_headings_and_valid_manual_links(module):
+@pytest.mark.parametrize(
+    "module", [sdk, engine, extension, activity, views, extension_package]
+)
+def test_module_introductions_link_to_guides_without_repeating_them(module):
     source = inspect.getdoc(module)
-    assert len(re.findall(r"^## ", source, re.M)) >= 2
+    assert not re.search(r"^#{1,6} |^```|^\|", source, re.M)
     manual = Path(__file__).resolve().parents[3] / "resources/vis-docs"
     links = re.findall(r"https://vis\.blockether\.com/([a-z-]+)\.html", source)
     assert links

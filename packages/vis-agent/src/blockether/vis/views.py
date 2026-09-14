@@ -1,45 +1,9 @@
-"""Read input forms and live-view updates received from Vis.
+"""Immutable input-form, live-view and view-event records.
 
-These immutable records describe what the engine published. To *create* a form
-or live interface in an extension, use the
-[human-input guide](https://vis.blockether.com/human-input.html) or
-[live-view guide](https://vis.blockether.com/live-views.html), not these records.
-
-## Follow the view lifecycle
-
-1. `ViewEvent` decodes `view.open`, `view.patch` and `view.close` payloads.
-2. `InputView` describes a form; `LiveView` describes an open live interface.
-3. `LivePatch` carries ordered updates. `InputResult` and `LiveResult` describe
-   closure; `ViewSnapshot` is the final document when one is retained.
-
-`blockether.vis.engine.Event.view` already decodes these payloads for stream
-consumers. Use `from_wire` when you receive a raw JSON mapping yourself and
-`to_wire` when you need a fresh JSON-compatible copy. Nested nodes stay immutable
-mappings, validated by the same schema as Vis; they are not Python UI widgets.
-
-## Inspect a completed view
-
-```python
-from blockether.vis.views import LiveResult
-
-result = LiveResult.from_wire(
-    {
-        "view_id": "build-one",
-        "is_completed": True,
-        "reason": "completed",
-        "is_from_human": False,
-        "view": {
-            "title": "Build",
-            "nodes": [{"id": "status", "type": "status", "text": "Done", "tone": "ok"}],
-        },
-    }
-)
-assert result.view.nodes[0]["text"] == "Done"
-assert result.to_wire()["view"]["title"] == "Build"
-```
-
-Only the engine assigns IDs, sequence numbers, timeouts and terminal outcomes.
-The example decodes a receipt; it does not open a view or change an engine session.
+For reading receipts, see the
+[SDK guide](https://vis.blockether.com/python-sdk.html#read-activity-and-view-receipts).
+For creating interfaces, use the [human-input guide](https://vis.blockether.com/human-input.html)
+or [live-view guide](https://vis.blockether.com/live-views.html).
 """
 
 from __future__ import annotations

@@ -1,17 +1,5 @@
 {% extends "default/module.html.jinja2" %}
 
-{% set topics = {
-    "blockether.vis": "Overview",
-    "blockether.vis.engine": "Agents and sessions",
-    "blockether.vis.extension": "Extensions",
-    "blockether.vis.activity": "Activities",
-    "blockether.vis.views": "Views",
-    "blockether.vis.extension_package": "Package validation"
-} %}
-{% set page_title = "Python SDK" if module.modulename == "blockether.vis" else topics.get(module.modulename, module.modulename) %}
-
-{% block title %}{{ topics.get(module.modulename, module.modulename) }} API documentation{% endblock %}
-
 {% block head %}<link rel="stylesheet" href="/assets/theme.css">{% endblock %}
 
 {% block body %}
@@ -35,14 +23,10 @@
 {% block search_box %}
     <input type="search" placeholder="Find a class or method…" aria-label="Search Python SDK" pattern=".+" required>
     <ul class="api-modules">
-        {% for name, title in topics.items() if name in all_modules %}
-            <li><a href="/python-sdk-api/{{ name.replace('.', '/') }}.html"{% if name == module.modulename %} aria-current="page"{% endif %}>{{ title }}</a></li>
+        {% for name in all_modules | sort %}
+            <li><a href="/python-sdk-api/{{ name.replace('.', '/') }}.html"{% if name == module.modulename %} aria-current="page"{% endif %}>{{ name }}</a></li>
         {% endfor %}
     </ul>
-    <div class="api-guides">
-        <a href="/python-sdk.html">Installation and examples</a>
-        <a href="/extending.html">Write an extension</a>
-    </div>
 {% endblock %}
 
 {% block nav_submodules %}{% endblock %}
@@ -58,8 +42,7 @@
 
 {% block module_info %}
     <section class="module-info">
-        <h1 id="api-title" tabindex="-1">{{ page_title }}</h1>
-        <p class="api-module-name"><code>{{ module.modulename }}</code></p>
+        <h1 id="api-title" tabindex="-1">{{ module.modulename }}</h1>
         {{ docstring(module) }}
     </section>
 {% endblock %}

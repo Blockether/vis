@@ -1,29 +1,9 @@
-"""Read tool progress, outcomes and evidence reported by Vis.
+"""Immutable Activity receipts, counts, grouping and evidence.
 
-This module is for consumers of Activity receipts. To *author* a tool's label,
-progress or result presentation, use `blockether.vis.extension.Activity` and
-`blockether.vis.extension.ActivityPresentation` instead. See the
+For reading event data, see the
+[SDK guide](https://vis.blockether.com/python-sdk.html#read-activity-and-view-receipts).
+For authoring tool presentations, see the
 [Activity presentation guide](https://vis.blockether.com/extension-api.html#activity-presentation).
-
-## Read and group an Activity receipt
-
-`blockether.vis.engine.Event.activity` exposes an `ActivityProjection` for
-Activity-bearing stream events. A projection contains immutable `ActivityRow`
-records, outcome `ActivityCounts` and any `ActivityOmitted` information. Rows
-retain operation names, duration, resources and evidence, not just display text.
-
-Use `ActivityProjection.groups` to group an operation's invocations, or
-`ActivityProjection.argument_groups` to compare calls with identical arguments.
-These are computed reader views; they do not discard the original rows or change
-what `ActivityProjection.to_wire` serializes. A history-backed projection can be
-only one page: consult `history` and `omitted` before treating it as complete.
-
-## Decode portable data
-
-Call `ActivityProjection.from_wire` for a raw JSON mapping. It validates the
-canonical schema and receipt invariants, freezes nested data and raises
-`ValueError` for invalid input. `ActivityProjection.to_wire` returns a fresh
-JSON-compatible copy. Neither operation starts Vis or publishes an Activity.
 """
 
 from __future__ import annotations

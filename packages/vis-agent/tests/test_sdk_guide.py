@@ -98,6 +98,17 @@ def connection_environment(monkeypatch, client, work):
     monkeypatch.setenv("VIS_PROJECT_ROOT", str(work))
 
 
+def test_view_receipt_recipe_decodes_saved_data_without_io(recipe, monkeypatch):
+    def refuse(*_args, **_kwargs):
+        pytest.fail("Reading a saved receipt must not start Vis or use the network")
+
+    monkeypatch.setattr("socket.create_connection", refuse)
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    result = recipe("view_receipt").result
+    assert result.view.nodes[0]["text"] == "Done"
+    assert result.to_wire()["view"]["title"] == "Build"
+
+
 def test_gateway_recipe_sends_a_task_and_releases_only_its_lease(
     recipe, gateway, monkeypatch, capsys
 ):

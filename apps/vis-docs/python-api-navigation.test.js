@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 
 const directory = 'dist/python-sdk-api/';
+const modules = readdirSync(directory, { recursive: true })
+  .filter((name) => name.endsWith('.html') && name !== 'index.html')
+  .sort();
+const moduleNames = modules.map((name) => name.replace(/\.html$/, '').replaceAll('/', '.'));
 
 function page(name, options = {}) {
   return new JSDOM(readFileSync(directory + name, 'utf8'), {
@@ -21,43 +25,39 @@ function loadStyles(document) {
   }
 }
 
-test('the SDK overview starts with a usable workflow and an API choice guide', () => {
-  const dom = page('blockether/vis.html');
+test.each(modules)('%s is an API reference, not a second user guide', (name) => {
+  const dom = page(name);
   try {
     const document = dom.window.document;
-    expect(document.querySelector('main h1').textContent).toBe('Python SDK');
-    expect([...document.querySelectorAll('main h2')].map((node) => node.textContent)).toEqual(
-      expect.arrayContaining(['First request', 'Choose an API', 'Runtime and versions']),
+    const intro = document.querySelector('.module-info');
+    expect(document.querySelector('main h1').textContent).toBe(
+      name.replace(/\.html$/, '').replaceAll('/', '.'),
     );
-    expect(document.querySelector('main pre').textContent).toContain('with Agent(');
-    expect(document.querySelector('main table').textContent).toContain('Agent');
-    expect(document.querySelector('main').textContent).toContain('model calls');
+    expect(intro.querySelectorAll('h2, h3, h4, pre, table, ol, ul')).toHaveLength(0);
+    expect(intro.querySelector('a[href^="https://vis.blockether.com/"]')).not.toBeNull();
+    expect([...document.querySelectorAll('nav h2')].map((node) => node.textContent)).not.toContain(
+      'Contents',
+    );
   } finally {
     dom.window.close();
   }
 });
 
-test('every module offers task navigation, guide links and a compact symbol tree', () => {
-  for (const name of readdirSync(directory, { recursive: true }).filter(
-    (name) => name.endsWith('.html') && name !== 'index.html',
-  )) {
+test('every module offers generated module navigation and a compact symbol tree', () => {
+  for (const name of modules) {
     const dom = page(name);
     try {
       const document = dom.window.document;
       const navigation = document.querySelector('nav[aria-label="Python SDK"]');
       expect(navigation, name).not.toBeNull();
-      const topics = [...navigation.querySelectorAll('.api-modules a')];
-      expect(topics.map((link) => link.textContent.trim())).toEqual([
-        'Overview',
-        'Agents and sessions',
-        'Extensions',
-        'Activities',
-        'Views',
-        'Package validation',
-      ]);
-      expect(topics.filter((link) => link.getAttribute('aria-current') === 'page')).toHaveLength(1);
-      expect(navigation.querySelector('a[href="/python-sdk.html"]')).not.toBeNull();
-      expect(navigation.querySelector('a[href="/extending.html"]')).not.toBeNull();
+      const links = [...navigation.querySelectorAll('.api-modules a')];
+      expect(links.map((link) => link.textContent.trim())).toEqual(moduleNames);
+      expect(links.map((link) => link.getAttribute('href'))).toEqual(
+        modules.map((file) => '/python-sdk-api/' + file),
+      );
+      expect(links.filter((link) => link.getAttribute('aria-current') === 'page')).toHaveLength(1);
+      expect(navigation.querySelector('a[href="/"]')).not.toBeNull();
+      expect(navigation.querySelector('.api-guides')).toBeNull();
       expect(navigation.querySelector('summary').textContent).toContain('Browse Python SDK');
       expect(document.querySelector('.api-skip').getAttribute('href')).toBe('#api-title');
       for (const details of navigation.querySelectorAll('.api-symbols details'))
@@ -264,16 +264,13 @@ test('SDK search has room around its text and readable placeholder and focus sta
   }
 });
 
-test('API tables keep words intact while scrolling inside narrow pages', () => {
-  const dom = page('blockether/vis/engine.html');
+test('module names wrap within reference headings and navigation', () => {
+  const dom = page('blockether/vis/extension_package.html');
   try {
     const document = dom.window.document;
     loadStyles(document);
-    const table = document.querySelector('.module-info table');
-    const style = dom.window.getComputedStyle(table);
-    expect(style.overflowWrap).toBe('normal');
-    expect(style.overflowX).toBe('auto');
-    expect(style.maxWidth).toBe('100%');
+    for (const node of document.querySelectorAll('main h1, .api-modules a'))
+      expect(dom.window.getComputedStyle(node).overflowWrap).toBe('anywhere');
   } finally {
     dom.window.close();
   }

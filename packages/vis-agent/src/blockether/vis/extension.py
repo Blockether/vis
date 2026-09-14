@@ -1,58 +1,8 @@
-"""Build tools and extensions that Vis can call from a conversation.
+"""Tool declarations, host APIs and extension lifecycle contracts.
 
-## Choose your starting point
-
-| You want to | Start with |
-| --- | --- |
-| Expose a Python function | `Symbol` with an `Activity` |
-| Expose an object's methods | `Symbol` and the `method` decorator |
-| Group tools under one name | `Extension` |
-| Show progress and results | `ActivityPresentation` and `publish_activity` |
-| Ask a person or show a live interface | [Human input](https://vis.blockether.com/human-input.html) and [live views](https://vis.blockether.com/live-views.html) |
-| Add a model provider | `Provider` and [provider extensions](https://vis.blockether.com/provider-extensions.html) |
-
-## Declare a tool without starting Vis
-
-Keep your Python function usable on its own. The declaration supplies its public
-name and human-facing Activity; annotations and its docstring describe the tool.
-
-```python
-from blockether.vis.extension import Activity, Extension, Symbol
-
-
-def greet(name: str) -> str:
-    "Return a greeting for the named person."
-    return f"Hello, {name}!"
-
-
-extension = Extension(
-    name="Greetings",
-    description="Greet a person by name.",
-    alias="greetings",
-    symbols=(Symbol(greet, activity=Activity(label="Greet person", show_start=False)),),
-)
-assert greet("Ada") == "Hello, Ada!"
-```
-
-Constructing declarations does not register a host, connect to a gateway or run a
-model. An application passes this object to
-`blockether.vis.engine.Agent` through `extensions=(extension,)`; its functions
-stay in the application's Python process. See the
-[application-owned tools example](https://vis.blockether.com/python-sdk.html).
-
-## Register an installed extension
-
-An extension package's entrypoint calls `register_extension` once. Vis then owns
-its host environment and lifecycle. Application-owned tools and installed
-extensions do not have identical capabilities: provider declarations, host
-hooks, environment declarations and activation belong to the installed host,
-not to an Agent's application-owned callback bridge. Standalone imports use
-local behavior where available and explicitly refuse engine-only operations;
-they do not create an embedded Vis session.
-
-Follow the [extension tutorial](https://vis.blockether.com/extension-development.html)
-for a complete package, or the [API guide](https://vis.blockether.com/extension-api.html)
-for registration, state, shell, permissions and Activity examples.
+For authoring workflows and examples, use the
+[extension tutorial](https://vis.blockether.com/extension-development.html)
+and [extension API guide](https://vis.blockether.com/extension-api.html).
 """
 
 from __future__ import annotations

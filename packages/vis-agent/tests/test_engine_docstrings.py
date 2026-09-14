@@ -4,15 +4,14 @@ import inspect
 import re
 from unittest.mock import MagicMock
 
-import blockether.vis as sdk
 import blockether.vis.engine as engine
 import pytest
 
 
 @pytest.mark.parametrize(
     "document",
-    [sdk, engine, engine.LocalEngine, engine.GatewayClient],
-    ids=["package-overview", "engine-overview", "local-engine", "gateway-client"],
+    [engine.LocalEngine, engine.GatewayClient],
+    ids=["local-engine", "gateway-client"],
 )
 def test_engine_docstring_examples_use_public_api(document, monkeypatch, capsys):
     examples = re.findall(r"```python\n(.*?)\n```", inspect.getdoc(document), re.S)
@@ -46,14 +45,10 @@ def test_engine_docstring_examples_use_public_api(document, monkeypatch, capsys)
     monkeypatch.setattr("subprocess.Popen", unexpected_io)
     exec(compile(examples[0], "<engine-docstring>", "exec"), {})
 
-    if document is sdk:
-        expected_request = "Explain the project structure without changing files."
-        expected_output = "completed\n[]\n"
-    else:
-        expected_request = "Summarize this project without changing files."
-        expected_output = "completed\n"
-    assert capsys.readouterr().out == expected_output
-    conversation.send.assert_called_once_with(expected_request)
+    assert capsys.readouterr().out == "completed\n"
+    conversation.send.assert_called_once_with(
+        "Summarize this project without changing files."
+    )
     conversation.send.return_value.wait.assert_called_once_with(timeout=300)
     layer.close.assert_called_once_with()
     assert layer._client_extensions == {}
