@@ -70,6 +70,7 @@ it('moves a live view beside its exact Activity when the owner arrives', () => {
     <IterationTrace iterations={[]} liveViews={[liveView]} client={client} sid="session" whole />,
   );
   expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeNull();
+  expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border');
   mounted.rerender(
     <IterationTrace
       iterations={[{ forms: [{ source: 'monitor()', activity }] }]}
@@ -80,7 +81,10 @@ it('moves a live view beside its exact Activity when the owner arrives', () => {
     />,
   );
   expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
-  expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).not.toBeNull();
+  const title = mounted.getByText(liveView.title);
+  const group = title.closest('[data-execution-group]');
+  expect(group).toHaveClass('border', 'border-dialog-hint', 'bg-code');
+  expect(title.closest('.border')).toBe(group);
 });
 
 it('keeps concurrent owned views and unmatched views separate, including streamed updates', () => {
@@ -180,7 +184,8 @@ it('replaces the live view with one retained run receipt beside the same Activit
   const group = receipt.closest('[data-execution-group]');
   expect(group).not.toBeNull();
   expect(receipt.closest('[data-execution-activity]')).toBeNull();
-  expect(receipt.closest('.border')).toBeNull();
+  expect(group).toHaveClass('border', 'border-dialog-hint');
+  expect(receipt.closest('.border')).toBe(group);
   expect(receipt.closest('.bg-input')).toBeNull();
   fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
@@ -355,6 +360,9 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
   const second = mounted.getByText('Second monitor').closest('section');
   expect(first?.parentElement).toBe(second?.parentElement);
   expect(first?.parentElement).toHaveAttribute('data-execution-group');
+  expect(first?.parentElement).toHaveClass('border', 'border-dialog-hint');
+  expect(first?.closest('.border')).toBe(first?.parentElement);
+  expect(second?.closest('.border')).toBe(first?.parentElement);
   expect(mounted.getAllByText('RUN')).toHaveLength(2);
 });
 

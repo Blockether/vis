@@ -89,12 +89,28 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+// Regression: embedded runs delegated their frame to an unbordered execution group.
+async function expectExecutionFrame(element: Element) {
+  const frame = element.closest<HTMLElement>('[data-execution-group]')!;
+  await expect(frame).not.toBeNull();
+  const style = getComputedStyle(frame);
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    await expect(style.getPropertyValue(`border-${side}-width`)).toBe('1px');
+    await expect(style.getPropertyValue(`border-${side}-style`)).toBe('solid');
+  }
+  await expect(frame).toHaveClass('border-dialog-hint');
+  await expect(style.borderRadius).toBe('0px');
+  await expect(frame.getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
+  await expect(frame.getBoundingClientRect().right).toBeLessThanOrEqual(innerWidth);
+  return frame;
+}
+
 /** Regression #222: production execution surface and live actions, without a gateway. */
 export const Running: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
   play: async ({ canvas }) => {
     const title = canvas.getByText('Jenkins build pool');
-    const activitySurface = title.closest('[data-execution-group]');
-    await expect(activitySurface).not.toBeNull();
+    const activitySurface = await expectExecutionFrame(title);
     await expect(title.closest('section')).not.toHaveClass('border');
     const controls = within(activitySurface as HTMLElement);
     await expect(controls.getByText('ACTIVITY')).toBeInTheDocument();
@@ -124,6 +140,17 @@ export const Running: Story = {
     await expect(title).toBeVisible();
   },
 };
+
+export const RunningPhone: Story = {
+  ...Running,
+  globals: { viewport: { value: 'phone', isRotated: false } },
+};
+
+export const RunningTablet: Story = {
+  ...Running,
+  globals: { viewport: { value: 'tablet', isRotated: false } },
+};
+
 export const Unmatched: Story = { args: { liveViews: [{ ...view, owner: undefined }] } };
 export const Settled: Story = {
   args: {
@@ -156,9 +183,9 @@ export const Settled: Story = {
   },
   play: async ({ canvas }) => {
     const run = canvas.getByRole('button', { name: 'Open run Jenkins build pool' });
-    await expect(run.closest('[data-execution-group]')).not.toBeNull();
+    const group = await expectExecutionFrame(run);
     await expect(run.closest('[data-execution-activity]')).toBeNull();
-    await expect(run.closest('.border')).toBeNull();
+    await expect(run.closest('.border')).toBe(group);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
     await expect(run).toBeVisible();
