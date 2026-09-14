@@ -592,7 +592,7 @@ function Tile({
     <>
       <Thumb client={client} sid={sid} artifact={artifact} hasHistory={versions.length > 1} />
       <span className="min-w-0 px-2 py-1.5">
-        <span className="block truncate font-mono text-meta font-bold text-white">
+        <span className="block truncate font-mono text-meta font-bold text-white mouse:group-hover/artifact:text-accent-ink">
           {artifact.name}
         </span>
         <Meta artifact={artifact} />
@@ -624,7 +624,7 @@ function Tile({
         type="button"
         onClick={() => onOpen(artifact)}
         aria-label={`Open ${describeArtifact(artifact)}`}
-        className={`${shell} transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent`}
+        className={`${shell} group/artifact transition-colors focus-visible:outline-2 focus-visible:outline-accent`}
       >
         {body}
       </button>
@@ -1126,7 +1126,7 @@ export function ArtifactsChip({
       aria-controls={controls}
       aria-label={label}
       title={label}
-      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent px-2 font-mono text-ui font-bold transition-colors duration-150 hover:bg-hover after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:underline focus-visible:underline-offset-4 focus-visible:outline-none motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${tone}`}
+      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent px-2 font-mono text-ui font-bold transition-colors duration-150 mouse:hover:text-accent-ink after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:underline focus-visible:underline-offset-4 focus-visible:outline-none motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${tone}`}
     >
       <ClipIcon className="size-3" />
       <span aria-hidden="true" className="hidden sm:inline">

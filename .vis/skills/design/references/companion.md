@@ -4,7 +4,10 @@ Paths are relative to `apps/vis-companion/`. Read `src/components/ui.tsx` when
 adding or changing controls. Use its existing controls. A call-site `className`
 may control position only; props and variants control appearance. Use Tailwind
 v4 tokens, not component CSS, CSS modules, CSS-in-JS or inline styles. Use
-`sm:` for available-space layout and `mouse:` for pointer density.
+`sm:` for available-space layout and `mouse:` for pointer density. Hover feedback
+changes only semantic text or icon colours, never the control's background or
+frame. Keep base and selected surfaces, press feedback and keyboard focus intact.
+Enforce this in the shared control owner and in production Storybook checks.
 
 Never edit generated `ios/` or `android/`; native behavior goes through
 `scripts/ios-prepare.mjs` or `scripts/android-prepare.mjs`.

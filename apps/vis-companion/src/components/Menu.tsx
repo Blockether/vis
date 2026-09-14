@@ -274,24 +274,22 @@ export function MenuItem({
   const row = (
     <button
       type="button"
-      className={`flex min-h-11 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-9 ${
+      className={`group/menu-item flex min-h-11 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-9 ${
         action ? 'min-w-0 flex-1' : 'w-full border-b border-dialog-edge'
-      } ${
-        danger
-          ? 'hover:bg-err-surface focus-visible:bg-err-surface'
-          : 'hover:bg-hover focus-visible:bg-hover'
-      }`}
+      } ${danger ? 'focus-visible:bg-err-surface' : 'focus-visible:bg-hover'}`}
       onClick={(event) => onSelect(event.currentTarget)}
     >
       {icon && (
-        <span className={`${onFirstLine} shrink-0 ${danger ? 'text-err-ink' : 'text-dialog-hint'}`}>
+        <span
+          className={`${onFirstLine} shrink-0 ${danger ? 'text-err-ink' : 'text-dialog-hint mouse:group-hover/menu-item:text-accent-ink'}`}
+        >
           {icon}
         </span>
       )}
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-baseline gap-2">
           <span
-            className={`block min-w-0 flex-1 truncate font-mono text-ui font-bold ${danger ? 'text-err-ink' : 'text-white'}`}
+            className={`block min-w-0 flex-1 truncate font-mono text-ui font-bold ${danger ? 'text-err-ink' : 'text-white mouse:group-hover/menu-item:text-accent-ink'}`}
           >
             {title}
           </span>

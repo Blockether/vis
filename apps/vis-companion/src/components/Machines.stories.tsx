@@ -87,14 +87,14 @@ export const ConciseActions: Story = {
   },
   play: async ({ canvas, canvasElement }) => {
     await userEvent.click(canvas.getByRole('button', { name: 'Actions for 127.0.0.1:61397' }));
-    const menu = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+    // The action menu mounts in a portal after the click commits.
+    const menu = await within(canvasElement.ownerDocument.body).findByRole('dialog', {
       name: '127.0.0.1:61397 actions',
     });
-    await expect(within(menu).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      'Make primary',
-      'Rename',
-      'Bind to another address',
-      'Forget',
-    ]);
+    await expect(
+      within(menu)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Make primary', 'Rename', 'Bind to another address', 'Forget']);
   },
 };

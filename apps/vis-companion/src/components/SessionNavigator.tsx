@@ -113,7 +113,7 @@ export function SectionHeader({
 }) {
   return (
     <header
-      className={`${HEADER_BAND} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:hover:bg-hover mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover ${isCollapsed ? 'border-b' : ''}`}
+      className={`${HEADER_BAND} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover ${isCollapsed ? 'border-b' : ''}`}
     >
       {children}
     </header>
@@ -195,7 +195,7 @@ export function EditableName({
         aria-label={label}
         title={label}
         onClick={() => setDraft(value)}
-        className={`${face} text-left hover:underline focus-visible:outline-none focus-visible:underline`}
+        className={`${face} text-left mouse:hover:text-accent-ink focus-visible:outline-none focus-visible:underline`}
       >
         {value}
       </button>
@@ -713,7 +713,7 @@ export function NewSessionButton({
   const title = where ? `New session on ${machine}, in ${where}` : label;
   return (
     <IconButton
-      variant="quiet"
+      variant="primary"
       density="compact"
       disabled={disabled || isBusy}
       aria-busy={isBusy || undefined}
@@ -722,11 +722,7 @@ export function NewSessionButton({
       title={title}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      {isBusy ? (
-        <LoadingIcon className="size-4" />
-      ) : (
-        <PlusIcon className="size-4 text-accent-ink" />
-      )}
+      {isBusy ? <LoadingIcon className="size-4" /> : <PlusIcon className="size-4" />}
     </IconButton>
   );
 }

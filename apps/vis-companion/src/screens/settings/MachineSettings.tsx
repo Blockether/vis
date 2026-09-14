@@ -381,7 +381,7 @@ export function MachineSettings({
                 return (
                   <div
                     key={toggle.id}
-                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 transition-colors hover:bg-hover sm:px-4 sm:py-2"
+                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4 sm:py-2"
                   >
                     <div className="min-w-0">
                       <p className="break-words font-mono text-ui font-bold text-white">

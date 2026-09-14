@@ -108,27 +108,15 @@ export const Button = forwardRef<
   const tapPress = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   // Disabled colours belong to each text-button variant.
   const dimmed = 'disabled:border-edge disabled:bg-panel-2 disabled:text-muted';
-  // ONE hover system, and it only ever moves the SURFACE.
-  //
-  // Each variant used to invent its own, and each said something different from
-  // "you are on it": `primary` FADED the amber to 85%, so the primary looked like it
-  // was switching off under the cursor; `secondary` and `quiet` flared their ink and
-  // their frame amber, which is more attention than a hover has earned and is a
-  // second amber on a screen whose primary is already amber; `danger` poured a
-  // solid red fill under `text-white`, and `--color-white` in this app is the
-  // PAGE's ink (`--fg`) — #262626 on #dc2626 is 2.3:1, a control that becomes
-  // unreadable exactly when the pointer is on it.
-  //
-  // The press already answers the finger (`active:scale`) and the keyboard already
-  // has its ring, so hover is the quietest of the three: the paper changes, the ink
-  // does not. `primary` has no hover at all — a filled amber slab is as arrived as a
-  // control gets, and there is nothing for a hover to add.
+  // Desktop hover changes foreground only. Base/selected surfaces, press feedback
+  // and keyboard focus are independent states. Filled primary and inverse controls
+  // keep their contrast pair when no stronger foreground is available.
   const styles = {
     primary: `border-accent bg-accent text-accent-foreground ${dimmed}`,
-    secondary: `border-edge-strong bg-transparent text-white hover:bg-hover ${dimmed}`,
+    secondary: `border-edge-strong bg-transparent text-white enabled:hover:text-accent-ink ${dimmed}`,
     // Quiet text actions stay frameless beside the primary.
     quiet:
-      'border-transparent bg-transparent text-dialog-hint hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted',
+      'border-transparent bg-transparent text-dialog-hint enabled:hover:text-white disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     // TAKING SOMETHING AWAY, when the mark is not the ✕ — a trash can that empties a
     // project of its transcripts. THE WAY OUT ITSELF IS `CloseButton`, the app's one
     // ✕, and never this: the variant carries only the INK the two share.
@@ -139,10 +127,10 @@ export const Button = forwardRef<
     // page's own ink at rest and turns red only under the pointer, exactly like
     // `CloseButton` — one destructive language, one red.
     remove:
-      'border-transparent bg-transparent text-white hover:bg-err/15 hover:text-err disabled:border-transparent disabled:bg-transparent disabled:text-muted',
+      'border-transparent bg-transparent text-white enabled:hover:text-err-ink disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     // The red stays INK and the fill stays a wash, exactly as `MenuItem`'s danger
     // row does — one destructive language in both.
-    danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err/20 ${dimmed}`,
+    danger: `border-err/40 bg-err/10 text-err enabled:hover:text-err-ink ${dimmed}`,
     // A control that floats over CONTENT — a thumbnail, a picture, a note's own first
     // lines — rather than over chrome. It carries its own ink because whatever is under
     // it is not the app's paper, and it wears the same black block every other floating
@@ -151,7 +139,7 @@ export const Button = forwardRef<
     // VARIANT rather than a class at the call site because two competing `bg-*` are
     // settled by Tailwind's emission order, never by which one a call site typed last.
     overlay:
-      'border-transparent bg-dialog-title text-dialog-title-foreground hover:bg-accent hover:text-accent-ink disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
+      'border-transparent bg-dialog-title text-dialog-title-foreground disabled:border-transparent disabled:bg-panel-2 disabled:text-muted',
     // A split button's caret half is NOT a second variant: it is `primary` with a
     // hairline in `accent-foreground`.
   }[variant];
@@ -246,12 +234,12 @@ export const IconButton = forwardRef<
       }`
     : 'size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:size-7 mouse:after:content-none';
   const ink = {
-    primary: 'bg-transparent text-accent-ink hover:bg-hover',
-    secondary: 'bg-transparent text-white hover:bg-hover',
-    quiet: 'bg-transparent text-dialog-hint hover:bg-hover',
-    danger: 'bg-transparent text-err-ink hover:bg-err/15',
-    remove: 'bg-transparent text-white hover:bg-err/15 hover:text-err-ink',
-    overlay: 'bg-dialog-title text-dialog-title-foreground hover:bg-accent hover:text-accent-ink',
+    primary: 'bg-transparent text-accent-ink enabled:hover:text-white',
+    secondary: 'bg-transparent text-white enabled:hover:text-accent-ink',
+    quiet: 'bg-transparent text-dialog-hint enabled:hover:text-white',
+    danger: 'bg-transparent text-err-ink',
+    remove: 'bg-transparent text-white enabled:hover:text-err-ink',
+    overlay: 'bg-dialog-title text-dialog-title-foreground',
   }[variant];
   return (
     <button
@@ -299,7 +287,7 @@ export const Chip = forwardRef<
       className={`relative inline-flex min-h-8 min-w-11 shrink-0 items-center justify-center gap-1.5 border px-2 font-mono text-ui font-bold transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:text-meta mouse:after:content-none ${
         isOn
           ? 'border-accent bg-accent text-accent-foreground'
-          : 'border-edge-strong bg-transparent text-dialog-hint hover:bg-hover'
+          : 'border-edge-strong bg-transparent text-dialog-hint enabled:hover:text-white'
       } ${className}`}
       {...props}
     />
@@ -361,7 +349,7 @@ export function LoadMore({
       type="button"
       aria-label={label}
       onClick={onClick}
-      className={`${shape} transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none`}
+      className={`${shape} transition-colors duration-150 enabled:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none`}
       {...props}
     >
       {inside}
@@ -428,7 +416,7 @@ export function CopyChip({
           aria-label={isCopied ? 'Copied' : label}
           title={isCopied ? 'Copied' : (title ?? label)}
           {...tapPress}
-          className={`${iconControlClass} grid h-auto w-8 shrink-0 self-stretch items-center justify-items-end bg-transparent text-dialog-hint transition-colors duration-150 hover:bg-hover pl-0 pr-3 -mr-3 after:absolute after:top-0 after:bottom-0 after:left-0 after:-right-3 after:content-[""] motion-reduce:transition-none sm:w-9 sm:pl-0 sm:pr-4 sm:-mr-4 sm:after:-right-2 mouse:h-auto mouse:w-7 mouse:after:content-none ${className}`}
+          className={`${iconControlClass} grid h-auto w-8 shrink-0 self-stretch items-center justify-items-end bg-transparent text-dialog-hint transition-colors duration-150 enabled:hover:text-white pl-0 pr-3 -mr-3 after:absolute after:top-0 after:bottom-0 after:left-0 after:-right-3 after:content-[""] motion-reduce:transition-none sm:w-9 sm:pl-0 sm:pr-4 sm:-mr-4 sm:after:-right-2 mouse:h-auto mouse:w-7 mouse:after:content-none ${className}`}
         >
           {icon}
         </button>
@@ -459,7 +447,7 @@ export function CopyChip({
   const face =
     density === 'compact'
       ? `min-w-11 border-transparent bg-transparent mouse:min-w-7 sm:min-w-[6ch] ${
-          isCopied ? 'text-ok' : 'text-white'
+          isCopied ? 'text-ok' : 'text-white enabled:hover:text-accent-ink'
         }`
       : `min-w-[6ch] bg-button ${
           isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
@@ -470,12 +458,12 @@ export function CopyChip({
       onClick={copy}
       aria-label={label}
       title={title ?? label}
-      className={`group relative inline-flex h-8 items-center justify-center gap-1 rounded-control border px-2 text-center font-mono text-ui transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${face} ${className}`}
+      className={`relative inline-flex h-8 items-center justify-center gap-1 rounded-control border px-2 text-center font-mono text-ui transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${face} ${className}`}
     >
       {isCopied ? (
         <CheckIcon className="size-3 text-ok" />
       ) : (
-        <CopyIcon className="size-3 opacity-60 transition-opacity group-hover:opacity-100" />
+        <CopyIcon className="size-3 opacity-60" />
       )}
       <span className={`min-w-0 truncate ${density === 'compact' ? 'hidden sm:inline' : ''}`}>
         {isCopied ? 'Copied' : children}
@@ -485,13 +473,8 @@ export function CopyChip({
 }
 
 /**
- * A ROW YOU PRESS, and there is only one of it.
- *
- * A provider, a model, a saved gateway, an artifact's older version, a preset to
- * sign in with: a full-width slab, its content left-aligned, that opens or picks
- * the thing it names. Five screens spelled that out five times — `min-h-12` here
- * and `min-h-11` there, `hover:bg-hover` with and without a focus paper, a frame
- * on some and none on others — so rows doing one job read as several.
+ * A full-width row that opens or selects a provider, model, gateway, artifact
+ * version or preset. Hover changes the inherited foreground, never its surface.
  *
  * Framing and density are the two real differences. A row standing on the page
  * needs no frame; a row inside a card needs one. `compact` is a 36px band under
@@ -523,7 +506,7 @@ export const ListRow = forwardRef<
     <button
       ref={ref}
       type="button"
-      className={`flex w-full min-w-0 items-center gap-2 px-3 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${spacing} ${className}`}
+      className={`flex w-full min-w-0 items-center gap-2 px-3 text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 motion-reduce:transition-none ${paper} ${spacing} ${className}`}
       {...props}
     />
   );
@@ -599,7 +582,7 @@ export function ConfirmRow({
         <button
           type="button"
           autoFocus
-          className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
+          className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 enabled:hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
           onClick={onKeep}
         >
           {keepLabel}
@@ -607,7 +590,7 @@ export function ConfirmRow({
         <button
           type="button"
           disabled={isBusy}
-          className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 hover:bg-err hover:text-white active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
+          className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
           onClick={onConfirm}
         >
           {confirmLabel}
@@ -631,7 +614,7 @@ export function ExecutionAction({
   return (
     <button
       type="button"
-      className={`flex min-h-11 w-full min-w-0 items-center gap-1.5 text-left font-mono text-ui text-code-result transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-7 ${className}`}
+      className={`flex min-h-11 w-full min-w-0 items-center gap-1.5 text-left font-mono text-ui text-code-result transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-7 ${className}`}
       {...props}
     />
   );
@@ -703,16 +686,16 @@ export function Disclosure({
 }) {
   const ink =
     tone === 'step'
-      ? `${BAND_NAME} text-white hover:bg-hover`
+      ? `${BAND_NAME} text-white enabled:hover:text-accent-ink`
       : tone === 'thinking'
-        ? 'font-bold italic tracking-[0.07em] text-thinking hover:text-dialog-hint-key'
+        ? 'font-bold italic tracking-[0.07em] text-thinking enabled:hover:text-dialog-hint-key'
         : tone === 'caption'
-          ? 'uppercase tracking-[0.08em] text-dialog-hint hover:text-accent-ink'
+          ? 'uppercase tracking-[0.08em] text-dialog-hint enabled:hover:text-accent-ink'
           : tone === 'branch'
-            ? 'font-bold text-white hover:bg-hover'
+            ? 'font-bold text-white enabled:hover:text-accent-ink'
             : tone === 'chronology' || tone === 'execution'
-              ? 'text-code-result hover:bg-hover'
-              : 'text-footer-muted hover:bg-hover';
+              ? 'text-code-result enabled:hover:text-accent-ink'
+              : 'text-footer-muted enabled:hover:text-accent-ink';
   const size =
     density === 'compact'
       ? 'relative min-h-6 text-ui mouse:text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
@@ -799,7 +782,7 @@ export function ChoiceRow({
       className={`flex min-h-11 w-full min-w-0 items-center gap-2 border px-2.5 py-1 text-left font-mono text-ui transition-colors duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none mouse:min-h-7 ${
         isOn
           ? 'border-accent bg-hover text-accent-ink'
-          : 'border-edge bg-input text-white hover:border-accent'
+          : 'border-edge bg-input text-white enabled:hover:text-accent-ink'
       } ${className}`}
       {...props}
     >
@@ -878,7 +861,7 @@ export function ViewParagraph({ children }: { children: ReactNode }) {
  * which is two filled accents on one screen and a bar outranking its own screen. A bar
  * carries navigation, and navigation is a glyph in the page's ink.
  */
-const bandEdgeClass = `${iconControlClass} grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center bg-transparent pl-[env(safe-area-inset-left)] text-white transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-hover active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]`;
+const bandEdgeClass = `${iconControlClass} grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center bg-transparent pl-[env(safe-area-inset-left)] text-white transition-[color,transform,translate,scale,rotate] duration-150 enabled:hover:text-accent-ink active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]`;
 
 export function BackButton({
   label,
@@ -948,7 +931,9 @@ export function OptionRow({
       aria-selected={isActive}
       onMouseDown={(event) => event.preventDefault()}
       className={`grid min-h-9 w-full gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors duration-150 motion-reduce:transition-none ${
-        isActive ? 'bg-accent text-accent-foreground' : 'text-dialog-foreground hover:bg-hover'
+        isActive
+          ? 'bg-accent text-accent-foreground'
+          : 'text-dialog-foreground enabled:hover:text-accent-ink'
       } ${className}`}
       {...props}
     >
@@ -1063,10 +1048,10 @@ export function ComposerButton({
       ? 'size-11'
       : 'size-8 after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
   const face = {
-    quiet: 'text-dialog-hint hover:text-dialog-hint-key disabled:text-muted',
+    quiet: 'text-dialog-hint enabled:hover:text-dialog-hint-key disabled:text-muted',
     recording: 'animate-pulse text-err-ink disabled:text-muted motion-reduce:animate-none',
-    voice: 'text-accent-ink disabled:text-muted',
-    send: 'text-accent-ink disabled:scale-100 disabled:text-muted',
+    voice: 'text-accent-ink enabled:hover:text-white disabled:text-muted',
+    send: 'text-accent-ink enabled:hover:text-white disabled:scale-100 disabled:text-muted',
     stop: 'text-err-ink starting:scale-90 starting:opacity-0',
   }[tone];
   return (
@@ -1075,7 +1060,7 @@ export function ComposerButton({
       aria-label={label}
       disabled={disabled}
       {...press}
-      className={`${iconControlClass} grid shrink-0 place-items-center bg-transparent transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 hover:bg-hover active:scale-[0.94] motion-reduce:transition-none ${frame} ${face} ${className}`}
+      className={`${iconControlClass} grid shrink-0 place-items-center bg-transparent transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 active:scale-[0.94] motion-reduce:transition-none ${frame} ${face} ${className}`}
       {...props}
     >
       {isHolding && (
@@ -1116,9 +1101,9 @@ export function MetaButton({
       type="button"
       disabled={disabled}
       {...press}
-      className={`relative inline-flex min-h-8 min-w-11 items-center gap-1 px-1 py-1 text-left font-mono text-ui font-semibold uppercase tracking-[0.08em] transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:text-meta mouse:after:content-none ${
+      className={`relative inline-flex min-h-8 min-w-11 items-center gap-1 px-1 py-1 text-left font-mono text-ui font-semibold uppercase tracking-[0.08em] transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] enabled:hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:text-meta mouse:after:content-none ${
         isPicker
-          ? 'text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 hover:decoration-accent'
+          ? 'text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 enabled:hover:decoration-accent'
           : 'text-dialog-hint'
       } ${className}`}
       {...props}
@@ -1131,12 +1116,8 @@ export function MetaButton({
 /**
  * PRESSABLE PROSE, and there is only one of it.
  *
- * A queued turn you can still edit, a pasted block standing in for 40 lines:
- * text in a row that opens an editor. Neither is a button-shaped thing and
- * neither should become one — but they hovered differently (one flared its ink,
- * one moved its paper) for the same gesture. Hover moves the SURFACE here as it
- * does everywhere else; `isToken` adds the dotted rule that says this word is
- * standing in for something longer.
+ * A queued turn or a pasted block that opens an editor. Hover changes only the
+ * foreground. `isToken` adds a dotted underline for text standing in for more.
  */
 export function TextButton({
   isToken = false,
@@ -1147,7 +1128,7 @@ export function TextButton({
   return (
     <button
       type="button"
-      className={`min-w-0 px-1 text-left font-mono text-ui text-dialog-foreground transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent motion-reduce:transition-none ${
+      className={`min-w-0 px-1 text-left font-mono text-ui text-dialog-foreground transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none disabled:cursor-not-allowed motion-reduce:transition-none ${
         isToken ? 'truncate underline decoration-dotted underline-offset-2' : ''
       } ${className}`}
       {...props}
@@ -1245,7 +1226,9 @@ export function ChoiceCell({
             ? 'pl-3 pr-3'
             : 'px-3'
       } ${isLeaf ? 'min-h-9 mouse:min-h-8' : 'min-h-10 justify-between py-1.5 mouse:min-h-9'} ${
-        isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
+        isSelected
+          ? 'bg-accent text-accent-foreground'
+          : 'bg-input text-white enabled:hover:text-accent-ink'
       } ${className}`}
       {...props}
     >
@@ -1284,7 +1267,9 @@ export function ChoiceCell({
         disabled={leadingAction.disabled}
         onClick={leadingAction.onClick}
         className={`${iconControlClass} grid min-h-9 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
-          isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
+          isSelected
+            ? 'bg-accent text-accent-foreground'
+            : 'bg-input text-white enabled:hover:text-accent-ink'
         }`}
       >
         {leadingAction.icon}
@@ -1331,7 +1316,7 @@ export function SettingsChoiceDisclosure({
         className={`${iconControlClass} grid min-h-10 w-10 place-items-center transition-[background-color,color] duration-150 active:bg-accent-2 motion-reduce:transition-none mouse:min-h-9 ${
           isSelected
             ? 'bg-accent text-accent-foreground'
-            : 'bg-input text-dialog-hint hover:bg-hover hover:text-white'
+            : 'bg-input text-dialog-hint enabled:hover:text-white'
         }`}
       >
         <ChevronIcon open={isOpen} className="size-3 shrink-0" />
@@ -1409,7 +1394,7 @@ export function SettingsDisclosure({
     <button
       type="button"
       aria-expanded={isOpen}
-      className={`flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent motion-reduce:transition-none mouse:min-h-10 ${className}`}
+      className={`flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent motion-reduce:transition-none mouse:min-h-10 ${className}`}
       {...props}
     >
       <span className="min-w-0 flex-1">
@@ -1467,7 +1452,7 @@ export function Switch({
       aria-checked={isOn}
       aria-busy={isBusy}
       className={`relative inline-flex h-7 w-[2.875rem] shrink-0 items-center rounded-full border p-0.5 transition-colors duration-150 ease-out after:absolute after:inset-x-0 after:-top-2 after:-bottom-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:h-6 mouse:w-10 mouse:after:-top-1 mouse:after:-bottom-1 ${
-        isOn ? 'border-white bg-accent' : 'border-white bg-transparent hover:bg-hover'
+        isOn ? 'border-white bg-accent' : 'border-white bg-transparent'
       } ${className}`}
       {...props}
     >
@@ -1579,7 +1564,7 @@ export function CloseButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`${iconControlClass} grid shrink-0 place-items-center bg-transparent text-current transition-colors duration-150 hover:bg-current/10 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
+      className={`${iconControlClass} grid shrink-0 place-items-center bg-transparent text-current transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
         isBand
           ? 'w-12 self-stretch mouse:w-9'
           : 'size-8 self-center after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none'
@@ -1624,11 +1609,11 @@ export function BandButton({
       type="button"
       className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap font-mono text-meta font-bold focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 sm:text-ui mouse:text-meta ${
         isIconOnly
-          ? `${iconControlClass} group w-12 bg-transparent px-0 text-current hover:bg-current/10 mouse:w-9`
-          : `${isFirst ? '' : 'border-l border-current/20'} px-3 transition-colors duration-150 disabled:hover:bg-transparent motion-reduce:transition-none sm:px-4 mouse:px-3 ${
+          ? `${iconControlClass} group w-12 bg-transparent px-0 text-current mouse:w-9`
+          : `${isFirst ? '' : 'border-l border-current/20'} px-3 transition-colors duration-150 motion-reduce:transition-none sm:px-4 mouse:px-3 ${
               isLive
-                ? 'bg-accent text-accent-foreground hover:bg-accent-2 focus-visible:bg-accent-2'
-                : 'text-current hover:bg-current/10 focus-visible:bg-current/10'
+                ? 'bg-accent text-accent-foreground focus-visible:bg-accent-2'
+                : 'text-current focus-visible:bg-current/10'
             }`
       } ${className}`}
       aria-label={label}

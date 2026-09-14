@@ -1234,7 +1234,7 @@ describe('settings is ONE dialog with two columns', () => {
     // Label then control: the name starts on the same left edge as the band
     // title above it, and the description gets the glyph column's width back.
     expect(settings).toContain(
-      'className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 transition-colors hover:bg-hover sm:px-4 sm:py-2"',
+      'className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4 sm:py-2"',
     );
     // With no glyph column to clear, a value row's chips start under the name.
     expect(settings).not.toContain('col-start-2');
@@ -1445,7 +1445,7 @@ describe('NewSessionButton, one action', () => {
       <NewSessionButton machine="visgw" where="vis" onPress={() => {}} />,
     );
     expect(html.match(/<button/g)).toHaveLength(1);
-    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
+    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4" />));
     expect(html).not.toContain('border-r-0');
   });
 
@@ -1712,7 +1712,7 @@ describe('project verbs use distinct marks', () => {
     const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g)?.[0];
     const start = glyph(session);
     const inventory = glyph(projects);
-    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
+    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4" />));
     expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
     expect(start).not.toBe(inventory);
   });
@@ -2427,7 +2427,7 @@ describe("the composer's own controls", () => {
     expect(renderToStaticMarkup(<MetaButton>quick</MetaButton>)).toContain('quick');
   });
 
-  it('presses prose by moving the paper, dotted only where a word stands in', () => {
+  it('opens prose with foreground feedback, dotted only where a word stands in', () => {
     const token = classes(renderToStaticMarkup(<TextButton isToken>{'[paste #1]'}</TextButton>));
     const plain = classes(renderToStaticMarkup(<TextButton>draft</TextButton>));
     expect(token).toContain('decoration-dotted');
@@ -3153,6 +3153,27 @@ describe('a call site positions, and the component paints', () => {
         : paintAtCallSites(source).map((one) => `${path}: ${one}`),
     );
 
+    expect(offenders).toEqual([]);
+  });
+
+  // Regression: hovering a desktop plus must not paint a rectangular background.
+  it('keeps hover feedback in the foreground throughout production', () => {
+    const hoverSurfaces = (source: string) =>
+      source.match(
+        /[^\s"'`]*hover[^\s"'`]*:(?:bg-|border-|shadow\b|ring-|outline-|scale-|translate-|rotate-)[^\s"'`]*/g,
+      ) ?? [];
+    expect(
+      hoverSurfaces('mouse:hover:bg-hover group-hover/row:border-accent hover:before:bg-current'),
+    ).toHaveLength(3);
+    expect(
+      hoverSurfaces('hover:text-accent-ink focus-visible:bg-hover active:bg-err bg-panel-2'),
+    ).toEqual([]);
+
+    const offenders = Object.entries(sources).flatMap(([path, source]) =>
+      path.includes('.test.') || path.includes('.stories.') || path.includes('/dev/')
+        ? []
+        : hoverSurfaces(source).map((utility) => `${path}: ${utility}`),
+    );
     expect(offenders).toEqual([]);
   });
 

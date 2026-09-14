@@ -50,6 +50,11 @@ synthesized fonts or all-caps sentences. Capitals are allowed for short tags.
 
 ### States, motion and words
 
+- **Desktop hover changes foreground only:** text or icon colour. Do not add or
+  recolour a background, border, shadow or enclosing shape on hover. Keep control
+  geometry stable. Hover may reveal an action in its reserved space; it does not
+  select or press it. Selected, pressed and keyboard-focus states remain separate
+  and may retain their own surfaces or indicators. Disabled controls do not react.
 - Async components need loading, empty, error and partial/stale states. Errors
   explain the failure and recovery action. Empty states explain what belongs
   there and provide an appropriate action.

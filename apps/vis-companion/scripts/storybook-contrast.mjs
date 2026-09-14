@@ -60,9 +60,24 @@ try {
     .filter((entry) => entry.type === 'story')
     .map((entry) => entry.id)
     .sort();
+  const hoverStories = new Set([
+    'session-jump-to-latest--default',
+    ...storyIds.filter((id) => id.startsWith('vocabulary-controls--')),
+    'components-artifacts-sheet--files',
+    'components-data-table--opened',
+    'components-live-view--finished-jobs',
+    'components-iteration-trace--code-with-result',
+    'components-menu--verbs',
+    'components-menu--danger-focused',
+    'components-manage-projects-sheet--browsing-pointer',
+    'screens-session-list--desktop-hover',
+  ]);
+  for (const id of hoverStories) {
+    if (!storyIds.includes(id)) throw new Error(`Missing hover regression story: ${id}`);
+  }
   const jobs = storyIds.flatMap((id) =>
     themes.flatMap((theme) =>
-      id === 'session-jump-to-latest--default'
+      hoverStories.has(id)
         ? [
             { id, theme },
             { id, theme, hover: true },
@@ -72,9 +87,11 @@ try {
   );
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
+    reducedMotion: 'reduce',
   });
   const failures = [];
   let cursor = 0;
+  let hoverChecks = 0;
 
   async function runJob(page, { id, theme, hover }) {
     const query = new URLSearchParams({ id, globals: `theme:${theme}` });
@@ -84,15 +101,74 @@ try {
     });
     await page.waitForSelector('#storybook-root > *', { timeout: 15_000 });
     await page.evaluate(() => document.fonts?.ready);
-    // CI exposed an inverted foreground left on the page-hover background.
-    // Use a real pointer: DOM userEvent.hover does not activate CSS :hover.
+    await page.waitForFunction(
+      () => window.__STORYBOOK_PREVIEW__?.currentRender?.phase === 'finished',
+    );
+    // Real pointer regression: DOM userEvent.hover does not activate CSS :hover.
+    // Include ancestors and children: a list/group must not restore a hover slab
+    // behind a frameless plus. Selected, disabled and inverse controls are included.
     if (hover) {
-      const button = page.getByRole('button', { name: 'Latest', exact: true });
-      await button.hover();
-      await button.evaluate((element) =>
-        Promise.all(element.getAnimations().map((animation) => animation.finished)),
-      );
+      const controls = page.locator('button, a[href], [role="button"], summary, tbody tr');
+      for (const control of await controls.all()) {
+        if (!(await control.isVisible())) continue;
+        await control.scrollIntoViewIfNeeded();
+        await page.mouse.move(0, 0);
+        // A modal can leave mounted controls behind its backdrop. They are not
+        // pointer targets until it closes; never force a hover through the overlay.
+        const isExposed = await control.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+          return hit === element || element.contains(hit);
+        });
+        if (!isExposed) continue;
+        const before = await control.evaluate(readSurfaces);
+        await control.hover();
+        const after = await control.evaluate(readSurfaces);
+        if (JSON.stringify(before) !== JSON.stringify(after)) {
+          failures.push({
+            id,
+            theme,
+            rule: 'hover-surface',
+            target: await control.evaluate(
+              (element) => element.getAttribute('aria-label') || element.textContent?.trim(),
+            ),
+            data: { before, after },
+          });
+        }
+        hoverChecks += 1;
+        await audit(page, id, theme);
+      }
+      return;
     }
+    await audit(page, id, theme);
+  }
+
+  function readSurfaces(control) {
+    const elements = [control, ...control.querySelectorAll('*')];
+    for (let parent = control.parentElement; parent; parent = parent.parentElement) {
+      elements.push(parent);
+    }
+    return elements
+      .filter((element) => !element.closest('svg'))
+      .map((element) => {
+        const style = getComputedStyle(element);
+        return {
+          background: style.backgroundColor,
+          image: style.backgroundImage,
+          shadow: style.boxShadow,
+          disabledInk: element.matches(':disabled') ? style.color : null,
+          radius: style.borderRadius,
+          borders: ['Top', 'Right', 'Bottom', 'Left'].map((side) => [
+            style[`border${side}Width`],
+            parseFloat(style[`border${side}Width`]) > 0 ? style[`border${side}Color`] : null,
+          ]),
+          width: element.getBoundingClientRect().width,
+          height: element.getBoundingClientRect().height,
+        };
+      });
+  }
+
+  async function audit(page, id, theme) {
     const violations = await page.evaluate(async (source) => {
       // Audit every rendered icon-only action, including portal and artifact controls.
       // SVG strokes express the glyph itself; only HTML enclosures are forbidden.
@@ -172,11 +248,11 @@ try {
       );
     }
     if (failures.length > 100) console.error(`…and ${failures.length - 100} more.`);
-    throw new Error(`${failures.length} Storybook contrast/icon-frame checks failed.`);
+    throw new Error(`${failures.length} Storybook contrast/icon-frame/hover checks failed.`);
   }
 
   console.log(
-    `${storyIds.length} stories × ${themes.length} themes: contrast and icon frames clean.`,
+    `${storyIds.length} stories × ${themes.length} themes: contrast and icon frames clean; ${hoverChecks} desktop hover checks clean.`,
   );
 } finally {
   await browser.close();

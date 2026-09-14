@@ -1209,7 +1209,7 @@ const ToolCard = memo(function ToolCard({
       }}
     >
       <summary
-        className={`${CARD_BAND} ${isCopyable ? 'px-2' : 'pl-[15px] sm:pl-[17px] pr-0'} list-none cursor-pointer select-none text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden`}
+        className={`${CARD_BAND} ${isCopyable ? 'px-2' : 'pl-[15px] sm:pl-[17px] pr-0'} list-none cursor-pointer select-none text-code-result mouse:hover:text-accent-ink [&::-webkit-details-marker]:hidden`}
       >
         <ChevronIcon
           className={`size-3 shrink-0 group-open:rotate-90 ${failed ? 'text-err' : 'text-accent-ink'}`}

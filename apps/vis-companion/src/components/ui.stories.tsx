@@ -990,7 +990,12 @@ export const Machines: Story = {
   play: async ({ canvas }) => {
     const buttons = canvas.getAllByRole('button', { name: /^New session/ });
     // Busy and disabled states must not restore the old project circles.
-    for (const button of buttons) await expectUnframedIcon(button);
+    for (const button of buttons) {
+      await expectUnframedIcon(button);
+      // The glyph must follow the control's hover and disabled foreground.
+      const glyph = button.querySelector('svg')!;
+      await expect(getComputedStyle(glyph).color).toBe(getComputedStyle(button).color);
+    }
     await expect(buttons).toHaveLength(3);
     await expect(buttons[0]).toBeEnabled();
     await expect(buttons[1]).toBeDisabled();

@@ -765,7 +765,7 @@ function TableRows({
               <SelectableTableRow
                 key={row.id}
                 isSelected={isSelected}
-                className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer hover:bg-hover focus-within:bg-hover' : ''}`}
+                className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer focus-within:bg-hover' : ''}`}
                 onClick={isSelectable ? () => onSelect?.(node.id, [row.id]) : undefined}
               >
                 <td className="p-0 align-middle">

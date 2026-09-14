@@ -262,11 +262,8 @@ export const SessionRow = memo(function SessionRow({
             </HeaderActions>
           }
         >
-          {/* THE ROW IS ONE SLAB, and the hover tint is ITS colour, not the open
-          button's. The button stops where the disclosure begins, so a pointer
-          crossing the row lit 948px of a 991px row and left the last 43 in plain
-          paper — the trailing strip of the very row under the cursor. */}
-          <div className="group flex items-stretch transition-colors duration-150 hover:bg-hover motion-reduce:transition-none">
+          {/* Hover changes the title ink; status marks retain their own meaning. */}
+          <div className="group flex items-stretch">
             <SessionRowSurface
               isEditing={renameDraft !== null}
               sessionId={session.id}
@@ -362,7 +359,7 @@ export const SessionRow = memo(function SessionRow({
                   ) : (
                     <span
                       title={title}
-                      className={`min-w-0 truncate text-title font-medium ${
+                      className={`min-w-0 truncate text-title font-medium mouse:group-hover:text-accent-ink ${
                         session.title?.trim() ? 'text-white' : 'text-white/45'
                       }`}
                     >

@@ -539,7 +539,7 @@ export function ManageProjectsSheet({
                         className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 ${
                           isHere
                             ? 'font-bold text-white'
-                            : 'text-accent-ink hover:bg-hover focus-visible:bg-hover'
+                            : 'text-accent-ink mouse:hover:text-white focus-visible:bg-hover'
                         }`}
                         onClick={() => enter(crumb.path)}
                       >

@@ -27,8 +27,7 @@ export interface SwipeAction {
    * they measure 1.37:1 and 3.50:1, under the 4.5:1 a caption owes, and the
    * amber one arrived as a smear rather than a word. The palette splits each
    * one for exactly this — `accent-ink` reads 6.4:1 and `err-ink` 5.4:1 on the
-   * same cells — and the full-strength fill is spent on the hover state, where
-   * it becomes the background and takes its own foreground.
+   * same cells. Hover leaves these semantic surfaces and their paired ink intact.
    */
   tone?: 'neutral' | 'accent' | 'danger';
   /**
@@ -285,7 +284,7 @@ export function SwipeActions({
         }
         setOpen((current) => (current === next ? current : next));
       }}
-      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden mouse:transition-colors mouse:duration-150 mouse:motion-reduce:transition-none mouse:hover:bg-hover"
+      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden"
     >
       {/* Touch keeps content and permanent controls in one full-width snap panel.
           Desktop reserves just one menu trigger before the permanent trailing edge. */}
@@ -321,10 +320,10 @@ export function SwipeActions({
             title={action.name ?? action.label}
             className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
               action.tone === 'danger'
-                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white'
+                ? 'border-err-edge bg-err-surface text-err-ink'
                 : action.tone === 'accent'
-                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground'
-                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover'
+                  ? 'border-accent/40 bg-accent/15 text-accent-ink'
+                  : 'border-dialog-edge bg-panel-2 text-accent-ink'
             }`}
             onClick={(event) => {
               const anchor = event.currentTarget;

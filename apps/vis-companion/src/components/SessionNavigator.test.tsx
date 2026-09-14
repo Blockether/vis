@@ -14,7 +14,8 @@ describe('project pages', () => {
       expect(button).toBeInTheDocument();
       // Regression: page targets must match the adjacent header controls, not 24px chips.
       expect(button).toHaveClass('mouse:min-h-7', 'mouse:min-w-7', 'mouse:px-1.5');
-      expect(button).toHaveClass('border-transparent', 'hover:bg-hover');
+      expect(button).toHaveClass('border-transparent');
+      expect(button.className).not.toMatch(/hover:bg-/);
     }
     expect(screen.getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
     const numbers = screen.getByRole('button', { name: 'Page 1' }).parentElement;

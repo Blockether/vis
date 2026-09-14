@@ -547,7 +547,7 @@ export const DataTable = memo(function DataTable({
                     key={row.key}
                     aria-selected={picked}
                     aria-rowindex={range.first + offset + 1}
-                    className={picked ? 'bg-panel-2' : 'hover:bg-hover'}
+                    className={picked ? 'bg-panel-2' : 'mouse:hover:text-accent-ink'}
                   >
                     <td
                       className={`${BODY_CELL} sticky left-0 z-10 border-r border-code-edge ${picked ? 'bg-panel-2' : 'bg-panel'}`}

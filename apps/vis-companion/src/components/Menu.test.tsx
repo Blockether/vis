@@ -98,10 +98,11 @@ describe('Menu parts', () => {
 
     // The new row dropdown focuses Delete when it is a project's only action.
     // A translucent error fill left its caption below 4.5:1 in several themes.
-    it('uses the paired error ink and surface for destructive hover and focus', () => {
+    it('keeps the destructive focus surface separate from foreground-only hover', () => {
       const markup = html({ tone: 'danger', title: 'Remove sessions', icon: <svg /> });
       expect(markup).toContain('<button');
-      expect(markup).toContain('hover:bg-err-surface focus-visible:bg-err-surface');
+      expect(markup).toContain('focus-visible:bg-err-surface');
+      expect(markup).not.toMatch(/hover:bg-/);
       expect(markup).toContain('text-err-ink');
       expect(markup).not.toContain('bg-err/15');
     });

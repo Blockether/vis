@@ -167,7 +167,7 @@ export const Fleet: Story = {
         await expect(create.getBoundingClientRect().left).toBeGreaterThanOrEqual(
           pager.getBoundingClientRect().right + 16,
         );
-        // Selected pages and hovered actions share the project's visible surface.
+        // Selection retains its surface; hovering an action must not select it.
         const selected = within(pager).getByRole('button', { name: 'Page 1' });
         await expect(win.getComputedStyle(selected).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
       }
@@ -348,6 +348,12 @@ export const Desktop: Story = {
   ...Fleet,
   globals: { viewport: { value: 'desktop', isRotated: false } },
   decorators: [],
+};
+
+/** Resting rows for the real-pointer audit; interaction playback must not open a menu. */
+export const DesktopHover: Story = {
+  ...Desktop,
+  play: undefined,
 };
 
 export const TouchFleet: Story = {
