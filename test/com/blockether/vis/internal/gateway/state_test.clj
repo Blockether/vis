@@ -697,36 +697,47 @@
         (expect (not (contains? payload :attachments)))))
   ;; User report: an assistant's attachment link had no stable id in the descriptor,
   ;; so tapping its preview link could not identify the artifact to open.
-  (it "projects lean snake-case descriptors and NEVER leaks base64"
-      (with-redefs [state/iteration-attachments
-                    (fn [_iid]
-                      [{:id "00000000-0000-0000-0000-0000000000f1"
-                        :tool-call-id "call_A"
-                        :kind "image"
-                        :media-type "image/png"
-                        :filename "fig.png"
-                        :size 1234
-                        :base64 "SECRET"} {:tool-call-id nil :media-type "image/svg+xml" :size 0}])]
-        (let [[_ _ payload] (#'state/chunk->event
-                             {:phase :iteration-final
-                              :iteration 4
-                              :done false
-                              :iteration-id "00000000-0000-0000-0000-0000000000ab"
-                              :attachment-count 2})
-              atts (:attachments payload)]
+  (it
+    "projects lean snake-case descriptors and NEVER leaks base64"
+    (with-redefs [state/iteration-attachments
+                  (fn [_iid]
+                    [{:id "00000000-0000-0000-0000-0000000000f1"
+                      :tool-call-id "call_A"
+                      :kind "image"
+                      :media-type "image/png"
+                      :filename "fig.png"
+                      :size 1234
+                      :base64 "SECRET"}
+                     {:tool-call-id nil
+                      :media-type "application/vnd.vis.live+ndjson"
+                      :size 0
+                      :owner {:invocation-id "00000000-0000-0000-0000-0000000000a1"
+                              :activity-id "00000000-0000-0000-0000-0000000000a2"}}])]
+      (let [[_ _ payload] (#'state/chunk->event
+                           {:phase :iteration-final
+                            :iteration 4
+                            :done false
+                            :iteration-id "00000000-0000-0000-0000-0000000000ab"
+                            :attachment-count 2})
+            atts (:attachments payload)]
 
-          (expect (= 2 (count atts)))
-          (expect (= [0 1] (mapv :index atts)))
-          (expect (= "00000000-0000-0000-0000-0000000000f1" (:attachment_id (first atts))))
-          (expect (not (contains? (second atts) :attachment_id)))
-          (expect (= "image/png" (:media_type (first atts))))
-          (expect (= "call_A" (:tool_call_id (first atts))))
-          (expect (= 1234 (:size (first atts))))
-          ;; default kind for the un-kinded second artifact
-          (expect (= "image" (:kind (second atts))))
-          ;; bytes NEVER ride the frame
-          (expect (not (str/includes? (pr-str payload) "SECRET")))
-          (expect (every? #(not (contains? % :base64)) atts))))))
+        (expect (= 2 (count atts)))
+        (expect (= [0 1] (mapv :index atts)))
+        (expect (= "00000000-0000-0000-0000-0000000000f1" (:attachment_id (first atts))))
+        (expect (not (contains? (second atts) :attachment_id)))
+        ;; Regression #222: persisted live ownership crosses the attachment descriptor boundary.
+        (expect (= {"invocation_id" "00000000-0000-0000-0000-0000000000a1"
+                    "activity_id" "00000000-0000-0000-0000-0000000000a2"}
+                   (:owner (second atts))))
+        (expect (not (contains? (first atts) :owner)))
+        (expect (= "image/png" (:media_type (first atts))))
+        (expect (= "call_A" (:tool_call_id (first atts))))
+        (expect (= 1234 (:size (first atts))))
+        ;; default kind for the un-kinded second artifact
+        (expect (= "image" (:kind (second atts))))
+        ;; bytes NEVER ride the frame
+        (expect (not (str/includes? (pr-str payload) "SECRET")))
+        (expect (every? #(not (contains? % :base64)) atts))))))
 
 (defdescribe
   broadcast-title-poll-parity-test

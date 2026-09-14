@@ -98,6 +98,10 @@
   "Evaluation-scoped Activity identity, sequence allocators, and form anchor."
   nil)
 
+(def ^:dynamic *activity-history-id*
+  "Persistent Activity history of the executing block, or nil outside stored execution."
+  nil)
+
 (def ^:dynamic *current-invocation-id*
   "Invocation whose body is running, used only as observed parentage."
   nil)

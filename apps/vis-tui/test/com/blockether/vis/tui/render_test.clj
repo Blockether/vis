@@ -6032,62 +6032,66 @@ h = 8"
 ;; forms that ran them, and their chevrons never reflected reopening.
 (defdescribe
   answer-run-rows-test
-  (it "settles each finished run at its originating form with a truthful disclosure"
-      (render/invalidate-cache!)
-      (let [payload
-            (render/format-answer-with-thinking-data
-              "Watched it."
-              [{:forms [{:code "first_watch()" :success? true :duration-ms 1000}]}
-               {:forms [{:code "second_watch()" :success? true :duration-ms 1000}]}]
-              80
-              nil
-              nil
-              false
-              {:session-id "s1"
-               :runs [{:view-id "view-1"
-                       :title "Release · gh"
-                       :reason :completed
-                       :lines 314
-                       :elapsed-ms 461000
-                       :anchor {:iteration-index 0 :form-index 0}}
-                      {:view-id "view-2"
-                       :title "Nightly"
-                       :reason :interrupted
-                       :lines 1
-                       :elapsed-ms 1000
-                       :is-reopened true
-                       :anchor {:iteration-index 1 :form-index 0}}]})
+  (it
+    "settles each finished run at its originating form with a truthful disclosure"
+    (render/invalidate-cache!)
+    (let [payload
+          (render/format-answer-with-thinking-data
+            "Watched it."
+            [{:forms [{:code "first_watch()"
+                       :success? true
+                       :duration-ms 1000
+                       :activity {:history {:id "activity-1"}}}]}
+             {:forms [{:code "second_watch()"
+                       :success? true
+                       :duration-ms 1000
+                       :activity {:history {:id "activity-2"}}}]}]
+            80
+            nil
+            nil
+            false
+            {:session-id "s1"
+             :runs [{:view-id "view-1"
+                     :title "Release · gh"
+                     :reason :completed
+                     :lines 314
+                     :elapsed-ms 461000
+                     :owner {:activity-id "activity-1"}}
+                    {:view-id "view-2"
+                     :title "Nightly"
+                     :reason :interrupted
+                     :lines 1
+                     :elapsed-ms 1000
+                     :is-reopened true
+                     :owner {:activity-id "activity-2"}}]})
 
-            body
-            (-> (:text payload)
-                strip-ansi
-                strip-sentinels)
+          body
+          (-> (:text payload)
+              strip-ansi
+              strip-sentinels)
 
-            rows
-            (filterv #(= :live-reopen (:kind %)) (:line-meta payload))]
+          rows
+          (filterv #(= :live-reopen (:kind %)) (:line-meta payload))]
 
-        (expect (str/includes? body "Release · gh · completed · 314 lines"))
-        (expect (str/includes? body "Nightly · interrupted · 1 line"))
-        (expect (= ["view-1" "view-2"] (mapv :view-id rows)) "one row per run, in execution order")
-        (expect (= ["s1" "s1"] (mapv :session-id rows))
-                "each row names the session whose band reopens the record")
-        (expect (< (.indexOf ^String body "first_watch()")
-                   (.indexOf ^String body "Release · gh")
-                   (.indexOf ^String body "Nightly")
-                   (.indexOf ^String body "Watched it."))
-                "both run records remain inside their execution group, before the answer")
-        (expect (str/includes? body "▸ RUN Release · gh") "a dormant record offers open")
-        (expect (str/includes? body "▾ RUN Nightly") "a reopened record offers collapse")))
+      (expect (str/includes? body "Release · gh · completed · 314 lines"))
+      (expect (str/includes? body "Nightly · interrupted · 1 line"))
+      (expect (= ["view-1" "view-2"] (mapv :view-id rows)) "one row per run, in execution order")
+      (expect (= ["s1" "s1"] (mapv :session-id rows))
+              "each row names the session whose band reopens the record")
+      (expect (< (.indexOf ^String body "first_watch()")
+                 (.indexOf ^String body "Release · gh")
+                 (.indexOf ^String body "Nightly")
+                 (.indexOf ^String body "Watched it."))
+              "both run records remain inside their execution group, before the answer")
+      (expect (str/includes? body "▸ RUN Release · gh") "a dormant record offers open")
+      (expect (str/includes? body "▾ RUN Nightly") "a reopened record offers collapse")))
   (it "invalidates the hot iteration cache when the record opens and closes"
       (render/invalidate-cache!)
       (let [trace
-            [{:forms [{:code "watch()" :success? true}]}]
+            [{:forms [{:code "watch()" :success? true :activity {:history {:id "activity-1"}}}]}]
 
             run
-            {:view-id "view-1"
-             :title "CI"
-             :reason :completed
-             :anchor {:iteration-index 0 :form-index 0}}
+            {:view-id "view-1" :title "CI" :reason :completed :owner {:activity-id "activity-1"}}
 
             render-row
             (fn [is-reopened]
@@ -8380,6 +8384,111 @@ print(paths)"
         (expect (str/includes? text "┘"))
         (expect (not (str/includes? text "ndjson"))))
       (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))
+
+;; #222: a form's live receipt must share its Activity surface, not float below it.
+(defdescribe
+  activity-live-nesting-test
+  (it
+    "keeps anchored run receipts inside the Activity fill and inset"
+    (doseq [width [40 80]]
+      (let [entries (format-iteration-entry-entries
+                      {:forms [{:code "watch()"
+                                :success? false
+                                :activity {:state :failed
+                                           :rows [{:id "watch"
+                                                   :sequence 1
+                                                   :operation "watch"
+                                                   :state :failed
+                                                   :presentation {:headline "Watch build"}
+                                                   :evidence []}]}
+                                :runs [{:view-id "build"
+                                        :title "Jenkins"
+                                        :reason :interrupted
+                                        :lines 421
+                                        :elapsed-ms 617000}]}]}
+                      width
+                      1
+                      {:session-id "session-live" :session-turn-id "turn-live"})
+            receipt (first (filter #(= :live-reopen (get-in % [:meta :kind])) entries))
+            header-index
+            (first (keep-indexed #(when (= :activity-header (get-in %2 [:meta :kind])) %1) entries))
+            receipt-index (.indexOf ^java.util.List entries receipt)]
+
+        (expect (some? receipt))
+        (expect (true? (get-in receipt [:meta :trace-inset?])))
+        (expect (str/starts-with? (:line receipt) p/MARKER_ACTIVITY))
+        (expect (< header-index receipt-index))
+        (expect (every? #(str/starts-with? (:line %) p/MARKER_ACTIVITY)
+                        (subvec entries header-index (inc receipt-index))))
+        (expect (= "build" (get-in receipt [:meta :view-id])))
+        (expect (= "session-live" (get-in receipt [:meta :session-id])))))))
+
+(defdescribe
+  activity-live-owner-test
+  (it "matches exact owners after rows arrive, not the latest form"
+      (let [owner-a
+            {:invocation-id "watch-a" :activity-id "history-a"}
+
+            owner-b
+            {:invocation-id "watch-b"}
+
+            runs
+            [{:view-id "a" :owner owner-a} {:view-id "b" :owner owner-b}
+             {:view-id "unmatched" :owner {:invocation-id "unknown"}}]
+
+            iterations
+            [{:forms [{:activity {:history {:id "history-a"} :rows []}}
+                      {:activity {:rows [{:id "parent" :children [{:id "watch-b"}]}]}}]}]
+
+            before
+            (#'render/place-run-rows [{:forms [{} {}]}] runs)
+
+            after
+            (#'render/place-run-rows iterations (:unplaced before))]
+
+        (expect (= runs (:unplaced before)))
+        (expect (= ["a"] (mapv :view-id (get-in after [:iterations 0 :forms 0 :runs]))))
+        (expect (= ["b"] (mapv :view-id (get-in after [:iterations 0 :forms 1 :runs]))))
+        (expect (= ["unmatched"] (mapv :view-id (:unplaced after))))))
+  (it
+    "nests a durable owned recording after reload but preserves unmatched cards"
+    (doseq [width [40 80]]
+      (let [entries (format-iteration-entry-entries
+                      {:iteration-id "recorded-iteration"
+                       :attachments [{:source "tool"
+                                      :kind "doc"
+                                      :filename "Jenkins.live.ndjson"
+                                      :media-type "application/vnd.vis.live+ndjson"
+                                      :view_id "build"
+                                      :owner {:invocation_id "watch"}}
+                                     {:source "tool"
+                                      :kind "doc"
+                                      :filename "Other.live.ndjson"
+                                      :media-type "application/vnd.vis.live+ndjson"
+                                      :view_id "other"
+                                      :owner {:invocation_id "unknown"}}]
+                       :forms [{:code "watch()"
+                                :success? true
+                                :activity {:state :succeeded
+                                           :rows [{:id "watch"
+                                                   :sequence 1
+                                                   :operation "watch"
+                                                   :state :succeeded
+                                                   :presentation {:headline "Watch build"}
+                                                   :evidence []}]}}]}
+                      width
+                      1
+                      {:session-id "session-live" :session-turn-id "turn-live"})
+            owned (filter #(= "build" (get-in % [:meta :artifact :view-id])) entries)
+            unmatched (filter #(= "other" (get-in % [:meta :artifact :view-id])) entries)]
+
+        (expect (= 3 (count owned)))
+        (expect (every? #(and (get-in % [:meta :trace-inset?])
+                              (str/starts-with? (:line %) p/MARKER_ACTIVITY))
+                        owned))
+        (expect (not-any? #(get-in % [:meta :live-card-row]) owned))
+        (expect (= 8 (count unmatched)))
+        (expect (every? #(get-in % [:meta :live-card-row]) unmatched))))))
 
 (defdescribe
   activity-middle-content-spacing-test

@@ -421,8 +421,8 @@
              :lines (long lines)
              :elapsed-ms (max 0 (- end (long (or (:created-at view) end))))
              :is-reopened (boolean (:is-reopened pane))}
-      (:trace-anchor pane)
-      (assoc :anchor (:trace-anchor pane)))))
+      (:owner view)
+      (assoc :owner (:owner view)))))
 
 (defn watching-title
   "The title of the view the band is PAINTING right now, or nil when the band is
@@ -1508,6 +1508,8 @@
   [g left row inner-w fg styles runs]
   (paint-segments! g left row inner-w (run-segments runs fg styles)))
 
+(def ^:private ^:dynamic *hit-row-offset* 0)
+
 (defn- paint-entry!
   "Paint ONE plan row and register whatever on it can be clicked. `left` is the
    band's rail and the body opens two columns inside it, exactly like the form's
@@ -1530,7 +1532,9 @@
     :disclosure
     (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
         (.register interactions/hit-map
-                   {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                   {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                             :col (+ (long left) 2)
+                             :width (max 0 (- (long inner-w) 3))}
                     :kind :live-expand
                     :view-id view-id
                     :node-id (:node-id entry)
@@ -1546,7 +1550,9 @@
                        (:text entry))
         (when-not (:is-disabled entry)
           (.register interactions/hit-map
-                     {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                               :col (+ (long left) 2)
+                               :width (max 0 (- (long inner-w) 3))}
                       :kind (if (= :log-search (:kind entry)) :live-log-search :live-activate)
                       :view-id view-id
                       :node-id (:node-id entry)
@@ -1619,7 +1625,9 @@
         ;; attached TUI and Companion from that one engine state.
         (when (:is-selectable entry)
           (.register interactions/hit-map
-                     {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                               :col (+ (long left) 2)
+                               :width (max 0 (- (long inner-w) 3))}
                       :kind :live-select
                       :view-id view-id
                       :node-id (:node-id entry)
@@ -1645,7 +1653,9 @@
 
                           nil)]
           (.register interactions/hit-map
-                     {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                               :col (+ (long left) 2)
+                               :width (max 0 (- (long inner-w) 3))}
                       :kind kind
                       :url (:target entry)
                       :enabled? true})))
@@ -1655,7 +1665,9 @@
     :more
     (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
         (.register interactions/hit-map
-                   {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                   {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                             :col (+ (long left) 2)
+                             :width (max 0 (- (long inner-w) 3))}
                     :kind :live-expand
                     :view-id view-id
                     :node-id (:node-id entry)
@@ -1678,7 +1690,9 @@
     :minimized
     (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
         (.register interactions/hit-map
-                   {:bounds {:row row :col (inc (long left)) :width (long inner-w)}
+                   {:bounds {:row (+ (long row) (long *hit-row-offset*))
+                             :col (inc (long left))
+                             :width (long inner-w)}
                     :kind :live-restore
                     :view-id view-id
                     :enabled? true}))
@@ -1748,7 +1762,7 @@
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (p/styled g [p/BOLD] (p/put-str! g col row label))
       (.register interactions/hit-map
-                 {:bounds {:row row :col col :width width}
+                 {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col col :width width}
                   :kind (cond (settled? pane) :live-reopen
                               (minimized? pane) :live-restore
                               :else :live-minimize)
@@ -1974,3 +1988,92 @@
   ([g cols rows panes content-top prompt-h now-ms]
    (when (last (remove dormant? panes))
      (paint-generic! g cols rows panes content-top prompt-h now-ms))))
+
+(defn inline-entries
+  "Bounded transcript rows for an owned live pane, using its ordinary node plan.
+   Each row carries the pane geometry so painting and wheel handling agree."
+  [pane width]
+  (let [rows
+        (if (minimized? pane) [(minimized-row pane 1)] (plan pane (max 8 (- (long width) 4))))
+
+        visible
+        (min 12 (count rows))
+
+        start
+        (offset pane rows visible)
+
+        geom
+        (if (minimized? pane)
+          (assoc (select-keys pane [:offset :anchor :total :visible :widths])
+            :view-id (view-id pane))
+          {:view-id (view-id pane)
+           :offset start
+           :anchor (anchor-at rows start)
+           :total (count rows)
+           :visible visible
+           :widths (:widths (meta rows))})
+
+        entries
+        (concat [{:kind :inline-title :text (flat-text (get-in pane [:view :title]))}]
+                (subvec (vec rows) start (+ start visible))
+                (when-let [stop (stop-prompt pane)]
+                  [{:kind :inline-stop :text (str (:label stop) (:note stop) "▏") :stop stop}])
+                [{:kind :inline-hint :text ""}])]
+
+    (mapv (fn [entry]
+            {:line (or (:text entry) "")
+             :meta {:kind :activity-live-entry
+                    :view-id (view-id pane)
+                    :live-pane pane
+                    :live-entry entry
+                    :live-geometry geom}})
+          entries)))
+
+(defn paint-inline-entry!
+  "Paint a live node inside Activity; viewport-top translates hits to terminal rows."
+  [g left row width viewport-top {:keys [live-pane live-entry live-geometry]}]
+  (binding [t/dialog-bg
+            t/code-block-bg
+
+            *hit-row-offset*
+            (long viewport-top)]
+
+    (.register interactions/hit-map
+               {:bounds {:row (+ (long row) (long viewport-top)) :col left :width width}
+                :kind :live-inline
+                :view-id (view-id live-pane)
+                :geometry live-geometry})
+    (case (:kind live-entry)
+      :inline-title
+      (do (paint-styled! g
+                         left
+                         row
+                         (max 1 (- (long width) 5))
+                         t/dialog-fg
+                         [p/BOLD]
+                         (:text live-entry))
+          (paint-fold-control! g {:left left :inner-w (dec (long width))} row live-pane))
+
+      :inline-stop
+      (paint-segments! g
+                       left
+                       row
+                       width
+                       [{:text (get-in live-entry [:stop :label]) :fg t/dialog-hint}
+                        {:text (get-in live-entry [:stop :note]) :fg t/dialog-fg :styles [p/BOLD]}
+                        {:text "▏" :fg t/dialog-hint-key}])
+
+      :inline-hint
+      (dialogs/draw-hint-bar! g left row width (hint live-pane []))
+
+      (paint-entry! g left row width (view-id live-pane) live-entry))))
+
+(defn transcript-run
+  "A live receipt with the existing planner/painter attached for transcript projection.
+   Keeping these functions here avoids a render → dialogs → render dependency."
+  [pane]
+  (assoc (run-row pane)
+    :live-pane pane
+    :inline-entries (fn [width]
+                      (mapv #(assoc-in % [:meta :live-paint] paint-inline-entry!)
+                            (inline-entries pane width)))))

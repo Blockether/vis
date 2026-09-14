@@ -5,6 +5,7 @@
  */
 
 import type { SseEvent } from './types';
+import type { ActivityProjection, ActivityRow } from './activity';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, viewKind } from './view';
 
 /** What a view can be MADE of (`view.spec/live-node-types`). CLOSED. */
@@ -237,6 +238,31 @@ export type LiveLeafNode =
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
 
+/** Trusted engine identity of the operation that opened a live view. */
+export interface LiveViewOwner {
+  invocation_id: string;
+  activity_id?: string;
+}
+
+export function liveOwnerFromWire(value: unknown): LiveViewOwner | undefined {
+  const owner = record(value);
+  const invocation = owner && optionalText(owner.invocation_id);
+  if (!invocation) return undefined;
+  return { invocation_id: invocation, activity_id: optionalText(owner?.activity_id) };
+}
+
+/** Match the original source, never merged row ids or the most recent operation. */
+export function liveOwnerMatches(
+  owner: LiveViewOwner | undefined,
+  activity: ActivityProjection | undefined,
+): boolean {
+  if (!owner || !activity) return false;
+  if (owner.activity_id && owner.activity_id === activity.history?.id) return true;
+  const contains = (rows: ActivityRow[]): boolean =>
+    rows.some((row) => row.id === owner.invocation_id || contains(row.children ?? []));
+  return contains(activity.rows);
+}
+
 export interface LiveView {
   id: string;
   title: string;
@@ -246,6 +272,7 @@ export interface LiveView {
   seq: number;
   created_at?: number;
   source?: string;
+  owner?: LiveViewOwner;
   /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
 }
@@ -547,6 +574,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     seq: count(view.seq, 0),
     created_at: optionalNumber(view.created_at),
     source: optionalText(view.source),
+    owner: liveOwnerFromWire(view.owner),
   };
 }
 

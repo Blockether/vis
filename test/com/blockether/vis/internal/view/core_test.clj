@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.channel.events :as ce]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl]
             [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
@@ -2216,6 +2217,43 @@
                  (let [result (binding [mpl/*attachment-sink* sink]
                                 (hi/close-live! (:id view) ending))]
                    {:result result :rows @sink :file file}))))))
+
+(defdescribe
+  live-activity-owner-test
+  ;; Regression #222: live frames and durable receipts name their actual Activity row.
+  (it "captures the observed invocation and preserves it in the record and attachment"
+      (let [invocation-id
+            (str (random-uuid))
+
+            activity-id
+            (str (random-uuid))
+
+            owner
+            {:invocation-id invocation-id :activity-id activity-id}]
+
+        (binding [extension/*current-invocation-id*
+                  invocation-id
+
+                  extension/*activity-history-id*
+                  activity-id]
+
+          (let [{:keys [rows file]} (filed (live-spec {:id "now" :type "status" :text "Running"})
+                                           {}
+                                           (fn [id]
+                                             (expect (= owner (:owner (hi/live-view id))))))]
+            (expect (= owner (:owner (first rows))))
+            (expect (= {"invocation_id" invocation-id "activity_id" activity-id}
+                       (get-in (json/read-json (first (str/split-lines (slurp file))))
+                               ["view" "owner"])))))))
+  (it "leaves unobserved views ownerless and refuses caller-provided ownership"
+      (let [spec (live-spec {:id "now" :type "status" :text "Ready"})]
+        (binding [extension/*activity-history-id* (str (random-uuid))]
+          (expect (nil? (:owner (hi/normalize-live-view spec)))))
+        (binding [extension/*current-invocation-id* (str (random-uuid))]
+          (expect (= #{:invocation-id} (set (keys (:owner (hi/normalize-live-view spec)))))))
+        (expect (some? (live-refusal #(hi/normalize-live-view (assoc spec
+                                                                :owner {:invocation-id
+                                                                        (str (random-uuid))}))))))))
 
 (defdescribe
   live-artifact-test

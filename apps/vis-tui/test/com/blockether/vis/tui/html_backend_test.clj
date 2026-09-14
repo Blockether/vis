@@ -84,6 +84,8 @@
   "Paint the production joined execution surface; no copied browser layout."
   ([^TerminalScreen screen rows expansions] (paint-activity-review! screen rows expansions nil))
   ([^TerminalScreen screen rows expansions projection-extra]
+   (paint-activity-review! screen rows expansions projection-extra nil))
+  ([^TerminalScreen screen rows expansions projection-extra live-records]
    (.doResizeIfNecessary screen)
    (.clear screen)
    (let [cols
@@ -104,6 +106,8 @@
          (render/format-answer-with-thinking-data*
            ""
            [{:thinking "Inspect files, apply the patch, then run tests."
+             :iteration-id "activity-review-iteration"
+             :attachments (:attachments live-records)
              :forms [{:code "inspect_files()\napply_patch()\nrun_checks()"
                       :stdout "Read 3 files.\nUpdated 2 files."
                       :duration-ms 1200
@@ -112,7 +116,9 @@
            {:show-thinking true :show-iterations true}
            nil
            false
-           {:session-id "activity-review" :detail-expansions expansions})]
+           {:session-id "activity-review"
+            :detail-expansions expansions
+            :runs (:runs live-records)})]
 
      (doto (.newTextGraphics screen)
        (.setBackgroundColor theme/terminal-bg)
@@ -984,3 +990,91 @@
                   (str "duplicated " (pr-str phrase) " on one row at " cols " columns")))
             (is (= (cell-grid html cols 60) (cell-grid terminal cols 60)))
             (is (str/includes? (.renderHtml html) "ACTIVITY"))))))))
+
+(defn activity-live-records
+  "Owned live receipt fixture for the production Activity renderer (#222)."
+  []
+  {:runs [{:view-id "jenkins-build"
+           :title "Jenkins build pool"
+           :reason :interrupted
+           :lines 421
+           :elapsed-ms 617000
+           :owner {:invocation-id "jenkins-watch"}}]
+   :attachments [{:source "tool"
+                  :kind "doc"
+                  :filename "Jenkins.live.ndjson"
+                  :media-type "application/vnd.vis.live+ndjson"
+                  :view_id "jenkins-build"
+                  :owner {:invocation_id "jenkins-watch"}}]})
+
+(defn activity-live-rows
+  "One deterministic operation owns the recorded Jenkins view."
+  []
+  [{:id "jenkins-watch"
+    :sequence 1
+    :operation "watch"
+    :state "failed"
+    :presentation {:headline "Watch Jenkins build" :summary "Build interrupted"}
+    :evidence []}])
+
+;; #222: terminal cells, hit targets and HTML all share one Activity background.
+(deftest activity-live-nested-grid-test
+  (doseq [cols
+          [40 80]
+
+          recorded?
+          [false true]]
+
+    (with-open [html
+                (activity-review-terminal cols 50)
+
+                terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 50))
+
+                hs
+                (doto (TerminalScreen. html) (.startScreen))
+
+                ts
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [records
+            (cond-> (activity-live-records)
+              (not recorded?)
+              (dissoc :attachments))
+
+            rows
+            (activity-live-rows)]
+
+        (paint-activity-review! hs rows {} nil records)
+        (paint-activity-review! ts rows {} nil records)
+        (is (= (cell-grid html cols 50) (cell-grid terminal cols 50)))
+        (let [grid
+              (cell-grid terminal cols 50)
+
+              lines
+              (mapv #(apply str
+                       (map (fn [^com.googlecode.lanterna.TextCharacter cell]
+                              (.getCharacterString cell))
+                            %))
+                    grid)
+
+              header-y
+              (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
+
+              live-y
+              (first (keep-indexed #(when (str/includes? %2 (if recorded? "Live view" "RUN")) %1)
+                                   lines))
+
+              live-x
+              (.indexOf ^String (nth lines live-y) (if recorded? "Live view" "RUN"))
+
+              hit
+              (.lookup interactions/hit-map live-x live-y)]
+
+          (is (< header-y live-y))
+          (is (= (if recorded? :artifact :live-reopen) (:kind hit)))
+          (doseq [y (range header-y (inc live-y))]
+            (is (= theme/code-block-bg
+                   (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                        (get-in grid [y live-x])))))
+          (is (not-any? #(str/includes? % "┌─ Live view") lines)))))))

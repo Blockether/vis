@@ -716,6 +716,15 @@
   ^long [message ^long text-top ^long top]
   (+ text-top top 1 (if (or (= :user (:role message)) (error-card-row-geometry? message)) 1 0)))
 
+(defn- inline-live-geometries
+  "Live panes actually projected into this transcript frame, keyed by exact view id."
+  [layout]
+  (into {}
+        (keep (fn [meta]
+                (when (= :activity-live-entry (:kind meta))
+                  [(:view-id meta) (:live-geometry meta)])))
+        (mapcat #(get-in % [:projected :line-meta]) (:visible layout))))
+
 (defn- live-band-pane
   "The live view the pointer at terminal row `my` is over — the one the band is
    painting right now — or nil when the pointer is on the transcript.
@@ -724,17 +733,36 @@
    same anchor the band was drawn with, so the rows the wheel claims are the rows
    the human sees. A form takes the band back, and with it the wheel."
   [db my]
-  (when-let [panes (seq (:live-views db))]
-    (when-not (:human-input db)
-      (let [ly (:layout db)
-            {:keys [content-top prompt-h]} (state/band-anchor db)
-            span (lv/band-rows (long (or (:cols ly) 0))
-                               (long (or (:rows ly) 0))
-                               panes
-                               content-top
-                               prompt-h)]
+  (when-not (:human-input db)
+    (let [inline
+          (some (fn [region]
+                  (when (and (= :live-inline (:kind region))
+                             (= (long my) (long (get-in region [:bounds :row]))))
+                    (:view-id region)))
+                (.current interactions/hit-map))
 
-        (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
+          panes
+          (:live-views db)
+
+          fallback
+          (remove #(contains? (get-in db [:layout :inline-live-ids] #{}) (lv/view-id %)) panes)
+
+          ly
+          (:layout db)
+
+          {:keys [content-top prompt-h]}
+          (state/band-anchor db)
+
+          span
+          (lv/band-rows (long (or (:cols ly) 0))
+                        (long (or (:rows ly) 0))
+                        fallback
+                        content-top
+                        prompt-h)]
+
+      (or (first (filter #(= inline (lv/view-id %)) panes))
+          (when (and span (<= (long (first span)) (long my) (long (second span))))
+            (last fallback))))))
 
 (defn- live-view-wheel-event
   "The pane-local event for `wheel-delta` EFFECTIVE wheel rows over the live band
@@ -2814,7 +2842,8 @@
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
-         :live-title (lv/watching-title (:live-views db))}
+         :live-title (lv/watching-title (:live-views db))
+         :live-runs (mapv lv/transcript-run (remove lv/dormant? (:live-views db)))}
 
         ;; Single virtualized layout pass: cheap height estimate for
         ;; every message, full projection + real height ONLY for
@@ -3068,14 +3097,22 @@
       ;; is on screen. Before `commit-frame!`, so the pane's own click regions —
       ;; its links and its `+ N more` lines — belong to this frame.
       (when-not (:human-input db)
-        (when-let [geom (lv/paint! g
-                                   cols
-                                   rows
-                                   (:live-views db)
-                                   messages-top
-                                   composer-h
-                                   (System/currentTimeMillis))]
-          (state/dispatch [:live-view-painted (:view-id geom) geom])))
+        (let [inline
+              (inline-live-geometries layout)
+
+              owned
+              (render/owned-live-view-ids (:iterations progress) (:live-runs progress-extra))]
+
+          (doseq [[view-id geom] inline]
+            (state/dispatch [:live-view-painted view-id geom]))
+          (when-let [geom (lv/paint! g
+                                     cols
+                                     rows
+                                     (remove #(contains? owned (lv/view-id %)) (:live-views db))
+                                     messages-top
+                                     composer-h
+                                     (System/currentTimeMillis))]
+            (state/dispatch [:live-view-painted (:view-id geom) geom]))))
       (binding [frame/*column-offset* 0]
         (projects/paint! (frame/surface-graphics screen screen-cols rows)
                          (if (project-sidebar-locked? db screen-cols)
@@ -3154,6 +3191,8 @@
        :eff-scroll (:eff-scroll layout)
        :heights (:heights layout)
        :offsets (:offsets layout)
+       :inline-live-ids (render/owned-live-view-ids (:iterations progress)
+                                                    (:live-runs progress-extra))
        ;; Did this frame place any inline terminal images? Carried for downstream
        ;; state; both the full and scroll paths now re-place images (transmit-once
        ;; + placement), so this no longer forces a full frame.
@@ -3543,7 +3582,8 @@
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
-         :live-title (lv/watching-title (:live-views db))}
+         :live-title (lv/watching-title (:live-views db))
+         :live-runs (mapv lv/transcript-run (remove lv/dormant? (:live-views db)))}
 
         layout-start-ns
         (System/nanoTime)
@@ -3882,7 +3922,8 @@
          :viewport-rows inner-h
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
-         :live-title (lv/watching-title (:live-views db))}
+         :live-title (lv/watching-title (:live-views db))
+         :live-runs (mapv lv/transcript-run (remove lv/dormant? (:live-views db)))}
 
         layout-start-ns
         (System/nanoTime)
@@ -4124,7 +4165,9 @@
         with-layout?
         (and eligible? same-size? last-layout)]
 
-    (if (or (tab-content-loading? db) (lv/animating? (:live-views db)))
+    ;; Live pictures may be inline or in the fallback band. Either needs the complete
+    ;; projection/geometry pass, including when a non-spinning pane scrolls offscreen.
+    (if (or (tab-content-loading? db) (some (complement lv/dormant?) (:live-views db)))
       {:header-hover-only? false
        :partial-live? false
        :header-spinner-only? false

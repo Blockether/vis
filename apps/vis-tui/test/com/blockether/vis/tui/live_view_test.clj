@@ -1201,25 +1201,33 @@
   ;; Regression, Vis session a64d44c2-8228-455f-926e-b3381f19a93b: run rows
   ;; were filed without their executing-form position and their disclosure stayed
   ;; visually collapsed after a click reopened the record.
-  (testing "finished runs retain their execution anchors and disclosure state"
+  ;; #222: ownership comes from the invocation, never whichever form is newest.
+  (testing "finished runs retain their explicit owners and disclosure state"
     (with-db
       (fn []
         (swap! state/app-db assoc
           :messages [{:role :user :text "watch it"} {:role :assistant :text "watching"}]
           :progress {:iterations [{:forms [{:code "first_watch()"}]}]})
-        (state/dispatch [:live-view-open (assoc (ci-view :id "a") :session-id "s1")])
+        (state/dispatch [:live-view-open
+                         (assoc (ci-view :id "a")
+                           :session-id "s1"
+                           :owner {:invocation-id "first" :activity-id "history-a"})])
         (swap! state/app-db assoc-in
           [:progress :iterations]
           [{:forms [{:code "first_watch()"}]} {:forms [{:code "second_watch()"}]}])
-        (state/dispatch [:live-view-open (assoc (ci-view :id "b") :session-id "s1")])
+        (state/dispatch [:live-view-open
+                         (assoc (ci-view :id "b")
+                           :session-id "s1"
+                           :owner {:invocation-id "second"})])
         (state/dispatch [:live-view-close "a" {:reason :completed}])
         (state/dispatch [:live-view-close "b" {:reason :failed}])
         (is (= ["a" "b"] (mapv lv/view-id (:live-views @state/app-db)))
             "nothing is retired: every record remains reachable")
         (let [runs (:runs (second (:messages @state/app-db)))]
-          (is (= [{:iteration-index 0 :form-index 0} {:iteration-index 1 :form-index 0}]
-                 (mapv :anchor runs))
-              "each row returns to the form active when its view opened")
+          (is (= [{:invocation-id "first" :activity-id "history-a"} {:invocation-id "second"}]
+                 (mapv :owner runs))
+              "each row carries the host's exact owner even when forms arrive later")
+          (is (not-any? :anchor runs) "opening a view must not guess its current form")
           (is (= [:completed :failed] (mapv :reason runs))))
         (state/dispatch [:live-view-reopen "a"])
         (is (true? (get-in @state/app-db [:messages 1 :runs 0 :is-reopened]))

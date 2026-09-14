@@ -1017,6 +1017,7 @@ export function LiveViewPanel({
   error,
   load,
   isSettled = false,
+  embedded = false,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -1033,6 +1034,8 @@ export function LiveViewPanel({
    * itself to a screen reader as one that can.
    */
   isSettled?: boolean;
+  /** The owning Activity supplies the frame and background. */
+  embedded?: boolean;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -1064,12 +1067,14 @@ export function LiveViewPanel({
   };
   return (
     <section
-      className="overflow-hidden border border-dialog-edge bg-panel"
+      className={
+        embedded ? 'overflow-hidden' : 'overflow-hidden border border-dialog-edge bg-panel'
+      }
       role={isSettled ? undefined : 'status'}
       aria-live={isSettled ? undefined : 'polite'}
     >
       <header
-        className={`flex items-start gap-2 bg-panel-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'}`}
+        className={`flex items-start gap-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} ${embedded ? '' : 'bg-panel-2'}`}
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate font-mono text-title font-bold text-white">
@@ -1267,15 +1272,17 @@ export function useLiveViews(
   return views;
 }
 
-/** Every open view of this session, painted where the transcript ends. */
+/** Open views, either within their owning Activity or in an unmatched fallback. */
 export function LiveView({
   views,
   client,
   sid,
+  embedded = false,
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
   sid: string;
+  embedded?: boolean;
 }) {
   const [stopping, setStopping] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1331,6 +1338,7 @@ export function LiveView({
         <LiveViewPanel
           key={view.id}
           view={view}
+          embedded={embedded}
           error={stopping === null ? error : null}
           isInterrupting={stopping === view.id}
           onInterrupt={(note) => interrupt(view.id, note)}

@@ -3016,24 +3016,6 @@
                            (fn [panes]
                              (mapv #(if (= view-id (lv/view-id %)) (f %) %) panes)))))))
 
-(defn- current-live-trace-anchor
-  "The zero-based iteration/form position currently executing in `workspace`."
-  [workspace]
-  (let [iterations
-        (vec (get-in workspace [:progress :iterations]))
-
-        iteration-index
-        (dec (count iterations))
-
-        forms
-        (when-not (neg? iteration-index) (vec (:forms (get iterations iteration-index))))
-
-        form-index
-        (dec (count forms))]
-
-    (when (and (not (neg? iteration-index)) (not (neg? form-index)))
-      {:iteration-index iteration-index :form-index form-index})))
-
 (defn- set-run-reopened
   [workspace view-id reopened?]
   (update workspace
@@ -3082,12 +3064,12 @@
   [workspace view]
   (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
     workspace
-    (let [pane (assoc (lv/opened view) :trace-anchor (current-live-trace-anchor workspace))]
+    (let [pane (lv/opened view)]
       (update workspace :live-views (fnil conj []) pane))))
 
 (reg-event-db :live-view-open
-              ;; Mounted on the session's own tab and idempotent by view id. Capture the
-              ;; executing form now; by close time a later form may already be active.
+              ;; Owner matching happens during rendering, after Activity rows can arrive.
+              ;; Never infer ownership from the most recently executing form.
               (fn [db [_ view]]
                 (let [target (session-target-tab db (:session-id view))]
                   (if (= :not-here target) db (update-tab db target #(mount-live-pane % view))))))

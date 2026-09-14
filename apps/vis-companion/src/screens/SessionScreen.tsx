@@ -4039,13 +4039,7 @@ export function SessionScreen({
           client={client}
           sid={sid}
           onOpenAttachment={openLinkedArtifact}
-          liveViewPanel={
-            liveViews.length > 0 ? (
-              <div className="mt-5">
-                <LiveView views={liveViews} client={client} sid={sid} />
-              </div>
-            ) : undefined
-          }
+          liveViews={liveViews}
         />
       </div>
     );

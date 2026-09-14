@@ -2857,7 +2857,12 @@
   [att]
   (cond-> {}
     (:view-id att)
-    (assoc :view_id (str (:view-id att)))))
+    (assoc :view_id (str (:view-id att)))
+
+    (get-in att [:owner :invocation-id])
+    (assoc :live_invocation_id
+      (get-in att [:owner :invocation-id]) :live_activity_id
+      (get-in att [:owner :activity-id]))))
 
 (defn- turn-session-soul-id
   "The SESSION soul a turn belongs to, resolved `session_turn_soul -> session_state
@@ -3054,7 +3059,13 @@
              :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
              :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}
       (:view_id row)
-      (assoc :view-id (:view_id row)))))
+      (assoc :view-id (:view_id row))
+
+      (:live_invocation_id row)
+      (assoc :owner
+        (cond-> {:invocation-id (:live_invocation_id row)}
+          (:live_activity_id row)
+          (assoc :activity-id (:live_activity_id row)))))))
 
 (defn db-list-turn-attachments
   "Ordered INBOUND user images persisted for one `session_turn_soul` (the `user`
@@ -3153,8 +3164,8 @@
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :view_id :version :audience :storage_uri :size_bytes :transcription
-   [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
+   :filename :view_id :live_invocation_id :live_activity_id :version :audience :storage_uri
+   :size_bytes :transcription [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
   "[[row->attachment]] for a bytes-free row: the same envelope minus `:base64`,
@@ -3205,14 +3216,16 @@
         {}
         (query-sql!
           db-info
-          (into [(str "SELECT id, session_turn_soul_id, session_turn_iteration_id, "
-                      "tool_call_id, position, kind, media_type, filename, view_id, "
-                      "version, audience, commentable, storage_uri, size_bytes, transcription, "
-                      "CASE WHEN bytes IS NULL THEN 0 ELSE 1 END AS has_bytes "
-                      "FROM session_attachment WHERE session_turn_iteration_id IN ("
-                      (str/join "," (repeat (count ids) "?"))
-                      ") ORDER BY session_turn_iteration_id ASC, tool_call_id ASC, position ASC")]
-                ids))))))
+          (into
+            [(str
+               "SELECT id, session_turn_soul_id, session_turn_iteration_id, "
+               "tool_call_id, position, kind, media_type, filename, view_id, live_invocation_id, live_activity_id, "
+               "version, audience, commentable, storage_uri, size_bytes, transcription, "
+               "CASE WHEN bytes IS NULL THEN 0 ELSE 1 END AS has_bytes "
+               "FROM session_attachment WHERE session_turn_iteration_id IN ("
+               (str/join "," (repeat (count ids) "?"))
+               ") ORDER BY session_turn_iteration_id ASC, tool_call_id ASC, position ASC")]
+            ids))))))
 
 (defn db-list-turn-all-attachments
   "EVERY attachment hanging off one TURN - user images AND tool artifacts
@@ -3275,7 +3288,8 @@
   (into [[:a.id :id] [:a.session_turn_soul_id :session_turn_soul_id]
          [:a.session_turn_iteration_id :session_turn_iteration_id] [:a.tool_call_id :tool_call_id]
          [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
-         [:a.view_id :view_id] [:a.version :version] [:a.audience :audience]
+         [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
+         [:a.live_activity_id :live_activity_id] [:a.version :version] [:a.audience :audience]
          [:a.storage_uri :storage_uri] [:a.transcription :transcription] [:a.size_bytes :size_bytes]
          [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
         [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))

@@ -26,6 +26,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel.events :as channel-events]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view.materializer :as materializer]
@@ -1221,22 +1222,28 @@
         session-id
         (or (trimmed (pick* view :session-id)) (ambient-session-id))]
 
-    (checked-live-view (cond-> {:id (str (random-uuid))
-                                :title title
-                                :nodes nodes
-                                :timeout-ms
-                                (normalize-timeout view no-timeout-ms invalid-live-view!)
-                                :channel-ids (normalize-channel-ids view invalid-live-view!)
-                                :seq 0
-                                :created-at (util/now-ms)}
-                         session-id
-                         (assoc :session-id session-id)
+    (checked-live-view
+      (cond-> {:id (str (random-uuid))
+               :title title
+               :nodes nodes
+               :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
+               :channel-ids (normalize-channel-ids view invalid-live-view!)
+               :seq 0
+               :created-at (util/now-ms)}
+        extension/*current-invocation-id*
+        (assoc :owner
+          (cond-> {:invocation-id extension/*current-invocation-id*}
+            extension/*activity-history-id*
+            (assoc :activity-id extension/*activity-history-id*)))
 
-                         (trimmed (pick* view :description))
-                         (assoc :description (trimmed (pick* view :description)))
+        session-id
+        (assoc :session-id session-id)
 
-                         (trimmed (pick* view :source))
-                         (assoc :source (trimmed (pick* view :source)))))))
+        (trimmed (pick* view :description))
+        (assoc :description (trimmed (pick* view :description)))
+
+        (trimmed (pick* view :source))
+        (assoc :source (trimmed (pick* view :source)))))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -2015,6 +2022,9 @@
                  :storage-uri (sink/record-uri (:session-id view) (:view-id result))
                  :size size
                  :line-count line-count}
+          (:owner view)
+          (assoc :owner (:owner view))
+
           (<= (long size) (long view-spec/live-artifact-inline-bytes))
           (assoc :base64
             (.encodeToString (java.util.Base64/getEncoder)

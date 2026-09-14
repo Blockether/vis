@@ -2213,7 +2213,8 @@
                                          :col x
                                          :width (min iw (long (or (:live-card-width meta) iw)))}
                                 :kind :artifact
-                                :live-card? (boolean (:live-card-row meta))
+                                :live-card? (boolean (or (:live-card-row meta)
+                                                         (:activity-live? meta)))
                                 :session-id (:session-id meta)
                                 :artifact artifact}))
                   (cond
@@ -2459,15 +2460,20 @@
 
                       (p/set-colors! g band-fg band-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
-                      (p/paint-styled-line! g
-                                            x
-                                            y
-                                            raw
-                                            band-fg
-                                            band-bg
-                                            t/code-block-fg
-                                            t/code-block-bg)
+                      (when-not (= :activity-live-entry (:kind meta))
+                        (p/paint-styled-line! g
+                                              x
+                                              y
+                                              raw
+                                              band-fg
+                                              band-bg
+                                              t/code-block-fg
+                                              t/code-block-bg))
+                      (register-toggle-region! meta viewport-top y x iw)
                       (case (:kind meta)
+                        :activity-live-entry
+                        ((:live-paint meta) g x y (max 0 (dec (long iw))) viewport-top meta)
+
                         (:activity-row :activity-header)
                         (do (p/set-colors! g
                                            (cond (= :activity-header (:kind meta)) band-fg
@@ -3665,7 +3671,7 @@
    result-detail error success? silent? tag
    ;; A settled live view joins this exact form after it closes, and reopening
    ;; changes its chevron. Both transitions must invalidate the iteration cache.
-   (mapv #(select-keys % [:view-id :title :reason :lines :elapsed-ms :is-reopened]) runs)
+   (mapv #(select-keys % [:view-id :title :reason :lines :elapsed-ms :is-reopened :live-pane]) runs)
    ;; The form OWNS its Activity: every published revision replaces the snapshot in
    ;; place, so the iteration cache has to invalidate on the value itself.
    activity
@@ -4831,6 +4837,34 @@
     (mapv #(assoc-in % [:meta :doc] doc)
           (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
 
+(defn- owns-live-view?
+  "Match host-captured ownership, including retained histories and nested invocations."
+  [activity owner]
+  (let [field
+        (fn [k]
+          (or (get owner k)
+              (get owner (keyword (str/replace (name k) "-" "_")))
+              (get owner (str/replace (name k) "-" "_"))))
+
+        activity-id
+        (field :activity-id)
+
+        invocation-id
+        (field :invocation-id)
+
+        sources
+        (or (seq (:sources activity)) [activity])]
+
+    (boolean (some (fn [source]
+                     (or (and activity-id
+                              (some #(= (str activity-id) (str (:id %)))
+                                    (or (seq (:histories source)) [(:history source)])))
+                         (and invocation-id
+                              (some #(= (str invocation-id) (str (:id %)))
+                                    (mapcat #(tree-seq (comp seq :children) :children %)
+                                            (:rows source))))))
+                   sources))))
+
 (defn- iteration-artifact-rows
   "Normalize durable produced attachments in byte-endpoint index order."
   [iteration-id attachments]
@@ -4852,7 +4886,10 @@
                                       :iteration-id (str iteration-id)
                                       :index index}
                                (field artifact "view_id")
-                               (assoc :view-id (field artifact "view_id")))))))
+                               (assoc :view-id (field artifact "view_id"))
+
+                               (field artifact "owner")
+                               (assoc :owner (field artifact "owner")))))))
          vec)))
 
 (defn- strip-produced-artifact-transport
@@ -4870,7 +4907,7 @@
   "One recorded view, bounded in terminal cells. Run status is joined only by view ID;
    an unloaded record says Recorded, never an inferred success. Every card row opens
    the same durable artifact, including borders and padding."
-  [artifact session-id max-w run]
+  [artifact session-id max-w run nested?]
   (let [width
         (max 1 (long max-w))
 
@@ -4907,26 +4944,31 @@
           (str "│ " (p/pad-right (p/ellipsize text inner) inner) " │"))
 
         rows
-        [[:top (edge "┌" "─ Live view " "┐")] [:pad (body "")] [:title (body title)]
-         [:pad (body "")] [:status (body status)]
-         [:hint (body (str "Click or " (keymap/label-for :toggle-detail-labels) " to open"))]
-         [:pad (body "")] [:bottom (edge "└" "" "┘")]]]
+        (if nested?
+          [[:title (str "  ▸ Live view · " title)] [:status (str "    " status)]
+           [:hint (str "    Click or " (keymap/label-for :toggle-detail-labels) " to open")]]
+          [[:top (edge "┌" "─ Live view " "┐")] [:pad (body "")] [:title (body title)]
+           [:pad (body "")] [:status (body status)]
+           [:hint (body (str "Click or " (keymap/label-for :toggle-detail-labels) " to open"))]
+           [:pad (body "")] [:bottom (edge "└" "" "┘")]])]
 
-    (into [{:line ""}]
+    (into (if nested? [] [{:line ""}])
           (concat (map (fn [[row line]]
-                         {:line (str result-marker (p/truncate-cols line width))
+                         {:line (str (if nested? activity-marker result-marker)
+                                     (p/truncate-cols line width))
                           :meta {:artifact artifact
                                  :session-id session-id
-                                 :live-card-row row
+                                 :activity-live? nested?
+                                 :live-card-row (when-not nested? row)
                                  :live-card-width width
                                  :live-card-error? (contains? #{"failed" "interrupted" "timeout"
                                                                 "cancelled"}
                                                               reason)}})
                        rows)
-                  [{:line ""}]))))
+                  (when-not nested? [{:line ""}])))))
 
 (defn- artifact-disclosure-entries
-  [artifacts session-id max-w runs]
+  [artifacts session-id max-w runs nested?]
   (into []
         (mapcat (fn [{:keys [filename media-type view-id] :as artifact}]
                   (let [meta {:artifact artifact :session-id session-id}]
@@ -4935,7 +4977,8 @@
                                                   session-id
                                                   max-w
                                                   (when view-id
-                                                    (some #(when (= view-id (:view-id %)) %) runs)))
+                                                    (some #(when (= view-id (:view-id %)) %) runs))
+                                                  nested?)
                       [{:line (str result-marker filename " · " media-type) :meta meta}
                        {:line (str result-marker "↗ click to open in the system viewer")
                         :meta meta}]))))
@@ -6566,12 +6609,17 @@
          runs)))))
 
 (defn- place-run-rows
-  "Attach run rows to their captured zero-based iteration/form positions.
-   Returns unplaced legacy rows separately so no record becomes unreachable."
+  "Attach run rows only to their trusted Activity owner.
+   Unmatched and ownerless receipts remain standalone and reachable."
   [iterations runs]
   (reduce (fn [{:keys [iterations] :as layout} run]
             (let [{:keys [iteration-index form-index]}
-                  (:anchor run)
+                  (when-let [owner (:owner run)]
+                    (first (for [[iteration-index iteration] (map-indexed vector iterations)
+                                 [form-index form] (map-indexed vector (:forms iteration))
+                                 :when (owns-live-view? (:activity form) owner)]
+
+                             {:iteration-index iteration-index :form-index form-index})))
 
                   forms
                   (when (and (integer? iteration-index) (not (neg? (long iteration-index))))
@@ -6589,6 +6637,13 @@
                 (update layout :unplaced conj run))))
           {:iterations (vec (or iterations [])) :unplaced []}
           (or runs [])))
+
+(defn owned-live-view-ids
+  "Exact live owners in the complete trace, independent of viewport virtualization."
+  [iterations runs]
+  (into #{}
+        (map :view-id)
+        (mapcat :runs (mapcat :forms (:iterations (place-run-rows iterations runs))))))
 
 (defn- execution-group
   "Display-only aggregation. Wire forms, invocation ids and their lifecycles remain unchanged."
@@ -6916,7 +6971,13 @@
                 form
 
                 form-artifacts
-                (when (= (long block-number) (long (count forms))) iteration-artifacts)
+                (filterv (fn [artifact]
+                           (if-let [owner (:owner artifact)]
+                             (or (owns-live-view? (:activity form) owner)
+                                 (and (= (long block-number) (long (count forms)))
+                                      (not-any? #(owns-live-view? (:activity %) owner) forms)))
+                             (= (long block-number) (long (count forms)))))
+                  iteration-artifacts)
 
                 is-error?
                 (and (some? success?) (not success?))
@@ -6929,7 +6990,11 @@
                 ;; to be placed here from a separate live record.
                 activity-node-id
                 (when (and session-id
-                           (or (seq (:rows activity))
+                           (or (seq runs)
+                               (some #(and (attach/live-artifact? %)
+                                           (owns-live-view? activity (:owner %)))
+                                     form-artifacts)
+                               (seq (:rows activity))
                                (pos? (long (get-in activity [:omitted :rows] 0)))))
                   (detail-node-id {:session-turn-id session-turn-id
                                    :iteration-number iteration-number
@@ -7306,21 +7371,37 @@
                   (mapv #(update % :meta assoc :code-result? true) result-lines)
                   (vec result-lines))
 
+                nested-artifacts
+                (when activity-run
+                  (filterv #(and (attach/live-artifact? %) (owns-live-view? activity (:owner %)))
+                    form-artifacts))
+
                 artifact-block
-                (artifact-disclosure-entries form-artifacts session-id fill-w (mapcat :runs forms))
+                (artifact-disclosure-entries (remove (set nested-artifacts) form-artifacts)
+                                             session-id
+                                             fill-w
+                                             (mapcat :runs forms)
+                                             false)
+
+                live-artifact-block
+                (artifact-disclosure-entries nested-artifacts session-id fill-w runs true)
 
                 ;; Python and Result share the compact execution surface. Activity follows as
                 ;; a timeline surface, while the verdict remains transcript text above both.
                 generic-run-entries
                 (run-row-entries (filterv (fn [run]
-                                            (not-any? #(and (attach/live-artifact? %)
-                                                            (:view-id %)
-                                                            (= (:view-id %) (:view-id run)))
-                                                      iteration-artifacts))
+                                            (and (not (:live-pane run))
+                                                 (not-any? #(and (attach/live-artifact? %)
+                                                                 (:view-id %)
+                                                                 (= (:view-id %) (:view-id run)))
+                                                           iteration-artifacts)))
                                    runs)
                                  fill-w
                                  session-id
                                  false)
+
+                inline-live-entries
+                (mapcat #((:inline-entries %) fill-w) (filter :inline-entries runs))
 
                 ;; A failure closes with one blank error row, the same bottom edge a code
                 ;; band or a result band ends on; without it the red message sat hard
@@ -7343,13 +7424,20 @@
 
                 activity-surface
                 (when activity-run
-                  (activity-detail-entries activity-run (max 1 (long fill-w)) session-id))]
+                  (let [entries
+                        (activity-detail-entries activity-run (max 1 (long fill-w)) session-id)]
+                    (vec (concat
+                           (butlast entries)
+                           (map #(update % :line (partial str activity-marker)) generic-run-entries)
+                           (map #(update % :line (partial str activity-marker)) inline-live-entries)
+                           live-artifact-block
+                           (take-last 1 entries)))))]
 
-            ;; RESULT lives under CODE; Activity and failures remain visible.
+            ;; Live receipts share their owning Activity's background and inset.
             (vec (concat (inset-entries
                            (concat comment-block code-block execution-details activity-surface))
                          artifact-block
-                         generic-run-entries))))
+                         (when-not activity-run generic-run-entries)))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result
@@ -8012,7 +8100,8 @@
          (max 10 (- (long bubble-w) 4))
 
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-                 viewport-rows pending-sends command-label queue-paused live-title runs agent-name]}
+                 viewport-rows pending-sends command-label queue-paused live-title runs agent-name
+                 live-runs]}
          extra
 
          now-ms
@@ -8040,7 +8129,10 @@
          ;; anchor, and what cannot be placed trails the trace. The placed `:runs`
          ;; join `form-fingerprint`, so the body cache below busts on every patch.
          run-layout
-         (place-run-rows iterations runs)
+         (place-run-rows iterations
+                         (concat (remove #(contains? (set (map :view-id live-runs)) (:view-id %))
+                                   runs)
+                                 live-runs))
 
          iterations
          (:iterations run-layout)

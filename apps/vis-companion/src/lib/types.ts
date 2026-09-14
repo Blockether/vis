@@ -5,6 +5,7 @@
 // Type-only, so it is erased at compile time and the `activity` -> `types`
 // import stays the one real edge between these two modules.
 import type { ActivityProjection } from './activity';
+import type { LiveViewOwner } from './live-view';
 
 export interface GatewayConn {
   /** Base URL, e.g. http://100.64.0.10:7890 (LAN, Tailscale, or cloudflared). */
@@ -554,6 +555,8 @@ export interface IterationAttachment {
   transcription_status?: string;
   /** Stable identity of the settled live view this artifact is the record of. */
   view_id?: string;
+  /** Trusted producer identity for a settled live-view receipt. */
+  owner?: LiveViewOwner;
 }
 
 /**

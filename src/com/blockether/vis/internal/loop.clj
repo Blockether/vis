@@ -1173,6 +1173,9 @@
                           extension/*tool-event-context*
                           activity-context
 
+                          extension/*activity-history-id*
+                          activity-history-id
+
                           mpl-capture/*attachment-reader*
                           attachment-reader
 

@@ -688,6 +688,9 @@
           b64
           (.encodeToString (java.util.Base64/getEncoder) png)
 
+          owner
+          {:invocation-id (str (random-uuid)) :activity-id (str (random-uuid))}
+
           iid
           (h/store-iteration!
             s
@@ -709,7 +712,8 @@
                :media-type "application/vnd.vis.live+ndjson"
                :base64 b64
                :filename "watch.live.ndjson"
-               :view-id "watch-view"}]})
+               :view-id "watch-view"
+               :owner owner}]})
 
           got
           (vis/db-list-iteration-attachments s iid)]
@@ -754,7 +758,12 @@
               live-meta
               (first (filter #(= "watch.live.ndjson" (:filename %)) meta-rows))]
 
-          (expect (= "watch-view" (:view-id live-row) (:view-id live-meta)))))
+          (expect (= "watch-view" (:view-id live-row) (:view-id live-meta)))
+          ;; Regression #222: owner survives byte-free listings and full attachment reads.
+          (expect (= owner
+                     (:owner live-row)
+                     (:owner live-meta)
+                     (:owner (vis/db-read-attachment s (:id live-meta)))))))
       ;; Batch variant groups by iteration id.
       (let [batch (vis/db-list-iterations-attachments s [iid])]
         (expect (= 1 (count batch)))

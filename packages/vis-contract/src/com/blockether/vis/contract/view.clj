@@ -162,8 +162,8 @@
 
 (def live-view-stamp-keys
   "Keys the ENGINE stamps on a live view, never written in a spec: its own
-   identity, its arrival time, and the patch counter every surface orders by."
-  #{:id :seq :created-at})
+   identity, owning Activity invocation, arrival time, and patch counter."
+  #{:id :seq :created-at :owner})
 
 (def live-column-keys "Every key one declared table column may carry." #{:id :label :align})
 
@@ -250,7 +250,7 @@
    (`:storage-uri`, `:size`, `:line-count`, and `:base64` only under
    [[live-artifact-inline-bytes]])."
   #{:id :view-id :session-id :title :media-type :audience :ended-at :reason :view :storage-uri :size
-    :line-count :base64})
+    :line-count :base64 :owner})
 
 ;; The keys — one table, and the parser reads it too
 ;;

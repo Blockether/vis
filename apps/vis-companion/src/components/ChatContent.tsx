@@ -16,6 +16,8 @@ import Prism from 'prismjs';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { LiveRunRow } from './LiveArtifact';
+import { LiveView } from './LiveView';
+import { liveOwnerMatches, type LiveView as LiveViewModel } from '../lib/live-view';
 import { ActivityPanel, ActivityAttachmentContext } from './ActivityPanel';
 import { mergeActivity, type ActivityProjection } from '../lib/activity';
 import { usePythonCodeShown } from '../lib/transcript-display';
@@ -1476,10 +1478,18 @@ const FormTrace = memo(function FormTrace({
   forms,
   live = false,
   showCode,
+  liveViews,
+  attachments,
+  client,
+  sid,
 }: {
   forms: TranscriptForm[];
   live?: boolean;
   showCode: boolean;
+  liveViews: LiveViewModel[];
+  attachments: IterationAttachment[];
+  client?: GatewayClient;
+  sid?: string;
 }) {
   const form = executionGroup(forms, live);
   const code = formCode(form);
@@ -1494,6 +1504,15 @@ const FormTrace = memo(function FormTrace({
     .filter(Boolean)
     .join('\n');
   const { detected: detectedActivity, running, status } = formStep(form, live);
+  const ownedViews = liveViews.filter((view) =>
+    forms.some((source) => liveOwnerMatches(view.owner, source.activity)),
+  );
+  const ownedAttachments = attachments.filter(
+    (attachment) =>
+      attachmentIsLive(attachment) &&
+      forms.some((source) => liveOwnerMatches(attachment.owner, source.activity)),
+  );
+  const hasActivity = detectedActivity || ownedViews.length > 0 || ownedAttachments.length > 0;
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {forms[0].comment?.trim() && (
@@ -1519,8 +1538,8 @@ const FormTrace = memo(function FormTrace({
         </CollapsibleFormCode>
       )}
       <div
-        className={detectedActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
-        data-execution-activity={detectedActivity || undefined}
+        className={hasActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
+        data-execution-activity={hasActivity || undefined}
         role={running ? 'status' : 'group'}
         aria-live={running ? 'polite' : undefined}
         aria-label="Execution trace"
@@ -1528,6 +1547,12 @@ const FormTrace = memo(function FormTrace({
         {status && <span className="sr-only">{status}</span>}
         {detectedActivity && (
           <ActivityPanel activity={forms.flatMap((source) => source.activity ?? [])} />
+        )}
+        {client && sid && (
+          <>
+            <LiveView views={ownedViews} client={client} sid={sid} embedded />
+            <AttachmentRail client={client} sid={sid} attachments={ownedAttachments} />
+          </>
         )}
       </div>
     </div>
@@ -2284,6 +2309,7 @@ type TraceSegmentProps = {
   showCode: boolean;
   client?: GatewayClient;
   sid?: string;
+  liveViews: LiveViewModel[];
 };
 
 /**
@@ -2301,7 +2327,13 @@ function sameTraceEntry(a: TraceEntry, b: TraceEntry): boolean {
 }
 
 function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
-  if (a.live !== b.live || a.showCode !== b.showCode || a.client !== b.client || a.sid !== b.sid)
+  if (
+    a.live !== b.live ||
+    a.showCode !== b.showCode ||
+    a.client !== b.client ||
+    a.sid !== b.sid ||
+    a.liveViews !== b.liveViews
+  )
     return false;
   const before = a.segment;
   const after = b.segment;
@@ -2321,6 +2353,7 @@ const TraceSegment = memo(function TraceSegment({
   showCode,
   client,
   sid,
+  liveViews,
 }: TraceSegmentProps) {
   // Narration and attachments bound a run; consecutive Python forms share its source and axis.
   const chunks = useMemo(() => {
@@ -2370,6 +2403,10 @@ const TraceSegment = memo(function TraceSegment({
                     forms={chunk.forms}
                     live={live}
                     showCode={showCode || !chunk.isPython}
+                    liveViews={liveViews}
+                    attachments={attachments}
+                    client={client}
+                    sid={sid}
                   />
                 ) : (
                   <CardGrid cards={chunk.cards} live={live} />
@@ -2379,10 +2416,26 @@ const TraceSegment = memo(function TraceSegment({
           })}
         </div>
       )}
-      {client && sid && <AttachmentRail client={client} sid={sid} attachments={attachments} />}
+      {client && sid && (
+        <AttachmentRail
+          client={client}
+          sid={sid}
+          attachments={attachments.filter(
+            (attachment) =>
+              !attachmentIsLive(attachment) ||
+              !chunks.some(
+                (chunk) =>
+                  chunk.kind === 'code' &&
+                  chunk.forms.some((form) => liveOwnerMatches(attachment.owner, form.activity)),
+              ),
+          )}
+        />
+      )}
     </section>
   );
 }, sameTraceSegment);
+
+const NO_LIVE_VIEWS: LiveViewModel[] = [];
 
 export const IterationTrace = memo(function IterationTrace({
   iterations,
@@ -2392,6 +2445,7 @@ export const IterationTrace = memo(function IterationTrace({
   client,
   sid,
   showCode: codeOverride,
+  liveViews = NO_LIVE_VIEWS,
 }: {
   iterations: TranscriptIteration[];
   /** Prose the ANSWER band already paints — see `answeredProse`. */
@@ -2402,6 +2456,7 @@ export const IterationTrace = memo(function IterationTrace({
   client?: GatewayClient;
   sid?: string;
   showCode?: boolean;
+  liveViews?: LiveViewModel[];
 }) {
   const preferredCode = usePythonCodeShown();
   const showCode = codeOverride ?? preferredCode;
@@ -2494,9 +2549,21 @@ export const IterationTrace = memo(function IterationTrace({
     return () => window.cancelAnimationFrame(frame);
   }, [foldFloor, hiddenSegments, rampDone, rampId, whole]);
 
-  if (!segments.length) return null;
   const shown = hidden > 0 ? segments.slice(hidden) : segments;
-
+  const unmatchedViews = liveViews.filter(
+    (view) =>
+      !shown.some((segment) =>
+        segment.items.some((entry) =>
+          entry.forms.some(
+            (form) =>
+              !hiddenForm(form) &&
+              showFormCode(form, formCode(form)) &&
+              liveOwnerMatches(view.owner, form.activity),
+          ),
+        ),
+      ),
+  );
+  if (!segments.length && !unmatchedViews.length) return null;
   return (
     <ActivityAttachmentContext.Provider
       value={(id) => {
@@ -2530,8 +2597,10 @@ export const IterationTrace = memo(function IterationTrace({
             showCode={showCode}
             client={client}
             sid={sid}
+            liveViews={liveViews}
           />
         ))}
+        {client && sid && <LiveView views={unmatchedViews} client={client} sid={sid} />}
       </div>
     </ActivityAttachmentContext.Provider>
   );
@@ -3354,7 +3423,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   whole = false,
   client,
   sid,
-  liveViewPanel,
+  liveViews,
   onOpenAttachment,
   onFork,
   isForking = false,
@@ -3379,8 +3448,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   settled?: boolean;
   client?: GatewayClient;
   sid?: string;
-  /** Host-owned Live Views follow the turn trace and precede its phase ticker. */
-  liveViewPanel?: ReactNode;
+  /** Live views are placed in their owning execution, or an unmatched fallback. */
+  liveViews?: LiveViewModel[];
   /** Opens the artifact named by a safe `attachment://<uuid>` answer link. */
   onOpenAttachment?: OpenAttachment;
   /** Fork through this persisted turn, including its answer. Absent before persistence. */
@@ -3448,6 +3517,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           whole={whole}
           client={client}
           sid={sid}
+          liveViews={liveViews}
         />
         {/* Message prose sits on the SAME canonical step as the trace it grows out of:
             tool results, thinking bands and code cards are all `text-ui` (11px), so an
@@ -3464,7 +3534,6 @@ export const AssistantMessage = memo(function AssistantMessage({
             {emptyStatus && <span>{emptyStatus}</span>}
           </div>
         )}
-        {liveViewPanel}
         {streaming ? (
           <TurnPhaseLine phase={progressLabel ?? `${agentName} is working`} startedAt={startedAt} />
         ) : cancelled ? (

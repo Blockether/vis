@@ -2212,12 +2212,33 @@
         }
       ]
     },
+    "live_owner": {
+      "description": "Host-stamped Activity invocation and optional persistent history that own a live view.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "invocation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "activity_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "invocation_id"
+      ]
+    },
     "live_view": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "id": {
           "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "owner": {
+          "$ref": "#/$defs/live_owner"
         },
         "title": {
           "$ref": "common.json#/$defs/non_blank_string"
@@ -2649,6 +2670,9 @@
         },
         "session_id": {
           "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "owner": {
+          "$ref": "#/$defs/live_owner"
         },
         "title": {
           "$ref": "common.json#/$defs/non_blank_string"

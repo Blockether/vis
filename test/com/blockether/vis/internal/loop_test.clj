@@ -10127,6 +10127,67 @@
                                     (try (env/dispose-python-context! pc)
                                          (catch Throwable _ nil)))))))))
 
+(defdescribe
+  live-activity-owner-boundary-test
+  ;; Regression #222: the host callback carries the same history as its resulting form.
+  (it
+    "stamps the observed invocation and persistent Activity history across the Python bridge"
+    (with-redefs-fn {live-views-dir (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
+                                                               (str "vis-views-" (random-uuid))))}
+      (fn []
+        (let [environment
+              (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+              opened
+              (atom nil)]
+
+          (try
+            (tpc/with-own
+              [pc {}]
+              (python-host/install-sync-tools!
+                pc
+                {"__vis_host_live__"
+                 (fn [envelope]
+                   (let [ctx
+                         extension/*tool-event-context*
+
+                         invocation
+                         (activity-event/invocation ctx nil)
+
+                         details
+                         {:operation :watch_build
+                          :presenter :generic
+                          :activity {:headline "Watch build" :show-start true}}]
+
+                     (extension/*tool-event-sink*
+                       (activity-event/start-event ctx invocation details))
+                     (try (binding [extension/*current-invocation-id* (:invocation-id invocation)]
+                            (let [answer (hi/live-json! envelope)]
+                              (reset! opened (get (json/read-json answer) "view_id"))
+                              answer))
+                          (finally (extension/*tool-event-sink* (activity-event/terminal-event
+                                                                  ctx
+                                                                  invocation
+                                                                  (assoc details
+                                                                    :started-at-ms (util/now-ms)
+                                                                    :outcome :succeeded
+                                                                    :result nil)))))))}
+                (fn [session name]
+                  (python-runtime/install-sync-tool! session name)))
+              (let [result
+                    (#'lp/run-python-code pc (open-a-view) :env environment)
+
+                    owner
+                    (:owner (hi/live-view @opened))]
+
+                (expect (nil? (:error result)))
+                (expect (some? (:invocation-id owner)))
+                (expect (= (:invocation-id owner) (get-in result [:activity :rows 0 :id])))
+                (expect (= (:activity-id owner) (get-in result [:activity :history :id])))
+                (expect (some? (:activity-id owner)))))
+            (finally (when @opened (hi/close-live! @opened))
+                     (lp/dispose-environment! environment))))))))
+
 (defn- cancelled-watching-block
   "The same block as [[watching-block]], stopped the way a person's Cancel stops
    one: the turn's cancellation token is fired the moment the view is up, and the

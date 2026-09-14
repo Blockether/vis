@@ -728,6 +728,8 @@ CREATE TABLE session_attachment (
   -- A settled live view keeps the identity of the surface it replaces. NULL for
   -- ordinary attachments.
   view_id                   TEXT,
+  live_invocation_id        TEXT,
+  live_activity_id          TEXT,
 
   -- VERSION: artifacts with the SAME `filename` inside one session are ONE
   -- artifact iterated over time, not N loose files. The writer allocates

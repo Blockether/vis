@@ -1412,7 +1412,7 @@
         (map-indexed
           (fn [idx
                {:keys [id tool-call-id kind media-type filename size audience version transcription
-                       transcription-status view-id]}]
+                       transcription-status view-id owner]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
                      :tool_call_id tool-call-id
@@ -1430,6 +1430,9 @@
 
               view-id
               (assoc :view_id (str view-id))
+
+              owner
+              (assoc :owner (wire/->wire owner))
 
               ;; TRANSCRIPTION: a recording's own words, transcribed on the way
               ;; in. It rides the DESCRIPTOR rather than the bytes so a client
