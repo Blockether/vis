@@ -728,6 +728,11 @@
   ;; Context -> snapshot and admitted calls. Guarded by session-contexts.
   (atom {}))
 
+(defonce ^:private loading-snapshots
+  ;; Frozen roots retained by active scans, including not-yet-loaded siblings.
+  ;; Guarded by session-contexts, like context retirement.
+  (atom #{}))
+
 (defn- delete-tree!
   [^File dir]
   (when (and dir (.exists dir))
@@ -752,6 +757,7 @@
              (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
                (pyext/stop-worker! worker))
              (when (and snapshot
+                        (not (contains? @loading-snapshots snapshot))
                         (not-any? #(= snapshot (:snapshot %)) (vals @loaded))
                         (not-any? #(= snapshot (:snapshot %)) (vals @context-lifecycle)))
                (delete-tree! (io/file snapshot))))))))
@@ -2317,7 +2323,10 @@
            (let [rk [(:roots plan) (:dependencies plan) (:project plan) (:automatic? plan)]]
              (or (get-in @roots [rk k])
                  (let [v (f plan)]
-                   (swap! roots assoc-in [rk k] v)
+                   (locking session-contexts
+                     (when (= k :frozen)
+                       (swap! loading-snapshots conj (.getCanonicalPath ^File (:dir v))))
+                     (swap! roots assoc-in [rk k] v))
                    v))))
 
          fp
@@ -2340,92 +2349,95 @@
                          (.getCanonicalPath f))
                        files))]
 
-         (reset! failures [])
-         ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
-         ;; (its PREVIOUS context is closed only after the new one is live); a
-         ;; file that FAILS keeps its last-good entry — still registered, context
-         ;; still open — untouched. So a failed reload never leaves the stale
-         ;; old+dead mix issue #44 reported (old symbols bound to a CLOSED
-         ;; namespace → every door gone, new symbols missing):
-         ;; the live surface holds the working last-good module wholesale.
-         ;; `vis-agent doctor` (a fresh process, no last-good) and a live `/reload`
-         ;; run the SAME loader and diverge only in the fallback for a failed
-         ;; load — nothing to fall back to vs. the retained last-good.
-         (doseq [^File f files]
-           (let [path (.getCanonicalPath f)
-                 prev-ctx (get-in @loaded [path :context])]
+         (try
+           (reset! failures [])
+           ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
+           ;; (its PREVIOUS context is closed only after the new one is live); a
+           ;; file that FAILS keeps its last-good entry — still registered, context
+           ;; still open — untouched. So a failed reload never leaves the stale
+           ;; old+dead mix issue #44 reported (old symbols bound to a CLOSED
+           ;; namespace → every door gone, new symbols missing):
+           ;; the live surface holds the working last-good module wholesale.
+           ;; `vis-agent doctor` (a fresh process, no last-good) and a live `/reload`
+           ;; run the SAME loader and diverge only in the fallback for a failed
+           ;; load — nothing to fall back to vs. the retained last-good.
+           (doseq [^File f files]
+             (let [path (.getCanonicalPath f)
+                   prev-ctx (get-in @loaded [path :context])]
 
-             (try
-               (let [{:keys [ext-name] :as entry}
-                     (load-file! f (per-root :frozen (get plans f) prepare-root!))]
-                 ;; A later file (project dir) registering the same extension
-                 ;; name supersedes an earlier one at a DIFFERENT path — the
-                 ;; registry already swapped the registration; close the
-                 ;; superseded context so its adapters can't linger.
-                 (doseq [[opath {oname :ext-name octx :context}] @loaded
-                         :when (and (= oname ext-name) (not= opath path))]
+               (try
+                 (let [{:keys [ext-name] :as entry}
+                       (load-file! f (per-root :frozen (get plans f) prepare-root!))]
+                   ;; A later file (project dir) registering the same extension
+                   ;; name supersedes an earlier one at a DIFFERENT path — the
+                   ;; registry already swapped the registration; close the
+                   ;; superseded context so its adapters can't linger.
+                   (doseq [[opath {oname :ext-name octx :context}] @loaded
+                           :when (and (= oname ext-name) (not= opath path))]
 
-                   (close-context! octx)
-                   (swap! loaded dissoc opath))
-                 (swap! loaded assoc path (dissoc entry :path))
-                 (close-context! prev-ctx))
-               (catch Throwable t
-                 (tel/log! {:level :warn
-                            :id ::load-failed
-                            :data {:file (str f) :error (ex-message t)}
-                            :msg (str "Python extension failed to load: " f " — " (ex-message t))})
-                 (let [previous (get @loaded path)
-                       [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
+                     (close-context! octx)
+                     (swap! loaded dissoc opath))
+                   (swap! loaded assoc path (dissoc entry :path))
+                   (close-context! prev-ctx))
+                 (catch Throwable t
+                   (tel/log! {:level :warn
+                              :id ::load-failed
+                              :data {:file (str f) :error (ex-message t)}
+                              :msg (str "Python extension failed to load: " f
+                                        " — " (ex-message t))})
+                   (let [previous (get @loaded path)
+                         [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
 
-                   (swap! failures conj
-                     (merge (select-keys (ex-data t) [:changed-inputs :changed-distributions])
-                            {:file (str f)
-                             :error (ex-message t)
-                             :extension (:ext-name previous)
-                             :stale? (boolean previous)
-                             :loaded-fingerprint
-                             (when previous
-                               (util/sha256-hex (pr-str (select-keys previous [:sha :code-sha]))))
-                             :requested-fingerprint
-                             (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))})))))))
-         ;; Files that vanished from disk since the last scan (deleted / renamed)
-         ;; have no entry to retain — deregister and close so they don't linger.
-         (doseq [[opath {:keys [ext-name] :as e}]
-                 @loaded
+                     (swap! failures conj
+                       (merge (select-keys (ex-data t) [:changed-inputs :changed-distributions])
+                              {:file (str f)
+                               :error (ex-message t)
+                               :extension (:ext-name previous)
+                               :stale? (boolean previous)
+                               :loaded-fingerprint
+                               (when previous
+                                 (util/sha256-hex (pr-str (select-keys previous [:sha :code-sha]))))
+                               :requested-fingerprint
+                               (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))})))))))
+           ;; Files that vanished from disk since the last scan (deleted / renamed)
+           ;; have no entry to retain — deregister and close so they don't linger.
+           (doseq [[opath {:keys [ext-name] :as e}]
+                   @loaded
 
-                 :when (not (scanned opath))]
+                   :when (not (scanned opath))]
 
-           (try (extension/deregister-extension! ext-name) (catch Throwable _))
-           (close-context! (:context e))
-           (swap! loaded dissoc opath))
-         ;; Frozen code this process no longer serves. A retained last-good entry
-         ;; (its own reload failed) still points at its snapshot, so only trees
-         ;; nothing references are removed.
-         (locking session-contexts
-           (let [live (set (concat (keep :snapshot (vals @loaded))
-                                   (keep :snapshot (vals @context-lifecycle))))]
-             (doseq [s (distinct (keep :snapshot (vals old-loaded)))
-                     :when (not (live s))]
+             (try (extension/deregister-extension! ext-name) (catch Throwable _))
+             (close-context! (:context e))
+             (swap! loaded dissoc opath))
+           (reset! last-fingerprint fp)
+           ;; Propagate to live surfaces (cached session envs, TUI slash
+           ;; palette). Without this a /reload only updates the GLOBAL
+           ;; registry: new extensions stay invisible to running sessions
+           ;; and stale env rows keep calling into the closed contexts.
+           (let [entries
+                 (vals @loaded)
 
-               (delete-tree! (io/file s)))
-             (doseq [^File s (keep (comp :dir :frozen) (vals @roots))
-                     :when (not (live (.getCanonicalPath s)))]
+                 new-names
+                 (set (map :ext-name entries))]
 
-               (delete-tree! s))))
-         (reset! last-fingerprint fp)
-         ;; Propagate to live surfaces (cached session envs, TUI slash
-         ;; palette). Without this a /reload only updates the GLOBAL
-         ;; registry: new extensions stay invisible to running sessions
-         ;; and stale env rows keep calling into the closed contexts.
-         (let [entries
-               (vals @loaded)
+             (notify-change-listeners! {:extensions (vec (keep :ext entries))
+                                        :removed (vec (sort (remove new-names old-names)))}))
+           {:loaded (count @loaded) :failed (count @failures) :changed? true}
+           (finally
+             ;; A failed entry must not delete code still queued in this scan.
+             ;; Release the scan's roots even if publication or retirement fails.
+             (locking session-contexts
+               (let [snapshots (mapv (fn [^File dir]
+                                       (.getCanonicalPath dir))
+                                     (keep (comp :dir :frozen) (vals @roots)))]
+                 (swap! loading-snapshots #(apply disj % snapshots))
+                 (let [live (set (concat @loading-snapshots
+                                         (keep :snapshot (vals @loaded))
+                                         (keep :snapshot (vals @context-lifecycle))))]
+                   (doseq [snapshot (distinct (concat (keep :snapshot (vals old-loaded)) snapshots))
+                           :when (not (live snapshot))]
 
-               new-names
-               (set (map :ext-name entries))]
-
-           (notify-change-listeners! {:extensions (vec (keep :ext entries))
-                                      :removed (vec (sort (remove new-names old-names)))}))
-         {:loaded (count @loaded) :failed (count @failures) :changed? true})))))
+                     (delete-tree! (io/file snapshot)))))))))))))
 
 (defonce ^:private ensure-load-lock (Object.))
 

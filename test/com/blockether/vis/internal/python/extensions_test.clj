@@ -2027,6 +2027,90 @@ vis.register_extension(vis.Extension(
           (expect (= 1 (:failed result)))
           (expect (str/includes? (:error (first (pyx/load-failures))) "docstring"))))))
 
+(defdescribe
+  shared-root-load-failure-test
+  (it
+    "a failed first import leaves the shared snapshot available to later siblings"
+    (with-fresh-loaded
+      {"a_broken.py" "raise RuntimeError('first import failed')\n"
+       "b_healthy.py"
+       (str
+         "import blockether.vis.extension as vis\n"
+         "vis.register_extension(vis.Extension(name='healthy-sibling', description='Sibling load'))\n")}
+      (fn [result _]
+        (expect (= 1 (:loaded result)))
+        (expect (= 1 (:failed result)))
+        (expect (some? (registered "healthy-sibling")))
+        (expect (str/includes? (:error (first (pyx/load-failures))) "first import failed")))))
+  (it
+    "registration failures also leave later siblings loadable"
+    (doseq
+      [broken
+       ["x = 1\n"
+        (str "import blockether.vis.extension as vis\n" "def missing_doc():\n    return 1\n"
+             "vis.register_extension(vis.Extension(name='invalid-sibling', description='Invalid',\n"
+             "    symbols=[vis.Symbol(missing_doc)]))\n")]]
+      (with-fresh-loaded
+        {"a_broken.py" broken
+         "b_healthy.py"
+         (str
+           "import blockether.vis.extension as vis\n"
+           "vis.register_extension(vis.Extension(name='healthy-sibling', description='Sibling load'))\n")}
+        (fn [result _]
+          (expect (= 1 (:loaded result)))
+          (expect (= 1 (:failed result)))
+          (expect (some? (registered "healthy-sibling")))))))
+  (it "reports each broken sibling's own error and removes their unused shared snapshot"
+      (let [snapshots
+            (atom [])
+
+            freeze
+            @#'pyx/freeze-root!]
+
+        (with-redefs-fn {#'pyx/freeze-root! (fn [roots]
+                                              (let [frozen (freeze roots)]
+                                                (swap! snapshots conj (:dir frozen))
+                                                frozen))}
+          #(with-fresh-loaded
+             {"a_broken.py" "raise RuntimeError('first import failed')\n"
+              "b_broken.py" "raise RuntimeError('second import failed')\n"}
+             (fn [result _]
+               (expect (= 0 (:loaded result)))
+               (expect (= 2 (:failed result)))
+               (expect (str/includes? (:error (first (pyx/load-failures))) "first import failed"))
+               (expect (str/includes? (:error (second (pyx/load-failures))) "second import failed"))
+               (expect (= 1 (count @snapshots)))
+               (expect (every? (fn [^java.io.File snapshot]
+                                 (not (.exists snapshot)))
+                               @snapshots)))))))
+  (it "releases scan snapshots even when publishing the load result throws"
+      (with-fresh-loaded
+        {}
+        (fn [_ {:keys [ext-dir]}]
+          (write-ext! ext-dir "broken.py" "raise RuntimeError('import failed')\n")
+          (let [snapshots
+                (atom [])
+
+                freeze
+                @#'pyx/freeze-root!]
+
+            (expect (= "publication failed"
+                       (try (with-redefs-fn {#'pyx/freeze-root! (fn [roots]
+                                                                  (let [frozen (freeze roots)]
+                                                                    (swap! snapshots conj
+                                                                      (:dir frozen))
+                                                                    frozen))
+                                             #'pyx/notify-change-listeners!
+                                             (fn [_]
+                                               (throw (ex-info "publication failed" {})))}
+                              #(pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))
+                            nil
+                            (catch clojure.lang.ExceptionInfo e (ex-message e)))))
+            (expect (= 1 (count @snapshots)))
+            (expect (every? (fn [^java.io.File snapshot]
+                              (not (.exists snapshot)))
+                            @snapshots)))))))
+
 ;; Regression, issue #152: a preset's `api_style` was keywordized verbatim, so a
 ;; near-miss spelling like `openai_responses` reached svar as a dialect its `case`
 ;; does not know and silently meant `/chat/completions` — a Responses endpoint
