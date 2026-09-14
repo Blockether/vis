@@ -445,7 +445,7 @@ describe('the projects mark opens the inventory', () => {
   // Regression, user report: project deletion expanded the selected row with a cost
   // paragraph above the answers. It should replace that row with the same single-height
   // yes/no strip used by session deletion.
-  it('asks to delete in one row-height strip, from a close-width trash cell', async () => {
+  it('asks to delete in one row-height strip, from an independent trash button', async () => {
     const { client, onRemove, panel } = sheet();
 
     const row = await screen.findByRole('button', { name: /^vis/ });
@@ -457,9 +457,8 @@ describe('the projects mark opens the inventory', () => {
     const trash = screen.getByRole('button', {
       name: 'Remove every transcript in vis',
     });
-    const close = screen.getByRole('button', { name: 'Close projects on tower' });
-    expect(trash).toHaveClass('w-12', 'mouse:w-9');
-    expect(close).toHaveClass('w-12', 'mouse:w-9');
+    expect(row.contains(trash)).toBe(false);
+    expect(trash.parentElement).toBe(row.parentElement);
 
     await userEvent.click(trash);
 

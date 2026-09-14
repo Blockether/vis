@@ -470,8 +470,6 @@ export function ManageProjectsSheet({
                     onSelect={() => onChoose(entry.root)}
                     action={
                       <IconButton
-                        edge
-                        fullCell
                         variant="remove"
                         label={`Remove every transcript in ${entry.name}`}
                         onClick={() => askRemove(entry)}

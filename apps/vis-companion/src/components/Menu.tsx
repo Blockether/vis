@@ -310,9 +310,8 @@ export function MenuItem({
   );
   if (!action) return row;
   return (
-    // Match the edge action's negative margin at both breakpoints. A 12px gutter
-    // against its 16px desktop margin overflows even a two-project inventory.
-    <div className="flex items-stretch border-b border-dialog-edge pr-3 sm:pr-4">
+    // Keep the independent action inside the same gutter as the row's leading icon.
+    <div className="flex items-center gap-2 border-b border-dialog-edge pr-3">
       {row}
       {action}
     </div>

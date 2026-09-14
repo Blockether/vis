@@ -38,9 +38,18 @@ export const Inventory: Story = {
     await expect(inventory.scrollWidth).toBe(inventory.clientWidth);
     await expect(inventory.scrollHeight).toBe(inventory.clientHeight);
     for (const action of page.getAllByRole('button', { name: /^Remove every transcript/ })) {
-      await expect(action.getBoundingClientRect().right).toBeLessThanOrEqual(
-        inventory.getBoundingClientRect().right,
+      const box = action.getBoundingClientRect();
+      const row = action.parentElement!.getBoundingClientRect();
+      const icon = action.querySelector('svg')!.getBoundingClientRect();
+      // Regression: deletion must be an inset circle, not a stretched edge cell.
+      await expect(box.width).toBe(box.height);
+      await expect(parseFloat(getComputedStyle(action).borderRadius)).toBeGreaterThanOrEqual(
+        box.width / 2,
       );
+      await expect(row.right - box.right).toBeGreaterThanOrEqual(8);
+      await expect(box.top - row.top).toBeGreaterThanOrEqual(8);
+      await expect(Math.abs(icon.x + icon.width / 2 - (box.x + box.width / 2))).toBeLessThan(1);
+      await expect(Math.abs(icon.y + icon.height / 2 - (box.y + box.height / 2))).toBeLessThan(1);
     }
     await userEvent.click(page.getByRole('button', { name: /^vis/i }));
     await userEvent.click(page.getByRole('button', { name: 'Close projects on tower' }));
