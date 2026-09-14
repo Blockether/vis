@@ -12624,7 +12624,10 @@
              :as entry}
             (ensure-env! id)]
         (if (.tryLock lock (long ENGINE_LOCK_POLL_MS) java.util.concurrent.TimeUnit/MILLISECONDS)
-          (if (or rescued? (policy-stale? entry) (env/context-enterable? (:environment entry)))
+          (if (try (or rescued? (policy-stale? entry) (env/context-enterable? (:environment entry)))
+                   ;; The bounded guest readiness check is interruptible. Its caller
+                   ;; already owns this lock, even though send! has not received it yet.
+                   (catch Throwable error (.unlock lock) (throw error)))
             (do (when condemned (.set condemned false)) entry)
             (do
               (.unlock lock)

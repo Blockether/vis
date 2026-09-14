@@ -8,6 +8,8 @@
             [com.blockether.vis.internal.extension.core :as ext]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
+            [com.blockether.vis.internal.python.worker :as worker]
+            [com.blockether.vis.internal.python.worker-peer :as worker-peer]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -45,6 +47,117 @@
                    (reset! (:python-context-retired-atom environment) true)
                    (let [error (try (ep/python-context environment) nil (catch Exception e e))]
                      (expect (= ::ep/context-retired (:type (ex-data error))))))))
+
+(defdescribe between-turn-guest-readiness-test
+             ;; A live process can be stuck in native Python code after its last block finished.
+             ;; The next turn must rebuild it, not wait forever while installing tool bindings.
+             (it "keeps cold sandboxes cold and never probes a retired environment"
+                 (let [environment {:python-sandbox (delay (throw (ex-info "unexpected build" {})))
+                                    :python-context-retired-atom (atom false)}]
+                   (expect (ep/context-enterable? environment))
+                   (expect (not (realized? (:python-sandbox environment))))
+                   (reset! (:python-context-retired-atom environment) true)
+                   (expect (not (ep/context-enterable? environment)))
+                   (expect (not (realized? (:python-sandbox environment))))))
+             (it "preserves a responsive worker and its globals"
+                 (tpc/with-own
+                   [ctx {} nil {:worker? true}]
+                   (expect (nil? (:error (ep/run-python-block ctx "ready_value = 41"))))
+                   (let [pids (worker/worker-pids)]
+                     (expect (ep/context-enterable? {:python-context ctx}))
+                     (expect (= pids (worker/worker-pids)))
+                     (expect (= "42\n"
+                                (:stdout (ep/run-python-block ctx "print(ready_value + 1)")))))))
+             (it "rejects a live worker whose readiness request never completes"
+                 (tpc/with-own [ctx {} nil {:worker? true}]
+                               (let [entered
+                                     (promise)
+
+                                     release
+                                     (promise)
+
+                                     left
+                                     (promise)]
+
+                                 (with-redefs [worker-peer/request!
+                                               (fn [& _]
+                                                 (deliver entered true)
+                                                 (try @release (finally (deliver left true))))]
+                                   (try (expect (worker/worker-live? ctx))
+                                        (expect (not (ep/context-enterable? {:python-context ctx})))
+                                        (expect (realized? entered))
+                                        (expect (= true (deref left 1000 ::blocked)))
+                                        (finally (deliver release true))))))))
+
+(defdescribe
+  readiness-probe-failure-test
+  (it "bounds a blocked write and stops its helper"
+      (tpc/with-own [ctx {} nil {:worker? true}]
+                    (let [entered
+                          (promise)
+
+                          release
+                          (promise)
+
+                          left
+                          (promise)]
+
+                      (with-redefs-fn {#'worker/READY_REPLY_MS 100
+                                       #'worker-peer/send-line!
+                                       (fn [& _]
+                                         (deliver entered true)
+                                         (try @release (finally (deliver left true))))}
+                        (fn []
+                          (try (expect (not (ep/context-enterable? {:python-context ctx})))
+                               (expect (realized? entered))
+                               (expect (= true (deref left 1000 ::blocked)))
+                               (finally (deliver release true))))))))
+  (it
+    "rejects failed probes without swallowing caller cancellation"
+    (tpc/with-own
+      [ctx {} nil {:worker? true}]
+      (with-redefs [worker-peer/request! (fn [& _]
+                                           (throw (ex-info "peer failed" {})))]
+        (expect (not (ep/context-enterable? {:python-context ctx}))))
+      (let [entered
+            (promise)
+
+            release
+            (promise)
+
+            left
+            (promise)
+
+            result
+            (promise)
+
+            thread
+            (Thread. ^Runnable
+                     (fn []
+                       (try (deliver result (ep/context-enterable? {:python-context ctx}))
+                            (catch InterruptedException _ (deliver result ::interrupted))
+                            (catch Throwable error (deliver result error)))))]
+
+        (with-redefs [worker-peer/request! (fn [& _]
+                                             (deliver entered true)
+                                             (try @release (finally (deliver left true))))]
+          (.setDaemon thread true)
+          (.start thread)
+          (try (expect (= true (deref entered 1000 ::blocked)))
+               (.interrupt thread)
+               (expect (= ::interrupted (deref result 1000 ::blocked)))
+               (expect (= true (deref left 1000 ::blocked)))
+               (finally (deliver release true) (.interrupt thread) (.join thread 1000)))))
+      (expect (ep/context-enterable? {:python-context ctx}))))
+  (it "never restarts a disappeared worker or accepts its late probe"
+      (tpc/with-own [ctx {} nil {:worker? true}]
+                    (with-redefs [worker-peer/request! (fn [& _]
+                                                         (worker/stop-worker! ctx)
+                                                         "True")]
+                      (expect (not (ep/context-enterable? {:python-context ctx}))))
+                    (with-redefs-fn {#'worker/start! (fn [& _]
+                                                       (throw (ex-info "unexpected restart" {})))}
+                      #(expect (not (ep/context-enterable? {:python-context ctx})))))))
 
 (defdescribe
   session-defs-restart-test

@@ -430,6 +430,34 @@
   [k]
   (boolean (alive? (get @workers k))))
 
+(def ^:private READY_REPLY_MS
+  "Maximum between-turn wait for an existing worker to enter its Python namespace."
+  5000)
+
+(defn worker-ready?
+  "Can the existing worker enter `session` before a new turn starts?
+
+   Process liveness alone does not prove the interpreter can acquire its GIL.
+   Bound the entire exchange, including a blocked socket write. Only call between
+   turns: a running block may legitimately occupy the interpreter for minutes.
+   Never starts or replaces a worker; the engine owns recovery after a false result.
+   Caller cancellation propagates instead of declaring a healthy worker broken."
+  [k session]
+  (boolean (when-let [state (get @workers k)]
+             (when (and (alive? state) (not (contains? @retired-workers k)))
+               (let [peer (:peer state)
+                     probe (cancellation/worker-future
+                             "vis-python-readiness"
+                             (bound-fn
+                               []
+                               (child/request! peer {"op" "eval" "session" session "code" "True"}))
+                             {:platform? true})]
+
+                 (try (and (= "True" (deref probe READY_REPLY_MS ::not-ready))
+                           (identical? state (get @workers k)))
+                      (catch ExecutionException _ false)
+                      (finally (future-cancel probe))))))))
+
 (defn worker-pids
   "PIDs of every live session or shared Python worker this process owns."
   []

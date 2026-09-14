@@ -1347,8 +1347,10 @@
 (defn context-enterable?
   "Can the loop still run guest code in this environment?
 
-   False once the session was disposed or its worker was retired, or when the
-   environment carries no sandbox at all.
+   Called between turns. False once the session was disposed or its worker was
+   retired, when the environment carries no sandbox, or when its existing worker
+   cannot enter Python within its readiness budget. A live process alone is not
+   enough: background native Python code can hold the GIL after a block finishes.
 
    An environment whose sandbox is not built YET is enterable: entering is what
    builds it. Answering this question must never start an interpreter, so a
@@ -1361,7 +1363,7 @@
       (and (not (contains? @disposed-sessions session))
            (not retired?)
            (if-let [worker (worker-of session)]
-             (pyext/worker-live? worker)
+             (pyext/worker-ready? worker session)
              true))
       (boolean (and (:python-sandbox environment) (not retired?))))))
 
