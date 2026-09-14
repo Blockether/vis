@@ -91,7 +91,7 @@
   [block]
   (cond-> (merge (vis/form->display (vis/form-with-display block))
                  {:started-at-ms nil
-                  :duration-ms (or (:duration-ms block) 0)
+                  :duration-ms (:duration-ms block)
                   ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
                   ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
                   :channel (vec (:channel block))

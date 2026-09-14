@@ -3,7 +3,8 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IterationTrace } from './ChatContent';
 import { readPythonCodeShown, setPythonCodeShown } from '../lib/transcript-display';
-import type { TranscriptForm, TranscriptIteration } from '../lib/types';
+import { reduceRunningTurnEvent } from '../lib/running-turn';
+import type { SseEvent, TranscriptForm, TranscriptIteration } from '../lib/types';
 import type { ActivityProjection } from '../lib/activity';
 
 const activity = (state: ActivityProjection['state'], label: string): ActivityProjection => ({
@@ -39,6 +40,66 @@ afterEach(() => {
 });
 
 describe('execution grouping', () => {
+  // #224: exercise the real event reducer, not only forms with hand-written totals.
+  it.each([33, 116])('sums %s streamed executions in a collapsed group', (count) => {
+    let turn = reduceRunningTurnEvent(null, { type: 'turn.started' } as SseEvent);
+    for (let index = 0; index < count; index++) {
+      const owner = { iteration: index + 1, form_index: 0 };
+      turn = reduceRunningTurnEvent(turn, {
+        ...owner,
+        type: 'block.started',
+        code: `read_file_${index + 1}()`,
+      } as SseEvent);
+      turn = reduceRunningTurnEvent(turn, {
+        ...owner,
+        type: 'block.activity',
+        activity: activity('succeeded', `Read file ${index + 1}`),
+      } as SseEvent);
+      turn = reduceRunningTurnEvent(turn, {
+        ...owner,
+        type: 'block.output',
+        duration_ms: 100,
+      } as SseEvent);
+      turn = reduceRunningTurnEvent(turn, {
+        ...owner,
+        type: 'iteration.completed',
+      } as SseEvent);
+    }
+    turn = reduceRunningTurnEvent(turn, { type: 'turn.completed' } as SseEvent);
+    expect(turn?.iterations.flatMap((iteration) => iteration.forms ?? [])).toHaveLength(count);
+    const view = render(<IterationTrace whole iterations={turn!.iterations} />);
+    const duration = `${(count / 10).toFixed(1)}s`;
+    const code = view.container.querySelector('[data-execution-code]')!;
+    expect(code).toHaveTextContent(duration);
+    expect(code).not.toHaveTextContent('<1ms');
+    expect(view.getAllByRole('button', { name: 'Expand code' })).toHaveLength(1);
+    expect(view.getByRole('button', { name: 'Expand Activity' })).toHaveTextContent(
+      `${count} operations`,
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
+    fireEvent.click(view.getByRole('button', { name: 'Expand Activity' }));
+    expect(code).toHaveTextContent(duration);
+    fireEvent.click(view.getByRole('button', { name: 'Collapse code' }));
+    fireEvent.click(view.getByRole('button', { name: 'Collapse Activity' }));
+    expect(code).toHaveTextContent(duration);
+  });
+
+  it('does not label a partially timed group as a measured total', () => {
+    // #224: a missing measurement is not a zero-duration execution.
+    const view = render(
+      <IterationTrace
+        whole
+        iterations={iterations([
+          { source: 'measured()', duration_ms: 500 },
+          { source: 'untimed()' },
+        ])}
+      />,
+    );
+    expect(view.container.querySelector('[data-execution-code]')).not.toHaveTextContent(
+      /500ms|<1ms/,
+    );
+  });
+
   it.each([false, true])(
     'folds consecutive outputs into one RESULT (across iterations: %s)',
     (split) => {

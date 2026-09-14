@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.progress :as progress]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
@@ -7413,18 +7414,27 @@ h = 8"
 
         (expect (str/includes? (:line (first code)) "<1ms"))))
   (it
-    "paints grouped and zero durations in narrow and wide terminal grids"
+    "paints gateway duration totals without inventing missing measurements"
+    ;; Regression #224: pass actual wire events through progress before rendering the group.
     (doseq [width
             [40 80]
 
             durations
-            [[0] [0.5] [0.999] [1] [10 20]]]
+            [[0] [0.5] [0.999] [1] [10 20] [500 700] (vec (repeat 116 100)) [nil nil] [500 nil]]]
 
-      (let [entry
-            (iteration/canonicalize {:forms
-                                     (mapv (fn [duration]
-                                             {:code "pass" :success? true :duration-ms duration})
-                                           durations)})
+      (let [tracker
+            (progress/make-progress-tracker)
+
+            _
+            (doseq [[index duration] (map-indexed vector durations)]
+              ((:on-chunk tracker)
+                (#'chat/gateway-event->chunk
+                 (cond-> {"type" "block.output" "iteration" 1 "form_index" index "code" "pass"}
+                   (some? duration)
+                   (assoc "duration_ms" duration)))))
+
+            entry
+            (first ((:get-timeline tracker)))
 
             entries
             (format-iteration-entry-entries entry
@@ -7452,9 +7462,9 @@ h = 8"
 
         (expect (nil? (:error captured)))
         (expect (some? code-row))
-        (expect (str/includes?
-                  code-row
-                  (if (< (reduce + durations) 1) "<1ms" (str (reduce + durations) "ms")))))))
+        (if (every? some? durations)
+          (expect (str/includes? code-row (vis/format-duration (reduce + durations))))
+          (expect (not (re-find #"(?:<1ms|[0-9]+ms|[0-9]+\.[0-9]+s)" code-row)))))))
   (it "hides source without hiding execution or result"
       (let [entry
             (iteration/canonicalize

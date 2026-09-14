@@ -23,7 +23,7 @@
 
      :form-result      One block finished evaluating. Carries
                        `:position`, `:code`, `:stdout`/`:error`,
-                       and `:envelope` timestamps. The tracker writes
+                       and `:duration-ms` or `:envelope` timestamps. The tracker writes
                        the completed form record into `:forms` at the
                        chunk's display index. Chunks tagged `:silent?`
                        keep their flag so channels can toggle visibility.
@@ -68,7 +68,7 @@
                   :result-kind     :tool|:value|:error
                    :result-detail   map-or-nil        ;; tool metadata
                    :error           map-or-nil
-                   :duration-ms     int
+                   :duration-ms     number-or-nil
                    :success?        bool
                    :silent?         bool
                     :started-at-ms   int-or-nil
@@ -194,7 +194,7 @@
             :render-segments (:render-segments chunk)
             :scope (or (:scope chunk) (:scope prev-form))
             :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
-            :duration-ms (or (form/envelope-duration-ms (:envelope chunk)) 0)
+            :duration-ms (or (:duration-ms chunk) (form/envelope-duration-ms (:envelope chunk)))
             :stdout (:stdout chunk)
             :result-kind (form-result-kind chunk)
             :result-detail (form-result-detail chunk)

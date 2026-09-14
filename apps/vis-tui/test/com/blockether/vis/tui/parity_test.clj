@@ -12,7 +12,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [com.blockether.vis.contract.activity :as activity]
-            [com.blockether.vis.tui.chat]
+            [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.iteration :as iteration]
             [com.blockether.vis.tui.progress :as progress]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -129,3 +129,27 @@
                    (expect (= "t7/i3" (:scope e)))
                    (expect (= :ok (:status e)))
                    (expect (nil? (:error e))))))
+
+(defdescribe
+  gateway-duration-parity-test
+  ;; Regression #224: live gateway results carry duration_ms, not an engine envelope.
+  (it "preserves measured and missing durations through live and resumed form projections"
+      (doseq [durations [[500 700] [0 0] [nil nil] [500 nil]]]
+        (let [tracker (progress/make-progress-tracker)
+              forms (mapv (fn [index duration]
+                            (cond-> {"code" (str "operation_" index "()")}
+                              (some? duration)
+                              (assoc "duration_ms" duration)))
+                          (range)
+                          durations)]
+
+          (doseq [[index form] (map-indexed vector forms)]
+            ((:on-chunk tracker)
+              (#'chat/gateway-event->chunk
+               (merge form {"type" "block.output" "iteration" 1 "form_index" index}))))
+          (let [live (first ((:get-timeline tracker)))
+                resumed (it->iteration-entry {}
+                                             {"id" "duration-fixture" "position" 1 "forms" forms})]
+
+            (expect (= durations (mapv :duration-ms (:forms live))))
+            (expect (= durations (mapv :duration-ms (:forms resumed)))))))))
