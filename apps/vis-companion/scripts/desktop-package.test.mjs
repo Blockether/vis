@@ -21,6 +21,12 @@ afterEach(() => vi.unstubAllEnvs());
 // The installers are release assets: a name must say which OS and arch it is for,
 // and every OS the workflow runs on must have at least one target to build.
 describe('desktop package', () => {
+  it('keeps executable modules LF-terminated on Windows checkouts', () => {
+    // CRLF hashbangs broke Vite's module loader before the Windows suite could run.
+    const attributes = readFileSync(new URL('.gitattributes', import.meta.url), 'utf8');
+    expect(attributes.split(/\r?\n/)).toContain('*.mjs text eol=lf');
+  });
+
   it('names an asset by version, platform and installer type', () => {
     expect(assetName('0.1.30', desktopTargets('darwin', 'arm64')[0])).toBe(
       'vis-companion-0.1.30-macos-universal.dmg',

@@ -1,0 +1,2 @@
+# Keep executable modules compatible with Vite's loader on Windows checkouts.
+*.mjs text eol=lf
