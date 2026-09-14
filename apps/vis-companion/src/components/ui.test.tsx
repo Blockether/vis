@@ -2123,7 +2123,15 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
 
     it('keeps tallies smaller, quieter and regular weight', () => {
       const tally = renderToStaticMarkup(<BandTally> +3 more</BandTally>);
-      for (const token of ['font-normal', 'text-ui', 'mouse:text-meta', 'text-dialog-hint']) {
+      for (const token of [
+        'font-mono',
+        'font-normal',
+        'tracking-normal',
+        'text-ui',
+        'tabular-nums',
+        'mouse:text-meta',
+        'text-dialog-hint',
+      ]) {
         expect(tally).toContain(token);
       }
     });

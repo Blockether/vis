@@ -406,6 +406,54 @@ export function activityCopyText(activity: ActivityProjection): string {
   return blocks.join('\n\n');
 }
 
+/** Copy complete retained histories without changing their bounded display windows. */
+export async function activityHistoryCopyText(
+  activities: readonly ActivityProjection[],
+  load: (
+    id: string,
+    after: number,
+    query: string,
+    signal: AbortSignal,
+  ) => Promise<ActivityProjection>,
+  signal: AbortSignal,
+): Promise<string> {
+  signal.throwIfAborted();
+  const complete: ActivityProjection[] = [];
+  for (const activity of activities) {
+    const history = activity.history;
+    if (!history || (history.after === 0 && history.next_after === null)) {
+      complete.push(activity);
+      continue;
+    }
+    const rows: ActivityRow[] = [];
+    let after = 0;
+    for (;;) {
+      signal.throwIfAborted();
+      const page = await load(history.id, after, '', signal);
+      signal.throwIfAborted();
+      const next = page.history;
+      if (
+        !next ||
+        next.id !== history.id ||
+        next.revision !== history.revision ||
+        next.total !== history.total ||
+        next.after !== after ||
+        (history.total > 0 && page.rows.length === 0) ||
+        (next.next_after !== null &&
+          (!Number.isInteger(next.next_after) || next.next_after <= after))
+      ) {
+        throw new Error('Activity changed. Copy again to use its latest history.');
+      }
+      rows.push(...page.rows);
+      if (next.next_after === null) break;
+      after = next.next_after;
+    }
+    complete.push({ ...activity, rows });
+  }
+  signal.throwIfAborted();
+  return activityCopyText(mergeActivity(complete));
+}
+
 function activityEnum<T extends string>(value: unknown, values: readonly T[]): T | null {
   const candidate = text(value);
   return values.includes(candidate as T) ? (candidate as T) : null;

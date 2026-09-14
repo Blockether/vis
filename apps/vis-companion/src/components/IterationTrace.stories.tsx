@@ -305,6 +305,19 @@ export const TrailingMetadata: Story = {
     const activityToggle = canvas.getByRole('button', { name: 'Expand Activity' });
     const activitySummary = within(activityToggle).getByText(/operations?/);
     const checkSpacing = async () => {
+      const durationStyle = getComputedStyle(duration);
+      const summaryStyle = getComputedStyle(activitySummary);
+      for (const property of [
+        'fontFamily',
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'lineHeight',
+        'letterSpacing',
+        'fontVariantNumeric',
+      ] as const) {
+        await expect(summaryStyle[property], property).toBe(durationStyle[property]);
+      }
       for (const [metadata, copy] of [
         [duration, codeCopy],
         [activitySummary, activityCopy],

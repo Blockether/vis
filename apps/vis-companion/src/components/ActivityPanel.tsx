@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from './ChatContent';
-import { BandLabel, CopyChip, Disclosure, LoadMore } from './ui';
+import { BandLabel, BandTally, CopyChip, Disclosure, LoadMore } from './ui';
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
@@ -12,6 +12,7 @@ import type {
 } from '../lib/activity';
 import {
   activityCopyText,
+  activityHistoryCopyText,
   argumentGroups,
   operationGroups,
   mergeActivity,
@@ -1046,10 +1047,17 @@ export function ActivityPanel({
   activity?: ActivityProjection | ActivityProjection[];
 }) {
   const [open, setOpen] = useState(false);
+  const [copyError, setCopyError] = useState('');
+  const source = useContext(ActivityHistoryContext);
   const activities = Array.isArray(input) ? input : input ? [input] : [];
   const activity = mergeActivity(activities);
   const total = activities.reduce((sum, activity) => sum + operationCount(activity), 0);
   const hasHistory = activities.some((activity) => activity.history);
+  const historyKey = activities
+    .map((activity) =>
+      activity.history ? `${activity.history.id}:${activity.history.revision}` : 'inline',
+    )
+    .join(':');
   if (!total) return null;
   const summary = `${total} ${total === 1 ? 'operation' : 'operations'}`;
   const states = (['running', 'failed', 'cancelled'] as const).flatMap((state) =>
@@ -1063,7 +1071,7 @@ export function ActivityPanel({
           tone="execution"
           inlineChevron
           tally={
-            <span className="ml-auto min-w-0 break-words text-right text-ui text-dialog-hint mouse:text-meta">
+            <BandTally placement="trailing">
               {[
                 summary,
                 ...states,
@@ -1071,7 +1079,7 @@ export function ActivityPanel({
               ]
                 .filter(Boolean)
                 .join(' · ')}
-            </span>
+            </BandTally>
           }
           isOpen={open}
           aria-label={open ? 'Collapse Activity' : 'Expand Activity'}
@@ -1079,25 +1087,40 @@ export function ActivityPanel({
         >
           <BandLabel className="shrink-0">ACTIVITY</BandLabel>
         </Disclosure>
-        {!hasHistory && (
-          <CopyChip
-            value={activityCopyText(activity)}
-            label="Copy activity"
-            density="compact"
-            edge
-          />
-        )}
+        <CopyChip
+          key={historyKey}
+          value={
+            activities.some(
+              (activity) =>
+                activity.history &&
+                (activity.history.after > 0 || activity.history.next_after !== null),
+            )
+              ? (signal) =>
+                  activityHistoryCopyText(
+                    activities,
+                    async (id, after, query, signal) => {
+                      if (!source)
+                        throw new Error('Reconnect to copy the complete activity history.');
+                      return source.load(id, after, query, signal);
+                    },
+                    signal,
+                  )
+              : activityCopyText(activity)
+          }
+          label="Copy activity"
+          onError={setCopyError}
+          density="compact"
+          edge
+        />
       </div>
+      {copyError && (
+        <p role="alert" className="pb-2 text-ui text-err-ink">
+          {copyError} Try again.
+        </p>
+      )}
       <div hidden={!open}>
         {hasHistory ? (
-          <ActivityHistoryWindow
-            key={activities
-              .map((activity) =>
-                activity.history ? `${activity.history.id}:${activity.history.revision}` : 'inline',
-              )
-              .join(':')}
-            activities={activities}
-          />
+          <ActivityHistoryWindow key={historyKey} activities={activities} />
         ) : (
           <ActivityThread activity={activity} />
         )}

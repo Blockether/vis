@@ -594,7 +594,17 @@ export const RetainedHistory: Story = {
   ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const user = userEvent.setup();
+    const copy = canvas.getByRole('button', { name: 'Copy activity' });
+    const toggle = canvas.getByRole('button', { name: 'Expand Activity' });
+    await expect(copy.getBoundingClientRect().left - toggle.getBoundingClientRect().right).toBe(8);
+    await user.click(copy);
+    await expect(await canvas.findByRole('button', { name: 'Copied' })).toBeVisible();
+    const copied = await navigator.clipboard.readText();
+    await expect(copied).toContain('retained-1\n');
+    await expect(copied).toContain('retained-160\n');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
     await expect(canvas.queryByRole('searchbox')).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Copy all activity' })).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Export all activity' })).toBeNull();
@@ -617,7 +627,11 @@ export const RetainedHistoryOffline: Story = {
   args: { activity: activityHistoryPage() },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    const user = userEvent.setup();
+    await user.click(canvas.getByRole('button', { name: 'Copy activity' }));
+    await expect(await canvas.findByRole('alert')).toHaveTextContent('Reconnect');
+    await expect(canvas.getByRole('button', { name: 'Copy failed. Try again.' })).toBeEnabled();
+    await user.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     await expect(canvas.getByText('Operation 1')).toBeVisible();
     await expect(canvas.getByText('Reconnect to load more operations.')).toBeVisible();
     await expect(canvas.queryByRole('searchbox')).toBeNull();

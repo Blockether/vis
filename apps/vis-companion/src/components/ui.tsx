@@ -50,7 +50,7 @@ import {
 import { createPortal } from 'react-dom';
 import viewSpec from '../../../../packages/vis-contract/resources/vis-contract/view.json';
 
-import { CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
+import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
@@ -366,17 +366,20 @@ export function CopyChip({
   value,
   label,
   title,
+  onError,
   density = 'default',
   edge = false,
   className = '',
   children,
 }: {
-  /** What lands on the clipboard. */
-  value: string;
+  /** Text to copy, or a lazy source cancelled when the control unmounts. */
+  value: string | ((signal: AbortSignal) => Promise<string>);
   /** What the control is called: "Copy code", "Copy session id". */
   label: string;
   /** Hover text, when there is more to say than the label — the full id. */
   title?: string;
+  /** Show copy failures beside the owning content; an empty message clears the previous failure. */
+  onError?: (message: string) => void;
   /**
    * Both contexts share the 32px touch / 28px pointer face and 44px touch reach.
    * `compact` joins screen-header chrome; the default labels a value on a card.
@@ -390,21 +393,88 @@ export function CopyChip({
   children?: ReactNode;
 }) {
   const [isCopied, setIsCopied] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef<AbortController | null>(null);
+  const reset = useRef<number | undefined>(undefined);
+  useEffect(
+    () => () => {
+      pending.current?.abort();
+      pending.current = null;
+      window.clearTimeout(reset.current);
+    },
+    [],
+  );
   async function copy(event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
     event.stopPropagation();
+    if (pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    window.clearTimeout(reset.current);
+    setIsCopied(false);
+    setIsCopying(true);
+    setError('');
+    onError?.('');
     try {
-      await navigator.clipboard.writeText(value);
+      if (typeof value === 'string') {
+        await navigator.clipboard.writeText(value);
+      } else {
+        if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+          // WebKit needs write() during the press, before retained history finishes loading.
+          const blob = Promise.resolve().then(async () => {
+            const result = await value(controller.signal);
+            controller.signal.throwIfAborted();
+            return new Blob([result], { type: 'text/plain' });
+          });
+          const write = async () =>
+            navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+          await Promise.all([blob, write()]);
+        } else {
+          const text = await value(controller.signal);
+          controller.signal.throwIfAborted();
+          await navigator.clipboard.writeText(text);
+        }
+      }
+      if (controller.signal.aborted) return;
       setIsCopied(true);
-      window.setTimeout(() => setIsCopied(false), 1_500);
-    } catch {
-      // Clipboard access can be unavailable in an untrusted mobile webview.
+      reset.current = window.setTimeout(() => setIsCopied(false), 1_500);
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        const message = cause instanceof Error ? cause.message : 'Clipboard unavailable.';
+        setError(message);
+        onError?.(message);
+        controller.abort();
+      }
+    } finally {
+      if (pending.current === controller) {
+        pending.current = null;
+        setIsCopying(false);
+      }
     }
   }
-  const tapPress = useTapPress(copy, false);
+  const tapPress = useTapPress(copy, isCopying);
+  const statusLabel = isCopying
+    ? 'Copying…'
+    : isCopied
+      ? 'Copied'
+      : error
+        ? 'Copy failed. Try again.'
+        : label;
+  const statusTitle = error || (isCopying || isCopied ? statusLabel : (title ?? label));
+  const failure =
+    error && !onError ? (
+      <span role="alert" className="sr-only">
+        {error} Try again.
+      </span>
+    ) : null;
   if (children === undefined) {
-    const icon = isCopied ? (
+    const icon = isCopying ? (
+      <Spinner />
+    ) : isCopied ? (
       <CheckIcon className="size-3 text-ok" />
+    ) : error ? (
+      <AlertIcon className="size-3 text-err-ink" />
     ) : (
       <CopyIcon className="size-3" />
     );
@@ -413,25 +483,31 @@ export function CopyChip({
       return (
         <button
           type="button"
-          aria-label={isCopied ? 'Copied' : label}
-          title={isCopied ? 'Copied' : (title ?? label)}
+          aria-label={statusLabel}
+          title={statusTitle}
+          aria-busy={isCopying || undefined}
+          disabled={isCopying}
           {...tapPress}
           className={`${iconControlClass} grid h-auto w-8 shrink-0 self-stretch items-center justify-items-end bg-transparent text-dialog-hint transition-colors duration-150 enabled:hover:text-white pl-0 pr-3 -mr-3 after:absolute after:top-0 after:bottom-0 after:left-0 after:-right-3 after:content-[""] motion-reduce:transition-none sm:w-9 sm:pl-0 sm:pr-4 sm:-mr-4 sm:after:-right-2 mouse:h-auto mouse:w-7 mouse:after:content-none ${className}`}
         >
           {icon}
+          {failure}
         </button>
       );
     }
     return (
       <IconButton
-        label={isCopied ? 'Copied' : label}
-        title={isCopied ? 'Copied' : (title ?? label)}
+        label={statusLabel}
+        title={statusTitle}
+        aria-busy={isCopying || undefined}
+        disabled={isCopying}
         variant="quiet"
         density={density}
         onClick={copy}
         className={className}
       >
         {icon}
+        {failure}
       </IconButton>
     );
   }
@@ -456,18 +532,25 @@ export function CopyChip({
     <button
       type="button"
       onClick={copy}
-      aria-label={label}
-      title={title ?? label}
+      aria-label={statusLabel}
+      title={statusTitle}
+      aria-busy={isCopying || undefined}
+      disabled={isCopying}
       className={`relative inline-flex h-8 items-center justify-center gap-1 rounded-none border px-2 text-center font-mono text-ui transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${face} ${className}`}
     >
-      {isCopied ? (
+      {isCopying ? (
+        <Spinner />
+      ) : isCopied ? (
         <CheckIcon className="size-3 text-ok" />
+      ) : error ? (
+        <AlertIcon className="size-3 text-err-ink" />
       ) : (
         <CopyIcon className="size-3 opacity-60" />
       )}
       <span className={`min-w-0 truncate ${density === 'compact' ? 'hidden sm:inline' : ''}`}>
-        {isCopied ? 'Copied' : children}
+        {isCopying ? 'Copying…' : isCopied ? 'Copied' : children}
       </span>
+      {failure}
     </button>
   );
 }
@@ -750,9 +833,17 @@ export function BandLabel({
 /**
  * Secondary metadata beside a band name: regular weight and readable touch sizing.
  */
-export function BandTally({ children }: { children: ReactNode }) {
+export function BandTally({
+  children,
+  placement = 'inline',
+}: {
+  children: ReactNode;
+  placement?: 'inline' | 'trailing';
+}) {
   return (
-    <span className="font-normal tracking-normal text-ui text-dialog-hint mouse:text-meta">
+    <span
+      className={`font-mono font-normal tracking-normal text-ui tabular-nums text-dialog-hint mouse:text-meta ${placement === 'trailing' ? 'ml-auto min-w-0 break-words text-right' : ''}`}
+    >
       {children}
     </span>
   );

@@ -12,6 +12,91 @@ import {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+it('copies all retained operations while collapsed without changing the visible page', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  const load = vi.fn(async (_id: string, after: number) => page(after));
+  render(
+    <ActivityHistoryContext.Provider value={{ load }}>
+      <ActivityPanel activity={page()} />
+    </ActivityHistoryContext.Provider>,
+  );
+  const copy = screen.getByRole('button', { name: 'Copy activity' });
+  expect(copy.closest('[data-disclosure-toggle]')).toBeNull();
+  expect(load).not.toHaveBeenCalled();
+  fireEvent.click(copy);
+  await screen.findByRole('button', { name: 'Copied' });
+  expect(writeText).toHaveBeenCalledTimes(1);
+  expect(writeText.mock.calls[0][0]).toContain('retained-1\n');
+  expect(writeText.mock.calls[0][0]).toContain('retained-160\n');
+  expect(screen.getByRole('button', { name: 'Expand Activity' })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+  expect(screen.getByText('Operation 1')).toBeVisible();
+  expect(screen.queryByText('Operation 160')).toBeNull();
+});
+
+it('keeps offline Copy available and explains how to retry incomplete history', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  render(<ActivityPanel activity={page()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Copy activity' }));
+  const error = await screen.findByRole('alert');
+  expect(error).toBeVisible();
+  expect(error).toHaveTextContent('Reconnect');
+  expect(screen.getByRole('button', { name: 'Copy failed. Try again.' })).toBeEnabled();
+  expect(writeText).not.toHaveBeenCalled();
+});
+
+it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)(
+  'copies a complete %s history offline without retrieval',
+  async (state) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const activity = groupPage(ids[0]);
+    activity.state = state;
+    activity.counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0, [state]: 2 };
+    activity.rows = activity.rows.map((row) => ({ ...row, state }));
+    render(<ActivityPanel activity={activity} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy activity' }));
+    await screen.findByRole('button', { name: 'Copied' });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0][0]).toContain('Read result 1-1');
+    expect(writeText.mock.calls[0][0]).toContain('Read result 1-2');
+  },
+);
+
+it('cancels a pending copy when a new history revision arrives', async () => {
+  let finish!: (activity: ReturnType<typeof page>) => void;
+  const load = vi.fn(
+    (_id: string, _after: number, _query: string, _signal: AbortSignal) =>
+      new Promise<ReturnType<typeof page>>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  const paint = (activity: ReturnType<typeof page>) => (
+    <ActivityHistoryContext.Provider value={{ load }}>
+      <ActivityPanel activity={activity} />
+    </ActivityHistoryContext.Provider>
+  );
+  const view = render(paint(page()));
+  fireEvent.click(screen.getByRole('button', { name: 'Copy activity' }));
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+  const latest = page();
+  latest.history!.revision++;
+  view.rerender(paint(latest));
+  expect(load.mock.calls[0][3].aborted).toBe(true);
+  finish(page());
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Copying…' })).toBeNull());
+  expect(screen.getByRole('button', { name: 'Copy activity' })).toBeEnabled();
+  expect(writeText).not.toHaveBeenCalled();
 });
 
 it('opens retained operations without a search or bulk-action toolbar', () => {

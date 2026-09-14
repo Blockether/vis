@@ -329,6 +329,56 @@ export const CodeCopy: Story = {
   },
 };
 
+/** Clipboard access is stubbed; the production control owns loading and feedback. */
+export const AsyncCopy: Story = {
+  render: () => <CopyChip value={async () => 'Complete activity history'} label="Copy activity" />,
+  play: async ({ canvas }) => {
+    const user = userEvent.setup();
+    await user.click(canvas.getByRole('button', { name: 'Copy activity' }));
+    await expect(await canvas.findByRole('button', { name: 'Copied' })).toBeEnabled();
+    await expect(navigator.clipboard.readText()).resolves.toBe('Complete activity history');
+  },
+};
+
+export const CopyPending: Story = {
+  render: () => (
+    <CopyChip
+      value={(signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason));
+        })
+      }
+      label="Copy activity"
+    />
+  ),
+  play: async ({ canvas }) => {
+    const user = userEvent.setup();
+    await user.click(canvas.getByRole('button', { name: 'Copy activity' }));
+    await expect(canvas.getByRole('button', { name: 'Copying…' })).toBeDisabled();
+    await expect(canvas.getByRole('button', { name: 'Copying…' })).toHaveAttribute(
+      'aria-busy',
+      'true',
+    );
+  },
+};
+
+export const CopyUnavailable: Story = {
+  render: () => (
+    <CopyChip
+      value={async () => {
+        throw new Error('Clipboard access denied.');
+      }}
+      label="Copy activity"
+    />
+  ),
+  play: async ({ canvas }) => {
+    const user = userEvent.setup();
+    await user.click(canvas.getByRole('button', { name: 'Copy activity' }));
+    await expect(await canvas.findByRole('alert')).toHaveTextContent('Clipboard access denied.');
+    await expect(canvas.getByRole('button', { name: 'Copy failed. Try again.' })).toBeEnabled();
+  },
+};
+
 export const Chips: Story = {
   render: () => (
     <Sheet>
