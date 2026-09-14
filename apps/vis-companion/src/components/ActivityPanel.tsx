@@ -1061,13 +1061,9 @@ export function ActivityPanel({
         <Disclosure
           className="min-w-0 flex-1"
           tone="execution"
-          isOpen={open}
-          aria-label={open ? 'Collapse Activity' : 'Expand Activity'}
-          onClick={() => setOpen((value) => !value)}
-        >
-          <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <BandLabel>ACTIVITY</BandLabel>
-            <span className="min-w-0 break-words text-ui text-dialog-hint mouse:text-meta">
+          inlineChevron
+          tally={
+            <span className="ml-auto min-w-0 break-words text-right text-ui text-dialog-hint mouse:text-meta">
               {[
                 summary,
                 ...states,
@@ -1076,7 +1072,12 @@ export function ActivityPanel({
                 .filter(Boolean)
                 .join(' · ')}
             </span>
-          </span>
+          }
+          isOpen={open}
+          aria-label={open ? 'Collapse Activity' : 'Expand Activity'}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <BandLabel className="shrink-0">ACTIVITY</BandLabel>
         </Disclosure>
         {!hasHistory && (
           <CopyChip

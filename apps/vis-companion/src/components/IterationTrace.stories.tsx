@@ -303,11 +303,11 @@ export const TrailingMetadata: Story = {
     const code = canvasElement.querySelector('[data-execution-code]')!;
     const duration = code.querySelector('.text-code-duration')!;
     const activityToggle = canvas.getByRole('button', { name: 'Expand Activity' });
-    const chevron = activityToggle.querySelector('svg:last-child')!;
+    const activitySummary = within(activityToggle).getByText(/operations?/);
     const checkSpacing = async () => {
       for (const [metadata, copy] of [
         [duration, codeCopy],
-        [chevron, activityCopy],
+        [activitySummary, activityCopy],
       ]) {
         const glyph = copy.querySelector('svg')!.getBoundingClientRect();
         await expect(glyph.left - metadata.getBoundingClientRect().right).toBeCloseTo(

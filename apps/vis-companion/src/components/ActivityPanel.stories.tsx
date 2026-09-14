@@ -282,11 +282,50 @@ export const LiveDisclosure: Story = {
 /** Settled and read: three calls, a diff among them, nothing moving. */
 export const Settled: Story = {
   args: { activity: ACTIVITY_SETTLED },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toggle = canvas.getByRole('button', { name: 'Expand Activity' });
+    const label = within(toggle).getByText('ACTIVITY');
+    const chevron = toggle.querySelector('svg')!;
+    const summary = within(toggle).getByText(/operations/);
+    for (const expanded of [false, true]) {
+      await expect(toggle).toHaveAttribute('aria-expanded', String(expanded));
+      // The disclosure belongs to the label, not the operation count at the far edge.
+      await expect(chevron.getBoundingClientRect().left - label.getBoundingClientRect().right).toBe(
+        6,
+      );
+      await expect(summary.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+        chevron.getBoundingClientRect().right + 6,
+      );
+      await expect(summary.getBoundingClientRect().right).toBe(
+        toggle.getBoundingClientRect().right,
+      );
+      await expect(label.scrollWidth).toBe(label.clientWidth);
+      await expect(toggle.scrollWidth).toBe(toggle.clientWidth);
+      // The count remains part of the same full-row pointer and keyboard target.
+      if (!expanded) await userEvent.click(summary);
+    }
+    toggle.focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  },
 };
 
 /** Failure counts remain visible; details wait for explicit expansion. */
 export const Failed: Story = {
   args: { activity: ACTIVITY_FAILED },
+  play: Settled.play,
+};
+
+export const FailedNarrow: Story = {
+  ...Failed,
+  decorators: [
+    (Story) => (
+      <div className="max-w-xs">
+        <Story />
+      </div>
+    ),
+  ],
 };
 
 /** No projection at all — what a turn has before its first tool call. */
