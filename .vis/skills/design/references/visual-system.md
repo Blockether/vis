@@ -42,8 +42,8 @@ synthesized fonts or all-caps sentences. Capitals are allowed for short tags.
   its clickable area.
 - Use `mouse:` for density, not viewport width. An iPad uses touch sizing.
 - Use one border per group. Prefer spacing, alignment and an inset separator
-  over nested cards. Containers are square with thin borders. Round a control
-  only where its component contract permits.
+  over nested cards. Use square corners on every surface and control, including
+  fields, buttons, switches, chips, menus and sheets. Do not add radius exceptions.
 - Align each column to one left edge. Titles use available width; metadata
   aligns to the end. Reserve space for hover actions to prevent layout shifts.
 - Do not add an `Open` button to a row that already opens when selected.

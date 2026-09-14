@@ -14,8 +14,8 @@
  *    cell) and the whole-tree scan in `ui.test.tsx` fails when a paint utility
  *    arrives at one of these components.
  * 3. TOKENS ONLY. Tailwind v4 utilities over the tokens in `index.css`: no
- *    component CSS, no inline styles, no hex, and no raw radius — the ladder is
- *    `rounded-chip | rounded-control | rounded-field | rounded-panel`.
+ *    component CSS, no inline styles, no hex. Surfaces and controls use square
+ *    corners (`rounded-none`), including switches, chips, fields and sheets.
  * 4. TWO FACES, AND ONLY TWO. `sm:` answers "is there room" and owns layout;
  *    only `mouse:` may make a control tighter (44px under a finger, 28px under a
  *    pointer). A control has no other responsive behaviour.
@@ -156,7 +156,7 @@ export const Button = forwardRef<
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
     page: `${touchReach} min-h-8 min-w-11 px-1.5 font-mono text-ui tabular-nums aria-[current=page]:bg-hover aria-[current=page]:text-white mouse:min-h-7 mouse:min-w-7 mouse:px-1.5 mouse:text-meta`,
   }[density];
-  const frame = `rounded-control py-0.5 ${scale}`;
+  const frame = `rounded-none py-0.5 ${scale}`;
 
   return (
     <button
@@ -458,7 +458,7 @@ export function CopyChip({
       onClick={copy}
       aria-label={label}
       title={title ?? label}
-      className={`relative inline-flex h-8 items-center justify-center gap-1 rounded-control border px-2 text-center font-mono text-ui transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${face} ${className}`}
+      className={`relative inline-flex h-8 items-center justify-center gap-1 rounded-none border px-2 text-center font-mono text-ui transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${face} ${className}`}
     >
       {isCopied ? (
         <CheckIcon className="size-3 text-ok" />
@@ -1451,14 +1451,14 @@ export function Switch({
       aria-label={`${label}: ${isOn ? 'on' : 'off'}`}
       aria-checked={isOn}
       aria-busy={isBusy}
-      className={`relative inline-flex h-7 w-[2.875rem] shrink-0 items-center rounded-full border p-0.5 transition-colors duration-150 ease-out after:absolute after:inset-x-0 after:-top-2 after:-bottom-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:h-6 mouse:w-10 mouse:after:-top-1 mouse:after:-bottom-1 ${
+      className={`relative inline-flex h-7 w-[2.875rem] shrink-0 items-center rounded-none border p-0.5 transition-colors duration-150 ease-out after:absolute after:inset-x-0 after:-top-2 after:-bottom-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:h-6 mouse:w-10 mouse:after:-top-1 mouse:after:-bottom-1 ${
         isOn ? 'border-white bg-accent' : 'border-white bg-transparent'
       } ${className}`}
       {...props}
     >
       <span
         aria-hidden
-        className={`size-[1.375rem] rounded-full transition-transform duration-150 ease-out mouse:size-[1.125rem] ${
+        className={`size-[1.375rem] rounded-none transition-transform duration-150 ease-out mouse:size-[1.125rem] ${
           isOn
             ? 'translate-x-[1.125rem] bg-accent-foreground mouse:translate-x-4'
             : 'translate-x-0 bg-dialog-hint'
@@ -1658,7 +1658,7 @@ export const Input = forwardRef<
     >
       <input
         ref={ref}
-        className={`block h-8 w-full rounded-control border border-edge bg-input py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none mouse:h-7 ${icon ? 'pl-8 sm:pl-9' : 'pl-2.5 sm:pl-3'} ${action ? 'pr-10 mouse:pr-8 [&::-webkit-search-cancel-button]:hidden' : 'pr-2.5 sm:pr-3'} ${masked}`}
+        className={`block h-8 w-full rounded-none border border-edge bg-input py-0.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none mouse:h-7 ${icon ? 'pl-8 sm:pl-9' : 'pl-2.5 sm:pl-3'} ${action ? 'pr-10 mouse:pr-8 [&::-webkit-search-cancel-button]:hidden' : 'pr-2.5 sm:pr-3'} ${masked}`}
         {...props}
       />
       {icon && (
@@ -1681,7 +1681,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
   function Select({ className = '', ...props }, ref) {
     return (
       <span
-        className={`inline-flex h-8 min-w-0 max-w-full items-center self-center rounded-control border border-edge bg-input focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 mouse:h-7 ${className}`}
+        className={`inline-flex h-8 min-w-0 max-w-full items-center self-center rounded-none border border-edge bg-input focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 mouse:h-7 ${className}`}
       >
         <select
           ref={ref}
@@ -1885,10 +1885,9 @@ export function Modal({
  * dead space on both sides to clear a close button that is welded to one of them.
  *
  * The band is the list's own (`min-h-12 mouse:min-h-9`), so a dialog's header and a
- * machine's header are the same height on the same screen. The dialog frame owns every
- * outer radius. The band's lower edge stays square and full width so the scrolling body
- * meets it on one exact seam; rounding that edge exposed two wedges of body paper and
- * made the band read as a capsule laid over a second surface.
+ * machine's header are the same height on the same screen. The frame and band have
+ * square corners; the lower edge stays full width so the scrolling body meets it
+ * on one exact seam.
  */
 /**
  * The way out as ONE value: the handler and the name that goes with it, or nothing
@@ -2086,9 +2085,9 @@ export function DialogFrame({
   const isFitSheet = useContext(IsFitSheet);
   return (
     <section
-      className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-panel border-t-2 border-accent bg-panel ${
+      className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-t-2 border-accent bg-panel ${
         isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'
-      } pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:rounded-panel sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
+      } pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}

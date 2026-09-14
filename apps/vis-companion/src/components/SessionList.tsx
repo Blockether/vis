@@ -870,7 +870,7 @@ function highlightNeedle(text: string, needle: string) {
   const parts = text.split(new RegExp(`(${escapeRegExp(needle)})`, 'ig'));
   return parts.map((part, index) =>
     part.toLowerCase() === needle.toLowerCase() && part.length > 0 ? (
-      <mark key={index} className="rounded-[2px] bg-accent/30 px-0.5 font-bold text-white">
+      <mark key={index} className="rounded-none bg-accent/30 px-0.5 font-bold text-white">
         {part}
       </mark>
     ) : (

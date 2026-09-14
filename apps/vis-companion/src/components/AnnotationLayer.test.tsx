@@ -140,8 +140,7 @@ describe('AnnotationLayer', () => {
 });
 
 describe('PenToolbar', () => {
-  // Regression, user report: the mobile rail had a wide square frame and square inks.
-  it('offers every ink as a round chip in a narrow rounded rail', () => {
+  it('offers every ink as a square chip in a narrow square rail', () => {
     const onColor = vi.fn();
     mount(
       <PenToolbar
@@ -153,7 +152,7 @@ describe('PenToolbar', () => {
       />,
     );
     const toolbar = host.querySelector('[aria-label="Drawing tools"]');
-    expect(toolbar?.className).toContain('rounded-panel');
+    expect(toolbar?.className).toContain('rounded-none');
     expect(toolbar?.className).toContain('px-0');
     expect(toolbar?.className).toContain('sm:p-1');
     const swatches = [...host.querySelectorAll('button[aria-pressed]')];
@@ -162,7 +161,7 @@ describe('PenToolbar', () => {
     for (const swatch of swatches) {
       expect(swatch.getAttribute('aria-label')).toMatch(/pen$/u);
       expect(swatch.className).not.toContain('sm:min-h');
-      expect(swatch.querySelector('span')?.className).toContain('rounded-full');
+      expect(swatch.querySelector('span')?.className).toContain('rounded-none');
     }
     act(() => (swatches[0] as HTMLButtonElement).click());
     expect(onColor).toHaveBeenCalledWith('--err');

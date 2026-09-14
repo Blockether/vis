@@ -82,7 +82,7 @@ describe('queued turns tray', () => {
     expect(screen.getByText('Inspect the release manifest')).toBeTruthy();
     await waitFor(() => expect(onError).toHaveBeenCalledWith('queue changed first'));
   });
-  it('keeps the queued label while letting compact removal set the row rhythm', () => {
+  it('keeps the queued label and the shared square removal target', () => {
     render(
       <QueuedTurnsTray
         client={gateway()}
@@ -101,13 +101,13 @@ describe('queued turns tray', () => {
     for (const remove of screen.getAllByRole('button', {
       name: /Remove queued message/,
     })) {
-      expect(remove.className).toContain('size-6');
-      expect(remove.className).toContain('mouse:size-5');
-      const face = remove.querySelector('span');
-      expect(face?.className).toContain('size-4');
-      expect(face?.className).toContain('mouse:size-3.5');
-      expect(face?.className).toContain('blockether-light:bg-accent');
-      expect(face?.className).toContain('blockether-light:text-accent-foreground');
+      expect(remove.className).toContain('size-8');
+      expect(remove.className).toContain('mouse:size-7');
+      expect(remove.className).toContain('after:size-11');
+      expect(remove.className).toContain('rounded-none');
+      expect(remove.className).toContain('bg-transparent');
+      expect(remove.className).toContain('text-current');
+      expect(remove.querySelector('span')).toBeNull();
       expect(remove.querySelector('svg')?.className.baseVal).toContain('size-2.5');
     }
   });

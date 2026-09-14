@@ -30,13 +30,13 @@ import {
   type HumanInputValues,
 } from '../lib/human-input';
 
-/** The range field's painted track and finger-sized target. */
+/** The range field's square track and thumb, with a finger-sized target. */
 function RangeSlider({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <span className={`flex min-h-11 min-w-0 items-center mouse:min-h-7 ${className}`}>
       <input
         type="range"
-        className="h-1 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
+        className="h-1 w-full min-w-0 cursor-pointer appearance-none rounded-none bg-edge accent-accent disabled:cursor-not-allowed [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-none [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-accent [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-none [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-accent"
         {...props}
       />
     </span>

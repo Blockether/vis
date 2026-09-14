@@ -510,7 +510,7 @@ function ImproveEditor({
             onChange={(event) => setContent(event.target.value)}
             disabled={busy}
             rows={12}
-            className="min-h-44 w-full resize-y rounded-field border border-edge bg-input p-3 font-mono text-body text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted"
+            className="min-h-44 w-full resize-y rounded-none border border-edge bg-input p-3 font-mono text-body text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted"
           />
         </label>
         <p className="font-mono text-ui text-dialog-hint">

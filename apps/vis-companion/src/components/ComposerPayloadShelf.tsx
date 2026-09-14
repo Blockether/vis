@@ -31,7 +31,7 @@ export function ComposerPayloadShelf({
           {pastes.map((paste) => (
             <span
               key={paste.id}
-              className="inline-flex min-h-7 shrink-0 items-center overflow-hidden rounded-chip border border-code-edge bg-code font-mono text-chip"
+              className="inline-flex min-h-7 shrink-0 items-center overflow-hidden rounded-none border border-code-edge bg-code font-mono text-chip"
             >
               <TextButton
                 isToken
@@ -58,7 +58,7 @@ export function ComposerPayloadShelf({
           {attachments.map((attachment) => (
             <div
               key={attachment.id}
-              className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 overflow-hidden rounded-chip border border-dialog-edge bg-panel pr-8 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+              className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 overflow-hidden rounded-none border border-dialog-edge bg-panel pr-8 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
             >
               {isVideoMediaType(attachment.media_type) ? (
                 <video

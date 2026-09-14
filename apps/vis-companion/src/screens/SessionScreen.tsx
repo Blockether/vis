@@ -4461,7 +4461,7 @@ export function SessionScreen({
               onError={setError}
             />
 
-            <div className="relative rounded-field border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
+            <div className="relative rounded-none border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
               <ComposerPayloadShelf
                 pastes={activePastes}
                 attachments={attachments}

@@ -604,7 +604,7 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
                 </p>
                 {(running || block.total !== undefined) && (
                   <progress
-                    className="block h-1.5 w-full overflow-hidden rounded-full border-0 bg-edge accent-accent-ink [&::-webkit-progress-bar]:bg-edge [&::-webkit-progress-value]:bg-accent-ink [&::-moz-progress-bar]:bg-accent-ink motion-safe:indeterminate:animate-pulse"
+                    className="block h-1.5 w-full overflow-hidden rounded-none border-0 bg-edge accent-accent-ink [&::-webkit-progress-bar]:bg-edge [&::-webkit-progress-value]:bg-accent-ink [&::-moz-progress-bar]:bg-accent-ink motion-safe:indeterminate:animate-pulse"
                     aria-label={block.label}
                     value={block.value}
                     max={block.total}

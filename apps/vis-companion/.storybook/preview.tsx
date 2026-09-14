@@ -1,4 +1,5 @@
 import type { Decorator, Preview } from '@storybook/react-vite';
+import { expect } from 'storybook/test';
 import { useLayoutEffect, type ReactNode } from 'react';
 import { applyTheme, resolveTheme } from '../src/lib/theme';
 import { DEFAULT_THEME, THEMES } from '../src/lib/themes.generated';
@@ -43,6 +44,26 @@ const withTheme: Decorator = (Story, { globals }) => (
 const preview: Preview = {
   decorators: [withTheme],
   tags: ['autodocs'],
+  afterEach: async ({ canvasElement }) => {
+    const rounded: string[] = [];
+    // Include portals and generated faces, but preserve the Lucide glyphs themselves.
+    for (const element of canvasElement.ownerDocument.body.querySelectorAll('*')) {
+      if (!(element instanceof HTMLElement) || !element.checkVisibility()) continue;
+      for (const pseudo of [null, '::before', '::after']) {
+        const style = getComputedStyle(element, pseudo);
+        if (pseudo && (style.content === 'none' || style.content === 'normal')) continue;
+        for (const corner of ['top-left', 'top-right', 'bottom-right', 'bottom-left']) {
+          const radius = style.getPropertyValue(`border-${corner}-radius`);
+          if (radius !== '0px') {
+            rounded.push(
+              `${element.tagName}.${element.className}${pseudo ?? ''}: ${corner} ${radius}`,
+            );
+          }
+        }
+      }
+    }
+    await expect(rounded, 'Every app surface and control has square corners').toEqual([]);
+  },
   parameters: {
     layout: 'fullscreen',
 

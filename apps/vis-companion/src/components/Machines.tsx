@@ -414,7 +414,7 @@ function ReachDot({ state }: { state: AddressReach }) {
   return (
     <span
       aria-hidden="true"
-      className={`size-1.5 shrink-0 rounded-full ${
+      className={`size-1.5 shrink-0 rounded-none ${
         state === 'online'
           ? 'bg-ok'
           : state === 'offline'

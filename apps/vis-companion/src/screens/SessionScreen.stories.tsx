@@ -5,6 +5,7 @@ import {
   STORY_COMPOSER_CLIENT as client,
   STORY_COMPOSER_SESSION as session,
   STORY_COMPOSER_SUBSCRIPTIONS as subscriptions,
+  STORY_QUEUED_TURNS,
 } from '../dev/story-data';
 import { draftMessageKey, hydrateDraftMessages, writeDraftMessage } from '../lib/draft-messages';
 import type { RunningTurn } from '../lib/running-turn';
@@ -184,4 +185,31 @@ export const RunningComposerHeights: Story = {
 export const RunningComposerHeightsPointer: Story = {
   ...RunningComposerHeights,
   globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+/** The queued message and composer share a square frame at every input density. */
+export const QueuedComposer: Story = {
+  args: {
+    client: new Proxy(runningClient, {
+      get(target, key) {
+        if (key === 'cachedQueuedTurns') return () => STORY_QUEUED_TURNS.slice(0, 1);
+        if (key === 'queuedTurns') {
+          return async () => ({ turns: STORY_QUEUED_TURNS.slice(0, 1), paused: null });
+        }
+        return Reflect.get(target, key);
+      },
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const composer = await page.findByRole('textbox', { name: 'Message Vis' });
+    const queued = await page.findByRole('region', { name: 'Queued messages' });
+    const field = composer.closest('.rounded-none')!;
+    const tray = queued.parentElement!;
+    await expect(getComputedStyle(field).borderRadius).toBe('0px');
+    await expect(getComputedStyle(tray).borderRadius).toBe('0px');
+    await expect(tray.getBoundingClientRect().width).toBe(field.getBoundingClientRect().width);
+    await userEvent.type(composer, 'Keep this message queued.');
+    await expect(composer).toHaveValue('Keep this message queued.');
+  },
 };

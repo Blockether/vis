@@ -87,48 +87,10 @@
   --text-display--line-height: 30px;
 }
 
-/* Corners. A radius is a promise that a thing can be PRESSED, so it belongs to a
-   control, to the field that holds controls, and to a layer that floats over the
-   page. Never to a PLANE: activity rows, code and result surfaces, transcript
-   bands and list rows stay square — "definitely there should be no rounded
-   corners" was a report about a pill on a page of square bands, and `ui.test.tsx`
-   still pins every plane that report named.
-
-   THE MACHINE SWITCHER IS NOT ONE OF THEM, and it took two more reports to land it:
-   it is a segmented control whose tiles are pressed, standing ON the page rather
-   than lying in it, so it wears the shape of the control standing beside it — track
-   and tiles are capsules, because the mark that opens this machine's projects is a
-   disc, and a rectangle next to a circle is two rhythms on one 32px row.
-
-   THE DOCK IS ONE OBJECT too: the queue tray and the paused banner are not bands
-   of a page but boxes that arrive over the composer, carrying their own paper at
-   its width six pixels above it — two boxes of one object read as one material
-   only at one radius, so they take its field rung and its 3px shadow, while a
-   completion list, floating on a 6px shadow like the menu beside it, is a panel.
-
-   Two lines size every corner. A radius is its box divided by four, capped at
-   16px; and a CONTAINER's radius is its child's radius plus the padding between
-   them. The second line is what makes the composer's send look concentric inside
-   the field instead of parallel to it: an 8px control with a 4px inset around it
-   gives the field 12px. A MARK HAS NO WIDTH TO EARN: a control carrying a glyph
-   where its word would be is square, and a square control is a DISC — 32px of face,
-   28px under a pointer, which is the box the way out of a dialog already drew and
-   nothing else copied. A LAYER OVER THE PAGE takes the panel rung whatever its own
-   box is, because it is not standing on the page's grid; on a 32px face that lands
-   on a capsule too, and what tells "Latest" apart from a disc in the chrome is the
-   WORD inside it and the shadow under it. Tailwind's own scale is reset so
-   `rounded-2xl` cannot appear — four rungs, each named after the box it wraps. */
+/* Surfaces and controls have square corners. Clear Tailwind's default radius
+   scale so components use rounded-none rather than introducing a corner ladder. */
 @theme {
   --radius-*: initial;
-
-  /* a 24px chip, tile or thumbnail */
-  --radius-chip: 6px;
-  /* the 28-32px control: a button, a field, a composer key */
-  --radius-control: 8px;
-  /* a container of controls: the control's 8px plus the 4px that insets it */
-  --radius-field: 12px;
-  /* a sheet, a popover, or the one control that floats over the page */
-  --radius-panel: 16px;
 }
 
 /* Tailwind utilities resolve directly to the shared TUI palette generated above. */

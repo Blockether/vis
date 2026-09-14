@@ -146,6 +146,17 @@ describe('human input sheet', () => {
     expect(html).toContain('Error budget');
   });
 
+  it('uses square range thumbs instead of native round knobs', () => {
+    const html = markup('slider');
+    const slider = /<input[^>]*type="range"[^>]*>/.exec(html)?.[0] ?? '';
+    for (const thumb of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
+      // A square input alone does not change the browser's native thumb painting.
+      for (const style of ['appearance-none', 'rounded-none', 'border-0', 'size-4', 'bg-accent']) {
+        expect(slider).toContain(`[&amp;${thumb}]:${style}`);
+      }
+    }
+  });
+
   it('masks a password and shows a checkbox as a pressed toggle', () => {
     const html = markup('slider');
     expect(html).toContain('type="password"');

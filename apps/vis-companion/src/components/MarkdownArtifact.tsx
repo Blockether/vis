@@ -644,7 +644,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
           {comments.map((comment, at) => (
             <li
               key={`${at}:${comment.quote}`}
-              className="flex items-start gap-2 rounded-[2px] border-l-2 border-dialog-edge py-1 pr-1 pl-2"
+              className="flex items-start gap-2 rounded-none border-l-2 border-dialog-edge py-1 pr-1 pl-2"
               style={{
                 borderLeftColor: annotationColor(at),
                 backgroundColor: annotationWash(at),

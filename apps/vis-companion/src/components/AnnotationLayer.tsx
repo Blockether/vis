@@ -245,7 +245,7 @@ export function AnnotationLayer({
 /**
  * The pen's own controls: which ink, and the two ways back. Presentational — it
  * holds no strokes, so the same rail drives a viewer, a document page, or anything
- * else that mounts an {@link AnnotationLayer}. Each rounded swatch is a 28px chip.
+ * else that mounts an {@link AnnotationLayer}. Each square swatch is a 28px chip.
  * Every control reserves a 44px touch / 28px pointer target with 8px separation;
  * bare icon actions keep their smaller face and reserve touch reach as margin.
  */
@@ -268,7 +268,7 @@ export function PenToolbar({
     <div
       role="group"
       aria-label="Drawing tools"
-      className={`flex flex-col items-center gap-2 rounded-panel border border-dialog-edge bg-panel px-0 py-1 sm:p-1 ${className}`}
+      className={`flex flex-col items-center gap-2 rounded-none border border-dialog-edge bg-panel px-0 py-1 sm:p-1 ${className}`}
     >
       {PEN_COLORS.map((pen) => (
         <button
@@ -280,7 +280,7 @@ export function PenToolbar({
           aria-pressed={color === pen.token}
         >
           <span
-            className={`size-7 rounded-full border-2 ${pen.className} ${
+            className={`size-7 rounded-none border-2 ${pen.className} ${
               color === pen.token ? 'border-accent' : 'border-edge-strong'
             }`}
           />

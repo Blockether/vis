@@ -622,7 +622,7 @@ export function MachineMark({
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-full bg-level-machine p-0.5">
+    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-none bg-level-machine p-0.5">
       {children}
     </div>
   );
@@ -667,7 +667,7 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-none px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
         isDown
           ? 'text-dialog-hint hover:text-white'
           : isOn

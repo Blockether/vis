@@ -86,6 +86,11 @@ export const ConciseActions: Story = {
     onForget: fn(),
   },
   play: async ({ canvas, canvasElement }) => {
+    // Settle the viewport's queued resize before opening a resize-dismissed menu.
+    await canvasElement.ownerDocument.fonts.ready;
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
     await userEvent.click(canvas.getByRole('button', { name: 'Actions for 127.0.0.1:61397' }));
     // The action menu mounts in a portal after the click commits.
     const menu = await within(canvasElement.ownerDocument.body).findByRole('dialog', {

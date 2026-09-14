@@ -2955,7 +2955,7 @@ describe('the session screen and the settings dialog spell no control out', () =
 
     // The route a machine takes is asked for in the row's own slide, beside its other
     // verbs — the app's one strip, opening the app's one menu.
-    expect(machinesSource).toContain('Bind ${name} to a different address');
+    expect(machinesSource).toContain('Bind to another address');
     expect(machinesSource).toContain('<AddressMenu');
     expect(machinesSource).toContain('<MenuItem');
     expect(machinesSource).toContain('<AddressIcon');
@@ -3562,63 +3562,36 @@ describe('SettingsChoiceGroup', () => {
   });
 });
 
-// The corner ladder, and the rule that sizes it. A radius is a promise that a thing
-// can be PRESSED: the control vocabulary carries one, a plane does not, and the size
-// comes from the box rather than from taste. `index.css` states it; this reads it
-// back on a machine with no browser.
+// Source checks reject radius utilities; Storybook verifies every rendered corner.
 describe('Corners', () => {
-  const everything = import.meta.glob(['../**/*.tsx'], {
-    query: '?raw',
-    import: 'default',
-    eager: true,
-  }) as Record<string, string>;
+  const everything = import.meta.glob(
+    ['../**/*.tsx', '!../**/*.test.tsx', '!../**/*.stories.tsx'],
+    { query: '?raw', import: 'default', eager: true },
+  ) as Record<string, string>;
 
-  /** Every corner a piece of markup asks for, as whole class tokens. */
-  const corners = (markup: string) =>
-    [...markup.matchAll(/\bclass="([^"]*)"/g)]
-      .flatMap(([, list]) => list.split(' '))
-      .filter((token) => token.includes('rounded'));
-
-  it("writes the ladder's four rungs and no step Tailwind ships", () => {
-    // The rungs are declared in `src/index.css` — chip 6px, control 8px, field
-    // 12px, panel 16px — and the default scale is reset beside them, so a
-    // `rounded-2xl` would be a class that paints nothing. Vitest hands a
-    // stylesheet back as an empty module (`?raw` included), so what is pinned
-    // here is every corner the app actually writes: a rung, a dot, or a square.
-    const rungs = new Set(['chip', 'control', 'field', 'panel', 'none', 'full']);
+  it('uses only square-corner utilities throughout the app', () => {
     for (const [path, source] of Object.entries(everything)) {
-      for (const [, rung] of source.matchAll(/\brounded-(?:[tbrlse]-|[tb][lr]-)?([a-z0-9]+)\b/g)) {
-        expect(rungs.has(rung) ? path : `${path}: rounded-${rung}`).toBe(path);
-      }
+      const corners = [...source.matchAll(/\brounded(?:-[\w-]+|-\[[^\]]+\])?/g)];
+      expect(
+        corners.map(([corner]) => corner).filter((corner) => corner !== 'rounded-none'),
+        path,
+      ).toEqual([]);
     }
   });
 
-  it('rounds what is pressed and leaves a plane square', () => {
-    // A row in a list is a plane of a page made of square bands, and the report that
-    // made it square still holds. The machine tab left that list: it is a segmented
-    // control standing beside a disc, so it is a capsule.
-    expect(corners(renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>))).toEqual(
-      [],
-    );
-  });
-
-  it('measures a container off the thing it holds', () => {
-    expect(sessionScreenSource).toContain('rounded-field border border-dialog-edge bg-input');
-  });
-
-  it("gives the dock's own boxes the composer's corner", () => {
-    // "why isn't this element rounded" was a report about the queue tray, the one
-    // box in the dock still square. The tray and the paused banner are not bands of
-    // a page: they arrive over the composer at its width, so they take its 12px
-    // field and its 3px shadow. Anything floating on the 6px shadow — the two
-    // completion lists, the attachment menu — is a 16px panel.
+  it('keeps the composer, queue and floating suggestions square without changing their shadows', () => {
+    expect(sessionScreenSource).toContain('rounded-none border border-dialog-edge bg-input');
     expect(sessionDockSource).toContain(
-      'mb-1.5 overflow-clip rounded-field border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]',
+      'mb-1.5 overflow-clip rounded-none border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]',
     );
     expect(sessionDockSource).toContain(
-      'rounded-field border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)]',
+      'rounded-none border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)]',
     );
+    expect(composerSuggestionsSource).toContain('rounded-none border border-dialog-edge bg-panel');
     expect(composerSuggestionsSource).toContain('shadow-[6px_6px_0_var(--dialog-shadow)]');
+    expect(composerAttachmentPickerSource).toContain(
+      'rounded-none border border-dialog-edge bg-panel',
+    );
     expect(composerAttachmentPickerSource).toContain('shadow-[6px_6px_0_var(--dialog-shadow)]');
     expect(sessionScreenSource.match(/<ComposerSuggestions/g)).toHaveLength(2);
   });
