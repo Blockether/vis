@@ -1,4 +1,4 @@
-# Review a specification and start implementation
+# Plan before coding
 
 Turn on **Plan before coding** when a change needs decisions before implementation.
 Vis helps you settle those decisions, writes a versioned specification and breaks
