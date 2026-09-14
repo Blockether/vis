@@ -894,3 +894,256 @@ def test_sync_lock_and_corrupt_receipts_fail_without_touching_source(tmp_path):
         package.sync(config, target, trust=True)
     assert not (target / "vis-greeter").exists()
     assert not (target / ".sync-lock").exists()
+
+
+def test_saved_local_install_is_sync_owned_and_repeatable(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    result = package.install(
+        str(source / "pyproject.toml"), target, trust=True, save=True
+    )
+    assert result["name"] == "vis-greeter"
+    assert result["declaration"] == {"source": str(source)}
+    configured = {result["name"]: result["declaration"]}
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+    again = package.install(str(source), target, trust=True, save=True)
+    assert again["declaration"] == result["declaration"]
+    assert (target / "vis-greeter").resolve() == source
+
+
+@pytest.mark.parametrize("selector_kind", ["latest", "version", "revision"])
+def test_saved_remote_install_pins_the_selected_release_or_revision(
+    releases, selector_kind
+):
+    metadata, target, _ = releases
+    selector = (
+        {"revision": metadata[0]["revision"]}
+        if selector_kind == "revision"
+        else {"version": "1.0.0"}
+        if selector_kind == "version"
+        else {}
+    )
+    result = package.install(
+        REPOSITORY,
+        target,
+        trust=True,
+        save=True,
+        subdirectory="plugins/greeting",
+        **selector,
+    )
+    expected = {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    if "revision" in selector:
+        expected["revision"] = selector["revision"]
+    else:
+        expected["version"] = result["version"]
+    assert result["declaration"] == expected
+    assert (
+        package.sync({result["name"]: expected}, target, trust=True)[0]["status"]
+        == "cached"
+    )
+
+
+def test_save_does_not_adopt_an_unrelated_or_externally_changed_link(tmp_path):
+    source = project(tmp_path / "source")
+    alternate = project(tmp_path / "alternate")
+    target = tmp_path / "extensions"
+    package.install(str(source), target, trust=True)
+    with pytest.raises(ValueError, match="owned by sync"):
+        package.install(str(alternate), target, trust=True, save=True)
+    assert (target / "vis-greeter").resolve() == source
+    (target / "vis-greeter").unlink()
+    package.install(str(source), target, trust=True, save=True)
+    (target / "vis-greeter").unlink()
+    (target / "vis-greeter").symlink_to(alternate)
+    with pytest.raises(ValueError, match="owned by sync"):
+        package.install(str(source), target, trust=True, save=True)
+    assert (target / "vis-greeter").resolve() == alternate
+
+
+@pytest.mark.parametrize("remote", [False, True])
+def test_save_adopts_the_same_manual_install_and_rollback_preserves_it(
+    releases, tmp_path, remote
+):
+    _, target, _ = releases
+    source = REPOSITORY if remote else str(project(tmp_path / "source"))
+    options = {"subdirectory": "plugins/greeting", "version": "1.0.0"} if remote else {}
+    package.install(source, target, trust=True, **options)
+    previous = (target / "vis-greeter").resolve()
+    result = package.install(source, target, trust=True, save=True, **options)
+    assert result["save_state"]["previous"] is None
+    package.rollback_saved_install(target, result["name"], result["save_state"])
+    assert (target / "vis-greeter").resolve() == previous
+    assert package._sync_records(target) == {}
+    result = package.install(source, target, trust=True, save=True, **options)
+    assert (
+        package.sync({result["name"]: result["declaration"]}, target, trust=True)[0][
+            "status"
+        ]
+        == "cached"
+    )
+
+
+def test_save_refuses_a_different_manual_release(releases):
+    _, target, _ = releases
+    options = {"subdirectory": "plugins/greeting"}
+    package.install(REPOSITORY, target, trust=True, version="1.0.0", **options)
+    previous = (target / "vis-greeter").resolve()
+    with pytest.raises(ValueError):
+        package.install(
+            REPOSITORY, target, trust=True, save=True, version="1.1.0", **options
+        )
+    assert (target / "vis-greeter").resolve() == previous
+    assert package._sync_records(target) == {}
+
+
+def test_failed_configuration_save_can_remove_only_the_new_saved_link(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    result = package.install(str(source), target, trust=True, save=True)
+    package.rollback_saved_install(target, result["name"], result["save_state"])
+    assert not (target / "vis-greeter").exists()
+    assert package._sync_records(target) == {}
+    assert source.is_dir()
+
+
+def test_failed_configuration_save_restores_previous_saved_source(releases):
+    _, target, _ = releases
+    first = package.install(
+        REPOSITORY,
+        target,
+        trust=True,
+        save=True,
+        version="1.0.0",
+        subdirectory="plugins/greeting",
+    )
+    previous = (target / "vis-greeter").resolve()
+    record = package._sync_records(target)["vis-greeter"]
+    result = package.install(
+        REPOSITORY,
+        target,
+        trust=True,
+        save=True,
+        version="1.1.0",
+        subdirectory="plugins/greeting",
+    )
+    newer = (target / "vis-greeter").resolve()
+    package.rollback_saved_install(target, result["name"], result["save_state"])
+    assert (target / "vis-greeter").resolve() == previous
+    assert package._sync_records(target)["vis-greeter"] == record
+    assert (
+        package.sync({first["name"]: first["declaration"]}, target, trust=True)[0][
+            "status"
+        ]
+        == "cached"
+    )
+    assert newer.is_dir()
+
+
+@pytest.mark.parametrize("change", ["saved", "external", "same"])
+def test_save_rollback_refuses_a_concurrently_changed_install(tmp_path, change):
+    source = project(tmp_path / "source")
+    alternate = project(tmp_path / "alternate")
+    target = tmp_path / "extensions"
+    result = package.install(str(source), target, trust=True, save=True)
+    expected = source if change == "same" else alternate
+    if change == "external":
+        (target / "vis-greeter").unlink()
+        (target / "vis-greeter").symlink_to(alternate)
+    else:
+        package.install(str(expected), target, trust=True, save=True)
+    with pytest.raises(ValueError, match="changed"):
+        package.rollback_saved_install(target, result["name"], result["save_state"])
+    assert (target / "vis-greeter").resolve() == expected
+
+
+def test_save_receipt_failure_restores_the_previously_active_link(
+    tmp_path, monkeypatch
+):
+    source = project(tmp_path / "source")
+    alternate = project(tmp_path / "alternate")
+    target = tmp_path / "extensions"
+    package.install(str(source), target, trust=True, save=True)
+    receipt = (target / ".sync.json").read_bytes()
+
+    def fail(*_):
+        raise OSError("receipt is not writable")
+
+    monkeypatch.setattr(package, "_save_sync_records", fail)
+    with pytest.raises(OSError, match="not writable"):
+        package.install(str(alternate), target, trust=True, save=True)
+    assert (target / "vis-greeter").resolve() == source
+    assert (target / ".sync.json").read_bytes() == receipt
+
+
+def test_new_save_receipt_failure_removes_only_its_link(tmp_path, monkeypatch):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+
+    def fail(*_):
+        raise OSError("receipt is not writable")
+
+    monkeypatch.setattr(package, "_save_sync_records", fail)
+    with pytest.raises(OSError, match="not writable"):
+        package.install(str(source), target, trust=True, save=True)
+    assert not (target / "vis-greeter").exists()
+    assert not (target / ".sync.json").exists()
+    assert not (target / ".sync-lock").exists()
+    assert source.is_dir()
+
+
+def test_save_rollback_preserves_unrelated_sync_records(tmp_path):
+    source = project(tmp_path / "source")
+    other = project(tmp_path / "other", MANIFEST.replace("vis-greeter", "another-tool"))
+    target = tmp_path / "extensions"
+    result = package.install(str(source), target, trust=True, save=True)
+    package.install(str(other), target, trust=True, save=True)
+    record = package._sync_records(target)["another-tool"]
+    package.rollback_saved_install(target, result["name"], result["save_state"])
+    assert package._sync_records(target) == {"another-tool": record}
+    assert (target / "another-tool").resolve() == other
+
+
+def test_save_rollback_receipt_failure_restores_the_current_pointer(
+    tmp_path, monkeypatch
+):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    result = package.install(str(source), target, trust=True, save=True)
+    receipt = (target / ".sync.json").read_bytes()
+
+    def fail(*_):
+        raise OSError("receipt is not writable")
+
+    monkeypatch.setattr(package, "_save_sync_records", fail)
+    with pytest.raises(OSError, match="not writable"):
+        package.rollback_saved_install(target, result["name"], result["save_state"])
+    assert (target / "vis-greeter").resolve() == source
+    assert (target / ".sync.json").read_bytes() == receipt
+
+
+def test_saved_install_requires_trust_and_respects_the_sync_lock(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    with pytest.raises(ValueError, match="trust"):
+        package.install(str(source), target, save=True)
+    assert not target.exists()
+    target.mkdir()
+    (target / ".sync-lock").write_text("")
+    with pytest.raises(FileExistsError):
+        package.install(str(source), target, trust=True, save=True)
+    assert not (target / "vis-greeter").exists()
+
+
+def test_saved_install_enforces_sync_receipt_package_limit(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    target.mkdir()
+    records = {
+        f"tool-{number}": {"spec": {}, "target": str(source), "result": {}}
+        for number in range(128)
+    }
+    package._save_sync_records(target, records)
+    with pytest.raises(ValueError, match="at most 128"):
+        package.install(str(source), target, trust=True, save=True)
+    assert not (target / "vis-greeter").exists()
+    assert package._sync_records(target) == records

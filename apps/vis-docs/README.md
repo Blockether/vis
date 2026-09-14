@@ -159,8 +159,8 @@ or **Global** to copy a version-pinned, multiline shell command with an explicit
 Commands use the shared syntax colors and copy as plain text, including shell line
 continuations. If the Clipboard API is unavailable or denied, copying falls back to
 browser selection; if that also fails, the command stays selected for manual copying.
-Manual installation does not add a declaration to `vis.yml`. Use the
-[configuration workflow](../../resources/vis-docs/extension-packages.md#declare-packages-in-configuration)
+Installation without `--save` does not add a declaration to `vis.yml`. Add `--save`
+to use the [configuration workflow](../../resources/vis-docs/extension-packages.md#save-an-installation-in-configuration)
 for a shared setup. The CLI also provides `versions`, `update` and `rollback`; see the
 [installation guide](../../resources/vis-docs/extension-packages.md).
 Deploy the catalog API and use a Vis build that includes these version-aware commands;

@@ -275,6 +275,26 @@
         (expect (empty? @calls)))))
 
 (defdescribe
+  extension-install-save-command-test
+  (it
+    "passes explicit save intent and scope without changing ordinary installation"
+    (doseq [scope [nil "--project" "--global"]]
+      (let [calls (atom [])]
+        (with-redefs [python-extensions/install-package!
+                      (fn [source options]
+                        (swap! calls conj [source options])
+                        {"name" "vis-greeter" "version" "1.0.0" "mode" "source" "next" "/reload"})]
+          (with-out-str (commandline/dispatch! (#'main/root-command)
+                                               (cond-> ["vis-agent" "extension" "install"
+                                                        "./vis-greeter" "--trust" "--save"]
+                                                 scope
+                                                 (conj scope)))))
+        (let [[_ options] (first @calls)]
+          (expect (= 1 (count @calls)))
+          (expect (true? (:save options)))
+          (expect (= (= scope "--project") (boolean (:project options)))))))))
+
+(defdescribe
   extension-version-commands-test
   (it "prints the repository slug rather than the Python distribution name"
       (let [lines (atom [])]

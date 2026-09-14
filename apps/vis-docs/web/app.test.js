@@ -320,6 +320,10 @@ test('install choices render highlighted multiline shell commands and reset copy
   expect($('#install-command').textContent).not.toContain('--project');
   expect($('#install-scope-help').textContent).toContain('~/.vis/extensions');
   expect($('#install-scope-help').textContent).toContain('does not add an extensions entry to vis.yml');
+  expect($('#install-scope-help code').textContent).toBe('--save');
+  expect($('#install-scope-help a').getAttribute('href')).toBe(
+    '/extension-packages.html#save-an-installation-in-configuration',
+  );
   expect($('#copy-command').textContent).toBe('Copy install command');
   expect($('#copy-status').textContent).toBe('');
   $('#copy-command').click();

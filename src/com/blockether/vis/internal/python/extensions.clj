@@ -1791,16 +1791,52 @@
     (str operation "(**json.loads(" (python-string-literal (json/write-json-str arguments)) "))")))
 
 (defn install-package!
-  "Install an approved version, an explicit SHA or a local source project."
-  [source {:keys [trust subdirectory revision version directory]}]
-  (package-operation "install"
-                     {:source source
-                      :directory directory
-                      :trust (boolean trust)
-                      :subdirectory (or subdirectory "")
-                      :revision revision
-                      :version version
-                      :vis_version (package-version)}))
+  "Install a source; with save, persist its declaration and transfer management to sync.
+   Preflight config before admission. Roll back the admitted source if saving fails."
+  [source {:keys [trust subdirectory revision version directory save project]}]
+  (let [plan
+        (when save (config/prepare-extension-save {:project project}))
+
+        result
+        (package-operation "install"
+                           {:source source
+                            :directory directory
+                            :trust (boolean trust)
+                            :subdirectory (or subdirectory "")
+                            :revision revision
+                            :version version
+                            :save (boolean save)
+                            :vis_version (package-version)})]
+
+    (if-not save
+      result
+      (try
+        (let [path (config/save-extension-declaration! plan
+                                                       (get result "name")
+                                                       (get result "declaration"))]
+          (-> result
+              (dissoc "save_state")
+              (assoc "saved_config" path
+                     "next"
+                     (str "Saved to "
+                          path
+                          ". "
+                          (get result "next")
+                          ". Manage this package through its declaration and extension sync."))))
+        (catch Exception error
+          (try
+            (package-operation "rollback_saved_install"
+                               {:directory directory
+                                :name (get result "name")
+                                :save_state (get result "save_state")})
+            (catch Exception rollback-error
+              (.addSuppressed error rollback-error)
+              (throw
+                (ex-info
+                  "Could not save configuration or roll back the installation; inspect both before retrying"
+                  {:type ::save-rollback-failed}
+                  error))))
+          (throw error))))))
 
 (defn package-versions
   "List approved releases and update availability for a GitHub repository slug or URL."

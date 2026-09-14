@@ -32,7 +32,9 @@
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove]
             [taoensso.trove.telemere :as trove-telemere]
+            [yamlstar.composer :as yaml-composer]
             [yamlstar.core :as yamlstar]
+            [yamlstar.parser :as yaml-parser]
             ;; YAMLStar 0.1.21 loads plugins lazily; link/register the default in native images.
             [yamlstar.plugin.parser.reference])
   (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)
@@ -1738,6 +1740,284 @@
                          :data {:path (str lock-path) :error (ex-message t)}}
                         "Writing the machine store without a file lock")
               (apply-update!)))))))
+
+(defn- save-file-text
+  [path]
+  (let [file (io/file path)]
+    (when (java.nio.file.Files/isSymbolicLink (.toPath file))
+      (throw (ex-info "Refusing to save extensions through a symbolic link" {:path path})))
+    (when (.exists file)
+      (when-not (.isFile file)
+        (throw (ex-info "Extension configuration is not a regular file" {:path path})))
+      (slurp file))))
+
+(defn- extension-save-document
+  [text path]
+  (let [nodes
+        (yaml-composer/compose-all (yaml-parser/parse (or text "")))
+
+        documents
+        (vec (yamlstar/load-all (or text "")))
+
+        raw
+        (if (empty? documents) {} (first documents))]
+
+    (when (or (> (count documents) 1) (not (map? raw)))
+      (throw (ex-info "Saving extensions requires one YAML mapping document" {:path path})))
+    (doseq [node
+            (tree-seq #(contains? #{:mapping :sequence} (:kind %))
+                      #(if (= :mapping (:kind %)) (mapcat identity (:value %)) (:value %))
+                      (first nodes))
+
+            :when (= :mapping (:kind node))]
+
+      (let [keys (map (comp :value first) (:value node))]
+        (when-not (= (count keys) (count (distinct keys)))
+          (throw (ex-info "Duplicate YAML keys prevent saving extensions" {:path path})))))
+    (config-validation/assert-config! raw path)
+    {:raw raw :node (first nodes)}))
+
+(defn prepare-extension-save
+  "Validate and snapshot the selected configuration before package admission.
+   Project saves target vis.yml (or an existing vis.yaml); global saves target
+   the machine-owned state.yml, never the hand-written global configuration.
+   Project saves support block mappings and an empty extensions: {} field;
+   unsupported layouts are refused rather than reformatted."
+  [{:keys [project]}]
+  (let [candidates
+        (if project (project-root-yaml-paths) [(state-path)])
+
+        path
+        (or (some #(when (.exists (io/file %)) %) candidates) (first candidates))
+
+        overlays
+        (when (and project
+                   (not= (.getCanonicalPath (io/file (workspace/cwd) ".vis"))
+                         (.getCanonicalPath (io/file (config-dir)))))
+          (project-config-yaml-paths))
+
+        snapshots
+        (into {}
+              (map (fn [p]
+                     [p (save-file-text p)]))
+              (concat candidates overlays))
+
+        {:keys [raw node]}
+        (extension-save-document (get snapshots path) path)
+
+        extension-node
+        (some (fn [[key value]]
+                (when (= "extensions" (:value key)) value))
+              (:value node))]
+
+    (doseq [p
+            overlays
+
+            :when (get snapshots p)]
+
+      (extension-save-document (get snapshots p) p))
+    (when (and project
+               (or (:flow node)
+                   (and (:flow extension-node) (seq (:value extension-node)))
+                   (and (contains? raw "extensions")
+                        (not
+                          (re-find
+                            #"(?m)^(?:extensions|'extensions'|\"extensions\"):[^\r\n]*(?:\r?\n|$)"
+                            (get snapshots path))))))
+      (throw
+        (ex-info
+          "Use block-style project YAML before --save; edit the declaration and run sync for other layouts"
+          {:path path})))
+    {:path path
+     :scope (if project "project" "global")
+     :raw raw
+     :snapshots snapshots
+     :overlays (vec overlays)}))
+
+(defn- extension-save-source
+  [path declaration relative?]
+  (let [source
+        (get declaration "source")
+
+        directory
+        (.getParentFile (io/file path))]
+
+    (if (str/includes? source "://")
+      declaration
+      (let [source
+            (if (str/starts-with? source "~/")
+              (io/file (System/getProperty "user.home") (subs source 2))
+              (io/file source))
+
+            source
+            (if (.isAbsolute source) source (io/file directory (str source)))
+
+            absolute
+            (.getCanonicalFile source)]
+
+        (assoc declaration
+          "source" (if relative?
+                     (let [relative (str (.relativize (.toPath (.getCanonicalFile directory))
+                                                      (.toPath absolute)))]
+                       (if (str/starts-with? relative "..") relative (str "./" relative)))
+                     (str absolute)))))))
+
+(defn- project-extension-text
+  [text raw name declaration]
+  (let [text
+        (or text "")
+
+        newline
+        (if (str/includes? text "\r\n") "\r\n" "\n")
+
+        line-end
+        (fn [s]
+          (if (or (empty? s) (str/ends-with? s "\n")) s (str s newline)))
+
+        dump
+        (str/replace (yamlstar/dump {name declaration}) "\n" newline)
+
+        field
+        #"(?m)^(?:extensions|'extensions'|\"extensions\"):[^\r\n]*(?:\r?\n|$)"
+
+        matcher
+        (re-matcher field text)]
+
+    (if (contains? raw "extensions")
+      (do
+        (when-not (.find matcher)
+          (throw (ex-info "Use a block-style extensions field before saving" {})))
+        (let [start
+              (.start matcher)
+
+              end
+              (.end matcher)
+
+              header
+              (.group matcher)
+
+              _
+              (when (.find matcher)
+                (throw (ex-info "Duplicate extensions fields prevent saving" {})))
+
+              suffix
+              (subs text end)
+
+              inline?
+              (boolean (re-find #":\s*\{\}" header))
+
+              _
+              (when (and (not inline?) (not (re-find #":\s*(?:#.*)?(?:\r?\n)?$" header)))
+                (throw (ex-info "Use a block-style extensions field before saving" {})))
+
+              indent
+              (or (when-not inline? (second (re-find #"(?m)^([ ]+)[^ #\r\n]" suffix))) "  ")
+
+              entry
+              (str/replace dump #"(?m)^" indent)
+
+              header
+              (if inline? (str/replace-first header #"\{\}" "") header)]
+
+          (str (subs text 0 start) (line-end header) entry suffix)))
+      (let [end-marker
+            (re-matcher #"(?m)^\.\.\.(?:[ ]*#.*)?[ ]*(?:\r?\n|$)" text)
+
+            position
+            (if (.find end-marker) (.start end-marker) (count text))
+
+            block
+            (str/replace (yamlstar/dump {"extensions" {name declaration}}) "\n" newline)]
+
+        (str (line-end (subs text 0 position)) block (subs text position))))))
+
+(defn- assert-extension-save-snapshot!
+  [{:keys [snapshots]}]
+  (doseq [[path before] snapshots]
+    (when-not (= before (save-file-text path))
+      (throw (ex-info "Configuration changed during installation; retry --save" {:path path})))))
+
+(defn- with-project-extension-save-lock
+  [path f]
+  (let [lock-file (io/file (.getParentFile (io/file path)) ".vis" "extension-save.lock")]
+    (io/make-parents lock-file)
+    (when (Files/isSymbolicLink (.toPath lock-file))
+      (throw (ex-info "Refusing a symbolic extension-save lock" {:path (str lock-file)})))
+    (with-open [^FileChannel channel (FileChannel/open (.toPath lock-file)
+                                                       (into-array OpenOption
+                                                                   [StandardOpenOption/CREATE
+                                                                    StandardOpenOption/WRITE]))]
+      (let [^FileLock lock (.lock channel)]
+        (try (f) (finally (.release lock)))))))
+
+(defn save-extension-declaration!
+  "Save one admitted declaration using a prepared snapshot; return its YAML path.
+   Preserve project comments and other fields, reject conflicting declarations or
+   concurrent edits, and keep local project sources relative to their YAML file."
+  [{:keys [path scope raw snapshots overlays] :as plan} name declaration]
+  (config-validation/assert-config! {"extensions" {name declaration}} path)
+  (let [declaration
+        (extension-save-source path declaration (= scope "project"))
+
+        canonical
+        (extension-save-source path declaration false)
+
+        existing
+        (get-in raw ["extensions" name])]
+
+    (when (and existing (not= canonical (extension-save-source path existing false)))
+      (throw
+        (ex-info
+          "An extension declaration already exists with different settings; edit it and run extension sync"
+          {:path path :name name})))
+    (doseq [overlay
+            overlays
+
+            :when (get snapshots overlay)]
+
+      (let [overrides (get-in (:raw (extension-save-document (get snapshots overlay) overlay))
+                              ["extensions" name])]
+        (when (and overrides (not= canonical (extension-save-source overlay overrides false)))
+          (throw (ex-info "A project overlay overrides this extension declaration"
+                          {:path overlay :name name})))))
+    (let [write!
+          (fn []
+            (assert-extension-save-snapshot! plan)
+            (when-not existing
+              (if (= scope "global")
+                (update-machine-config! (fn [current]
+                                          (assert-extension-save-snapshot! plan)
+                                          (assoc-in current ["extensions" name] declaration)))
+                (let [content (project-extension-text (get snapshots path) raw name declaration)
+                      expected (assoc-in raw ["extensions" name] declaration)
+                      actual (:raw (extension-save-document content path))
+                      target (.toPath (io/file path))]
+
+                  (when-not (= expected actual)
+                    (throw (ex-info "Cannot preserve this YAML layout while saving the extension"
+                                    {:path path})))
+                  (let [temporary (Files/createTempFile (.getParent target)
+                                                        ".vis-save-"
+                                                        ".yml"
+                                                        (make-array FileAttribute 0))]
+                    (try (when (.exists (io/file path))
+                           (Files/copy target
+                                       temporary
+                                       (into-array CopyOption
+                                                   [StandardCopyOption/REPLACE_EXISTING
+                                                    StandardCopyOption/COPY_ATTRIBUTES])))
+                         (Files/write temporary (util/utf8 content) (make-array OpenOption 0))
+                         (assert-extension-save-snapshot! plan)
+                         (Files/move temporary
+                                     target
+                                     (into-array CopyOption
+                                                 [StandardCopyOption/ATOMIC_MOVE
+                                                  StandardCopyOption/REPLACE_EXISTING]))
+                         (finally (Files/deleteIfExists temporary)))))))
+            (invalidate-config-cache!))]
+      (locking machine-store-monitor
+        (if (= scope "global") (write!) (with-project-extension-save-lock path write!))))
+    path))
 
 (defn set-agent-name!
   "Persist the gateway-wide coding-agent name in state.yml, preserving other keys.

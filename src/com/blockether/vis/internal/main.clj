@@ -3881,7 +3881,7 @@
    :cmd/internal? true
    :cmd/doc "Install an approved GitHub release, an explicit commit or a local Python project."
    :cmd/usage
-   "vis-agent extension install SOURCE --trust [--subdirectory PATH] [--version VERSION | --revision SHA] [--project | --global]"
+   "vis-agent extension install SOURCE --trust [--save] [--subdirectory PATH] [--version VERSION | --revision SHA] [--project | --global]"
    :cmd/args
    [{:name "source"
      :kind :positional
@@ -3905,8 +3905,12 @@
      :type :string
      :doc "Approved release version; defaults to the latest approved stable release."}
     {:name "project" :kind :flag :type :boolean :doc "Install for this project only."}
-    {:name "global" :kind :flag :type :boolean :doc "Install for all projects (the default)."}]
-   :cmd/run-fn (fn [{:strs [source trust subdirectory revision version project global]} _]
+    {:name "global" :kind :flag :type :boolean :doc "Install for all projects (the default)."}
+    {:name "save"
+     :kind :flag
+     :type :boolean
+     :doc "Save the installed package in configuration for extension sync."}]
+   :cmd/run-fn (fn [{:strs [source trust subdirectory revision version project global save]} _]
                  (when (and project global)
                    (throw (ex-info "Choose --project or --global, not both" {})))
                  (print-package-result "Installed"
@@ -3916,6 +3920,8 @@
                                           :subdirectory (or subdirectory "")
                                           :revision revision
                                           :version version
+                                          :save (boolean save)
+                                          :project (boolean project)
                                           :directory (package-directory project)})))})
 
 (registry/register-cmd!

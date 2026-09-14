@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.python.extensions-test :as fixtures]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [lazytest.core :refer [throws?]]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [java.io ByteArrayOutputStream]
            [java.net InetSocketAddress]
@@ -261,3 +262,69 @@
               (is (= "1.0.0" (active-version)))
               (is (= 3 (count (.listFiles (io/file directory ".versions" "vis-release-fixture")))))
               (is (.isFile (io/file directory "vis-release-fixture" "extension.py")))))))))))
+
+(deftest install-save-project-and-sync-roundtrip
+  (#'fixtures/with-shared-packages
+   (fn [_]
+     (#'fixtures/with-fresh-loaded
+      {}
+      (fn [_ {:keys [ext-dir]}]
+        (let [source
+              (doto (io/file ext-dir "source") .mkdirs)
+
+              directory
+              (str (io/file ext-dir ".vis/extensions"))
+
+              yaml
+              (io/file ext-dir "vis.yml")]
+
+          (spit (io/file source "pyproject.toml")
+                (str "[project]\nname='vis-saved-fixture'\nversion='1.0.0'\n"
+                     "description='Saved extension fixture'\nrequires-python='>=3.11'\n"
+                     "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n"))
+          (spit (io/file source "extension.py") "# Source admission must not import this file.\n")
+          (spit yaml "# Keep project notes.\nextensions: {}\n")
+          (with-redefs [workspace/cwd
+                        (constantly (str ext-dir))
+
+                        config/config-dir
+                        (constantly (str (io/file ext-dir "global")))
+
+                        python-runtime/ensure-project!
+                        identity]
+
+            (is (throws? Exception
+                         #(pyx/install-package! (str source)
+                                                {:save true :project true :directory directory})))
+            (is (= "# Keep project notes.\nextensions: {}\n" (slurp yaml)))
+            (with-redefs [config/save-extension-declaration!
+                          (fn [& _]
+                            (throw (ex-info "Fixture save failure" {})))]
+              (is (= "Fixture save failure"
+                     (try (pyx/install-package!
+                            (str source)
+                            {:trust true :save true :project true :directory directory})
+                          nil
+                          (catch Exception error (.getMessage error))))))
+            (is (not (.exists (io/file directory "vis-saved-fixture")))
+                "A failed config write removes only the newly admitted link")
+            (is (= "# Keep project notes.\nextensions: {}\n" (slurp yaml)))
+            (let [manual (pyx/install-package! (str source)
+                                               {:trust true :project true :directory directory})]
+              (is (nil? (get manual "saved_config")))
+              (is (= "# Keep project notes.\nextensions: {}\n" (slurp yaml))))
+            (let [result
+                  (pyx/install-package! (str source)
+                                        {:trust true :save true :project true :directory directory})
+
+                  project
+                  (first (filter #(= "project" (:scope %)) (config/extension-package-scopes)))]
+
+              (is (= (str yaml) (get result "saved_config")))
+              (is (nil? (get result "save_state")) "Rollback internals stay inside the host")
+              (is (str/includes? (slurp yaml) "# Keep project notes."))
+              (is (= (.getCanonicalPath source)
+                     (get-in project [:packages "vis-saved-fixture" "source"])))
+              (is (= ["cached"]
+                     (mapv #(get % "status")
+                           (pyx/sync-packages! {:trust true :project true}))))))))))))

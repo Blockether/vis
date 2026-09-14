@@ -63,7 +63,7 @@ export function installScopeHelp(scope = 'project') {
     (scope === 'global'
       ? 'Global: available in every project under ~/.vis/extensions.'
       : 'Project: run from your project directory to install in .vis/extensions.') +
-    ' This installs files; it does not add an extensions entry to vis.yml. <a href="/extension-packages.html#declare-packages-in-configuration">Declare packages in configuration</a> to share the setup.'
+    ' This command does not add an extensions entry to vis.yml. Add <code>--save</code> to also record the installation. <a href="/extension-packages.html#save-an-installation-in-configuration">Save an installation in configuration</a> to share the setup.'
   );
 }
 const dateLabel = (value) =>

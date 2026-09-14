@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -471,6 +472,7 @@ def _admit(
     expected=None,
     expected_name=None,
     expected_target=None,
+    sync_records=None,
 ):
     path = Path(source).expanduser()
     if path.is_file() and path.name == "pyproject.toml":
@@ -511,6 +513,43 @@ def _admit(
         os.close(fd)
         try:
             previous = None
+            save_state = None
+            if sync_records is not None:
+                current = sync_records.get(metadata["name"])
+                if current is None and len(sync_records) >= 128:
+                    raise ValueError(
+                        "extensions may contain at most 128 named packages"
+                    )
+                exists = os.path.lexists(destination)
+                same_manual = False
+                if exists and current is None and destination.is_symlink():
+                    if repository:
+                        try:
+                            _, receipt = _managed(directory, metadata["name"])
+                            same_manual = (
+                                github_repository(receipt.get("repository_url"))
+                                == repository
+                                and project_subdirectory(
+                                    receipt.get("subdirectory", "")
+                                )
+                                == subdirectory
+                                and receipt["revision"] == revision
+                            )
+                        except (OSError, ValueError):
+                            same_manual = False
+                    else:
+                        same_manual = destination.resolve() == selected
+                if exists and not _sync_owned(destination, current) and not same_manual:
+                    raise ValueError(
+                        "Existing extension is not owned by sync or does not match this source; no files replaced. "
+                        "Preserve the existing installation or remove its installed link before retrying --save"
+                    )
+                save_state = {
+                    "previous": current,
+                    "previous_target": str(destination.resolve()) if exists else None,
+                }
+                if exists:
+                    expected_target = save_state["previous_target"]
             if expected_target is not None:
                 if (
                     not destination.is_symlink()
@@ -565,7 +604,7 @@ def _admit(
                     destination.symlink_to(selected, target_is_directory=True)
         finally:
             lock.unlink()
-    return {
+    result = {
         "name": metadata["name"],
         "repository": repository.removeprefix("https://github.com/")
         if repository
@@ -577,6 +616,9 @@ def _admit(
         "revision": revision,
         "next": "Start Vis or /reload to prepare dependencies and load the extension",
     }
+    if sync_records is not None:
+        result["save_state"] = save_state
+    return result
 
 
 def install(
@@ -587,11 +629,14 @@ def install(
     revision=None,
     vis_version=None,
     version=None,
+    save=False,
 ):
     """Install an approved version, an explicit SHA, or a linked local project.
 
     No selector means the latest approved stable release, never a moving branch.
     Release selection does not import publisher code. Dependency preparation is on reload.
+    Save admits the source as sync-owned and returns its declaration and a rollback token;
+    the host writes configuration, then discards the token on success.
     """
     _trust(trust)
     subdirectory = project_subdirectory(subdirectory)
@@ -617,6 +662,10 @@ def install(
     if not local and not revision:
         release = _select(_releases(source, subdirectory), version)
         revision = release["revision"]
+    if save:
+        return _install_saved(
+            source, directory, subdirectory, revision, vis_version, release
+        )
     return _admit(source, directory, subdirectory, revision, vis_version, release)
 
 
@@ -794,6 +843,126 @@ def _sync_owned(destination, record):
         and destination.is_symlink()
         and str(destination.resolve()) == record["target"]
     )
+
+
+def _restore_saved_link(directory, name, expected, target):
+    destination = directory / name
+    lock = directory / ("." + name + ".install-lock")
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(fd)
+    try:
+        if (
+            expected is None
+            and os.path.lexists(destination)
+            or expected is not None
+            and (not destination.is_symlink() or str(destination.resolve()) != expected)
+        ):
+            raise ValueError(
+                "Installation changed; refusing to roll back another operation"
+            )
+        if target is None:
+            destination.unlink()
+        else:
+            with tempfile.TemporaryDirectory(
+                prefix=".save-rollback-", dir=directory
+            ) as temporary:
+                pointer = Path(temporary) / "active"
+                pointer.symlink_to(target, target_is_directory=True)
+                os.replace(pointer, destination)
+    finally:
+        lock.unlink()
+
+
+def _install_saved(source, directory, subdirectory, revision, vis_version, release):
+    path = Path(source).expanduser()
+    local = path.is_dir() or (path.is_file() and path.name == "pyproject.toml")
+    declaration = {
+        "source": str((path.parent if path.is_file() else path).resolve())
+        if local
+        else github_repository(source)
+    }
+    if not local:
+        if release:
+            declaration["version"] = str(Version(release["version"]))
+        else:
+            declaration["revision"] = revision
+    if subdirectory:
+        declaration["subdirectory"] = subdirectory
+    spec = _sync_spec(declaration)
+    directory = Path(directory).expanduser().resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    lock = directory / ".sync-lock"
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(fd)
+    try:
+        records = _sync_records(directory)
+        result = _admit(
+            source,
+            directory,
+            subdirectory,
+            revision,
+            vis_version,
+            release,
+            sync_records=records,
+        )
+        name = result["name"]
+        save_state = result.pop("save_state")
+        record = {
+            "spec": spec,
+            "transaction": uuid.uuid4().hex,
+            "target": str((directory / name).resolve()),
+            "result": result,
+        }
+        try:
+            _save_sync_records(directory, {**records, name: record})
+        except BaseException:
+            _restore_saved_link(
+                directory, name, record["target"], save_state["previous_target"]
+            )
+            raise
+        return {
+            **result,
+            "declaration": declaration,
+            "save_state": {**save_state, "installed": record},
+        }
+    finally:
+        lock.unlink()
+
+
+def rollback_saved_install(directory, name, save_state):
+    """Undo this saved admission after configuration failed, never a later installation.
+
+    The host returns the opaque token from install(save=True). Source checkouts and Git
+    snapshots are retained. Unrelated sync records and externally changed links survive.
+    """
+    name = _name(name)
+    directory = Path(directory).expanduser().resolve()
+    lock = directory / ".sync-lock"
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(fd)
+    try:
+        records = _sync_records(directory)
+        current = records.get(name)
+        if current is None or current != save_state["installed"]:
+            raise ValueError(
+                "Installation changed; refusing to roll back another operation"
+            )
+        previous = save_state["previous"]
+        previous_target = save_state["previous_target"]
+        _restore_saved_link(directory, name, current["target"], previous_target)
+        restored = dict(records)
+        if previous is None:
+            del restored[name]
+        else:
+            restored[name] = previous
+        try:
+            _save_sync_records(directory, restored)
+        except BaseException:
+            _restore_saved_link(directory, name, previous_target, current["target"])
+            raise
+        return {"name": name, "status": "restored" if previous_target else "removed"}
+    finally:
+        lock.unlink()
 
 
 def _sync_one(name, spec, directory, current, refresh, vis_version):

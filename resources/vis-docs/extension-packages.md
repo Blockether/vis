@@ -93,10 +93,9 @@ and does not fetch sources, install dependencies or run extension code.
 **Prerequisites:** Vis installed and reviewed source and dependencies. Vis supplies
 `uv`; GitHub installs also need Git on `PATH`.
 
-`install` installs a package directly; it does **not** add an `extensions:` entry
-to `vis.yml`. `--project` selects the installation directory, not configuration
-persistence. To share the dependency with your team or restore it from configuration,
-[declare it in `vis.yml` and run `sync`](#declare-packages-in-configuration) instead.
+By default, `install` installs a package directly without changing configuration.
+Add `--save` to also record it under `extensions:`. `--project` and `--global`
+choose the scope; `--save` chooses whether to persist the declaration.
 
 1. In the target project, link the local [greeter example](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
    after copying its complete directory to `greeter/`:
@@ -117,6 +116,38 @@ persistence. To share the dependency with your team or restore it from configura
 3. On the next turn, ask Vis to inspect `doc("greet.hello")` and call
    `await greet.hello("Ada")`. The result's `.text` is `Hello, Ada!`.
    `vis-agent extension list` checks registration, not execution.
+
+### Save an installation in configuration
+
+Use `--project --save` to install a package and record it in your project's `vis.yml`
+(or the existing `vis.yaml`):
+
+```bash
+vis-agent extension install example/greeting \
+  --version 1.2.0 \
+  --project \
+  --save \
+  --trust
+```
+
+The key is the package name from `pyproject.toml`. Approved GitHub releases save
+an exact version; `--revision` saves the reviewed commit instead. Local sources
+save a path relative to the project configuration. With `--global --save`, Vis
+writes to its global machine store, `~/.vis/state.yml`, without rewriting your
+hand-written global configuration. Omitting the scope flag still means global.
+
+Saved packages are managed by [`extension sync`](#declare-packages-in-configuration).
+Commit the project declaration to share it with your team. To update a saved package,
+edit its declaration and run `vis-agent extension sync --project --trust`; do not
+use manual `update` or `rollback` on a saved package.
+
+Saving preserves existing project comments and unrelated settings. Conflicting
+same-name declarations and configuration layouts that cannot be safely edited are
+refused rather than overwritten. If saving fails after source admission, Vis rolls
+back that installation. You can rerun the same installation with `--save` to record
+an existing local link or managed GitHub snapshot after its source identity is
+verified. Unrelated links, copied directories and different source revisions are
+refused rather than adopted or replaced.
 
 ### Install an approved GitHub Release
 
