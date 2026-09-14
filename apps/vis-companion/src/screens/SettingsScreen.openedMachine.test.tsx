@@ -70,6 +70,17 @@ const onlineRows = (count = 1) =>
   });
 
 describe('machine settings disclosures', () => {
+  it('opens a sole machine automatically and keeps it open when its name is pressed', async () => {
+    open([{ url: URL_A, token: 't', label: 'tower' }]);
+
+    expect(await screen.findByText('MCP servers')).toBeVisible();
+    expect(screen.getByText('Providers')).toBeVisible();
+    const name = screen.getByText('tower');
+    expect(name.closest('button')).toBeNull();
+    fireEvent.click(name);
+    expect(screen.getByText('MCP servers')).toBeVisible();
+  });
+
   it('starts every machine closed and opens one only after its row is pressed', async () => {
     const view = open([
       { url: URL_A, token: 't', id: 'be2c15686eaef0f4' },
@@ -110,9 +121,6 @@ describe('machine settings disclosures', () => {
     globalThis.fetch = vi.fn(incompatibleSettings) as unknown as typeof fetch;
     const view = open([{ url: URL_A, token: 't', id: 'be2c15686eaef0f4' }]);
 
-    const [row] = await onlineRows();
-    fireEvent.click(row);
-
     await waitFor(() =>
       expect(screen.getAllByText(/gateway speaks protocol 4/i).length).toBeGreaterThan(0),
     );
@@ -145,16 +153,11 @@ describe('machine settings disclosures', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('MCP servers')).toBeNull();
 
-    await act(async () => answer(await quiet()));
-    const [row] = await onlineRows();
-    expect(row).toHaveAttribute('aria-expanded', 'false');
-    expect(row).not.toHaveAttribute('aria-busy');
-    expect(
-      fetcher.mock.calls.every(([input]) => new URL(String(input)).pathname === '/healthz'),
-    ).toBe(true);
     fetcher.mockImplementation(quiet);
-    fireEvent.click(row);
+    await act(async () => answer(await quiet()));
     await waitFor(() => expect(screen.getByText('MCP servers')).toBeTruthy());
+    expect(screen.getByText('laptop').closest('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Checking connection to laptop' })).toBeNull();
     view.unmount();
   });
 });

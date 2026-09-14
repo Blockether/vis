@@ -62,3 +62,20 @@ export const Appearance: Story = {
     await waitFor(() => expect(theme).toHaveAttribute('aria-pressed', 'true'));
   },
 };
+
+/** A sole machine shows its full settings without a disclosure or an extra press. */
+export const SingleMachine: Story = {
+  args: { gateways: STORY_GATEWAYS.slice(0, 1) },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await expect(await page.findByText('MCP servers')).toBeVisible();
+    await expect(page.getByText('Providers')).toBeVisible();
+    const name = page.getByText('tower');
+    await expect(name.closest('button')).toBeNull();
+    await expect(name.closest('[aria-expanded]')).toBeNull();
+    await expect(name.parentElement?.parentElement?.querySelector('.lucide-chevron-right')).toBeNull();
+    await userEvent.click(name);
+    await expect(page.getByText('MCP servers')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add a machine' })).toBeVisible();
+  },
+};

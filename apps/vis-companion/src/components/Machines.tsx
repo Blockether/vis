@@ -480,8 +480,9 @@ function AddressMenu({
   );
 }
 /**
- * Paired machines render as one-line rows. Only online rows disclose settings;
- * unavailable rows retry their connection instead, showing progress while checking.
+ * Paired machines render as one-line rows. A sole online machine's settings stay
+ * visible under a static header; fleets disclose each machine independently.
+ * Unavailable rows retry their connection, showing progress while checking.
  * Management verbs remain available through each row's `SwipeActions`.
  */
 export function MachineRows({
@@ -503,8 +504,8 @@ export function MachineRows({
   /** The row painted "you are here", in a list whose rows are places to GO. */
   selectedUrl?: string | null;
   /**
-   * Every machine standing OPEN, by url. A machine's settings belong to its own
-   * row, so opening one is never a reason to close another.
+   * Open machines in a fleet, by URL. Ignored for a sole machine, which stays open.
+   * Opening one machine never closes another.
    */
   openUrls?: ReadonlySet<string>;
   /**
@@ -636,7 +637,10 @@ export function MachineRows({
         // missing from the machine that already holds the rank.
         const isOnline = hv.state === 'online';
         const isChecking = hv.state === 'checking';
-        const isOpen = isOnline && Boolean(renderPanel) && (openUrls?.has(conn.url) ?? false);
+        const isStatic = isOnline && Boolean(renderPanel) && !isFleet;
+        const isOpen =
+          isOnline && Boolean(renderPanel) && (!isFleet || Boolean(openUrls?.has(conn.url)));
+        const Row = isStatic ? 'div' : ListRow;
         // The open row and the "you are here" row wear one paper: a list does one of
         // the two, and a machine standing out of it looks the same either way.
         const isMarked = isOpen || conn.url === selectedUrl;
@@ -687,13 +691,21 @@ export function MachineRows({
               {/* The paper belongs to the whole row: a machine standing open is one
                   slab, and its own settings hang under that slab. */}
               <div className={`min-w-0 ${isMarked ? 'bg-panel-2' : ''}`}>
-                <ListRow
-                  isSelected={isMarked}
-                  onClick={() => {
-                    if (isOnline) onPick(conn);
-                    else if (!isChecking) void onRetry?.(conn);
-                  }}
-                  className="min-w-0 gap-3"
+                <Row
+                  {...(!isStatic && { isSelected: isMarked })}
+                  onClick={
+                    isStatic
+                      ? undefined
+                      : () => {
+                          if (isOnline) onPick(conn);
+                          else if (!isChecking) void onRetry?.(conn);
+                        }
+                  }
+                  className={
+                    isStatic
+                      ? 'flex min-h-12 min-w-0 items-center gap-3 px-3 py-2'
+                      : 'min-w-0 gap-3'
+                  }
                   aria-label={
                     !isOnline
                       ? `${isChecking ? 'Checking' : 'Retry'} connection to ${name}`
@@ -701,8 +713,8 @@ export function MachineRows({
                   }
                   aria-disabled={isChecking || (!isOnline && !onRetry) || undefined}
                   aria-busy={isChecking || undefined}
-                  aria-expanded={isOnline && renderPanel ? isOpen : undefined}
-                  aria-controls={isOpen ? panelId : undefined}
+                  aria-expanded={isOnline && renderPanel && isFleet ? isOpen : undefined}
+                  aria-controls={isOpen && isFleet ? panelId : undefined}
                 >
                   {/* One rule with the provider rows: the state is the RING's
                       interior, never the ink alone, and this row is one line — so
@@ -746,15 +758,18 @@ export function MachineRows({
                   {!isOnline ? (
                     <RefreshIcon isBusy={isChecking} className="size-3 shrink-0 text-dialog-hint" />
                   ) : (
-                    (renderPanel || actionLabel) && (
+                    ((renderPanel && isFleet) || actionLabel) && (
                       <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
                     )
                   )}
-                </ListRow>
+                </Row>
               </div>
             </SwipeActions>
             {isOpen && renderPanel && (
-              <div id={panelId} className="min-w-0 border-l-2 border-dialog-edge">
+              <div
+                id={panelId}
+                className={`min-w-0 ${isFleet ? 'border-l-2 border-dialog-edge' : ''}`}
+              >
                 {renderPanel(conn)}
               </div>
             )}

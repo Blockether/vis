@@ -2879,7 +2879,9 @@ describe('the session screen and the settings dialog spell no control out', () =
   it('picks a saved machine with the one pressable row', () => {
     // The rows moved out of the screen and into `Machines`, shared with the cog's
     // settings dialog — so the rule follows the rows.
-    expect(machinesSource).toContain('<ListRow');
+    // A sole machine's settings have a static header; selectable rows still use ListRow.
+    expect(machinesSource).toContain("const Row = isStatic ? 'div' : ListRow;");
+    expect(machinesSource).toContain('<Row');
     expect(machinesSource).not.toContain('<button');
     expect(connectSource).not.toContain('<button');
   });

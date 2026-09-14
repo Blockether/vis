@@ -33,9 +33,9 @@ function machineId(conn: GatewayConn): string {
  * Machines leads, because the cog is opened to reach a machine far more often than to
  * repaint the app, and below `sm:` the columns stack in that same order.
  *
- * A machine's settings are hidden under its online row. Unavailable rows retry
- * the connection instead of disclosing settings. Opening one machine leaves every
- * other machine as it was.
+ * A sole online machine stays fully open, with no disclosure control. With several
+ * machines, each row opens its own settings independently. Unavailable rows retry
+ * the connection instead of disclosing settings.
  */
 export function SettingsDialog({
   gateways,
@@ -129,8 +129,8 @@ export function SettingsDialog({
     return next;
   }
 
-  // The main cog opens the fleet closed. A route from the model picker already names
-  // both the machine and the job, so that one machine opens directly on Providers.
+  // Fleets start closed; MachineRows keeps a sole online machine open automatically.
+  // A route from the model picker opens the requested machine directly on Providers.
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(
     () =>
       new Set(

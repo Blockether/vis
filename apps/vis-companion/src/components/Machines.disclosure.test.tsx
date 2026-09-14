@@ -60,6 +60,54 @@ function panelOf(machine: string): HTMLElement | null {
 const settingsOf = (machine: GatewayConn) => <p>settings of {machine.label}</p>;
 
 describe('a machine hides its own settings under its own row', () => {
+  it('always shows a sole machine without a disclosure or a clickable header', async () => {
+    const onPick = vi.fn();
+    const view = render(
+      <MachineRows
+        conns={[tower]}
+        health={{ [tower.url]: { state: 'online', at: Date.now() } }}
+        onPick={onPick}
+        renderPanel={settingsOf}
+      />,
+    );
+
+    expect(screen.getByText('settings of tower')).toBeVisible();
+    const name = screen.getByText('tower');
+    expect(name.closest('button')).toBeNull();
+    expect(view.container.querySelector('[aria-expanded]')).toBeNull();
+    expect(view.container.querySelector('.lucide-chevron-right')).toBeNull();
+    await userEvent.click(name);
+    expect(onPick).not.toHaveBeenCalled();
+    expect(screen.getByText('settings of tower')).toBeVisible();
+  });
+
+  it('uses disclosures only while there is more than one machine', () => {
+    const props = {
+      health: {
+        [tower.url]: { state: 'online' as const, at: Date.now() },
+        [laptop.url]: { state: 'online' as const, at: Date.now() },
+      },
+      openUrls: new Set<string>(),
+      onPick: vi.fn(),
+      renderPanel: settingsOf,
+    };
+    const view = render(<MachineRows {...props} conns={[tower, laptop]} />);
+    expect(screen.queryByText(/^settings of/)).toBeNull();
+
+    view.rerender(<MachineRows {...props} conns={[tower]} />);
+    expect(screen.getByText('settings of tower')).toBeVisible();
+    expect(screen.getByText('tower').closest('button')).toBeNull();
+
+    view.rerender(<MachineRows {...props} conns={[tower, laptop]} />);
+    expect(rowOf('tower')).toHaveAttribute('aria-expanded', 'false');
+    expect(rowOf('laptop')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText(/^settings of/)).toBeNull();
+
+    view.rerender(<MachineRows {...props} conns={[laptop]} />);
+    expect(screen.getByText('settings of laptop')).toBeVisible();
+    expect(screen.getByText('laptop').closest('button')).toBeNull();
+  });
+
   it('opens nothing until the row is pressed, and says as much on the row', () => {
     const panel = vi.fn(settingsOf);
     render(<Column panel={panel} />);
@@ -156,6 +204,6 @@ describe('a machine hides its own settings under its own row', () => {
       <MachineRows {...props} health={{ [tower.url]: { state: 'online', at: Date.now() } }} />,
     );
     expect(screen.getByText('settings of tower')).toBeTruthy();
-    expect(rowOf('tower')).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('tower').closest('button')).toBeNull();
   });
 });
