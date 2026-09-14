@@ -161,14 +161,9 @@ export type ActivityContent =
     }
   | { type: 'progress'; label: string; value?: number; total?: number };
 
-/** Closed, bounded content grammar shared with activity.json. Never accept markup as HTML. */
+/** Closed, lossless content grammar shared with activity.json. Never accept markup as HTML. */
 function activityContentFromWire(value: unknown): ActivityContent[] | null {
-  if (
-    !Array.isArray(value) ||
-    value.length > 32 ||
-    new TextEncoder().encode(JSON.stringify(value)).length > 32768
-  )
-    return null;
+  if (!Array.isArray(value)) return null;
   const string = (v: unknown, max = 256): v is string =>
     typeof v === 'string' && [...v].length <= max;
   for (const item of value) {
@@ -178,13 +173,13 @@ function activityContentFromWire(value: unknown): ActivityContent[] | null {
       case 'heading':
       case 'text':
       case 'markdown':
-        if (!hasExactKeys(b, ['type', 'text']) || !string(b.text, 16384)) return null;
+        if (!hasExactKeys(b, ['type', 'text']) || typeof b.text !== 'string') return null;
         break;
       case 'code':
       case 'diff':
         if (
           !hasExactKeys(b, ['type', 'text'], ['language']) ||
-          !string(b.text, 16384) ||
+          typeof b.text !== 'string' ||
           (b.language !== undefined && !string(b.language))
         )
           return null;
@@ -194,17 +189,18 @@ function activityContentFromWire(value: unknown): ActivityContent[] | null {
           !hasExactKeys(b, ['type', 'columns', 'rows']) ||
           !Array.isArray(b.columns) ||
           !b.columns.length ||
-          b.columns.length > 16 ||
-          !b.columns.every((c) => string(c)) ||
-          !Array.isArray(b.rows) ||
-          b.rows.length > 200
+          !b.columns.every((c) => typeof c === 'string') ||
+          !Array.isArray(b.rows)
         )
           return null;
         {
           const width = b.columns.length;
           if (
             !b.rows.every(
-              (row) => Array.isArray(row) && row.length === width && row.every((c) => string(c)),
+              (row) =>
+                Array.isArray(row) &&
+                row.length === width &&
+                row.every((c) => typeof c === 'string'),
             )
           )
             return null;
@@ -259,10 +255,8 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
   const raw = record(value);
   if (!raw || !hasExactKeys(raw, ['headline', 'summary', 'content'], ['sections'])) return null;
   const sections = raw.sections === undefined ? [] : raw.sections;
-  if (!Array.isArray(sections) || sections.length > 8) return null;
+  if (!Array.isArray(sections)) return null;
   const bytes = (s: string) => new TextEncoder().encode(s).length;
-  if (bytes(JSON.stringify(value)) > 32768) return null;
-  let blockCount = 0;
   for (const [index, candidate] of [raw, ...sections].entries()) {
     const section = record(candidate);
     if (
@@ -280,9 +274,8 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
         return null;
     }
     if (!section.headline || !activityContentFromWire(section.content)) return null;
-    blockCount += (section.content as ActivityContent[]).length;
   }
-  return blockCount <= 32 ? (value as ActivityPresentation) : null;
+  return value as ActivityPresentation;
 }
 
 export interface ActivityRow {
@@ -700,7 +693,8 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     new Set(ids).size !== ids.length ||
     (history !== undefined &&
       (activityLeafCount(rows) > ACTIVITY_LIMITS.max_page_rows ||
-        new TextEncoder().encode(JSON.stringify(raw)).length > ACTIVITY_LIMITS.max_page_bytes))
+        (activityLeafCount(rows) > 1 &&
+          new TextEncoder().encode(JSON.stringify(raw)).length > ACTIVITY_LIMITS.max_page_bytes)))
   ) {
     return null;
   }

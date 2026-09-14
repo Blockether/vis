@@ -211,21 +211,23 @@ serialized result or a duplicate output preview. Choose typed `ActivityText`,
 nesting sections. `vis.publish_activity(presentation)` replaces the current
 snapshot while a tool runs; empty content clears the body.
 
-Each headline and summary is one line of at most 512 UTF-8 bytes. A presentation
-allows 8 sections, 32 total blocks and 32 KiB. Bound large content deliberately
-and label excerpts. Test declared start visibility, success, failure, cancellation,
-empty results, replacement, redaction and disclosure in both clients. The
+Each headline and summary is one line of at most 512 UTF-8 bytes. Put the complete
+result in content blocks and non-nested sections: Vis does not cut their text,
+table rows or block counts to fit a presentation budget. Test declared start
+visibility, success, failure, cancellation, empty results, replacement, redaction
+and disclosure in both clients. The
 [tested greeter entrypoint](extension-design.md#keep-the-entrypoint-small)
 demonstrates the callback beside registration. Exact portable limits and block
 shapes live in the
 [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
 
-The per-presentation bounds do not limit the number of calls or the total size of
-Activity history. Vis keeps every admitted, redacted invocation and its details
-in the session store. Companion and the TUI load small pages as you browse;
-search, Copy all and Export cover the full history, including calls outside the
-current page. Copying or sharing a complete export can use memory proportional
-to its size. Closing a client or restarting Vis does not discard saved Activity.
+Vis keeps every admitted, redacted invocation and its complete presentation in
+the session store, without a total size or call-count cap. Companion and the TUI
+load small pages as you browse. A single large invocation is kept whole even if
+it exceeds the page's byte target. Search, Copy all and Export cover the full
+history, including calls outside the current page. Copying or sharing a complete
+export can use memory proportional to its size. Closing a client or restarting
+Vis does not discard saved Activity.
 
 For clients, a projection's optional `history` object identifies its durable
 record and carries the revision, total invocation count and page cursor. Read

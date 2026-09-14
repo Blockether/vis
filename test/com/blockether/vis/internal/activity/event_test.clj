@@ -213,11 +213,70 @@
           (expect (string/includes? text "[REDACTED]"))
           (expect (not (string/includes? text "fixture-secret")))
           (expect (not (string/includes? text "src/example.clj")))))
-    (it "marks partial retained content and still produces a valid bounded event"
-        (let [result (terminal :doc (apply str (repeat 30000 "x")))]
-          (expect (some? (:presentation result)))
-          (expect (:result-truncated result))
+    ;; #218: complete content is evidence, not the bounded diagnostic summary.
+    (it "retains long result bodies without marking complete presentations truncated"
+        (let [body (apply str (repeat 30000 "x"))
+              result (terminal :doc body)]
+
+          (expect (= body (get-in result [:presentation "content" 0 "text"])))
+          (expect (not (:result-truncated result)))
           (expect (nil? (event/event-error result)))))))
+
+(defdescribe
+  complete-result-presentation-test
+  (it "passes every nested Python build field to the renderer and retains large content"
+      ;; #218: even nine nested records exceeded the old 128-node public-view budget.
+      (let [ctx
+            (event/context)
+
+            builds
+            (mapv (fn [n]
+                    {"__vis_object__" "ChangeBuild"
+                     "__vis_attrs__" (into {"number" n "api_key" "fixture-secret"}
+                                           (map (fn [i]
+                                                  [(str "field_" i) (str n "-" i)]))
+                                           (range 20))})
+                  (range 9))
+
+            result
+            {"__vis_object__" "ChangeBuilds" "__vis_attrs__" {"change" 24206 "builds" builds}}
+
+            public
+            (atom nil)
+
+            body
+            (apply str (repeat 300000 "x"))
+
+            blocks
+            (vec (concat [{"type" "table"
+                           "columns" ["Build" "Result"]
+                           "rows" (mapv (fn [n]
+                                          [(str n) (str n "-19")])
+                                        (range 9))} {"type" "code" "text" body}]
+                         (repeat 40 {"type" "text" "text" "Complete detail"})))
+
+            view
+            {"headline" "Find builds for review" "summary" "9 builds" "content" blocks}
+
+            terminal
+            (event/terminal-event ctx
+                                  (event/invocation ctx nil)
+                                  {:operation :jenkins.for_change
+                                   :presenter :generic
+                                   :started-at-ms (System/currentTimeMillis)
+                                   :outcome :succeeded
+                                   :result result
+                                   :activity {:render (fn [_ value]
+                                                        (reset! public value)
+                                                        view)}})]
+
+        (expect (= 9 (count (get @public "builds"))))
+        (expect (= "8-19" (get-in @public ["builds" 8 "field_19"])))
+        (expect (= "[REDACTED]" (get-in @public ["builds" 8 "api_key"])))
+        (expect (not (string/includes? (pr-str @public) "__vis_")))
+        (expect (= view (:presentation terminal)))
+        (expect (not (:result-truncated terminal)))
+        (expect (nil? (event/event-error terminal))))))
 
 (defn- argument-start
   [ctx args]

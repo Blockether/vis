@@ -41,6 +41,65 @@
     (:invocation-id inv)))
 
 (defdescribe
+  oversized-presentation-history-test
+  (it
+    "returns one oversized invocation intact and continues with the next record"
+    ;; #218: the page byte target must not discard or make complete content unreadable.
+    (let [store
+          (h/store)
+
+          sid
+          (h/store-session! store {})
+
+          aid
+          (str (random-uuid))
+
+          ctx
+          (event/context)
+
+          inv
+          (event/invocation ctx nil)
+
+          details
+          {:operation :read-record :presenter :generic}
+
+          body
+          (str (apply str (repeat 1100000 "x")) "final-detail")
+
+          presentation
+          {"headline" "Read record"
+           "summary" "Complete result"
+           "content" [{"type" "code" "text" body}]}]
+
+      (db/db-activity-apply! store sid aid (event/start-event ctx inv details))
+      (db/db-activity-apply! store sid aid (event/content-event ctx inv details presentation))
+      (db/db-activity-apply! store
+                             sid
+                             aid
+                             (event/terminal-event ctx
+                                                   inv
+                                                   (assoc details
+                                                     :outcome :succeeded
+                                                     :started-at-ms (System/currentTimeMillis))))
+      (let [next-id
+            (write-operation! store sid aid ctx 1)
+
+            first-page
+            (db/db-activity-page store sid aid {})
+
+            second-page
+            (db/db-activity-page store sid aid {:after (get-in first-page [:history :next-after])})]
+
+        (expect (= [(:invocation-id inv)] (mapv :id (:rows first-page))))
+        (expect (= (count body)
+                   (count (get-in first-page [:rows 0 :presentation "content" 0 "text"]))))
+        (expect (= body (get-in first-page [:rows 0 :presentation "content" 0 "text"])))
+        (expect (contract/valid-projection? first-page))
+        (expect (= [next-id] (mapv :id (:rows second-page))))
+        (expect (nil? (get-in second-page [:history :next-after])))
+        (expect (= first-page (db/db-activity-page store sid aid {})))))))
+
+(defdescribe
   durable-history-test
   ;; Regression #212: pages bound transport, not retained rows or detail.
   (it

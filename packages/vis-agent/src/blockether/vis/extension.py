@@ -215,7 +215,8 @@ class ActivityText(_ActivityBlock):
     type: ClassVar[str] = "text"
 
     def __post_init__(self):
-        _bounded_text(self.text, 16384, "Activity text")
+        if not isinstance(self.text, str):
+            raise ValueError("Activity text must be text")
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,27 +255,24 @@ class ActivityDiff(ActivityCode):
 
 @dataclass(frozen=True, slots=True)
 class ActivityTable(_ActivityBlock):
-    """A bounded rectangular table; input lists are snapshotted as tuples."""
+    """A rectangular table; input lists are snapshotted as tuples."""
 
     columns: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
     type: ClassVar[str] = "table"
 
     def __post_init__(self):
-        if (
-            not isinstance(self.columns, (tuple, list))
-            or not 1 <= len(self.columns) <= 16
-        ):
-            raise ValueError("Activity table requires 1..16 columns")
-        if not isinstance(self.rows, (tuple, list)) or len(self.rows) > 200:
-            raise ValueError("Activity table allows at most 200 rows")
-        for column in self.columns:
-            _bounded_text(column, 256, "Activity column")
+        if not isinstance(self.columns, (tuple, list)) or not self.columns:
+            raise ValueError("Activity table requires at least one column")
+        if not isinstance(self.rows, (tuple, list)):
+            raise ValueError("Activity table rows must be a list or tuple")
+        if any(not isinstance(column, str) for column in self.columns):
+            raise ValueError("Activity columns must be text")
         for row in self.rows:
             if not isinstance(row, (tuple, list)) or len(row) != len(self.columns):
                 raise ValueError("Activity table row width must match its columns")
-            for cell in row:
-                _bounded_text(cell, 256, "Activity cell")
+            if any(not isinstance(cell, str) for cell in row):
+                raise ValueError("Activity cells must be text")
         object.__setattr__(self, "columns", tuple(self.columns))
         object.__setattr__(self, "rows", tuple(tuple(row) for row in self.rows))
 
@@ -376,12 +374,10 @@ class ActivitySection:
                 )
         if not self.headline:
             raise ValueError("Activity headline must not be empty")
-        if (
-            not isinstance(self.content, (tuple, list))
-            or len(self.content) > 32
-            or any(not isinstance(block, ActivityBlock) for block in self.content)
+        if not isinstance(self.content, (tuple, list)) or any(
+            not isinstance(block, ActivityBlock) for block in self.content
         ):
-            raise TypeError("Activity content must contain at most 32 typed blocks")
+            raise TypeError("Activity content must contain typed blocks")
         object.__setattr__(self, "content", tuple(self.content))
 
     def to_wire(self) -> dict[str, Any]:
@@ -395,35 +391,19 @@ class ActivitySection:
 
 @dataclass(frozen=True, slots=True)
 class ActivityPresentation(ActivitySection):
-    """One atomic symbol presentation: up to 8 sections, 32 total blocks and 32 KiB."""
+    """One atomic symbol presentation retaining all content and non-nested sections."""
 
     sections: tuple[ActivitySection, ...] = ()
 
     def __post_init__(self):
         ActivitySection.__post_init__(self)
-        if (
-            not isinstance(self.sections, (tuple, list))
-            or len(self.sections) > 8
-            or any(type(section) is not ActivitySection for section in self.sections)
+        if not isinstance(self.sections, (tuple, list)) or any(
+            type(section) is not ActivitySection for section in self.sections
         ):
             raise TypeError(
-                "Activity sections must contain at most 8 non-nested ActivitySections"
+                "Activity sections must contain non-nested ActivitySections"
             )
         object.__setattr__(self, "sections", tuple(self.sections))
-        if (
-            len(self.content) + sum(len(section.content) for section in self.sections)
-            > 32
-        ):
-            raise ValueError("Activity presentation exceeds 32 total blocks")
-        if (
-            len(
-                json.dumps(
-                    self.to_wire(), ensure_ascii=False, separators=(",", ":")
-                ).encode()
-            )
-            > 32768
-        ):
-            raise ValueError("Activity presentation exceeds 32 KiB")
 
     def to_wire(self) -> dict[str, Any]:
         value = ActivitySection.to_wire(self)

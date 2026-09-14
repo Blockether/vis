@@ -12,18 +12,16 @@
 (def limits (get vocabulary "limits"))
 
 (defn valid-presentation?
-  "Admit explicit headline/summary/content and non-nested sections, within one shared budget."
+  "Admit complete content and non-nested sections with brief headlines and summaries."
   [value]
   (let [value (wire/->wire value)]
-    (and (document/valid-json? "activity" "presentation" value)
-         (let [sections (cons value (get value "sections"))
-               blocks (mapcat #(get % "content") sections)
-               bytes #(alength (.getBytes ^String % StandardCharsets/UTF_8))]
+    (and
+      (document/valid-json? "activity" "presentation" value)
+      (let [sections (cons value (get value "sections"))
+            blocks (mapcat #(get % "content") sections)
+            bytes #(alength (.getBytes ^String % StandardCharsets/UTF_8))]
 
-           (and
-             (<= (long (bytes (wire/json-str value))) 32768)
-             (<= (count blocks) 32)
-             (every? #(<= (long (bytes %)) 512) (mapcat #(map % ["headline" "summary"]) sections))
+        (and (every? #(<= (long (bytes %)) 512) (mapcat #(map % ["headline" "summary"]) sections))
              (every? (fn [block]
                        (case (get block "type")
                          "progress"
@@ -37,7 +35,7 @@
                      blocks))))))
 
 (defn valid-projection?
-  "Admit lossless projections; history-bearing transport pages have bounded rows and bytes."
+  "Admit lossless projections; one indivisible invocation may exceed the page byte target."
   [value]
   (and (document/valid? "activity" "projection" value)
        (let [value
@@ -59,9 +57,10 @@
               (or (nil? (get value "history"))
                   (and (<= (count (filter #(empty? (children %)) rows))
                            (long (get limits "max_page_rows")))
-                       (<= (alength (.getBytes ^String (wire/json-str value)
-                                               StandardCharsets/UTF_8))
-                           (long (get limits "max_page_bytes")))))))))
+                       (or (<= (count (filter #(empty? (children %)) rows)) 1)
+                           (<= (alength (.getBytes ^String (wire/json-str value)
+                                                   StandardCharsets/UTF_8))
+                               (long (get limits "max_page_bytes"))))))))))
 
 (defn from-wire
   "Valid projection in engine spelling, or nil. Never accepts retired owner/view keys."

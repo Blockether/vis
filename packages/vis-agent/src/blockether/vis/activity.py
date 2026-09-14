@@ -214,21 +214,12 @@ class ActivityProjection:
                 content = [
                     block for section in sections for block in section["content"]
                 ]
-                if (
-                    len(content) > 32
-                    or len(
-                        json.dumps(
-                            presentation, ensure_ascii=False, separators=(",", ":")
-                        ).encode()
-                    )
-                    > 32768
-                    or any(
-                        len(section[key].encode("utf-8")) > 512
-                        for section in sections
-                        for key in ("headline", "summary")
-                    )
+                if any(
+                    len(section[key].encode("utf-8")) > 512
+                    for section in sections
+                    for key in ("headline", "summary")
                 ):
-                    raise ValueError("activity presentation exceeds bound")
+                    raise ValueError("activity headline or summary exceeds bound")
                 for block in content:
                     if block["type"] == "progress" and "value" in block:
                         if not (0 <= block["value"] <= block["total"]):
@@ -248,12 +239,15 @@ class ActivityProjection:
             "history" in value
             and (
                 leaf_count > ACTIVITY["limits"]["max_page_rows"]
-                or len(
-                    json.dumps(
-                        value, ensure_ascii=False, separators=(",", ":")
-                    ).encode()
+                or (
+                    leaf_count > 1
+                    and len(
+                        json.dumps(
+                            value, ensure_ascii=False, separators=(",", ":")
+                        ).encode()
+                    )
+                    > ACTIVITY["limits"]["max_page_bytes"]
                 )
-                > ACTIVITY["limits"]["max_page_bytes"]
             )
         ):
             raise ValueError("invalid activity projection identity or byte bound")

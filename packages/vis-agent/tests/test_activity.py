@@ -377,3 +377,57 @@ def test_activity_page_counts_real_invocations_not_synthetic_groups():
     )
     with pytest.raises(ValueError):
         ActivityProjection.from_wire(fixture)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "code", "text": "界" * 20000}],
+        [{"type": "text", "text": str(index)} for index in range(40)],
+        [{"type": "table", "columns": ["Field"], "rows": [["x" * 300]] * 201}],
+        [{"type": "table", "columns": [str(index) for index in range(17)], "rows": []}],
+    ],
+)
+def test_complete_large_activity_content_roundtrips(content):
+    # Regression #218: a complete result must not disappear at presentation admission.
+    from blockether.vis.activity import ActivityProjection
+
+    fixture = _history_projection(1, paged=False)
+    fixture["rows"][0]["presentation"]["content"] = content
+    assert ActivityProjection.from_wire(fixture).to_wire() == fixture
+
+
+def test_large_typed_presentation_publishes_all_content(monkeypatch):
+    # Regression #218: typed SDK values retain complete text, tables and sections.
+    updates = []
+    monkeypatch.setattr(
+        vis._host, "activity", lambda value: updates.append(value) or True
+    )
+    text = "界" * 20000
+    table = vis.ActivityTable(["Column" * 50] * 17, [["Cell" * 100] * 17] * 201)
+    blocks = [vis.ActivityCode(text)] * 40 + [table]
+    sections = [
+        vis.ActivitySection(f"Section {index}", "", blocks) for index in range(9)
+    ]
+    view = vis.ActivityPresentation(
+        "Complete results", "Nine sections", blocks, sections
+    )
+    assert vis.publish_activity(view)
+    assert updates == [view.to_wire()]
+    assert updates[0]["content"][0]["text"] == text
+    assert updates[0]["sections"][-1]["content"][-1]["rows"][-1][-1] == "Cell" * 100
+    assert _contracts.validate("activity", "presentation", updates[0]) == updates[0]
+
+
+def test_single_large_activity_invocation_roundtrips_as_one_page():
+    # Regression #218: a page budget cannot discard an indivisible invocation.
+    from blockether.vis.activity import ActivityProjection
+
+    fixture = _history_projection(1, paged=True)
+    fixture["rows"][0]["presentation"]["content"] = [
+        {"type": "code", "text": "界" * 400000}
+    ]
+    assert ActivityProjection.from_wire(fixture).to_wire() == fixture
+    fixture["rows"].append({**fixture["rows"][0], "id": "second", "sequence": 2})
+    with pytest.raises(ValueError):
+        ActivityProjection.from_wire(fixture)

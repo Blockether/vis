@@ -287,3 +287,96 @@ it('admits a durable history window beyond the former receipt size', () => {
     activityProjectionFromWire({ ...grouped, rows: [{ ...grouped.rows[0], id: children[0].id }] }),
   ).toBeNull();
 });
+
+// #218: complete result content must survive admission and copying, not only the headline.
+describe('complete Activity presentation content', () => {
+  const body = `${'x'.repeat(1_100_000)} final-code-detail`;
+  const cell = `${'y'.repeat(300)} final-cell-detail`;
+  const columns = Array.from({ length: 17 }, (_, i) => `Field ${i}`);
+  const rows = Array.from({ length: 201 }, (_, i) =>
+    columns.map((_, j) => (i === 200 && j === 16 ? cell : `${i}-${j}`)),
+  );
+  const presentation = {
+    headline: 'Find builds for review',
+    summary: 'Complete build results',
+    content: [
+      { type: 'code', language: 'text', text: body },
+      { type: 'table', columns, rows },
+      ...Array.from({ length: 33 }, (_, i) => ({ type: 'text', text: `Detail ${i}` })),
+    ],
+    sections: Array.from({ length: 9 }, (_, i) => ({
+      headline: `Build ${i}`,
+      summary: 'Completed',
+      content: [{ type: 'text', text: `section-${i}-final-detail` }],
+    })),
+  };
+  const page = activityProjection('succeeded');
+  const row = { ...page.rows[0], presentation };
+  const history = {
+    id: '12345678-1234-1234-1234-123456789012',
+    revision: 1,
+    total: 2,
+    after: 0,
+    next_after: 1,
+  };
+
+  it('retains all large blocks, table cells and sections through parsing and copying', () => {
+    const parsed = activityProjectionFromWire({ ...page, rows: [row] });
+    expect(parsed).not.toBeNull();
+    expect(parsed!.rows[0].presentation).toEqual(presentation);
+    const copied = activityCopyText(parsed!);
+    expect(copied).toContain(body);
+    expect(copied).toContain(cell);
+    expect(copied).toContain('Detail 32');
+    expect(copied).toContain('section-8-final-detail');
+    expect(copied).not.toContain('Details truncated');
+  });
+
+  it('admits one oversized invocation on a history page without losing its cursor', () => {
+    const parsed = activityProjectionFromWire({ ...page, rows: [row], history });
+    expect(parsed).not.toBeNull();
+    expect(parsed!.history).toEqual(history);
+    expect(parsed!.rows[0].presentation).toEqual(presentation);
+    expect(
+      activityProjectionFromWire({
+        ...page,
+        rows: [{ ...page.rows[0], id: 'group', children: [row] }],
+        history,
+      })?.rows[0].children?.[0].presentation,
+    ).toEqual(presentation);
+  });
+
+  it('still requires multiple invocations to fit the history page byte budget', () => {
+    expect(
+      activityProjectionFromWire({
+        ...page,
+        rows: [row, { ...row, id: 'call-2', sequence: 2 }],
+        history: { ...history, next_after: null },
+      }),
+    ).toBeNull();
+    expect(
+      activityProjectionFromWire({
+        ...page,
+        rows: [
+          { ...page.rows[0], id: 'group', children: [row, { ...row, id: 'call-2', sequence: 2 }] },
+        ],
+        history: { ...history, next_after: null },
+      }),
+    ).toBeNull();
+  });
+
+  it('still rejects malformed content rather than treating it as complete evidence', () => {
+    for (const content of [
+      [{ type: 'code', text: 1 }],
+      [{ type: 'table', columns: ['Name', 'Result'], rows: [['missing result']] }],
+      [{ type: 'progress', label: 'Builds', value: 3, total: 2 }],
+    ]) {
+      expect(
+        activityProjectionFromWire({
+          ...page,
+          rows: [{ ...row, presentation: { ...presentation, content } }],
+        }),
+      ).toBeNull();
+    }
+  });
+});

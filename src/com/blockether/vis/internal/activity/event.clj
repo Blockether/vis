@@ -154,6 +154,21 @@
         (string? value) (util/redact-secret-text value)
         :else value))
 
+(defn- redact-result
+  "Retain complete finite result data for authored presentations, without transport handles."
+  [value]
+  (cond (callback-envelope? value) "[CALLBACK]"
+        (map? value) (into {}
+                           (map (fn [[k v]]
+                                  [k (if (util/secret-key? k) "[REDACTED]" (redact-result v))]))
+                           (if (and (string? (get value "__vis_object__"))
+                                    (map? (get value "__vis_attrs__")))
+                             (get value "__vis_attrs__")
+                             value))
+        (coll? value) (mapv redact-result value)
+        (string? value) (util/redact-secret-text value)
+        :else value))
+
 (defn- bounded-redact-result
   "Redact a bounded public view, unwrapping Python transport objects before rendering."
   ([value] (bounded-redact-result value max-detail-bytes))
@@ -335,7 +350,7 @@
           (and terminal? (not (number? (:duration-ms event)))) "terminal requires duration"
           (and (:presentation event) (not (contract/valid-presentation? (:presentation event))))
           "invalid presentation"
-          (> (utf8-bytes (wire/json-str event)) (long max-event-bytes))
+          (> (utf8-bytes (wire/json-str (dissoc event :presentation))) (long max-event-bytes))
           (str "event exceeds " (quot (long max-event-bytes) 1024) " KiB")
           :else nil)))
 
@@ -357,16 +372,16 @@
        ffirst))
 
 (defn fit-event
-  "The event, shrunk to `max-event-bytes` by dropping WHOLE diff bodies, heaviest first.
+  "Bound the diagnostic envelope to `max-event-bytes`, retaining authored presentation content.
 
    A patch is evidence, and half of one is worse than none: a reader who meets a hunk
    that stops mid-file cannot tell the cut from the change. So the ceiling that keeps a
    pathological payload out of SSE and `/poll` replay is paid in whole bodies - the file
    keeps its name, its counts and `:is-truncated` - never in a partial diff. Everything
-   else an event carries is already bounded to bytes where it is built."
+   else except the complete authored presentation is bounded where it is built."
   [event]
   (loop [event event]
-    (if (<= (utf8-bytes (wire/json-str event)) (long max-event-bytes))
+    (if (<= (utf8-bytes (wire/json-str (dissoc event :presentation))) (long max-event-bytes))
       event
       (if-let [idx (heaviest-diff-body (:diff-evidence event))]
         (recur (update-in event [:diff-evidence idx] assoc :lines [] :is-truncated true))
@@ -689,17 +704,16 @@
         (assoc :argument-truncated true)))))
 
 (defn- result-presentation
-  "Retain a bounded result-specific view separately from the short diagnostic summary."
+  "Render complete redacted result content; only the always-visible labels are summaries."
   [details]
-  (let [{:keys [value is-truncated]}
-        (bounded-redact-result (if (= :format_code (:operation details))
-                                 (presenter/format-result (:result details))
-                                 (:result details))
-                               16384)
+  (let [value
+        (redact-result (if (= :format_code (:operation details))
+                         (presenter/format-result (:result details))
+                         (:result details)))
 
         full
         (when-let [render (get-in details [:activity :render])]
-          (compact-presentation (:workspace-root details) (render details value)))
+          (compact-presentation (:workspace-root details) (redact (render details value))))
 
         clip-line
         #(-> (str %)
@@ -707,31 +721,12 @@
              (str/replace #"[\p{Cntrl}\u2028\u2029]+" " ")
              (bounded-text max-summary-bytes))
 
-        blocks
-        (mapv (fn [block]
-                (cond-> block
-                  (get block "text")
-                  (update "text" bounded-text 16384)
-
-                  (= "table" (get block "type"))
-                  (update "rows"
-                          #(mapv (fn [row]
-                                   (mapv (fn [cell]
-                                           (bounded-text cell 256))
-                                         row))
-                                 %))))
-              (take 32 (get full "content")))
-
-        initial
+        presentation
         (-> full
             (update "headline" clip-line)
-            (update "summary" clip-line)
-            (assoc "content" blocks))]
+            (update "summary" clip-line))]
 
-    (loop [presentation initial]
-      (if (contract/valid-presentation? presentation)
-        {:value presentation :is-truncated (or is-truncated (not= full presentation))}
-        (when (seq (get presentation "content")) (recur (update presentation "content" pop)))))))
+    (when (contract/valid-presentation? presentation) {:value presentation})))
 
 (defn terminal-event
   [ctx invocation

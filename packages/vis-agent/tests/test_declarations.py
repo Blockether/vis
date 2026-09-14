@@ -131,7 +131,6 @@ def test_activity_blocks_are_immutable_and_match_canonical_schema(class_name, kw
     "class_name, kwargs",
     [
         ("ActivityText", {"text": 7}),
-        ("ActivityText", {"text": "x" * 16385}),
         ("ActivityImage", {"attachment_id": " ", "label": "Image"}),
         ("ActivityProgress", {"label": "Work", "value": 1}),
         ("ActivityProgress", {"label": "Work", "value": True, "total": 2}),
@@ -145,7 +144,7 @@ def test_invalid_activity_blocks_are_refused(class_name, kwargs):
         getattr(vis, class_name)(**kwargs)
 
 
-def test_activity_publish_is_typed_bounded_and_preserves_host_result(monkeypatch):
+def test_activity_publish_is_typed_and_preserves_host_result(monkeypatch):
     updates = []
     monkeypatch.setattr(
         vis._host, "activity", lambda blocks: updates.append(blocks) or True
@@ -157,10 +156,6 @@ def test_activity_publish_is_typed_bounded_and_preserves_host_result(monkeypatch
     assert updates == [view.to_wire()]
     assert _contracts.validate("activity", "presentation", updates[0]) == updates[0]
     assert not vis.publish_activity({"type": "text", "text": "retired raw block"})
-    with pytest.raises((ValueError, TypeError)):
-        vis.ActivityPresentation("Build", "", [vis.ActivityText("x")] * 33)
-    with pytest.raises(ValueError):
-        vis.ActivityPresentation("Build", "", [vis.ActivityText("é" * 16384)] * 2)
     assert len(updates) == 1
     assert vis.publish_activity(vis.ActivityPresentation("Build", "Complete"))
     assert updates[-1]["content"] == []
@@ -178,22 +173,11 @@ def test_activity_publish_is_typed_bounded_and_preserves_host_result(monkeypatch
         {
             "headline": "Build",
             "summary": "",
-            "sections": [vis.ActivitySection("src", "Ready")] * 9,
-        },
-        {
-            "headline": "Build",
-            "summary": "",
             "sections": [vis.ActivityPresentation("nested", "")],
-        },
-        {
-            "headline": "Build",
-            "summary": "",
-            "content": [vis.ActivityText("x")] * 17,
-            "sections": [vis.ActivitySection("src", "", [vis.ActivityText("y")] * 16)],
         },
     ],
 )
-def test_presentation_refuses_multiline_or_unbounded_structure(kwargs):
+def test_presentation_refuses_multiline_or_invalid_structure(kwargs):
     with pytest.raises((ValueError, TypeError)):
         vis.ActivityPresentation(**kwargs)
 

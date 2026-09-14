@@ -5533,10 +5533,9 @@
 
           (loop [selected (vec (take limit records))]
             (let [projection (page selected (> (count records) (count selected)))]
-              (if (<= (activity/byte-size projection)
-                      (long (get activity-contract/limits "max_page_bytes")))
+              ;; A single invocation is indivisible: byte targets only split between records.
+              (if (or (<= (count selected) 1)
+                      (<= (activity/byte-size projection)
+                          (long (get activity-contract/limits "max_page_bytes"))))
                 projection
-                (if (> (count selected) 1)
-                  (recur (pop selected))
-                  (throw (ex-info "Admitted Activity record exceeds page size"
-                                  {:type :activity/oversized-record})))))))))))
+                (recur (pop selected))))))))))

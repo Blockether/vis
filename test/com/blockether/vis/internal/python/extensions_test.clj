@@ -388,6 +388,31 @@ vis.register(vis.Extension(
             (expect (activity-contract/valid-projection? projection))))))))
 
 (defdescribe
+  sdk-complete-activity-content-test
+  (it "retains large SDK callback presentations across the Python host boundary"
+      ;; #218: validation at either end used to suppress the entire callback result.
+      (let [source (str/replace counter-py
+                                "vis.ActivityText(phase)"
+                                "vis.ActivityText(phase + ('x' * 300000) + 'final-detail')")]
+        (with-loaded {"counter.py" source}
+                     (fn [_ _]
+                       (expect (= [] (pyx/load-failures)))
+                       (let [ext (registered "counter")
+                             entry (second (get-in ext [:ext/engine :ext.engine/symbols]))
+                             events (atom [])]
+
+                         (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                           (expect (= {"count" 0 "op" "counter_counter_read"}
+                                      (extension/invoke-symbol-wrapper ext entry [] {}))))
+                         (let [projection (activity/presentation (activity/replay @events))
+                               body (get-in projection [:rows 0 :presentation "content" 0 "text"])]
+
+                           (expect (= (+ (count "successfinal-detail") 300000) (count body)))
+                           (expect (str/ends-with? body "final-detail"))
+                           (expect (not (get-in projection [:rows 0 :is-truncated])))
+                           (expect (activity-contract/valid-projection? projection)))))))))
+
+(defdescribe
   sdk-activity-paths-test
   (it
     "compacts Python callback and publication paths without changing the tool result"

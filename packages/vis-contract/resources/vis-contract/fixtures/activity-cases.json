@@ -1803,8 +1803,8 @@
     }
   },
   {
-    "name": "sections-share-block-bound",
-    "valid": false,
+    "name": "sections-retain-all-blocks",
+    "valid": true,
     "projection": {
       "state": "running",
       "counts": {

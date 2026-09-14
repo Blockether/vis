@@ -139,7 +139,8 @@
                    (mapv #(get-in % ["presentation" "summary"]) rows)))
         (expect (every? #(seq (get-in % ["presentation" "content"])) rows))
         (expect (not-any? #(get % "is_truncated") rows))))
-  (it "counts full results before the event bounds per-file and per-finding evidence"
+  ;; #218: all findings remain visible, not just complete aggregate counts.
+  (it "retains complete per-file and per-finding evidence alongside counts"
       (let [projection
             (result-fixture
               [[:format_code "src"
@@ -166,8 +167,10 @@
         (expect (= ["0 of 100 files changed" "0 errors · 100 warnings · 0 info · 20 files checked"]
                    (mapv #(get-in % ["presentation" "summary"]) rows)))
         (expect (not (get (first rows) "is_truncated")))
-        (expect (get (second rows) "is_truncated"))
-        (expect (re-find #"Unused binding" (pr-str (get-in rows [1 "presentation" "content"]))))))
+        (expect (not (get (second rows) "is_truncated")))
+        (expect (= 100
+                   (count (re-seq #"Unused binding"
+                                  (pr-str (get-in rows [1 "presentation" "content"]))))))))
   (it "uses complete results for counts but only public values for displayed text"
       (doseq [[operation complete public expected]
               [[:format_code {"changed" false "path" "original-target"}
