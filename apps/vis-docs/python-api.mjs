@@ -63,6 +63,18 @@ export async function buildPythonApi(dist) {
           node.src = '/python-sdk-api/' + asset;
         }
       }
+      // Each API owns its prose anchors; repeated headings such as "Arguments" must not collide.
+      for (const docstring of document.querySelectorAll('main .docstring')) {
+        const owner = docstring.closest('section[id], .classattr[id]');
+        if (!owner) continue;
+        for (const node of docstring.querySelectorAll('[id]')) {
+          const fragment = '#' + node.id;
+          node.id = owner.id + '--' + node.id;
+          for (const link of docstring.querySelectorAll('a[href]')) {
+            if (link.getAttribute('href') === fragment) link.setAttribute('href', '#' + node.id);
+          }
+        }
+      }
       // A signature may name a private base even when its public methods are rendered.
       // Keep the type name without linking to an intentionally hidden implementation.
       for (const link of document.querySelectorAll('a[href^="#_"]')) {

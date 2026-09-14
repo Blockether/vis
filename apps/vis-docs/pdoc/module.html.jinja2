@@ -70,9 +70,16 @@
             {{ member(m) }}
             {% if m.kind == "class" %}
                 {{ attributes(m.own_members) }}
-                {# Keep inherited APIs available without repeating an entire base by default. #}
+                {# Link to documented bases; render APIs from hidden bases in place. #}
                 {% set inherited_docs %}
-                    {% for members in m.inherited_members.values() %}{{ attributes(members) }}{% endfor %}
+                    {% for base, members in m.inherited_members.items() %}
+                        {% set base_class = module.get(base[1]) %}
+                        {% if not base_class or base_class.taken_from != base %}
+                            {% set base_module = all_modules.get(base[0]) %}
+                            {% set base_class = base_module.get(base[1]) if base_module else None %}
+                        {% endif %}
+                        {{ attributes(members, base_class and is_public(base_class) | trim) }}
+                    {% endfor %}
                 {% endset %}
                 {% if inherited_docs | trim %}
                     <details class="api-inherited">
@@ -85,9 +92,15 @@
     {% endfor %}
 {% endblock %}
 
-{% macro attributes(members) %}
+{% macro attributes(members, reference=False) %}
     {% for attr in members if attr.kind != "class" and is_public(attr) | trim and attr.taken_from[0].startswith("blockether.vis") %}
-        <div id="{{ attr.qualname }}" class="classattr">{{ member(attr) }}</div>
+        <div id="{{ attr.qualname }}" class="classattr">
+            {% if reference %}
+                <p class="docstring">Inherited from {{ attr.taken_from | link }}.</p>
+            {% else %}
+                {{ member(attr) }}
+            {% endif %}
+        </div>
     {% endfor %}
 {% endmacro %}
 

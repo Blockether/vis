@@ -84,8 +84,10 @@ nav.pdoc input[type='search']:focus {
   cursor: pointer;
   min-height: 28px;
 }
-.api-symbols summary a {
-  display: inline;
+nav.pdoc .api-symbols summary > a {
+  display: inline-block;
+  max-width: calc(100% - 1.25rem);
+  vertical-align: middle;
 }
 .api-symbols .memberlist .memberlist {
   padding-left: 1rem;
@@ -193,8 +195,7 @@ main.pdoc {
 }
 @media (pointer: coarse) {
   nav.pdoc li a,
-  .api-guides a,
-  .api-symbols summary {
+  .api-guides a {
     min-height: 44px;
     padding-top: 0.75rem;
     padding-bottom: 0.75rem;

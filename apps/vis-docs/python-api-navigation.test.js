@@ -68,6 +68,58 @@ test('every module offers task navigation, guide links and a compact symbol tree
   }
 });
 
+test.each([false, true])('symbol labels stay beside native chevrons (touch: %s)', (touch) => {
+  const dom = page('blockether/vis/activity.html');
+  try {
+    const document = dom.window.document;
+    loadStyles(document);
+    if (touch) {
+      // JSDOM does not evaluate pointer media features.
+      const style = document.createElement('style');
+      style.textContent = [...document.styleSheets]
+        .flatMap((sheet) => [...sheet.cssRules])
+        .filter((rule) => rule.conditionText?.replace(/\s/g, '') === '(pointer:coarse)')
+        .flatMap((rule) => [...rule.cssRules])
+        .map((rule) => rule.cssText)
+        .join('\n');
+      document.head.append(style);
+    }
+    for (const link of document.querySelectorAll('.api-symbols summary > a')) {
+      expect(dom.window.getComputedStyle(link).display).toBe('inline-block');
+      expect(dom.window.getComputedStyle(link).minHeight).toBe(touch ? '44px' : '28px');
+      const summaryStyle = dom.window.getComputedStyle(link.parentElement);
+      expect(parseFloat(summaryStyle.paddingTop) || 0).toBe(0);
+      expect(parseFloat(summaryStyle.paddingBottom) || 0).toBe(0);
+    }
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('inherited public methods link to one definition instead of repeating it', () => {
+  const dom = page('blockether/vis/engine.html');
+  try {
+    const document = dom.window.document;
+    const description = 'Create a conversation and return a Session handle.';
+    expect(document.getElementById('ExecutionLayer.create_session').textContent).toContain(
+      description,
+    );
+    for (const name of ['GatewayClient', 'LocalEngine']) {
+      const member = document.getElementById(name + '.create_session');
+      expect(member.querySelector('a[href="#ExecutionLayer.create_session"]')).not.toBeNull();
+      expect(member.textContent).not.toContain(description);
+      expect(member.querySelector('.attr')).toBeNull();
+    }
+    for (const name of ['Events', 'JobEvents']) {
+      expect(
+        document.getElementById(name + '.close').querySelector('.docstring').textContent,
+      ).toContain('Release this event subscription');
+    }
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('public engine methods remain documented when their implementation base is private', () => {
   const methods = JSON.parse(
     execFileSync(

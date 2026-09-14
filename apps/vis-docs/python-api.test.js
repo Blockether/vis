@@ -57,6 +57,18 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
   }
 });
 
+test('API headings have unique anchors without duplicating member definitions', () => {
+  for (const name of files.filter((name) => name !== 'index.html')) {
+    const dom = new JSDOM(read(prefix + name));
+    try {
+      const ids = [...dom.window.document.querySelectorAll('[id]')].map((node) => node.id);
+      expect(ids.length, name).toBe(new Set(ids).size);
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+
 test('generated API pages have discovery metadata and no inline executable content', () => {
   const sitemap = read('/sitemap-python-sdk.xml');
   for (const name of files.filter((name) => name !== 'index.html')) {
