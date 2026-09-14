@@ -52,20 +52,32 @@
            (java.lang.management ManagementFactory)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
            (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
-           (java.nio.file Files)
+           (java.nio.file CopyOption Files StandardCopyOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)
-           (java.util.concurrent TimeUnit)))
+           (java.util.concurrent TimeUnit)
+           (java.util.concurrent.locks ReentrantLock)))
 
 (set! *warn-on-reflection* true)
 
 (defn- materialize-guest-sources!
-  "Stage modules under their content identity so engine versions cannot overwrite each other."
+  "Publish complete modules atomically under their content identity, even during concurrent starts."
   [root sources]
   (let [dir (io/file root (util/sha256-hex (pr-str (into (sorted-map) sources))))]
     (.mkdirs dir)
     (doseq [[name source] sources]
       (let [target (io/file dir name)]
-        (when-not (and (.isFile target) (= source (slurp target))) (spit target source))))
+        (when-not (and (.isFile target) (= source (slurp target)))
+          (let [staged (Files/createTempFile (.toPath dir)
+                                             ".vis-guest-"
+                                             ".tmp"
+                                             (make-array FileAttribute 0))]
+            (try (spit (.toFile staged) source)
+                 (Files/move staged
+                             (.toPath target)
+                             (into-array CopyOption
+                                         [StandardCopyOption/ATOMIC_MOVE
+                                          StandardCopyOption/REPLACE_EXISTING]))
+                 (finally (Files/deleteIfExists staged)))))))
     (.getCanonicalPath dir)))
 
 (defonce ^:private guest-sources
@@ -155,6 +167,29 @@
           disposed (`forget-policy!`)."}
   retired-workers
   (atom {}))
+
+(defonce ^:private worker-locks
+  ;; Count holders AND waiters so a key never gets two lifecycle locks. Entries
+  ;; disappear after their last user; disposed sessions leave no lock registry.
+  (atom {}))
+
+(defn- with-worker-lock
+  "Serialize one worker's lifecycle, never another worker's startup or control.
+   Requests can cancel while waiting; teardown must also run on an interrupted thread."
+  [k interruptible? f]
+  (let [^ReentrantLock gate (locking worker-locks
+                              (let [entry (or (get @worker-locks k)
+                                              {:lock (ReentrantLock.) :users 0})]
+                                (swap! worker-locks assoc k (update entry :users #(inc (long %))))
+                                (:lock entry)))]
+    (try (if interruptible? (.lockInterruptibly gate) (.lock gate))
+         (try (f) (finally (.unlock gate)))
+         (finally (locking worker-locks
+                    (swap! worker-locks (fn [locks]
+                                          (let [users (long (get-in locks [k :users]))]
+                                            (if (= 1 users)
+                                              (dissoc locks k)
+                                              (assoc-in locks [k :users] (dec users)))))))))))
 
 (def shared-key
   "The worker for Python that belongs to no single session: extension files
@@ -406,25 +441,28 @@
   "Start a worker only for a new key. A dead or retired worker has lost its
    namespace and host bindings; only a rebuilt environment may replace it."
   [k]
-  (locking workers
-    (let [state
-          (get @workers k)
+  (with-worker-lock
+    k
+    true
+    (fn []
+      (let [state
+            (get @workers k)
 
-          reason
-          (or (get @retired-workers k)
-              (when (and state (not (alive? state))) "exited unexpectedly"))]
+            reason
+            (or (get @retired-workers k)
+                (when (and state (not (alive? state))) "exited unexpectedly"))]
 
-      (when reason
-        (swap! retired-workers assoc k reason)
-        (throw (ex-info (str
-                          "this session's Python worker was retired (" reason
-                          "). Its sandbox — every variable, import and tool — is gone until "
-                          "the next turn starts a fresh one; finish this turn with what you have.")
-                        {:type :vis/python-worker-retired :worker k :reason reason})))
-      (or state
-          (let [started (start! k)]
-            (swap! workers assoc k started)
-            started)))))
+        (when reason
+          (swap! retired-workers assoc k reason)
+          (throw (ex-info
+                   (str "this session's Python worker was retired (" reason
+                        "). Its sandbox — every variable, import and tool — is gone until "
+                        "the next turn starts a fresh one; finish this turn with what you have.")
+                   {:type :vis/python-worker-retired :worker k :reason reason})))
+        (or state
+            (let [started (start! k)]
+              (swap! workers assoc k started)
+              started))))))
 
 (def ^:private INTERRUPT_REPLY_MS
   "Maximum wait for the worker control plane to acknowledge an interrupt."
@@ -531,18 +569,21 @@
    releases every pending parent call; a child that does not leave promptly is
    force-killed so retired sessions cannot accumulate processes."
   [k]
-  (locking workers
-    (when-let [state (get @workers k)]
-      (swap! workers dissoc k)
-      ;; Lifecycle cancellation is explicit, not an authorization or crash error.
-      (let [[pending _] (reset-vals! (:pending (:peer state)) {})]
-        (doseq [[_ waiting] pending]
-          (deliver waiting {"error" "Python worker stopped by session lifecycle cancellation"})))
-      (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
-      (let [^Process process (:process state)]
-        (.destroy process)
-        (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
-             (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil)))))))
+  (with-worker-lock
+    k
+    false
+    (fn []
+      (when-let [state (get @workers k)]
+        (swap! workers dissoc k)
+        ;; Lifecycle cancellation is explicit, not an authorization or crash error.
+        (let [[pending _] (reset-vals! (:pending (:peer state)) {})]
+          (doseq [[_ waiting] pending]
+            (deliver waiting {"error" "Python worker stopped by session lifecycle cancellation"})))
+        (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
+        (let [^Process process (:process state)]
+          (.destroy process)
+          (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
+               (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))))))
   nil)
 
 (defn retire-worker!

@@ -226,6 +226,73 @@ print(worker_value)"))))
                                    (java.nio.file.Files/deleteIfExists (.toPath file))))))))
 
 (defdescribe
+  guest-sources-publication-test
+  (it
+    "never truncates published modules when two cold starts stage the same sources"
+    (let [base
+          (java.nio.file.Files/createTempDirectory (.toPath (io/file "target"))
+                                                   "worker-source-publication-"
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+
+          source
+          "VALUE = 7\n"
+
+          sources
+          {"guest.py" source}
+
+          entered
+          (promise)
+
+          write-first
+          (promise)
+
+          truncated
+          (promise)
+
+          release
+          (promise)
+
+          result
+          (promise)
+
+          original-spit
+          spit
+
+          first-writer
+          (Thread. ^Runnable
+                   (fn []
+                     (try (deliver result
+                                   (#'worker/materialize-guest-sources! (.toFile base) sources))
+                          (catch Throwable error (deliver result error))))
+                   "guest-source-publication-test")]
+
+      (.setDaemon first-writer true)
+      (try (with-redefs [spit (fn [file value & opts]
+                                (when (identical? first-writer (Thread/currentThread))
+                                  (deliver entered true)
+                                  @write-first
+                                  (original-spit file "")
+                                  (deliver truncated true)
+                                  @release)
+                                (apply original-spit file value opts))]
+             (try (.start first-writer)
+                  (expect (= true (deref entered 2000 ::timeout)))
+                  (let [directory (#'worker/materialize-guest-sources! (.toFile base) sources)
+                        target (io/file directory "guest.py")]
+
+                    (deliver write-first true)
+                    (expect (= true (deref truncated 2000 ::timeout)))
+                    (expect (= source (slurp target))))
+                  (finally (deliver write-first true)
+                           (deliver release true)
+                           (.join first-writer 2000)
+                           (expect (not (.isAlive first-writer))))))
+           (expect (string? @result))
+           (finally (doseq [^java.io.File file (reverse (file-seq (.toFile base)))]
+                      (java.nio.file.Files/deleteIfExists (.toPath file))))))))
+
+(defdescribe
   worker-long-home-test
   ;; The installed SDK's isolated HOME exposed the Unix socket's 104/108-byte limit.
   (it
@@ -937,3 +1004,121 @@ print(worker_value)"))))
                                 (expect (not= ::timeout result))
                                 (expect (= :vis/python-worker (:type result))))
                               (finally (future-cancel task)))))))))
+
+;; A blocked startup held the process-wide monitor before the first provider call,
+;; stalling unrelated sessions in :engine-start and ignoring their cancellation.
+(defdescribe
+  worker-startup-isolation-test
+  (it
+    "keeps ready and new workers independent while same-key waiters can cancel"
+    (let [entered
+          (promise)
+
+          release
+          (promise)
+
+          threads
+          (atom [])
+
+          starts
+          (atom {})
+
+          state
+          {:peer {:host-sessions (atom #{})}}
+
+          call
+          (fn [k]
+            (let [result
+                  (promise)
+
+                  thread
+                  (Thread. ^Runnable
+                           (fn []
+                             (try (deliver result (worker/exec! k k "pass"))
+                                  (catch InterruptedException _ (deliver result ::interrupted))
+                                  (catch Throwable error (deliver result error))))
+                           "worker-startup-test")]
+
+              (.setDaemon thread true)
+              (swap! threads conj thread)
+              (.start thread)
+              [thread result]))]
+
+      (with-redefs-fn {#'worker/workers (atom {"ready" state})
+                       #'worker/retired-workers (atom {})
+                       #'worker/worker-locks (atom {})
+                       #'worker/alive? boolean
+                       #'worker/start! (fn [k]
+                                         (swap! starts update k (fnil inc 0))
+                                         (when (= "blocked" k) (deliver entered true) @release)
+                                         state)
+                       #'worker-peer/request! (fn [& _]
+                                                ::ok)}
+        (fn []
+          (try (let [[_ started] (call "blocked")]
+                 (expect (= true (deref entered 2000 ::timeout)))
+                 (let [[_ ready] (call "ready")
+                       [_ cold] (call "cold")
+                       [^Thread waiter waiting] (call "blocked")
+                       [^Thread follower following] (call "blocked")
+                       ^java.util.concurrent.locks.ReentrantLock gate
+                       (:lock (get @(var-get #'worker/worker-locks) "blocked"))]
+
+                   (expect (= ::ok (deref ready 1000 ::timeout)))
+                   (expect (= ::ok (deref cold 1000 ::timeout)))
+                   (expect (loop [remaining 200]
+                             (cond (and (.hasQueuedThread gate waiter)
+                                        (.hasQueuedThread gate follower))
+                                   true
+                                   (zero? remaining) false
+                                   :else (do (Thread/sleep 5) (recur (dec remaining))))))
+                   (.interrupt waiter)
+                   (expect (= ::interrupted (deref waiting 1000 ::timeout)))
+                   (expect (not (realized? started)))
+                   (expect (not (realized? following)))
+                   (deliver release true)
+                   (expect (= ::ok (deref started 1000 ::timeout)))
+                   (expect (= ::ok (deref following 1000 ::timeout)))
+                   (expect (= {"blocked" 1 "cold" 1} @starts))))
+               (finally (deliver release true)
+                        (doseq [^Thread thread @threads]
+                          (.join thread 2000)
+                          (expect (not (.isAlive thread))))))
+          (expect (empty? @(var-get #'worker/worker-locks))))))))
+
+(defdescribe
+  worker-lifecycle-lock-test
+  (it "releases the per-key lock after a startup failure"
+      (with-redefs-fn {#'worker/workers (atom {})
+                       #'worker/retired-workers (atom {})
+                       #'worker/worker-locks (atom {})
+                       #'worker/start! (fn [_]
+                                         (throw (ex-info "Startup failed" {:type ::failed})))}
+        (fn []
+          (expect (= ::failed
+                     (try (worker/exec! "failed" "failed" "pass")
+                          (catch clojure.lang.ExceptionInfo error (:type (ex-data error))))))
+          (expect (empty? @(var-get #'worker/workers)))
+          (expect (empty? @(var-get #'worker/worker-locks))))))
+  (it "still stops a live worker when teardown's thread was interrupted"
+      (with-worker-context
+        (fn [session]
+          (let [result
+                (promise)
+
+                thread
+                (Thread. ^Runnable
+                         (fn []
+                           (.interrupt (Thread/currentThread))
+                           (try (worker/stop-worker! session)
+                                (deliver result ::stopped)
+                                (catch Throwable error (deliver result error))
+                                (finally (Thread/interrupted))))
+                         "worker-stop-test")]
+
+            (.setDaemon thread true)
+            (.start thread)
+            (try (expect (= ::stopped (deref result 2000 ::timeout)))
+                 (expect (not (worker/worker-live? session)))
+                 (expect (not (contains? @(var-get #'worker/worker-locks) session)))
+                 (finally (.join thread 2000) (expect (not (.isAlive thread))))))))))
