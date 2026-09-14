@@ -10,6 +10,8 @@ import inspect
 import json
 import os
 import sys
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,6 +20,17 @@ import pytest
 from blockether.vis import _contracts, _outside
 
 CONTRACT = _outside.contract
+
+
+@pytest.fixture(autouse=True)
+def stop_log_sweepers():
+    yield
+    sweepers = getattr(_outside, "_LOG_SWEEPERS", {})
+    for stop, thread in list(sweepers.values()):
+        stop.set()
+        thread.join(5)
+        assert not thread.is_alive()
+    sweepers.clear()
 
 
 def _op(name):
@@ -184,6 +197,28 @@ def test_log_and_notify_go_to_stderr(capsys):
 # -- Shell ---------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("with_outside", [False, True])
+def test_log_sweep_preserves_fresh_empty_directories(tmp_path, with_outside):
+    log_root = tmp_path / "logs"
+    fresh = log_root / "2026-09-14"
+    stale = log_root / "2026-09-13"
+    fresh.mkdir(parents=True)
+    stale.mkdir()
+    if with_outside:
+        (fresh / "outside").mkdir()
+        (stale / "outside").mkdir()
+        os.utime(stale / "outside", (0, 0))
+    os.utime(stale, (0, 0))
+
+    # A writer may be between mkdir and opening its log during a periodic sweep.
+    _outside._sweep_logs(log_root)
+
+    assert fresh.is_dir()
+    if with_outside:
+        assert (fresh / "outside").is_dir()
+    assert not stale.exists()
+
+
 def test_shell_runs_a_command_and_answers_the_engine_shape():
     run = vis.shell({"command": "printf hello"}).wait(10)
     assert run["exit"] == 0
@@ -191,6 +226,154 @@ def test_shell_runs_a_command_and_answers_the_engine_shape():
     assert run["status"] == "exited"
     assert set(run) == set(_outside._SHELL_RESULT_KEYS)
     assert run.logs()["out"] == "hello"
+
+
+def _aged_log(path, days):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("diagnostic")
+    stamp = time.time() - days * 86400
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_shell_sweeps_old_logs_at_start_and_periodically(
+    tmp_path, monkeypatch, override
+):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    if override:
+        log_root = tmp_path / "logs"
+    else:
+        monkeypatch.delenv("VIS_OUTSIDE_HOME")
+        log_root = home / ".vis" / "logs"
+    stale = _aged_log(log_root / "2020-01-01" / "outside" / "shell-old.log", 15)
+    fresh = _aged_log(log_root / "2020-01-02" / "outside" / "shell-live.log", 1)
+    other = _aged_log(log_root / "2020-01-01" / "gateway-old.log", 30)
+    state = _aged_log(_outside.state_home() / "state.json", 30)
+    swept = threading.Event()
+    original = _outside._sweep_logs
+
+    def sweep(root):
+        original(root)
+        swept.set()
+
+    monkeypatch.setattr(_outside, "_sweep_logs", sweep)
+    monkeypatch.setattr(_outside, "_LOG_SWEEP_INTERVAL_SECS", 0.01)
+    run = vis.shell({"command": "printf retention"}).wait(10)
+    assert swept.wait(5)
+    assert not stale.exists()
+    assert not stale.parent.exists()
+    assert fresh.exists() and other.exists() and state.exists()
+    assert Path(run["log_path"]).exists()
+    # No second shell is needed: the daemon removes logs created after startup.
+    later = _aged_log(log_root / "2020-01-03" / "outside" / "shell-later.log", 15)
+    swept.clear()
+    deadline = time.monotonic() + 5
+    while later.exists() and time.monotonic() < deadline:
+        assert swept.wait(1)
+        swept.clear()
+    assert not later.exists()
+    assert not later.parent.parent.exists()
+    sweepers = list(_outside._LOG_SWEEPERS.values())
+    assert len(sweepers) == 1 and sweepers[0][1].daemon
+    vis.shell({"command": "true"}).wait(10)
+    assert list(_outside._LOG_SWEEPERS.values()) == sweepers
+
+
+@pytest.mark.parametrize("link_kind", ["root", "date", "outside", "file", "nested"])
+def test_log_sweep_never_follows_symlinks(tmp_path, link_kind):
+    root = tmp_path / "logs"
+    target = tmp_path / "precious"
+    suffix = {
+        "root": "2020-01-01/outside/shell-keep.log",
+        "date": "outside/shell-keep.log",
+    }.get(link_kind, "shell-keep.log")
+    victim = _aged_log(target / suffix, 30)
+    if link_kind == "root":
+        root.symlink_to(target, target_is_directory=True)
+    else:
+        dated = root / "2020-01-01"
+        outside = dated / "outside"
+        link = {
+            "date": dated,
+            "outside": outside,
+            "file": outside / "shell-link.log",
+            "nested": outside / "nested",
+        }[link_kind]
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(
+            victim if link_kind == "file" else target,
+            target_is_directory=link_kind != "file",
+        )
+    _outside._sweep_logs(root)
+    assert victim.read_text() == "diagnostic"
+    assert (root if link_kind == "root" else link).is_symlink()
+
+
+def test_log_sweep_uses_a_fourteen_day_mtime_cutoff(tmp_path, monkeypatch):
+    now = 1_800_000_000
+    monkeypatch.setattr(_outside.time, "time", lambda: now)
+    root = tmp_path / "logs"
+    old = _aged_log(root / "2020-01-01/outside/old.log", 15)
+    edge = _aged_log(root / "2020-01-01/outside/edge.log", 14)
+    fresh = _aged_log(root / "2020-01-01/outside/fresh.log", 13)
+    invalid = _aged_log(root / "not-a-date/outside/keep.log", 30)
+    _outside._sweep_logs(root)
+    assert not old.exists()
+    assert edge.exists() and fresh.exists() and invalid.exists()
+    monkeypatch.setattr(_outside.time, "time", lambda: now + 1)
+    _outside._sweep_logs(root)
+    assert not edge.exists()
+    assert fresh.exists()
+
+
+def test_log_sweeper_retries_io_failure_and_keeps_its_original_root(
+    tmp_path, monkeypatch
+):
+    original_home = tmp_path / "original"
+    original_home.mkdir()
+    monkeypatch.chdir(original_home)
+    root = original_home / "logs"
+    stale = _aged_log(root / "2020-01-01/outside/old.log", 30)
+    elsewhere = tmp_path / "elsewhere"
+    keep = _aged_log(elsewhere / "logs/2020-01-01/outside/keep.log", 30)
+    first = threading.Event()
+    done = threading.Event()
+    calls = []
+    original = _outside._sweep_logs
+
+    def sweep(captured):
+        calls.append(captured)
+        if len(calls) == 1:
+            first.set()
+            raise OSError("temporary failure")
+        original(captured)
+        done.set()
+
+    monkeypatch.setattr(_outside, "_sweep_logs", sweep)
+    monkeypatch.setattr(_outside, "_LOG_SWEEP_INTERVAL_SECS", 0.01)
+    _outside._start_log_sweeper(Path("logs"))
+    assert first.wait(5)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("VIS_OUTSIDE_HOME", str(elsewhere))
+    assert done.wait(5)
+    assert len(calls) >= 2 and set(calls) == {root}
+    assert not stale.exists()
+    assert keep.exists()
+
+
+def test_log_sweeper_start_failure_does_not_break_shell(monkeypatch):
+    def fail_start(_thread):
+        raise RuntimeError("cannot start thread")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(_outside.threading.Thread, "start", fail_start)
+        run = vis.shell({"command": "printf survived"}).wait(10)
+        assert run["exit"] == 0 and run["out"] == "survived"
+        assert not _outside._LOG_SWEEPERS
+    vis.shell({"command": "true"}).wait(10)
+    assert len(_outside._LOG_SWEEPERS) == 1
 
 
 @pytest.mark.parametrize("override", [False, True])

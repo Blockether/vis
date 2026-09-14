@@ -81,27 +81,35 @@ cannot cancel a dump the JVM has already accepted.
 
 ## Rotation and retention
 
-- At engine startup, Vis removes diagnostic files whose last modification was
-  more than 14 days ago, then removes empty directories. A running process keeps
+- At engine startup and every hour while it runs, Vis removes diagnostic files
+  whose last modification was more than 14 days ago, then removes empty directories.
+  This covers the entire log tree, including shell and Python worker output,
+  rotated logs, hang reports, JFR recordings and heap dumps. A running process keeps
   writing to its original date directory; cleanup uses file age, not folder date.
 - Ordinary process logs rotate monthly or at 4,000,000 bytes. Rotated parts use
   gzip; the handler limits them to eight parts per interval and six intervals.
-  The startup age policy also applies to these files.
+  The 14-day age policy also applies to these files.
 - Hang-report cleanup keeps the ten newest completed reports across all dates.
   It runs after a report completes. Incomplete captures remain subject to the
-  startup age policy.
+  14-day age policy.
 - Starting a JFR recording keeps the six newest existing recordings across dates.
   The new recording may add a seventh file. Enable recording with `VIS_JFR=1` or
   `--jfr`; it dumps on exit, with a 128 MiB client or 256 MiB gateway limit.
 - Deleting a session also deletes its shell logs across dates.
 
-The standalone Python SDK uses the same default log root, but does not run its
-own age cleanup. An engine startup cleans those default logs. If you set
-`VIS_OUTSIDE_HOME`, SDK shell logs use
-`<VIS_OUTSIDE_HOME>/logs/YYYY-MM-DD/outside/`; you manage their retention.
+The standalone Python SDK cleans its own shell logs after the first shell
+command starts and every hour while that Python process runs. It uses the same
+14-day cutoff. By default these logs share `~/.vis/logs/`; setting
+`VIS_OUTSIDE_HOME` moves them to
+`<VIS_OUTSIDE_HOME>/logs/YYYY-MM-DD/outside/`, with the same automatic cleanup.
 
-Existing files are not moved into the dated layout. New writers use it; ordinary
-startup cleanup still ages out old files beneath `~/.vis/logs/`.
+Cleanup runs in the background and needs a running process. A very short-lived
+CLI or Python process may exit before its first pass finishes. If both are
+stopped, expired logs remain until a later run. Save diagnostic files you need
+longer outside the log tree before they expire.
+
+Existing files are not moved into the dated layout. New writers use it; the
+engine's age cleanup still removes old files beneath `~/.vis/logs/`.
 
 ## Review before sharing
 

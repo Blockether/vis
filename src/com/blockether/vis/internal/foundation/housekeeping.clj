@@ -18,11 +18,11 @@
    a picture whose bytes are already DB-owned, the pre-image of an edit nobody
    will rewind a fortnight later, an interpreter the next start refetches from
    its release — so they carry a window instead of
-   a report. `sweep-targets` is the one list of them. Journals also self-sweep
-   inside the tailer loop (`gateway.bus/sweep!`) after a single idle day, but
-   that is a LIVENESS rule and it only runs while a daemon does — journals from
-   crashed or never-restarted daemons used to stay forever, and startup is
-   exactly when no daemon is running.
+   a report. `sweep-targets` is the one list of them. Diagnostic logs also sweep
+   hourly while the process runs; the other targets remain startup-only here.
+   Journals also self-sweep inside the tailer loop (`gateway.bus/sweep!`) after a
+   single idle day, but that is a LIVENESS rule and it only runs while a daemon
+   does — journals from crashed or never-restarted daemons used to stay forever.
 
    `purge!` routes deletions through `workspace/abandon!` for live draft rows so
    the DB transition, hooks, and backend root release all use the canonical engine
@@ -157,6 +157,10 @@
    kind is reconstructible from the DB or from nothing at all."
   14)
 
+(def default-log-sweep-interval-ms
+  "Delay between diagnostic-log sweeps while a process stays alive: one hour."
+  3600000)
+
 (def default-cache-budget-bytes
   "Bytes one display cache may still hold once the age pass is done. Age alone
    does not bound an afternoon that renders thousands of figures, so the newest
@@ -219,11 +223,11 @@
   (try (Files/deleteIfExists p) (catch Throwable _ false)))
 
 (defn- sweep-files!
-  "Delete every regular file under `root` older than `cutoff`, then every
-   directory those deletions emptied — `root` itself excepted. Symlinks are
-   never followed (`walkFileTree` does not by default) and every candidate is
-   re-checked with `under?` against `canon`, so a hostile link cannot walk the
-   delete out of the tree. Returns `{:file-count :deleted :bytes :dirs-removed}`."
+  "Delete every regular file under `root` older than `cutoff`, then directories
+   those deletions emptied or whose own timestamp is stale — `root` excepted.
+   Symlinks are never followed (`walkFileTree` does not by default) and every
+   candidate is re-checked with `under?` against `canon`, so a hostile link cannot
+   walk deletion out of the tree. Returns `{:file-count :deleted :bytes :dirs-removed}`."
   [^File root ^String canon ^long cutoff]
   (let [files
         (java.util.concurrent.atomic.AtomicLong. 0)
@@ -235,7 +239,10 @@
         (java.util.concurrent.atomic.AtomicLong. 0)
 
         dirs
-        (java.util.concurrent.atomic.AtomicLong. 0)]
+        (java.util.concurrent.atomic.AtomicLong. 0)
+
+        prunable
+        (volatile! #{})]
 
     (try (Files/walkFileTree (.toPath root)
                              (proxy [SimpleFileVisitor] []
@@ -246,14 +253,19 @@
                                      (when (and (< (.toMillis (.lastModifiedTime attrs)) cutoff)
                                                 (under? canon (canonical (.toFile p)))
                                                 (delete-quietly! p))
+                                       (vswap! prunable conj (.getParent p))
                                        (.incrementAndGet deleted)
                                        (.addAndGet bytes size))))
                                  FileVisitResult/CONTINUE)
                                (visitFileFailed [_p _e] FileVisitResult/CONTINUE)
                                (postVisitDirectory [^Path p _e]
+                                 ;; A fresh empty directory may be waiting for its writer's open.
                                  (when (and (not= (.toFile p) root)
                                             (under? canon (canonical (.toFile p)))
+                                            (or (contains? @prunable p)
+                                                (< (.lastModified (.toFile p)) cutoff))
                                             (delete-quietly! p))
+                                   (vswap! prunable conj (.getParent p))
                                    (.incrementAndGet dirs))
                                  FileVisitResult/CONTINUE)))
          (catch Throwable _ nil))
@@ -444,24 +456,47 @@
       :deleted (reduce + 0 (map :deleted reports))
       :bytes (reduce + 0 (map :bytes reports))})))
 
-(defn sweep-stale-async!
-  "Fire-and-forget `sweep-stale!` on a lowest-priority daemon thread. Called once
-   per process at startup: a few thousand `File` stats are trivial but they are
-   still disk I/O on the path to first paint, and a sweep that loses the race
-   with a short-lived `vis-agent --version` simply runs on the next start.
-   Returns the thread.
+(defn- sweep-logs!
+  "Repeat only diagnostic retention; other derived-state rules remain startup-only."
+  [{:keys [days now-ms]}]
+  (let [dir
+        (logs-dir)
 
-   The body is a `bound-fn` so the three home seams CONVEY: a new thread
-   otherwise sees only root bindings, which would make a test's temp-dir binding
-   silently sweep the operator's real `~/.vis`. Production binds nothing, so the
-   conveyance is free."
+        now
+        (long (or now-ms (util/now-ms)))
+
+        window
+        (long (or days default-retention-days))]
+
+    (sweep-files! dir (canonical dir) (- now (* window (long day-ms))))))
+
+(defn sweep-stale-async!
+  "Start the stale-state sweep on a lowest-priority daemon thread, then repeat
+   diagnostic-log cleanup hourly for this process's lifetime. Other targets are
+   swept only at startup. All passes are best-effort and off the first-paint path;
+   a short-lived CLI may exit before its initial pass finishes.
+
+   Called once per process. Returns the thread; interrupt it to stop. `:interval-ms`
+   overrides the hourly delay for tests. The body is a `bound-fn` so ALL home seams
+   convey to every pass rather than falling back to the operator's real `~/.vis`."
   ([] (sweep-stale-async! nil))
   ([opts]
-   (doto (Thread. ^Runnable (bound-fn* #(try (sweep-stale! opts) (catch Throwable _ nil)))
-                  "vis-stale-sweep")
-     (.setDaemon true)
-     (.setPriority Thread/MIN_PRIORITY)
-     (.start))))
+   (let [interval-ms (long (or (:interval-ms opts) default-log-sweep-interval-ms))]
+     (doto (Thread. ^Runnable
+                    (bound-fn []
+                              (try (loop [initial? true]
+                                     (when-not (.isInterrupted (Thread/currentThread))
+                                       (try (if initial? (sweep-stale! opts) (sweep-logs! opts))
+                                            (catch InterruptedException e (throw e))
+                                            (catch Throwable _ nil))
+                                       (Thread/sleep interval-ms)
+                                       (recur false)))
+                                   (catch InterruptedException _
+                                     (.interrupt (Thread/currentThread)))))
+                    "vis-stale-sweep")
+       (.setDaemon true)
+       (.setPriority Thread/MIN_PRIORITY)
+       (.start)))))
 
 ;; Drafts
 

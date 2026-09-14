@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import stat
 import subprocess
 import sys
 import textwrap
@@ -18,6 +19,7 @@ import threading
 import time
 import uuid
 from copy import deepcopy
+from datetime import date
 from pathlib import Path
 
 from blockether.vis import _contracts
@@ -220,6 +222,86 @@ _SHELL_RESULT_KEYS = (
 )
 
 _RUNS = {}
+_LOG_RETENTION_SECS = 14 * 86400
+_LOG_SWEEP_INTERVAL_SECS = 3600
+_LOG_SWEEPERS = {}
+
+
+def _sweep_logs(log_root):
+    """Remove stale SDK logs without following links or touching other producers."""
+    cutoff = time.time() - _LOG_RETENTION_SECS
+    if log_root.is_symlink():
+        return
+    try:
+        dated_dirs = list(log_root.iterdir())
+    except OSError:
+        return
+    for dated in dated_dirs:
+        try:
+            if date.fromisoformat(dated.name).isoformat() != dated.name:
+                continue
+            outside = dated / "outside"
+            if dated.is_symlink() or outside.is_symlink():
+                continue
+            stale_dirs = set()
+            for directory in (outside, dated):
+                try:
+                    if directory.lstat().st_mtime < cutoff:
+                        stale_dirs.add(directory)
+                except FileNotFoundError:
+                    pass
+            try:
+                log_files = list(outside.iterdir())
+            except FileNotFoundError:
+                log_files = []
+            deleted = False
+            for log_file in log_files:
+                try:
+                    attrs = log_file.lstat()
+                    if stat.S_ISREG(attrs.st_mode) and attrs.st_mtime < cutoff:
+                        log_file.unlink()
+                        deleted = True
+                except OSError:
+                    pass
+            for directory in (outside, dated):
+                try:
+                    # Do not remove a fresh directory before its writer opens a log.
+                    if deleted or directory in stale_dirs:
+                        directory.rmdir()
+                        deleted = True
+                except OSError:
+                    pass
+        except (OSError, ValueError):
+            continue
+
+
+def _start_log_sweeper(log_root):
+    # Resolve relative overrides once: later cwd/env changes must not redirect it.
+    log_root = log_root.absolute()
+    with _LOCK:
+        if log_root in _LOG_SWEEPERS:
+            return
+        stop = threading.Event()
+        interval = _LOG_SWEEP_INTERVAL_SECS
+
+        def sweep():
+            while not stop.is_set():
+                try:
+                    _sweep_logs(log_root)
+                except OSError:
+                    pass
+                if stop.wait(interval):
+                    break
+
+        thread = threading.Thread(
+            target=sweep, name="vis-outside-log-sweep", daemon=True
+        )
+        _LOG_SWEEPERS[log_root] = (stop, thread)
+        try:
+            thread.start()
+        except RuntimeError:
+            # Retention is best-effort; a later shell can retry thread creation.
+            _LOG_SWEEPERS.pop(log_root, None)
 
 
 class _Run:
@@ -230,9 +312,9 @@ class _Run:
         self.timeout_secs = timeout_secs
         self.started_at = time.time()
         home = os.environ.get("VIS_OUTSIDE_HOME")
-        log_root = Path(home) if home else Path.home() / ".vis"
+        log_root = (Path(home) if home else Path.home() / ".vis") / "logs"
         date = time.strftime("%Y-%m-%d", time.gmtime(self.started_at))
-        log_dir = log_root / "logs" / date / "outside"
+        log_dir = log_root / date / "outside"
         log_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = str(log_dir / f"shell-{self.id}.log")
         self.finished_at = None
@@ -250,6 +332,7 @@ class _Run:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        _start_log_sweeper(log_root)
 
     def poll(self):
         code = self.process.poll()
