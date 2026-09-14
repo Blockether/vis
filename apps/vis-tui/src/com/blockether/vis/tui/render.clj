@@ -1750,14 +1750,28 @@
   (str (p/ellipsize prefix (max 0 (- (long width) (p/display-width (or mark ""))))) mark))
 
 (defn- draw-band-copy!
-  [g meta x y iw right-inset]
+  [g meta x y iw right-inset viewport-top]
   (when-let [copy-width (:copy-width meta)]
-    (p/clear-styles! g)
-    (p/set-colors! g t/button-fg t/button-bg)
-    (p/put-str! g
-                (+ (long x) (- (long iw) (long right-inset) (long copy-width)))
-                y
-                code-copy-label)))
+    (let [col (+ (long x) (- (long iw) (long right-inset) (long copy-width)))
+          extra {:session-id (:session-id meta) :node-id (:node-id meta)}
+          hovered (.hovered interactions/hit-map)
+          hovered? (and (= :copy-disclosure (:kind hovered))
+                        (= (:session-id extra) (:session-id hovered))
+                        (= (:node-id extra) (:node-id hovered)))]
+
+      (p/clear-styles! g)
+      (p/set-colors! g
+                     (if hovered? t/header-active-tab-fg t/button-fg)
+                     (if hovered? t/header-active-tab-accent t/button-bg))
+      (when hovered? (p/enable! g p/BOLD))
+      (p/put-str! g col y code-copy-label)
+      (p/clear-styles! g)
+      (.register interactions/hit-map
+                 (merge extra
+                        {:kind :copy-disclosure
+                         :bounds {:row (+ (long viewport-top) (long y)) :col col :width copy-width}
+                         :text (:copy-text meta)
+                         :history (:copy-history meta)})))))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -2482,7 +2496,7 @@
                                           :session-id (:session-id meta)
                                           :node-id (:node-id meta)
                                           :collapsed? (:collapsed? meta)}))
-                            (draw-band-copy! g meta x y iw right-inset))
+                            (draw-band-copy! g meta x y iw right-inset viewport-top))
 
                         ;; A path keeps its name: the directory reads quiet because it is
                         ;; only where the file lives, the filename wears the darker ink
@@ -2655,7 +2669,8 @@
                     ;; ── Code (running, no status yet) - neutral bg ──
                     (str/starts-with? line code-marker)
                     (let [abs-row (+ (long viewport-top) (long y))
-                          hovered? (and (= :toggle-details (:kind meta))
+                          hovered? (and (= :toggle-details (:kind (.hovered interactions/hit-map)))
+                                        (= :toggle-details (:kind meta))
                                         (= abs-row
                                            (:row (:bounds (.hovered interactions/hit-map)))))
                           row-bg (code-row-bg meta hovered? t/code-block-bg)
@@ -2664,7 +2679,7 @@
                       (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
-                      (draw-band-copy! g meta x y iw right-inset)
+                      (draw-band-copy! g meta x y iw right-inset viewport-top)
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)

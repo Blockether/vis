@@ -19,7 +19,7 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Button GridLayout Panel TextGraphicsComponent]
-           [com.googlecode.lanterna.input KeyStroke KeyType]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.html HtmlMedia$Kind HtmlTerminal HtmlTerminalView]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -380,14 +380,17 @@
             (is (= (subvec code-row (- cols 11) (- cols 5))
                    (subvec activity-row (- cols 11) (- cols 5))))
             (doseq [x (range (- cols 11) (- cols 5))]
-              (is (nil? (.lookup interactions/hit-map
-                                 (TerminalPosition. (int x)
-                                                    (.indexOf ^java.util.List grid
-                                                              activity-row))))))
+              (is (= :copy-disclosure
+                     (:kind (.lookup interactions/hit-map
+                                     (TerminalPosition. (int x)
+                                                        (.indexOf ^java.util.List grid
+                                                                  activity-row)))))))
             (doseq [x (range (- cols 11) (- cols 5))]
-              (is (nil? (.lookup interactions/hit-map
-                                 (TerminalPosition. (int x)
-                                                    (.indexOf ^java.util.List grid code-row))))))
+              (is (= :copy-disclosure
+                     (:kind (.lookup interactions/hit-map
+                                     (TerminalPosition. (int x)
+                                                        (.indexOf ^java.util.List grid
+                                                                  code-row)))))))
             (doseq [cell (subvec code-row (- cols 11) (- cols 5))]
               (is (not (.isBold ^com.googlecode.lanterna.TextCharacter cell)))
               (is (= theme/button-fg
@@ -396,6 +399,54 @@
                      (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell)))
               (is (not= theme/code-block-bg
                         (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))))))
+    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+
+(deftest execution-header-copy-hover-test
+  ;; #223: live and persisted COPY caps react independently and reset on leave.
+  (try
+    (doseq [theme-id
+            (map keyword (shared-theme/available-theme-ids))
+
+            cols
+            [40 80 160]
+
+            status
+            ["running" "succeeded"]]
+
+      (theme/apply-theme! theme-id)
+      (binding [interactions/hit-map (interactions/create-hit-map)]
+        (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                    ts (doto (TerminalScreen. terminal) (.startScreen))]
+
+          (let [paint! #(paint-activity-review! ts (activity-review-rows status) {})
+                _ (paint!)
+                baseline (cell-grid terminal cols 50)
+                targets (filter #(= :copy-disclosure (:kind %)) (.current interactions/hit-map))]
+
+            (is (= 2 (count targets)))
+            (doseq [{:keys [bounds]} targets
+                    x (range (:col bounds) (+ (:col bounds) (:width bounds)))]
+
+              (is (.updateHovered interactions/hit-map
+                                  (MouseAction. MouseActionType/MOVE
+                                                0
+                                                (TerminalPosition. (int x) (int (:row bounds))))))
+              (paint!)
+              (let [grid (cell-grid terminal cols 50)
+                    y (:row bounds)
+                    col (:col bounds)]
+
+                (is (= (subvec (nth baseline y) 0 col) (subvec (nth grid y) 0 col)))
+                (doseq [cell (subvec (nth grid y) col (+ col 6))]
+                  (is (.isBold ^com.googlecode.lanterna.TextCharacter cell))
+                  (is (= theme/header-active-tab-accent
+                         (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))
+                (is (= (vec (concat (subvec baseline 0 y) (subvec baseline (inc y))))
+                       (vec (concat (subvec grid 0 y) (subvec grid (inc y)))))))
+              (.updateHovered interactions/hit-map
+                              (MouseAction. MouseActionType/MOVE 0 (TerminalPosition. 0 0)))
+              (paint!)
+              (is (= baseline (cell-grid terminal cols 50))))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest joined-activity-html-native-parity-test

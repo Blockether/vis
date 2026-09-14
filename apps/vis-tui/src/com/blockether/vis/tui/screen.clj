@@ -6935,7 +6935,7 @@
                          (let [hit (.lookup interactions/hit-map mx my)]
                            (if (and hit
                                     (not (contains? #{:toggle-details :activity-page
-                                                      :activity-search}
+                                                      :activity-search :copy-disclosure}
                                                     (:kind hit))))
                              (do
                                ;; Tell the matching CLICK_RELEASE in
@@ -7035,6 +7035,9 @@
                                  :toggle-details
                                  (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)
                                                   (:collapsed? hit)])
+
+                                 :copy-disclosure
+                                 (copy-disclosure! hit)
 
                                  :activity-page
                                  (state/dispatch [:activity-page (:session-id hit) (:history-id hit)
