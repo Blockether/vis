@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Pager, pageWindow } from './SessionNavigator';
 
-// Desktop rails offer direct jumps; phones keep previous/next steps.
+// Every layout offers explicit steps; wider layouts also keep direct jumps.
 describe('project pages', () => {
   it('offers at most three numbered jumps on desktop', () => {
     const onPage = vi.fn();
@@ -26,7 +26,7 @@ describe('project pages', () => {
     expect(onPage).toHaveBeenCalledExactlyOnceWith(2);
   });
 
-  it.each([1, 40, 80])('keeps mobile steps in range on page %s', (page) => {
+  it.each([1, 40, 80])('keeps shared previous/next steps in range on page %s', (page) => {
     const onPage = vi.fn();
     render(<Pager page={page} pageCount={80} label="vis sessions" onPage={onPage} />);
     for (const [label, target] of [
@@ -34,14 +34,15 @@ describe('project pages', () => {
       ['Next page', page + 1],
     ] as const) {
       const button = screen.getByLabelText(label);
+      // Regression: desktop must not hide its steps inside the phone-only strip.
+      expect(button.parentElement).toBe(screen.getByRole('navigation'));
       expect(button).toHaveClass('border-0');
       expect(button).not.toHaveClass('rounded-full');
       expect(button).toHaveClass('after:-inset-1.5');
       if (target < 1 || target > 80) {
-        expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
         expect(button).toBeDisabled();
-        expect(button).toHaveAttribute('aria-hidden', 'true');
-        expect(button).toHaveAttribute('tabindex', '-1');
+        expect(button).not.toHaveAttribute('aria-hidden');
+        expect(button).not.toHaveClass('invisible');
         fireEvent.click(button);
         expect(onPage).not.toHaveBeenCalled();
       } else {
@@ -76,34 +77,40 @@ describe('project pages', () => {
     }
   });
 
-  it.each([
-    [1, 3],
-    [2, 3],
-    [40, 39],
-    [40, 41],
-    [80, 78],
-  ])('lets the gap on page %s open the nearest omitted page %s', (page, target) => {
+  it('uses gaps only to indicate omitted pages, never as disguised step buttons', () => {
     const onPage = vi.fn();
-    render(<Pager page={page} pageCount={80} label="vis sessions" onPage={onPage} />);
-    const gap = screen.getByRole('button', { name: `Go to page ${target}` });
-    expect(gap).toHaveTextContent('…');
-    fireEvent.click(gap);
-    expect(onPage).toHaveBeenCalledExactlyOnceWith(target);
+    render(<Pager page={40} pageCount={80} label="vis sessions" onPage={onPage} />);
+    for (const gap of screen.getAllByText('…')) {
+      expect(gap.tagName).toBe('SPAN');
+      expect(gap).toHaveAttribute('aria-hidden', 'true');
+      expect(gap.closest('button')).toBeNull();
+      fireEvent.click(gap);
+    }
+    expect(onPage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /Go to page/ })).not.toBeInTheDocument();
   });
 
-  it('keeps both adjacent pages reachable through numbers or gaps', () => {
+  it('keeps the same step controls while traversing a long history', () => {
     const onPage = vi.fn();
     const { rerender } = render(
       <Pager page={1} pageCount={80} label="vis sessions" onPage={onPage} />,
     );
+    const previous = screen.getByRole('button', { name: 'Previous page' });
+    const next = screen.getByRole('button', { name: 'Next page' });
     for (let page = 1; page <= 80; page += 1) {
       rerender(<Pager page={page} pageCount={80} label="vis sessions" onPage={onPage} />);
-      for (const target of [page - 1, page + 1]) {
-        if (target < 1 || target > 80) continue;
-        fireEvent.click(
-          screen.getByRole('button', { name: new RegExp(`^(?:Page|Go to page) ${target}$`) }),
-        );
-        expect(onPage).toHaveBeenCalledExactlyOnceWith(target);
+      expect(screen.getByRole('button', { name: 'Previous page' })).toBe(previous);
+      expect(screen.getByRole('button', { name: 'Next page' })).toBe(next);
+      for (const [button, target] of [
+        [previous, page - 1],
+        [next, page + 1],
+      ] as const) {
+        fireEvent.click(button);
+        if (target >= 1 && target <= 80) {
+          expect(onPage).toHaveBeenCalledExactlyOnceWith(target);
+        } else {
+          expect(onPage).not.toHaveBeenCalled();
+        }
         onPage.mockClear();
       }
     }

@@ -177,12 +177,12 @@ export const Fleet: Story = {
         await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
       }
       expect(within(pager).getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
-      await expect(within(pager).getByRole('button', { name: 'Go to page 3' })).toBeVisible();
-      expect(within(pager).queryByRole('button', { name: 'Next page' })).toBeNull();
+      expect(within(pager).queryByRole('button', { name: /Go to page/ })).toBeNull();
     } else {
-      await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeVisible();
       expect(within(pager).queryByRole('button', { name: /^Page \d/ })).toBeNull();
     }
+    await expect(within(pager).getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeVisible();
     await userEvent.click(
       within(pager).getByRole('button', {
         name: numbered ? 'Page 2' : 'Next page',
@@ -197,12 +197,12 @@ export const Fleet: Story = {
       await expect(centerY(control)).toBe(centerY(pager));
     }
     if (numbered) {
-      await userEvent.click(within(pager).getByRole('button', { name: 'Go to page 3' }));
+      await userEvent.click(within(pager).getByRole('button', { name: 'Next page' }));
       await expect(await within(pager).findByText(/^Page 3 of /)).toHaveAttribute(
         'aria-live',
         'polite',
       );
-      await userEvent.click(within(pager).getByRole('button', { name: 'Go to page 2' }));
+      await userEvent.click(within(pager).getByRole('button', { name: 'Previous page' }));
       await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute(
         'aria-live',
         'polite',
@@ -286,7 +286,11 @@ export const NarrowRail: Story = {
     const fold = within(project).getByRole('button', {
       name: 'Collapse uberworkspace',
     });
-    const pageCount = Number(within(pager).getAllByRole('button').at(-1)!.textContent);
+    const pageCount = Number(
+      within(pager)
+        .getAllByRole('button', { name: /^Page \d+$/ })
+        .at(-1)!.textContent,
+    );
     const centerY = (node: Element) => {
       const box = node.getBoundingClientRect();
       return box.y + box.height / 2;
@@ -322,10 +326,14 @@ export const NarrowRail: Story = {
     scroller.scrollTo({ top: 0, behavior: 'instant' });
     await expect(scroller.scrollTop).toBe(0);
     await checkEdges();
-    for (const target of [3, 4, pageCount, 1]) {
-      await userEvent.click(
-        within(pager).getByRole('button', { name: new RegExp(`^(?:Page|Go to page) ${target}$`) }),
-      );
+    for (const target of [2, 3, 4, pageCount, pageCount - 1, 1]) {
+      const label =
+        target === pageCount || target === 1
+          ? `Page ${target}`
+          : target === pageCount - 1
+            ? 'Previous page'
+            : 'Next page';
+      await userEvent.click(within(pager).getByRole('button', { name: label }));
       await expect(
         await within(pager).findByText(`Page ${target} of ${pageCount}`),
       ).toBeInTheDocument();

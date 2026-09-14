@@ -332,8 +332,7 @@ export function ProjectCrumb({
 /**
  * At most three page numbers: the first, the current (or nearest interior) page,
  * and the last, with a gap marker (`null`) wherever the run breaks.
- * Pager makes each gap a jump to the nearest omitted page so the compact window
- * still supports sequential navigation.
+ * Gaps are informational; Pager supplies explicit previous/next controls.
  */
 export function pageWindow(page: number, pageCount: number): (number | null)[] {
   if (pageCount <= 3) return Array.from({ length: pageCount }, (_, index) => index + 1);
@@ -347,8 +346,9 @@ export function pageWindow(page: number, pageCount: number): (number | null)[] {
 }
 
 /**
- * Phones use compact steps beside the project name and new-session control.
- * Numbered jumps share the project band on desktop; tablets give them a separate row.
+ * Previous/next steps stay available in every layout, disabled at either end.
+ * Phones show the position between them; wider layouts add compact numbered jumps.
+ * Ellipses only mark omitted pages and never hide a navigation action.
  */
 export function Pager({
   page,
@@ -364,59 +364,57 @@ export function Pager({
   label: string;
 }) {
   if (pageCount <= 1) return null;
-  const step = (target: number, isBack: boolean) => {
-    const available = target >= 1 && target <= pageCount;
-    return (
-      <IconButton
-        variant="quiet"
-        label={isBack ? 'Previous page' : 'Next page'}
-        onClick={() => onPage(target)}
-        disabled={!available}
-        className={available ? '' : 'invisible'}
-        aria-hidden={available ? undefined : true}
-        tabIndex={available ? undefined : -1}
-      >
-        <ChevronIcon back={isBack} className="mx-auto size-3" />
-      </IconButton>
-    );
-  };
+  const step = (target: number, isBack: boolean) => (
+    <IconButton
+      variant="quiet"
+      label={isBack ? 'Previous page' : 'Next page'}
+      onClick={() => onPage(target)}
+      disabled={target < 1 || target > pageCount}
+    >
+      <ChevronIcon back={isBack} className="mx-auto size-3" />
+    </IconButton>
+  );
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className="flex shrink-0 items-center justify-end whitespace-nowrap"
+      className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap sm:gap-3.5 mouse:gap-2"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
-      <div className="flex items-center gap-2 sm:hidden">
-        {step(page - 1, true)}
-        <span aria-hidden="true" className="font-mono text-ui text-dialog-hint tabular-nums">
-          {page} / {pageCount}
-        </span>
-        {step(page + 1, false)}
-      </div>
-      <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
-        {pageWindow(page, pageCount).map((entry, index, pages) => {
-          const target =
-            entry ??
-            (index === 1 ? (pages[index + 1] as number) - 1 : (pages[index - 1] as number) + 1);
-          const label = entry === null ? `Go to page ${target}` : `Page ${entry}`;
-          return (
+      {step(page - 1, true)}
+      <span
+        aria-hidden="true"
+        className="font-mono text-ui text-dialog-hint tabular-nums sm:hidden"
+      >
+        {page} / {pageCount}
+      </span>
+      <div className="hidden items-center gap-2 sm:flex">
+        {pageWindow(page, pageCount).map((entry, index) =>
+          entry === null ? (
+            <span
+              key={`gap-${index}`}
+              aria-hidden="true"
+              className="font-mono text-ui text-dialog-hint mouse:text-meta"
+            >
+              …
+            </span>
+          ) : (
             <Button
-              key={entry ?? (index === 1 ? 'previous-gap' : 'next-gap')}
+              key={entry}
               variant="quiet"
               density="page"
               pressEffect="none"
-              aria-label={label}
-              title={entry === null ? label : undefined}
+              aria-label={`Page ${entry}`}
               aria-current={entry === page ? 'page' : undefined}
-              onClick={() => onPage(target)}
+              onClick={() => onPage(entry)}
             >
-              {entry ?? '…'}
+              {entry}
             </Button>
-          );
-        })}
+          ),
+        )}
       </div>
+      {step(page + 1, false)}
     </nav>
   );
 }

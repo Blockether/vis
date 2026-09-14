@@ -843,7 +843,7 @@ function PagerDemo() {
   return <Pager page={page} pageCount={80} onPage={setPage} label="vis sessions" />;
 }
 
-// Desktop rails keep numbered jumps; phones use compact previous/next steps.
+// Explicit steps in every layout; numbered jumps only where there is room.
 export const ProjectPages: Story = {
   render: () => (
     <Sheet>
@@ -852,48 +852,73 @@ export const ProjectPages: Story = {
   ),
   play: async ({ canvas }) => {
     const pager = canvas.getByRole('navigation', { name: 'Pages of vis sessions' });
+    const previous = canvas.getByRole('button', { name: 'Previous page' });
+    const next = canvas.getByRole('button', { name: 'Next page' });
+    await expect(previous).toBeVisible();
+    await expect(previous).toBeDisabled();
+    await expect(next).toBeVisible();
+    await userEvent.click(next);
+    await expect(canvas.getByText('Page 2 of 80')).toHaveAttribute('aria-live', 'polite');
+    await expect(next).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    await expect(canvas.getByText('Page 3 of 80')).toBeInTheDocument();
+    await userEvent.keyboard(' ');
+    await expect(canvas.getByText('Page 4 of 80')).toBeInTheDocument();
+    await expect(next).toHaveFocus();
+    await userEvent.click(previous);
+    await expect(canvas.getByText('Page 3 of 80')).toBeInTheDocument();
+
     if (pager.ownerDocument.defaultView!.innerWidth >= 640) {
-      expect(canvas.queryByRole('button', { name: 'Next page' })).toBeNull();
-      for (const page of [1, 2, 80]) {
+      for (const page of [1, 3, 80]) {
         await expect(canvas.getByRole('button', { name: `Page ${page}` })).toBeVisible();
       }
       expect(canvas.getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
-      await userEvent.click(canvas.getByRole('button', { name: 'Page 2' }));
-      await expect(canvas.getByRole('button', { name: 'Page 2' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
-      await userEvent.click(canvas.getByRole('button', { name: 'Go to page 3' }));
+      const targets = within(pager)
+        .getAllByRole('button')
+        .map((button) => {
+          const { left, right } = button.getBoundingClientRect();
+          const reach = getComputedStyle(button, '::after');
+          return reach.content === 'none'
+            ? { left, right }
+            : {
+                left: left + Math.min(0, parseFloat(reach.left) || 0),
+                right: right - Math.min(0, parseFloat(reach.right) || 0),
+              };
+        });
+      for (let index = 1; index < targets.length; index += 1) {
+        expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(8);
+      }
       await expect(canvas.getByRole('button', { name: 'Page 3' })).toHaveAttribute(
         'aria-current',
         'page',
       );
-      await userEvent.keyboard('{Enter}');
-      await expect(canvas.getByRole('button', { name: 'Page 4' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
-      await userEvent.click(canvas.getByRole('button', { name: 'Go to page 3' }));
-      await expect(canvas.getByRole('button', { name: 'Page 3' })).toHaveAttribute(
-        'aria-current',
-        'page',
-      );
+      for (const gap of canvas.getAllByText('…')) {
+        expect(gap.closest('button')).toBeNull();
+      }
       await userEvent.click(canvas.getByRole('button', { name: 'Page 80' }));
       await expect(canvas.getByRole('button', { name: 'Page 80' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      await expect(next).toBeVisible();
+      await expect(next).toBeDisabled();
+      await userEvent.click(previous);
+      await expect(canvas.getByRole('button', { name: 'Page 79' })).toHaveAttribute(
         'aria-current',
         'page',
       );
       await userEvent.click(canvas.getByRole('button', { name: 'Page 1' }));
     } else {
       expect(canvas.queryByRole('button', { name: /^Page \d/ })).toBeNull();
-      expect(canvas.queryByRole('button', { name: 'Previous page' })).toBeNull();
-      await userEvent.click(canvas.getByRole('button', { name: 'Next page' }));
-      await expect(canvas.getByText('2 / 80')).toBeVisible();
-      await expect(canvas.getByText('Page 2 of 80')).toHaveAttribute('aria-live', 'polite');
-      await userEvent.click(canvas.getByRole('button', { name: 'Previous page' }));
+      await expect(canvas.getByText('3 / 80')).toBeVisible();
+      await userEvent.click(previous);
+      await userEvent.click(previous);
       await expect(canvas.getByText('1 / 80')).toBeVisible();
-      expect(canvas.queryByRole('button', { name: 'Previous page' })).toBeNull();
     }
+    await expect(previous).toBeDisabled();
+    // Touch hit targets extend beyond the face, but must stay within the viewport.
+    const document = pager.ownerDocument.documentElement;
+    expect(document.scrollWidth).toBeLessThanOrEqual(document.clientWidth);
   },
 };
 
