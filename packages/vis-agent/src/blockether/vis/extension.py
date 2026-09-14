@@ -28,9 +28,11 @@ from typing import (
     Optional,
     Protocol,
     TypeAlias,
+    TypeVar,
     Union,
     get_args,
     get_origin,
+    overload,
     runtime_checkable,
 )
 
@@ -1046,13 +1048,49 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None):
     }
 
 
-def method(fn=None, *, tag="observation", is_hidden=False, activity=None):
+_Method = TypeVar(
+    "_Method",
+    bound="Callable[..., Any] | staticmethod[Any, Any] | classmethod[Any, Any, Any]",
+)
+
+
+class _MethodDecorator(Protocol):
+    def __call__(self, actual: _Method) -> _Method: ...
+
+
+@overload
+def method(
+    fn: _Method,
+    *,
+    tag: Literal["observation", "mutation"] = "observation",
+    is_hidden: bool = False,
+    activity: Activity | None = None,
+) -> _Method: ...
+
+
+@overload
+def method(
+    fn: None = None,
+    *,
+    tag: Literal["observation", "mutation"] = "observation",
+    is_hidden: bool = False,
+    activity: Activity | None = None,
+) -> _MethodDecorator: ...
+
+
+def method(
+    fn: _Method | None = None,
+    *,
+    tag: Literal["observation", "mutation"] = "observation",
+    is_hidden: bool = False,
+    activity: Activity | None = None,
+) -> _Method | _MethodDecorator:
     """Declare per-method tool metadata for an object exported by vis.Symbol()."""
     if tag not in ("observation", "mutation"):
         raise ValueError(f"vis.method tag must be observation or mutation, got {tag!r}")
     _activity_spec(activity)
 
-    def _mark(actual):
+    def _mark(actual: _Method) -> _Method:
         declared = (
             actual.__func__
             if isinstance(actual, (staticmethod, classmethod))
