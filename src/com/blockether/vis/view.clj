@@ -245,7 +245,7 @@
 (defn- live-node
   "One live node of `type-name`, addressed by `id`, carrying `opts`.
 
-   Every builder below takes a `:label` through `opts`, and none of them takes a
+   Builders with `opts` take a `:label`; a [[divider]] has no options. None takes a
    position: WHERE a node stands is said by [[row]] and [[column]], the form's
    own arrangement, so a view lays its work out the way a request lays out its
    questions. Layout is declared here and by no patch, so nothing rearranges
@@ -262,6 +262,11 @@
              id
              (merge opts
                     {:label label :direction "column" :fields (vec nodes) :is-collapsible true})))
+
+(defn divider
+  "A static horizontal rule across its live container. Add or remove it by id."
+  [id]
+  (live-node "divider" id nil))
 
 (defn code
   "Literal live code; :language is optional and whitespace is preserved."

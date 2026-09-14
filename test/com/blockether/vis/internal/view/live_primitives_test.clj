@@ -323,3 +323,64 @@
     (is (try (engine/normalize-live-node {:type :log :id "bad" :lines ["x"] :line-tones tones})
              false
              (catch clojure.lang.ExceptionInfo _ true)))))
+
+(deftest divider-contract-test
+  (is (= {:id "section-break" :type "divider"} (v/divider "section-break")))
+  (let [divider
+        (engine/normalize-live-node {:id "section-break" :type "divider"})
+
+        view
+        (materializer/materialize
+          (engine/normalize-live-view
+            {:title "Build sections"
+             :nodes [{:id "sections"
+                      :type "group"
+                      :direction "column"
+                      :fields [{:id "before" :type "paragraph" :text "Build finished"} divider
+                               {:id "after" :type "paragraph" :text "Review results"}]}]}))
+
+        markdown
+        (materializer/->markdown view)]
+
+    (is (= {:id "section-break" :type :divider} divider))
+    (is (nil? (spec/live-node-error divider)))
+    (is (= {"id" "section-break" "type" "divider"} (wire/->wire divider)))
+    (is (= divider (node (engine/live-view<-wire (wire/->wire view)) "section-break")))
+    (is (str/includes? markdown "\n---\n"))
+    (is (= markdown (materializer/->markdown (:view (materializer/parse-markdown markdown)))))
+    (is (= 1
+           (count (filter #(= :divider (:type %))
+                          (nodes (:view (materializer/parse-markdown markdown))))))))
+  (doseq [[key value] [[:label "Section"] [:text "---"] [:tone :idle] [:level 2] [:fields []]
+                       [:style "dashed"]]]
+    (is (try (engine/normalize-live-node {:id "bad" :type :divider key value})
+             false
+             (catch clojure.lang.ExceptionInfo _ true)))
+    (is (some? (spec/live-node-error {:id "bad" :type :divider key value})))))
+
+(deftest divider-lifecycle-test
+  (watching
+    (fn [view]
+      (let [id
+            (:id view)
+
+            divider
+            {:id "section-break" :type :divider}]
+
+        (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
+        (is (= divider (node (engine/live-view id) "section-break")))
+        (doseq [op [{:op :set} {:op :set :label "Heading"} {:op :set :text "Changed"}
+                    {:op :append :lines ["line"]} {:op :clear} {:op :remove :item-ids ["x"]}]]
+          (is (try (engine/patch-live! id [(assoc op :node-id "section-break")])
+                   false
+                   (catch clojure.lang.ExceptionInfo _ true)))
+          (is (= divider (node (engine/live-view id) "section-break"))))
+        (is (try (engine/action! id {:action :activate :node-id "section-break"})
+                 false
+                 (catch clojure.lang.ExceptionInfo _ true)))
+        (engine/patch-live! id [{:op :remove-node :node-id "section-break"}])
+        (is (nil? (node (engine/live-view id) "section-break")))
+        (engine/patch-live! id [{:op :add-node :after "intro" :node-spec divider}])
+        (let [receipt (engine/close-live! id)]
+          (is (= divider (node (:view receipt) "section-break")))
+          (is (nil? (spec/live-result-error receipt))))))))

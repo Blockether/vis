@@ -750,6 +750,8 @@ def _live_check_node(node, seen, *, is_declaration=True):
     if not isinstance(node, dict):
         return f"every node must be a map, got {node!r}"
     kind = node.get("type")
+    if kind == "divider" and set(node) != {"id", "type"}:
+        return "a divider has only id and type"
     is_group = kind == _GROUP
     if is_group:
         # Layout is the FORM's own vocabulary: a view arranges its nodes with the
@@ -953,6 +955,8 @@ def _live_apply(view, op):
         # A group leaves with its children: nothing outlives the row it stood in.
         siblings.pop(index)
         return "- {}".format(node.get("label") or node.get("id"))
+    if node["type"] == "divider":
+        raise Refused("a divider has no mutable state")
     if name == "set":
         node.update({k: v for k, v in op.items() if k not in ("op", "node_id")})
         complaint = _live_check_node(node, set(), is_declaration=False)

@@ -71,10 +71,9 @@
                   {:type :vis/view-invalid-patch :node-id node-id :reason message})))
 
 (def ^:private settable-keys
-  "Which keys a `set` may carry, per node type, over the `:label` every node
-   answers. A `progress` has no text and a `status` has no value: crossing them
-   is refused with both named, because the alternative is a patch that lands
-   nowhere while its author believes it painted."
+  "Which keys a `set` may carry, per mutable node type, beyond `:label`.
+   A `progress` has no text and a `status` has no value: crossing them is refused
+   with both named. Dividers have no mutable state."
   {:status #{:text :detail :tone}
    :paragraph #{:text}
    :heading #{:text :level}
@@ -231,6 +230,7 @@
   "A node with its own state replaced. Keys foreign to the node's type are
    refused BY NAME rather than merged into a shape no surface can paint."
   [node op]
+  (when (= :divider (:type node)) (invalid-patch! (:id node) "a divider has no state to set"))
   (let [allowed
         (conj (get settable-keys (:type node) #{}) :label)
 
@@ -612,6 +612,8 @@
 
 (defmethod node->markdown :paragraph [{:keys [text]} _] (marked-lines :paragraph [text]))
 
+(defmethod node->markdown :divider [_ _] (marked-lines :divider ["---"]))
+
 (defmethod node->markdown :heading
   [{:keys [text level]} _]
   (marked-lines :heading [(str (apply str (repeat (long level) "#")) " " text)]))
@@ -954,7 +956,8 @@
            second
            parse-long))
 
-(def ^:private presentation-marker #"<!-- vis:(paragraph|heading|code|spinner|button) ([0-9]+) -->")
+(def ^:private presentation-marker
+  #"<!-- vis:(paragraph|heading|divider|code|spinner|button) ([0-9]+) -->")
 
 (defn- blocks
   "Group numbered lines without splitting fences or counted presentation content."
@@ -1038,6 +1041,12 @@
 (defmethod markdown->node :paragraph
   [_ {:keys [lines]}]
   {:type :paragraph :text (str/join "\n" (rest lines))})
+
+(defmethod markdown->node :divider
+  [_ {:keys [at lines]}]
+  (when-not (= ["---"] (vec (rest lines)))
+    (invalid-markdown! at "a divider is one horizontal rule"))
+  {:type :divider})
 
 (defmethod markdown->node :heading
   [_ {:keys [at lines]}]

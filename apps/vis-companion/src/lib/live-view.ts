@@ -22,6 +22,7 @@ export const LIVE_NODE_TYPES = [
   'code',
   'spinner',
   'button',
+  'divider',
 ] as const;
 
 /**
@@ -220,6 +221,14 @@ export interface LiveGroupNode extends LiveNodeBase {
   is_collapsible?: boolean;
   default_expanded?: boolean;
 }
+
+/** A static thematic break spanning its allocated content width. */
+export interface LiveDividerNode {
+  id: string;
+  type: 'divider';
+  label?: never;
+}
+
 /** Every node that PAINTS — what an op may name and what a surface draws. */
 export type LiveLeafNode =
   | LiveStatusNode
@@ -233,7 +242,8 @@ export type LiveLeafNode =
   | LiveHeadingNode
   | LiveCodeNode
   | LiveSpinnerNode
-  | LiveButtonNode;
+  | LiveButtonNode
+  | LiveDividerNode;
 
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
@@ -454,6 +464,8 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
   }
   if (!(LIVE_NODE_TYPES as readonly string[]).includes(type)) return null;
   switch (type as LiveNodeType) {
+    case 'divider':
+      return { id, type: 'divider' };
     case 'paragraph':
       return { ...base, type: 'paragraph', text: text(node.text) };
     case 'heading':
@@ -632,6 +644,8 @@ function appendKey(node: LiveNode): 'lines' | 'rows' | 'stats' | 'steps' | 'link
 /** `set` MERGES the keys it carries onto the node (`live/apply-set`). */
 function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
   switch (node.type) {
+    case 'divider':
+      return node;
     case 'paragraph':
     case 'heading':
     case 'code':

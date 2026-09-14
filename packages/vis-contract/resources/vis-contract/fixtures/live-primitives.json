@@ -7,6 +7,10 @@
   "id": "live-primitives",
   "nodes": [
     {
+      "id": "section-break",
+      "type": "divider"
+    },
+    {
       "id": "h1",
       "type": "heading",
       "text": "Heading level 1",

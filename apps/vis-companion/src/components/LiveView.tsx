@@ -963,6 +963,9 @@ function NodeCell({
               ))}
             </div>
           )}
+          {node.type === 'divider' && (
+            <hr className="m-0 w-full border-0 border-t border-dialog-hint" />
+          )}
           {node.type === 'paragraph' && (
             <p className={`font-mono text-body text-white ${PROSE}`}>
               <InlineMarkdown>{node.text}</InlineMarkdown>
@@ -1193,13 +1196,14 @@ export function LiveViewPanel({
           </p>
         )}
         <ul
-          className={`divide-y divide-dialog-edge ${view.description ? '[&>li:first-child]:pt-0' : ''}`}
+          className={`divide-y divide-dialog-edge [&>li[data-live-divider]]:border-b-0 [&>li:has(+li[data-live-divider])]:border-b-0 ${view.description ? '[&>li:first-child]:pt-0' : ''}`}
         >
           {view.nodes.map((node) => (
             // Table cells own their padding; an outer inset makes the first and last
             // rows uneven relative to the internal separators. Keep labelled headings inset.
             <li
               key={node.id}
+              data-live-divider={node.type === 'divider' || undefined}
               className={`min-w-0 ${embedded ? '' : 'px-3'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
             >
               <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />

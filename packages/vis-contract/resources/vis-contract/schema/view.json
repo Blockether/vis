@@ -2209,6 +2209,22 @@
             "label",
             "is_disabled"
           ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "divider"
+            }
+          },
+          "required": [
+            "id",
+            "type"
+          ]
         }
       ]
     },

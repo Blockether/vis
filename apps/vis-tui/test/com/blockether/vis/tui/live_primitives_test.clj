@@ -499,3 +499,22 @@
           (is (>= (/ (+ (max foreground background) 0.05) (+ (min foreground background) 0.05)) 4.5)
               (str id " " tone))))
       (finally (theme/apply-theme! original)))))
+
+(deftest divider-markdown-roundtrip-test
+  (let [view
+        (assoc (fixture) :nodes [{:id "section-break" :type :divider}])
+
+        markdown
+        (materializer/->markdown view)
+
+        parsed
+        (:view (materializer/parse-markdown markdown))]
+
+    (is (str/includes? markdown "<!-- vis:divider 1 -->\n---"))
+    (is (= [:divider] (mapv :type (:nodes parsed))))
+    (is (= markdown (materializer/->markdown parsed)))
+    (doseq [invalid ["<!-- vis:divider 1 -->\ntext" "<!-- vis:divider 2 -->\n---\n---"]]
+      (is (try (materializer/parse-markdown
+                 (str/replace markdown "<!-- vis:divider 1 -->\n---" invalid))
+               false
+               (catch clojure.lang.ExceptionInfo _ true))))))

@@ -1561,3 +1561,70 @@
       (is (= 40 (+ (count (ids first-plan)) (long (:count more)))))
       (is (= (mapv :id links) (ids expanded)))
       (is (not-any? #(= :more (:kind %)) expanded)))))
+
+(defn divider-review-pane
+  "Section dividers in the production live view, active or retained."
+  ([] (divider-review-pane false))
+  ([recorded?]
+   (let [view (mounted {:title "Build review" :description "Verification and next steps"}
+                       {:id "build" :type :paragraph :text "Build finished"}
+                       {:id "results-break" :type :divider}
+                       {:id "review"
+                        :type :group
+                        :direction :column
+                        :label "Verification"
+                        :is-collapsible true
+                        :default-expanded true
+                        :fields [{:id "checks" :type :paragraph :text "All checks passed"}
+                                 {:id "review-break" :type :divider}
+                                 {:id "approval" :type :paragraph :text "Ready for review"}]}
+                       {:id "next" :type :paragraph :text "Next: publish when approved"})]
+     (if recorded?
+       (-> (lv/recorded-pane (str (wire/json-str {:kind :open :at 1000 :view view})
+                                  "\n"
+                                  (wire/json-str
+                                    {:kind :close
+                                     :at 5000
+                                     :result {:reason :completed :is-completed true :view view}})
+                                  "\n")
+                             "s1")
+           (lv/expanded "review"))
+       (lv/opened view)))))
+
+(deftest live-divider-test
+  (doseq [recorded?
+          [false true]
+
+          width
+          [1 28 80 120]]
+
+    (let [pane
+          (divider-review-pane recorded?)
+
+          rules
+          (filterv #(= :trule (:kind %)) (lv/plan pane width))]
+
+      (is (= ["results-break" "review-break"] (mapv :node-id rules)))
+      (is (= [width (max 1 (- width (min 2 (max 0 (dec width)))))] (mapv #(count (:text %)) rules)))
+      (is (every? #(every? #{\─} (:text %)) rules))
+      (is (not-any? #(#{"results-break" "review-break"} (:node-id %)) (lv/controls [pane])))
+      (is (= ["results-break"]
+             (mapv :node-id
+                   (filter #(= :trule (:kind %)) (lv/plan (lv/expanded pane "review") width)))))))
+  (let [pane
+        (lv/opened (mounted
+                     {:description nil}
+                     (fixture/row "pair" {:id "left" :type :divider} {:id "right" :type :divider})))
+
+        narrow
+        (lv/plan pane 28)
+
+        wide
+        (lv/plan pane 80)]
+
+    (is (= [:trule :blank :trule] (mapv :kind narrow)))
+    (is (= [28 28] (mapv #(count (:text %)) (filter :text narrow))))
+    (is (= 1 (count wide)))
+    (is (= :columns (:kind (first wide))))
+    (is (= ["left" "right"] (mapv :node-id (:cells (first wide)))))
+    (is (= (repeat 2 (columns/cell-width 80 2)) (mapv #(count (:text %)) (:cells (first wide)))))))

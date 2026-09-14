@@ -1063,6 +1063,9 @@
         (checked-live-node
           node-fail!
           (case type
+            :divider
+            (do (check-keys! "divider" (wire-keys #{:id :type}) node node-fail!) base)
+
             :status
             (cond-> (assoc base
                       :text (live-text node-fail! "a status' :text" (pick* node :text))

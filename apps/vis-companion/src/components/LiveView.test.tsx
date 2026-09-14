@@ -9,7 +9,13 @@ import { LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveVie
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
-import { LIVE_NOTE_CHARS, liveViewFromWire, type LiveNode, type LiveView } from '../lib/live-view';
+import {
+  applyLivePatch,
+  LIVE_NOTE_CHARS,
+  liveViewFromWire,
+  type LiveNode,
+  type LiveView,
+} from '../lib/live-view';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_PATCH_EVENT } from '../lib/view';
@@ -672,5 +678,54 @@ describe('the section is built from the closed vocabulary', () => {
     expect(liveViewSource).not.toContain('<button');
     expect(liveViewSource).not.toContain('style={');
     expect(liveViewSource).not.toContain('style="');
+  });
+});
+
+describe('live horizontal dividers', () => {
+  it.each([false, true])('retains a semantic noninteractive divider (settled=%s)', (isSettled) => {
+    const view = liveViewFromWire({
+      ...fixture,
+      nodes: [
+        { id: 'before', type: 'paragraph', text: 'Build completed' },
+        { id: 'results-break', type: 'divider' },
+        { id: 'after', type: 'paragraph', text: 'Review the results' },
+      ],
+    });
+    expect(view?.nodes.map((node) => node.id)).toEqual(['before', 'results-break', 'after']);
+    paint({ view: view!, isSettled });
+    const divider = screen.getByRole('separator');
+    expect(divider.tagName).toBe('HR');
+    expect(divider.tabIndex).toBe(-1);
+    expect(divider.textContent).toBe('');
+    expect(
+      screen.getByText('Build completed').compareDocumentPosition(divider) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      divider.compareDocumentPosition(screen.getByText('Review the results')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+  it('adds and removes a divider without allowing content patches to mutate it', () => {
+    let view = liveViewFromWire({ ...fixture, nodes: [{ id: 'break', type: 'divider' }] })!;
+    const divider = { id: 'break', type: 'divider' };
+    const update = (ops: unknown[]) => {
+      const seq = view.seq + 1;
+      view = applyLivePatch(view, {
+        type: VIEW_PATCH_EVENT,
+        kind: 'live',
+        view_id: view.id,
+        first_seq: seq,
+        patch: { view_id: view.id, seq, ops },
+      });
+    };
+    for (const op of ['set', 'append', 'remove', 'clear']) {
+      update([{ op, node_id: 'break', label: 'Not a heading', text: 'Not prose' }]);
+      expect(view.nodes).toEqual([divider]);
+    }
+    update([{ op: 'add-node', after: 'break', node_spec: { id: 'second', type: 'divider' } }]);
+    expect(view.nodes).toEqual([divider, { id: 'second', type: 'divider' }]);
+    update([{ op: 'remove-node', node_id: 'break' }]);
+    expect(view.nodes).toEqual([{ id: 'second', type: 'divider' }]);
   });
 });

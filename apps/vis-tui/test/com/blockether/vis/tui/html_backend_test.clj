@@ -1202,3 +1202,57 @@
             (when (>= (long cols) 80)
               (is (some #(and (str/includes? % "Build 1") (str/includes? % "Build 2")) lines)))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+
+(deftest live-divider-html-native-parity-test
+  (try
+    (doseq [theme-id
+            (map keyword (shared-theme/available-theme-ids))
+
+            cols
+            [40 80 120]
+
+            recorded?
+            [false true]
+
+            inline?
+            [false true]]
+
+      (theme/apply-theme! theme-id)
+      (with-open [html
+                  (activity-review-terminal cols 32)
+
+                  terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 32))
+
+                  hs
+                  (doto (TerminalScreen. html) (.startScreen))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (let [pane (live-fixture/divider-review-pane recorded?)]
+          (paint-disclosure-review! hs pane inline?)
+          (let [html-hits (.current interactions/hit-map)]
+            (paint-disclosure-review! ts pane inline?)
+            (is (= html-hits (.current interactions/hit-map)))
+            (is (not-any? #(#{"results-break" "review-break"} (:node-id %)) html-hits)))
+          (let [grid (cell-grid terminal cols 32)
+                rules (keep (fn [row]
+                              (let [glyph (fn [^com.googlecode.lanterna.TextCharacter cell]
+                                            (.getCharacterString cell))
+                                    text (apply str (map glyph row))]
+
+                                ;; Section rules have padding; outer dialog rails do not.
+                                (when (re-matches #"\s*(?:│\s+)?─+\s+(?:│\s*)?" text)
+                                  (filter #(= "─" (glyph %)) row))))
+                            grid)]
+
+            (is (= (cell-grid html cols 32) grid))
+            (is (= 2 (count rules)) "both section rules survive the available height")
+            (doseq [^com.googlecode.lanterna.TextCharacter cell (mapcat identity rules)]
+              (is (>= (#'theme-test/contrast-ratio
+                       (.getForegroundColor cell)
+                       (.getBackgroundColor cell))
+                      3.0)
+                  (str theme-id " divider contrast")))))))
+    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))

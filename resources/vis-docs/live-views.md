@@ -252,7 +252,7 @@ def present(*, phase, args, kwargs, result, error):
     return vis.ActivityPresentation("Watch builds", summary)
 
 
-vis.register(vis.Extension(
+vis.register_extension(vis.Extension(
     name="ci-monitor", alias="ci", description="Read-only monitoring of pinned CI builds.",
     symbols=[vis.Symbol(watch, name="watch_builds",
                         activity=vis.Activity(label="Watch builds", render=present))],
@@ -297,6 +297,7 @@ A view declares its nodes once, each with an id, and addresses them by id.
 | `vis.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
 | `vis.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
 | `vis.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
+| `vis.divider(id)` | a horizontal rule between sections | none; use `view.add(...)` or `view.drop(id)` |
 | `vis.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
 | `vis.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
 | `vis.button(id, label, is_disabled=False)` | an operator action | `.set(label=, is_disabled=)` |
@@ -396,6 +397,7 @@ with vis.live("Review", [
     vis.disclosure("details", "Build details",
                    vis.output("tests", label="Test output"),
                    vis.output("build", label="Build output")),
+    vis.divider("review-actions"),
     vis.button("continue", "Continue"),
 ]) as view:
     view["tests"].write("Tests passed")
@@ -434,6 +436,14 @@ or vertically. Every group has an id. Rows place children side by side when
 space permits and vertically on narrow screens. `view.add(node, after="hosts")`
 inserts into the group containing `hosts`. Removing a group removes its
 children.
+
+Use `vis.divider("section-break")` between sections, like an HTML `<hr>`. It fills
+its current container’s width in the terminal and Companion, including inside
+columns and disclosures, and remains visible in completed receipts. A divider
+has only an id: it has no label, content, style options or update verbs. Use a
+heading for a section title, and `view.drop("section-break")` to remove the rule.
+The Clojure builder is `(view/divider "section-break")`; the wire node is
+`{"id": "section-break", "type": "divider"}`.
 
 Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_` and
 links. Status text wraps and is justified within its column.

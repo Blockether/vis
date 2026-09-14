@@ -581,6 +581,8 @@
   (let [painted (vec (mapcat #(str/split % #"\n" -1) lines))]
     (into [(str "<!-- vis:" (name type) " " (count painted) " -->")] painted)))
 
+(defmethod node->markdown :divider [_ _] (marked-lines :divider ["---"]))
+
 (defmethod node->markdown :paragraph [{:keys [text]} _] (marked-lines :paragraph [text]))
 
 (defmethod node->markdown :heading
@@ -925,7 +927,8 @@
            second
            parse-long))
 
-(def ^:private presentation-marker #"<!-- vis:(paragraph|heading|code|spinner|button) ([0-9]+) -->")
+(def ^:private presentation-marker
+  #"<!-- vis:(divider|paragraph|heading|code|spinner|button) ([0-9]+) -->")
 
 (defn- blocks
   "Group numbered lines without splitting fences or counted presentation content."
@@ -1005,6 +1008,12 @@
    [[addressed]]."
   (fn [type _block]
     type))
+
+(defmethod markdown->node :divider
+  [_ {:keys [at lines]}]
+  (when-not (= ["---"] (vec (rest lines)))
+    (invalid-markdown! at "a divider needs one horizontal rule"))
+  {:type :divider})
 
 (defmethod markdown->node :paragraph
   [_ {:keys [lines]}]

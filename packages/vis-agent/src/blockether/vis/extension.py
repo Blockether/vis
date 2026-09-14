@@ -2847,6 +2847,7 @@ _LIVE_NODES = {
     "paragraph": TextNode,
     "heading": TextNode,
     "code": TextNode,
+    "divider": _Node,
     "spinner": Spinner,
     "button": Button,
     "status": Status,
@@ -3459,6 +3460,8 @@ class _LiveRecorder:
             return
 
         node = self.node(op["node_id"])
+        if node["type"] == "divider":
+            raise AssertionError("a divider has no mutable state")
         if action == "set":
             node.update(
                 {k: self._copy(v) for k, v in op.items() if k not in ("op", "node_id")}
@@ -3775,6 +3778,11 @@ def disclosure(node_id, label, *nodes, default_expanded=False):
             "default_expanded": default_expanded,
         },
     )
+
+
+def divider(node_id):
+    """A static horizontal rule across its live container. Add or drop it by id."""
+    return _live_node("divider", node_id, {})
 
 
 def code(node_id, text, *, language=None, **spec):

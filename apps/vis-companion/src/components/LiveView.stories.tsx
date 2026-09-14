@@ -138,11 +138,9 @@ export const LabelledJobs: Story = {
     ...FinishedJobs.args,
     view: {
       ...FinishedJobs.args!.view!,
-      nodes: FinishedJobs.args!.view!.nodes.map((node) => ({
-        ...node,
-        label: 'Jobs',
-        is_selectable: false,
-      })),
+      nodes: FinishedJobs.args!.view!.nodes.map((node) =>
+        node.type === 'table' ? { ...node, label: 'Jobs', is_selectable: false } : node,
+      ),
     },
   },
   play: async ({ canvas }) => {
@@ -573,4 +571,123 @@ export const LinkResultStates: Story = {
     await expect(parseFloat(getComputedStyle(single.closest('ul')!).borderTopWidth)).toBe(0);
     await expect(canvas.getByText('no links')).toBeVisible();
   },
+};
+
+/** A semantic horizontal break stays within its column, including retained output. */
+export const Dividers: Story = {
+  args: {
+    onInterrupt: undefined,
+    view: {
+      id: 'divider-review',
+      title: 'Build review',
+      seq: 1,
+      nodes: [
+        { id: 'summary', type: 'paragraph', text: 'Build completed. Review the results below.' },
+        { id: 'results-break', type: 'divider' },
+        {
+          id: 'results',
+          type: 'group',
+          direction: 'row',
+          fields: [
+            {
+              id: 'checks',
+              type: 'group',
+              direction: 'column',
+              fields: [
+                { id: 'checks-title', type: 'heading', text: 'Checks', level: 3 },
+                { id: 'checks-break', type: 'divider' },
+                { id: 'checks-summary', type: 'paragraph', text: 'All checks passed.' },
+              ],
+            },
+            { id: 'report', type: 'paragraph', text: 'The report is ready for review.' },
+          ],
+        },
+        {
+          id: 'details',
+          type: 'group',
+          direction: 'column',
+          is_collapsible: true,
+          label: 'Build details',
+          fields: [
+            { id: 'details-before', type: 'paragraph', text: 'Compiled successfully.' },
+            { id: 'details-break', type: 'divider' },
+            { id: 'details-after', type: 'paragraph', text: 'No warnings reported.' },
+          ],
+        },
+      ],
+    },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getAllByRole('separator')).toHaveLength(2);
+    const dividerRow = canvas.getAllByRole('separator')[0].closest('li')!;
+    // An explicit break replaces adjacent automatic rules; it is not three lines.
+    await expect(parseFloat(getComputedStyle(dividerRow).borderBottomWidth)).toBe(0);
+    await expect(
+      parseFloat(getComputedStyle(dividerRow.previousElementSibling!).borderBottomWidth),
+    ).toBe(0);
+    const disclosure = canvas.getByRole('button', { name: 'Build details' });
+    await userEvent.click(disclosure);
+    const dividers = canvas.getAllByRole('separator');
+    await expect(dividers).toHaveLength(3);
+    await expect(canvas.getByText('No warnings reported.')).toBeVisible();
+    for (const divider of dividers) {
+      const box = divider.getBoundingClientRect();
+      const parent = divider.parentElement!.getBoundingClientRect();
+      const style = getComputedStyle(divider);
+      await expect(divider.tagName).toBe('HR');
+      await expect(divider.tabIndex).toBe(-1);
+      await expect(divider.textContent).toBe('');
+      await expect(box.width).toBeGreaterThan(0);
+      await expect(box.left).toBe(parent.left);
+      await expect(box.right).toBe(parent.right);
+      await expect(style.borderTopStyle).toBe('solid');
+      await expect(parseFloat(style.borderTopWidth)).toBeGreaterThan(0);
+      const luminance = (color: string) =>
+        color
+          .match(/\d+/g)!
+          .slice(0, 3)
+          .map((channel) => Number(channel) / 255)
+          .map((channel) =>
+            channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+          )
+          .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+      let surface: Element = divider;
+      while (
+        surface.parentElement &&
+        getComputedStyle(surface).backgroundColor === 'rgba(0, 0, 0, 0)'
+      ) {
+        surface = surface.parentElement;
+      }
+      const ink = luminance(style.borderTopColor);
+      const paper = luminance(getComputedStyle(surface).backgroundColor);
+      await expect(
+        (Math.max(ink, paper) + 0.05) / (Math.min(ink, paper) + 0.05),
+      ).toBeGreaterThanOrEqual(3);
+    }
+    await userEvent.click(disclosure);
+    await expect(canvas.getAllByRole('separator')).toHaveLength(2);
+    await expect(canvas.queryByText('No warnings reported.')).not.toBeInTheDocument();
+  },
+};
+
+export const EmbeddedDividers: Story = {
+  args: { ...Dividers.args, embedded: true },
+  play: Dividers.play,
+};
+
+export const DividersReceipt: Story = {
+  args: { ...Dividers.args, isSettled: true },
+  play: Dividers.play,
+};
+
+export const NarrowDividers: Story = {
+  args: Dividers.args,
+  decorators: [
+    (Story) => (
+      <div className="max-w-72">
+        <Story />
+      </div>
+    ),
+  ],
+  play: Dividers.play,
 };

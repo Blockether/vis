@@ -684,6 +684,10 @@
   (fn [node _ctx]
     (:type node)))
 
+(defmethod node-rows :divider
+  [{:keys [id]} {:keys [text-w]}]
+  [{:kind :trule :node-id id :text (apply str (repeat (max 0 (long text-w)) "─"))}])
+
 (defmethod node-rows :paragraph
   [{:keys [id text]} {:keys [text-w]}]
   (mapv (fn [runs]
