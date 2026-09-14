@@ -50,7 +50,7 @@
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
   (:import (com.blockether.vispython Locations Sources)
-           (java.io File)
+           (java.io File FileOutputStream)
            (java.lang.management ManagementFactory)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
            (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
@@ -215,17 +215,19 @@
 (defn- trusted-worker? [k] (or (= k shared-key) (instance? TrustedExtensionWorker k)))
 
 (defn- worker-jvm-options
-  "Preserve runtime flags, but keep the parent's JFR recording process-local.
-   Its destination and repository are neither the worker's nor writable in its jail."
+  "Keep runtime flags, not the parent's recording, repository or diagnostic destinations.
+   Worker diagnostic files belong to its own writable log directory."
   [options]
   (remove #(or (str/starts-with? % "-XX:StartFlightRecording")
-               (str/starts-with? % "-XX:FlightRecorderOptions"))
+               (str/starts-with? % "-XX:FlightRecorderOptions")
+               (str/starts-with? % "-XX:ErrorFile=")
+               (str/starts-with? % "-XX:HeapDumpPath="))
     options))
 
 (defn- child-argv
   "Prefer the selected runtime's packaged worker, including from a JVM host.
    A source-only runtime uses its Java entrypoint; native Vis requires the executable."
-  [library socket guest-dir]
+  [library socket guest-dir run-directory]
   (if-let [executable (runtime/resolve-worker {:path library})]
     [executable (str "-Duser.home=" (System/getProperty "user.home")) socket guest-dir]
     (if (util/native-image?)
@@ -234,7 +236,9 @@
       (vec (concat
              [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
              (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
-             ["-cp" (System/getProperty "java.class.path") "com.blockether.vispython.Worker" socket
+             [(str "-XX:ErrorFile=" (io/file run-directory "jvm-crash-%p.log"))
+              (str "-XX:HeapDumpPath=" (io/file run-directory "jvm-heap.hprof")) "-cp"
+              (System/getProperty "java.class.path") "com.blockether.vispython.Worker" socket
               guest-dir])))))
 
 (defn- worker-dir
@@ -289,11 +293,11 @@
        vec))
 
 (defn- drain-output!
-  "Drain the child process stream to `log`; a worker never gets to block on logs."
+  "Drain process output without buffering; startup and hang evidence stays visible while alive."
   [^Process process ^File log]
   (let [thread (Thread. ^Runnable
                         (fn []
-                          (try (with-open [out (io/output-stream log :append true)]
+                          (try (with-open [out (FileOutputStream. log true)]
                                  (io/copy (.getInputStream process) out))
                                (catch Throwable _ nil)))
                         "vis-python-worker-log")]
@@ -393,7 +397,7 @@
 
           (spit log "" :append true)
           (let [^Process process (process-jail/spawn!
-                                   (child-argv library (.getAbsolutePath socket) guest-dir)
+                                   (child-argv library (.getAbsolutePath socket) guest-dir dir)
                                    nil
                                    policy
                                    {:extra-environment extra :merge-stderr? true})

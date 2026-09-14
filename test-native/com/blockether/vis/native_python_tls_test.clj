@@ -32,7 +32,7 @@
 
     (is (some? executable) "Build or stage the native Python worker before running test-native")
     (try
-      (with-redefs-fn {#'worker/child-argv (fn [_ socket guest-dir]
+      (with-redefs-fn {#'worker/child-argv (fn [_ socket guest-dir _run-directory]
                                              [executable
                                               (str "-Duser.home=" (.getCanonicalPath home)) socket
                                               guest-dir])}

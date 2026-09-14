@@ -23,6 +23,8 @@ that change between runs.
 | Gateway launcher output, including startup failures | `gateway-boot-<database-hash>-<time>-<random>.log` | Text |
 | A command's stdout and stderr | `shell/<session>/<id>.log` | Text |
 | Python worker startup output and errors | `pyext-<worker-id>/worker.log` | Text |
+| Python JVM worker fatal-error report | `pyext-<worker-id>/jvm-crash-<PID>.log` | Text |
+| Python JVM worker heap dump, when enabled | `pyext-<worker-id>/jvm-heap.hprof` | JVM heap dump |
 | Managed Clojure nREPL output | `vis-nrepl-<project>-<id>.log` | Text |
 | Standalone Python SDK shell output | `outside/shell-<id>.log` | Text |
 | Gateway hang evidence | `gateway-hang-<id>/report.json` | JSON |
@@ -31,6 +33,23 @@ that change between runs.
 Shell results expose their exact `log_path`; it stays the same after midnight or
 a gateway restart. Hang warnings also include the report path. Ordinary process
 logs use a start timestamp such as `20260914T153000Z` to distinguish runs.
+
+## Python runtime
+
+Session sandboxes and trusted Python extensions use separate worker processes.
+Both write process output to `pyext-<worker-id>/worker.log`, including while the
+worker is still running. Packaged native workers and the JVM fallback use the
+same dated layout and keep their startup directory after midnight.
+
+Normal Python `print()` output returns with the execution result. Extension
+`vis.log` messages go to the gateway log. The embedded runtime does not choose
+another log directory: Vis forwards its in-process JSONL diagnostic stream to
+the process logger at debug level.
+
+JVM fallback workers write fatal-error reports beside `worker.log`. If JVM heap
+dumping is enabled, their heap dumps also go there; Vis does not enable heap
+dumping itself. These JVM options are not passed to packaged native workers.
+Operating-system crash reports follow the operating system's own reporting policy.
 
 ## Hang reports
 
@@ -88,7 +107,9 @@ startup cleanup still ages out old files beneath `~/.vis/logs/`.
 
 Read the relevant files and share only the lines needed to show the problem.
 Command output and ordinary logs can contain anything the command or extension
-prints, including credentials, private code and local paths.
+prints, including credentials, private code and local paths. JVM fatal-error
+reports can include environment and memory details. Heap dumps contain process
+memory; do not share them without a separate privacy review.
 
 Hang reports omit prompts, tool arguments, HTTP bodies and credentials from
 their metadata. Thread names and stacks can still expose paths and application

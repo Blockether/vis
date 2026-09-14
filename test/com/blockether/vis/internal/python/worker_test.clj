@@ -369,27 +369,33 @@ print(worker_value)"))))
         (finally (doseq [path [module packages base]]
                    (java.nio.file.Files/deleteIfExists path)))))))
 
-(defdescribe worker-profiler-options-test
-             ;; Full-suite JFR reproduction: a confined worker inherited the parent's
-             ;; recording path and failed before connecting to its control socket.
-             (it "does not inherit a parent recording or repository"
-                 (expect (= ["-Xmx2g" "--enable-native-access=ALL-UNNAMED" "-Dvis.example=true"]
-                            (vec (#'worker/worker-jvm-options
-                                  ["-Xmx2g" "-XX:StartFlightRecording=filename=parent.jfr"
-                                   "--enable-native-access=ALL-UNNAMED"
-                                   "-XX:FlightRecorderOptions=repository=parent-recordings"
-                                   "-Dvis.example=true"])))))
-             (it "launches the worker without the current JVM's recording options"
-                 (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
-                   (expect (not-any?
-                             #(re-find #"^-XX:(StartFlightRecording|FlightRecorderOptions)" %)
-                             (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules"))))))
+(defdescribe
+  worker-profiler-options-test
+  ;; Full-suite JFR reproduction: a confined worker inherited the parent's
+  ;; recording path and failed before connecting to its control socket.
+  (it "does not inherit parent recording or diagnostic destinations"
+      (expect (= ["-Xmx2g" "--enable-native-access=ALL-UNNAMED" "-XX:+HeapDumpOnOutOfMemoryError"
+                  "-Dvis.example=true"]
+                 (vec (#'worker/worker-jvm-options
+                       ["-Xmx2g" "-XX:StartFlightRecording=filename=parent.jfr"
+                        "--enable-native-access=ALL-UNNAMED"
+                        "-XX:FlightRecorderOptions=repository=parent-recordings"
+                        "-XX:ErrorFile=parent-crash.log" "-XX:HeapDumpPath=parent.hprof"
+                        "-XX:+HeapDumpOnOutOfMemoryError" "-Dvis.example=true"])))))
+  (it
+    "launches the worker without the current JVM's recording options"
+    (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
+      (expect
+        (not-any?
+          #(re-find #"^-XX:(StartFlightRecording|FlightRecorderOptions)" %)
+          (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules" "/tmp/worker-logs"))))))
 
 (defdescribe
   worker-entrypoint-test
   (it "uses the Java entrypoint when the selected runtime has no packaged worker"
       (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
-        (let [argv (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")]
+        (let [argv
+              (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules" "/tmp/worker-logs")]
           (expect (= ["com.blockether.vispython.Worker" "/tmp/control.sock" "/tmp/host-modules"]
                      (vec (take-last 3 argv)))))))
   (it "makes runtime sources and their extraction marker readable at worker boot"
@@ -423,7 +429,8 @@ print(worker_value)"))))
                      (#'worker/child-argv
                       "/runtime/libvispython.so"
                       "/tmp/control.sock"
-                      "/tmp/host-modules"))))))
+                      "/tmp/host-modules"
+                      "/tmp/worker-logs"))))))
   (it "refuses a native runtime without its worker instead of starting Vis again"
       (with-redefs [com.blockether.vis.internal.util/native-image?
                     (constantly true)
@@ -431,9 +438,11 @@ print(worker_value)"))))
                     com.blockether.vis-python-runtime/resolve-worker
                     (constantly nil)]
 
-        (expect (= :vis/python-worker-missing
-                   (try (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")
-                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+        (expect
+          (= :vis/python-worker-missing
+             (try
+               (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules" "/tmp/worker-logs")
+               (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 (defdescribe worker-host-authorization-test
              (it "rejects callers not assigned to the connection before host dispatch"

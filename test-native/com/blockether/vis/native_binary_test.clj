@@ -744,6 +744,64 @@
                             :usage {:prompt_tokens 1 :completion_tokens 2 :total_tokens 3}}))))
 
 (defdescribe
+  native-python-worker-log-test
+  (it
+    "reads dated worker output while the native interpreter is still running"
+    (let [dir
+          (temp-dir "vis-native-worker-log")
+
+          original-stream
+          @#'stream-body
+
+          original-whole
+          @#'whole-body
+
+          calls
+          (atom 0)
+
+          code
+          (str "import os, time\nfrom pathlib import Path\n"
+               "os.write(2, b'native-worker-log-fixture\\n')\n"
+               "logs = Path("
+               (pr-str (.getAbsolutePath (io/file dir ".vis" "logs")))
+               ")\n"
+               "for attempt in range(200):\n"
+               "    matches = [p for p in logs.glob('????-??-??/pyext-*/worker.log')\n"
+               "               if 'native-worker-log-fixture' in p.read_text()]\n"
+               "    if matches:\n        break\n    time.sleep(0.01)\n"
+               "assert len(matches) == 1, 'Worker output must be readable before exit'\n"
+               "print('Native worker log ' + 'verified')")
+
+          reply
+          (fn [stream? text]
+            (if (= 1 (swap! calls inc))
+              (python-tool-body code 1 stream?)
+              ((if stream? original-stream original-whole) text)))]
+
+      (try (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
+             (fn []
+               (let [{:keys [server asked port]} (start-stub-provider! "Worker check complete")]
+                 (try (overlay! dir port)
+                      (let [{:keys [finished? exit output]}
+                            (run-binary dir
+                                        [(.getAbsolutePath (require-binary))
+                                         (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                         (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                         "Run the supplied Python fixture and finish."]
+                                        180)
+                            tools (->> @asked
+                                       (mapcat #(get (json/read-json (:body %)) "messages"))
+                                       (filter #(= "tool" (get % "role")))
+                                       (map #(str (get % "content"))))]
+
+                        (expect finished? output)
+                        (expect (= 0 exit) output)
+                        (expect (some #(str/includes? % "Native worker log verified") tools)
+                                (pr-str tools)))
+                      (finally (.stop server 0))))))
+           (finally (delete-tree! dir))))))
+
+(defdescribe
   native-python-interrupt-control-test
   (it
     "unwinds a timed-out Python block and reuses its interpreter through the linked control plane"
@@ -1375,13 +1433,13 @@
                   ;; Exercise both processes with the JVM and packaged native entrypoints.
                   (doseq [native? [false true]]
                     (with-redefs-fn {#'worker/child-argv
-                                     (fn [lib socket guest-dir]
+                                     (fn [lib socket guest-dir run-directory]
                                        (if native?
                                          (let [executable (runtime/resolve-worker {:path lib})]
                                            (expect executable
                                                    "The runtime archive must carry its worker")
                                            [executable (str "-Duser.home=" dir) socket guest-dir])
-                                         (jvm-worker lib socket guest-dir)))}
+                                         (jvm-worker lib socket guest-dir run-directory)))}
                       (fn []
                         (let [made (ep/create-python-context
                                      {}
