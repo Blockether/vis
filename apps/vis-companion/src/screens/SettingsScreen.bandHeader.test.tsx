@@ -27,10 +27,9 @@ const band = (meta: string) => {
 describe('a settings band header carrying a long status', () => {
   it('measures the title at its own width so the status wraps instead', () => {
     const header = band('0 devices · via relay.example.com');
-    expect(header.className).not.toContain('items-baseline');
-    const cell = header.querySelector('div');
-    expect(cell?.className).toContain('flex-wrap');
+    expect(header.firstElementChild?.className).not.toContain('items-baseline');
     const title = header.querySelector('h4');
+    expect(title?.parentElement?.className).toContain('flex-wrap');
     expect(title?.className).toContain('flex-auto');
   });
 

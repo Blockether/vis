@@ -287,8 +287,9 @@ describe('the app bar', () => {
     // A machine is ONE ROW — its name, its marks and its verdict on a single line —
     // not a bare tab, and EVERY row keeps the machine's own verbs under its own
     // trailing edge.
-    const [row] = within(dialog).getAllByRole('button', { name: /laptop/ });
-    expect(row.textContent).toContain('laptop');
+    // A sole online machine is already open; its identity is not a disclosure button.
+    const machineName = within(dialog).getByText('laptop', { exact: true });
+    expect(machineName.closest('button')).toBeNull();
     expect(
       within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole('button', {
         name: 'Forget',

@@ -1512,6 +1512,49 @@ export function SettingsChoiceGroup({
     </section>
   );
 }
+
+/**
+ * One centered row for a settings heading and its trailing control. The fixed
+ * action slot aligns add icons, switches and disclosure marks without shrinking
+ * their touch targets. A disclosure makes the whole header the button.
+ */
+export function SettingsHeader({
+  children,
+  action,
+  disclosure,
+}: {
+  children: ReactNode;
+  action?: ReactNode;
+  disclosure?: {
+    isOpen: boolean;
+    onToggle: () => void;
+    label: string;
+  } | null;
+}) {
+  const layout = 'flex min-h-11 min-w-0 items-center gap-3 px-3 py-1 sm:px-4 mouse:min-h-10';
+  const content = (
+    <>
+      {children}
+      <span className="flex w-12 shrink-0 items-center justify-center empty:hidden mouse:w-10">
+        {disclosure ? <ChevronIcon open={disclosure.isOpen} className="size-4" /> : action}
+      </span>
+    </>
+  );
+  return disclosure ? (
+    <button
+      type="button"
+      aria-label={disclosure.label}
+      aria-expanded={disclosure.isOpen}
+      onClick={disclosure.onToggle}
+      className={`${layout} w-full text-left transition-colors duration-150 enabled:hover:text-accent-ink focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none`}
+    >
+      {content}
+    </button>
+  ) : (
+    <div className={layout}>{content}</div>
+  );
+}
+
 /**
  * A SETTINGS DIRECTION THAT OPENS its concrete choices.
  *

@@ -1,7 +1,6 @@
 import { useSyncExternalStore, type ReactNode } from 'react';
 
-import { ChevronIcon } from '../../components/icons';
-import { ListRow, Text } from '../../components/ui';
+import { SettingsHeader, Text } from '../../components/ui';
 
 export function FormLabel({
   label,
@@ -44,6 +43,13 @@ const useWideColumns = () =>
     () => window.matchMedia?.(WIDE_COLUMNS).matches ?? false,
   );
 
+type HeaderDisclosure = {
+  isOpen: boolean;
+  onToggle: () => void;
+  /** What the fold is called to a screen reader. */
+  label: string;
+};
+
 /** Settings owned by this companion installation, never by a gateway. */
 /**
  * ONE COLUMN OF SETTINGS, and the dialog has two of them.
@@ -69,19 +75,14 @@ export function SettingsColumn({
 }: {
   title: string;
   meta?: ReactNode;
-  /** The column's ONE bare verb, at the physical end of its band. */
+  /** One icon action; the header owns its alignment and trailing space. */
   action?: ReactNode;
   /**
    * The fold to expose while the two columns stack on a phone, or nothing where
    * they stand beside each other. `ProjectCrumb`'s shape: the caller owns the
    * state, the band carries the chevron.
    */
-  disclosure?: {
-    isOpen: boolean;
-    onToggle: () => void;
-    /** What the fold is called to a screen reader: `Show application settings`. */
-    label: string;
-  };
+  disclosure?: HeaderDisclosure;
   children: ReactNode;
 }) {
   // The fold lives ONLY where the columns stack — below the same `sm:` that makes
@@ -119,23 +120,9 @@ export function SettingsColumn({
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
       <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
-        {fold ? (
-          // Like Diagnostics, the whole named band toggles, not just its chevron.
-          <ListRow
-            density="compact"
-            aria-label={fold.label}
-            aria-expanded={fold.isOpen}
-            onClick={fold.onToggle}
-          >
-            {titleBlock}
-            <ChevronIcon open={fold.isOpen} className="size-4 shrink-0" />
-          </ListRow>
-        ) : (
-          <div className="flex min-h-11 min-w-0 items-center gap-3 px-3 py-1 sm:px-4 mouse:min-h-10">
-            {titleBlock}
-            <span className="flex shrink-0 items-center empty:hidden">{action}</span>
-          </div>
-        )}
+        <SettingsHeader action={action} disclosure={fold}>
+          {titleBlock}
+        </SettingsHeader>
       </header>
       {!fold || fold.isOpen ? body : null}
     </section>
@@ -151,24 +138,16 @@ export function SettingsPanel({
 }: {
   title: string;
   meta?: ReactNode;
-  /** One bare verb for the whole band, aligned to its physical trailing edge. */
+  /** One icon action or switch; the header owns its alignment and trailing space. */
   action?: ReactNode;
   /** Makes the whole named band the disclosure target; the caller owns its state. */
-  disclosure?: {
-    isOpen: boolean;
-    onToggle: () => void;
-    label: string;
-  };
+  disclosure?: HeaderDisclosure;
   children: ReactNode;
 }) {
   const TitleContainer = disclosure ? 'span' : 'div';
   const TitleHeading = disclosure ? 'span' : 'h4';
   const titleBlock = (
-    <TitleContainer
-      className={`flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1 ${
-        disclosure ? 'sm:ms-1' : ''
-      }`}
-    >
+    <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
       <Text
         as={TitleHeading}
         variant="section"
@@ -202,26 +181,12 @@ export function SettingsPanel({
           wrapped one word per line, and the band grew 213px tall. The row WRAPS
           instead — the name is measured at its own width so a status that does
           not fit beside it drops to its own line. */}
-      {/* A section is named with quiet spacing, not another framed title band.
-          Disclosure and trailing actions retain their full touch targets. */}
-      {disclosure ? (
-        <header>
-          <ListRow
-            density="compact"
-            aria-label={disclosure.label}
-            aria-expanded={disclosure.isOpen}
-            onClick={disclosure.onToggle}
-          >
-            {titleBlock}
-            <ChevronIcon open={disclosure.isOpen} className="size-4 shrink-0 sm:me-1" />
-          </ListRow>
-        </header>
-      ) : (
-        <header className="flex min-h-11 min-w-0 items-center gap-3 px-3 pb-1 pt-3 sm:px-4 mouse:min-h-10">
+      {/* The same centered header fits a lone switch without an empty body below. */}
+      <header>
+        <SettingsHeader action={action} disclosure={disclosure}>
           {titleBlock}
-          {action && <span className="flex shrink-0 items-center empty:hidden">{action}</span>}
-        </header>
-      )}
+        </SettingsHeader>
+      </header>
       {/* Only siblings are separated; a heading does not frame its own body. */}
       <div className="overflow-hidden divide-y divide-dialog-edge empty:hidden">{children}</div>
     </section>

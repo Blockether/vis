@@ -107,6 +107,7 @@ import {
   Disclosure,
   ExecutionAction,
   SettingsDisclosure,
+  SettingsHeader,
   Switch,
   Text,
   TextButton,
@@ -157,6 +158,40 @@ describe('shared text roles', () => {
     expect(html).toMatch(/^<p\b/);
     expect(html).toContain('title="https://gateway.example.com/mcp"');
     expect(html).toContain('gateway.example.com</p>');
+  });
+});
+
+describe('shared settings headers', () => {
+  it('leaves a heading inert while its trailing switch owns the interaction', () => {
+    const html = renderToStaticMarkup(
+      <SettingsHeader
+        action={<NotifyConnectionSwitch machine="visgw" isOn={false} onClick={() => {}} />}
+      >
+        <Text as="h4" variant="section">
+          Notifications
+        </Text>
+      </SettingsHeader>,
+    );
+    expect(html).toMatch(/^<div\b/);
+    expect(html).toContain('<h4');
+    expect(html).toContain('aria-label="Notifications from visgw: off"');
+    expect(html.match(/<button\b/g)).toHaveLength(1);
+  });
+
+  it.each([false, true])('announces a full-header disclosure with expanded=%s', (isOpen) => {
+    const label = `${isOpen ? 'Hide' : 'Show'} diagnostics`;
+    const html = renderToStaticMarkup(
+      <SettingsHeader disclosure={{ isOpen, label, onToggle: () => {} }}>
+        <Text variant="section" role="heading" aria-level={4}>
+          Diagnostics
+        </Text>
+      </SettingsHeader>,
+    );
+    expect(html).toMatch(/^<button\b/);
+    expect(html.match(/<button\b/g)).toHaveLength(1);
+    expect(html).toContain(`aria-label="${label}"`);
+    expect(html).toContain(`aria-expanded="${isOpen}"`);
+    expect(html).toContain('role="heading"');
   });
 });
 
@@ -1055,7 +1090,7 @@ describe('settings is ONE dialog with two columns', () => {
       settings.indexOf('{/* THE COG'),
     );
     expect(band).toContain('variant="quiet"');
-    expect(band).toContain('edge');
+    expect(band).not.toMatch(/\n\s+edge(?:\s|$)/);
     expect(band).toContain('label="Add a machine"');
     expect(band).toContain('<PlusIcon className="size-4" />');
     // A mark has no word to be wide for, so it takes no density either.
@@ -1106,9 +1141,9 @@ describe('settings is ONE dialog with two columns', () => {
       providerAuthSource.indexOf('THE VERB RIDES THE BAND'),
       providerAuthSource.indexOf('{isPicking &&'),
     );
-    // Every add mark is bare and reaches through the band's trailing gutter.
+    // Every add mark is bare; the shared header owns its alignment and reach.
     expect(providerButton).toContain('variant="quiet"');
-    expect(providerButton).toContain('edge');
+    expect(providerButton).not.toMatch(/\n\s+edge(?:\s|$)/);
     expect(providerButton).not.toContain('variant="primary"');
     expect(providerButton).toContain('label="Add a provider"');
     expect(providerButton).toContain('<PlusIcon className="size-4" />');
@@ -1131,7 +1166,8 @@ describe('settings is ONE dialog with two columns', () => {
     expect(mcp).not.toMatch(/\sdescription=/);
     expect(mcp).not.toContain('meta=');
     expect(mcp).toContain('variant="quiet"');
-    expect(mcp).toContain('edge');
+    const add = mcp.match(/<IconButton\b[^>]+>/)?.[0] ?? '';
+    expect(add).not.toMatch(/\bedge\b/);
     expect(mcp).toContain('label="Add an MCP server"');
     expect(mcp).not.toContain('w-full justify-center');
     // The ＋ IS the form's door, so it steps out of the band while the form is open
@@ -2920,22 +2956,9 @@ describe('the session screen and the settings dialog spell no control out', () =
     expect(sessionsListSource).not.toContain('RowVerbs');
     expect(uiSource).not.toContain('export function RowVerbs(');
 
-    // Regression, user report (paraphrased: the ＋ in MACHINES and the ones by
-    // notifications and by MCP are uneven): the column band stood 48px tall on a
-    // 16px `sm:` gutter while the bands nested inside a machine stood 36 on a 12px
-    // one, so the same 32px mark floated in 8px of paper and then in 2 — and
-    // measured on a desktop the two marks did not even share a vertical line, 595
-    // against 599. Every band in this dialog is ONE height and ONE gutter; the verb
-    // is the band's trailing CELL, centred against the title's own cell, and that
-    // cell is what wraps — never the line the verb stands on.
-    const band = /<div className="(flex min-h-\d+[^"]*)"/.exec(settingsSource)?.[1] ?? '';
-    const nestedBand = /<header className="(flex min-h-\d+[^"]*)"/.exec(settingsSource)?.[1] ?? '';
-    expect(band.length).toBeGreaterThan(0);
-    expect(nestedBand.length).toBeGreaterThan(0);
-    for (const row of [band, nestedBand]) {
-      expect(row).not.toContain('items-baseline');
-      expect(row).not.toContain('min-h-12');
-    }
+    // Columns, sections and disclosures use one header; browser stories verify
+    // its height, centered titles, aligned controls and full touch reach.
+    expect(settingsSource.match(/<SettingsHeader\b/g)).toHaveLength(2);
 
     // A 28px control answers the WHOLE cell, so it centres against it: pinned to
     // the row's `items-start` the switch sat 6px above the middle of the two lines

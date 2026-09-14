@@ -215,6 +215,30 @@ export const Populated: Story = {
     await expect(await page.findByText('filesystem', { exact: true })).toBeVisible();
     const application = page.queryByRole('button', { name: 'Show application settings' });
     if (application) await userEvent.click(application);
+    await canvasElement.ownerDocument.fonts.ready;
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    // Keep the real call sites on the shared header rhythm, not just the layout fixture.
+    for (const name of ['Machines', 'Providers', 'Notifications', 'MCP servers']) {
+      const heading = page.getByRole('heading', { name });
+      const header = heading.closest('header')!;
+      const title = heading.getBoundingClientRect();
+      await expect(header.clientHeight).toBe(pointer ? 40 : 44);
+      await expect(title.top + title.height / 2 - header.getBoundingClientRect().top).toBeCloseTo(
+        header.clientHeight / 2,
+        1,
+      );
+    }
+    const notification = page.getByRole('switch', { name: /^Notifications from/ });
+    const notificationBox = notification.getBoundingClientRect();
+    for (const name of ['Add a machine', 'Add an MCP server']) {
+      const action = page.getByRole('button', { name });
+      const box = action.getBoundingClientRect();
+      await expect(box.left + box.width / 2).toBeCloseTo(
+        notificationBox.left + notificationBox.width / 2,
+        1,
+      );
+      await expect(box.height).toBe(pointer ? 28 : 32);
+    }
     const toggle = page.getByRole('switch', { name: 'filesystem MCP server: on' });
     await userEvent.click(toggle);
     await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));

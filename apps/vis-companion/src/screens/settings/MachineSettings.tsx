@@ -888,7 +888,6 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
         showForm ? null : (
           <IconButton
             variant="quiet"
-            edge
             label="Add an MCP server"
             title="Add an MCP server"
             onClick={() => openForm(null)}

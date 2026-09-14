@@ -956,13 +956,10 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
 
   return (
     <>
-      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The title supplies the
-          noun, so the plus needs neither a word nor a circular face. `edge` extends its
-          hit area through the trailing gutter and moves the visible stroke toward the
-          panel edge, on the same line as the machine and MCP verbs. */}
+      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The header's shared
+          action slot aligns the bare plus with other section controls. */}
       <IconButton
         variant="quiet"
-        edge
         label="Add a provider"
         title="Add a provider to this machine"
         onClick={() => {

@@ -172,13 +172,9 @@ export function SettingsDialog({
           <SettingsColumn
             title="Machines"
             action={
-              /* THE COLUMN'S ONE VERB ENDS ITS BAND AS A BARE MARK. The title already
-                 names what the plus adds; a filled disc repeated the same emphasis as
-                 the dialog close above it. `edge` spends the header's trailing gutter
-                 as hit area and lands the stroke nearer the physical right edge. */
+              /* A bare add mark in the same header slot as section actions. */
               <IconButton
                 variant="quiet"
-                edge
                 label="Add a machine"
                 title="Add a machine"
                 onClick={() => setIsAdding(true)}

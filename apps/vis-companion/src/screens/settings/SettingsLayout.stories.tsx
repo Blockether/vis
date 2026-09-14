@@ -1,7 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
-import { expect } from 'storybook/test';
-import { ChoiceCell, NotifyConnectionSwitch } from '../../components/ui';
+import { expect, userEvent } from 'storybook/test';
+import { PlusIcon } from '../../components/icons';
+import {
+  ChoiceCell,
+  IconButton,
+  NotifyConnectionSwitch,
+  SettingsHeader,
+  Text,
+} from '../../components/ui';
 import { THEMES } from '../../lib/themes.generated';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { SettingsColumn, SettingsPanel } from './SettingsLayout';
@@ -151,6 +158,128 @@ export const HeaderOnlyPanels: Story = {
     ).toBe(0);
     await expect(canvas.getByRole('switch', { name: 'Notifications from visgw: off' })).toBeVisible();
   },
+};
+
+/** Section actions share a centerline, even when a switch is the entire panel. */
+export const HeaderRhythm: Story = {
+  args: { title: 'Machines', children: null },
+  render: function Render(args) {
+    const [notify, setNotify] = useState(false);
+    const [diagnostics, setDiagnostics] = useState(false);
+    return (
+      <SettingsColumn
+        {...args}
+        action={
+          <IconButton variant="quiet" label="Add a machine">
+            <PlusIcon className="size-4" />
+          </IconButton>
+        }
+      >
+        {/* The shared primitive beside its column and panel compositions. */}
+        <section className="bg-panel">
+          <header>
+            <SettingsHeader
+              action={
+                <IconButton variant="quiet" label="Add a provider">
+                  <PlusIcon className="size-4" />
+                </IconButton>
+              }
+            >
+              <Text as="h4" variant="section" className="min-w-0 flex-auto truncate">
+                Providers
+              </Text>
+            </SettingsHeader>
+          </header>
+        </section>
+        <SettingsPanel
+          title="Notifications"
+          action={
+            <NotifyConnectionSwitch
+              machine="visgw"
+              isOn={notify}
+              onClick={() => setNotify((current) => !current)}
+            />
+          }
+        >
+          {false}
+        </SettingsPanel>
+        <SettingsPanel
+          title="MCP servers"
+          action={
+            <IconButton variant="quiet" label="Add an MCP server">
+              <PlusIcon className="size-4" />
+            </IconButton>
+          }
+        >
+          {false}
+        </SettingsPanel>
+        {body}
+        <DiagnosticsPanel
+          isOpen={diagnostics}
+          onToggle={() => setDiagnostics((current) => !current)}
+        />
+      </SettingsColumn>
+    );
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await canvasElement.ownerDocument.fonts.ready;
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const titles = [
+      'Machines',
+      'Providers',
+      'Notifications',
+      'MCP servers',
+      'Theme',
+      'Diagnostics',
+    ];
+    const headings = titles.map((name) => canvas.getByRole('heading', { name }));
+    // Regression: asymmetric padding lowered titles by 4px; a switch, a plus and
+    // a disclosure each set a different header height and trailing alignment.
+    for (const heading of headings) {
+      const header = heading.closest('header')!;
+      const title = heading.getBoundingClientRect();
+      const frame = header.getBoundingClientRect();
+      await expect(header.clientHeight).toBe(pointer ? 40 : 44);
+      await expect(title.top + title.height / 2 - frame.top).toBe(header.clientHeight / 2);
+      await expect(title.left).toBe(headings[0].getBoundingClientRect().left);
+    }
+    const toggle = canvas.getByRole('switch', { name: 'Notifications from visgw: off' });
+    const actions = [
+      ...['Add a machine', 'Add a provider', 'Add an MCP server'].map((name) =>
+        canvas.getByRole('button', { name }),
+      ),
+      toggle,
+      canvas.getByRole('button', { name: 'Show diagnostics' }).querySelector('svg')!,
+    ];
+    const center = (element: Element) => {
+      const box = element.getBoundingClientRect();
+      return box.left + box.width / 2;
+    };
+    for (const action of actions) await expect(center(action)).toBe(center(toggle));
+    for (const action of actions.slice(0, 4)) {
+      const reach = getComputedStyle(action, '::after');
+      const height = action.getBoundingClientRect().height;
+      await expect(
+        height +
+          Math.max(0, -parseFloat(reach.top) || 0) +
+          Math.max(0, -parseFloat(reach.bottom) || 0),
+      ).toBeGreaterThanOrEqual(pointer ? 28 : 44);
+    }
+    await userEvent.click(toggle);
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await userEvent.click(toggle);
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(canvas.getByRole('button', { name: 'Show diagnostics' }));
+    await expect(canvas.getByRole('button', { name: 'Hide diagnostics' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  },
+};
+
+export const HeaderRhythmPointer: Story = {
+  ...HeaderRhythm,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 /** Overflow stays reachable without desktop scrollbar thumbs or reserved lanes. */
