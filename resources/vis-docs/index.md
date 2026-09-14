@@ -308,7 +308,7 @@ survive restarts, and the full history stays stored even when Vis summarizes
 completed work to make room for the next task. See
 [How Vis manages context](token-optimization.md).
 
-## Update
+## Updating vis
 
 ```bash
 vis-agent update
