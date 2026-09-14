@@ -761,9 +761,9 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     });
   }
 
-  // The editor: under the row it edits, or at the foot of the list when adding.
+  // Editing owns its divider; an add form uses the enclosing list or panel boundary.
   const form = showForm && (
-    <div className="space-y-3 border-t border-dialog-edge bg-panel-2 p-3">
+    <div className={`space-y-3 bg-panel-2 p-3 ${editing ? 'border-t border-dialog-edge' : ''}`}>
       {!editing && (
         <div className="grid grid-cols-2 gap-1" role="group" aria-label="MCP transport">
           {(['stdio', 'streamable_http'] as const).map((kind) => (

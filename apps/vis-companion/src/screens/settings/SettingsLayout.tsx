@@ -187,8 +187,10 @@ export function SettingsPanel({
           {titleBlock}
         </SettingsHeader>
       </header>
-      {/* Only siblings are separated; a heading does not frame its own body. */}
-      <div className="overflow-hidden divide-y divide-dialog-edge empty:hidden">{children}</div>
+      {/* A visible body owns one header divider; an empty body adds no second rule. */}
+      <div className="overflow-hidden divide-y divide-dialog-edge border-t border-dialog-edge empty:hidden">
+        {children}
+      </div>
     </section>
   );
 }

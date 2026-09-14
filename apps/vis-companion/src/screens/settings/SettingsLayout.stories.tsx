@@ -151,11 +151,12 @@ export const HeaderOnlyPanels: Story = {
     }
     await expect(getComputedStyle(notifications).borderBottomWidth).toBe('1px');
     await expect(getComputedStyle(diagnostics).borderBottomWidth).toBe('0px');
+    // Regression: a populated section must separate its heading from the first row.
     const theme = canvas.getByRole('heading', { name: 'Theme' }).closest('section')!;
     await expect(
       parseFloat(getComputedStyle(theme.querySelector('header')!).borderBottomWidth) +
         parseFloat(getComputedStyle(theme.lastElementChild!).borderTopWidth),
-    ).toBe(0);
+    ).toBe(1);
     await expect(canvas.getByRole('switch', { name: 'Notifications from visgw: off' })).toBeVisible();
   },
 };

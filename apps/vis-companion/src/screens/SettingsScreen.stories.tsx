@@ -173,6 +173,13 @@ export const FormTypography: Story = {
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.click(await page.findByRole('button', { name: 'Add an MCP server' }));
     const name = await page.findByRole('textbox', { name: 'Server name' });
+    const panelBody = page
+      .getByRole('heading', { name: 'MCP servers' })
+      .closest('section')!.lastElementChild!;
+    const form = page.getByRole('group', { name: 'MCP transport' }).parentElement!;
+    // An empty list's add form uses the panel's separator, never a second top border.
+    await expect(getComputedStyle(panelBody).borderTopWidth).toBe('1px');
+    await expect(getComputedStyle(form).borderTopWidth).toBe('0px');
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     const label = page.getByText('Server name', { exact: true });
     const hint = page.getByText('Arguments are passed directly, never through a shell.');
@@ -227,6 +234,14 @@ export const Populated: Story = {
         header.clientHeight / 2,
         1,
       );
+      const body = header.nextElementSibling!;
+      if (getComputedStyle(body).display !== 'none') {
+        // Regression: section headings merged into the first row of otherwise bordered lists.
+        await expect(
+          parseFloat(getComputedStyle(header).borderBottomWidth) +
+            parseFloat(getComputedStyle(body).borderTopWidth),
+        ).toBe(1);
+      }
     }
     const notification = page.getByRole('switch', { name: /^Notifications from/ });
     const notificationBox = notification.getBoundingClientRect();
@@ -244,5 +259,13 @@ export const Populated: Story = {
     await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
     await userEvent.click(toggle);
     await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+    await userEvent.click(page.getByRole('button', { name: 'Add an MCP server' }));
+    const form = page.getByRole('group', { name: 'MCP transport' }).parentElement!;
+    // In a populated list, the preceding row supplies the add form's single divider.
+    await expect(
+      parseFloat(getComputedStyle(form.previousElementSibling!).borderBottomWidth) +
+        parseFloat(getComputedStyle(form).borderTopWidth),
+    ).toBe(1);
+    await userEvent.click(within(form).getByRole('button', { name: 'Cancel' }));
   },
 };
