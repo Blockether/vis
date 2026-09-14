@@ -575,12 +575,12 @@
           (str/join "\n"
                     (map #(str/replace (:line %) #"[\uE110-\uE2FF]" "") (entries rows opened))))]
 
-    (it "hides all operations until Activity is explicitly opened"
+    (it "shows all operations by default and folds only on explicit request"
         (let [shut
-              (text rows {})
+              (text rows {"#band" false})
 
               shown
-              (text rows {"#band" true})]
+              (text rows {})]
 
           (expect (str/includes? shut "ACTIVITY"))
           (expect (str/includes? shut "6 operations"))
@@ -686,8 +686,8 @@
 
     (it "groups complete identical arguments while retaining different and unknown calls"
         (let [result (entries rows opened 72)]
-          (expect (= ["search-1#group" "search-1#arguments" "search-2" "unknown-1" "unknown-2"
-                      "read-1"]
+          (expect (= ["search-1#group" "search-1#arguments" "search-1" "search-3" "search-4"
+                      "search-2" "unknown-1" "unknown-2" "read-1"]
                      (row-ids result)))
           (expect (some #(str/includes? (:line %) "×3") result))
           (expect (some #(str/includes? (:line %) "1 failed") result))))
@@ -2215,7 +2215,7 @@
 
         (expect (str/includes? body "ACTIVITY"))
         (expect (str/includes? body "1 running · 2 operations"))
-        (expect (not (str/includes? body "npm test")))))
+        (expect (str/includes? body "npm test"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
     (let [;; Tool output paints purely as the program's stdout — both live
@@ -5329,7 +5329,7 @@
           expanded
           (render-text {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (not (str/includes? collapsed "Searched source")))
+      (expect (str/includes? collapsed "Searched source"))
       (expect (not (str/includes? collapsed "answer = search()")))
       (expect (not (str/includes? collapsed "PYTHON")))
       (expect (not (str/includes? collapsed "one match")))
@@ -6141,10 +6141,10 @@ h = 8"
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (not (str/includes? collapsed "test evidence companion suite")))
+      (expect (str/includes? collapsed "test evidence companion suite"))
       (expect (str/includes? collapsed "CODE"))
       (expect (not (str/includes? collapsed "PYTHON")))
-      (expect (not (str/includes? collapsed "18 matches")))
+      (expect (str/includes? collapsed "18 matches"))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (str/includes? expanded "test evidence companion suite"))
       (expect (< (.indexOf ^String expanded "grep({...})")
@@ -6295,10 +6295,10 @@ h = 8"
             :text
             strip-ansi
             strip-sentinels)]
-      ;; A shut band reports counts, never operation details.
-      (expect (str/includes? receipt "2 omitted"))
+      ;; Activity starts open independently of the source disclosure.
+      (expect (str/includes? receipt "2 steps omitted"))
       (doseq [label ["Patched" "Searched" "Ran tests"]]
-        (expect (not (str/includes? receipt label))))
+        (expect (str/includes? receipt label)))
       (expect (str/includes? receipt "ACTIVITY"))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
@@ -6757,11 +6757,9 @@ h = 8"
                   "its paths wait behind the step's own fold")
           (expect (not-any? #(str/includes? % "added-line") lines) "and so does the patch")))))
 
-;; Regression: every step painted its outcome, its paths and its grouped changes open, with
-;; no chevron to shut them - a turn of shell calls read as a wall of receipts, and the blank
-;; disclosure slot before each verb read as a margin nobody asked for.
+;; Explicit folds remain available, but no operation is folded automatically.
 (defdescribe
-  activity-steps-start-shut-test
+  activity-explicit-folding-test
   (let [outcome
         "{\"keys\" nil, \"offset\" 0, \"command\" \"git push origin main\", \"id\" \"git\"}"
 
@@ -6823,8 +6821,8 @@ h = 8"
         (fn [lines needle]
           (str (first (filter #(str/includes? % needle) lines))))]
 
-    (it "keeps a settled step to one line, with a chevron that says more waits behind it"
-        (let [shut (lines [group bare] {})]
+    (it "keeps a settled step to one line when the reader explicitly folds it"
+        (let [shut (lines [group bare] {"sh-1" false})]
           (expect (re-find #"^Ran cmd.*▸" (line-with shut "Ran"))
                   "the operation starts at the text edge and its disclosure trails")
           (expect (= 1 (count (filter #(str/includes? % "Ran") shut)))
@@ -6837,9 +6835,9 @@ h = 8"
                                  (get-in % [:meta :node-id]))
                               (entries [group bare] {})))
                   "and is no disclosure: a press on it has nothing to open")))
-    (it "opens a group onto its calls, each shut behind its own chevron"
+    (it "respects explicitly folded calls inside an open group"
         (let [open
-              (lines [group] {"sh-1" true})
+              (lines [group] {"sh-1" true "sh-2" false "wait-1" false "logs-1" false})
 
               head
               (line-with open "Ran cmd")
@@ -7306,16 +7304,16 @@ h = 8"
                          :is-truncated true
                          :result-summary nil)])
 
-              closed
+              opened
               (paint partial {})
 
               row
-              (first (filter #(= :activity-row (:kind %)) (:line-meta closed)))
+              (first (filter #(= :activity-row (:kind %)) (:line-meta opened)))
 
-              opened
-              (paint partial {["live-more" (:node-id row)] true})]
+              closed
+              (paint partial {["live-more" (:node-id row)] false})]
 
-          (expect (:collapsed? row))
+          (expect (not (:collapsed? row)))
           (expect (not (str/includes? (str/join "\n" (:lines closed)) "Details truncated")))
           (expect (str/includes? (str/join "\n" (:lines opened)) "Details truncated"))))))
 
@@ -8436,3 +8434,79 @@ print(paths)"
         (when open?
           (expect (str/ends-with? (:line (first content)) "alpha"))
           (expect (str/ends-with? (:line (nth content 2)) "beta")))))))
+
+(defdescribe
+  activity-all-operations-visible-test
+  (it "shows every nested operation and its content without opening disclosures"
+      ;; A shell receipt groups lifecycle calls. Counting only its parent reported
+      ;; fewer operations than the retained history even when every call was loaded.
+      (doseq [cols [40 80 120]]
+        (let [leaves (mapv (fn [i]
+                             {:id (str "visible-" i)
+                              :sequence i
+                              :operation "shell"
+                              :state "succeeded"
+                              :summary (str "command-" i)
+                              :presentation {:headline (str "Operation " i)
+                                             :content [{:type "text" :text (str "Output " i)}]}})
+                           (range 11))
+              rows (into [{:id "shell-group"
+                           :sequence 0
+                           :operation "shell"
+                           :state "succeeded"
+                           :summary "Grouped shell"
+                           :children (subvec leaves 0 4)}]
+                         (subvec leaves 4))
+              entries (#'render/activity-detail-entries
+                       {:node-id "all-activity"
+                        :activity-rows rows
+                        :activity-sources [{:rows rows :counts {:succeeded 11}}]}
+                       (- cols 4)
+                       "fixture")
+              text (str/join "\n" (map :line entries))
+              ids (set (keep #(when (= :activity-row (get-in % [:meta :kind]))
+                                (get-in % [:meta :item-id]))
+                             entries))
+              captured (cap/capture! {:cols cols
+                                      :rows 80
+                                      :paint! (fn [{:keys [g]}]
+                                                (render/draw-chat-bubble!
+                                                  g
+                                                  {:role :assistant
+                                                   :prewrapped-lines (mapv :line entries)
+                                                   :line-meta (mapv :meta entries)}
+                                                  0
+                                                  0
+                                                  (- cols 4)
+                                                  {:viewport-h 80}))})]
+
+          (expect (nil? (:error captured)))
+          (expect (str/includes? text "11 operations"))
+          (expect (not (str/includes? text "8 of 11")))
+          (doseq [i (range 11)]
+            (expect (contains? ids (str "visible-" i)))
+            (expect (str/includes? text (str "Output " i)))
+            (expect (str/includes? (cap/frame-text captured) (str "Output " i))))))))
+
+(defdescribe activity-all-files-visible-test
+             (it "shows every resource without requesting more files"
+                 (let [paths
+                       (mapv #(str "src/file-" % ".clj") (range 6))
+
+                       entries
+                       (#'render/activity-detail-entries
+                        {:node-id "files"
+                         :activity-rows [{:id "read-files"
+                                          :operation "cat"
+                                          :state "succeeded"
+                                          :summary "Read files"
+                                          :resources (mapv #(hash-map :type "file" :id %) paths)}]}
+                        80
+                        "fixture")
+
+                       text
+                       (str/join "\n" (map :line entries))]
+
+                   (doseq [path paths]
+                     (expect (str/includes? text path)))
+                   (expect (not (str/includes? text "show 2 more files"))))))

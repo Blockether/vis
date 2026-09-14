@@ -5968,3 +5968,182 @@
       (reset! state/app-db (activity-paging-db))
       (state/dispatch [:activity-page-failed "other-session" "a1" 0])
       (expect (nil? (:vis.channel-tui/fetch (settled-activity))))))
+
+(defdescribe
+  activity-automatic-history-test
+  (it "loads each retained history once without a disclosure or page press"
+      (let [asked (atom [])]
+        (state/reg-fx :load-activity-page
+                      (fn [& args]
+                        (swap! asked conj (vec args))))
+        (reset! state/app-db (activity-paging-db))
+        (state/dispatch [:load-activity-history])
+        (state/dispatch [:load-activity-history])
+        (expect (= [["cid" "a1" 32 4 nil true]] @asked))
+        (expect (= {:status :loading :after 32 :automatic? true}
+                   (get-in (settled-activity) [:vis.channel-tui/fetch "a1"])))))
+  (it "accumulates automatic pages in every copy without discarding earlier operations"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:load-activity-history])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 64 [{:id "r2"}])
+                       {:after 32 :revision 4 :automatic? true}])
+      (expect (= [{:id "r1"} {:id "r2"}] (:rows (settled-activity))))
+      (expect (= (settled-activity) (live-activity)))
+      (expect (= 0 (get-in (settled-activity) [:history :after])))
+      (state/dispatch [:load-activity-history])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 64 nil [{:id "r3"}])
+                       {:after 64 :revision 4 :automatic? true}])
+      (expect (= [{:id "r1"} {:id "r2"} {:id "r3"}] (:rows (settled-activity))))
+      (expect (nil? (get-in (settled-activity) [:history :next-after]))))
+  (it "does not automatically page searches or retry failed requests"
+      (let [asked (atom [])]
+        (state/reg-fx :load-activity-page
+                      (fn [& args]
+                        (swap! asked conj (vec args))))
+        (doseq [fetch [{:query "patch"} {:status :failed :after 32} {:status :stale :after 32}]]
+          (reset! state/app-db (update-in (activity-paging-db)
+                                          [:messages 0 :traces 0 :forms 0 :activity]
+                                          assoc-in
+                                          [:vis.channel-tui/fetch "a1"]
+                                          fetch))
+          (swap! state/app-db dissoc :progress)
+          (state/dispatch [:load-activity-history]))
+        (expect (empty? @asked))))
+  (it "refuses an automatic continuation after a live snapshot changes revision"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:load-activity-history])
+      (swap! state/app-db assoc-in [:messages 0 :traces 0 :forms 0 :activity :history :revision] 5)
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 64 [{:id "old"}])
+                       {:after 32 :revision 4 :automatic? true}])
+      (expect (= [{:id "r1"}] (:rows (settled-activity))))
+      (expect (= 5 (get-in (settled-activity) [:history :revision])))))
+
+(defdescribe
+  activity-automatic-retry-test
+  (it "retries a failed automatic page without dropping the rows already shown"
+      (let [asked (atom [])]
+        (state/reg-fx :load-activity-page
+                      (fn [& args]
+                        (swap! asked conj (vec args))))
+        (reset! state/app-db (activity-paging-db))
+        (state/dispatch [:load-activity-history])
+        (state/dispatch [:activity-page-failed "cid" "a1" 32 false])
+        (state/dispatch [:activity-page "cid" "a1" 32 4])
+        (expect (= ["cid" "a1" 32 4 nil true] (last @asked)))
+        (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 nil [{:id "r2"}])
+                         {:after 32 :revision 4 :automatic? true}])
+        (expect (= [{:id "r1"} {:id "r2"}] (:rows (settled-activity))))
+        (state/dispatch [:load-activity-history])
+        (expect (= 2 (count @asked)))))
+  (it "reloads a stale record from the beginning at its new revision"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:load-activity-history])
+      (state/dispatch [:activity-page-failed "cid" "a1" 32 true])
+      (state/dispatch [:activity-page "cid" "a1" 0])
+      (state/dispatch [:activity-page-loaded "cid" "a1"
+                       (assoc-in (paged-activity 0 nil [{:id "new"}]) [:history :revision] 5)
+                       {:after 0 :automatic? true}])
+      (expect (= [{:id "new"}] (:rows (settled-activity))))
+      (expect (= 5 (get-in (settled-activity) [:history :revision]))))
+  (it "does not append a late automatic page over an explicit search"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (reset! state/app-db (activity-paging-db))
+      (state/dispatch [:load-activity-history])
+      (state/dispatch [:activity-page "cid" "a1" 0 4 "patch"])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 nil [{:id "late"}])
+                       {:after 32 :revision 4 :automatic? true}])
+      (expect (= [{:id "r1"}] (:rows (settled-activity))))
+      (expect (= "patch" (get-in (settled-activity) [:vis.channel-tui/fetch "a1" :query])))))
+
+(defdescribe activity-automatic-stale-response-test
+             (it "ignores old automatic failures and malformed responses after a search starts"
+                 (state/reg-fx :load-activity-page
+                               (fn [& _]))
+                 (doseq [response [[:activity-page-failed "cid" "a1" 32 false nil
+                                    {:revision 4 :automatic? true}]
+                                   [:activity-page-loaded "cid" "a1"
+                                    (paged-activity 64 nil [{:id "late"}])
+                                    {:after 32 :revision 4 :automatic? true}]]]
+                   (reset! state/app-db (activity-paging-db))
+                   (state/dispatch [:load-activity-history])
+                   (state/dispatch [:activity-page "cid" "a1" 0 4 "patch"])
+                   (let [before (settled-activity)]
+                     (state/dispatch response)
+                     (expect (= before (settled-activity)))))))
+
+(defdescribe
+  activity-automatic-grouped-pages-test
+  (it "merges a synthetic parent split across pages without duplicate operation IDs"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (let [first-group
+            {:id "group-shared"
+             :sequence 1
+             :state "failed"
+             :duration-ms 3
+             :children [{:id "r1" :state "failed" :duration-ms 1}
+                        {:id "r2" :state "succeeded" :duration-ms 2}]}
+
+            next-group
+            {:id "group-shared"
+             :sequence 3
+             :state "succeeded"
+             :duration-ms 7
+             :children [{:id "r3" :state "succeeded" :duration-ms 3}
+                        {:id "r4" :state "succeeded" :duration-ms 4}]}
+
+            db
+            (activity-paging-db)]
+
+        (reset! state/app-db (-> db
+                                 (assoc-in [:messages 0 :traces 0 :forms 0 :activity :rows]
+                                           [first-group])
+                                 (dissoc :progress)))
+        (state/dispatch [:load-activity-history])
+        (let [response [:activity-page-loaded "cid" "a1" (paged-activity 32 nil [next-group])
+                        {:after 32 :revision 4 :automatic? true}]]
+          (state/dispatch response)
+          (state/dispatch response))
+        (expect (= 1 (count (:rows (settled-activity)))))
+        (let [group (first (:rows (settled-activity)))]
+          (expect (= ["r1" "r2" "r3" "r4"] (mapv :id (:children group))))
+          (expect (= 1 (:sequence group)))
+          (expect (= "failed" (:state group)))
+          (expect (= 10 (:duration-ms group)))))))
+
+(defdescribe
+  activity-automatic-scroll-test
+  (it "preserves follow and parked scroll intent when automatic pages arrive"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (doseq [intent
+              [scroll/follow (scroll/parked 15)]
+
+              search?
+              [false true]]
+
+        (reset! state/app-db (assoc (activity-paging-db)
+                               :scroll intent
+                               :layout {:eff-scroll 42}))
+        (state/dispatch [:load-activity-history])
+        (when search? (state/dispatch [:activity-page "cid" "a1" 0 4 "patch"]))
+        (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 32 nil [{:id "r2"}])
+                         {:after 32 :revision 4 :automatic? true}])
+        (expect (= intent (:scroll @state/app-db)))))
+  (it "still parks the viewport for an explicitly requested search page"
+      (state/reg-fx :load-activity-page
+                    (fn [& _]))
+      (reset! state/app-db (assoc (activity-paging-db)
+                             :scroll scroll/follow
+                             :layout {:eff-scroll 42}))
+      (state/dispatch [:activity-page "cid" "a1" 0 4 "patch"])
+      (state/dispatch [:activity-page-loaded "cid" "a1" (paged-activity 0 nil [{:id "r2"}])
+                       {:after 0 :revision 4 :query "patch"}])
+      (expect (= (scroll/parked 42) (:scroll @state/app-db)))))

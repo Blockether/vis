@@ -5501,12 +5501,8 @@
         (str (repeat-str \─ left) text (repeat-str \─ (- gap left)))))))
 
 (def ^:private activity-files-shown
-  "FOUR PATHS, THEN A COUNT.
-
-   A read that touched forty files is a read that touched forty files: the number is
-   the fact, and forty paths printed under one row spend the whole band on the step
-   with the least to say. Four lines show WHICH corner of the tree a step was working
-   in; the rest are one press away, behind the same fold the paths already carry."
+  "Number of paths kept visible when the reader explicitly folds a file list.
+   File lists start fully expanded."
   4)
 
 (defn- activity-counts-visible-files?
@@ -5818,9 +5814,8 @@
         (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
-  "A joined, independently folded Activity band. Every operation group is visible when
-   #band is open; group contents start shut. Live/failure context survives manual folding.
-   Row, file and group keys retain reader choices."
+  "A joined Activity band that starts fully open, including nested operations and details.
+   Only explicit reader choices fold its band, groups, rows or files."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts
            activity-histories activity-sources activity-fetch]} max-w session-id]
   (let [rows
@@ -5830,12 +5825,14 @@
         true
 
         expanded?
-        (let [answer (or activity-expanded? (constantly false))]
+        (let [answer (or activity-expanded?
+                         (fn [_ default-open?]
+                           default-open?))]
           (fn [item-key default-open?]
             (boolean (answer item-key default-open?))))
 
         band-open?
-        (expanded? "#band" false)
+        (expanded? "#band" true)
 
         width
         (max 1 (long max-w))
@@ -5888,7 +5885,7 @@
                 (str row-id "#")
 
                 show-all?
-                (expanded? more-key false)
+                (expanded? more-key true)
 
                 shown
                 (if show-all? entries (vec (take activity-files-shown entries)))]
@@ -5901,7 +5898,7 @@
                           (str row-id "#" id)
 
                           open?
-                          (boolean (and diff (expanded? file-key false)))
+                          (boolean (and diff (expanded? file-key true)))
 
                           mark
                           (cond (nil? diff) "›"
@@ -6079,17 +6076,12 @@
 
                                                        ;; Only child rows are indented, never a top-level operation.
                                                        ;; The header stays visible; only content follows the disclosure.
-                                                       ;; Live and failed content starts open until the reader chooses.
+                                                       ;; Every operation starts open until the reader chooses.
                                                        openable?
                                                        (activity-row-openable? row)
 
                                                        open?
-                                                       (and openable?
-                                                            (expanded?
-                                                              id
-                                                              (and (not (:activity-group? row))
-                                                                   (contains? #{:running :failed}
-                                                                              state))))
+                                                       (and openable? (expanded? id true))
 
                                                        suffix
                                                        (activity-row-tail row)
@@ -6434,13 +6426,18 @@
 
                         (str (get states state) " " (name state))))
 
+            operation-count
+            (fn [rows]
+              (count (filter #(empty? (:children %))
+                             (mapcat #(tree-seq (comp seq :children) :children %) rows))))
+
             retained
             (reduce +
                     0
                     (map (fn [{:keys [history rows counts omitted]}]
                            (max (long (or (:total history) 0))
                                 (long (reduce + 0 (vals counts)))
-                                (+ (count rows) (long (or (:rows omitted) 0)))))
+                                (+ (operation-count rows) (long (or (:rows omitted) 0)))))
                          sources))
 
             ;; One search reads the whole record, so the band says what it is
@@ -6455,7 +6452,7 @@
             ;; thirty-two out of three hundred calls is not "32 operations":
             ;; the count a reader needs is the one that says there is more.
             summary
-            (let [shown (count activity-rows)]
+            (let [shown (operation-count activity-rows)]
               (cond query (str "showing "
                                shown
                                " operation"

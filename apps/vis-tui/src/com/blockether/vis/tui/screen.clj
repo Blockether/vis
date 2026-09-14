@@ -4299,6 +4299,11 @@
       ;; registry after the turn has outlived its grace window.
       (when (or (:loading? db) (state/any-background-loading? db))
         (state/dispatch [:turn-liveness-tick]))
+      ;; A new transcript snapshot may carry only its first transport page. Finish
+      ;; reading it on workers without requiring the reader to reveal missing rows.
+      (when (or (not (identical? (:messages db) (:messages last-db)))
+                (not (identical? (:progress db) (:progress last-db))))
+        (state/dispatch [:load-activity-history]))
       (when-not (:shutdown? db)
         (let [version
               (long (or (:render-version @state/app-db) 0))
@@ -5653,12 +5658,9 @@
                     (catch Throwable _ (state/dispatch [:older-history-loading sid false])))))))
        (state/reg-fx
          :load-activity-page
-         ;; A press on the rule under an Activity band. The record keeps the WHOLE
-         ;; history of that run, so this asks it for ONE window on a worker — never on
-         ;; the input or the render thread — and hands the result to the store, which
-         ;; swaps it into the band the reader is looking at. A failure leaves the rows
-         ;; in hand and re-arms the same cursor.
-         (fn [sid history-id after revision query]
+         ;; Read one transport page on a worker. Automatic reads accumulate in
+         ;; state; searches retain their explicit window and retry behavior.
+         (fn [sid history-id after revision query & [automatic?]]
            (vis/worker-future
              "tui-load-activity-page"
              (fn []
@@ -5667,11 +5669,14 @@
                                                    {:after after :revision revision :query query})]
                       (if (or (nil? page) (:failed page))
                         (state/dispatch [:activity-page-failed sid history-id after
-                                         (boolean (:stale page)) query])
-                        (state/dispatch [:activity-page-loaded sid history-id page
-                                         {:after after :revision revision :query query}])))
+                                         (boolean (:stale page)) query
+                                         {:revision revision :automatic? automatic?}])
+                        (state/dispatch
+                          [:activity-page-loaded sid history-id page
+                           {:after after :revision revision :query query :automatic? automatic?}])))
                     (catch Throwable _
-                      (state/dispatch [:activity-page-failed sid history-id after false query])))
+                      (state/dispatch [:activity-page-failed sid history-id after false query
+                                       {:revision revision :automatic? automatic?}])))
                (state/dispatch [:bump-render-version])))))
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try

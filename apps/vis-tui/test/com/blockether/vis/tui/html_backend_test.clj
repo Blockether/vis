@@ -148,10 +148,10 @@
                 ts (doto (TerminalScreen. terminal) (.startScreen))]
 
       (let [rows (activity-result-rows)
-            _ (paint-activity-review! hs rows {})
+            _ (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
             band (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
                                 (.current interactions/hit-map)))
-            opened (toggle-review-region {} band)]
+            opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
 
         (is (= 6 (count rows)))
         (let [painted (paint-activity-review! hs rows opened)]
@@ -239,10 +239,10 @@
                   hs (doto (TerminalScreen. html) (.startScreen))
                   ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (paint-activity-review! hs rows {})
+        (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
         (let [band (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
                                   (.current interactions/hit-map)))
-              band-opened (toggle-review-region {} band)
+              band-opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)
               _ (paint-activity-review! hs rows band-opened)
               group (first (filter #(str/ends-with? (str (:node-id %)) "#group")
                                    (.current interactions/hit-map)))
@@ -290,8 +290,9 @@
 
               (let [open-states [code-open? result-open? activity-open?]
                     expansions (reduce (fn [folds [region open?]]
-                                         (if open? (toggle-review-region folds region) folds))
-                                       {}
+                                         (assoc folds
+                                           [(:session-id region) (:node-id region)] open?))
+                                       {:vis.channel-tui/baseline :collapse}
                                        (map vector regions open-states))
                     _ (paint-activity-review! hs rows expansions)
                     _ (paint-activity-review! ts rows expansions)
@@ -422,13 +423,13 @@
                   ts
                   (doto (TerminalScreen. terminal) (.startScreen))]
 
-        (paint-activity-review! hs rows {})
+        (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse})
         (let [band
               (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
                              (.current interactions/hit-map)))
 
               opened-band
-              (toggle-review-region {} band)
+              (toggle-review-region {:vis.channel-tui/baseline :collapse} band)
 
               _
               (paint-activity-review! hs rows opened-band)
@@ -441,7 +442,7 @@
               (toggle-review-region opened-band read-group)
 
               collapsed
-              {}]
+              {:vis.channel-tui/baseline :collapse}]
 
           (is (some? band))
           (is (some? read-group))
@@ -485,8 +486,8 @@
             (is (= (+ 2 (column "Vis")) (column "Inspect files")))
             (doseq [label (if (seq expansions) ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
               (is (= (+ 2 (column "Vis")) (column label))))
-            (is (nil? (column "Read ×3")))
-            (is (nil? (column "Command failed")))
+            (is (= (column "ACTIVITY") (column "Read ×3")))
+            (is (some? (column "Command failed")))
             (is (not-any? #(str/includes? % "│") lines))
             (if (seq expansions)
               (do (is (= (column "CODE") (column "inspect_files()")))
@@ -510,7 +511,7 @@
 
       (paint-activity-review! screen
                               (activity-review-rows "succeeded")
-                              {:vis.channel-tui/expand-all-details? expanded?})
+                              {:vis.channel-tui/baseline (if expanded? :expand :collapse)})
       (let [grid
             (cell-grid terminal cols 50)
 
@@ -904,14 +905,14 @@
               {:history history :vis.channel-tui/fetch fetch}
 
               _
-              (paint-activity-review! hs rows {} extra)
+              (paint-activity-review! hs rows {:vis.channel-tui/baseline :collapse} extra)
 
               band
               (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
                              (.current interactions/hit-map)))
 
               opened
-              (toggle-review-region {} band)]
+              (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
 
           (is (some? band))
           (paint-activity-review! hs rows opened extra)

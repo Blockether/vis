@@ -1526,79 +1526,189 @@
                                                      [:vis.channel-tui/fetch id]
                                                      (cond-> {:status :loading :after cursor}
                                                        (seq query)
-                                                       (assoc :query query))))
-                     :fx [[:load-activity-page (str session-id) id cursor revision query]]}
+                                                       (assoc :query query)
+
+                                                       (not (seq query))
+                                                       (assoc :automatic? true))))
+                     :fx [(cond-> [:load-activity-page (str session-id) id cursor revision query]
+                            (not (seq query))
+                            (conj true))]}
                     {:db db}))))
 
-(reg-event-db :activity-page-loaded
-              ;; One window of the retained record arrived. It REPLACES the projection the
-              ;; band is showing — the same shape, different rows — and clears that
-              ;; history's paging state, so the rule under it names the NEXT window.
-              ;; Height changes, hence the scroll park a disclosure toggle also does.
-              ;;
-              ;; A window is only shown when it is the window that was ASKED for: same
-              ;; record, same cursor, and — when the press continued a revision — the
-              ;; same revision. Anything else is a different history wearing the right
-              ;; shape, so it is refused the way a changed revision is. A reload from
-              ;; the first operation asks WITHOUT a revision, which is how a reader
-              ;; deliberately picks up the record as it is now.
-              (fn [db [_ session-id history-id projection {:keys [after query revision]}]]
-                (let [id
-                      (str history-id)
+(reg-event-fx
+  :load-activity-history
+  ;; Transport pages bound a response, not the operations available in the TUI.
+  ;; Collect each history once even when live and restored traces both contain it.
+  (fn [db _]
+    (let [traces
+          (concat [(get-in db [:progress :iterations])]
+                  (mapcat (fn [message]
+                            [(:traces message) (get-in message [:terminal-pending :trace])])
+                          (:messages db)))
 
-                      cursor
-                      (long (or after 0))
+          activities
+          (keep :activity (mapcat :forms (mapcat identity traces)))
 
-                      history
-                      (:history projection)
+          sid
+          (some-> db
+                  :session
+                  :id
+                  str)
 
-                      requested?
-                      (and (= id (str (:id history)))
-                           (= cursor (long (or (:after history) 0)))
-                           (or (nil? revision)
-                               (= (long revision) (long (or (:revision history) -1)))))]
+          requests
+          (when sid
+            (distinct (keep
+                        (fn [activity]
+                          (let [{:keys [id revision after next-after]}
+                                (:history activity)
 
-                  (cond (not= (str session-id) (str (get-in db [:session :id]))) db
-                        requested? (update-activity-history
-                                     (park-scroll-for-toggle db)
-                                     id
-                                     (fn [activity]
-                                       (let [others
-                                             (dissoc (:vis.channel-tui/fetch activity) id)
+                                fetch
+                                (get-in activity [:vis.channel-tui/fetch (str id)])]
 
-                                             fetch
-                                             (cond-> others
-                                               (seq query)
-                                               (assoc id {:query query}))]
+                            (when (and id (or next-after (pos? (long (or after 0)))) (empty? fetch))
+                              [(str id) (if (pos? (long (or after 0))) 0 next-after) revision])))
+                        activities)))]
 
-                                         (cond-> projection
-                                           (seq fetch)
-                                           (assoc :vis.channel-tui/fetch fetch)))))
-                        :else (update-activity-history db
-                                                       id
-                                                       #(assoc-in %
-                                                          [:vis.channel-tui/fetch id]
-                                                          (cond-> {:status :stale :after cursor}
-                                                            (seq query)
-                                                            (assoc :query query))))))))
+      {:db (reduce (fn [db [id after _]]
+                     (update-activity-history db
+                                              id
+                                              #(assoc-in %
+                                                 [:vis.channel-tui/fetch id]
+                                                 {:status :loading :after after :automatic? true})))
+                   db
+                   requests)
+       :fx (mapv (fn [[id after revision]]
+                   [:load-activity-page sid id after revision nil true])
+                 requests)})))
 
-(reg-event-db :activity-page-failed
-              ;; The window could not be fetched. Keep the rows in hand and say so on the
-              ;; rule itself: the same cursor stays pressable, so a retry costs one press.
-              ;; A `stale?` failure is not a retry — the record changed, so the rule offers
-              ;; the only continuation that cannot lie: read it again from the first window.
-              (fn [db [_ session-id history-id after stale? query]]
-                (let [id (str history-id)]
-                  (if (= (str session-id) (str (get-in db [:session :id])))
-                    (update-activity-history db
-                                             id
-                                             #(assoc-in %
-                                                [:vis.channel-tui/fetch id]
-                                                (cond-> {:status (if stale? :stale :failed)
-                                                         :after (long (or after 0))}
-                                                  (seq query)
-                                                  (assoc :query query))))
-                    db))))
+(defn- current-activity-request?
+  "Whether an automatic reply still belongs to the cursor and revision being read."
+  [activity id cursor revision automatic?]
+  (let [fetch
+        (get-in activity [:vis.channel-tui/fetch id])
+
+        history
+        (:history activity)]
+
+    (or (not automatic?)
+        (and (:automatic? fetch)
+             (= cursor (:after fetch))
+             (or (nil? revision) (= revision (:revision history)))
+             (or (zero? (long cursor)) (= cursor (:next-after history)))))))
+
+(defn- merge-activity-rows
+  "Join transport pages by receipt ID, including synthetic parents spanning pages."
+  [before after]
+  (let [rows
+        (concat before after)
+
+        by-id
+        (group-by :id rows)]
+
+    (mapv (fn [id]
+            (let [parts
+                  (get by-id id)
+
+                  children
+                  (mapcat :children parts)]
+
+              (if (seq children)
+                (let [children
+                      (merge-activity-rows [] children)
+
+                      states
+                      (set (map :state children))]
+
+                  (assoc (first parts)
+                    :children children
+                    :resources (vec (distinct (mapcat :resources parts)))
+                    :duration-ms (reduce + 0 (keep :duration-ms children))
+                    :state (some states ["failed" "running" "cancelled" "succeeded"])))
+                (last parts))))
+          (distinct (map :id rows)))))
+
+(reg-event-db
+  :activity-page-loaded
+  ;; Explicit searches replace their window. Automatic unfiltered reads append
+  ;; to the same revision and cursor, retaining every earlier operation.
+  (fn [db [_ session-id history-id projection {:keys [after query revision automatic?]}]]
+    (let [id
+          (str history-id)
+
+          cursor
+          (long (or after 0))
+
+          history
+          (:history projection)
+
+          requested?
+          (and (= id (str (:id history)))
+               (= cursor (long (or (:after history) 0)))
+               (or (nil? revision) (= (long revision) (long (or (:revision history) -1)))))]
+
+      (cond (not= (str session-id) (str (get-in db [:session :id]))) db
+            requested? (update-activity-history
+                         (cond-> db
+                           (not automatic?)
+                           park-scroll-for-toggle)
+                         id
+                         (fn [activity]
+                           (let [current?
+                                 (current-activity-request? activity id cursor revision automatic?)
+
+                                 others
+                                 (dissoc (:vis.channel-tui/fetch activity) id)
+
+                                 fetch
+                                 (cond-> others
+                                   (seq query)
+                                   (assoc id {:query query}))
+
+                                 loaded
+                                 (cond-> projection
+                                   (and automatic? (pos? cursor))
+                                   (assoc :rows
+                                     (merge-activity-rows (:rows activity) (:rows projection))
+                                     :history
+                                     (assoc history :after 0))
+
+                                   (seq fetch)
+                                   (assoc :vis.channel-tui/fetch fetch))]
+
+                             (if current? loaded activity))))
+            :else (update-activity-history
+                    db
+                    id
+                    (fn [activity]
+                      (if (current-activity-request? activity id cursor revision automatic?)
+                        (assoc-in activity
+                          [:vis.channel-tui/fetch id]
+                          (cond-> {:status :stale :after cursor}
+                            (seq query)
+                            (assoc :query query)))
+                        activity)))))))
+
+(reg-event-db
+  :activity-page-failed
+  ;; The window could not be fetched. Keep the rows in hand and say so on the
+  ;; rule itself: the same cursor stays pressable, so a retry costs one press.
+  ;; A `stale?` failure is not a retry — the record changed, so the rule offers
+  ;; the only continuation that cannot lie: read it again from the first window.
+  (fn [db [_ session-id history-id after stale? query {:keys [revision automatic?]}]]
+    (let [id (str history-id)]
+      (if (= (str session-id) (str (get-in db [:session :id])))
+        (update-activity-history
+          db
+          id
+          (fn [activity]
+            (if (current-activity-request? activity id (long (or after 0)) revision automatic?)
+              (assoc-in activity
+                [:vis.channel-tui/fetch id]
+                (cond-> {:status (if stale? :stale :failed) :after (long (or after 0))}
+                  (seq query)
+                  (assoc :query query)))
+              activity)))
+        db))))
 
 (reg-event-db :collapse-all-details
               ;; C-x [ — collapse EVERY disclosure. Wipe per-node overrides and set the
