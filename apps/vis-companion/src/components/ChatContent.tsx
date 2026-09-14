@@ -3511,12 +3511,12 @@ export const AssistantMessage = memo(function AssistantMessage({
       ref={paintSkip}
     >
       <div
-        className={`mb-1 flex items-center justify-between gap-2 font-mono text-meta font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
+        className={`mb-2 flex min-h-11 items-center justify-between gap-2 font-mono text-meta font-bold mouse:min-h-7 ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}
       >
         <span>{agentName}</span>
         {onFork && (
           // Reserve the action's space; reveal it on answer hover or keyboard focus.
-          <span className="-my-1 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
+          <span className="mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
             <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from here">
               <ForkIcon className="size-3" aria-hidden />
               {isForking ? 'Forking...' : 'Fork from here'}
@@ -3756,11 +3756,13 @@ export const UserMessage = memo(function UserMessage({
   // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
   return (
     <article className="mt-4 w-full">
-      <div className="mb-1 font-mono text-meta font-bold text-you-role">
-        {requestKind === 'council' ? 'Council' : 'You'}
-        {requestKind === 'council' && council && (
-          ` · ${councilKindLabel[council.kind]} · Thread #${council.thread_id}`
-        )}
+      <div className="mb-2 flex min-h-11 items-center font-mono text-meta font-bold text-you-role mouse:min-h-7">
+        <span>
+          {requestKind === 'council' ? 'Council' : 'You'}
+          {requestKind === 'council' &&
+            council &&
+            ` · ${councilKindLabel[council.kind]} · Thread #${council.thread_id}`}
+        </span>
       </div>
       <div
         className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}

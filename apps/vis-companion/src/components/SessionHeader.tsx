@@ -116,7 +116,7 @@ export function SessionHeader({
           )}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))] mouse:gap-1">
+      <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">
         {team}
         <SessionIdChip sessionId={model.sessionId} />
         <ArtifactsChip

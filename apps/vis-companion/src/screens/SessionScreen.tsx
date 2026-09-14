@@ -4513,7 +4513,7 @@ export function SessionScreen({
                 </div>
               )}
 
-              <div className="flex items-end gap-1 p-1">
+              <div className="flex items-end gap-5 p-1.5 mouse:gap-2 mouse:p-1">
                 <ComposerAttachmentPicker
                   accept={(
                     capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']
@@ -4561,7 +4561,7 @@ export function SessionScreen({
                   }
                   aria-autocomplete="list"
                   aria-haspopup="listbox"
-                  className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1.5 mouse:text-meta"
+                  className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:whitespace-nowrap placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1.5 mouse:text-meta"
                   onPaste={handlePaste}
                   onFocus={handleComposerFocus}
                   onSelect={(event) => {

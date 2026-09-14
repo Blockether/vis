@@ -26,6 +26,15 @@ export const Drawing: Story = {
     await userEvent.click(page.getByRole('button', { name: 'Draw on image' }));
     await expect(page.queryByRole('button', { name: 'Draw on image' })).not.toBeInTheDocument();
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+    const rail = page.getByRole('group', { name: 'Drawing tools' });
+    const buttons = within(rail).getAllByRole('button');
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const pitch = pointer ? 36 : 52;
+    for (let index = 1; index < buttons.length; index += 1) {
+      const previous = buttons[index - 1].getBoundingClientRect();
+      const current = buttons[index].getBoundingClientRect();
+      await expect(current.y + current.height / 2 - previous.y - previous.height / 2).toBe(pitch);
+    }
   },
 };
 
@@ -61,6 +70,25 @@ export const ZoomControls: Story = {
       await userEvent.hover(button);
       await assertUnframed();
       await userEvent.unhover(button);
+      if (!matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
+        const box = button.getBoundingClientRect();
+        for (const y of [box.top - 5, box.bottom + 5]) {
+          const hit = button.ownerDocument.elementFromPoint(box.left + box.width / 2, y);
+          await expect(button.contains(hit)).toBe(true);
+        }
+      }
+    }
+    // Invisible reach counts as part of the target, including between toolbar groups.
+    const toolbar = zoomIn.closest('[role="group"]')!.parentElement!;
+    const targets = [...toolbar.querySelectorAll('button')].map((button) => {
+      const box = button.getBoundingClientRect();
+      const reach = getComputedStyle(button, '::after');
+      const width =
+        reach.content === 'none' ? box.width : Math.max(box.width, parseFloat(reach.width));
+      return { left: box.x + (box.width - width) / 2, right: box.x + (box.width + width) / 2 };
+    });
+    for (let index = 1; index < targets.length; index += 1) {
+      await expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(8);
     }
     const reset = page.getByRole('button', { name: 'Reset zoom' });
     await userEvent.click(zoomIn);
@@ -71,4 +99,14 @@ export const ZoomControls: Story = {
     await userEvent.click(reset);
     await expect(reset).toHaveTextContent('100%');
   },
+};
+
+export const DrawingPointer: Story = {
+  ...Drawing,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+export const ZoomControlsPointer: Story = {
+  ...ZoomControls,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };

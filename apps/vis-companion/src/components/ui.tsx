@@ -296,7 +296,7 @@ export const Chip = forwardRef<
       ref={ref}
       type="button"
       aria-pressed={isOn}
-      className={`inline-flex min-h-7 shrink-0 items-center justify-center gap-1.5 border px-2 font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none mouse:min-h-6 ${
+      className={`relative inline-flex min-h-8 min-w-11 shrink-0 items-center justify-center gap-1.5 border px-2 font-mono text-ui font-bold transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:text-meta mouse:after:content-none ${
         isOn
           ? 'border-accent bg-accent text-accent-foreground'
           : 'border-edge-strong bg-transparent text-dialog-hint hover:bg-hover'
@@ -390,11 +390,8 @@ export function CopyChip({
   /** Hover text, when there is more to say than the label — the full id. */
   title?: string;
   /**
-   * `compact` is a SCREEN HEADER's rhythm — the one `Button` already spells: a 32px
-   * face on touch, 24px under a pointer, and Apple's 44px target restored as invisible
-   * slop rather than as paint. The default belongs to a CARD's own band, which is 32px
-   * tall and centres a 24px chip, so a chip that grew there would stack padding on top
-   * of its own height.
+   * Both contexts share the 32px touch / 28px pointer face and 44px touch reach.
+   * `compact` joins screen-header chrome; the default labels a value on a card.
    */
   density?: 'default' | 'compact';
   /** Execution-band copy: fixed trailing inset, with touch reach into the outer gutter. */
@@ -461,10 +458,10 @@ export function CopyChip({
   // word's worth of air open beside the control next to it.
   const face =
     density === 'compact'
-      ? `relative h-8 min-w-8 border-transparent bg-transparent text-ui after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-w-6 mouse:text-meta mouse:after:content-none sm:min-w-[6ch] ${
+      ? `min-w-11 border-transparent bg-transparent mouse:min-w-7 sm:min-w-[6ch] ${
           isCopied ? 'text-ok' : 'text-white'
         }`
-      : `h-6 min-w-[6ch] bg-button text-chip ${
+      : `min-w-[6ch] bg-button ${
           isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
         }`;
   return (
@@ -473,7 +470,7 @@ export function CopyChip({
       onClick={copy}
       aria-label={label}
       title={title ?? label}
-      className={`group inline-flex items-center justify-center gap-1 rounded-control border px-2 text-center font-mono transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${face} ${className}`}
+      className={`group relative inline-flex h-8 items-center justify-center gap-1 rounded-control border px-2 text-center font-mono text-ui transition-colors duration-150 after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${face} ${className}`}
     >
       {isCopied ? (
         <CheckIcon className="size-3 text-ok" />
@@ -1119,7 +1116,7 @@ export function MetaButton({
       type="button"
       disabled={disabled}
       {...press}
-      className={`inline-flex items-center gap-1 px-1 py-1 text-left font-mono text-chip font-semibold uppercase tracking-[0.08em] transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none ${
+      className={`relative inline-flex min-h-8 min-w-11 items-center gap-1 px-1 py-1 text-left font-mono text-ui font-semibold uppercase tracking-[0.08em] transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 mouse:min-w-7 mouse:text-meta mouse:after:content-none ${
         isPicker
           ? 'text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 hover:decoration-accent'
           : 'text-dialog-hint'
@@ -1694,15 +1691,19 @@ export const Input = forwardRef<
   );
 });
 
-/** Native closed choices shared by machine settings and project workflows. */
+/** Native choices keep a full touch target inside the same visible face as Input. */
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
   function Select({ className = '', ...props }, ref) {
     return (
-      <select
-        ref={ref}
-        className={`min-h-11 min-w-0 max-w-full appearance-auto rounded-control border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted mouse:min-h-7 ${className}`}
-        {...props}
-      />
+      <span
+        className={`inline-flex h-8 min-w-0 max-w-full items-center self-center rounded-control border border-edge bg-input focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 mouse:h-7 ${className}`}
+      >
+        <select
+          ref={ref}
+          className="relative h-11 min-w-0 max-w-full flex-1 appearance-auto border-0 bg-transparent px-2.5 py-1 font-mono text-ui text-white focus:outline-none disabled:cursor-not-allowed disabled:text-muted mouse:h-7"
+          {...props}
+        />
+      </span>
     );
   },
 );

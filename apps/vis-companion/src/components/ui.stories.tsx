@@ -362,6 +362,28 @@ export const Chips: Story = {
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    const icon = canvas.getByRole('button', { name: 'Copy code' });
+    await icon.ownerDocument.fonts.ready;
+    const height = icon.getBoundingClientRect().height;
+    for (const button of [
+      canvas.getByRole('button', { name: 'All' }),
+      canvas.getByRole('button', { name: 'Running' }),
+      ...canvas.getAllByRole('button', { name: 'Copy session id' }),
+    ]) {
+      await expect(button.getBoundingClientRect().height).toBe(height);
+      if (!matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
+        await expect(parseFloat(getComputedStyle(button, '::after').height)).toBeGreaterThanOrEqual(
+          44,
+        );
+      }
+    }
+  },
+};
+
+export const ChipsPointer: Story = {
+  ...Chips,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 function SwitchDemo() {
@@ -639,6 +661,12 @@ export const Composer: Story = {
           }
         }
       }
+    }
+    for (const name of ['claude-opus-5', 'high']) {
+      const button = canvas.getByRole('button', { name });
+      await expect(button.getBoundingClientRect().height).toBe(
+        canvas.getByRole('button', { name: 'Attach' }).getBoundingClientRect().height,
+      );
     }
   },
 };
@@ -1157,11 +1185,13 @@ export const ClosedChoices: Story = {
   render: () => (
     <Sheet>
       <Group of="Select — review mode">
+        <Input aria-label="Review name" defaultValue="Companion" className="min-w-0 flex-1" />
         <Select aria-label="Review mode" defaultValue="human">
           <option value="off">Off</option>
           <option value="human">Governed by human</option>
           <option value="automatic">Automatic</option>
         </Select>
+        <Button variant="secondary">Save review</Button>
       </Group>
       <Group of="Select — saving">
         <Select aria-label="Saving review mode" defaultValue="human" disabled aria-busy="true">
@@ -1172,6 +1202,13 @@ export const ClosedChoices: Story = {
   ),
   play: async ({ canvas }) => {
     const mode = canvas.getByRole('combobox', { name: 'Review mode' });
+    const field = canvas.getByRole('textbox', { name: 'Review name' }).getBoundingClientRect();
+    const action = canvas.getByRole('button', { name: 'Save review' }).getBoundingClientRect();
+    const face = mode.parentElement!.getBoundingClientRect();
+    await expect(face.height).toBe(field.height);
+    await expect(face.top).toBe(field.top);
+    await expect(action.height).toBe(field.height);
+    await expect(action.top).toBe(field.top);
     await userEvent.selectOptions(mode, 'automatic');
     await expect(mode).toHaveValue('automatic');
     await expect(canvas.getByRole('combobox', { name: 'Saving review mode' })).toBeDisabled();

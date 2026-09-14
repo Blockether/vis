@@ -728,8 +728,12 @@ export function ImageViewer({
       </div>
 
       <div className="absolute inset-x-0 bottom-0 z-20 border-t border-dialog-edge bg-panel pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2">
-        <div className="mx-auto flex max-w-[1400px] items-center gap-2 overflow-x-auto overscroll-x-contain pb-1">
-          <div className="flex shrink-0 items-center gap-2" role="group" aria-label="Zoom controls">
+        <div className="mx-auto flex max-w-[1400px] items-center gap-5 overflow-x-auto overscroll-x-contain p-1.5 mouse:gap-2 mouse:p-0 mouse:pb-1">
+          <div
+            className="flex shrink-0 items-center gap-3.5 mouse:gap-2"
+            role="group"
+            aria-label="Zoom controls"
+          >
             <IconButton
               variant="secondary"
               onClick={() => zoomBy(1 / 1.35)}
@@ -829,7 +833,7 @@ export function ImageViewer({
             </Button>
           )}
 
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-5 mouse:gap-2">
             <IconButton
               variant="secondary"
               label="Copy image"

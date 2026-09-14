@@ -659,7 +659,7 @@ function FilterStrip({
         role="group"
         aria-label="Filter artifacts by kind"
         tabIndex={0}
-        className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1.5"
+        className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1.5"
       >
         {ARTIFACT_FILTERS.map((filter) => {
           const count = list.filter((entry) => filter.kinds.includes(entry.kind)).length;
@@ -1126,7 +1126,7 @@ export function ArtifactsChip({
       aria-controls={controls}
       aria-label={label}
       title={label}
-      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent px-2 font-mono text-ui font-bold transition-colors duration-150 hover:bg-hover after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:underline focus-visible:underline-offset-4 focus-visible:outline-none motion-reduce:transition-none mouse:h-6 mouse:text-meta mouse:after:content-none ${tone}`}
+      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent px-2 font-mono text-ui font-bold transition-colors duration-150 hover:bg-hover after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:underline focus-visible:underline-offset-4 focus-visible:outline-none motion-reduce:transition-none mouse:h-7 mouse:text-meta mouse:after:content-none ${tone}`}
     >
       <ClipIcon className="size-3" />
       <span aria-hidden="true" className="hidden sm:inline">

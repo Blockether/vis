@@ -536,7 +536,7 @@ export function ManageProjectsSheet({
                         type="button"
                         disabled={isHere}
                         aria-current={isHere ? 'location' : undefined}
-                        className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-6 ${
+                        className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 ${
                           isHere
                             ? 'font-bold text-white'
                             : 'text-accent-ink hover:bg-hover focus-visible:bg-hover'

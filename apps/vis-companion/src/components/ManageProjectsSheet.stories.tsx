@@ -89,3 +89,37 @@ export const DeleteConfirmation: Story = {
     await expect(page.getByRole('button', { name: 'Yes, delete' })).toBeVisible();
   },
 };
+
+/** Breadcrumbs keep the platform's target height without growing their path band. */
+export const Browsing: Story = {
+  args: {
+    isAdding: true,
+    startAt: '/home/developer/work/vis/src',
+    client: new Proxy(STORY_INERT_CLIENT, {
+      get(target, key) {
+        if (key !== 'browse') return Reflect.get(target, key);
+        return async () => ({
+          path: '/home/developer/work/vis',
+          parent: '/home/developer/work',
+          home: '/home/developer',
+          is_truncated: false,
+          entries: [],
+        });
+      },
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await page.findByRole('button', { name: 'vis' });
+    const minimum = matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44;
+    for (const name of ['~', 'work', 'vis']) {
+      const crumb = page.getByRole('button', { name });
+      await expect(crumb.getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+    }
+  },
+};
+
+export const BrowsingPointer: Story = {
+  ...Browsing,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};

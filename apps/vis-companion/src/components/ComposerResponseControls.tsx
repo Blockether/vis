@@ -35,15 +35,15 @@ export function ComposerResponseControls({
   controls: ComposerResponseControlsModel;
 }) {
   return (
-    <div className="flex w-full items-center gap-2.5 pt-1">
+    <div className="flex w-full items-center gap-2.5 pt-3.5 mouse:pt-2">
       <MetaButton
         isPicker
-        className="min-w-0 shrink truncate"
+        className="min-w-0 shrink"
         onClick={controls.model.choose}
         aria-label="Change provider and model"
         title={controls.model.title}
       >
-        {controls.model.value}
+        <span className="truncate">{controls.model.value}</span>
       </MetaButton>
 
       {controls.reasoning && (

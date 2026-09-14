@@ -199,11 +199,11 @@ describe('the artifacts chip', () => {
   // rhythm now — and they are still measured against each other, never against a number.
   it('is exactly the chip the session id beside it is', () => {
     const html = renderToStaticMarkup(<ArtifactsChip count={3} open onToggle={() => {}} />);
-    expect(sessionIdChipBox()).toEqual(['h-8', 'mouse:h-6']);
+    expect(sessionIdChipBox()).toEqual(['h-8', 'mouse:h-7']);
     for (const box of sessionIdChipBox()) {
       expect(buttonClasses(html)).toContain(box);
     }
-    // A 32px face on touch, 24px under a pointer, and Apple's 44px target arriving as
+    // A 32px face on touch, 28px under a pointer, and Apple's 44px target arriving as
     // invisible slop — never as a taller painted box to fall back out of.
     for (const slop of ['after:absolute', 'after:-top-1.5', 'after:-bottom-1.5']) {
       expect(buttonClasses(html)).toContain(slop);

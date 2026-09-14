@@ -377,12 +377,19 @@ async function expectForkAlignment(answer: HTMLElement) {
   const action = canvas.getByRole('button', { name: 'Fork from here' }).getBoundingClientRect();
   // Regression: the icon-led action must share the role label's vertical center.
   await expect(action.top + action.height / 2).toBeCloseTo(role.top + role.height / 2, 0);
+  const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+  await expect(action.height).toBe(pointer ? 28 : 32);
+  const reach = pointer ? 0 : 6;
+  // Reserve the full action target above the first prose or execution control.
+  await expect(
+    answer.children[1].getBoundingClientRect().top - action.bottom - reach,
+  ).toBeGreaterThanOrEqual(8);
 }
 
 async function expectRoleSpacing(canvasElement: HTMLElement) {
   const canvas = within(canvasElement);
   const userRole = canvas.getByText('You', { exact: true });
-  const userBody = userRole.nextElementSibling!;
+  const userBody = userRole.closest('article')!.children[1];
   const userGap = userBody.getBoundingClientRect().top - userRole.getBoundingClientRect().bottom;
   // Regression: every answer starts at the same distance below its role as a request.
   for (const role of canvas.getAllByText('Vis', { exact: true })) {
@@ -443,12 +450,27 @@ export const Exchange: Story = {
       }),
     ).toBeNull();
     await userEvent.hover(answer);
-    await expect(fork).toBeVisible();
+    await waitFor(() => expect(fork).toBeVisible());
     await expectForkAlignment(answer);
     await expectRoleSpacing(canvasElement);
     forkFromAnswer.mockClear();
     await userEvent.click(fork);
     await expect(forkFromAnswer).toHaveBeenCalledOnce();
+  },
+};
+
+export const ExchangePointer: Story = {
+  ...Exchange,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const answer = canvas.getByText('Vis', { exact: true }).closest('article')!;
+    const fork = within(answer).getByRole('button', { name: 'Fork from here' });
+    fork.focus();
+    await expect(fork).toHaveFocus();
+    await waitFor(() => expect(fork).toBeVisible());
+    await expectForkAlignment(answer);
+    await expectRoleSpacing(canvasElement);
   },
 };
 

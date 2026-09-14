@@ -26,6 +26,25 @@ export const Files: Story = {
   args: { onClose: close },
   play: async ({ args, canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
+    const filters = page.getByRole('group', { name: 'Filter artifacts by kind' });
+    const buttons = within(filters).getAllByRole('button');
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    for (const [index, button] of buttons.entries()) {
+      const box = button.getBoundingClientRect();
+      await expect(box.height).toBe(pointer ? 28 : 32);
+      if (index) {
+        await expect(
+          box.left - buttons[index - 1].getBoundingClientRect().right,
+        ).toBeGreaterThanOrEqual(8);
+      }
+      if (!pointer && box.right <= filters.getBoundingClientRect().right) {
+        for (const y of [box.top - 5, box.bottom + 5]) {
+          await expect(
+            button.contains(button.ownerDocument.elementFromPoint(box.left + box.width / 2, y)),
+          ).toBe(true);
+        }
+      }
+    }
     await userEvent.click(page.getByRole('button', { name: 'Close artifacts' }));
     await expect(args.onClose).toHaveBeenCalledOnce();
   },

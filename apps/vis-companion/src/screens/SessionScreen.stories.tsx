@@ -7,6 +7,8 @@ import {
   STORY_COMPOSER_SUBSCRIPTIONS as subscriptions,
 } from '../dev/story-data';
 import { draftMessageKey, hydrateDraftMessages, writeDraftMessage } from '../lib/draft-messages';
+import type { RunningTurn } from '../lib/running-turn';
+import type { GatewayCapabilities } from '../lib/types';
 import { SessionScreen } from './SessionScreen';
 
 const meta = {
@@ -59,4 +61,127 @@ export const ComposerInput: Story = {
     await userEvent.type(composer, text);
     await expect(composer).toHaveValue(text);
   },
+};
+
+/** The input and bare actions share one line, without overlapping touch targets. */
+export const ComposerHeights: Story = {
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const composer = await page.findByRole('textbox', { name: 'Message Vis' });
+    await composer.ownerDocument.fonts.ready;
+    const attach = page.getByRole('button', { name: 'Choose photos, clips, recordings or files' });
+    const send = page.getByRole('button', { name: 'Send message' });
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const height = pointer ? 28 : 32;
+    const input = composer.getBoundingClientRect();
+    for (const button of [attach, send]) {
+      const box = button.getBoundingClientRect();
+      await expect(box.height).toBe(height);
+      await expect(box.top).toBe(input.top);
+      await expect(box.bottom).toBe(input.bottom);
+    }
+    const reach = pointer ? 0 : 6;
+    await expect(input.left - attach.getBoundingClientRect().right - reach).toBeGreaterThanOrEqual(
+      8,
+    );
+
+    await userEvent.type(
+      composer,
+      'First line{Shift>}{Enter}{/Shift}Second line{Shift>}{Enter}{/Shift}Third line',
+    );
+    await expect(composer.getBoundingClientRect().height).toBeGreaterThan(height);
+    for (const button of [attach, send]) {
+      await expect(button.getBoundingClientRect().bottom).toBe(
+        composer.getBoundingClientRect().bottom,
+      );
+    }
+    await userEvent.clear(composer);
+    await expect(composer.getBoundingClientRect().height).toBe(height);
+  },
+};
+
+export const ComposerHeightsPointer: Story = {
+  ...ComposerHeights,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+const runningTurn: RunningTurn = {
+  id: 'composer-running-turn',
+  request: 'Check the control heights.',
+  answer: '',
+  iterations: [],
+  startedAt: Date.now(),
+  status: 'running',
+};
+const runningSession = {
+  ...session,
+  status: 'running' as const,
+  live: true,
+  current_turn_id: runningTurn.id,
+};
+const voiceCapabilities: GatewayCapabilities = {
+  version: 1,
+  features: {
+    chat: { enabled: true },
+    attachments: {
+      enabled: true,
+      transport: 'inline-base64',
+      media_types: ['image/png'],
+      max_files: 8,
+      max_file_bytes: 8 * 1024 * 1024,
+    },
+    voice: {
+      enabled: true,
+      transport: 'audio/wav',
+      transcription: 'gateway-local',
+      model: { status: 'ready' },
+    },
+  },
+};
+const runningClient = new Proxy(client, {
+  get(target, key) {
+    if (key === 'cachedSession') return () => runningSession;
+    if (key === 'session') return async () => runningSession;
+    if (key === 'cachedRunningTurn') return () => ({ turn: runningTurn, seq: 1 });
+    if (key === 'cachedCapabilities') return () => voiceCapabilities;
+    if (key === 'capabilities') return async () => voiceCapabilities;
+    if (key === 'voiceModel') return async () => voiceCapabilities.features.voice.model;
+    return Reflect.get(target, key);
+  },
+});
+
+/** The full row still fits while voice and cancellation are both available. */
+export const RunningComposerHeights: Story = {
+  args: { client: runningClient },
+  play: async ({ canvasElement }) => {
+    const composer = await within(canvasElement).findByRole('textbox', { name: 'Message Vis' });
+    await composer.ownerDocument.fonts.ready;
+    await expect(composer).toHaveAttribute('placeholder', 'Message Vis — queues next');
+    const row = composer.parentElement!;
+    const buttons = within(row).getAllByRole('button');
+    await expect(buttons).toHaveLength(4);
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const input = composer.getBoundingClientRect();
+    // A long placeholder must not paint a clipped second line in an empty one-line field.
+    await expect(composer.scrollHeight).toBe(input.height);
+    for (const button of buttons) {
+      const box = button.getBoundingClientRect();
+      await expect(box.height).toBe(pointer ? 28 : 32);
+      await expect(box.top).toBe(input.top);
+      await expect(box.bottom).toBe(input.bottom);
+    }
+    const targets = [...row.querySelectorAll('button, textarea')].map((element) => {
+      const box = element.getBoundingClientRect();
+      const reach = !pointer && element.tagName === 'BUTTON' ? 6 : 0;
+      return { left: box.left - reach, right: box.right + reach };
+    });
+    for (let index = 1; index < targets.length; index += 1) {
+      await expect(targets[index].left - targets[index - 1].right).toBeGreaterThanOrEqual(8);
+    }
+  },
+};
+
+export const RunningComposerHeightsPointer: Story = {
+  ...RunningComposerHeights,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
