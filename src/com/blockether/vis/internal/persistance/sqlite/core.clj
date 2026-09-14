@@ -74,13 +74,17 @@
 
 (defonce ^:private sqlite-write-lock (Object.))
 
+(defn- query-sql!
+  [db-info statement]
+  ;; Shared-cache memory stores cannot overlap a table reader with a writer.
+  ;; WAL-backed files retain concurrent reads; both paths use the existing writer boundary.
+  (let [run #(jdbc/execute! (ds db-info) statement {:builder-fn rs/as-unqualified-lower-maps})]
+    (if (= :memory (:mode db-info)) (locking sqlite-write-lock (run)) (run))))
+
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
   [db-info q]
-  ;; Shared-cache memory stores cannot overlap a table reader with a writer.
-  ;; WAL-backed files retain concurrent reads; both paths use the existing writer boundary.
-  (let [run #(jdbc/execute! (ds db-info) (sql/format q) {:builder-fn rs/as-unqualified-lower-maps})]
-    (if (= :memory (:mode db-info)) (locking sqlite-write-lock (run)) (run))))
+  (query-sql! db-info (sql/format q)))
 
 (defn query-one! [db-info q] (first (query! db-info q)))
 
@@ -3220,7 +3224,7 @@
             [(str
                "SELECT id, session_turn_soul_id, session_turn_iteration_id, "
                "tool_call_id, position, kind, media_type, filename, view_id, live_invocation_id, live_activity_id, "
-               "version, audience, commentable, storage_uri, size_bytes, transcription, "
+               "version, audience, storage_uri, size_bytes, transcription, "
                "CASE WHEN bytes IS NULL THEN 0 ELSE 1 END AS has_bytes "
                "FROM session_attachment WHERE session_turn_iteration_id IN ("
                (str/join "," (repeat (count ids) "?"))
