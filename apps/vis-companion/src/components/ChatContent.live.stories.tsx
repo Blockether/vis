@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import { IterationTrace } from './ChatContent';
 import type { ActivityProjection } from '../lib/activity';
-import type { GatewayClient } from '../lib/gateway';
+import { STORY_INERT_CLIENT } from '../dev/story-data';
 import type { LiveView } from '../lib/live-view';
 
 const activity: ActivityProjection = {
@@ -49,7 +49,22 @@ const view: LiveView = {
     },
   ],
 };
+const savedView: LiveView = {
+  ...view,
+  nodes: [{ id: 'status', type: 'status', text: 'Integration tests passed', tone: 'ok' }],
+};
+const savedRecord = [
+  JSON.stringify({ kind: 'open', view }),
+  JSON.stringify({
+    kind: 'close',
+    result: { reason: 'completed', is_completed: true, view: savedView },
+  }),
+].join('\n');
 const client = {
+  retainAttachment: fn(() => () => {}),
+  attachmentUrl: fn(
+    async () => `data:application/vnd.vis.live+ndjson,${encodeURIComponent(savedRecord)}`,
+  ),
   viewAction: fn(async () => ({ is_accepted: true })),
   liveViewLog: fn(async () => ({
     node_id: 'log',
@@ -57,7 +72,7 @@ const client = {
     total: 2,
     lines: ['Compile completed', 'Integration tests running'],
   })),
-} as unknown as GatewayClient;
+} as unknown as typeof STORY_INERT_CLIENT;
 const meta = {
   title: 'Transcript/Activity live views',
   component: IterationTrace,
@@ -98,6 +113,15 @@ export const Running: Story = {
       controls.getByRole('textbox', { name: 'Why are you stopping Jenkins build pool?' }),
     ).toBeInTheDocument();
     await userEvent.click(controls.getByRole('button', { name: 'Keep watching' }));
+    const launch = controls.getByRole('button', {
+      name: 'Open run Jenkins build pool',
+    });
+    await expect(launch).not.toHaveAttribute('aria-expanded');
+    await expect(launch.querySelector('svg')).toBeNull();
+    await userEvent.click(launch);
+    const page = within(document.body);
+    await userEvent.click(page.getByRole('button', { name: 'Close Jenkins build pool' }));
+    await expect(title).toBeVisible();
   },
 };
 export const Unmatched: Story = { args: { liveViews: [{ ...view, owner: undefined }] } };
@@ -139,5 +163,11 @@ export const Settled: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
     await expect(run).toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(run);
+    const page = within(document.body);
+    await expect(await page.findByText('Integration tests passed')).toBeVisible();
+    await expect(page.queryByRole('button', { name: 'Interrupt' })).toBeNull();
+    await userEvent.click(page.getByRole('button', { name: 'Close Jenkins build pool' }));
+    await expect(run).toBeVisible();
   },
 };

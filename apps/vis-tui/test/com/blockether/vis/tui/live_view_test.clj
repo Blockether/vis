@@ -1195,8 +1195,8 @@
                    (is (= "art-1" (:artifact-id (:settled p)))
                        "the pane knows the artifact it was filed as"))
                  (state/dispatch [:live-view-reopen "view-1"])
-                 (is (not (lv/dormant? (first (:live-views @state/app-db)))))
-                 (state/dispatch [:live-view-reopen "view-1"])
+                 (is (= "view-1" (:live-viewer-id @state/app-db)))
+                 (state/dispatch [:live-viewer-close])
                  (is (lv/dormant? (first (:live-views @state/app-db))))))))
   ;; Regression, Vis session a64d44c2-8228-455f-926e-b3381f19a93b: run rows
   ;; were filed without their executing-form position and their disclosure stayed
@@ -1230,11 +1230,11 @@
           (is (not-any? :anchor runs) "opening a view must not guess its current form")
           (is (= [:completed :failed] (mapv :reason runs))))
         (state/dispatch [:live-view-reopen "a"])
-        (is (true? (get-in @state/app-db [:messages 1 :runs 0 :is-reopened]))
-            "opening the record flips the transcript disclosure open")
-        (state/dispatch [:live-view-reopen "a"])
-        (is (false? (get-in @state/app-db [:messages 1 :runs 0 :is-reopened]))
-            "pressing it again collapses both record and disclosure"))))
+        (is (= "a" (:live-viewer-id @state/app-db)))
+        (is (not (get-in @state/app-db [:messages 1 :runs 0 :is-reopened])))
+        (state/dispatch [:live-viewer-close])
+        (is (nil? (:live-viewer-id @state/app-db)))
+        (is (not (get-in @state/app-db [:messages 1 :runs 0 :is-reopened]))))))
   ;; The proof a person can LOOK at: one run finished and gone from the band, the
   ;; one still going painting in full.
   (testing "a real PNG of the band a finished run has already left"

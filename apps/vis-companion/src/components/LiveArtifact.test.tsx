@@ -344,7 +344,10 @@ describe('the settled run in the transcript', () => {
     );
     const { client: c, attachmentUrl } = rowClient();
     render(<LiveRunRow client={c} sid="s1" attachment={record()} embedded={embedded} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open run release' }));
+    const launch = screen.getByRole('button', { name: 'Open run release' });
+    expect(launch).not.toHaveAttribute('aria-expanded');
+    expect(launch.querySelector('svg')).toBeNull();
+    fireEvent.click(launch);
     await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeTruthy());
     expect(attachmentUrl).toHaveBeenCalledWith('s1', 'it-1', 2);
     // The band REPORTS the verdict; the run is over, so it is what it took, not

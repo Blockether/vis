@@ -106,6 +106,7 @@ import {
   NotifyConnectionSwitch,
   OptionRow,
   Disclosure,
+  ExecutionAction,
   SettingsDisclosure,
   Switch,
   TextButton,
@@ -2018,6 +2019,30 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
 
     it('marks the selected one with the amber edge, framed or not', () => {
       expect(first(html({ isFramed: true, isSelected: true }))).toContain('border-accent');
+    });
+  });
+
+  // Regression #222: RUN launches a viewer, never a disclosure or form submission.
+  describe('ExecutionAction', () => {
+    const html = renderToStaticMarkup(
+      <ExecutionAction aria-label="Open run Build pool">
+        <BandLabel>RUN</BandLabel>
+        <span>Build pool</span>
+      </ExecutionAction>,
+    );
+
+    it('provides a named button without disclosure state or a chevron', () => {
+      expect(html).toContain('type="button"');
+      expect(html).toContain('aria-label="Open run Build pool"');
+      expect(html).not.toContain('aria-expanded');
+      expect(html).not.toContain('data-disclosure-toggle');
+      expect(html).not.toContain('<svg');
+    });
+
+    it('shares the execution edge and keeps touch and pointer targets', () => {
+      expect(first(html)).toEqual(expect.arrayContaining(['w-full', 'min-h-11', 'mouse:min-h-7']));
+      expect(first(html).some((token) => /^(?:px-|pl-|border|bg-)/.test(token))).toBe(false);
+      expect(first(html)).toContain('focus-visible:ring-2');
     });
   });
 

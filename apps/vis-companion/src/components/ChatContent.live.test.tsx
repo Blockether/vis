@@ -17,6 +17,47 @@ it('lets the execution group supply the frame and background', () => {
   expect(panel?.querySelector('header')).not.toHaveClass('bg-panel-2');
 });
 
+// Regression #222: opening watches the current projection, and dismissal never interrupts it.
+it('updates an open live screen and keeps the inline preview when closed or escaped', () => {
+  const onInterrupt = vi.fn();
+  const view = {
+    ...STORY_LIVE_VIEW,
+    nodes: [{ id: 'status', type: 'status' as const, text: 'Building', tone: 'running' as const }],
+  };
+  const mounted = render(<LiveViewPanel view={view} embedded onInterrupt={onInterrupt} />);
+  fireEvent.click(mounted.getByRole('button', { name: `Open run ${view.title}` }));
+  expect(mounted.getAllByText('Building')).toHaveLength(2);
+  const updated = { ...view, nodes: [{ ...view.nodes[0], text: 'Testing' }] };
+  mounted.rerender(<LiveViewPanel view={updated} embedded onInterrupt={onInterrupt} />);
+  expect(mounted.queryByText('Building')).toBeNull();
+  expect(mounted.getAllByText('Testing')).toHaveLength(2);
+  fireEvent.click(mounted.getByRole('button', { name: `Close ${view.title}` }));
+  expect(mounted.getAllByText('Testing')).toHaveLength(1);
+  fireEvent.click(mounted.getByRole('button', { name: `Open run ${view.title}` }));
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(mounted.queryByRole('button', { name: `Close ${view.title}` })).toBeNull();
+  expect(mounted.getByText('Testing')).toBeVisible();
+  expect(onInterrupt).not.toHaveBeenCalled();
+  fireEvent.click(mounted.getByRole('button', { name: `Open run ${view.title}` }));
+  mounted.unmount();
+  expect(mounted.queryByRole('button', { name: `Close ${view.title}` })).toBeNull();
+  expect(onInterrupt).not.toHaveBeenCalled();
+});
+
+it('preserves the explicit interrupt action inside an opened live screen', () => {
+  const onInterrupt = vi.fn();
+  const mounted = render(
+    <LiveViewPanel view={STORY_LIVE_VIEW} embedded onInterrupt={onInterrupt} />,
+  );
+  fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
+  fireEvent.click(mounted.getAllByRole('button', { name: 'Interrupt' }).at(-1)!);
+  fireEvent.change(mounted.getByRole('textbox', { name: 'Why are you stopping Fleet scan?' }), {
+    target: { value: 'Wrong pool' },
+  });
+  fireEvent.click(mounted.getAllByRole('button', { name: 'Interrupt' }).at(-1)!);
+  expect(onInterrupt).toHaveBeenCalledExactlyOnceWith('Wrong pool');
+});
+
 // Regression #222: explicit ownership survives bounded Activity windows.
 it('moves a live view beside its exact Activity when the owner arrives', () => {
   const activity = activityHistoryPage();
@@ -107,6 +148,9 @@ it('replaces the live view with one retained run receipt beside the same Activit
       liveViews={[{ ...STORY_LIVE_VIEW, owner }]}
     />,
   );
+  // Regression #222: settlement removes the optional live screen, not just its row.
+  fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
+  expect(mounted.getByRole('button', { name: `Close ${STORY_LIVE_VIEW.title}` })).toBeVisible();
   mounted.rerender(
     <IterationTrace
       {...props}
@@ -127,6 +171,8 @@ it('replaces the live view with one retained run receipt beside the same Activit
       liveViews={[]}
     />,
   );
+  expect(mounted.queryByRole('button', { name: `Close ${STORY_LIVE_VIEW.title}` })).toBeNull();
+  expect(mounted.queryByRole('button', { name: 'Interrupt' })).toBeNull();
   expect(mounted.queryByText(STORY_LIVE_VIEW.title)).toBeNull();
   const receipts = mounted.getAllByRole('button', { name: 'Open run Monitor' });
   expect(receipts).toHaveLength(1);
@@ -244,7 +290,7 @@ it.each(['hidden', 'ramped'])(
 );
 
 // Regression #222: association must not add hierarchy or another horizontal inset.
-it('renders RUN beside Activity and preserves independent disclosures', () => {
+it('renders RUN beside Activity and opens it without folding the preview', () => {
   const activity = activityHistoryPage();
   const mounted = render(
     <IterationTrace
@@ -269,11 +315,19 @@ it('renders RUN beside Activity and preserves independent disclosures', () => {
   fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
   expect(mounted.getByText(STORY_LIVE_VIEW.title)).toBeVisible();
-  fireEvent.click(mounted.getByRole('button', { name: `Collapse run ${STORY_LIVE_VIEW.title}` }));
-  expect(mounted.getByRole('button', { name: 'Expand Activity' })).toBeVisible();
-  expect(
-    mounted.getByRole('button', { name: `Expand run ${STORY_LIVE_VIEW.title}` }),
-  ).toBeVisible();
+  const launch = mounted.getByRole('button', {
+    name: `Open run ${STORY_LIVE_VIEW.title}`,
+  });
+  expect(launch).not.toHaveAttribute('aria-expanded');
+  expect(launch.querySelector('svg')).toBeNull();
+  fireEvent.click(launch);
+  const close = mounted.getByRole('button', {
+    name: `Close ${STORY_LIVE_VIEW.title}`,
+  });
+  expect(close).toBeVisible();
+  fireEvent.click(close);
+  expect(mounted.queryByRole('button', { name: `Close ${STORY_LIVE_VIEW.title}` })).toBeNull();
+  expect(mounted.getByText(STORY_LIVE_VIEW.title)).toBeVisible();
 });
 
 // Regression #222: one execution may own several independent RUN sections.

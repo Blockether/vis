@@ -25,8 +25,7 @@ import { liveRecordFromText, type LiveRecord } from '../lib/live-view';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import type { IterationAttachment } from '../lib/types';
 import { LiveViewPanel } from './LiveView';
-import { ChevronIcon } from './icons';
-import { BandLabel, Disclosure, ListRow, overlayLayer, OverlayScreen } from './ui';
+import { BandLabel, ExecutionAction, ListRow, overlayLayer, OverlayScreen } from './ui';
 
 /** Under this, the whole record is folded patch by patch — the honest replay. */
 export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
@@ -248,11 +247,11 @@ export const LiveRunRow = memo(function LiveRunRow({
   return (
     <>
       {embedded ? (
-        <Disclosure tone="execution" isOpen={opened} onClick={open} aria-label={`Open run ${name}`}>
+        <ExecutionAction onClick={open} aria-label={`Open run ${name}`}>
           <BandLabel>RUN</BandLabel>
           <span className="min-w-0 flex-1 truncate">{name}</span>
           {sizeLabel && <span className="shrink-0 text-dialog-hint">{sizeLabel}</span>}
-        </Disclosure>
+        </ExecutionAction>
       ) : (
         <ListRow onClick={open} title={name} aria-label={`Open run ${name}`}>
           <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">
@@ -262,7 +261,6 @@ export const LiveRunRow = memo(function LiveRunRow({
           {sizeLabel ? (
             <span className="shrink-0 font-mono text-chip text-footer-muted">{sizeLabel}</span>
           ) : null}
-          <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
         </ListRow>
       )}
       {/* The opened run is a SCREEN, not a part of the transcript — portalled

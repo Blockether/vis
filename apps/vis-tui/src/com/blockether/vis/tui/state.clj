@@ -129,7 +129,7 @@
    :paste-counter :attachments :attachment-feedback :attachment-focus? :attachment-index :loading?
    :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id
    :live-turn-client-id :progress :turn-start-ms :detail-expansions :mouse-selection
-   :session-model-pref :human-input :human-input-queue :live-views
+   :session-model-pref :human-input :human-input-queue :live-views :live-viewer-id
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -181,6 +181,7 @@
    ;; And so does a live view: it reports on ONE session's run, so it paints on
    ;; that session's tab and gives its rows back when the run ends.
    :live-views []
+   :live-viewer-id nil
    ;; Stated HERE on purpose: `restore-tab` only MERGES, so a tab that never armed
    ;; would otherwise inherit the armed tab's flag from the root db.
    :voice-conversation? false})
@@ -3016,22 +3017,6 @@
                            (fn [panes]
                              (mapv #(if (= view-id (lv/view-id %)) (f %) %) panes)))))))
 
-(defn- set-run-reopened
-  [workspace view-id reopened?]
-  (update workspace
-          :messages
-          (fn [messages]
-            (mapv (fn [message]
-                    (if (some #(= view-id (:view-id %)) (:runs message))
-                      (update message
-                              :runs
-                              (fn [runs]
-                                (mapv
-                                  #(if (= view-id (:view-id %)) (assoc % :is-reopened reopened?) %)
-                                  runs)))
-                      message))
-                  (or messages [])))))
-
 (defn- upsert-run-row
   "Place one transcript receipt on the assistant message that owns its form.
 
@@ -3118,21 +3103,13 @@
                                  w)))))
 
 (reg-event-db :live-view-reopen
-              ;; The transcript disclosure and the read-only band are one control: both
-              ;; flip together so the row never claims to be collapsed while it is open.
+              ;; Opening a viewer never changes the transcript or the running pane.
               (fn [db [_ view-id]]
-                (across-tabs db
-                             (fn [workspace]
-                               (if-let [pane (first (filter #(= view-id (lv/view-id %))
-                                                            (:live-views workspace)))]
-                                 (let [next-pane (lv/reopened pane)]
-                                   (-> workspace
-                                       (update :live-views
-                                               (fn [panes]
-                                                 (mapv #(if (= view-id (lv/view-id %)) next-pane %)
-                                                       panes)))
-                                       (set-run-reopened view-id (:is-reopened next-pane))))
-                                 workspace)))))
+                (assoc db :live-viewer-id view-id)))
+
+(reg-event-db :live-viewer-close
+              (fn [db _]
+                (dissoc db :live-viewer-id)))
 
 (reg-event-db :live-record-open
               (fn [db [_ session-id pane]]
@@ -3142,12 +3119,12 @@
                     (update-tab db
                                 target
                                 (fn [workspace]
-                                  (update workspace
+                                  (update (assoc workspace :live-viewer-id (lv/view-id pane))
                                           :live-views
                                           (fn [panes]
                                             (conj (filterv #(not= (lv/view-id pane) (lv/view-id %))
                                                     panes)
-                                                  pane)))))))))
+                                                  (dissoc pane :is-reopened))))))))))
 
 (reg-event-db :live-view-minimize
               ;; Presentation only: fold one running view to a compact status row. Its

@@ -7,7 +7,20 @@ import {
   useState,
   type HTMLAttributes,
 } from 'react';
-import { BandLabel, Button, Disclosure, Input, ListRow, LoadMore, PROSE, Spinner } from './ui';
+import { createPortal } from 'react-dom';
+import {
+  BandLabel,
+  Button,
+  Disclosure,
+  ExecutionAction,
+  Input,
+  ListRow,
+  LoadMore,
+  overlayLayer,
+  OverlayScreen,
+  PROSE,
+  Spinner,
+} from './ui';
 import { InlineMarkdown } from './ChatContent';
 import {
   ArrowOutIcon,
@@ -49,9 +62,9 @@ import {
  * The other half of human input is a QUESTION: it blocks, it takes the screen,
  * it wants an answer. This one wants nothing. A scan sweeping a fleet, a build
  * draining a log, a table filling in — the operator watches it, or does not,
- * and the run finishes either way. So it is a panel in the session's own
- * column, never a dialog: a scrim over a screen for something nobody has to
- * answer is the app taking a hostage.
+ * and the run finishes either way. Its inline preview stays in the session.
+ * Selecting RUN opens an optional transient screen; closing that screen leaves
+ * both the preview and the running work alone.
  *
  * It paints the same picture the terminal pane paints, node for node, because
  * both fold the same patches through the same rules (`lib/live-view`). What
@@ -1067,7 +1080,7 @@ export function LiveViewPanel({
         values: { ...(held.phase === phase ? held.values : {}), [id]: value },
       })),
   };
-  const [open, setOpen] = useState(true);
+  const [opened, setOpened] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const isArmed = note !== null;
   const typed = note ?? '';
@@ -1078,124 +1091,142 @@ export function LiveViewPanel({
     send(typed.trim() === '' ? null : typed.trim());
   };
   return (
-    <section
-      className={
-        embedded
-          ? 'min-w-0 overflow-hidden pt-3'
-          : 'overflow-hidden border border-dialog-edge bg-panel'
-      }
-      data-execution-run={embedded || undefined}
-      role={isSettled ? undefined : 'status'}
-      aria-live={isSettled ? undefined : 'polite'}
-    >
-      <header
+    <>
+      <section
         className={
           embedded
-            ? 'flex min-w-0 items-center gap-2'
-            : `flex items-start gap-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} bg-panel-2`
+            ? 'min-w-0 overflow-hidden pt-3'
+            : 'overflow-hidden border border-dialog-edge bg-panel'
         }
+        data-execution-run={embedded || undefined}
+        role={isSettled ? undefined : 'status'}
+        aria-live={isSettled ? undefined : 'polite'}
       >
-        {embedded ? (
-          <Disclosure
-            className="min-w-0 flex-1"
-            tone="execution"
-            isOpen={open}
-            aria-label={`${open ? 'Collapse' : 'Expand'} run ${view.title}`}
-            onClick={() => setOpen((value) => !value)}
-          >
-            <BandLabel>RUN</BandLabel>
-            <span className="min-w-0 flex-1 truncate">{view.title}</span>
-          </Disclosure>
-        ) : (
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-mono text-title font-bold text-white">
-              {view.title}
-            </span>
-            {view.description && (
-              <span className="block truncate font-mono text-meta text-dialog-hint">
-                <InlineMarkdown>{view.description}</InlineMarkdown>
+        <header
+          className={
+            embedded
+              ? 'flex min-w-0 items-center gap-2'
+              : `flex items-start gap-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} bg-panel-2`
+          }
+        >
+          {embedded ? (
+            <ExecutionAction
+              className="min-w-0 flex-1"
+              aria-label={`Open run ${view.title}`}
+              onClick={() => setOpened(true)}
+            >
+              <BandLabel>RUN</BandLabel>
+              <span className="min-w-0 flex-1 truncate">{view.title}</span>
+            </ExecutionAction>
+          ) : (
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-title font-bold text-white">
+                {view.title}
               </span>
-            )}
-          </span>
+              {view.description && (
+                <span className="block truncate font-mono text-meta text-dialog-hint">
+                  <InlineMarkdown>{view.description}</InlineMarkdown>
+                </span>
+              )}
+            </span>
+          )}
+          {embedded && !isSettled && (
+            <span className="shrink-0 font-mono text-ui text-dialog-hint">LIVE</span>
+          )}
+          <ViewState view={view} isSettled={isSettled} />
+          {!isSettled && onInterrupt && !isArmed && (
+            <Button
+              variant="secondary"
+              className="shrink-0 self-center"
+              onClick={() => setNote('')}
+              disabled={isInterrupting}
+            >
+              {isInterrupting ? 'Stopping...' : 'Interrupt'}
+            </Button>
+          )}
+        </header>
+        {embedded && view.description && (
+          <p className="pb-4 font-mono text-ui text-dialog-hint mouse:text-meta">
+            <InlineMarkdown>{view.description}</InlineMarkdown>
+          </p>
         )}
-        {embedded && !isSettled && (
-          <span className="shrink-0 font-mono text-ui text-dialog-hint">LIVE</span>
-        )}
-        <ViewState view={view} isSettled={isSettled} />
-        {!isSettled && onInterrupt && !isArmed && (
-          <Button
-            variant="secondary"
-            className="shrink-0 self-center"
-            onClick={() => setNote('')}
-            disabled={isInterrupting}
+        {!isSettled && isArmed && onInterrupt && (
+          <form
+            className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge py-2 ${embedded ? '' : 'bg-panel-2 px-3'}`}
+            onSubmit={(event) => {
+              event.preventDefault();
+              sendStop(onInterrupt);
+            }}
+            onKeyDown={(event) => {
+              // Escape STOPS. It is the key that ARMED the interrupt, so it is the
+              // key that sends it, note and all — the terminal answers the same
+              // key the same way. `Keep watching` is the way back here, because a
+              // phone has no Backspace to fall out of an empty line with.
+              if (event.key !== 'Escape') return;
+              event.preventDefault();
+              event.stopPropagation();
+              sendStop(onInterrupt);
+            }}
           >
-            {isInterrupting ? 'Stopping...' : 'Interrupt'}
-          </Button>
+            <Input
+              autoFocus
+              className="min-w-40 flex-1"
+              value={typed}
+              maxLength={LIVE_NOTE_CHARS}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="why stop it? (optional)"
+              aria-label={`Why are you stopping ${view.title}?`}
+            />
+            <Button type="submit" variant="primary" disabled={isInterrupting}>
+              Interrupt
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setNote(null)}>
+              Keep watching
+            </Button>
+          </form>
         )}
-      </header>
-      {embedded && open && view.description && (
-        <p className="pb-4 font-mono text-ui text-dialog-hint mouse:text-meta">
-          <InlineMarkdown>{view.description}</InlineMarkdown>
-        </p>
-      )}
-      {!isSettled && isArmed && onInterrupt && (
-        <form
-          className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge py-2 ${embedded ? '' : 'bg-panel-2 px-3'}`}
-          onSubmit={(event) => {
-            event.preventDefault();
-            sendStop(onInterrupt);
-          }}
-          onKeyDown={(event) => {
-            // Escape STOPS. It is the key that ARMED the interrupt, so it is the
-            // key that sends it, note and all — the terminal answers the same
-            // key the same way. `Keep watching` is the way back here, because a
-            // phone has no Backspace to fall out of an empty line with.
-            if (event.key !== 'Escape') return;
-            event.preventDefault();
-            event.stopPropagation();
-            sendStop(onInterrupt);
-          }}
-        >
-          <Input
-            autoFocus
-            className="min-w-40 flex-1"
-            value={typed}
-            maxLength={LIVE_NOTE_CHARS}
-            onChange={(event) => setNote(event.target.value)}
-            placeholder="why stop it? (optional)"
-            aria-label={`Why are you stopping ${view.title}?`}
-          />
-          <Button type="submit" variant="primary" disabled={isInterrupting}>
-            Interrupt
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => setNote(null)}>
-            Keep watching
-          </Button>
-        </form>
-      )}
-      {error && (
-        <p
-          className={`border-b border-dialog-edge py-2 font-mono text-chip text-err ${embedded ? '' : 'px-3'}`}
-        >
-          {error}
-        </p>
-      )}
-      <ul
-        hidden={embedded && !open}
-        className={`divide-y divide-dialog-edge ${view.description ? '[&>li:first-child]:pt-0' : ''}`}
-      >
-        {view.nodes.map((node) => (
-          // Table cells own their padding; an outer inset makes the first and last
-          // rows uneven relative to the internal separators. Keep labelled headings inset.
-          <li
-            key={node.id}
-            className={`min-w-0 ${embedded ? '' : 'px-3'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+        {error && (
+          <p
+            className={`border-b border-dialog-edge py-2 font-mono text-chip text-err ${embedded ? '' : 'px-3'}`}
           >
-            <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
-          </li>
-        ))}
-      </ul>
-    </section>
+            {error}
+          </p>
+        )}
+        <ul
+          className={`divide-y divide-dialog-edge ${view.description ? '[&>li:first-child]:pt-0' : ''}`}
+        >
+          {view.nodes.map((node) => (
+            // Table cells own their padding; an outer inset makes the first and last
+            // rows uneven relative to the internal separators. Keep labelled headings inset.
+            <li
+              key={node.id}
+              className={`min-w-0 ${embedded ? '' : 'px-3'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+            >
+              <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
+            </li>
+          ))}
+        </ul>
+      </section>
+      {embedded &&
+        opened &&
+        createPortal(
+          <OverlayScreen title={view.title} onClose={() => setOpened(false)}>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <LiveViewPanel
+                view={view}
+                onInterrupt={onInterrupt}
+                onSelect={onSelect}
+                onActivate={onActivate}
+                error={error}
+                isInterrupting={isInterrupting}
+                load={load}
+                isSettled={isSettled}
+              />
+            </div>
+          </OverlayScreen>,
+          overlayLayer().host,
+        )}
+    </>
   );
 }
 

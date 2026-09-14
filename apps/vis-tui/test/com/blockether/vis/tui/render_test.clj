@@ -6083,8 +6083,8 @@ h = 8"
                  (.indexOf ^String body "Nightly")
                  (.indexOf ^String body "Watched it."))
               "both run records remain inside their execution group, before the answer")
-      (expect (str/includes? body "RUN ▸ Release · gh") "a dormant record offers open")
-      (expect (str/includes? body "RUN ▾ Nightly") "a reopened record offers collapse")))
+      (expect (str/includes? body "RUN Release · gh") "a dormant record offers open")
+      (expect (str/includes? body "RUN Nightly") "opening a record does not add a disclosure")))
   (it "invalidates the hot iteration cache when the record opens and closes"
       (render/invalidate-cache!)
       (let [trace
@@ -6107,9 +6107,9 @@ h = 8"
                   strip-ansi
                   strip-sentinels))]
 
-        (expect (str/includes? (render-row false) "RUN ▸ CI"))
-        (expect (str/includes? (render-row true) "RUN ▾ CI"))
-        (expect (str/includes? (render-row false) "RUN ▸ CI"))))
+        (expect (str/includes? (render-row false) "RUN CI"))
+        (expect (str/includes? (render-row true) "RUN CI"))
+        (expect (str/includes? (render-row false) "RUN CI"))))
   (it
     "collapses tool source with its details and opens the evidence hierarchy"
     (render/invalidate-cache!)

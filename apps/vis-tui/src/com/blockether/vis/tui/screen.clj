@@ -725,6 +725,14 @@
                   [(:view-id meta) (:live-geometry meta)])))
         (mapcat #(get-in % [:projected :line-meta]) (:visible layout))))
 
+(defn- viewer-panes
+  "Project the selected transient view without modifying its transcript state."
+  [db]
+  (when-let [pane (first (filter #(= (:live-viewer-id db) (lv/view-id %)) (:live-views db)))]
+    [(assoc (lv/restored pane)
+       :is-reopened true
+       :is-viewer true)]))
+
 (defn- live-band-pane
   "The live view the pointer at terminal row `my` is over — the one the band is
    painting right now — or nil when the pointer is on the transcript.
@@ -745,7 +753,8 @@
           (:live-views db)
 
           fallback
-          (remove #(contains? (get-in db [:layout :inline-live-ids] #{}) (lv/view-id %)) panes)
+          (or (viewer-panes db)
+              (remove #(contains? (get-in db [:layout :inline-live-ids] #{}) (lv/view-id %)) panes))
 
           ly
           (:layout db)
@@ -760,9 +769,8 @@
                         content-top
                         prompt-h)]
 
-      (or (first (filter #(= inline (lv/view-id %)) panes))
-          (when (and span (<= (long (first span)) (long my) (long (second span))))
-            (last fallback))))))
+      (or (when (and span (<= (long (first span)) (long my) (long (second span)))) (last fallback))
+          (first (filter #(= inline (lv/view-id %)) panes))))))
 
 (defn- live-view-wheel-event
   "The pane-local event for `wheel-delta` EFFECTIVE wheel rows over the live band
@@ -826,6 +834,9 @@
     (do (state/dispatch [:live-view-reopen (:view-id hit)])
         (state/dispatch [:bump-render-version])
         true)
+
+    :live-viewer-close
+    (do (state/dispatch [:live-viewer-close]) (state/dispatch [:bump-render-version]) true)
 
     :live-minimize
     (do (state/dispatch [:live-view-minimize (:view-id hit)])
@@ -3108,7 +3119,9 @@
           (when-let [geom (lv/paint! g
                                      cols
                                      rows
-                                     (remove #(contains? owned (lv/view-id %)) (:live-views db))
+                                     (or (viewer-panes db)
+                                         (remove #(contains? owned (lv/view-id %))
+                                           (:live-views db)))
                                      messages-top
                                      composer-h
                                      (System/currentTimeMillis))]
@@ -4167,7 +4180,10 @@
 
     ;; Live pictures may be inline or in the fallback band. Either needs the complete
     ;; projection/geometry pass, including when a non-spinning pane scrolls offscreen.
-    (if (or (tab-content-loading? db) (some (complement lv/dormant?) (:live-views db)))
+    (if (or (:live-viewer-id db)
+            (:live-viewer-id last-db)
+            (tab-content-loading? db)
+            (some (complement lv/dormant?) (:live-views db)))
       {:header-hover-only? false
        :partial-live? false
        :header-spinner-only? false
@@ -6332,11 +6348,17 @@
                    ;; the band, so the form owns the keyboard.
                    (and (some? key) (lv/stopping (lv/interruptible (:live-views db))))
                    (do (live-stop-key! db key) (recur))
+                   (and (:live-viewer-id db)
+                        (instance? KeyStroke key)
+                        (= KeyType/Escape (.getKeyType ^KeyStroke key)))
+                   (do (state/dispatch [:live-viewer-close])
+                       (state/dispatch [:bump-render-version])
+                       (recur))
                    (and (some? key)
                         (= KeyType/F3 (.getKeyType ^KeyStroke key))
                         (not (overlay-locked? db))
                         (not @paste-buffer))
-                   (do (when-let [items (seq (lv/controls (:live-views db)))]
+                   (do (when-let [items (seq (lv/controls (or (viewer-panes db) (:live-views db))))]
                          (when-let [choice (with-dialog-lock #(dlg/list-dialog!
                                                                 screen
                                                                 "Live view controls"
@@ -6922,7 +6944,7 @@
                                  :live-expand
                                  (activate-live-region! db hit)
 
-                                 :live-reopen
+                                 (:live-reopen :live-viewer-close)
                                  (activate-live-region! db hit)
 
                                  :live-minimize
@@ -7096,7 +7118,7 @@
                                  :live-expand
                                  (activate-live-region! db hit)
 
-                                 :live-reopen
+                                 (:live-reopen :live-viewer-close)
                                  (activate-live-region! db hit)
 
                                  :live-minimize

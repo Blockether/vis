@@ -688,6 +688,20 @@ export function ConfirmRow({
  */
 const BAND_NAME = 'font-semibold tracking-[0.06em]';
 
+/** Open an execution in a transient screen; unlike Disclosure, never folds content. */
+export function ExecutionAction({
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={`flex min-h-11 w-full min-w-0 items-center gap-1.5 text-left font-mono text-ui text-code-result transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-7 ${className}`}
+      {...props}
+    />
+  );
+}
+
 /**
  * A TRACE ROW YOU EXPAND, and there is only one of it.
  *

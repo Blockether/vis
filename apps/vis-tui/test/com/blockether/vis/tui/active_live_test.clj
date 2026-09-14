@@ -92,7 +92,7 @@
           run-line
           (nth lines run-index)]
 
-      (is (str/includes? run-line "RUN ▾ Build verification"))
+      (is (str/includes? run-line "RUN Build verification"))
       (is (zero? (get-in payload [:line-meta activity-index :operation-col])))
       (is (< activity-index (dec run-index)))
       (is (str/blank? (subs (nth lines (dec run-index)) 1)))
@@ -181,7 +181,7 @@
             (is (= (:view-id disclosure) (lv/view-id pane)))
             (is (= "▾ Output · 1 lines" (str/trim (nth lines row))))
             (let [header-row (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
-                  run-row (first (keep-indexed #(when (str/includes? %2 "RUN ▾") %1) lines))
+                  run-row (first (keep-indexed #(when (str/includes? %2 "RUN Build") %1) lines))
                   background-cols
                   (fn [r]
                     (into #{}
@@ -241,7 +241,7 @@
     (is (not-any? #(= :live-reopen (:kind %)) (:line-meta after)))
     (is (< (count (:lines compact)) (count (:lines after))))
     (is (= 1 (count (filter #(str/includes? % "Build verification") (:lines compact)))))
-    (is (str/includes? (str/join "\n" (:lines compact)) "RUN ▸"))
+    (is (str/includes? (str/join "\n" (:lines compact)) "RUN Build verification"))
     (is (some #(= :inline-stop (get-in % [:live-entry :kind]))
               (:line-meta (review-payload armed 90))))
     (is (= :stop (:action (lv/typed armed {:kind :enter}))))))
@@ -491,36 +491,27 @@
     (doseq [row rows]
       (is (str/blank? (subs (nth (:lines payload) (dec row)) 1))))))
 
-(deftest sibling-header-keeps-live-control-route
-  ;; #222: the full RUN heading restores/minimizes live work and closes a reopened record.
+(deftest sibling-header-opens-without-folding
+  ;; #222: RUN opens a transient view; the transcript never folds.
   (with-open [terminal
               (DefaultVirtualTerminal. (TerminalSize. 80 44))
 
               ts
               (doto (TerminalScreen. terminal) (.startScreen))]
 
-    (doseq [[pane kind] [[(review-pane) :live-minimize] [(lv/minimized (review-pane)) :live-restore]
-                         [(lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))
-                          :live-reopen]]]
+    (doseq [pane [(review-pane) (lv/minimized (review-pane))
+                  (lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))]]
       (binding [interactions/hit-map (interactions/create-hit-map)]
         (paint-review! ts pane)
-        (let [hit (first (filter #(= kind (:kind %)) (.current interactions/hit-map)))
-              events (atom [])]
+        (let [hit (first (filter #(= :live-reopen (:kind %)) (.current interactions/hit-map)))
+              events (atom [])
+              title (:line (first (lv/inline-entries pane 80)))]
 
+          (is (= "RUN Build verification" title))
           (is (some? hit))
           (with-redefs [state/dispatch #(swap! events conj %)]
             (is (#'screen/activate-live-region! {:live-views [pane]} hit)))
-          (is (some #{[(case kind
-                         :live-minimize
-                         :live-view-minimize
-
-                         :live-restore
-                         :live-view-restore
-
-                         :live-reopen
-                         :live-view-reopen) (lv/view-id pane)]}
-                    @events))
-          (when (= kind :live-reopen) (is (lv/dormant? (lv/reopened pane)))))))))
+          (is (some #{[:live-view-reopen (lv/view-id pane)]} @events)))))))
 
 (deftest mixed-and-saved-runs-keep-sibling-separation
   ;; #222: saved receipts and running panes have the same one-row section boundary.
@@ -558,3 +549,123 @@
       (is (= 2 (count rows)))
       (doseq [row rows]
         (is (str/blank? (subs (nth (:lines payload) (dec row)) 1)))))))
+
+(deftest transient-viewer-keeps-transcript-state
+  ;; #222: opening, selecting, settling and closing never fold or duplicate RUN.
+  (let [pane
+        (review-pane)
+
+        second-pane
+        (assoc-in pane [:view :id] "another-view")
+
+        original
+        {:live-views [pane second-pane] :messages [{:runs [(lv/run-row pane)]}]}
+
+        db
+        (atom original)]
+
+    (with-redefs [state/app-db db]
+      (doseq [selected [pane second-pane]]
+        (state/dispatch [:live-view-reopen (lv/view-id selected)])
+        (is (= (lv/view-id selected) (lv/view-id (first (#'screen/viewer-panes @db)))))
+        (is (= (:messages original) (:messages @db)))
+        (is (= (:live-views original) (:live-views @db))))
+      (state/dispatch [:live-view-reopen (lv/view-id pane)])
+      (swap! db assoc-in [:live-views 0] (lv/settled pane {:reason :completed} 2000))
+      (let [frozen @db
+            projected (first (#'screen/viewer-panes frozen))]
+
+        (is (lv/settled? projected))
+        (is (not (lv/dormant? projected)))
+        (is (lv/dormant? (first (:live-views frozen))))
+        (is (every? false?
+                    (vals
+                      (#'screen/frame-change-flags
+                       {:last-db frozen :db frozen :last-layout {} :cols 80 :same-size? true}))))
+        (state/dispatch [:live-viewer-close])
+        (is (nil? (#'screen/viewer-panes @db)))
+        (is (= (:live-views frozen) (:live-views @db)))
+        (is (= (:messages original) (:messages @db)))))))
+
+(defn viewer-review-db
+  "Deterministic full production frame for the transient RUN viewer."
+  [pane]
+  {:session {:id "viewer-review"}
+   :messages [{:role :assistant :text ""}]
+   :input (input/empty-input)
+   :scroll scroll/follow
+   :loading? true
+   :progress review-progress
+   :settings {:show-iterations true}
+   :live-views [pane]
+   :live-viewer-id (lv/view-id pane)
+   :pending-sends []
+   :channel-status {}
+   :tabs []
+   :tab-locals {}
+   :slash-command-index 0
+   :render-version 0})
+
+(defn paint-viewer-review!
+  "Paint the production frame, including the selected transient band."
+  [ts cols db]
+  (with-redefs [timg/images-protocol
+                (constantly nil)
+
+                client/get-router
+                (constantly nil)]
+
+    (#'screen/render-frame! ts cols 44 db 1000)))
+
+(deftest transient-viewer-full-frame-open-close
+  ;; #222: actual band has Close, targets selected live/frozen view, and clears on dismissal.
+  (doseq [cols
+          [40 80 120]
+
+          settled?
+          [false true]]
+
+    (with-open [terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 44))
+
+                ts
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [pane
+            (cond-> (review-pane)
+              settled?
+              (lv/settled {:reason :completed} 2000))
+
+            db
+            (atom (viewer-review-db pane))]
+
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (with-redefs [state/app-db db]
+            (paint-viewer-review! ts cols @db)
+            (let [close (first (filter #(= :live-viewer-close (:kind %))
+                                       (.current interactions/hit-map)))
+                  before (:messages @db)]
+
+              (is (some? close))
+              (is (= (lv/view-id pane) (:view-id close)))
+              (is (#'screen/activate-live-region! @db close))
+              (is (= before (:messages @db)))
+              (paint-viewer-review! ts cols @db)
+              (is (not-any? #(= :live-viewer-close (:kind %))
+                            (.current interactions/hit-map))))))))))
+
+(deftest viewer-wheel-stays-inside-band
+  ;; #222: an explicit viewer must not capture transcript or header wheel input.
+  (let [pane
+        (review-pane)
+
+        db
+        (assoc (viewer-review-db pane) :layout {:cols 80 :rows 44})]
+
+    (binding [interactions/hit-map (interactions/create-hit-map)]
+      (with-redefs [state/band-anchor (constantly {:content-top 4 :prompt-h 3})
+                    lv/band-rows (constantly [10 30])]
+
+        (is (nil? (#'screen/live-band-pane db 2)))
+        (is (nil? (#'screen/live-band-pane db 40)))
+        (is (= (lv/view-id pane) (lv/view-id (#'screen/live-band-pane db 15))))))))

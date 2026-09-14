@@ -1478,29 +1478,31 @@
    the bar says the two keys that end typing: Escape or Enter interrupt with whatever
    was written, Backspace on an empty line keeps watching."
   [pane others]
-  (let [open (remove settled? others)]
-    (if-let [note (stopping pane)]
-      (if (str/blank? note)
-        [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
-        [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
-      (if (minimized? pane)
-        [["click ▴" "restore live view"]
-         ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
-        (cond-> [["F3" "controls"]]
-          (and (some? pane) (not (settled? pane)))
-          (conj ["click ▾" "minimize"])
+  (if (:is-viewer pane)
+    [["F3" "controls"] ["Esc" "close view"]]
+    (let [open (remove settled? others)]
+      (if-let [note (stopping pane)]
+        (if (str/blank? note)
+          [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
+          [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
+        (if (minimized? pane)
+          [["click ▴" "restore live view"]
+           ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
+          (cond-> [["F3" "controls"]]
+            (and (some? pane) (not (settled? pane)))
+            (conj ["click ▾" "minimize"])
 
-          (and (some? pane) (not (settled? pane)) (has-selectable-table? pane))
-          (conj ["click" "select a row"])
+            (and (some? pane) (not (settled? pane)) (has-selectable-table? pane))
+            (conj ["click" "select a row"])
 
-          (and (some? pane) (not (settled? pane)))
-          (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
+            (and (some? pane) (not (settled? pane)))
+            (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-          (and (some? pane) (settled? pane))
-          (conj ["click" "close the record"])
+            (and (some? pane) (settled? pane))
+            (conj ["click" "close the record"])
 
-          (seq open)
-          (conj [(str (+ (if pane 1 0) (count open))) "views open"]))))))
+            (seq open)
+            (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
 
@@ -1836,7 +1838,7 @@
   [g {:keys [left inner-w]} row pane]
   (when pane
     (let [label
-          (cond (settled? pane) " Close "
+          (cond (or (:is-viewer pane) (settled? pane)) " Close "
                 (minimized? pane) " ▴ "
                 :else " ▾ ")
 
@@ -1850,7 +1852,8 @@
       (p/styled g [p/BOLD] (p/put-str! g col row label))
       (.register interactions/hit-map
                  {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col col :width width}
-                  :kind (cond (settled? pane) :live-reopen
+                  :kind (cond (:is-viewer pane) :live-viewer-close
+                              (settled? pane) :live-reopen
                               (minimized? pane) :live-restore
                               :else :live-minimize)
                   :view-id (view-id pane)
@@ -2102,9 +2105,7 @@
 
         entries
         (concat [{:kind :inline-title
-                  :text (str "RUN "
-                             (if (minimized? pane) "▸ " "▾ ")
-                             (flat-text (get-in pane [:view :title])))}]
+                  :text (str "RUN " (flat-text (get-in pane [:view :title])))}]
                 (subvec (vec rows) start (+ start visible))
                 (when-let [stop (stop-prompt pane)]
                   [{:kind :inline-stop :text (str (:label stop) (:note stop) "▏") :stop stop}])
@@ -2151,9 +2152,7 @@
         (p/styled g [p/BOLD] (p/put-str! g (+ (long left) (long width) (- status-w)) row status))
         (.register interactions/hit-map
                    {:bounds {:row (+ (long row) (long viewport-top)) :col left :width width}
-                    :kind (cond (settled? live-pane) :live-reopen
-                                (minimized? live-pane) :live-restore
-                                :else :live-minimize)
+                    :kind :live-reopen
                     :view-id (view-id live-pane)
                     :enabled? true}))
 
@@ -2167,7 +2166,7 @@
                         {:text "▏" :fg t/dialog-hint-key}])
 
       :inline-hint
-      (dialogs/draw-hint-bar! g left row width (hint live-pane []))
+      (dialogs/draw-hint-bar! g left row width [["F3" "controls"] ["RUN" "open view"]])
 
       ;; The standalone painter reserves two rail cells; this shared surface has no inner rail.
       (paint-entry! g (- (long left) 2) row width (view-id live-pane) live-entry))))

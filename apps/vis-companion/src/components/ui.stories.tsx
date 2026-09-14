@@ -33,6 +33,7 @@ import {
   DialogFrame,
   DialogHeader,
   Disclosure,
+  ExecutionAction,
   IconButton,
   Input,
   ListRow,
@@ -115,6 +116,27 @@ function Group({ of, children }: { of: string; children: ReactNode }) {
 function Sheet({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-5 p-4">{children}</div>;
 }
+
+/** RUN is a launch target, not a collapse control. */
+export const ExecutionLaunch: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="Open a live view or its saved record">
+        <ExecutionAction aria-label="Open run Build pool" onClick={noop}>
+          <BandLabel>RUN</BandLabel>
+          <span>Build pool</span>
+        </ExecutionAction>
+      </Group>
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    const launch = canvas.getByRole('button', { name: 'Open run Build pool' });
+    await expect(launch).not.toHaveAttribute('aria-expanded');
+    await expect(launch.querySelector('svg')).toBeNull();
+    await userEvent.click(launch);
+    await expect(launch).toHaveFocus();
+  },
+};
 
 export const Buttons: Story = {
   render: () => (
