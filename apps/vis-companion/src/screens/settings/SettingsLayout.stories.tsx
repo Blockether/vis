@@ -148,7 +148,7 @@ export const HeaderOnlyPanels: Story = {
     await expect(
       parseFloat(getComputedStyle(theme.querySelector('header')!).borderBottomWidth) +
         parseFloat(getComputedStyle(theme.lastElementChild!).borderTopWidth),
-    ).toBe(1);
+    ).toBe(0);
     await expect(canvas.getByRole('switch', { name: 'Notifications from visgw: off' })).toBeVisible();
   },
 };

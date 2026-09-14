@@ -7,12 +7,20 @@ import { resolveTheme } from '../lib/theme';
 import { SettingsDialog } from './SettingsScreen';
 
 /** The real dialog over a fixture transport; preferences remain local to this preview. */
-function StorySettings({ theme, children }: { theme: string; children: ReactNode }) {
+function StorySettings({
+  theme,
+  populated,
+  children,
+}: {
+  theme: string;
+  populated: boolean;
+  children: ReactNode;
+}) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     let active = true;
     const previous = globalThis.fetch;
-    globalThis.fetch = storySettingsFetch();
+    globalThis.fetch = storySettingsFetch(populated);
     void setThemePref(resolveTheme(theme).id).then(() => {
       if (active) setReady(true);
     });
@@ -20,7 +28,7 @@ function StorySettings({ theme, children }: { theme: string; children: ReactNode
       active = false;
       globalThis.fetch = previous;
     };
-  }, [theme]);
+  }, [theme, populated]);
   return ready ? children : null;
 }
 
@@ -29,8 +37,12 @@ const meta = {
   component: SettingsDialog,
   parameters: { layout: 'fullscreen' },
   decorators: [
-    (Story, { globals }) => (
-      <StorySettings key={String(globals.theme)} theme={String(globals.theme)}>
+    (Story, { globals, parameters }) => (
+      <StorySettings
+        key={String(globals.theme)}
+        theme={String(globals.theme)}
+        populated={parameters.populated === true}
+      >
         <Story />
       </StorySettings>
     ),
@@ -93,26 +105,37 @@ export const ReadingLayout: Story = {
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     const label = page.getByText('Show Python code', { exact: true });
     const title = page.getByRole('heading', { name: 'Settings', level: 2 });
-    for (const [element, touchSize, touchLine] of [
-      [title, '12px', '18px'],
-      [label, '11px', '16px'],
-      [page.getByRole('heading', { name: 'Machines' }), '11px', '16px'],
-      [page.getByRole('heading', { name: 'Application' }), '11px', '16px'],
-      [page.getByRole('heading', { name: 'Transcript' }), '8px', '14px'],
-      [page.getByRole('heading', { name: 'Theme' }), '8px', '14px'],
-    ] as const) {
+    // Regression: the dialog title, sections and values all rendered at 13px bold.
+    const columns = ['Machines', 'Application'].map((name) => page.getByRole('heading', { name }));
+    const sections = ['Transcript', 'Theme'].map((name) => page.getByRole('heading', { name }));
+    const size = (element: Element) => parseFloat(getComputedStyle(element).fontSize);
+    await expect(size(title)).toBeGreaterThan(size(label));
+    for (const column of columns) {
+      await expect(size(column)).toBe(size(label));
+      await expect(getComputedStyle(column).fontWeight).toBe('600');
+    }
+    for (const section of sections) {
+      await expect(size(section)).toBeLessThan(size(label));
+      await expect(section).toHaveAttribute('aria-level', '4');
+    }
+    for (const element of [title, label, ...columns, ...sections]) {
       const style = getComputedStyle(element);
       await expect(style.fontFamily).toBe(getComputedStyle(title).fontFamily);
-      await expect(style.fontSize).toBe(pointer ? '13px' : touchSize);
-      await expect(style.lineHeight).toBe(pointer ? '20px' : touchLine);
+      await expect(style.textTransform).toBe('none');
+      await expect(style.letterSpacing).toBe('normal');
     }
+    const choice = page.getByText('Blockether Dark', { exact: true });
+    await expect(size(choice)).toBe(size(label));
+    await expect(getComputedStyle(choice).fontWeight).toBe('400');
     const description = page.getByText(
       'One expandable source line before Activity. Hiding code keeps every activity and result.',
     );
-    await expect(getComputedStyle(description).fontSize).toBe(pointer ? '12px' : '11px');
-    await expect(getComputedStyle(description).lineHeight).toBe(pointer ? '18px' : '16px');
+    await expect(getComputedStyle(description).fontSize).toBe('12px');
+    await expect(getComputedStyle(description).lineHeight).toBe('18px');
     const available = innerWidth >= 640 ? innerWidth - 32 : innerWidth;
-    await expect(dialog.getBoundingClientRect().width).toBe(Math.min(pointer ? 1152 : 896, available));
+    await expect(dialog.getBoundingClientRect().width).toBe(
+      Math.min(pointer ? 1152 : 896, available),
+    );
     await expect(dialog.scrollWidth).toBe(dialog.clientWidth);
     const toggle = page.getByRole('switch', { name: /^Show Python code:/ });
     const checked = toggle.getAttribute('aria-checked');
@@ -121,12 +144,20 @@ export const ReadingLayout: Story = {
     await userEvent.click(toggle);
     await expect(toggle).toHaveAttribute('aria-checked', checked);
     const emptyServers = page.getByText('No MCP servers on this gateway.');
-    await expect(getComputedStyle(emptyServers).fontSize).toBe(pointer ? '12px' : '10px');
-    await expect(getComputedStyle(emptyServers).lineHeight).toBe(pointer ? '18px' : '16px');
+    await expect(getComputedStyle(emptyServers).fontSize).toBe(
+      getComputedStyle(description).fontSize,
+    );
+    await expect(getComputedStyle(emptyServers).lineHeight).toBe(
+      getComputedStyle(description).lineHeight,
+    );
     await userEvent.click(page.getByRole('button', { name: /^ASR/ }));
     const emptySpeech = await page.findByText('No ASR engine is registered on this machine.');
-    await expect(getComputedStyle(emptySpeech).fontSize).toBe(pointer ? '12px' : '8px');
-    await expect(getComputedStyle(emptySpeech).lineHeight).toBe(pointer ? '18px' : '14px');
+    await expect(getComputedStyle(emptySpeech).fontSize).toBe(
+      getComputedStyle(description).fontSize,
+    );
+    await expect(getComputedStyle(emptySpeech).lineHeight).toBe(
+      getComputedStyle(description).lineHeight,
+    );
   },
 };
 
@@ -145,10 +176,10 @@ export const FormTypography: Story = {
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     const label = page.getByText('Server name', { exact: true });
     const hint = page.getByText('Arguments are passed directly, never through a shell.');
-    await expect(getComputedStyle(label).fontSize).toBe(pointer ? '13px' : '8px');
-    await expect(getComputedStyle(label).lineHeight).toBe(pointer ? '20px' : '14px');
-    await expect(getComputedStyle(hint).fontSize).toBe(pointer ? '12px' : '8px');
-    await expect(getComputedStyle(hint).lineHeight).toBe(pointer ? '18px' : '14px');
+    await expect(getComputedStyle(label).fontSize).toBe(pointer ? '13px' : '15px');
+    await expect(getComputedStyle(label).lineHeight).toBe(pointer ? '20px' : '22px');
+    await expect(getComputedStyle(hint).fontSize).toBe('12px');
+    await expect(getComputedStyle(hint).lineHeight).toBe('18px');
     const args = page.getByRole('textbox', { name: /^Arguments — one per line/ });
     const environment = page.getByRole('textbox', { name: /^Environment variables/ });
     for (const field of [args, environment]) {
@@ -168,4 +199,26 @@ export const FormTypography: Story = {
 export const FormTypographyPointer: Story = {
   ...FormTypography,
   globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+/** Full production screen with representative provider and MCP rows. */
+export const Populated: Story = {
+  // Gateway caches are keyed by URL; keep this fleet separate from the empty stories.
+  args: {
+    gateways: [{ ...STORY_GATEWAYS[0], url: 'http://127.0.0.1:7781' }],
+    primaryUrl: 'http://127.0.0.1:7781',
+  },
+  parameters: { populated: true },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await expect(await page.findByText('Anthropic', { exact: true })).toBeVisible();
+    await expect(await page.findByText('filesystem', { exact: true })).toBeVisible();
+    const application = page.queryByRole('button', { name: 'Show application settings' });
+    if (application) await userEvent.click(application);
+    const toggle = page.getByRole('switch', { name: 'filesystem MCP server: on' });
+    await userEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'false'));
+    await userEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+  },
 };

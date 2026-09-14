@@ -31,8 +31,15 @@ export const Fleet: Story = {
     const name = canvas.getByText('tower');
     await name.ownerDocument.fonts.ready;
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '12px');
-    await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '18px');
+    await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '15px');
+    await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '22px');
+    await expect(getComputedStyle(name).fontWeight).toBe('500');
+    const rank = canvas.getByText('Primary', { exact: true });
+    await expect(getComputedStyle(rank).fontSize).toBe('11px');
+    await expect(getComputedStyle(rank).lineHeight).toBe('16px');
+    await expect(getComputedStyle(rank).fontWeight).toBe('400');
+    await expect(getComputedStyle(rank).textTransform).toBe('none');
+    await expect(getComputedStyle(rank).letterSpacing).toBe('normal');
     await userEvent.click(canvas.getByRole('button', { name: /tower/i }));
     await expect(args.onPick).toHaveBeenCalledWith(STORY_GATEWAYS[0]);
   },

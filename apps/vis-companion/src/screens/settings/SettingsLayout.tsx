@@ -1,7 +1,8 @@
 import { useSyncExternalStore, type ReactNode } from 'react';
 
 import { ChevronIcon } from '../../components/icons';
-import { ListRow } from '../../components/ui';
+import { ListRow, Text } from '../../components/ui';
+
 export function FormLabel({
   label,
   hint,
@@ -13,10 +14,14 @@ export function FormLabel({
 }) {
   return (
     <label className="block space-y-1">
-      <span className="block font-mono text-chip font-bold text-white mouse:text-title">{label}</span>
+      <Text variant="label" className="block">
+        {label}
+      </Text>
       {children}
       {hint && (
-        <span className="block font-mono text-chip text-dialog-hint mouse:text-body">{hint}</span>
+        <Text variant="description" className="block">
+          {hint}
+        </Text>
       )}
     </label>
   );
@@ -95,16 +100,18 @@ export function SettingsColumn({
   const TitleHeading = fold ? 'span' : 'h3';
   const titleBlock = (
     <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
-      <TitleHeading
+      <Text
+        as={TitleHeading}
+        variant="heading"
         role="heading"
         aria-level={3}
-        className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white mouse:text-title"
+        className="min-w-0 flex-auto truncate"
       >
         {title}
-      </TitleHeading>
+      </Text>
       {meta && (
-        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint mouse:text-meta">
-          {meta}
+        <span className="ms-auto min-w-0 max-w-full break-words text-right">
+          <Text variant="meta">{meta}</Text>
         </span>
       )}
     </TitleContainer>
@@ -124,7 +131,7 @@ export function SettingsColumn({
             <ChevronIcon open={fold.isOpen} className="size-4 shrink-0" />
           </ListRow>
         ) : (
-          <div className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
+          <div className="flex min-h-11 min-w-0 items-center gap-3 px-3 py-1 sm:px-4 mouse:min-h-10">
             {titleBlock}
             <span className="flex shrink-0 items-center empty:hidden">{action}</span>
           </div>
@@ -155,23 +162,25 @@ export function SettingsPanel({
   children: ReactNode;
 }) {
   const TitleContainer = disclosure ? 'span' : 'div';
-  const TitleHeading = disclosure ? 'span' : 'h3';
+  const TitleHeading = disclosure ? 'span' : 'h4';
   const titleBlock = (
     <TitleContainer
       className={`flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1 ${
         disclosure ? 'sm:ms-1' : ''
       }`}
     >
-      <TitleHeading
+      <Text
+        as={TitleHeading}
+        variant="section"
         role="heading"
-        aria-level={3}
-        className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint mouse:text-title"
+        aria-level={4}
+        className="min-w-0 flex-auto truncate"
       >
         {title}
-      </TitleHeading>
+      </Text>
       {meta && (
-        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint mouse:text-meta">
-          {meta}
+        <span className="ms-auto min-w-0 max-w-full break-words text-right">
+          <Text variant="meta">{meta}</Text>
         </span>
       )}
     </TitleContainer>
@@ -184,7 +193,7 @@ export function SettingsPanel({
     // The dialog is the only box; a group is separated from the next by the one
     // rule its container divides on, exactly as a project is separated from the
     // next in the sessions list.
-    <section className="min-w-0 bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+    <section className="min-w-0 bg-panel">
       {/* A HEADER LINE IS NOT A COMPETITION FOR ONE ROW. The status used to be
           `shrink-0` beside the name, so it took its whole intrinsic width first
           and the name lived on what was left: measured on a 390px iPhone,
@@ -193,12 +202,8 @@ export function SettingsPanel({
           wrapped one word per line, and the band grew 213px tall. The row WRAPS
           instead — the name is measured at its own width so a status that does
           not fit beside it drops to its own line. */}
-      {/* A NESTED BAND IS NOT A COLUMN BAND. It keeps the smaller hint-colour title
-          but shares the column band's visible height and gutter. A disclosure IS the
-          band, so its whole named row responds instead of leaving inert copy beside a
-          tiny trailing target. Its invisible touch reach may cross the band's edge; the
-          body, not the section, owns overflow clipping so that reach remains real. An
-          ordinary action still occupies only the edge. */}
+      {/* A section is named with quiet spacing, not another framed title band.
+          Disclosure and trailing actions retain their full touch targets. */}
       {disclosure ? (
         <header>
           <ListRow
@@ -212,19 +217,13 @@ export function SettingsPanel({
           </ListRow>
         </header>
       ) : (
-        <header className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
+        <header className="flex min-h-11 min-w-0 items-center gap-3 px-3 pb-1 pt-3 sm:px-4 mouse:min-h-10">
           {titleBlock}
           {action && <span className="flex shrink-0 items-center empty:hidden">{action}</span>}
         </header>
       )}
-      {/* A PANEL BODY DIVIDES AND CLIPS ITS OWN PARTS. `divide-y` draws only BETWEEN
-          siblings, so a panel holding one list is unchanged, and a panel whose last
-          child is a verb gets the hairline that verb needs to be a row. Clipping begins
-          here rather than on the section, where it would cut off the header's touch slop.
-          An empty body owns no rule: the column already separates the panel below it. */}
-      <div className="overflow-hidden divide-y divide-dialog-edge border-t border-dialog-edge empty:hidden">
-        {children}
-      </div>
+      {/* Only siblings are separated; a heading does not frame its own body. */}
+      <div className="overflow-hidden divide-y divide-dialog-edge empty:hidden">{children}</div>
     </section>
   );
 }

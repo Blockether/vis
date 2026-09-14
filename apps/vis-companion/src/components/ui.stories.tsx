@@ -49,6 +49,7 @@ import {
   Spinner,
   Select,
   Switch,
+  Text,
   TextButton,
   ViewHeading,
   ViewLayout,
@@ -119,6 +120,66 @@ function Group({ of, children }: { of: string; children: ReactNode }) {
 function Sheet({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-5 p-4">{children}</div>;
 }
+
+/** Reading roles share one family without giving every line the same emphasis. */
+export const Typography: Story = {
+  render: () => (
+    <Sheet>
+      <DialogHeader title="Settings" />
+      <Text as="h3" variant="heading">
+        Application
+      </Text>
+      <Text as="h4" variant="section">
+        Transcript
+      </Text>
+      <div className="space-y-1">
+        <Text as="p" variant="label">
+          Show Python code
+        </Text>
+        <Text as="p" variant="description">
+          One expandable source line before Activity. Hiding code keeps every activity and result.
+        </Text>
+        <Text as="p" variant="meta">
+          Signed-in session · expires in 6 days
+        </Text>
+      </div>
+      <ChoiceCell title="Blockether Light" sub="Selected theme" isSelected isLeaf />
+      <ChoiceCell title="Blockether Dark" sub="Available theme" isSelected={false} isLeaf />
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    const title = canvas.getByRole('heading', { name: 'Settings' });
+    const heading = canvas.getByRole('heading', { name: 'Application' });
+    const section = canvas.getByRole('heading', { name: 'Transcript' });
+    const label = canvas.getByText('Show Python code');
+    const description = canvas.getByText(/^One expandable/);
+    const metadata = canvas.getByText(/^Signed-in session/);
+    const size = (element: Element) => parseFloat(getComputedStyle(element).fontSize);
+    await expect(size(title)).toBeGreaterThan(size(heading));
+    await expect(size(heading)).toBe(size(label));
+    await expect(size(label)).toBeGreaterThan(size(description));
+    await expect(size(section)).toBe(size(description));
+    await expect(size(description)).toBeGreaterThan(size(metadata));
+    for (const element of [title, heading, section, label, description, metadata]) {
+      await expect(getComputedStyle(element).fontFamily).toBe(getComputedStyle(title).fontFamily);
+      await expect(getComputedStyle(element).textTransform).toBe('none');
+      await expect(getComputedStyle(element).letterSpacing).toBe('normal');
+    }
+    await expect(getComputedStyle(heading).fontWeight).toBe('600');
+    await expect(getComputedStyle(label).fontWeight).toBe('500');
+    await expect(getComputedStyle(description).fontWeight).toBe('400');
+    const selected = canvas.getByRole('button', { name: /Blockether Light/ });
+    await expect(getComputedStyle(canvas.getByText('Selected theme')).color).toBe(
+      getComputedStyle(selected).color,
+    );
+    await expect(getComputedStyle(canvas.getByText('Blockether Dark')).fontWeight).toBe('400');
+  },
+};
+
+export const TypographyPointer: Story = {
+  ...Typography,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
 
 /** Icons stay unframed in every state; glyph strokes are not CSS borders. */
 async function expectUnframedIcon(button: HTMLElement) {
@@ -1143,22 +1204,24 @@ export const Settings: Story = {
   ),
   play: async ({ canvas }) => {
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    const labels = ['Voice', 'Piper (gateway)', 'This device'].map((name) => canvas.getByText(name));
+    const labels = ['Voice', 'Piper (gateway)', 'This device'].map((name) =>
+      canvas.getByText(name),
+    );
     await labels[0].ownerDocument.fonts.ready;
     for (const label of labels) {
       const style = getComputedStyle(label);
-      await expect(style.fontSize).toBe(pointer ? '13px' : '11px');
-      await expect(style.lineHeight).toBe(pointer ? '20px' : '16px');
+      await expect(style.fontSize).toBe(pointer ? '13px' : '15px');
+      await expect(style.lineHeight).toBe(pointer ? '20px' : '22px');
       await expect(style.fontFamily).toBe(getComputedStyle(labels[0]).fontFamily);
     }
     for (const value of ['Piper English', 'ready', 'system TTS']) {
       const style = getComputedStyle(canvas.getByText(value));
-      await expect(style.fontSize).toBe(pointer ? '10px' : '8px');
-      await expect(style.lineHeight).toBe(pointer ? '16px' : '14px');
+      await expect(style.fontSize).toBe('11px');
+      await expect(style.lineHeight).toBe('16px');
     }
-    await expect(getComputedStyle(canvas.getByRole('heading', { name: 'TTS engines' })).fontSize).toBe(
-      pointer ? '11px' : '8px',
-    );
+    await expect(
+      getComputedStyle(canvas.getByRole('heading', { name: 'TTS engines' })).fontSize,
+    ).toBe('12px');
     for (const button of canvas.getAllByRole('button', { name: /^Settings for/ })) {
       await expectUnframedIcon(button);
       await userEvent.click(button);

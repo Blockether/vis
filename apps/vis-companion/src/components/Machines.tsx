@@ -25,7 +25,7 @@ import { onWake } from '../lib/wake';
 import { hasHardwarePointer } from '../lib/pointer';
 import { warm } from '../lib/warm';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
-import { Banner, Button, ConfirmRow, CopyChip, Input, ListRow, Spinner } from './ui';
+import { Banner, Button, ConfirmRow, CopyChip, Input, ListRow, Spinner, Text } from './ui';
 import {
   AddressIcon,
   ChevronIcon,
@@ -727,33 +727,33 @@ export function MachineRows({
                     <hv.Mark />
                   </span>
                   <span className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className="truncate font-mono text-body font-bold text-white mouse:text-title">
+                    <Text variant="label" className="truncate">
                       {name}
-                    </span>
+                    </Text>
                     {isFleet && conn.url === primaryUrl && (
-                      <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                        Primary
+                      <span className="shrink-0 text-accent-ink">
+                        <Text variant="meta" tone="inherit">
+                          Primary
+                        </Text>
                       </span>
                     )}
                     {conn.pinned && (
-                      <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                        Pinned
+                      <span className="shrink-0 text-accent-ink">
+                        <Text variant="meta" tone="inherit">
+                          Pinned
+                        </Text>
                       </span>
                     )}
                   </span>
-                  <span
-                    className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}
-                    title={hv.why ?? hv.label}
-                  >
-                    {hv.state === 'online' ? (hv.ms != null ? `${hv.ms}ms` : '') : hv.label}
+                  <span className={`shrink-0 ${hv.textClass}`} title={hv.why ?? hv.label}>
+                    <Text variant="meta" tone="inherit">
+                      {hv.state === 'online' ? (hv.ms != null ? `${hv.ms}ms` : '') : hv.label}
+                    </Text>
                   </span>
                   {isOnline && actionLabel && (
-                    <span
-                      className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint"
-                      aria-hidden="true"
-                    >
+                    <Text variant="meta" className="shrink-0" aria-hidden="true">
                       {actionLabel}
-                    </span>
+                    </Text>
                   )}
                   {!isOnline ? (
                     <RefreshIcon isBusy={isChecking} className="size-3 shrink-0 text-dialog-hint" />
@@ -983,13 +983,13 @@ function PairingProgress({
       <header className="flex items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
         <Spinner tone="accent" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-body font-bold text-white">
+          <Text variant="label" className="block truncate">
             Pairing with {run.label}
-          </span>
-          <span className="block font-mono text-chip text-dialog-hint">
+          </Text>
+          <Text variant="meta" className="mt-0.5 block">
             Trying {run.candidates.length} {plural} · {settled} of {run.candidates.length} answered
             · up to {secondsLeft}s left
-          </span>
+          </Text>
         </span>
         <Button variant="secondary" onClick={onStop}>
           Stop
@@ -1000,14 +1000,16 @@ function PairingProgress({
           const view = candidateView(probe);
           return (
             <li key={probe.url} className="flex items-baseline gap-2 px-3 py-2">
-              <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
+              <Text variant="meta" className="shrink-0">
                 {REACH_LABEL[reachOf(probe.url)]}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-chip text-dialog-hint">
+              </Text>
+              <Text variant="meta" className="min-w-0 flex-1 truncate">
                 {hostOf(probe.url)}
-              </span>
-              <span className={`shrink-0 font-mono text-chip font-bold ${view.textClass}`}>
-                {view.note}
+              </Text>
+              <span className={`shrink-0 ${view.textClass}`}>
+                <Text variant="meta" tone="inherit">
+                  {view.note}
+                </Text>
               </span>
             </li>
           );
@@ -1036,7 +1038,9 @@ function PairStep({ n, title, children }: { n: number; title: string; children: 
         {n}
       </span>
       <div className="min-w-0 space-y-2">
-        <h3 className="font-mono text-body font-bold text-white">{title}</h3>
+        <Text as="h3" variant="heading">
+          {title}
+        </Text>
         {children}
       </div>
     </li>
@@ -1050,7 +1054,9 @@ function PairStep({ n, title, children }: { n: number; title: string; children: 
 function PairChoice({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="min-w-0 space-y-2">
-      <h3 className="font-mono text-body font-bold text-white">{title}</h3>
+      <Text as="h3" variant="heading">
+        {title}
+      </Text>
       {children}
     </section>
   );
@@ -1321,10 +1327,10 @@ export function AddMachine({
       {canScan ? (
         <div className="min-w-0 space-y-4">
           <PairChoice title="Scan the QR code">
-            <p className="text-body text-dialog-hint">
+            <Text as="p" variant="description">
               On the machine that runs vis, <PairCommand value="vis-agent gateway pair" isInline />{' '}
               shows it in the terminal.
-            </p>
+            </Text>
             <Button
               variant="primary"
               className="w-full"
@@ -1336,45 +1342,45 @@ export function AddMachine({
           </PairChoice>
           <div aria-hidden="true" className="flex items-center gap-3">
             <span className="h-px flex-1 bg-dialog-edge" />
-            <span className="font-mono text-ui uppercase text-dialog-hint">or</span>
+            <Text variant="meta">or</Text>
             <span className="h-px flex-1 bg-dialog-edge" />
           </div>
           <PairChoice title="I have a pairing link">
-            <p className="text-body text-dialog-hint">
+            <Text as="p" variant="description">
               The line under the QR code, or a machine address like{' '}
               <code className="font-mono text-white">10.0.0.5:7890</code>.
-            </p>
+            </Text>
             {field}
           </PairChoice>
         </div>
       ) : (
         <ol className="min-w-0 space-y-5 @3xl:grid @3xl:grid-cols-3 @3xl:gap-x-6 @3xl:space-y-0">
           <PairStep n={1} title="On the machine that runs vis">
-            <p className="text-body text-dialog-hint">
+            <Text as="p" variant="description">
               Start the gateway where this device can reach it. It prints a QR code and a pairing
               link.
-            </p>
+            </Text>
             <PairCommand value="vis-agent gateway start --host 0.0.0.0 --require-token --pair" />
-            <p className="text-ui text-dialog-hint">
+            <Text as="p" variant="description">
               Already running? <PairCommand value="vis-agent gateway pair" isInline /> prints the
               same code again.
-            </p>
+            </Text>
           </PairStep>
 
           <PairStep n={2} title="Copy the link it printed">
-            <p className="text-body text-dialog-hint">
+            <Text as="p" variant="description">
               Under the QR code the terminal prints one line that starts with{' '}
               <code className="font-mono text-white">vis://gateway</code>. Copy that whole line and
               paste it below.
-            </p>
+            </Text>
           </PairStep>
 
           <PairStep n={3} title="Pair">
-            <p className="text-body text-dialog-hint">
+            <Text as="p" variant="description">
               Paste the link, or a machine address like{' '}
               <code className="font-mono text-white">10.0.0.5:7890</code> — LAN, Tailscale or a
               Cloudflare tunnel.
-            </p>
+            </Text>
             {field}
           </PairStep>
         </ol>

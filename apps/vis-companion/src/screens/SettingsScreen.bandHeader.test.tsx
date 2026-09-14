@@ -30,7 +30,7 @@ describe('a settings band header carrying a long status', () => {
     expect(header.className).not.toContain('items-baseline');
     const cell = header.querySelector('div');
     expect(cell?.className).toContain('flex-wrap');
-    const title = header.querySelector('h3');
+    const title = header.querySelector('h4');
     expect(title?.className).toContain('flex-auto');
   });
 

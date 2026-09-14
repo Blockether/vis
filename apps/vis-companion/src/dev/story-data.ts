@@ -2186,14 +2186,51 @@ export const STORY_GOAL = {
   updated_at: 1780000032000,
 };
 
-/** Settings transport: two reachable machines, one unavailable, and empty machine configuration. */
-export function storySettingsFetch(): typeof fetch {
-  return (async (input: RequestInfo | URL) => {
+/** Settings transport with optional populated lists; every response stays in the preview. */
+export function storySettingsFetch(populated = false): typeof fetch {
+  let servers = populated
+    ? [
+        {
+          name: 'filesystem',
+          transport: 'stdio',
+          command: 'npx',
+          args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
+          enabled: true,
+          is_connected: true,
+          is_managed: true,
+          is_killed: false,
+          tools: 14,
+        },
+        {
+          name: 'company-tools',
+          transport: 'streamable_http',
+          url: 'https://gateway.example.com/mcp',
+          enabled: true,
+          is_connected: true,
+          is_managed: false,
+          is_killed: false,
+          tools: 24,
+        },
+      ]
+    : [];
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (new URL(href).origin === new URL(STORY_GATEWAYS[2].url).origin) {
+    const url = new URL(href);
+    if (url.origin === new URL(STORY_GATEWAYS[2].url).origin) {
       throw new TypeError('The latest probe timed out');
     }
-    return new Response(JSON.stringify({}), {
+    let body: unknown = {};
+    if (url.pathname === '/v1/router') body = { providers: populated ? STORY_PROVIDERS : [] };
+    if (url.pathname === '/v1/mcp/servers') body = { servers };
+    const enable = url.pathname.match(/^\/v1\/mcp\/servers\/([^/]+)\/actions\/enable$/);
+    if (enable && init?.method === 'POST') {
+      const { enabled } = JSON.parse(String(init.body));
+      servers = servers.map((server) =>
+        server.name === decodeURIComponent(enable[1]) ? { ...server, enabled } : server,
+      );
+      body = servers.find((server) => server.name === decodeURIComponent(enable[1]));
+    }
+    return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });

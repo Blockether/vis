@@ -52,6 +52,45 @@ import viewSpec from '../../../../packages/vis-contract/resources/vis-contract/v
 
 import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
+/**
+ * Shared reading roles for settings, lists and forms. Size, weight and quiet ink
+ * belong to the role; callers control placement only. Touch labels stay larger,
+ * while descriptions and metadata never shrink below their readable steps.
+ * Use inherited ink inside a selected control or a semantic status container.
+ */
+export function Text({
+  variant,
+  as: Tag = 'span',
+  tone = 'default',
+  className = '',
+  ...props
+}: HTMLAttributes<HTMLElement> & {
+  variant: 'heading' | 'section' | 'label' | 'option' | 'description' | 'meta';
+  as?: 'span' | 'p' | 'h3' | 'h4';
+  tone?: 'default' | 'inherit';
+}) {
+  const role = {
+    heading: 'text-subhead font-semibold mouse:text-title',
+    section: 'text-body font-semibold',
+    label: 'text-subhead font-medium mouse:text-title',
+    option: 'text-subhead font-normal mouse:text-title',
+    description: 'text-body font-normal',
+    meta: 'text-ui font-normal',
+  }[variant];
+  const ink =
+    tone === 'inherit'
+      ? 'text-inherit'
+      : variant === 'description' || variant === 'meta'
+        ? 'text-dialog-hint'
+        : 'text-white';
+  return (
+    <Tag
+      {...props}
+      className={`font-mono normal-case tracking-normal ${role} ${ink} ${className}`}
+    />
+  );
+}
+
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
 // to be measurable by its owner, and cloning the element's classes at the call site
 // to get a bare <button> is how a design system drifts.
@@ -1318,7 +1357,7 @@ export function ChoiceCell({
           : leadingAction
             ? 'pl-3 pr-3'
             : 'px-3'
-      } ${isLeaf ? 'min-h-9 mouse:min-h-8' : 'min-h-10 justify-between py-1.5 mouse:min-h-9'} ${
+      } ${isLeaf ? 'min-h-11 mouse:min-h-8' : 'min-h-11 justify-between py-2 mouse:min-h-9'} ${
         isSelected
           ? 'bg-accent text-accent-foreground'
           : 'bg-input text-white enabled:hover:text-accent-ink'
@@ -1327,32 +1366,37 @@ export function ChoiceCell({
     >
       {isLeaf ? (
         <>
-          <span className="min-w-0 truncate font-mono text-ui font-bold mouse:text-title">
+          <Text variant="option" tone="inherit" className="min-w-0 truncate">
             {title}
-          </span>
+          </Text>
           {sub && (
-            <span className="ml-auto min-w-0 truncate font-mono text-chip mouse:text-meta">
+            <Text
+              variant="meta"
+              tone={isSelected ? 'inherit' : 'default'}
+              className="ml-auto min-w-0 truncate"
+            >
               {sub}
-            </span>
+            </Text>
           )}
         </>
       ) : (
         <span className="min-w-0">
-          <span className="block truncate font-mono text-ui font-bold mouse:text-title">
+          <Text variant="option" tone="inherit" className="block truncate">
             {title}
-          </span>
+          </Text>
           {sub && (
-            <span className="block truncate font-mono text-chip uppercase tracking-wider mouse:text-meta">
+            <Text
+              variant="meta"
+              tone={isSelected ? 'inherit' : 'default'}
+              className="block truncate"
+            >
               {sub}
-            </span>
+            </Text>
           )}
         </span>
       )}
       {showSelectionMark && (
-        <span
-          className={`shrink-0 font-mono text-meta font-black${sub ? '' : ' ml-auto'}`}
-          aria-hidden="true"
-        >
+        <span className={`shrink-0 font-mono text-ui${sub ? '' : ' ml-auto'}`} aria-hidden="true">
           {isSelected ? '●' : '○'}
         </span>
       )}
@@ -1367,7 +1411,7 @@ export function ChoiceCell({
         aria-label={leadingAction.label}
         disabled={leadingAction.disabled}
         onClick={leadingAction.onClick}
-        className={`${iconControlClass} grid min-h-9 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
+        className={`${iconControlClass} grid min-h-11 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
           isSelected
             ? 'bg-accent text-accent-foreground'
             : 'bg-input text-white enabled:hover:text-accent-ink'
@@ -1406,7 +1450,7 @@ export function SettingsChoiceDisclosure({
   onToggle: () => void;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_2.5rem]">
+    <div className="grid grid-cols-[minmax(0,1fr)_2.75rem] mouse:grid-cols-[minmax(0,1fr)_2.5rem]">
       <ChoiceCell title={title} sub={sub} isSelected={isSelected} onClick={onSelect} />
       <button
         type="button"
@@ -1414,7 +1458,7 @@ export function SettingsChoiceDisclosure({
         aria-expanded={isOpen}
         aria-controls={controls}
         onClick={onToggle}
-        className={`${iconControlClass} grid min-h-10 w-10 place-items-center transition-[background-color,color] duration-150 active:bg-accent-2 motion-reduce:transition-none mouse:min-h-9 ${
+        className={`${iconControlClass} grid min-h-11 w-11 place-items-center transition-[background-color,color] duration-150 active:bg-accent-2 motion-reduce:transition-none mouse:min-h-9 mouse:w-10 ${
           isSelected
             ? 'bg-accent text-accent-foreground'
             : 'bg-input text-dialog-hint enabled:hover:text-white'
@@ -1461,12 +1505,9 @@ export function SettingsChoiceGroup({
           isNested ? 'border-b border-dialog-edge pl-6 pr-3' : 'px-3'
         }`}
       >
-        <h4
-          id={headingId}
-          className="font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint mouse:text-ui"
-        >
+        <Text as="h4" variant="section" id={headingId}>
           {label}
-        </h4>
+        </Text>
       </header>
       <IsNestedChoice.Provider value={isNested}>{children}</IsNestedChoice.Provider>
       {isNested && <div className="h-px w-full bg-dialog-edge" />}
@@ -1499,10 +1540,12 @@ export function SettingsDisclosure({
       {...props}
     >
       <span className="min-w-0 flex-1">
-        <span className="block font-mono text-ui font-black uppercase tracking-[0.08em] text-white mouse:text-title">
+        <Text variant="label" tone="inherit" className="block">
           {label}
-        </span>
-        <span className="block truncate font-mono text-chip text-dialog-hint mouse:text-meta">{value}</span>
+        </Text>
+        <Text variant="meta" className="block truncate">
+          {value}
+        </Text>
       </span>
       <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
     </button>
@@ -2186,13 +2229,15 @@ export function DialogHeader({
             The band's height is a minimum, not a cap. */}
         <h2
           id={titleId}
-          className="line-clamp-3 font-mono text-body font-bold tracking-wide mouse:text-title"
+          className="line-clamp-3 font-mono text-head font-semibold tracking-normal"
           title={typeof title === 'string' ? title : undefined}
         >
           {title}
         </h2>
         {subtitle && (
-          <p className="truncate font-mono text-meta text-dialog-title-foreground">{subtitle}</p>
+          <Text as="p" variant="meta" tone="inherit" className="truncate">
+            {subtitle}
+          </Text>
         )}
       </div>
       {/* What the band OFFERS, before the way out and in cells of the band's own:

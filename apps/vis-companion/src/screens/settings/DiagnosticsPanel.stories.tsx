@@ -46,10 +46,18 @@ export const BandPress: Story = {
 /** Open, phone: six facts keep their words while sharing three compact rows. */
 export const Open: Story = {
   args: { isOpen: true, onToggle: () => {} },
+  play: async ({ canvas }) => {
+    const label = canvas.getByText('Version', { exact: true });
+    const description = canvas.getByText('No credentials or request bodies are recorded.');
+    await expect(getComputedStyle(label).fontSize).toBe('11px');
+    await expect(getComputedStyle(label).fontWeight).toBe('400');
+    await expect(getComputedStyle(description).fontSize).toBe('12px');
+    await expect(getComputedStyle(description).lineHeight).toBe('18px');
+  },
 };
 
 /** Open, desktop: the same compact matrix follows the machine-panel rhythm. */
 export const OpenDesktop: Story = {
-  args: { isOpen: true, onToggle: () => {} },
-  parameters: { viewport: { defaultViewport: 'desktop' } },
+  ...Open,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };

@@ -108,6 +108,7 @@ import {
   ExecutionAction,
   SettingsDisclosure,
   Switch,
+  Text,
   TextButton,
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
@@ -135,6 +136,30 @@ import {
   SectionHeader,
 } from './SessionNavigator';
 import { MenuHeading } from './Menu';
+
+describe('shared text roles', () => {
+  it('keeps semantic headings and their accessible identifiers', () => {
+    const html = renderToStaticMarkup(
+      <Text as="h4" variant="section" id="speech-section">
+        Speech engines
+      </Text>,
+    );
+    expect(html).toMatch(/^<h4\b/);
+    expect(html).toContain('id="speech-section"');
+    expect(html).toContain('Speech engines</h4>');
+  });
+
+  it('preserves paragraph semantics and full descriptions for truncated metadata', () => {
+    const html = renderToStaticMarkup(
+      <Text as="p" variant="meta" title="https://gateway.example.com/mcp" className="truncate">
+        gateway.example.com
+      </Text>,
+    );
+    expect(html).toMatch(/^<p\b/);
+    expect(html).toContain('title="https://gateway.example.com/mcp"');
+    expect(html).toContain('gateway.example.com</p>');
+  });
+});
 
 // Regression (reported: "why we still have this chevron here showing something is
 // collapsible if we cannot click it — let's have just one color"): the caret half of
@@ -2929,8 +2954,8 @@ describe('the session screen and the settings dialog spell no control out', () =
     // against 599. Every band in this dialog is ONE height and ONE gutter; the verb
     // is the band's trailing CELL, centred against the title's own cell, and that
     // cell is what wraps — never the line the verb stands on.
-    const band = /<div className="(flex min-h-9[^"]*)"/.exec(settingsSource)?.[1] ?? '';
-    const nestedBand = /<header className="(flex min-h-9[^"]*)"/.exec(settingsSource)?.[1] ?? '';
+    const band = /<div className="(flex min-h-\d+[^"]*)"/.exec(settingsSource)?.[1] ?? '';
+    const nestedBand = /<header className="(flex min-h-\d+[^"]*)"/.exec(settingsSource)?.[1] ?? '';
     expect(band.length).toBeGreaterThan(0);
     expect(nestedBand.length).toBeGreaterThan(0);
     for (const row of [band, nestedBand]) {

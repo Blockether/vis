@@ -38,8 +38,8 @@ import {
   Input,
   ListRow,
   Select,
-  PROSE,
   Switch,
+  Text,
 } from '../../components/ui';
 import {
   AddProviderButton,
@@ -105,11 +105,13 @@ export function StringSetting({
       }}
     >
       <div>
-        <p className="font-mono text-ui font-bold text-white mouse:text-title">{toggle.label}</p>
+        <Text as="p" variant="label">
+          {toggle.label}
+        </Text>
         {toggle.description && (
-          <p className="mt-0.5 font-mono text-ui text-dialog-hint mouse:text-body">
+          <Text as="p" variant="description" className="mt-0.5">
             {toggle.description}
-          </p>
+          </Text>
         )}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -291,10 +293,14 @@ export function MachineSettings({
       {failure === 'incompatible' ? null : failure === 'unreachable' ? (
         <SettingsPanel title="Settings">
           <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-            <p className="font-mono text-body font-bold text-err">Machine unreachable</p>
-            <p className="font-mono text-meta text-dialog-hint mouse:text-body">
-              Can't load settings — vis isn't responding on this machine.
+            <p className="text-err">
+              <Text variant="label" tone="inherit">
+                Machine unreachable
+              </Text>
             </p>
+            <Text as="p" variant="description">
+              Can't load settings — vis isn't responding on this machine.
+            </Text>
             <Button variant="secondary" onClick={() => void load()}>
               Retry
             </Button>
@@ -303,14 +309,16 @@ export function MachineSettings({
       ) : failure === 'unauthorized' ? (
         <SettingsPanel title="Settings" meta="unauthorized">
           <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-            <p className="font-mono text-body font-bold text-warn-strong">
-              Token missing or invalid
+            <p className="text-warn-strong">
+              <Text variant="label" tone="inherit">
+                Token missing or invalid
+              </Text>
             </p>
-            <p className="max-w-sm font-mono text-meta text-dialog-hint mouse:text-body">
+            <Text as="p" variant="description" className="max-w-sm">
               The machine is online, but rejected this token. Re-pair from{' '}
               <code className="text-accent-ink">vis-agent gateway pair</code> and paste the fresh
               link to load its settings.
-            </p>
+            </Text>
             <Button variant="secondary" onClick={() => void load()}>
               Retry
             </Button>
@@ -327,9 +335,11 @@ export function MachineSettings({
             aria-live="polite"
             aria-label="Loading settings"
           >
-            <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint mouse:text-body">
-              Loading settings…
-            </p>
+            <div className="bg-panel px-4 py-2">
+              <Text as="p" variant="description">
+                Loading settings…
+              </Text>
+            </div>
             {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
               <div
                 key={width}
@@ -343,8 +353,8 @@ export function MachineSettings({
         </SettingsPanel>
       ) : groups.length === 0 ? (
         <SettingsPanel title="Settings">
-          <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-            No settings exposed by this machine.
+          <p className="px-4 py-6 text-center">
+            <Text variant="description">No settings exposed by this machine.</Text>
           </p>
         </SettingsPanel>
       ) : (
@@ -379,15 +389,13 @@ export function MachineSettings({
                     className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4 sm:py-2"
                   >
                     <div className="min-w-0">
-                      <p className="break-words font-mono text-ui font-bold text-white mouse:text-title">
+                      <Text as="p" variant="label" className="break-words">
                         {toggle.label}
-                      </p>
+                      </Text>
                       {toggle.description && (
-                        <p
-                          className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint mouse:text-body`}
-                        >
+                        <Text as="p" variant="description" className="mt-0.5 break-words">
                           {toggle.description}
-                        </p>
+                        </Text>
                       )}
                     </div>
 
@@ -763,7 +771,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               key={kind}
               isOn={transport === kind}
               onClick={() => setTransport(kind)}
-              className="w-full uppercase"
+              className="w-full"
             >
               {kind === 'stdio' ? 'Local command' : 'Streamable HTTP'}
             </Chip>
@@ -1037,30 +1045,34 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                   >
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-mono text-body font-bold text-white mouse:text-title">
+                        <Text variant="label" className="truncate">
                           {server.name}
-                        </span>
+                        </Text>
                         {!server.is_managed && (
-                          <span
-                            className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint"
+                          <Text
+                            variant="meta"
+                            className="shrink-0"
                             title="Listed from a hand-written config file; edit it there."
                           >
                             Config file
-                          </span>
+                          </Text>
                         )}
                       </span>
-                      <span
-                        className="block truncate font-mono text-meta text-dialog-hint"
+                      <Text
+                        variant="meta"
+                        className="block truncate"
                         title={server.transport === 'stdio' ? server.command : server.url}
                       >
                         {server.transport === 'stdio' ? homeifyPath(server.command) : server.url}
-                      </span>
+                      </Text>
                     </span>
                     <span
-                      className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${state.tone === 'text-ok' ? 'text-dialog-hint' : state.tone}`}
+                      className={`shrink-0 ${state.tone === 'text-ok' ? 'text-dialog-hint' : state.tone}`}
                       title={state.label}
                     >
-                      {server.enabled ? state.word : ''}
+                      <Text variant="meta" tone="inherit">
+                        {server.enabled ? state.word : ''}
+                      </Text>
                     </span>
                     <ChevronIcon
                       open={isOpen}
@@ -1078,13 +1090,13 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           );
         })}
         {servers === null && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
-            Checking MCP servers…
+          <p className="py-4 text-center">
+            <Text variant="description">Checking MCP servers…</Text>
           </p>
         )}
         {servers?.length === 0 && !showForm && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
-            No MCP servers on this gateway.
+          <p className="py-4 text-center">
+            <Text variant="description">No MCP servers on this gateway.</Text>
           </p>
         )}
         {showForm && !editing && form}
@@ -1154,21 +1166,18 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
     >
       {rows.map(([term, value]) => (
         <Fragment key={term}>
-          <span className="font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
-            {term}
-          </span>
-          <span
-            className="min-w-0 wrap-anywhere font-mono text-meta text-dialog-foreground"
-            title={value}
-          >
-            {(term === 'Command' || term === 'Directory' ? homeifyPath(value) : value)
-              .split(/(\/)/)
-              .map((part, index) => (
-                <Fragment key={index}>
-                  {part}
-                  {part === '/' && <wbr />}
-                </Fragment>
-              ))}
+          <Text variant="meta">{term}</Text>
+          <span className="min-w-0 wrap-anywhere text-dialog-foreground">
+            <Text variant="meta" tone="inherit" title={value}>
+              {(term === 'Command' || term === 'Directory' ? homeifyPath(value) : value)
+                .split(/(\/)/)
+                .map((part, index) => (
+                  <Fragment key={index}>
+                    {part}
+                    {part === '/' && <wbr />}
+                  </Fragment>
+                ))}
+            </Text>
           </span>
         </Fragment>
       ))}
@@ -1209,14 +1218,14 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       )}
 
       {providers === null && (
-        <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
-          Checking provider sign-in…
+        <p className="py-4 text-center">
+          <Text variant="description">Checking provider sign-in…</Text>
         </p>
       )}
 
       {providers?.length === 0 && (
-        <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
-          No providers configured on this machine.
+        <p className="py-4 text-center">
+          <Text variant="description">No providers configured on this machine.</Text>
         </p>
       )}
 

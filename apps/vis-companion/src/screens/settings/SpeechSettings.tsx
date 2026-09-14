@@ -36,6 +36,7 @@ import {
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
   SettingsDisclosure,
+  Text,
 } from '../../components/ui';
 import { SwipeActions } from '../../components/SwipeActions';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
@@ -351,14 +352,16 @@ export function VoicesPanel({
         )}
 
         {catalogue === null && !err && (
-          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4 mouse:text-body">
-            Reading this machine's voices…
+          <p className="px-3 py-5 sm:px-4">
+            <Text variant="description">Reading this machine's voices…</Text>
           </p>
         )}
 
         {catalogue && voices.length === 0 && (
-          <p className="px-3 py-3 font-mono text-body text-dialog-hint sm:px-4">
-            {canImport ? 'No custom voices yet.' : 'This engine speaks in no named voice.'}
+          <p className="px-3 py-3 sm:px-4">
+            <Text variant="description">
+              {canImport ? 'No custom voices yet.' : 'This engine speaks in no named voice.'}
+            </Text>
           </p>
         )}
 
@@ -471,17 +474,25 @@ export function VoicesPanel({
               )}
               {confirmingInstall === voice.id && (
                 <div className="border-t border-dialog-edge">
-                  <div className="space-y-2 px-3 pt-3 font-mono text-meta text-dialog-hint sm:px-4 mouse:text-body">
-                    <p>{voice.notice ?? `This voice requires acceptance of ${voice.license}.`}</p>
-                    {voice.license && <p className="font-bold text-white">{voice.license}</p>}
+                  <div className="space-y-2 px-3 pt-3 sm:px-4">
+                    <Text as="p" variant="description">
+                      {voice.notice ?? `This voice requires acceptance of ${voice.license}.`}
+                    </Text>
+                    {voice.license && (
+                      <Text as="p" variant="section">
+                        {voice.license}
+                      </Text>
+                    )}
                     {voice.source_url && (
                       <a
-                        className="block truncate text-accent underline"
+                        className="block truncate text-accent-ink underline"
                         href={voice.source_url}
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        Read the source and licence
+                        <Text variant="description" tone="inherit">
+                          Read the source and licence
+                        </Text>
                       </a>
                     )}
                   </div>
@@ -553,9 +564,9 @@ export function VoicesPanel({
             )}
           </div>
           {isTesting && (
-            <p role="status" className="font-mono text-ui text-dialog-hint">
+            <Text as="p" variant="description" role="status">
               {playing.phase === 'loading' ? 'Synthesizing…' : 'Playing…'}
-            </p>
+            </Text>
           )}
         </form>
       )}
@@ -572,18 +583,18 @@ export function VoicesPanel({
           />
           {clip === null ? (
             <div className="space-y-3 px-3 py-3 sm:px-4">
-              <p className="font-mono text-body text-dialog-hint">
+              <Text as="p" variant="description">
                 Use 10–30 seconds of clear speech, without music or other voices.
-              </p>
+              </Text>
               {recording ? (
                 <>
-                  <p role="status" className="font-mono text-ui text-white">
+                  <Text as="p" variant="description" role="status">
                     {recording === 'starting'
                       ? 'Waiting for microphone permission…'
                       : recording === 'stopping'
                         ? 'Preparing recording…'
                         : `Recording · ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, '0')}`}
-                  </p>
+                  </Text>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-5">
                     <Button
                       variant="secondary"
@@ -618,7 +629,9 @@ export function VoicesPanel({
           ) : (
             <div className="space-y-3 px-3 py-3 sm:px-4">
               <FormLabel label="Recording" hint="Ten to thirty seconds of clear speech is plenty.">
-                <p className="break-words font-mono text-ui text-white">{clip.name}</p>
+                <Text as="p" variant="meta" className="break-words">
+                  {clip.name}
+                </Text>
               </FormLabel>
               <FormLabel label="Name">
                 <Input
@@ -772,11 +785,11 @@ function EngineProblem({
   return (
     <div className="space-y-2 border-t border-dialog-edge px-3 py-3 sm:px-4">
       {reading?.absence && (
-        <p className="font-mono text-chip text-dialog-hint mouse:text-body">
+        <Text as="p" variant="description">
           {reading.absence.reasons?.length
             ? reading.absence.reasons.join(' · ')
             : 'This machine has no engine for this direction installed.'}
-        </p>
+        </Text>
       )}
       {state?.status === 'failed' && state.error && <Banner kind="err">{state.error}</Banner>}
       {reading?.error && <Banner kind="err">{reading.error}</Banner>}
@@ -1078,8 +1091,8 @@ export function SpeechEnginesPanel({
                 </div>
               ) : (
                 <>
-                  <p className="px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4 mouse:text-body">
-                    No ASR engine is registered on this machine.
+                  <p className="px-3 py-4 sm:px-4">
+                    <Text variant="description">No ASR engine is registered on this machine.</Text>
                   </p>
                   <EngineProblem
                     engineName="ASR"
@@ -1118,14 +1131,18 @@ export function SpeechEnginesPanel({
                     {openTtsSettings.has('device') && (
                       <div id="speech-tts-settings-device" className="grid">
                         {voices === null && (
-                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4 mouse:text-body">
-                            Asking this device what it can speak in…
-                          </p>
+                          <div className="border-t border-dialog-edge px-3 py-4 sm:px-4">
+                            <Text as="p" variant="description">
+                              Asking this device what it can speak in…
+                            </Text>
+                          </div>
                         )}
                         {voices !== null && voices.length === 0 && (
-                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4 mouse:text-body">
-                            This device has no system TTS engine installed.
-                          </p>
+                          <div className="border-t border-dialog-edge px-3 py-4 sm:px-4">
+                            <Text as="p" variant="description">
+                              This device has no system TTS engine installed.
+                            </Text>
+                          </div>
                         )}
                         {voices !== null && voices.length > 0 && (
                           <SettingsChoiceGroup label="Voices" isNested>
@@ -1188,9 +1205,11 @@ export function SpeechEnginesPanel({
                               })}
                             </div>
                             {voiceDownloadGuidance && (
-                              <p className="border-t border-dialog-edge p-3 font-mono text-meta text-dialog-hint sm:p-4 mouse:text-body">
-                                {voiceDownloadGuidance}
-                              </p>
+                              <div className="border-t border-dialog-edge p-3 sm:p-4">
+                                <Text as="p" variant="description">
+                                  {voiceDownloadGuidance}
+                                </Text>
+                              </div>
                             )}
                           </SettingsChoiceGroup>
                         )}

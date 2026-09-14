@@ -3,22 +3,22 @@ import { useState } from 'react';
 import { APP_BUILD_COMMIT, APP_BUILD_NUMBER } from '../../lib/build-info';
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL, APP_VERSION } from '../../lib/compat';
 import { RETAINED_LOG_POLICY, exportDiagnostics } from '../../lib/diagnostics';
-import { Banner, Button } from '../../components/ui';
+import { Banner, Button, Text } from '../../components/ui';
 import { SettingsPanel } from './SettingsLayout';
 
-/** ONE COMPACT FACT CELL, and the answer is the fact. Diagnostics is reference
- *  material, not a second settings form, so six facts pair into the same three-row
- *  rhythm as the machine panels instead of consuming six full-width rows. The label
- *  keeps the hint ink while the value takes the row's white and its weight: one
- *  `text-meta` size for both sides, with ink plus weight carrying the hierarchy.
- *  Each cell keeps its answer at the trailing edge; the one-pixel grid supplies the
- *  only internal rules, rather than boxing every fact. */
+/** Compact reference facts share the app's readable metadata role.
+ * Labels use hint ink; values keep the primary ink without adding another weight.
+ * Each answer stays at the trailing edge of its cell. */
 function DiagnosticFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 items-baseline gap-2 bg-panel px-3 py-1.5 sm:px-4">
-      <dt className="min-w-0 flex-1 break-words font-mono text-meta text-dialog-hint">{label}</dt>
-      <dd className="max-w-[70%] break-words text-right font-mono text-meta font-bold text-white">
-        {value}
+      <dt className="min-w-0 flex-1 break-words">
+        <Text variant="meta">{label}</Text>
+      </dt>
+      <dd className="max-w-[70%] break-words text-right text-white">
+        <Text variant="meta" tone="inherit">
+          {value}
+        </Text>
       </dd>
     </div>
   );
@@ -79,9 +79,9 @@ export function DiagnosticsPanel({ isOpen, onToggle }: { isOpen: boolean; onTogg
             />
           </dl>
           <div className="space-y-2 p-3 sm:p-4">
-            <p className="font-mono text-meta text-dialog-hint">
+            <Text as="p" variant="description">
               No credentials or request bodies are recorded.
-            </p>
+            </Text>
             {exported && <Banner kind="ok">{exported}</Banner>}
             {exportError && <Banner kind="err">{exportError}</Banner>}
             <Button

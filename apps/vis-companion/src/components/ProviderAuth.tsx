@@ -10,7 +10,17 @@ import type {
 } from '../lib/types';
 import { ProviderLimitReset } from './ProviderLimitReset';
 import { clientAuthFlow, openAuthUrl, watchAuth, type AuthWatch } from '../lib/oauth';
-import { Banner, Button, ConfirmRow, DialogFrame, IconButton, Input, ListRow, Modal } from './ui';
+import {
+  Banner,
+  Button,
+  ConfirmRow,
+  DialogFrame,
+  IconButton,
+  Input,
+  ListRow,
+  Modal,
+  Text,
+} from './ui';
 import {
   ChevronIcon,
   CircleAlertIcon,
@@ -762,11 +772,11 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
 
   return (
     <div className="space-y-3 border border-accent/50 bg-panel-2 p-3">
-      <p className="font-mono text-body font-bold text-white">
+      <Text as="p" variant="heading">
         {flow.kind === 'api-key' || (flow.kind === 'pkce' && showManual)
           ? 'Finish sign-in'
           : 'Waiting for authorization…'}
-      </p>
+      </Text>
 
       {flow.user_code && (
         <p className="select-all break-all border border-dialog-edge bg-input px-3 py-2 text-center font-mono text-display font-bold tracking-[0.2em] text-accent-ink">
@@ -775,11 +785,15 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
       )}
 
       {apiKeyHint !== null ? (
-        <p className="break-words font-mono text-meta text-dialog-hint">{apiKeyHint}</p>
+        <Text as="p" variant="description" className="break-words">
+          {apiKeyHint}
+        </Text>
       ) : flow.kind !== 'api-key' && flow.instructions?.length ? (
-        <ol className="list-inside list-decimal space-y-1 font-mono text-ui text-dialog-hint">
+        <ol className="list-inside list-decimal space-y-1">
           {flow.instructions.map((line) => (
-            <li key={line}>{line}</li>
+            <li key={line}>
+              <Text variant="description">{line}</Text>
+            </li>
           ))}
         </ol>
       ) : null}
@@ -797,11 +811,8 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
       )}
       {flow.kind === 'pkce' && showManual && (
         <div className="space-y-2">
-          <label
-            className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
-            htmlFor="provider-redirect-url"
-          >
-            Paste the final redirect URL
+          <label className="block" htmlFor="provider-redirect-url">
+            <Text variant="label">Paste the final redirect URL</Text>
           </label>
           <Input
             id="provider-redirect-url"
@@ -818,11 +829,8 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
 
       {flow.kind === 'api-key' && (
         <div className="space-y-2">
-          <label
-            className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
-            htmlFor="provider-api-key"
-          >
-            Paste the provider API key
+          <label className="block" htmlFor="provider-api-key">
+            <Text variant="label">Paste the provider API key</Text>
           </label>
           <Input
             id="provider-api-key"
@@ -979,11 +987,8 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
             {chosen ? (
               <div className="space-y-3 p-3 sm:p-4">
                 <div className="space-y-2">
-                  <label
-                    className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
-                    htmlFor="add-provider-base-url"
-                  >
-                    Where it listens on that machine
+                  <label className="block" htmlFor="add-provider-base-url">
+                    <Text variant="label">Where it listens on that machine</Text>
                   </label>
                   <Input
                     id="add-provider-base-url"
@@ -995,9 +1000,9 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
                     placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
                     onChange={(event) => setBaseUrl(event.target.value)}
                   />
-                  <p className="break-words font-mono text-chip text-dialog-hint">
+                  <Text as="p" variant="description" className="break-words">
                     Leave it blank for {chosen.base_url ?? 'the default'}.
-                  </p>
+                  </Text>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button
@@ -1045,12 +1050,12 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
                       }}
                     >
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate font-mono text-ui font-bold text-white mouse:text-title">
+                        <Text variant="label" className="block truncate">
                           {preset.label}
-                        </span>
-                        <span className="block truncate font-mono text-meta text-dialog-hint">
+                        </Text>
+                        <Text variant="meta" className="mt-0.5 block truncate">
                           {adding ? 'Adding…' : presetHint(preset)}
-                        </span>
+                        </Text>
                       </span>
                       <span className="shrink-0 text-dialog-hint" aria-hidden="true">
                         {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
@@ -1284,30 +1289,33 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate font-mono text-body font-bold text-white mouse:text-title">
+                      <Text variant="label" className="truncate">
                         {provider.label}
-                      </span>
+                      </Text>
                       {provider.is_default && (
-                        <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                          Default
+                        <span className="shrink-0 text-accent-ink">
+                          <Text variant="meta" tone="inherit">
+                            Default
+                          </Text>
                         </span>
                       )}
                       {provider.is_fallback && (
-                        <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
+                        <Text variant="meta" className="shrink-0">
                           Fallback
-                        </span>
+                        </Text>
                       )}
                     </span>
-                    <span className="block truncate font-mono text-meta text-dialog-hint">
+                    <Text variant="meta" className="mt-0.5 block truncate">
                       {providerRowLine(provider)}
-                    </span>
+                    </Text>
                   </span>
-                  <span
-                    className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint mouse:text-meta"
+                  <Text
+                    variant="meta"
+                    className="shrink-0"
                     title={providerLimitsLine(provider) ?? status.label}
                   >
                     {!authed ? 'Sign in' : (mark ?? '')}
-                  </span>
+                  </Text>
                   <ChevronIcon
                     open={isOpen}
                     className="size-3 shrink-0 text-dialog-hint"
@@ -1323,19 +1331,21 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                 aria-label={`${provider.label} limits`}
                 className="space-y-2 border-t border-dialog-edge bg-panel-2 p-3"
               >
-                <p className="font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                <Text as="p" variant="section">
                   Limits
-                </p>
+                </Text>
                 {limitLines.length > 0 ? (
-                  <ul className="space-y-1 font-mono text-meta text-dialog-foreground">
+                  <ul className="space-y-1">
                     {limitLines.map((line, index) => (
-                      <li key={`${provider.id}-limit-${index}`}>{line}</li>
+                      <li key={`${provider.id}-limit-${index}`}>
+                        <Text variant="meta">{line}</Text>
+                      </li>
                     ))}
                   </ul>
                 ) : !isProbing ? (
-                  <p className="font-mono text-meta text-dialog-hint">
+                  <Text as="p" variant="description">
                     No limits reported by this provider.
-                  </p>
+                  </Text>
                 ) : null}
                 {authed && provider.id === 'openai-codex' && (
                   <ProviderLimitReset

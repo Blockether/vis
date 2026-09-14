@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 import {
   STORY_PROVIDERS,
   STORY_BROWSER_AUTH,
@@ -35,8 +35,20 @@ export const Fleet: Story = {
     for (const provider of args.auth.providers!) {
       const name = canvas.getByText(provider.label, { exact: true });
       await name.ownerDocument.fonts.ready;
-      await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '12px');
-      await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '18px');
+      await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '15px');
+      await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '22px');
+      await expect(getComputedStyle(name).fontWeight).toBe('500');
+      // Names lead; routing status is readable metadata, not another bold heading.
+      const label = provider.is_default ? 'Default' : provider.is_fallback ? 'Fallback' : null;
+      if (label) {
+        const status = within(name.closest('button')!).getByText(label, { exact: true });
+        const style = getComputedStyle(status);
+        await expect(style.fontSize).toBe('11px');
+        await expect(style.lineHeight).toBe('16px');
+        await expect(style.fontWeight).toBe('400');
+        await expect(style.textTransform).toBe('none');
+        await expect(style.letterSpacing).toBe('normal');
+      }
     }
   },
 };

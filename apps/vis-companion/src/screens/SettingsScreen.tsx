@@ -7,7 +7,7 @@ import { DEFAULT_SPEECH_PREFS, getSpeechPrefs, getThemePref, setThemePref } from
 import { speechOutput } from '../lib/speech';
 import { PlusIcon } from '../components/icons';
 import { DEFAULT_THEME, THEMES, type ThemeChoice } from '../lib/themes.generated';
-import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch } from '../components/ui';
+import { Banner, ChoiceCell, DialogFrame, IconButton, Modal, Switch, Text } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
 import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
 import { MachineSettings } from './settings/MachineSettings';
@@ -219,9 +219,11 @@ export function SettingsDialog({
               />
             ) : (
               <SettingsPanel title="No machine yet">
-                <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-                  Add a machine above, and its settings live under its own row.
-                </p>
+                <div className="px-4 py-6 text-center">
+                  <Text as="p" variant="description">
+                    Add a machine above, and its settings live under its own row.
+                  </Text>
+                </div>
               </SettingsPanel>
             )}
           </SettingsColumn>
@@ -241,15 +243,15 @@ export function SettingsDialog({
             )}
 
             <SettingsPanel title="Transcript">
-              <div className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0">
-                  <p className="font-mono text-ui font-bold text-white mouse:text-title">
+              <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
+                <div className="min-w-0 space-y-1">
+                  <Text as="p" variant="label">
                     Show Python code
-                  </p>
-                  <p className="text-ui text-dialog-hint mouse:text-body">
+                  </Text>
+                  <Text as="p" variant="description">
                     One expandable source line before Activity. Hiding code keeps every activity and
                     result.
-                  </p>
+                  </Text>
                 </div>
                 <Switch
                   label="Show Python code"
@@ -259,7 +261,7 @@ export function SettingsDialog({
               </div>
             </SettingsPanel>
             <SettingsPanel title="Theme">
-              <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+              <div className="grid grid-cols-1 px-1 pb-2 sm:px-2">
                 {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized
                     Dark`, `Vis Light`, so a trailing `light`/`dark` restated the last word
                     of its own row six times down the list. The name is the whole answer. */}

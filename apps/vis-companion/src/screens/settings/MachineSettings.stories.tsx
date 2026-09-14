@@ -122,6 +122,34 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+/** Names lead while endpoints, provenance and tool counts stay readable and secondary. */
+export const Typography: Story = {
+  args: { servers: SERVERS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const name = await canvas.findByText('filesystem', { exact: true });
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '15px');
+    await expect(getComputedStyle(name).fontWeight).toBe('500');
+    for (const element of [
+      canvas.getByText('npx', { exact: true }),
+      canvas.getByText('Config file', { exact: true }),
+      canvas.getByText('14 tools', { exact: true }),
+    ]) {
+      const style = getComputedStyle(element);
+      await expect(style.fontSize).toBe('11px');
+      await expect(style.lineHeight).toBe('16px');
+      await expect(style.fontWeight).toBe('400');
+      await expect(style.textTransform).toBe('none');
+    }
+  },
+};
+
+export const TypographyPointer: Story = {
+  ...Typography,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
 /** Every reach a server can have: connected, waiting for sign-in, killed, off, and a config-file tier. */
 export const Fleet: Story = {
   args: { servers: SERVERS },

@@ -197,7 +197,8 @@ describe('the speech-engines band', () => {
     fireEvent.click(whisper);
 
     await waitFor(async () => expect((await getSpeechPrefs()).asrEngine).toBe('whisper-local'));
-    expect(whisper.getAttribute('aria-pressed')).toBe('true');
+    // Preference persistence can settle before React paints the selected state.
+    await waitFor(() => expect(whisper.getAttribute('aria-pressed')).toBe('true'));
     await waitFor(() => expect(asked).toContain('asr:whisper-local:read'));
   });
 
