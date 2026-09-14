@@ -44,6 +44,31 @@ def test_view_records_are_canonical_immutable_and_roundtrip():
     assert LiveResult.from_wire(samples["result"]).view.title == "Build"
 
 
+def test_live_view_owner_roundtrips_as_immutable_metadata():
+    from blockether.vis.views import LiveView
+
+    # SDK dogfooding: host-stamped ownership must survive view.open admission.
+    owner = {"invocation_id": "00000000-0000-0000-0000-000000000001"}
+    sample = {**fixtures()["live"], "owner": owner}
+    view = LiveView.from_wire(sample)
+    assert view.to_wire() == sample
+    assert view.owner == owner
+    with pytest.raises(TypeError):
+        view.owner["invocation_id"] = "different"
+    event = Event.from_wire(
+        {
+            "type": "view.open",
+            "kind": "live",
+            "view_id": sample["id"],
+            "view": sample,
+            "session_id": "s",
+            "turn_id": "t",
+            "seq": 1,
+        }
+    )
+    assert event.view.view.owner == owner
+
+
 def test_view_events_validate_kind_identity_and_patch_sequence():
     samples = fixtures()
     base = {"session_id": "s", "turn_id": "t", "seq": 5}

@@ -27,7 +27,6 @@ from blockether.vis.engine import (
     GatewayError,
     LocalEngine,
     ProtocolError,
-    Turn,
 )
 
 EXTENSION = """import blockether.vis.extension as vis
@@ -645,7 +644,9 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
+def test_real_council_idle_ping_does_not_wake_independent_peer(
+    tmp_path, monkeypatch, transport
+):
     ready, release = threading.Event(), threading.Event()
 
     def before_reply(position):
@@ -685,15 +686,9 @@ def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
                 idempotency_key="wake-once",
             )
             assert entry.ping == (peer.id,)
-            deadline = time.monotonic() + 30
-            while True:
-                turns = peer.turns()
-                if turns and turns[0]["status"] in {"completed", "failed", "cancelled"}:
-                    break
-                assert time.monotonic() < deadline, "Council wake did not finish"
-                time.sleep(0.05)
-            assert len(turns) == 1 and turns[0]["status"] == "completed"
-            assert f"Council notification #{entry.entry_id}." in turns[0]["request"]
+            # A shared project/group does not make this peer a managed subagent.
+            assert peer.council().get(entry.entry_id) == entry
+            assert peer.turns() == []
             assert (
                 conversation.publish(
                     entry.content,
@@ -703,26 +698,21 @@ def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
                 )
                 == entry
             )
-            assert len(peer.turns()) == 1
-            assert len(requests) == 2  # Author blocked; exactly one peer invocation.
-            ping_messages = [
-                message["content"]
-                for message in requests[1]["messages"]
-                if message.get("role") == "user"
-                and "Council ping — attributed peer data" in str(message.get("content"))
-            ]
-            assert len(ping_messages) == 1
-            assert entry.content in ping_messages[0] and author.id in ping_messages[0]
-            assert "council_input" in str(peer.transcript().content)
+            assert peer.turns() == []
+            assert len(requests) == 1  # Only the explicitly started author is blocked.
         finally:
             release.set()
         assert turn.wait(timeout=30)["status"] == "completed"
+        assert len(requests) == 2
+        assert peer.turns() == []
         author.delete()
         peer.delete()
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
-def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transport):
+def test_real_council_reply_after_author_finishes_does_not_wake_it(
+    tmp_path, monkeypatch, transport
+):
     author_ready, peer_ready = threading.Event(), threading.Event()
     release_author, release_peer = threading.Event(), threading.Event()
 
@@ -730,23 +720,80 @@ def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transpo
         if position == 1:
             author_ready.set()
             assert release_author.wait(30), "author was not released"
-        elif position == 3:
+        elif position == 2:
             peer_ready.set()
             assert release_peer.wait(30), "peer was not released"
 
-    def wait_peer(peer, count):
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        transport,
+        council=True,
+        tool_code="print('Council fixture')",
+        before_reply=before_reply,
+    ) as (client, work, requests):
+        author = client.create_session(
+            title="Council author", root=str(work), channel="app"
+        )
+        peer = client.create_session(
+            title="Council researcher", root=str(work), channel="app"
+        )
+        try:
+            turn = author.send("Finish the initial research task")
+            assert author_ready.wait(30), "author did not start"
+            conversation = author.council()
+            entry = conversation.publish(
+                "Research question", kind="coordination", ping=[peer.id]
+            )
+            # Independent peers run only after an explicit user/SDK start, not a ping.
+            peer_turn = peer.send("Answer the research question")
+            assert peer_ready.wait(30), "explicit peer turn did not start"
+            release_author.set()
+            assert turn.wait(timeout=30)["status"] == "completed"
+            reply = peer.council().publish(
+                "Research findings",
+                kind="informational",
+                thread_id=entry.thread_id,
+                ping=[author.id],
+                idempotency_key="findings",
+            )
+            replies = [
+                row
+                for row in conversation.read(thread_id=entry.thread_id).entries
+                if row.content == "Research findings"
+            ]
+            assert replies == [reply]
+            assert reply.source == "sdk" and reply.ping == (author.id,)
+            assert len(author.turns()) == 1
+            release_peer.set()
+            assert peer_turn.wait(timeout=30)["status"] == "completed"
+            assert len(author.turns()) == len(peer.turns()) == 1
+            assert len(requests) == 4
+        finally:
+            release_author.set()
+            release_peer.set()
+            author.delete()
+            peer.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport):
+    hold, ready, release = threading.Event(), threading.Event(), threading.Event()
+
+    def before_reply(position):
+        if hold.is_set() and not ready.is_set():
+            ready.set()
+            assert release.wait(30), "parent was not released"
+
+    def settled_turns(child, count):
         deadline = time.monotonic() + 30
         while True:
-            turns = peer.turns()
-            # History settles before the gateway retires its Council activation.
-            # Wait on the owning runtime before sending another idle wake.
+            turns = [row for row in child.turns() if row.get("council")]
             if len(turns) == count and all(
-                row["status"] == "completed"
-                and Turn(peer, row["turn_id"]).read()["status"] == "completed"
-                for row in turns
+                row["status"] == "completed" for row in turns
             ):
-                return
-            assert time.monotonic() < deadline, "peer did not finish"
+                return turns
+            assert time.monotonic() < deadline, ("managed child did not finish", turns)
             time.sleep(0.05)
 
     with sdk_fixture(
@@ -754,58 +801,56 @@ def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transpo
         monkeypatch,
         transport,
         council=True,
-        tool_code=(
-            "thread = (await council.threads())['entries'][0]\n"
-            "if session['id'] != thread['author_session_id']:\n"
-            "    reply = await council.publish('Research findings', kind='coordination', thread_id=thread['thread_id'], "
-            "ping=[thread['author_session_id']], idempotency_key='findings')\n"
-            "    assert (await council.publish('No active peers', kind='coordination', ping='all', idempotency_key='broadcast'))['ping'] == []\n"
-            "    print(reply)\n"
-        ),
         before_reply=before_reply,
-    ) as (client, work, _requests):
-        author = client.create_session(
-            title="Council author", root=str(work), channel="app"
+        tool_code=(
+            "if session['agent']['role'] == 'leader':\n"
+            "    if not (await council.subagents()):\n"
+            "        print(await council.publish_spawn('Report fixture evidence', iteration_budget=8, key='child'))\n"
+            "else:\n"
+            "    for pending in session['council']['pending_replies']:\n"
+            "        print(await council.publish('Fixture evidence', kind='informational', reply_to=pending['entry_id']))\n"
+            "print('Managed Council fixture')"
+        ),
+    ) as (client, work, requests):
+        parent = client.create_session(
+            title="Managed parent", root=str(work), channel="app"
         )
-        peer = client.create_session(
-            title="Council researcher", root=str(work), channel="app"
-        )
-        turn = author.send("Ask about prior research")
+        turn = parent.send("Delegate a bounded task")
+        assert turn.wait(timeout=30)["status"] == "completed"
+        team = parent.council()
+        agents = team.subagents()
+        assert len(agents) == 1 and agents[0].parent_id == parent.id
+        child = client.session(agents[0].session_id)
+        settled_turns(child, 1)
+        hold.set()
+        active = parent.send("Collect another child report")
         try:
-            assert author_ready.wait(30), "author did not start"
-            conversation = author.council()
-            entry = conversation.publish(
-                "Research question", kind="coordination", ping=[peer.id]
-            )
-            wait_peer(peer, 1)
-            # A second explicit ping starts the peer's next activation, held at its model call.
-            conversation.publish(
-                "Please give details",
+            assert ready.wait(30), "parent model request was not observed"
+            team = parent.council()
+            entry = team.publish(
+                "Report again",
                 kind="coordination",
-                thread_id=entry.entry_id,
-                ping=[peer.id],
+                ping=[child.id],
+                idempotency_key="managed-wake",
             )
-            assert peer_ready.wait(30), "peer did not wake"
-            release_author.set()
-            assert turn.wait(timeout=30)["status"] == "completed"
-            assert [member.session_id for member in conversation.members()] == [peer.id]
-            release_peer.set()
-            wait_peer(peer, 2)
-            replies = [
-                row
-                for row in conversation.read(thread_id=entry.entry_id).entries
-                if row.content == "Research findings"
-            ]
-            assert len(replies) == 1
-            assert replies[0].source == "host" and replies[0].ping == (author.id,)
+            turns = settled_turns(child, 2)
+            assert turns[-1]["request"] == entry.content
+            assert turns[-1]["council"]["entry_id"] == entry.entry_id
             assert (
-                len(author.turns()) == 1
-            )  # A reply is saved, without a reverse wake chain.
+                team.publish(
+                    "Report again",
+                    kind="coordination",
+                    ping=[child.id],
+                    idempotency_key="managed-wake",
+                )
+                == entry
+            )
+            assert len([row for row in child.turns() if row.get("council")]) == 2
         finally:
-            release_author.set()
-            release_peer.set()
-        author.delete()
-        peer.delete()
+            release.set()
+        assert active.wait(timeout=30)["status"] == "completed"
+        child.delete()
+        parent.delete()
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])

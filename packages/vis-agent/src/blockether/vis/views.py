@@ -58,6 +58,7 @@ class LiveView(_ViewRecord):
     description: str | None = None
     source: str | None = None
     session_id: str | None = None
+    owner: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
