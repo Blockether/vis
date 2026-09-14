@@ -558,7 +558,8 @@
       ;; 8.2k → 8.3k for confirmed paths, direct reads and question-driven discovery.
       ;; 8.3k → 8.5k for optional ls glob filtering and per-path overrides.
       ;; Deduplication keeps the same contracts below the previous 8.5k ceiling.
-      (expect (< (count text) 8100))
+      ;; 8.1k → 8.7k for bounded helper discovery, explicit cleanup and verified Improve proposals.
+      (expect (< (count text) 8700))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -1296,6 +1297,27 @@
                       "accepts str/Path or a list; returns STRING"
                       "Non-None `hidden` overrides `is_hidden`" "gitignored entries stay excluded"]]
           (expect (str/includes? text rule) rule)))))
+
+(defdescribe core-prompt-helper-lifecycle-test
+             ;; Council report 4353: unbounded helper catalogs and versioned names hid reusable work.
+             (it "searches before creating and refines the existing binding from its source"
+                 (let [text (prompt/build-system-prompt {})]
+                   (doseq [rule ["Before a new helper, search `defs(pattern=\"...\")`"
+                                 "read `defs(name)` and refine a stable name"
+                                 "`defs(name, details=True)`" "liveness unknown"]]
+                     (expect (str/includes? text rule) rule))))
+             (it "makes cleanup explicit and checks references rather than collecting by age"
+                 (let [text (prompt/build-system-prompt {})]
+                   (doseq [rule ["At phase boundaries, review your helpers"
+                                 "callers, aliases and captured defaults" "`del obsolete_name`"
+                                 "Never delete by age"]]
+                     (expect (str/includes? text rule) rule))))
+             (it "ties Improve proposals to demonstrated reuse and the verified source version"
+                 (let [text (prompt/build-system-prompt {})]
+                   (doseq [rule ["propose to Improve" "concrete uses" "sanitized source" "SHA-256"
+                                 "globals/preconditions" "verification of that source"
+                                 "Create Python extensions only when asked"]]
+                     (expect (str/includes? text rule) rule)))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
 ;; do not redefine paths or helpers that the session already provides.

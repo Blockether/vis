@@ -188,6 +188,76 @@
           (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
 (defdescribe
+  session-defs-lifecycle-test
+  (it
+    "preserves refined source and explicit deletion across local and worker restarts"
+    (doseq [worker? [false true]]
+      (let [sid (str "vis-test-defs-refine-" (random-uuid))
+            file (io/file (paths/sandbox-defs-file sid))
+            refined "def saved_helper(value=0):\n    return value + OFFSET + 2\n"
+            fingerprint (atom nil)
+            details-of
+            (fn [ctx]
+              (let [answer (ep/run-python-block ctx "print(defs('saved_helper', details=True))")]
+                (expect (nil? (:error answer)) (pr-str answer))
+                (:stdout answer)))]
+
+        (try (tpc/with-own
+               [ctx {} nil {:worker? worker?}]
+               (expect (nil?
+                         (:error
+                           (ep/run-python-block
+                             ctx
+                             (str "OFFSET = 40\n"
+                                  "def obsolete_helper():\n    return 0\n"
+                                  "def saved_helper(value=0):\n    return value + OFFSET + 1\n")))))
+               (let [before (details-of ctx)
+                     before-hash (re-find #"[0-9a-f]{64}" before)]
+
+                 (expect (some? before-hash))
+                 (expect (str/includes? before "OFFSET"))
+                 (expect (str/includes? before "present"))
+                 (expect (nil? (:error (ep/run-python-block
+                                         ctx
+                                         (str refined "del obsolete_helper\ndel OFFSET\n")))))
+                 (let [after (details-of ctx)
+                       after-hash (re-find #"[0-9a-f]{64}" after)]
+
+                   (expect (some? after-hash))
+                   (expect (not= before-hash after-hash))
+                   (expect (str/includes? after "OFFSET"))
+                   (expect (str/includes? after "missing"))
+                   (expect (str/includes? after "liveness unknown"))
+                   (expect (not (str/includes? after "return value")))
+                   (reset! fingerprint after-hash)))
+               (expect (some? (ep/persist-session-defs! ctx sid))))
+             (ep/forget-session-defs! sid)
+             (tpc/with-own
+               [ctx {} nil {:worker? worker?}]
+               (expect (= 1 (ep/restore-session-defs! ctx sid)))
+               (expect (= @fingerprint (re-find #"[0-9a-f]{64}" (details-of ctx))))
+               (expect (= (str refined "\n")
+                          (:stdout (ep/run-python-block ctx "print(defs('saved_helper'))"))))
+               (let [answer (ep/run-python-block
+                              ctx
+                              (str "assert 'obsolete_helper' not in globals()\n"
+                                   "assert 'OFFSET' not in globals()\n"
+                                   "OFFSET = 40\n" "assert saved_helper() == 42\n"
+                                   "del saved_helper\n" "print('refined and deleted')"))]
+                 (expect (nil? (:error answer)) (pr-str answer))
+                 (expect (= "refined and deleted\n" (:stdout answer))))
+               (expect (nil? (ep/persist-session-defs! ctx sid)))
+               (expect (not (.exists file))))
+             (ep/forget-session-defs! sid)
+             (tpc/with-own [ctx {} nil {:worker? worker?}]
+                           (expect (nil? (ep/restore-session-defs! ctx sid)))
+                           (expect (= "False\n"
+                                      (:stdout (ep/run-python-block
+                                                 ctx
+                                                 "print('saved_helper' in globals())")))))
+             (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
+
+(defdescribe
   canonical-python-literal-test
   (it
     "renders boundary data without a CPython printer context"
@@ -1152,7 +1222,7 @@ Follow every fixture step without truncation."}]))
                                                              "    print(\"refused:\", exc)\n")))]
 
                       (expect (str/includes? empty-out "no functions defined by this session yet"))
-                      (expect (str/includes? listed "widen(a, b=2)"))
+                      (expect (str/includes? listed "widen(a, b=<int>)"))
                       ;; An IMPORTED function is not this session's definition.
                       (expect (not (str/includes? listed "dumps")))
                       (expect (str/includes? source "def widen(a, b=2):"))
@@ -1198,7 +1268,50 @@ Follow every fixture step without truncation."}]))
         (expect (str/includes? found "found=False"))
         (expect (str/includes? found "listed=False"))
         ;; It is still readable by name — `defs()` is the catalogue that addresses it.
-        (expect (str/includes? found "page=True"))))))
+        (expect (str/includes? found "page=True")))))
+  (it
+    "bounds helper listings and doc call hints without exposing default or annotation values"
+    ;; Council report 4353: one large default expanded every aligned catalogue row.
+    (tpc/with-own
+      [ctx {}]
+      (let [setup
+            (ep/run-python-block
+              ctx
+              (str "payload = 'private-fixture-' * 10000\n"
+                   "def bounded(value: payload = payload):\n" "    \"Keep a bounded call hint.\"\n"
+                   "    return len(value)\n"
+                   (apply str
+                     (for [n (range 25)]
+                       (format "def helper_%02d(value):\n    return value\n" n)))))
+
+            answer
+            (ep/run-python-block
+              ctx
+              (str "listed = defs()\n" "page = doc('bounded')\n"
+                   "assert len(listed) < 8000\n" "assert 'private-fixture-' not in listed + page\n"
+                   "assert 'bounded(value=<str>)' in listed + page\n"
+                   "assert 'helper_24(' not in listed\n"
+                   "filtered = defs(pattern='Keep a bounded')\n"
+                   "assert 'bounded(' in filtered and 'helper_00(' not in filtered\n"
+                   "paged = defs(pattern='^helper_', limit=2, offset=23)\n"
+                   "assert 'helper_23(' in paged and 'helper_24(' in paged\n"
+                   "assert 'helper_22(' not in paged\n" "print('bounded and searchable')"))]
+
+        (expect (nil? (:error setup)) (pr-str setup))
+        (expect (nil? (:error answer)) (pr-str answer))
+        (expect (= "bounded and searchable\n" (:stdout answer))))))
+  (it "documents the filtered index and advisory detail contract"
+      (tpc/with-own [ctx {}]
+                    (let [answer
+                          (ep/run-python-block ctx "print(doc('defs'))")
+
+                          out
+                          (:stdout answer)]
+
+                      (expect (nil? (:error answer)))
+                      (doseq [text ["pattern=None" "limit=20" "offset=0" "details=False"
+                                    "case-sensitive" "SHA-256" "liveness unknown" "Improve"]]
+                        (expect (str/includes? out text) text))))))
 
 (defdescribe
   ensure-interpreter-second-caller-test

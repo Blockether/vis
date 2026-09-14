@@ -13,8 +13,8 @@ only what a block prints returns to the model. That has three consequences:
 
 - Multiple operations can run in one tool call.
 - Intermediate results can remain in Python variables instead of being printed.
-- The model can reuse helpers it defined earlier. `defs()` lists them; function
-  definitions persist across turns and gateway restarts.
+- The model can reuse helpers it defined earlier. `defs()` shows a bounded index;
+  helper definitions persist across turns and can be restored after a gateway restart.
 
 Before each block, Vis rebuilds the `session` dict with turn counters, workspace
 roots, utilization figures and extension-provided context.
@@ -26,6 +26,63 @@ with `apropos(pattern)`, which filters public symbol names using a regular
 expression, and reads their documentation with `doc(name)`. Documentation
 pages and skills are available the same way. Search matches names only and
 returns results in manifest order.
+
+## Reuse and refine session helpers
+
+If a session has accumulated useful Python helpers, ask Vis to reuse them rather
+than start another version:
+
+> Find the helper we used to summarize these rows, adapt it to the new columns,
+> and check that its existing callers still work.
+
+Vis can search the helper index, read the existing source and redefine the same
+name. A one-line docstring makes a helper easier to find: its first line appears
+in the index, and `doc(name)` returns the full docstring. Session helpers are not
+included in `apropos`.
+
+At a phase boundary, you can ask Vis to review the helpers it owns and remove
+obsolete names. Deletion is explicit, not based on age. Python's usual reference
+rules still apply: redefining a name does not update aliases or functions saved
+in default arguments. Deleting it with `del obsolete_name` can break callers that
+look up that global name; it does not remove other references to the function.
+Check those references before cleanup.
+
+### Helper lookup reference
+
+For an existing helper named `summarize_rows`, you can inspect it with:
+
+```python
+print(defs(pattern="summar|count"))
+print(defs("summarize_rows"))
+print(defs("summarize_rows", details=True))
+```
+
+- `defs()` lists up to 20 helpers in alphabetical order, with origin, source
+  length and a short docstring gist. Call hints are capped at 120 characters;
+  annotations are omitted and defaults show only their type, such as `=<int>`,
+  never their value. These hints are not source code.
+- `defs(pattern="summar|count", limit=10, offset=0)` searches names and first-line
+  docstring gists with a case-sensitive regular expression. `limit` must be an
+  integer from 1 to 100; `offset` must be a nonnegative integer. Increase the
+  offset to read another page, or narrow the pattern.
+- `defs("summarize_rows")` returns that helper's source, unchanged. Review it for
+  secrets before sharing it.
+- `defs("summarize_rows", details=True)` returns metadata instead of source:
+  origin, source SHA-256 and up to 20 source-derived global or captured names
+  with types and presence. These are advisory hints, not a complete dependency
+  graph or a check that a browser session, file or other resource is still usable.
+  Liveness is unknown. Default and decorator expressions are not analyzed. The
+  digest identifies source, not argument defaults, captured values or mutable state.
+
+Restoring a definition does not prove its dependencies are ready. Recheck its
+preconditions after a restart; do not assume live handles have been restored.
+
+If the same capability proves useful across sessions, ask Vis to propose it in
+Improve before turning it into an extension. A useful proposal includes concrete
+uses, a helper name and source fingerprint, sanitized source or evidence,
+required globals and preconditions, and verification tied to that source version.
+A proposal does not create an extension or authorize promotion; creating one
+requires a separate request and the [extension contract](extending.md).
 
 ## Reuse another session's findings
 
@@ -87,8 +144,8 @@ as `fold_measurement` for session introspection.
 
 For a code change, the agent can locate a function with `grep`, read the relevant
 lines with `cat`, apply a `patch` and run the affected tests. It does not need to
-load whole files or repeat the old code in the edit. Helpers that prove useful
-across sessions can become [extensions](extending.md).
+load whole files or repeat the old code in the edit. Reusable helpers can be
+reviewed for an Improve proposal before you request an [extension](extending.md).
 
 ## See also
 

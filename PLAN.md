@@ -489,3 +489,63 @@ Preserve concurrent worker-diagnostic and Companion changes.
    findings were checked against the baseline and warning-free JVM compilation.
 3. Documentation and scoped diff reviewed. Publication: commit only this task, push
    main and report the verified follow-up on #226. No installation or live restart.
+
+# Searchable session helpers
+
+Reuse and refine helpers without expanding the session catalogue into the context.
+
+## Context
+
+The runtime's `resources/vis-python/async_runtime.py` renders every helper with
+unbounded default representations and catalogue-wide padding. A measured
+86-helper listing reached 13.8 million characters, mostly padding (Improve 4353).
+Vis owns discovery metadata in `internal/python/env.clj`, the prompt and guides.
+Keep exact source lookup and ordinary Python bindings; reject automatic garbage
+collection, archival storage and automatic extension promotion. Preserve unrelated
+gather, worker diagnostics, Windows runtime and Companion work.
+
+## 1. Bound discovery and expose advisory details
+
+- Rationale: searching a small index must not evaluate or display default values.
+- Data: synthetic reproduction, historical listing sizes and peer reuse examples.
+- Acceptance criteria: paginated regex search, bounded type-only call hints, exact
+  source lookup, bounded errors, source fingerprint and value-free global hints;
+  runtime regressions fail first and pass after the implementation.
+- Unknowns: source analysis cannot prove dynamic dependencies or handle liveness.
+
+## 2. Integrate the helper lifecycle
+
+- Rationale: bounded output needs matching discovery, reuse and cleanup guidance.
+- Data: host worker/non-worker restoration tests and stable-name/alias experiments.
+- Acceptance criteria: matching metadata, actionable reader documentation and
+  prompt rules; refine stable names, explicitly delete obsolete helpers only after
+  checking dependencies, propose proven reusable capabilities to Improve with
+  source-version-specific evidence. No new lifecycle manager or extension.
+- Unknowns: concurrent local-only changes must remain outside staged hunks.
+
+## 3. Verify and publish the scoped changes
+
+- Rationale: Vis must actually consume the changed runtime.
+- Data: affected runtime and pinned-consumer suites, formatting, lint/reflection,
+  generated dependency audit and final scoped diffs.
+- Acceptance criteria: commit and push runtime changes, update Vis' runtime pin,
+  verify the pinned dependency, then commit and push only the Vis task's changes.
+- Unknowns: unrelated local-only work may fail broader suites; no service restart,
+  native build, release, version bump or tag is authorized by this plan.
+
+## Plan state
+
+1. Complete locally: regression reduced a 241-helper catalogue from 57,855,102
+   characters to below 6,500. Runtime and source/protection suites pass 31 tests /
+   119 assertions; defaults and type-name hooks are not evaluated. Ruff and
+   Clojure formatting/lint/reflection pass.
+2. Complete: six host cases pass with the exact published runtime dependency,
+   including worker/non-worker restoration and deletion. The prompt suite passes
+   67 cases and the dependency audit passes six. Documentation and metadata agree;
+   existing reflection warnings remain outside the changed code. Native Python
+   lint uses the working Ruff CLI fallback because the running tool image lacks a
+   downcall registration.
+3. Runtime `0213437658bb85441c1f79f90fec7ff720a68dd7` is committed and pushed.
+   Vis pins that exact revision and includes the regenerated audit. Pinned-consumer
+   verification and scoped diff review are complete; concurrent work stays excluded
+   from this task's Vis commit.
