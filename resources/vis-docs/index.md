@@ -122,12 +122,9 @@ runs your sessions and works with your files.
 
 ### Get the desktop app
 
-Download the latest stable app from
-[GitHub Releases](https://github.com/Blockether/vis/releases/latest).
-Choose the universal macOS `.dmg`, or the Linux `.AppImage` for x64 or ARM64.
-Windows 10/11 x64 builds use an `.msi` installer; see [Windows app setup](distributions.md#windows-app)
-for download availability. The Windows app connects to a gateway in WSL2 or on
-another Linux/macOS computer. It does not include a native Windows engine or TUI.
+Download the installer for your computer from
+[GitHub Releases](https://github.com/Blockether/vis/releases/latest): the Windows 10/11 x64
+`.msi`, universal macOS `.dmg`, or Linux `.AppImage` for x64 or ARM64.
 
 <div class="store-links" aria-label="Download the desktop app">
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
@@ -135,11 +132,8 @@ another Linux/macOS computer. It does not include a native Windows engine or TUI
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
 </div>
 
-On macOS and Linux, run `vis-agent desktop --track release` to download and open
-the app automatically. On Windows, install the MSI and open Vis from the Start menu;
-`vis-agent desktop` is not a Windows launcher. Opening the app does not start a gateway.
-Follow the [connection steps below](#connecting-the-companion-app), or see
-[Desktop setup](distributions.md#open-the-desktop-app) for launcher options.
+Install the package, open Vis, then follow the [connection steps below](#connecting-the-companion-app).
+See [Desktop setup](distributions.md#open-the-desktop-app) for installation and launcher options.
 
 ### Get the phone app
 
@@ -159,9 +153,9 @@ Use the desktop or phone app to follow the same work from another device.
 The apps connect to a **gateway**, the service running Vis on the computer where
 your projects live. Your files, commands and sessions stay on that computer.
 
-The app does not install or start the engine. [Install Vis](#install) on the
-computer that will run your work first. You do not need a separate Vis account
-to connect an app; model providers may require their own account or API key.
+[Install Vis](#install) on the computer that will run your work: macOS, Linux, or
+Linux in WSL2 on Windows. You do not need a separate Vis account to connect an app;
+model providers may require their own account or API key.
 
 ### Connect the desktop app
 
@@ -174,11 +168,7 @@ vis-agent gateway start --host 127.0.0.1
 ```
 
 Keep that terminal open: this command runs the gateway in the foreground.
-Open Vis from the Windows Start menu, or use another terminal on macOS/Linux to run:
-
-```bash
-vis-agent desktop --track release
-```
+Open Vis from your computer's application launcher.
 
 In **Add a machine**, paste the gateway's address (`http://127.0.0.1:7890` for
 the command above). Leave the bearer token empty for the default local gateway;
@@ -186,9 +176,9 @@ if you enabled token authentication, supply its token. Once connected, open
 your project and start or resume a session. The
 [first-session guide](#first-session) covers choosing a model and a task.
 
-An Intel Mac can use the desktop app with a remote gateway, or run a local
-engine from the [JVM source distribution](distributions.md). There is no native
-Intel macOS engine bundle.
+The app reaches a local WSL2 gateway through localhost forwarding. On an Intel Mac,
+use the [JVM source distribution](distributions.md) for a local gateway, or connect
+to a gateway on another computer.
 
 For a gateway on another computer, follow the phone pairing steps below and
 paste the pairing link instead of scanning its QR code. `127.0.0.1` always means

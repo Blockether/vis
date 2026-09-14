@@ -3,9 +3,8 @@
 For everyday use on a supported Linux or macOS host, install the prebuilt native
 release; it does not need Java. The `dev` track runs from source on the JVM. Both
 install `vis-agent`, which runs the engine and gateway, and `vis-tui`, the terminal
-client that connects to it. On Windows, use the [Windows app](#windows-app) with
-a gateway in WSL2 or on a supported remote host; neither engine track runs natively
-on Windows.
+client that connects to it. The [desktop apps](#open-the-desktop-app) connect to
+the same gateway from Windows, macOS or Linux.
 
 ## Native vs JVM
 
@@ -156,74 +155,32 @@ to it and never starts or stops a local replacement. Help and version commands d
 not start a gateway. Direct `vis-tui` execution remains a connection-only client;
 use `vis-agent tui` for automatic local lifecycle management.
 
+<a id="windows-app"></a>
+
 ## Open the desktop app
 
-You can [download the stable desktop app from GitHub Releases](https://github.com/Blockether/vis/releases/latest).
-Choose the universal macOS `.dmg`, the Linux `.AppImage` for x64 or ARM64, or the
-Windows x64 `.msi` when the selected build includes it. The app needs a running
-gateway; [Desktop and mobile setup](index.md#connecting-the-companion-app) explains
-how to connect on the same computer or from another device.
+1. [Download the installer from GitHub Releases](https://github.com/Blockether/vis/releases/latest)
+   for your computer.
+2. Install the package and open **Vis** from your application launcher.
+3. [Connect to your gateway](index.md#connecting-the-companion-app) to open your
+   projects and continue your sessions.
 
-### Windows app
+| Platform | Package | Install |
+| --- | --- | --- |
+| Windows 10/11 x64 | `.msi` | Run the installer. |
+| macOS, Apple silicon or Intel | Universal `.dmg` | Open the disk image and copy Vis to Applications. |
+| Linux x64 or ARM64 | `.AppImage` or `.deb` | Make the AppImage executable and open it, or install the Debian package with your package manager. |
 
-The Windows app runs on **Windows 10/11 x64**. It displays your sessions and
-connects to a gateway; it does not install or start a native Windows engine or
-terminal client. Windows ARM64 is not a release target.
+The Windows installer downloads Microsoft Edge WebView2 if needed; installation
+may require network access and administrator approval. To update the app, close
+Vis and install the newer package from the same release page.
 
-1. Look for `vis-companion-<version>-windows-x64.msi` in the selected
-   [GitHub Release](https://github.com/Blockether/vis/releases/latest). Older
-   releases may not contain this installer. Before the first Windows release,
-   a successful **Desktop companion** workflow run can provide the
-   `vis-companion-desktop-windows-x64` artifact from its run page on
-   [GitHub Actions](https://github.com/Blockether/vis/actions/workflows/desktop-companion.yml).
-   Sign in to GitHub to download workflow artifacts, then extract the MSI from the ZIP.
-   A workflow artifact is a test build, not a published stable release.
-2. Run the MSI. The app uses Microsoft Edge WebView2; the installer can download
-   its runtime if it is missing, so installation may need network access and
-   administrator approval. The Windows installer is currently **unsigned**.
-   Windows SmartScreen or your organization may block it. Do not disable Windows
-   security or bypass your organization's policy; ask your administrator to review
-   the installer if it is blocked.
-3. Open **Vis** from the Windows Start menu and connect to your gateway as below.
-   To update the Windows app, close it and install the newer MSI. The
-   `vis-agent desktop` launcher and its cache options below are for macOS/Linux,
-   not PowerShell or Command Prompt.
-
-**Use a gateway on this Windows computer through WSL2.** If needed, install
-Ubuntu with `wsl --install -d Ubuntu` in an administrator PowerShell window and
-restart when prompted. Check `wsl --list --verbose` to confirm Ubuntu uses
-version **2**; WSL1 is unsupported because it cannot provide the required OS
-confinement. Inside the Ubuntu terminal, run the [Vis installer](#installing),
-then start the gateway there:
-
-```bash
-vis-agent gateway start --host 127.0.0.1
-```
-
-Keep that Ubuntu terminal open. In the Windows app, choose **Add a machine** and
-enter `http://127.0.0.1:7890`. This uses WSL2 localhost forwarding; it must be
-enabled and allowed by your Windows/WSL network configuration. Leave the bearer
-token empty for the default local gateway, or supply its token if you enabled
-authentication. If localhost forwarding is unavailable, use a reachable,
-authenticated gateway with the [remote pairing instructions](index.md#pair-a-phone)
-rather than exposing an unauthenticated gateway.
-
-Your files and commands belong to Ubuntu, not the Windows app. Ordinary sessions
-can use an accessible project directory, but [isolated drafts](drafts.md) require
-the repository and draft store on the same btrfs mount. The usual WSL ext4
-filesystem and Windows-mounted drives such as `/mnt/c` do not support these drafts.
-
-**Use a gateway on another computer.** Install Vis on the supported Linux/macOS
-host where your projects live, follow the [remote pairing instructions](index.md#pair-a-phone),
-and paste its pairing link into the Windows app instead of scanning the QR code.
-`127.0.0.1` in the Windows app cannot reach that other computer.
-
-**What remains for a native Windows engine?** Windows app packaging does not
-port the embedded Python runtime, secure filesystem/network process jail and
-terminal handling, launcher and gateway service lifecycle, or isolated-draft
-filesystem backend. Those need Windows implementations, native dependency
-builds and Windows install/update/end-to-end tests. Running without the security
-jail is not a substitute for Windows support.
+Run the gateway on the computer where your projects live: macOS, Linux, or
+[Linux in WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) on Windows.
+For a local WSL2 gateway, enable localhost forwarding. The
+[connection guide](index.md#connecting-the-companion-app) covers both local
+addresses and remote pairing. [Isolated drafts](drafts.md) have additional
+filesystem requirements.
 
 ### macOS and Linux launcher
 

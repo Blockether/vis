@@ -102,8 +102,8 @@ covers setup and what to expect.
 
 ## Desktop app (Windows / macOS / Linux)
 
-Download the app from [GitHub Releases](https://github.com/Blockether/vis/releases/latest):
-the universal `.dmg` for macOS, or the `.AppImage` matching your Linux architecture.
+Download the installer for your computer from [GitHub Releases](https://github.com/Blockether/vis/releases/latest):
+the Windows 10/11 x64 `.msi`, universal macOS `.dmg`, or Linux `.AppImage` matching your architecture.
 
 <p>
 <a class="store-macos" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-macos.png" alt="Latest desktop release for macOS" width="224" height="56"></a>
@@ -111,16 +111,10 @@ the universal `.dmg` for macOS, or the `.AppImage` matching your Linux architect
 <a class="store-linux" href="https://github.com/Blockether/vis/releases/latest"><img src="resources/vis-docs/assets/install-linux.png" alt="Latest desktop release for Linux" width="224" height="56"></a>
 </p>
 
-For Windows 10/11 x64, use the `.msi` installer from a build that includes Windows.
-See [Windows app setup](resources/vis-docs/distributions.md#windows-app) for download
-availability and connection instructions. The Windows app is a client: run its
-gateway in WSL2 or on another Linux/macOS computer, then open Vis from the Start menu.
-There is no native Windows engine or terminal client yet.
-
-On macOS and Linux, `vis-agent desktop --track release` downloads and opens the
-stable app for you. Opening an app does not start the **gateway**, the Vis service
-running your sessions. Follow [Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app)
-and the [app connection guide](resources/vis-docs/index.md#connecting-the-companion-app) to connect it.
+Install the package, open Vis, and [connect to your gateway](resources/vis-docs/index.md#connecting-the-companion-app).
+The gateway runs your sessions on the computer where your projects live. See
+[Desktop setup](resources/vis-docs/distributions.md#open-the-desktop-app) for installation
+and launcher options.
 
 ## Companion app (iPhone / Android)
 

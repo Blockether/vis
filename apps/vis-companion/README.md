@@ -233,25 +233,20 @@ Tag and version must match; do not move a published tag.
 
 That tag also runs `.github/workflows/desktop-companion.yml`, which packages the same web
 bundle as a desktop app with [Pake](https://github.com/tw93/pake): macOS Universal
-(Intel + Apple Silicon, `.dmg`), Linux x86_64/ARM64 (`.deb`, `.AppImage`), and
-Windows x64 (`.msi`). Only macOS uses the self-hosted runner. Linux builds on
-GitHub-hosted `ubuntu-24.04` (x64) and `ubuntu-24.04-arm` (ARM64) runners; Windows
-builds on a Windows x64 runner. The Windows asset is
-`vis-companion-<version>-windows-x64.msi`. Windows ARM64 is not a release target.
+(Intel + Apple silicon, `.dmg`), Linux x64/ARM64 (`.deb`, `.AppImage`), and
+Windows x64 (`.msi`). All installers join the same GitHub Release. macOS uses the
+self-hosted runner; Linux and Windows use native GitHub-hosted runners.
 
-`scripts/desktop-package.mjs` holds the flags and asset names; locally,
-`npm run build` followed by `npm run package:desktop` writes this host's installers
-to `build/desktop/` (needs a Rust toolchain). Windows builds also need Microsoft
-Visual Studio Build Tools with **Desktop development with C++** and WebView2.
-Run these npm commands in the Windows checkout, not inside WSL, to build a Windows MSI.
-A **Run workflow** from a branch is a dry run that keeps installers as workflow
-artifacts and publishes nothing. Older published releases do not gain Windows
-assets automatically; use a successful Windows workflow artifact until a release
-includes the MSI.
+`scripts/desktop-package.mjs` holds the flags and asset names. To build installers
+for your host, run `npm run build` followed by `npm run package:desktop`; output
+lands in `build/desktop/`. Builds need a Rust toolchain and the platform's native
+build dependencies: Xcode on macOS, WebKitGTK on Linux, or Visual Studio Build Tools
+with **Desktop development with C++** and WebView2 on Windows.
+A **Run workflow** from a branch keeps installers as workflow artifacts and
+publishes nothing.
 
-The Windows app is a client for a gateway in WSL2 or on Linux/macOS, not a native
-Windows engine. See [Windows app setup](../../resources/vis-docs/distributions.md#windows-app)
-for installation, WebView2, unsigned-installer warnings and gateway pairing.
+See [Desktop setup](../../resources/vis-docs/distributions.md#open-the-desktop-app)
+for installation and gateway pairing.
 
 For an app-only build, commit and push the changes, then run:
 
