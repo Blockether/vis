@@ -291,7 +291,7 @@ describe('the app bar', () => {
     expect(row.textContent).toContain('laptop');
     expect(
       within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole('button', {
-        name: 'Forget laptop',
+        name: 'Forget',
       }),
     ).toBeTruthy();
 
@@ -320,7 +320,7 @@ describe('the app bar', () => {
     // opened before it closes the dialog under it.
     await userEvent.click(
       within(screen.getByRole('group', { name: 'laptop actions' })).getByRole('button', {
-        name: 'Forget laptop',
+        name: 'Forget',
       }),
     );
     expect(await screen.findByRole('group', { name: 'Forget laptop?' })).toBeTruthy();

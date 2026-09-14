@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, userEvent } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_GATEWAYS, STORY_GATEWAY_HEALTH } from '../dev/story-data';
 import { MachineRows } from './Machines';
@@ -71,5 +71,30 @@ export const CheckingSettings: Story = {
     await expect(checking).toHaveAttribute('aria-busy', 'true');
     await expect(checking).toHaveAttribute('aria-disabled', 'true');
     await expect(canvas.queryByText('Settings for mini')).not.toBeInTheDocument();
+  },
+};
+
+/** The row already names the machine; its menu offers only the actions. */
+export const ConciseActions: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  args: {
+    conns: [{ url: 'http://127.0.0.1:61397', pinned: true }],
+    primaryUrl: undefined,
+    onMakePrimary: fn(),
+    onRename: fn(),
+    onSelectAddress: fn(),
+    onForget: fn(),
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Actions for 127.0.0.1:61397' }));
+    const menu = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+      name: '127.0.0.1:61397 actions',
+    });
+    await expect(within(menu).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Make primary',
+      'Rename',
+      'Bind to another address',
+      'Forget',
+    ]);
   },
 };

@@ -73,7 +73,11 @@ function fleet(conns: GatewayConn[] = [tower, nas], primaryUrl?: string) {
 /** Open one machine's addresses from its own row, and read the menu back. */
 async function openAddresses(machine: string) {
   const user = userEvent.setup();
-  await user.click(screen.getByRole('button', { name: `Bind ${machine} to a different address` }));
+  await user.click(
+    within(screen.getByRole('group', { name: `${machine} actions` })).getByRole('button', {
+      name: 'Bind to another address',
+    }),
+  );
   return { menu: within(await screen.findByRole('dialog')), user };
 }
 
@@ -92,12 +96,12 @@ describe('binding a machine to one of its addresses', () => {
     // we should have the address icon after swipe"): every machine row carried a
     // SECOND line under it repeating the address the row's own name already said,
     // with a chevron on it. The route is a verb in the row's slide now.
-    const verb = screen.getByRole('button', { name: 'Bind tower to a different address' });
+    const verb = screen.getByRole('button', { name: 'Bind to another address' });
     expect(verb.textContent).toContain('Address');
     expect(screen.queryByText(LAN)).toBeNull();
 
     // One address and no pin is simply "the address": no verb at all.
-    expect(screen.queryByRole('button', { name: /^Bind nas/ })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'nas actions' })).toBeNull();
     expect(screen.queryByText(nas.url)).toBeNull();
   });
 

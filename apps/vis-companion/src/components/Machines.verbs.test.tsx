@@ -49,16 +49,16 @@ const verbsOf = (machine: string) =>
 describe('a machine keeps its verbs under its own row', () => {
   it('gives EVERY row a strip, not only the row being read', () => {
     fleet();
-    expect(verbsOf('laptop')).toEqual(['Make laptop primary', 'Rename laptop', 'Forget laptop']);
+    expect(verbsOf('laptop')).toEqual(['Make primary', 'Rename', 'Forget']);
     // `tower` is not the machine this column is reading, and it carries its own
     // verbs anyway: the row under the thumb is the row that acts.
-    expect(verbsOf('tower')).toEqual(['Rename tower', 'Forget tower']);
+    expect(verbsOf('tower')).toEqual(['Rename', 'Forget']);
   });
 
   it('keeps the rank verb off the machine that already holds the rank', () => {
     fleet({ selectedUrl: tower.url });
-    expect(verbsOf('tower')).toEqual(['Rename tower', 'Forget tower']);
-    expect(verbsOf('laptop')).toEqual(['Make laptop primary', 'Rename laptop', 'Forget laptop']);
+    expect(verbsOf('tower')).toEqual(['Rename', 'Forget']);
+    expect(verbsOf('laptop')).toEqual(['Make primary', 'Rename', 'Forget']);
   });
 
   it('keeps sliding on touch and reserves the dropdown for a mouse', () => {
@@ -79,8 +79,7 @@ describe('a machine keeps its verbs under its own row', () => {
     // Two machine rows, five touch verbs and two desktop menu triggers.
     expect(screen.getAllByRole('button')).toHaveLength(9);
 
-    // The captions stay one word wide — the cell is 72px — while the accessible
-    // name says which machine the verb acts on.
+    // Captions stay one word wide; the enclosing group names the machine.
     expect(
       stripOf('laptop')
         .getAllByRole('button')
@@ -115,7 +114,7 @@ describe('a machine keeps its verbs under its own row', () => {
     const onRename = vi.fn();
     fleet({ onRename });
 
-    await user.click(stripOf('laptop').getByRole('button', { name: 'Rename laptop' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Rename' }));
     const field = screen.getByRole('textbox', { name: 'Rename laptop' });
     expect(field).toHaveValue('laptop');
     // The row it replaced is gone while it is being typed in — strip and all: the
@@ -129,7 +128,7 @@ describe('a machine keeps its verbs under its own row', () => {
 
     // The list is the caller's state, so the row still reads `laptop` here:
     // clearing the field is what says "no name of its own".
-    await user.click(stripOf('laptop').getByRole('button', { name: 'Rename laptop' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Rename' }));
     await user.clear(screen.getByRole('textbox', { name: 'Rename laptop' }));
     await user.tab();
     expect(onRename).toHaveBeenLastCalledWith(laptop, undefined);
@@ -140,7 +139,7 @@ describe('a machine keeps its verbs under its own row', () => {
     const onForget = vi.fn();
     fleet({ onForget });
 
-    await user.click(stripOf('laptop').getByRole('button', { name: 'Forget laptop' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Forget' }));
     const ask = screen.getByRole('group', { name: 'Forget laptop?' });
     expect(
       within(ask)
@@ -153,9 +152,9 @@ describe('a machine keeps its verbs under its own row', () => {
 
     await user.click(within(ask).getByRole('button', { name: 'No, keep' }));
     expect(onForget).not.toHaveBeenCalled();
-    expect(stripOf('laptop').getByRole('button', { name: 'Forget laptop' })).toBeTruthy();
+    expect(stripOf('laptop').getByRole('button', { name: 'Forget' })).toBeTruthy();
 
-    await user.click(stripOf('laptop').getByRole('button', { name: 'Forget laptop' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Forget' }));
     await user.click(screen.getByRole('button', { name: 'Yes, forget' }));
     expect(onForget).toHaveBeenCalledWith(laptop);
   });

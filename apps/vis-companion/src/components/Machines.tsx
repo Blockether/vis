@@ -648,7 +648,7 @@ export function MachineRows({
           actions.push({
             key: 'primary',
             label: 'Primary',
-            name: `Make ${name} primary`,
+            name: 'Make primary',
             icon: <StarIcon className="size-4" />,
             // The one verb here that is a RANK rather than an edit, so it wears the
             // amber every rank mark in this app wears — the same slab `Star` has.
@@ -659,7 +659,7 @@ export function MachineRows({
           actions.push({
             key: 'rename',
             label: 'Rename',
-            name: `Rename ${name}`,
+            name: 'Rename',
             icon: <PencilIcon className="size-4" />,
             onSelect: () => startRename(conn),
           });
@@ -667,7 +667,7 @@ export function MachineRows({
           actions.push({
             key: 'address',
             label: 'Address',
-            name: `Bind ${name} to a different address`,
+            name: 'Bind to another address',
             icon: <AddressIcon className="size-4" />,
             onSelect: (anchor) => openAddresses(conn, anchor),
           });
@@ -675,7 +675,7 @@ export function MachineRows({
           actions.push({
             key: 'forget',
             label: 'Forget',
-            name: `Forget ${name}`,
+            name: 'Forget',
             icon: <TrashIcon className="size-4" />,
             tone: 'danger',
             onSelect: () => setForgetting(conn.url),
