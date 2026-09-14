@@ -1515,8 +1515,7 @@ const FormTrace = memo(function FormTrace({
         forms.some((source) => liveOwnerMatches(attachment.owner, source.activity)),
     ),
   ).map((thread) => thread[0]);
-  const hasRun = ownedViews.length > 0 || ownedAttachments.length > 0;
-  const hasActivity = detectedActivity || hasRun;
+  const hasActivity = detectedActivity || ownedViews.length > 0 || ownedAttachments.length > 0;
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {forms[0].comment?.trim() && (
@@ -1542,11 +1541,7 @@ const FormTrace = memo(function FormTrace({
         </CollapsibleFormCode>
       )}
       <div
-        className={
-          hasActivity
-            ? `relative z-0 min-w-0 bg-code px-3${hasRun ? ' border border-dialog-hint' : ''}`
-            : 'min-w-0'
-        }
+        className={hasActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
         data-execution-group={hasActivity || undefined}
       >
         <div

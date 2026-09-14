@@ -1060,7 +1060,7 @@ export function LiveViewPanel({
    * itself to a screen reader as one that can.
    */
   isSettled?: boolean;
-  /** ACTIVITY and RUN share the execution group surface and horizontal inset. */
+  /** Frame RUN below ACTIVITY without enclosing the other execution content. */
   embedded?: boolean;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
@@ -1097,7 +1097,7 @@ export function LiveViewPanel({
       <section
         className={
           embedded
-            ? 'min-w-0 overflow-hidden pt-3'
+            ? '-mx-3 mt-3 min-w-0 overflow-hidden border border-dialog-hint px-3 pt-3'
             : 'overflow-hidden border border-dialog-edge bg-panel'
         }
         data-execution-run={embedded || undefined}

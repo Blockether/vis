@@ -8,11 +8,11 @@ import { activityHistoryPage } from '../dev/activity-history';
 import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
 
-// Regression #222: ACTIVITY and RUN are sibling sections in one execution frame.
-it('lets the execution group supply the frame and background', () => {
+// Regression #222: ACTIVITY and RUN remain independent sibling sections.
+it('frames the embedded live view without changing its shared background', () => {
   const view = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
   const panel = view.getByText(STORY_LIVE_VIEW.title).closest('section');
-  expect(panel).not.toHaveClass('border');
+  expect(panel).toHaveClass('border', 'border-dialog-hint');
   expect(panel).not.toHaveClass('bg-panel');
   expect(panel?.querySelector('header')).not.toHaveClass('bg-panel-2');
 });
@@ -83,8 +83,9 @@ it('moves a live view beside its exact Activity when the owner arrives', () => {
   expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
   const title = mounted.getByText(liveView.title);
   const group = title.closest('[data-execution-group]');
-  expect(group).toHaveClass('border', 'border-dialog-hint', 'bg-code');
-  expect(title.closest('.border')).toBe(group);
+  expect(group).toHaveClass('bg-code');
+  expect(group).not.toHaveClass('border');
+  expect(title.closest('.border')).toBe(title.closest('section'));
 });
 
 it('keeps concurrent owned views and unmatched views separate, including streamed updates', () => {
@@ -184,8 +185,8 @@ it('replaces the live view with one retained run receipt beside the same Activit
   const group = receipt.closest('[data-execution-group]');
   expect(group).not.toBeNull();
   expect(receipt.closest('[data-execution-activity]')).toBeNull();
-  expect(group).toHaveClass('border', 'border-dialog-hint');
-  expect(receipt.closest('.border')).toBe(group);
+  expect(group).not.toHaveClass('border');
+  expect(receipt.closest('.border')).toBeNull();
   expect(receipt.closest('.bg-input')).toBeNull();
   fireEvent.click(mounted.getByRole('button', { name: 'Expand Activity' }));
   fireEvent.click(mounted.getByRole('button', { name: 'Collapse Activity' }));
@@ -360,9 +361,9 @@ it('keeps multiple views as siblings even when their activity rows are absent', 
   const second = mounted.getByText('Second monitor').closest('section');
   expect(first?.parentElement).toBe(second?.parentElement);
   expect(first?.parentElement).toHaveAttribute('data-execution-group');
-  expect(first?.parentElement).toHaveClass('border', 'border-dialog-hint');
-  expect(first?.closest('.border')).toBe(first?.parentElement);
-  expect(second?.closest('.border')).toBe(first?.parentElement);
+  expect(first?.parentElement).not.toHaveClass('border');
+  expect(first?.closest('.border')).toBe(first);
+  expect(second?.closest('.border')).toBe(second);
   expect(mounted.getAllByText('RUN')).toHaveLength(2);
 });
 
