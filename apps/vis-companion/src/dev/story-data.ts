@@ -30,7 +30,7 @@ import activityRepl from '../../../../packages/vis-contract/resources/vis-contra
 import activityTables from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-tables.json';
 import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
@@ -1967,6 +1967,22 @@ export const STORY_FLEET_PROJECTS: StoryProject[] = [
 
 /** The machine those projects live on, in the shape the screen takes its fleet in. */
 export const STORY_FLEET_CONNS: GatewayConn[] = [STORY_GATEWAYS[0]];
+
+/** One held project page with a newer arrival waiting under its name. */
+export const STORY_NEWER_PROJECT: StoryProject = {
+  root: '/CryptoSafe',
+  name: '/CryptoSafe',
+  projectId: 'crypto-safe',
+  rows: [
+    fleetRow('/CryptoSafe', 'confirmations', 'Check transaction confirmations', 1, 2),
+    fleetRow('/CryptoSafe', 'balance-refresh', 'Fix balance refresh', 4, 12),
+    fleetRow('/CryptoSafe', 'wallet-connection', 'Review wallet connection flow', 18, 8),
+    fleetRow('/CryptoSafe', 'transaction-history', 'Update transaction history', 55, 6),
+  ],
+};
+
+/** Uses the story's fetch adapter while retaining production project paging. */
+export const STORY_PROJECT_CLIENT = new GatewayClient(STORY_FLEET_CONNS[0]);
 
 /** A cursor NAMES a row, the way the gateway's own keyset does (`state/->session-cursor`). */
 const fleetCursor = (row: Session) => `2:0:${row.id}`;

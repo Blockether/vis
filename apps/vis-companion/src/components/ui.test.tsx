@@ -275,14 +275,11 @@ describe('SectionHeader', () => {
   // Regression, user report (paraphrased: the projects should have some separation from
   // each other, a border or something): the band stood on the page's own paper with no
   // edge at all, so nothing but distance said where one project ended and the next began.
-  it('carries the boundary: its own paper, and one rule coming in', () => {
+  it('closes its own paper with one top and one bottom rule', () => {
     const html = renderToStaticMarkup(<SectionHeader>rows</SectionHeader>);
 
     expect(html).toContain('bg-project-header');
-    expect(html).toContain('border-t');
-    // The edge comes IN, over the name. A rule under it would only repeat the hairline
-    // that already separates two rows of the project it heads.
-    expect(html).not.toContain('border-b');
+    expect(html).toContain('border-y');
   });
 
   // Regression, user report (paraphrased: the project header has practically no top or
@@ -707,11 +704,8 @@ describe('Pager', () => {
 
 // Counts and navigation belong to the same project band, without competing for width.
 describe('a project band carries its own count and its own pager', () => {
-  const band =
-    /<SectionHeader isCollapsed=\{!isShowing\}>[\s\S]*?<\/SectionHeader>/.exec(
-      sessionsListSource,
-    )?.[0] ?? '';
-  const qualifier = band.slice(band.indexOf('qualifier={'), band.indexOf('qualifierTitle='));
+  const band = /<SectionHeader>[\s\S]*?<\/SectionHeader>/.exec(sessionProjectGroupsSource)?.[0] ?? '';
+  const qualifier = /const qualifier = \([\s\S]*?\n  \);/.exec(sessionProjectGroupsSource)?.[0] ?? '';
   const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? '';
 
   it('keeps project pages inside the band but outside its action cluster', () => {

@@ -94,11 +94,11 @@ export const Fleet: Story = {
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
     // The project band stays uniform across its disclosure, paging and creation control.
     const header = fold.closest('header')!;
-    await expect(win.getComputedStyle(header).borderBottomWidth).toBe('0px');
+    await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
     await userEvent.click(fold);
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
     await userEvent.click(fold);
-    await expect(win.getComputedStyle(header).borderBottomWidth).toBe('0px');
+    await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
     pager = within(header).getByRole('navigation');
     await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
@@ -494,7 +494,7 @@ export const CollapsedProjectEdges: Story = {
     await expect(getComputedStyle(machine).borderBottomWidth).toBe('0px');
     const last = headers[headers.length - 1];
     await userEvent.click(within(last).getByRole('button', { name: /^Expand / }));
-    await expect(getComputedStyle(last).borderBottomWidth).toBe('0px');
+    await expect(getComputedStyle(last).borderBottomWidth).toBe('1px');
     await expect(getComputedStyle(machine).borderBottomWidth).toBe('0px');
   },
 };

@@ -20,24 +20,11 @@ import { Button, IconButton, LIST_EDGE } from './ui';
 const HEADER_TYPE = 'text-title';
 
 /**
- * The band every header in the list stands in. It sticks; nothing above it does.
- *
- * IT IS THE PROJECT'S EDGE. Reported (paraphrased: the projects should have some
- * separation from each other, a border or something), air alone was not enough: a run of
- * the list's own paper between two projects reads as a pause inside one list, not as the
- * end of one repository and the start of the next. So the band takes the boundary back —
- * one hairline coming in, and the band's own paper under the name — and it stays a BAND,
- * never a card: full bleed, no corner, no second edge, nothing drawn under the rows.
- *
- * The rule sits on TOP for the same reason. A line above a name says the passage begins
- * here; the same line under it only repeats the hairline that separates two rows.
- *
- * Both heights are that stack plus air, minus the rule the band takes in — 52 - 1 - 34
- * and 48 - 1 - 34 — so whatever the stack carries decides them. That is exactly how the
- * pointer column reached zero while it still spelled 36.
+ * The sticky project band owns its top and bottom hairlines in every fold state.
+ * Session rows draw only their internal separators, so the closing edge is never doubled.
  */
 const HEADER_BAND =
-  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-t border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
+  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-y border-white bg-project-header [--dialog-hint:var(--footer-strong)]';
 
 /** The session list's pull gesture takes over the app bar with the action a release would take. */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
@@ -104,16 +91,10 @@ export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
  * the band that wore it — the fleet-wide pin for runs waiting on an answer — is gone.
  * Every session is in a project, so the list has ONE kind of section.
  */
-export function SectionHeader({
-  children,
-  isCollapsed = false,
-}: {
-  children: ReactNode;
-  isCollapsed?: boolean;
-}) {
+export function SectionHeader({ children }: { children: ReactNode }) {
   return (
     <header
-      className={`${HEADER_BAND} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover ${isCollapsed ? 'border-b' : ''}`}
+      className={`${HEADER_BAND} [--hover:color-mix(in_srgb,var(--fg)_4%,var(--color-project-header))] mouse:focus-within:bg-hover mouse:has-[[aria-haspopup=dialog][aria-expanded=true]]:bg-hover`}
     >
       {children}
     </header>

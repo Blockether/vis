@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, screen } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
@@ -127,16 +127,54 @@ describe('the order the reader is looking at', () => {
     view.setRows(0, [row('new-1', 20), row('new-2', 19), row('a1', 12), row('a2', 11)]);
     await settle(10_000);
 
-    // Two arrivals fresher than everything on screen: counted above the list, not
-    // inserted under the thumb.
+    // New arrivals belong under their project name, not in a fleet-wide divider.
     expect(rowOrder()).toEqual(['a1', 'a2']);
-    const pill = screen.getByRole('button', { name: 'Show 2 newer sessions' });
-    expect(pill.textContent).toContain('2 newer sessions');
+    const header = screen.getByRole('button', { name: 'Collapse project' }).closest('header')!;
+    const updates = within(header).getByRole('button', { name: 'Show 2 newer sessions' });
+    expect(updates.textContent).toContain('2 newer sessions');
+    expect(updates.closest('button[aria-expanded]')).toBeNull();
 
     await act(async () => {
-      pill.click();
+      updates.click();
     });
     expect(rowOrder()).toEqual(['new-1', 'new-2', 'a1', 'a2']);
+    expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
+  });
+
+  it('counts arrivals per project and opens only the project whose updates were accepted', async () => {
+    const inProject = (id: string, hour: number, root: string) =>
+      listSession({ ...row(id, hour), workspace: { root } });
+    const a = inProject('a', 12, '/repo/a');
+    const b = inProject('b', 11, '/repo/b');
+    const quiet = inProject('quiet', 10, '/repo/quiet');
+    const view = renderSessionsScreen({ machines: [{ sessions: [a, b, quiet] }] });
+    restore = view.restore;
+    await settle(50);
+
+    const aNew = inProject('a-new', 20, '/repo/a');
+    const bNew = inProject('b-new', 19, '/repo/b');
+    const bNext = inProject('b-next', 18, '/repo/b');
+    view.setRows(0, [aNew, bNew, bNext, a, b, quiet]);
+    await settle(10_000);
+
+    const header = (name: string) =>
+      screen.getByRole('button', { name: new RegExp(`^(Expand|Collapse) ${name}$`) }).closest('header')!;
+    expect(within(header('a')).getByRole('button', { name: 'Show 1 newer session' })).toBeEnabled();
+    expect(within(header('quiet')).queryByRole('button', { name: /newer session/ })).toBeNull();
+    expect(rowOrder()).toEqual(['a']);
+    act(() => within(header('b')).getByRole('button', { name: 'Show 2 newer sessions' }).click());
+    await settle(50);
+    expect(screen.getByRole('button', { name: 'Collapse b' })).toHaveAttribute('aria-expanded', 'true');
+    expect(rowOrder()).toEqual(['a', 'b-new', 'b-next', 'b']);
+    expect(within(header('b')).queryByRole('button', { name: /newer session/ })).toBeNull();
+    expect(within(header('a')).getByRole('button', { name: 'Show 1 newer session' })).toBeEnabled();
+
+    // A later poll keeps accepted arrivals visible without adopting other projects.
+    await settle(10_000);
+    expect(rowOrder()).toEqual(['a', 'b-new', 'b-next', 'b']);
+    act(() => within(header('a')).getByRole('button', { name: 'Show 1 newer session' }).click());
+    await settle(50);
+    expect(rowOrder()).toEqual(['a-new', 'a', 'b-new', 'b-next', 'b']);
     expect(screen.queryByRole('button', { name: /newer session/ })).toBeNull();
   });
 

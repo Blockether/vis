@@ -10,12 +10,15 @@ import {
 import {
   HeaderActions,
   HeaderTally,
+  LIST_EDGE_END,
+  LIST_MARK,
   NewSessionButton,
   Pager,
   ProjectCrumb,
   ProjectStatusCounts,
   SectionHeader,
 } from '../../components/SessionNavigator';
+import { Button, LIST_EDGE } from '../../components/ui';
 import {
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
@@ -53,6 +56,8 @@ export type ProjectGroupReading = {
   epoch: OrderEpoch | null;
   admitted: ReadonlySet<string>;
   isVisible: boolean;
+  pendingByRoot: ReadonlyMap<string, readonly string[]>;
+  acceptUpdates: (ids: readonly string[]) => void;
 };
 
 /** One project-creation lifecycle, shared so headers report the request they started. */
@@ -91,7 +96,9 @@ export const ProjectGroup = memo(function ProjectGroup({
   const { label: project, root, sessions, tally } = group;
   const { conn, sessions: list } = machine;
   const { getClient, drafts, matches, needle, actions: rowActions } = context;
-  const { pageSize, epoch, admitted, isVisible } = reading;
+  const { pageSize, epoch, admitted, isVisible, pendingByRoot, acceptUpdates } = reading;
+  const pendingIds = pendingByRoot.get(root) ?? [];
+  const hasPending = pendingIds.length > 0;
   const { state: creating, start: onNewSession } = creation;
   const isDesk = useDeskRail();
   const hasPageRow = useMediaMatch('(width >= 40rem)') && !isDesk;
@@ -401,6 +408,21 @@ export const ProjectGroup = memo(function ProjectGroup({
       />
     ) : null;
 
+  const qualifier = (
+    <span className="flex max-w-full min-w-0 items-center gap-2">
+      {qualifierPath && (
+        <span className="min-w-0 shrink-[8] truncate @max-md:hidden">
+          {qualifierPath}
+          <span aria-hidden> ·</span>
+        </span>
+      )}
+      <span className="min-w-0 truncate">
+        <HeaderTally count={tally.count} unit="session" />
+        <ProjectStatusCounts live={tally.live} awaiting={tally.awaiting} unread={tally.unread} />
+      </span>
+    </span>
+  );
+
   return (
     <>
       {/* The rail's index finds this band by the two facts that identify it, and the
@@ -412,14 +434,12 @@ export const ProjectGroup = memo(function ProjectGroup({
         data-project-root={root}
         className="[&+&]:pt-2"
       >
-        <SectionHeader isCollapsed={!isShowing}>
-          <div className="grid min-w-0 flex-1">
+        <SectionHeader>
+          <div className={`grid min-w-0 flex-1 ${hasPending ? 'gap-2 py-2' : ''}`}>
             <div className="flex min-w-0">
-              {/* The band's edge comes IN, over the name, and belongs to the band. The 2px
-            accent line that used to close this header was the fourth yellow on a screen the
-            contract gives one to, and it drew the boundary at the wrong end: under a name is
-            where the rows it heads begin. */}
-              <div className="flex min-w-0 flex-1 gap-2 sm:min-h-13 mouse:min-h-12">
+              <div
+                className={`flex min-w-0 flex-1 gap-2 ${hasPending ? 'min-h-11 mouse:min-h-7' : 'sm:min-h-13 mouse:min-h-12'}`}
+              >
                 {/* The leading half NAMES the project and FOLDS it: folder name, the path that
               tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
               the band already reserves, so the name keeps the list's one leading edge
@@ -428,43 +448,7 @@ export const ProjectGroup = memo(function ProjectGroup({
               all, which is what a reader with four checkouts on one machine needs. */}
                 <ProjectCrumb
                   name={project}
-                  qualifier={
-                    // The path says WHICH checkout this is, the count says how much of it
-                    // there is: one quiet line under the name, in the hint ink both already
-                    // wear. The count had a shelf of its own under this band until the pager
-                    // took the band's trailing column and left it nothing to stand on.
-                    <span className="flex max-w-full min-w-0 items-center gap-2">
-                      {qualifierPath && (
-                        // The path LEAVES WITH ITS OWN SEPARATOR, and on a narrow list it
-                        // is not there at all. It was two flex items that shrank a pixel
-                        // at a time: measured on the 440px phone the report came from,
-                        // beside a pager and the verb, `~/rewrite` was down to `~.` and
-                        // still cost `1 needs input` its last word; at 393px the path had
-                        // given every pixel and its dot stayed, opening the line with
-                        // `· 113 sessions`. Under 28rem the counts are the whole line —
-                        // they say what the reader can ACT on — and the path stays on the
-                        // `title`, as it does for a machine whose address is its name.
-                        <span className="min-w-0 shrink-[8] truncate @max-md:hidden">
-                          {qualifierPath}
-                          <span aria-hidden> ·</span>
-                        </span>
-                      )}
-                      {/* The count gives way LAST, and with an ellipsis rather than a
-                    clip: the path shrinks eight times as readily, and only a list
-                    narrower than the count itself (the desk's sidebar, a project in
-                    three states at once) trims it. Measured before this: the band
-                    asked for 348px of a 308px sidebar and its `+` stood 24px past
-                    the rows' edge, half of it under the scrollbar gutter. */}
-                      <span className="min-w-0 truncate">
-                        <HeaderTally count={tally.count} unit="session" />
-                        <ProjectStatusCounts
-                          live={tally.live}
-                          awaiting={tally.awaiting}
-                          unread={tally.unread}
-                        />
-                      </span>
-                    </span>
-                  }
+                  qualifier={hasPending ? undefined : qualifier}
                   qualifierTitle={root}
                   disclosure={
                     hasSessions
@@ -489,10 +473,34 @@ export const ProjectGroup = memo(function ProjectGroup({
                 />
               </HeaderActions>
             </div>
+            {hasPending && (
+              <div
+                className={`${LIST_EDGE} ${LIST_EDGE_END} flex min-h-11 min-w-0 items-center gap-2 mouse:min-h-7`}
+              >
+                <span aria-hidden="true" className={LIST_MARK} />
+                <div className="flex min-w-0 flex-1 items-center gap-3 font-mono text-ui text-dialog-hint mouse:text-meta">
+                  <Button
+                    variant="quiet"
+                    density="compact"
+                    pressEffect="none"
+                    className="relative -left-px -ml-2.5 shrink-0 sm:-ml-3"
+                    aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
+                    onClick={() => {
+                      acceptUpdates(pendingIds);
+                      setFirst(0);
+                      fold(true);
+                    }}
+                  >
+                    {pendingIds.length} newer {pendingIds.length === 1 ? 'session' : 'sessions'}
+                  </Button>
+                  {qualifier}
+                </div>
+              </div>
+            )}
             {pager && hasPageRow && <div className="px-4 pb-2 pt-1">{pager}</div>}
           </div>
         </SectionHeader>
-        {/* Collapsed headers own their closing edge; expanded rows have no outer frame. */}
+        {/* The header closes the band; rows draw only separators between sessions. */}
         {isShowing && rows.length > 0 && (
           <div ref={rowsRef}>
             {rows.map((session) => {

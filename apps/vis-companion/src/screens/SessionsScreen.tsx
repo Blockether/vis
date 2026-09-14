@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Banner, Button, LoadMore } from '../components/ui';
+import { Banner, Button } from '../components/ui';
 import {
   MachineGap,
   MachineMark,
@@ -40,7 +40,7 @@ import {
   useListScrollPark,
   type ListAnchor,
 } from '../lib/list-scroll';
-import { EPOCH_STALE_AWAY_MS, holdOrder, useOrderEpoch } from '../lib/order-epoch';
+import { EPOCH_STALE_AWAY_MS, holdOrder, useOrderEpoch, type OrderEpoch } from '../lib/order-epoch';
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
 import { ManageProjectsSheet, type ManagedProject } from '../components/ManageProjectsSheet';
 import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
@@ -57,6 +57,7 @@ import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, nextFavoriteRank } from '../lib/favorites';
 import {
   fleetError,
+  groupByWorkDir,
   isFleetLoaded,
   machineCounts,
   machineKey,
@@ -1186,6 +1187,21 @@ export function SessionsScreen({
   // so it is admitted into the held order at once. A few are kept, because the
   // ones before the last are not necessarily in the epoch yet either.
   const mintedSet = useMemo(() => new Set(minted), [minted]);
+  // A project action admits only its own arrivals, keeping other projects in place.
+  // Scope changes and full adoption replace the epoch and retire these admissions.
+  const [acceptedUpdates, setAcceptedUpdates] = useState<{
+    epoch: OrderEpoch | null;
+    ids: ReadonlySet<string>;
+  } | null>(null);
+  const acceptUpdates = useCallback(
+    (ids: readonly string[]) => {
+      setAcceptedUpdates((previous) => ({
+        epoch,
+        ids: new Set([...(previous?.epoch === epoch ? previous.ids : []), ...ids]),
+      }));
+    },
+    [epoch],
+  );
 
   const heldRows = useMemo(
     () =>
@@ -1197,26 +1213,28 @@ export function SessionsScreen({
         // that admitted a just-created session.
         const admitted = new Set(mintedSet);
         for (const id of dirtySessionIds(clientFor(entry.machine.conn).base)) admitted.add(id);
+        if (acceptedUpdates?.epoch === epoch) {
+          for (const id of acceptedUpdates.ids) admitted.add(id);
+        }
+        const held = holdOrder(
+          epoch,
+          entry.sessions,
+          (session) => ({ id: session.id, millis: sessionMillis(session) }),
+          admitted,
+        );
+        const pending = new Set(held.pending);
         return {
           machine: entry.machine,
           admitted,
-          ...holdOrder(
-            epoch,
-            entry.sessions,
-            (session) => ({
-              id: session.id,
-              millis: sessionMillis(session),
-            }),
-            admitted,
+          ...held,
+          pendingByRoot: new Map(
+            groupByWorkDir(entry.sessions.filter((session) => pending.has(session.id))).map(
+              ([root, rows]) => [root, rows.map((session) => session.id)],
+            ),
           ),
         };
       }),
-    [epoch, filtered, mintedSet, draftMessages],
-  );
-
-  const pendingCount = useMemo(
-    () => heldRows.reduce((count, entry) => count + entry.pending.length, 0),
-    [heldRows],
+    [epoch, filtered, mintedSet, draftMessages, acceptedUpdates],
   );
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
@@ -1481,6 +1499,8 @@ export function SessionsScreen({
           epoch,
           admitted: entry.admitted,
           isVisible,
+          pendingByRoot: entry.pendingByRoot,
+          acceptUpdates,
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
         groups: searching
@@ -1491,7 +1511,7 @@ export function SessionsScreen({
               (session) => unreadTurnCount(session) > 0,
             ),
       })),
-    [heldRows, searching, readMarks, pageSize, epoch, isVisible],
+    [heldRows, searching, readMarks, pageSize, epoch, isVisible, acceptUpdates],
   );
 
   // Project management uses gateway overview counts, matching the visible headers.
@@ -1800,21 +1820,6 @@ export function SessionsScreen({
           ref={listRef}
           className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-color:color-mix(in_srgb,var(--dialog-hint)_12%,transparent)_transparent] pb-[calc(0.75rem+env(safe-area-inset-bottom))] ${isDesk ? '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : 'sm:px-3 [scrollbar-gutter:stable]'}`}
         >
-          {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
-            is where those rows go. Rows fresher than the oldest row on screen are
-            counted here instead of being inserted under the thumb; the tap is the
-            reader saying when. */}
-          {pendingCount > 0 && (
-            <LoadMore
-              label={`Show ${pendingCount} newer ${pendingCount === 1 ? 'session' : 'sessions'}`}
-              onClick={() => {
-                adopt();
-                listRef.current?.scrollTo({ top: 0 });
-              }}
-            >
-              {pendingCount === 1 ? '1 newer session' : `${pendingCount} newer sessions`}
-            </LoadMore>
-          )}
           {sessions === null ? (
             <NavigatorSkeleton />
           ) : visible?.length === 0 && sections.every(({ groups }) => groups.length === 0) ? (

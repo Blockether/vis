@@ -77,6 +77,10 @@ export const GroupedSessions: Story = {
     await expect(rows.children.length).toBeGreaterThan(1);
     await expect(style(rows.children[1]).borderTopColor).not.toBe(style(header).borderTopColor);
     await expect(style(rows.children[1]).borderTopWidth).toBe(style(header).borderTopWidth);
+    // The gray band closes once, even while open; the first row adds no second rule.
+    await expect(style(header).borderBottomWidth).toBe('1px');
+    await expect(style(rows).borderTopWidth).toBe('0px');
+    await expect(style(rows.firstElementChild!).borderTopWidth).toBe('0px');
     const nextGroup = group.nextElementSibling!;
     await expect(parseFloat(style(nextGroup).paddingTop)).toBeGreaterThan(0);
 
@@ -85,9 +89,11 @@ export const GroupedSessions: Story = {
     await userEvent.click(page.getByRole('button', { name: 'Collapse infrastructure' }));
     await expect(group.querySelector('[data-session-id]')).toBeNull();
     await expect(style(header).backgroundColor).toBe(background);
+    await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(within(header).getByRole('button', { name: /^New session/ })).toBeEnabled();
     await userEvent.click(page.getByRole('button', { name: 'Expand infrastructure' }));
     const reopened = await within(group).findByText('Rotate the relay signing key');
+    await expect(style(header).borderBottomWidth).toBe('1px');
     await expect(reopened.closest('[data-session-id]')!.getBoundingClientRect().height).toBe(
       rowHeight,
     );
