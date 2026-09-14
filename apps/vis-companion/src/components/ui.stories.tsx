@@ -936,6 +936,20 @@ export const ProjectPages: Story = {
     await expect(current).toHaveValue('1');
     await expect(previous).toBeDisabled();
 
+    // Regression: the editable digit must not leave extra whitespace beside the left arrow.
+    await pager.ownerDocument.fonts.ready;
+    const fieldBox = current.getBoundingClientRect();
+    const totalBox = canvas.getByText('/ 104').getBoundingClientRect();
+    const previousIcon = previous.querySelector('svg')!.getBoundingClientRect();
+    const nextIcon = next.querySelector('svg')!.getBoundingClientRect();
+    const font = getComputedStyle(current);
+    const context = pager.ownerDocument.createElement('canvas').getContext('2d')!;
+    context.font = `${font.fontWeight} ${font.fontSize} ${font.fontFamily}`;
+    expect(Math.abs(fieldBox.width - context.measureText(current.value).width)).toBeLessThan(1);
+    expect(
+      Math.abs(fieldBox.left - previousIcon.right - (nextIcon.left - totalBox.right)),
+    ).toBeLessThan(1);
+
     // The whole counter is a hit target; only its current number is editable.
     await userEvent.click(pageTarget);
     await expect(current).toHaveFocus();
@@ -996,6 +1010,13 @@ export const ProjectPagesEnd: Story = {
     const previous = canvas.getByRole('button', { name: 'Previous page' });
     const next = canvas.getByRole('button', { name: 'Next page' });
     const positions = [previous, next].map((button) => button.getBoundingClientRect().x);
+    const current = canvas.getByRole('textbox', { name: 'Current page' });
+    for (const page of [1, 9, 10, 99]) {
+      await userEvent.click(current);
+      await userEvent.keyboard(`${page}{Enter}`);
+      await expect(current).toHaveValue(String(page));
+      expect([previous, next].map((button) => button.getBoundingClientRect().x)).toEqual(positions);
+    }
     for (let page = 100; page <= 104; page += 1) {
       await userEvent.click(next);
       await expect(canvas.getByText(`Page ${page} of 104`)).toBeInTheDocument();

@@ -319,7 +319,7 @@ export function ProjectCrumb({
 /**
  * Compact project navigation in every layout: previous, current / total, next.
  * Edit the current number to jump; Enter or blur commits, Escape restores it.
- * The field reserves its final width so digit boundaries never move the arrows.
+ * The counter reserves its final width and centers its ink so neither arrow moves.
  */
 export function Pager({
   page,
@@ -356,42 +356,52 @@ export function Pager({
         Page {page} of {pageCount}
       </span>
       {step(page - 1, true)}
-      <label className="group flex min-h-11 min-w-11 cursor-text items-center justify-center font-mono text-ui tabular-nums text-white mouse:min-h-7 mouse:min-w-7">
-        <EditableNameField
-          aria-label="Current page"
-          aria-description={`Enter a page from 1 to ${pageCount}`}
-          inputMode="numeric"
-          enterKeyHint="go"
-          autoComplete="off"
-          spellCheck={false}
-          size={String(pageCount).length}
-          value={draft ?? String(page)}
-          onFocus={(event) => event.currentTarget.select()}
-          onClick={(event) => event.currentTarget.select()}
-          onChange={(event) => setDraft(event.currentTarget.value)}
-          onBlur={(event) => {
-            const value = event.currentTarget.value.trim();
-            setDraft(null);
-            if (cancelled.current) {
-              cancelled.current = false;
-              return;
-            }
-            if (!/^\d+$/.test(value)) return;
-            const target = Math.min(pageCount, Math.max(1, Number(value)));
-            if (target !== page) onPage(target);
-          }}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            if (event.key === 'Enter' || event.key === 'Escape') {
-              event.preventDefault();
-              event.stopPropagation();
-              cancelled.current = event.key === 'Escape';
-              event.currentTarget.blur();
-            }
-          }}
-          face="min-w-0 text-center focus:underline focus:underline-offset-2 mouse:group-hover:not-focus:text-accent-ink"
-        />
-        <span aria-hidden="true"> / {pageCount}</span>
+      <label className="group grid min-h-11 min-w-11 cursor-text items-center font-mono text-ui tabular-nums text-white mouse:min-h-7 mouse:min-w-7">
+        <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+          {pageCount} / {pageCount}
+        </span>
+        <span className="col-start-1 row-start-1 flex min-w-0 items-center justify-center gap-1">
+          <span className="relative">
+            <span aria-hidden="true" className="invisible">
+              {(draft ?? String(page)).slice(0, String(pageCount).length) || '0'}
+            </span>
+            <EditableNameField
+              aria-label="Current page"
+              aria-description={`Enter a page from 1 to ${pageCount}`}
+              inputMode="numeric"
+              enterKeyHint="go"
+              autoComplete="off"
+              spellCheck={false}
+              fit="track"
+              value={draft ?? String(page)}
+              onFocus={(event) => event.currentTarget.select()}
+              onClick={(event) => event.currentTarget.select()}
+              onChange={(event) => setDraft(event.currentTarget.value)}
+              onBlur={(event) => {
+                const value = event.currentTarget.value.trim();
+                setDraft(null);
+                if (cancelled.current) {
+                  cancelled.current = false;
+                  return;
+                }
+                if (!/^\d+$/.test(value)) return;
+                const target = Math.min(pageCount, Math.max(1, Number(value)));
+                if (target !== page) onPage(target);
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === 'Enter' || event.key === 'Escape') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  cancelled.current = event.key === 'Escape';
+                  event.currentTarget.blur();
+                }
+              }}
+              face="absolute inset-0 text-center focus:underline focus:underline-offset-2 mouse:group-hover:not-focus:text-accent-ink"
+            />
+          </span>
+          <span aria-hidden="true">/ {pageCount}</span>
+        </span>
       </label>
       {step(page + 1, false)}
     </nav>
