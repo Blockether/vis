@@ -86,17 +86,23 @@
   (let [original @theme/active-theme-id]
     (try (doseq [id (keys shared/built-in-themes)]
            (theme/apply-theme! id)
-           (doseq [turn-id ["turn-2" "another-turn"]]
-             (let [{:keys [capture regions]}
-                   (header-frame review-message 76 {:hover-turn-id turn-id})
-                   col (get-in (first regions) [:bounds :col])
-                   cell (get-in capture [:frames 0 1 col])
-                   hovered? (= "turn-2" turn-id)
-                   ink theme/button-fg]
+           (doseq [turn-id [nil "turn-2" "another-turn"]
+                   width [36 76]]
 
-               (is (= [(.getRed ink) (.getGreen ink) (.getBlue ink)] (:fg cell)))
-               (is (= hovered? (:bold cell)))
-               (is (= hovered? (:underline cell))))))
+             (let [{:keys [capture regions]}
+                   (header-frame review-message width {:hover-turn-id turn-id})
+                   col (get-in (first regions) [:bounds :col])
+                   hovered? (= "turn-2" turn-id)
+                   ink (if hovered? theme/link-chrome-hover-fg theme/button-fg)
+                   background (if hovered? theme/link-chrome-hover-bg theme/button-bg)]
+
+               (doseq [x (range col (+ col (get-in (first regions) [:bounds :width])))]
+                 (let [cell (get-in capture [:frames 0 1 x])]
+                   (is (= [(.getRed ink) (.getGreen ink) (.getBlue ink)] (:fg cell)))
+                   (is (= [(.getRed background) (.getGreen background) (.getBlue background)]
+                          (:bg cell)))
+                   (is (= hovered? (:bold cell)))
+                   (is (not (:underline cell))))))))
          (finally (theme/apply-theme! original)))))
 
 (deftest narrow-header-keeps-the-date-and-shortens-the-fork-label

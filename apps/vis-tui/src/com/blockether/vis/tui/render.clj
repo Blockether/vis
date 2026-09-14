@@ -2025,10 +2025,10 @@
                    (= session-id (:session-id hovered))
                    (= turn-id (:turn-id hovered)))]
 
-          (p/set-colors! g t/button-fg t/button-bg)
-          (p/styled g
-                    (if hovered? [p/BOLD p/UNDERLINE] [])
-                    (p/put-str! g fork-x label-row fork-label)))
+          (p/set-colors! g
+                         (if hovered? t/link-chrome-hover-fg t/button-fg)
+                         (if hovered? t/link-chrome-hover-bg t/button-bg))
+          (p/styled g (if hovered? [p/BOLD] []) (p/put-str! g fork-x label-row fork-label)))
         (when (< -1 label-row (long viewport-h))
           (.register interactions/hit-map
                      {:bounds {:row (+ (long viewport-top) label-row) :col fork-x :width fork-w}
