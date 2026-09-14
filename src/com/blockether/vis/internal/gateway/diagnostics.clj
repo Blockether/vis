@@ -8,6 +8,7 @@
    that failure is evidence, not proof of a particular cause. No HTTP bodies,
    credentials, prompts, tool arguments or process command-line arguments are saved."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
@@ -90,30 +91,32 @@
                      (filter (fn [^File dir]
                                (and (re-matches #"gateway-hang-[0-9]+" (.getName dir))
                                     (not (Files/isSymbolicLink (.toPath dir)))
-                                    (.isFile (io/file dir "report.edn")))))
+                                    (.isFile (io/file dir "report.json")))))
                      (sort-by (fn [^File dir]
                                 (- (.lastModified dir)))))]
     (doseq [^File dir (drop MAX_REPORTS reports)]
       ;; Only our fixed report files; never recurse into an unexpected directory.
-      (doseq [name ["report.edn" "threads.json" "attach.log"]]
+      (doseq [name ["report.json" "threads.json" "attach.log"]]
         (Files/deleteIfExists (.toPath (io/file dir name))))
       (Files/deleteIfExists (.toPath dir)))))
 
 (defn- finish-report!
   [^File dir report]
   (let [^File file
-        (private-file! dir ".report.edn")
+        (private-file! dir ".report.json")
 
         result
-        {:status (:status report) :path (str (io/file dir "report.edn"))}]
+        {:status (:status report) :path (str (io/file dir "report.json"))}]
 
     (spit file
-          (str (pr-str (assoc report
-                         :schema-version 1
-                         :recorded-ms (System/currentTimeMillis)))
-               "\n"))
+          (str (wire/json-str (assoc report
+                                :schema-version 1
+                                :recorded-ms (System/currentTimeMillis)))
+               "\n")
+          :encoding
+          "UTF-8")
     (Files/move (.toPath file)
-                (.toPath (io/file dir "report.edn"))
+                (.toPath (io/file dir "report.json"))
                 (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
     (try (prune-reports!) (catch Throwable _ nil))
     (tel/log! {:level :warn :id ::hang-evidence :data result}
@@ -150,7 +153,8 @@
 (defn capture!
   "Save private, bounded platform stacks before a gateway watchdog tears down a
    stalled turn. Adds at most CAPTURE_MS of waiting; failures never prevent recovery.
-   Reports are under ~/.vis/logs/gateway-hang-*/report.edn (newest ten retained).
+   Reports are UTF-8 JSON with snake_case field names under
+   ~/.vis/logs/gateway-hang-*/report.json (newest ten retained).
    JVM virtual threads are not enumerated by Thread/getAllStackTraces."
   [context]
   (try (bounded! capturing? CAPTURE_MS #(write-snapshot! context))

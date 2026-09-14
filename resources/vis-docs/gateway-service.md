@@ -176,17 +176,18 @@ stalled turn, including a turn waiting for a model, or gives up on a cancellatio
 that did not finish. You do not need a Python tool to be running. Collection waits
 at most 500 ms and does not change the existing stall deadlines.
 
-Look under `~/.vis/logs/gateway-hang-*/report.edn` on the gateway machine. The report
-contains the session and turn IDs, the observed phase or cancellation reason, and
-up to 256 platform-thread stacks with 64 frames each. The stalled turn's thread is
-listed first. This snapshot does not enumerate JVM virtual threads.
+Look under `~/.vis/logs/gateway-hang-*/report.json` on the gateway machine. Each
+UTF-8 JSON report contains the session and turn IDs, the observed phase or
+cancellation reason, and up to 256 platform-thread stacks with 64 frames each.
+The stalled turn's thread is listed first. This snapshot does not enumerate JVM
+virtual threads.
 
 If the whole JVM gateway stops answering, a running local Vis CLI client can also
 collect evidence from outside that process. After an authenticated local health
 check has succeeded, a later failed check triggers a best-effort `jcmd` dump of
 platform and virtual threads. This requires the same JVM process to still be
 alive and `jcmd` beside its Java executable. The client saves `threads.json`,
-`attach.log` and `report.edn` in **its own** log directory. Attempts are limited to
+`attach.log` and `report.json` in **its own** log directory. Attempts are limited to
 one per minute per client, and the diagnostic command has a five-second deadline.
 Vis never sends a signal to, stops or restarts the gateway to collect this evidence.
 

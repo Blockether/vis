@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.gateway.diagnostics-test
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -126,7 +126,7 @@
 (defdescribe
   gateway-diagnostic-capture-test
   (it
-    "saves a blocked turn's stacks and only allowlisted metadata in private files"
+    "saves a blocked turn's stacks as JSON with only allowlisted metadata in private files"
     (with-logs
       (fn [_]
         (let [gate
@@ -149,15 +149,30 @@
                                                    :prompt "must-not-be-in-report"})]
                  (expect (= :written (:status result)))
                  (when-let [path (:path result)]
-                   (let [report (edn/read-string (slurp path))
-                         target (first (:threads report))
+                   (let [text (slurp path :encoding "UTF-8")
+                         report (wire/parse-json text)
+                         target (first (get report "threads"))
                          file (.toPath (io/file path))]
 
-                     (expect (= :platform-threads (:coverage report)))
-                     (expect (= "gateway-turn-fixture" (:name target)))
-                     (expect (seq (:stack target)))
-                     (expect (<= (count (:threads report)) 256))
-                     (expect (not (str/includes? (slurp path) "must-not-be-in-report")))
+                     (expect (= "report.json" (.getName (io/file path))))
+                     (expect (= #{"report.json"} (set (.list (.getParentFile (io/file path))))))
+                     (expect (map? report))
+                     (expect (= 1 (get report "schema_version")))
+                     (expect (pos-int? (get report "recorded_ms")))
+                     (expect (= {"status" "written"
+                                 "session_id" "session"
+                                 "turn_id" "fixture"
+                                 "phase" "provider-call"
+                                 "reason" "turn-stall"
+                                 "coverage" "platform-threads"}
+                                (select-keys report
+                                             ["status" "session_id" "turn_id" "phase" "reason"
+                                              "coverage"])))
+                     (expect (= "gateway-turn-fixture" (get target "name")))
+                     (expect (seq (get target "stack")))
+                     (expect (<= (count (get report "threads")) 256))
+                     (expect (str/ends-with? text "\n"))
+                     (expect (not (str/includes? text "must-not-be-in-report")))
                      (when (.supportsFileAttributeView (Files/getFileStore file) "posix")
                        (expect (= "rw-------"
                                   (PosixFilePermissions/toString (Files/getPosixFilePermissions
@@ -287,7 +302,7 @@
 
               (let [result (#'diagnostics/attach-snapshot! {:pid 123 :started "fixture"})]
                 (expect (= :timed-out (:status result)))
-                (expect (= :timed-out (:status (edn/read-string (slurp (:path result)))))))
+                (expect (= "timed-out" (get (wire/parse-json (slurp (:path result))) "status"))))
               (expect @destroyed?)
               (expect (= [20 100] @waits)))))))
   (it "records attach startup errors without copying exception messages"
@@ -301,7 +316,12 @@
 
                      (let [result (#'diagnostics/attach-snapshot! {:pid 123 :started "fixture"})]
                        (expect (= :failed (:status result)))
-                       (expect (not (str/includes? (slurp (:path result)) "private-fixture"))))))))
+                       (let [text (slurp (:path result))
+                             report (wire/parse-json text)]
+
+                         (expect (= "failed" (get report "status")))
+                         (expect (= "clojure.lang.ExceptionInfo" (get report "error_type")))
+                         (expect (not (str/includes? text "private-fixture")))))))))
   (it
     "collects platform and virtual stacks from an isolated JVM without stopping it"
     (with-logs
@@ -335,7 +355,16 @@
                 (let [result (#'diagnostics/attach-snapshot! target)]
                   (expect (= :written (:status result)))
                   (when-let [path (:path result)]
-                    (let [stacks (slurp (io/file (.getParentFile (io/file path)) "threads.json"))]
+                    (let [report (wire/parse-json (slurp path))
+                          stacks (slurp (io/file (.getParentFile (io/file path)) "threads.json"))]
+
+                      (expect (= "report.json" (.getName (io/file path))))
+                      (expect (= "written" (get report "status")))
+                      (expect (= "platform-and-virtual-threads" (get report "coverage")))
+                      (expect (= "gateway-health-probe-failed" (get report "reason")))
+                      (expect (= (.pid process) (get report "pid")))
+                      (expect (string? (get report "process_started")))
+                      (expect (map? (wire/parse-json stacks)))
                       (expect (str/includes? stacks "hang-diagnostic-fixture"))
                       (expect (str/includes? stacks "hang-virtual-fixture")))))))
             (expect (.isAlive process))
