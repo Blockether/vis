@@ -2086,6 +2086,16 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
       expect(first(html({ tone: 'step' }))).not.toContain('italic');
     });
 
+    // THINKING, CODE and ACTIVITY head one trace at one text size, as the TUI
+    // paints all three through the same bold band label: the thinking name is
+    // not a chip beside two transcript-sized names.
+    it('sizes the thinking name like the code and Activity names', () => {
+      const thinking = first(html({ tone: 'thinking' }));
+      expect(thinking).toContain('text-ui');
+      expect(thinking).not.toContain('text-chip');
+      expect(first(html({ tone: 'execution' }))).toContain('text-ui');
+    });
+
     // A step of a run is a SENTENCE — `Searched · 18 matches` — not the name of a
     // band, so it must not wear the weight a tool header wears above a block.
     it('reads a chronology step as a sentence, not a band name', () => {

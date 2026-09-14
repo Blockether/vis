@@ -714,7 +714,9 @@ export function ExecutionAction({
  *
  * `tone` is the ink of the thing it opens, because that is the only difference —
  * ink INCLUDING the slant: the reasoning a thinking band opens is set in italic,
- * so that band's own name is italic, and bold with it.
+ * so that band's own name is italic, and bold with it. Its size is the size of
+ * `BandLabel`: THINKING, CODE and ACTIVITY head one trace at one text size, as the
+ * TUI paints all three through the same bold band label.
  *
  * `chronology` is the odd one because what it opens is not a band at all: it is
  * one step of a run, a sentence in the transcript's own result ink, so the row
@@ -784,7 +786,7 @@ export function Disclosure({
       ? 'relative min-h-6 text-ui mouse:text-meta after:absolute after:inset-x-0 after:-inset-y-2.5 after:-z-10 after:content-[""] mouse:after:-inset-y-0.5'
       : density === 'comfortable' || tone === 'execution'
         ? 'min-h-11 text-ui mouse:min-h-7'
-        : `min-h-8 mouse:min-h-6 ${tone === 'step' || tone === 'branch' ? 'text-ui' : 'text-chip'}`;
+        : `min-h-8 mouse:min-h-6 ${tone === 'step' || tone === 'branch' || tone === 'thinking' ? 'text-ui' : 'text-chip'}`;
   return (
     <button
       type="button"
