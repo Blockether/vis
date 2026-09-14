@@ -700,12 +700,12 @@ function TableRows({
     <div className="-mx-3 overflow-x-auto">
       <table className="w-full min-w-0 border-collapse font-mono text-ui">
         <thead className="hidden sm:table-header-group">
-          <tr>
+          <tr className="border-b border-dialog-edge">
             {node.columns.map((column) => (
               <th
                 key={column.id}
                 scope="col"
-                className={`px-3 pb-1.5 font-normal uppercase tracking-[0.08em] text-meta text-dialog-hint ${
+                className={`px-3 py-2 font-normal uppercase tracking-[0.08em] text-meta text-dialog-hint ${
                   column.align === 'right' ? 'text-right' : 'text-left'
                 }`}
               >
@@ -762,13 +762,12 @@ function TableRows({
               <SelectableTableRow
                 key={row.id}
                 isSelected={isSelected}
-                className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer' : ''}`}
+                className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer hover:bg-hover focus-within:bg-hover' : ''}`}
                 onClick={isSelectable ? () => onSelect?.(node.id, [row.id]) : undefined}
               >
-                <td className="p-0 align-top">
+                <td className="p-0 align-middle">
                   {isSelectable ? (
                     <ListRow
-                      isSelected={isSelected}
                       aria-pressed={isSelected}
                       aria-label={`Select ${row.cells[0] || row.id}`}
                     >
@@ -787,13 +786,13 @@ function TableRows({
                 {detailAt.map((index) => (
                   <td
                     key={node.columns[index]?.id ?? index}
-                    className="hidden px-3 py-2 align-top text-meta text-dialog-hint sm:table-cell"
+                    className="hidden px-3 py-2 align-middle text-meta text-dialog-hint sm:table-cell"
                   >
                     <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
                   </td>
                 ))}
                 {valueAt >= 0 && (
-                  <td className="hidden py-2 pr-3 pl-2 text-right align-top tabular-nums text-meta text-dialog-hint sm:table-cell">
+                  <td className="hidden py-2 pr-3 pl-2 text-right align-middle tabular-nums text-meta text-dialog-hint sm:table-cell">
                     <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
                   </td>
                 )}
