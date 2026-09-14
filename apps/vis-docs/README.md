@@ -154,9 +154,15 @@ source dates remain snapshots from release inspection.
 `GET /api/extensions/ID` returns the default version, `latest_version` and approved
 `releases` summaries. `?version=1.2.0` returns the full metadata for that approved
 version; pending, rejected and unknown versions return 404. The detail page supports
-version deep links, release notes and commit links, and copies `vis-agent extension install
-... --version VERSION --trust`. The CLI also provides `versions`, `update` and
-`rollback`; see the [installation guide](../../resources/vis-docs/extension-packages.md).
+version deep links, release notes and commit links. Choose **Project** (the default)
+or **Global** to copy a version-pinned, multiline shell command with an explicit scope.
+Commands use the shared syntax colors and copy as plain text, including shell line
+continuations. If the Clipboard API is unavailable or denied, copying falls back to
+browser selection; if that also fails, the command stays selected for manual copying.
+Manual installation does not add a declaration to `vis.yml`. Use the
+[configuration workflow](../../resources/vis-docs/extension-packages.md#declare-packages-in-configuration)
+for a shared setup. The CLI also provides `versions`, `update` and `rollback`; see the
+[installation guide](../../resources/vis-docs/extension-packages.md).
 Deploy the catalog API and use a Vis build that includes these version-aware commands;
 older binaries do not gain new CLI flags from a catalog deployment.
 

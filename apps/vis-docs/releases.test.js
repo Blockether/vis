@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import { runtimeFixture } from './test-support.js';
 import { moderationStatements, publicationStatements } from './moderate.mjs';
 import { identity, releaseVersion } from './github.js';
@@ -127,7 +128,14 @@ test('scheduled GitHub releases remain private until approved, and every approve
   );
   const html = await page.text();
   expect(page.status).toBe(200);
-  expect(html).toContain('--version &#39;1.0.0&#39;');
+  const dom = new JSDOM(html);
+  try {
+    expect(dom.window.document.querySelector('#install-command').textContent).toContain(
+      "--version '1.0.0'",
+    );
+  } finally {
+    dom.window.close();
+  }
   expect(html).toContain('id="release-version"');
   expect(html).toContain('Release notes');
   expect(html).toContain('Source</a>');

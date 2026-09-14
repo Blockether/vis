@@ -270,7 +270,14 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect($('meta[name="description"]').content).toBe(item.description);
   expect($('#install-command').textContent).toBe(installCommand(item));
   expect(installCommand(item)).toBe(
-    "vis-agent extension install 'example/extension-examples' --subdirectory 'extensions/greeting' --version '1.0.0' --trust",
+    [
+      'vis-agent extension install',
+      "'example/extension-examples'",
+      "--subdirectory 'extensions/greeting'",
+      "--version '1.0.0'",
+      '--project',
+      '--trust',
+    ].join(' \\\n  '),
   );
   expect(installCommand(item)).toContain("--version '1.0.0'");
   expect(installCommand(item)).not.toMatch(/registry|zip/i);
@@ -290,6 +297,97 @@ test('detail page has GitHub source, a pinned subdirectory command and working b
   expect(document.querySelectorAll('link[rel="canonical"]')).toHaveLength(1);
   expect($('meta[property="og:title"]').content).toBe('Extension Center · Vis · Blockether');
   expect(names()).toHaveLength(6);
+});
+
+test('install choices render highlighted multiline shell commands and reset copy feedback', async () => {
+  setup();
+  await tick();
+  $('.card-main').click();
+  await tick();
+  expect($('#install-scope').value).toBe('project');
+  expect($('#install-command .token.function').textContent).toBe('vis-agent extension install');
+  expect($('#install-command .token.keyword').textContent).toBe('--subdirectory');
+  expect($('#install-command .token.string').textContent).toBe("'example/extension-examples'");
+  expect($('#install-command').textContent.split('\n')).toHaveLength(6);
+  const writeText = vi.fn().mockResolvedValue();
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  $('#copy-command').click();
+  await tick();
+  expect($('#copy-command').textContent).toBe('Copied');
+  change('#install-scope', 'global', 'change');
+  expect($('#install-command').textContent).toBe(installCommand(item, 'global'));
+  expect($('#install-command').textContent).toContain('--global');
+  expect($('#install-command').textContent).not.toContain('--project');
+  expect($('#install-scope-help').textContent).toContain('~/.vis/extensions');
+  expect($('#install-scope-help').textContent).toContain('does not add an extensions entry to vis.yml');
+  expect($('#copy-command').textContent).toBe('Copy install command');
+  expect($('#copy-status').textContent).toBe('');
+  $('#copy-command').click();
+  await tick();
+  expect(writeText).toHaveBeenLastCalledWith(installCommand(item, 'global'));
+  change('#install-scope', 'project', 'change');
+  expect($('#install-command').textContent).toBe(installCommand(item));
+});
+
+test('a pending clipboard result cannot report success for a changed scope', async () => {
+  setup();
+  await tick();
+  $('.card-main').click();
+  await tick();
+  let complete;
+  const writeText = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  );
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  $('#copy-command').click();
+  expect($('#copy-command').disabled).toBe(true);
+  expect($('#copy-status').textContent).toBe('Copying…');
+  change('#install-scope', 'global', 'change');
+  complete();
+  await tick();
+  expect($('#copy-command').disabled).toBe(false);
+  expect($('#copy-command').textContent).toBe('Copy install command');
+  expect($('#copy-status').textContent).toBe('');
+});
+
+test.each(['unavailable', 'denied'])('copy works when Clipboard API is %s', async (failure) => {
+  setup();
+  await tick();
+  $('.card-main').click();
+  await tick();
+  Object.defineProperty(navigator, 'clipboard', {
+    value:
+      failure === 'unavailable'
+        ? undefined
+        : { writeText: vi.fn().mockRejectedValue(new Error('Denied')) },
+    configurable: true,
+  });
+  const execCommand = vi.fn(() => {
+    expect(window.getSelection().toString()).toBe(installCommand(item));
+    return true;
+  });
+  Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true });
+  $('#copy-command').click();
+  await tick();
+  expect(execCommand).toHaveBeenCalledWith('copy');
+  expect($('#copy-command').textContent).toBe('Copied');
+});
+
+test('copy failure selects the command for manual copying without claiming success', async () => {
+  setup();
+  await tick();
+  $('.card-main').click();
+  await tick();
+  Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+  Object.defineProperty(document, 'execCommand', { value: vi.fn(() => false), configurable: true });
+  $('#copy-command').click();
+  await tick();
+  expect(window.getSelection().toString()).toBe($('#install-command').textContent);
+  expect($('#copy-status').textContent).toContain('Copy the selected command');
+  expect($('#copy-command').textContent).toBe('Copy install command');
 });
 
 test('untrusted metadata remains text and unsafe links are not rendered', async () => {
@@ -614,6 +712,7 @@ test('version selection changes the pinned detail, is linkable, and survives bac
   $('.card-main').click();
   await tick();
   expect($('#release-version').value).toBe('1.2.0');
+  change('#install-scope', 'global', 'change');
   change('#release-version', '1.0.0', 'change');
   $('#version-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await tick();
@@ -627,6 +726,13 @@ test('version selection changes the pinned detail, is linkable, and survives bac
   expect(request).toHaveBeenCalledWith('/api/extensions/' + item.id + '?version=1.0.0', undefined);
   expect($('#install-command').textContent).toContain("--version '1.0.0'");
   expect($('#release-version').value).toBe('1.0.0');
+  expect($('#install-scope').value).toBe('global');
+  expect($('#install-command').textContent).toBe(installCommand(older, 'global'));
+  const writeText = vi.fn().mockResolvedValue();
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  $('#copy-command').click();
+  await tick();
+  expect(writeText).toHaveBeenCalledWith(installCommand(older, 'global'));
   expect($('#source-link').href).toBe(older.source_url);
   expect($('#version-help').textContent).toContain('different version');
   expect($('.release-history').textContent).toContain('Approved releases (2)');

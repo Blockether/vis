@@ -5,6 +5,8 @@ import {
   categoriesHTML,
   detailHTML,
   previewHTML,
+  installCommandHTML,
+  installScopeHelp,
   tocHTML,
   filters,
   filterURL,
@@ -27,6 +29,9 @@ export function mount(container, request = fetch, initial) {
     items = initial?.items || [],
     disposed = false,
     routeRevision = 0,
+    copyRevision = 0,
+    installScope = 'project',
+    detailItem = initial?.item || null,
     submissionRevision = 0,
     challengeRevision = 0,
     preview = null,
@@ -95,6 +100,21 @@ export function mount(container, request = fetch, initial) {
       $('#results')?.removeAttribute('aria-busy');
     }
   }
+  function renderInstall() {
+    ++copyRevision;
+    $('#install-scope').value = installScope;
+    $('#install-command code').innerHTML = installCommandHTML(detailItem, installScope);
+    $('#install-scope-help').innerHTML = installScopeHelp(installScope);
+    $('#copy-command').textContent = 'Copy install command';
+    $('#copy-command').disabled = false;
+    $('#copy-status').textContent = '';
+  }
+  const changeInstallScope = (event) => {
+    if (event.target.id !== 'install-scope') return;
+    installScope = event.target.value === 'global' ? 'global' : 'project';
+    renderInstall();
+  };
+  container.addEventListener('change', changeInstallScope);
   async function route(focus = false) {
     cleanupCommunity?.();
     cleanupCommunity = null;
@@ -120,7 +140,9 @@ export function mount(container, request = fetch, initial) {
           (version === null ? '' : '?version=' + encodeURIComponent(version)),
       );
       if (disposed || revision !== routeRevision) return;
+      detailItem = item;
       $('#detail').innerHTML = detailHTML(item);
+      renderInstall();
       updateMetadata({ item });
       feedback(item);
       if (focus) $('#detail h1').focus({ preventScroll: true });
@@ -345,12 +367,43 @@ export function mount(container, request = fetch, initial) {
       load();
     } else if (node.id === 'retry-detail') route(true);
     else if (node.id === 'copy-command') {
+      const command = $('#install-command');
+      const revision = ++copyRevision;
+      const status = $('#copy-status');
+      node.disabled = true;
+      status.textContent = 'Copying…';
+      let copied = false;
       try {
-        await navigator.clipboard.writeText($('#install-command').textContent);
-        node.textContent = 'Copied';
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(command.textContent);
+          copied = true;
+        }
       } catch {
-        node.textContent = 'Select and copy the command above';
+        // Some browsers deny the Clipboard API even after a user click.
       }
+      if (disposed || revision !== copyRevision || !command.isConnected) return;
+      if (!copied) {
+        command.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(command);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try {
+          copied = document.execCommand('copy');
+        } catch {
+          // Keep the exact command selected when automatic copying is unavailable.
+        }
+        if (copied) {
+          selection.removeAllRanges();
+          node.focus({ preventScroll: true });
+        }
+      }
+      node.disabled = false;
+      node.textContent = copied ? 'Copied' : 'Copy install command';
+      status.textContent = copied
+        ? 'Install command copied.'
+        : 'Automatic copying is unavailable. Copy the selected command using your browser’s Copy action.';
     } else if (node.closest('.toc')) {
       event.preventDefault();
       $(node.getAttribute('href'))?.scrollIntoView({ block: 'start' });
@@ -425,6 +478,7 @@ export function mount(container, request = fetch, initial) {
     document.removeEventListener('keydown', keys);
     container.removeEventListener('click', click);
     container.removeEventListener('submit', versionSubmit);
+    container.removeEventListener('change', changeInstallScope);
     document.body.style.overflow = '';
     container.replaceChildren();
   };

@@ -243,11 +243,11 @@
   (it
     "passes string-keyed CLI arguments to the package installer"
     ;; Native installation rejected --trust because keyword destructuring discarded parsed flags.
-    (doseq [[flags base trusted folder revision] [[[] "user.home" false "" nil]
-                                                  [["--trust" "--project" "--subdirectory"
-                                                    "plugins/greeting" "--revision"
-                                                    (apply str (repeat 40 "a"))] "user.dir" true
-                                                   "plugins/greeting" (apply str (repeat 40 "a"))]]]
+    (doseq [[flags base trusted folder revision]
+            [[[] "user.home" false "" nil] [["--global"] "user.home" false "" nil]
+             [["--trust" "--project" "--subdirectory" "plugins/greeting" "--revision"
+               (apply str (repeat 40 "a"))] "user.dir" true "plugins/greeting"
+              (apply str (repeat 40 "a"))]]]
       (let [calls (atom [])]
         (with-redefs [python-extensions/install-package!
                       (fn [source options]
@@ -262,7 +262,17 @@
           (expect (= trusted (boolean (:trust options))))
           (expect (= folder (:subdirectory options)))
           (expect (= revision (:revision options)))
-          (expect (= (str (System/getProperty base) "/.vis/extensions") (:directory options))))))))
+          (expect (= (str (System/getProperty base) "/.vis/extensions") (:directory options)))))))
+  (it "rejects conflicting scopes before installing"
+      (let [calls (atom [])]
+        (with-redefs [python-extensions/install-package! (fn [& args]
+                                                           (swap! calls conj args))]
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(commandline/dispatch! (#'main/root-command)
+                                                   ["vis-agent" "extension" "install"
+                                                    "example/greeting" "--trust" "--project"
+                                                    "--global"]))))
+        (expect (empty? @calls)))))
 
 (defdescribe
   extension-version-commands-test

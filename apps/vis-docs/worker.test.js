@@ -505,7 +505,14 @@ test('published hash links redirect to the repository slug and preserve the sele
     else {
       expect(html).toContain('action="' + path + '"');
       expect(html).toContain('href="' + path + '?version=1.0.0"');
-      expect(html).toContain('--version &#39;1.0.0&#39;');
+      const dom = new JSDOM(html);
+      try {
+        expect(dom.window.document.querySelector('#install-command').textContent).toContain(
+          "--version '1.0.0'",
+        );
+      } finally {
+        dom.window.close();
+      }
     }
   }
   for (const suffix of ['?version=9.9.9', '/missing']) {

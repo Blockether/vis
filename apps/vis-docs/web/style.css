@@ -252,6 +252,15 @@ button.quiet {
   padding: 0;
   border: 0;
 }
+#copy-status:empty {
+  display: none;
+}
+.install-scope {
+  display: grid;
+  gap: 0.5rem;
+  justify-self: start;
+  min-width: 12rem;
+}
 .install-section > button {
   justify-self: start;
 }

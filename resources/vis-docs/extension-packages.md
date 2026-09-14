@@ -93,17 +93,25 @@ and does not fetch sources, install dependencies or run extension code.
 **Prerequisites:** Vis installed and reviewed source and dependencies. Vis supplies
 `uv`; GitHub installs also need Git on `PATH`.
 
+`install` installs a package directly; it does **not** add an `extensions:` entry
+to `vis.yml`. `--project` selects the installation directory, not configuration
+persistence. To share the dependency with your team or restore it from configuration,
+[declare it in `vis.yml` and run `sync`](#declare-packages-in-configuration) instead.
+
 1. In the target project, link the local [greeter example](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
    after copying its complete directory to `greeter/`:
 
    ```bash
-   vis-agent extension install ./greeter --project --trust
+   vis-agent extension install ./greeter \
+     --project \
+     --trust
    ```
 
    The local checkout is linked, not copied. You may also pass its `pyproject.toml`.
    Prefix a relative checkout path with `./` when it could look like `owner/repository`;
    a bare repository slug always selects GitHub, even if a matching local directory exists.
-   Omit `--project` only when you intend a global installation.
+   Choose `--project` for this project or `--global` for every project. Without either
+   flag, installation is global, even when your current directory contains `vis.yml`.
 
 2. Start Vis there, or run `/reload`. Vis prepares dependencies before registration.
 3. On the next turn, ask Vis to inspect `doc("greet.hello")` and call
@@ -114,17 +122,41 @@ and does not fetch sources, install dependencies or run extension code.
 
 The [Extension Center](https://vis.blockether.com/extensions/) lists approved releases
 of public GitHub projects. **Publishing an extension on PyPI is not required.**
-Review the selected version's source, manifest and dependencies before installing:
+Review the selected version's source, manifest and dependencies before installing.
+Choose where you want to use it:
+
+**Project** — run this from the target project:
 
 ```bash
-vis-agent extension versions example/greeting
-vis-agent extension install example/greeting --version 1.2.0 --project --trust
-vis-agent extension install example/extensions --subdirectory tools/greeting --version 1.2.0 --project --trust
+vis-agent extension install example/greeting \
+  --version 1.2.0 \
+  --project \
+  --trust
+```
+
+**Global** — make the extension available in every project:
+
+```bash
+vis-agent extension install example/greeting \
+  --version 1.2.0 \
+  --global \
+  --trust
+```
+
+For an extension inside a monorepo, add its package directory:
+
+```bash
+vis-agent extension install example/extensions \
+  --subdirectory tools/greeting \
+  --version 1.2.0 \
+  --project \
+  --trust
 ```
 
 Replace the example repository and version with an approved listing. In the Extension
-Center, choose **Version** to see that release's README, dependencies, full commit and
-install command. Older approved releases remain selectable and linkable.
+Center, choose **Version** and the **Global** or **Project** scope, then copy the
+install command. Older approved releases remain selectable and linkable. Use
+`vis-agent extension versions example/greeting` to list them in your terminal.
 
 Without `--version`, a GitHub install selects the **latest approved stable version**,
 never the default branch. Prereleases require explicit `--version`. Unknown, pending
