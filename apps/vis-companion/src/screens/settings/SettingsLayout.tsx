@@ -198,7 +198,7 @@ export function SettingsPanel({
           body, not the section, owns overflow clipping so that reach remains real. An
           ordinary action still occupies only the edge. */}
       {disclosure ? (
-        <header className="border-b border-dialog-edge">
+        <header>
           <ListRow
             density="compact"
             aria-label={disclosure.label}
@@ -210,7 +210,7 @@ export function SettingsPanel({
           </ListRow>
         </header>
       ) : (
-        <header className="flex min-h-9 min-w-0 items-center gap-3 border-b border-dialog-edge px-3 py-0.5 sm:px-4 mouse:min-h-8">
+        <header className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
           {titleBlock}
           {action && <span className="flex shrink-0 items-center empty:hidden">{action}</span>}
         </header>
@@ -218,8 +218,11 @@ export function SettingsPanel({
       {/* A PANEL BODY DIVIDES AND CLIPS ITS OWN PARTS. `divide-y` draws only BETWEEN
           siblings, so a panel holding one list is unchanged, and a panel whose last
           child is a verb gets the hairline that verb needs to be a row. Clipping begins
-          here rather than on the section, where it would cut off the header's touch slop. */}
-      <div className="overflow-hidden divide-y divide-dialog-edge">{children}</div>
+          here rather than on the section, where it would cut off the header's touch slop.
+          An empty body owns no rule: the column already separates the panel below it. */}
+      <div className="overflow-hidden divide-y divide-dialog-edge border-t border-dialog-edge empty:hidden">
+        {children}
+      </div>
     </section>
   );
 }

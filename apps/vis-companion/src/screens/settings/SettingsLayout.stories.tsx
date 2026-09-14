@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { expect } from 'storybook/test';
-import { ChoiceCell } from '../../components/ui';
+import { ChoiceCell, NotifyConnectionSwitch } from '../../components/ui';
 import { THEMES } from '../../lib/themes.generated';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { SettingsColumn, SettingsPanel } from './SettingsLayout';
@@ -110,6 +110,46 @@ export const DiagnosticsFooter: Story = {
       '1px',
     );
     await expect(canvas.getByRole('button', { name: 'Export app logs' })).toBeVisible();
+  },
+};
+
+/** Header-only panels share one divider with the next panel, never an empty body's rule. */
+export const HeaderOnlyPanels: Story = {
+  args: {
+    title: 'Machine',
+    children: (
+      <>
+        <SettingsPanel
+          title="Notifications"
+          action={<NotifyConnectionSwitch machine="visgw" isOn={false} onClick={() => {}} />}
+        >
+          {false}
+        </SettingsPanel>
+        {body}
+        <DiagnosticsPanel isOpen={false} onToggle={() => {}} />
+      </>
+    ),
+  },
+  play: async ({ canvas }) => {
+    const notifications = canvas.getByRole('heading', { name: 'Notifications' }).closest('section')!;
+    const diagnostics = canvas.getByRole('heading', { name: 'Diagnostics' }).closest('section')!;
+    // Regression: Notifications' empty body left a header rule beside the column's divider.
+    for (const panel of [notifications, diagnostics]) {
+      const header = panel.querySelector('header')!;
+      await expect(getComputedStyle(header).borderBottomWidth).toBe('0px');
+      await expect(panel.lastElementChild).not.toBeVisible();
+      await expect(panel.getBoundingClientRect().height).toBe(
+        header.getBoundingClientRect().height + parseFloat(getComputedStyle(panel).borderBottomWidth),
+      );
+    }
+    await expect(getComputedStyle(notifications).borderBottomWidth).toBe('1px');
+    await expect(getComputedStyle(diagnostics).borderBottomWidth).toBe('0px');
+    const theme = canvas.getByRole('heading', { name: 'Theme' }).closest('section')!;
+    await expect(
+      parseFloat(getComputedStyle(theme.querySelector('header')!).borderBottomWidth) +
+        parseFloat(getComputedStyle(theme.lastElementChild!).borderTopWidth),
+    ).toBe(1);
+    await expect(canvas.getByRole('switch', { name: 'Notifications from visgw: off' })).toBeVisible();
   },
 };
 
