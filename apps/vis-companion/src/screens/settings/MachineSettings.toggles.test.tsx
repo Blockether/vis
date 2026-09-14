@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../../lib/gateway';
 import { DEFAULT_SPEECH_PREFS } from '../../lib/storage';
@@ -51,7 +52,7 @@ async function openSettings() {
       onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
     />,
   );
-  return await screen.findByRole<HTMLSelectElement>('combobox', { name: 'Draft backend' });
+  return await screen.findByRole('combobox', { name: 'Draft backend' });
 }
 
 describe('draft backend dropdown', () => {
@@ -60,17 +61,15 @@ describe('draft backend dropdown', () => {
       .spyOn(GatewayClient.prototype, 'setSetting')
       .mockResolvedValue({ ...backend, value: 'rift' });
     const select = await openSettings();
-    expect(select.value).toBe('auto');
-    expect(
-      within(select)
-        .getAllByRole('option')
-        .map((option) => option.textContent),
-    ).toEqual(backend.choices);
-    expect(screen.queryByRole('button', { name: 'rift' })).toBeNull();
-    fireEvent.change(select, { target: { value: 'rift' } });
-    await waitFor(() => expect(select.value).toBe('rift'));
+    expect(select).toHaveTextContent('auto');
+    await userEvent.click(select);
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(
+      backend.choices,
+    );
+    await userEvent.click(screen.getByRole('option', { name: 'rift' }));
+    await waitFor(() => expect(select).toHaveTextContent('rift'));
     expect(save).toHaveBeenCalledExactlyOnceWith('draft_backend', 'value', 'rift');
-    expect(select.disabled).toBe(false);
+    expect(select).toBeEnabled();
   });
 
   it("blocks another choice while saving, then adopts the gateway's response", async () => {
@@ -81,12 +80,13 @@ describe('draft backend dropdown', () => {
       }),
     );
     const select = await openSettings();
-    fireEvent.change(select, { target: { value: 'worktree' } });
-    expect(select.disabled).toBe(true);
+    await userEvent.click(select);
+    await userEvent.click(screen.getByRole('option', { name: 'worktree' }));
+    expect(select).toBeDisabled();
     expect(save).toHaveBeenCalledTimes(1);
     finish({ ...backend, value: 'worktree' });
-    await waitFor(() => expect(select.value).toBe('worktree'));
-    expect(select.disabled).toBe(false);
+    await waitFor(() => expect(select).toHaveTextContent('worktree'));
+    expect(select).toBeEnabled();
   });
 
   it('keeps the saved value after a refusal and allows retry', async () => {
@@ -95,12 +95,14 @@ describe('draft backend dropdown', () => {
       .mockRejectedValueOnce(new Error('Setting could not be saved'))
       .mockResolvedValueOnce({ ...backend, value: 'off' });
     const select = await openSettings();
-    fireEvent.change(select, { target: { value: 'off' } });
+    await userEvent.click(select);
+    await userEvent.click(screen.getByRole('option', { name: 'off' }));
     await screen.findByText('Setting could not be saved');
-    expect(select.value).toBe('auto');
-    expect(select.disabled).toBe(false);
-    fireEvent.change(select, { target: { value: 'off' } });
-    await waitFor(() => expect(select.value).toBe('off'));
+    expect(select).toHaveTextContent('auto');
+    expect(select).toBeEnabled();
+    await userEvent.click(select);
+    await userEvent.click(screen.getByRole('option', { name: 'off' }));
+    await waitFor(() => expect(select).toHaveTextContent('off'));
     expect(save).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Setting could not be saved')).toBeNull();
   });

@@ -30,13 +30,16 @@ export const Saving: Story = { args: { busy: true } };
 export const ChooseBackend: Story = {
   play: async ({ canvasElement }) => {
     const select = within(canvasElement).getByRole('combobox', { name: 'Draft backend' });
-    // The application reset removes native arrows unless this control opts back in.
-    await expect(getComputedStyle(select).appearance).toBe('auto');
+    const page = within(canvasElement.ownerDocument.body);
     await userEvent.tab();
     await expect(select).toHaveFocus();
-    await userEvent.selectOptions(select, 'rift');
-    await expect(select).toHaveValue('rift');
-    await userEvent.selectOptions(select, 'off');
-    await expect(select).toHaveValue('off');
+    await userEvent.keyboard('{ArrowDown}');
+    await expect(page.getByRole('option', { name: 'auto' })).toHaveFocus();
+    await userEvent.keyboard('r{Enter}');
+    await expect(select).toHaveTextContent('rift');
+    await expect(select).toHaveFocus();
+    await userEvent.click(select);
+    await userEvent.click(page.getByRole('option', { name: 'off' }));
+    await expect(select).toHaveTextContent('off');
   },
 };

@@ -274,6 +274,30 @@ describe('DataTable', () => {
     expect(text(paged)).not.toContain('row-25');
   });
 
+  it('changes page size through the shared picker and returns to the first page', async () => {
+    const body = [
+      '[Table: events.csv 60 rows × 2 cols, 1 KB]',
+      'events.csv',
+      'text/csv',
+      '2x60',
+      '1 KB',
+      'n,label',
+      ...Array.from({ length: 60 }, (_, index) => `${index},row-${index}`),
+    ].join('\n');
+    render(<DataTable body={body} compact />);
+    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(screen.getByText('26–50 of 60')).toBeVisible();
+    const picker = screen.getByRole('combobox', { name: 'Rows per page of events.csv' });
+    await userEvent.click(picker);
+    await userEvent.click(screen.getByRole('option', { name: '50' }));
+    expect(picker).toHaveTextContent('50');
+    expect(screen.getByText('1–50 of 60')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    await userEvent.click(picker);
+    await userEvent.click(screen.getByRole('option', { name: 'Fit' }));
+    expect(picker).toHaveTextContent('Fit');
+  });
+
   it('keeps paging controls above the grid', () => {
     const long = [
       '[Table: events.csv 60 rows × 2 cols, 1 KB]',

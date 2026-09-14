@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent } from 'storybook/test';
+import { expect, userEvent, within } from 'storybook/test';
 import { useState } from 'react';
 import { ImproveWorkspace } from './ImproveScreen';
 import { DialogFrame } from '../components/ui';
-import { storyImproveClient, STORY_IMPROVE_PROJECT } from '../dev/story-data';
+import { storyImproveClient } from '../dev/story-data';
 import type { ImproveMode } from '../lib/improve';
 
 function Workspace({
@@ -56,19 +56,26 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Human: Story = {
-  play: async ({ canvas }) => {
-    await canvas.findByRole('option', { name: '/workspace/vis' });
-    await userEvent.selectOptions(canvas.getByLabelText('Improve project'), STORY_IMPROVE_PROJECT);
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByRole('button', { name: 'New issue' })).toBeEnabled();
+    await userEvent.click(canvas.getByLabelText('Improve project'));
+    await userEvent.click(
+      await within(canvasElement.ownerDocument.body).findByRole('option', {
+        name: '/workspace/vis',
+      }),
+    );
     await expect(await canvas.findByText('Make collected reports actionable')).toBeVisible();
   },
 };
 
 export const HomePaths: Story = {
   args: { projectRoot: '/Users/ana/code/vis' },
-  play: async ({ canvas }) => {
-    const option = await canvas.findByRole('option', { name: '~/code/vis' });
-    await expect(option).toHaveValue(STORY_IMPROVE_PROJECT);
-    await userEvent.selectOptions(canvas.getByLabelText('Improve project'), option);
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByRole('button', { name: 'New issue' })).toBeEnabled();
+    await userEvent.click(canvas.getByLabelText('Improve project'));
+    await userEvent.click(
+      await within(canvasElement.ownerDocument.body).findByRole('option', { name: '~/code/vis' }),
+    );
     await expect(await canvas.findByText('Make collected reports actionable')).toBeVisible();
   },
 };
@@ -91,7 +98,12 @@ export const EditAndGroup: Story = {
     const { canvas } = context;
     await userEvent.click(canvas.getByText('Let people review reports without selecting a model'));
     await userEvent.click(canvas.getByRole('button', { name: 'Edit issue' }));
-    await userEvent.selectOptions(canvas.getByLabelText('Improvement group'), '1');
+    await userEvent.click(canvas.getByLabelText('Improvement group'));
+    await userEvent.click(
+      within(context.canvasElement.ownerDocument.body).getByRole('option', {
+        name: '#1 · Make collected reports actionable',
+      }),
+    );
     await userEvent.clear(canvas.getByLabelText('Issue content'));
     await userEvent.type(
       canvas.getByLabelText('Issue content'),
@@ -105,7 +117,7 @@ export const EditAndGroup: Story = {
 export const Automatic: Story = {
   args: { mode: 'automatic' },
   play: async ({ canvas }) => {
-    await canvas.findByRole('option', { name: '/workspace/vis' });
+    await expect(await canvas.findByRole('button', { name: 'New issue' })).toBeEnabled();
     await userEvent.click(canvas.getByRole('button', { name: 'Review settings' }));
     await expect(await canvas.findByLabelText('Improve model')).toBeVisible();
     await expect(canvas.getByLabelText('Review interval in minutes')).toHaveValue(60);

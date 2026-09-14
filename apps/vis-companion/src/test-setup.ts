@@ -66,6 +66,10 @@ if (typeof document !== 'undefined') {
   globalThis.IntersectionObserver ??= observer as never;
   Element.prototype.scrollTo ??= function scrollTo() {};
   Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+  // Pointer capture is a browser layout API used by the shared Select primitive.
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.setPointerCapture ??= function setPointerCapture() {};
+  Element.prototype.releasePointerCapture ??= function releasePointerCapture() {};
   window.matchMedia ??= ((query: string) => ({
     matches: false,
     media: query,

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent } from 'storybook/test';
+import { expect, userEvent, within } from 'storybook/test';
 import { useRef, useState, type ReactNode } from 'react';
 import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
@@ -1266,38 +1266,147 @@ export const Gestures: Story = {
   ),
 };
 
-/** Native choices retain touch targets and announce their selected value. */
-export const ClosedChoices: Story = {
-  render: () => (
+const reviewModes = [
+  { value: 'off', label: 'Off' },
+  { value: 'human', label: 'Governed by human' },
+  { value: 'automatic', label: 'Automatic' },
+];
+
+/** Closed, saving, empty and unavailable choices use the same production picker. */
+function ChoiceControls() {
+  const [mode, setMode] = useState('human');
+  return (
     <Sheet>
       <Group of="Select — review mode">
         <Input aria-label="Review name" defaultValue="Companion" className="min-w-0 flex-1" />
-        <Select aria-label="Review mode" defaultValue="human">
-          <option value="off">Off</option>
-          <option value="human">Governed by human</option>
-          <option value="automatic">Automatic</option>
-        </Select>
+        <Select
+          aria-label="Review mode"
+          value={mode}
+          onValueChange={setMode}
+          options={reviewModes}
+        />
         <Button variant="secondary">Save review</Button>
       </Group>
       <Group of="Select — saving">
-        <Select aria-label="Saving review mode" defaultValue="human" disabled aria-busy="true">
-          <option value="human">Governed by human</option>
-        </Select>
+        <Select
+          aria-label="Saving review mode"
+          value="human"
+          onValueChange={noop}
+          options={reviewModes}
+          disabled
+          aria-busy
+        />
+      </Group>
+      <Group of="Select — no choices available">
+        <Select aria-label="Unavailable model" value="" onValueChange={noop} options={[]} />
+      </Group>
+      <Group of="Select — one unavailable choice">
+        <Select
+          aria-label="Draft backend"
+          value="auto"
+          onValueChange={noop}
+          options={[
+            { value: 'auto', label: 'Automatic' },
+            { value: 'rift', label: 'Rift · not installed', disabled: true },
+            { value: '', label: 'Off' },
+          ]}
+        />
       </Group>
     </Sheet>
-  ),
-  play: async ({ canvas }) => {
+  );
+}
+
+export const ClosedChoices: Story = {
+  render: () => <ChoiceControls />,
+  play: async ({ canvas, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
     const mode = canvas.getByRole('combobox', { name: 'Review mode' });
     const field = canvas.getByRole('textbox', { name: 'Review name' }).getBoundingClientRect();
     const action = canvas.getByRole('button', { name: 'Save review' }).getBoundingClientRect();
-    const face = mode.parentElement!.getBoundingClientRect();
+    const face = mode.getBoundingClientRect();
     await expect(face.height).toBe(field.height);
     await expect(face.top).toBe(field.top);
     await expect(action.height).toBe(field.height);
     await expect(action.top).toBe(field.top);
-    await userEvent.selectOptions(mode, 'automatic');
-    await expect(mode).toHaveValue('automatic');
+    await userEvent.click(mode);
+    await userEvent.click(page.getByRole('option', { name: 'Automatic' }));
+    await expect(mode).toHaveTextContent('Automatic');
+    await expect(mode).toHaveFocus();
     await expect(canvas.getByRole('combobox', { name: 'Saving review mode' })).toBeDisabled();
+    await expect(canvas.getByRole('combobox', { name: 'Unavailable model' })).toBeDisabled();
+  },
+};
+
+export const OpenChoices: Story = {
+  render: () => <ChoiceControls />,
+  play: async ({ canvas, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const trigger = canvas.getByRole('combobox', { name: 'Review mode' });
+    await userEvent.click(trigger);
+    const option = page.getByRole('option', { name: 'Off' });
+    const background = getComputedStyle(option).backgroundColor;
+    const border = getComputedStyle(option).borderColor;
+    const shadow = getComputedStyle(option).boxShadow;
+    await userEvent.hover(option);
+    await expect(getComputedStyle(option).backgroundColor).toBe(background);
+    await expect(getComputedStyle(option).borderColor).toBe(border);
+    await expect(getComputedStyle(option).boxShadow).toBe(shadow);
+    await expect(page.getByRole('option', { name: 'Governed by human' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  },
+};
+
+/** A long list must escape a clipped modal column and fit above a bottom-edge trigger. */
+function LongChoicesInDialog() {
+  const [value, setValue] = useState('');
+  const [open, setOpen] = useState(true);
+  return open ? (
+    <Modal size="fit" onDismiss={() => setOpen(false)}>
+      <DialogFrame title="Project defaults" onClose={() => setOpen(false)}>
+        <div className="flex justify-end overflow-hidden p-4">
+          <Select
+            aria-label="Project"
+            className="w-64"
+            value={value}
+            onValueChange={setValue}
+            options={[
+              { value: '', label: 'Unassigned' },
+              ...Array.from({ length: 30 }, (_, index) => ({
+                value: String(index),
+                label: `Project ${index + 1} · /workspace/companion/accessibility-and-keyboard-navigation`,
+              })),
+            ]}
+          />
+        </div>
+      </DialogFrame>
+    </Modal>
+  ) : (
+    <Button onClick={() => setOpen(true)}>Open project defaults</Button>
+  );
+}
+
+export const LongChoices: Story = {
+  render: () => <LongChoicesInDialog />,
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const trigger = page.getByRole('combobox', { name: 'Project' });
+    await userEvent.click(trigger);
+    const list = page.getByRole('listbox', { name: 'Project' });
+    const box = list.getBoundingClientRect();
+    await expect(box.top).toBeGreaterThanOrEqual(0);
+    await expect(box.left).toBeGreaterThanOrEqual(0);
+    await expect(box.right).toBeLessThanOrEqual(window.innerWidth);
+    await expect(box.bottom).toBeLessThanOrEqual(window.innerHeight);
+    await userEvent.keyboard('{End}{Enter}');
+    await expect(trigger).toHaveTextContent('Project 30');
+    await userEvent.click(trigger);
+    await userEvent.keyboard('{Home}{Escape}');
+    await expect(trigger).toHaveTextContent('Project 30');
+    await expect(trigger).toHaveFocus();
+    await expect(page.getByRole('dialog', { name: 'Project defaults' })).toBeVisible();
   },
 };
 

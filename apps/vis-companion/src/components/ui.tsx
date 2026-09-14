@@ -44,10 +44,10 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
-  type SelectHTMLAttributes,
 } from 'react';
 
 import { createPortal } from 'react-dom';
+import * as SelectPrimitive from '@radix-ui/react-select';
 import viewSpec from '../../../../packages/vis-contract/resources/vis-contract/view.json';
 
 import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
@@ -1775,22 +1775,132 @@ export const Input = forwardRef<
   );
 });
 
-/** Native choices keep a full touch target inside the same visible face as Input. */
-export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
-  function Select({ className = '', ...props }, ref) {
-    return (
-      <span
-        className={`inline-flex h-8 min-w-0 max-w-full items-center self-center rounded-none border border-edge bg-input focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 mouse:h-7 ${className}`}
+/** Make the modal picker the only interactive branch; restore only attributes we own. */
+function isolateSelectContent(node: HTMLDivElement | null) {
+  if (!node?.isConnected) return;
+  const changed: Element[] = [];
+  for (let branch: Element = node; branch.parentElement; branch = branch.parentElement) {
+    for (const sibling of branch.parentElement.children) {
+      if (
+        sibling !== branch &&
+        !sibling.hasAttribute('inert') &&
+        !sibling.matches('[aria-live]') &&
+        !sibling.querySelector('[aria-live]')
+      ) {
+        sibling.setAttribute('inert', '');
+        changed.push(sibling);
+      }
+    }
+    if (branch.parentElement === node.ownerDocument.body) break;
+  }
+  return () => changed.forEach((element) => element.removeAttribute('inert'));
+}
+
+/**
+ * A single choice with app-owned faces and a portalled, collision-aware listbox.
+ * Radix owns keyboard navigation, typeahead, touch scrolling and focus return.
+ * Arrows explore; Enter/Space commits; Escape cancels without dismissing a parent.
+ * While open, Tab stays in the picker (the primitive's native-select convention).
+ * Callers own the saved value; rejected saves never replace it optimistically here.
+ */
+export const Select = forwardRef<
+  HTMLButtonElement,
+  Pick<
+    ButtonHTMLAttributes<HTMLButtonElement>,
+    'id' | 'aria-label' | 'aria-labelledby' | 'aria-describedby' | 'aria-busy' | 'disabled' | 'className'
+  > & {
+    value: string;
+    onValueChange: (value: string) => void;
+    options: readonly { value: string; label: string; disabled?: boolean }[];
+  }
+>(function Select({ value, onValueChange, options, disabled = false, className = '', ...props }, ref) {
+  const [open, setOpen] = useState(false);
+  const generatedId = useId();
+  const triggerId = props.id ?? generatedId;
+  const unavailable = disabled || options.length === 0;
+  const selected = options.find((option) => option.value === value);
+  const label = options.length === 0 ? 'No options available' : (selected?.label ?? value);
+  // An empty string is a real choice (Unassigned, No group), not Radix's placeholder.
+  // Prefix every value so the mapping is reversible and cannot collide with caller data.
+  const prefix = 'option:';
+  if (unavailable && open) setOpen(false);
+
+  return (
+    <SelectPrimitive.Root
+      value={`${prefix}${value}`}
+      onValueChange={(next) => onValueChange(next.slice(prefix.length))}
+      open={open && !unavailable}
+      onOpenChange={setOpen}
+      disabled={unavailable}
+    >
+      <SelectPrimitive.Trigger
+        {...props}
+        id={triggerId}
+        ref={ref}
+        title={label}
+        className={`relative inline-flex h-8 min-w-11 max-w-full items-center justify-between gap-2 self-center rounded-none border border-edge bg-input px-2.5 font-mono text-ui text-white after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-[''] enabled:hover:text-accent-ink focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted data-[state=open]:border-accent mouse:h-7 mouse:after:content-none ${className}`}
       >
-        <select
-          ref={ref}
-          className="relative h-11 min-w-0 max-w-full flex-1 appearance-auto border-0 bg-transparent px-2.5 py-1 font-mono text-ui text-white focus:outline-none disabled:cursor-not-allowed disabled:text-muted mouse:h-7"
-          {...props}
-        />
-      </span>
-    );
-  },
-);
+        <span className="min-w-0 truncate text-left">
+          <SelectPrimitive.Value>{label}</SelectPrimitive.Value>
+        </span>
+        <SelectPrimitive.Icon asChild>
+          <ChevronIcon open className={`size-3 shrink-0 ${open && !unavailable ? 'rotate-180' : ''}`} />
+        </SelectPrimitive.Icon>
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.Portal container={open ? overlayLayer().host : undefined}>
+        <SelectPrimitive.Content
+          position="popper"
+          ref={isolateSelectContent}
+          sideOffset={8}
+          collisionPadding={12}
+          aria-label={props['aria-label']}
+          aria-labelledby={props['aria-labelledby'] ?? (props['aria-label'] ? undefined : triggerId)}
+          className="z-[60] flex max-h-[min(20rem,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-none border border-edge-strong bg-panel font-mono text-ui text-white shadow-[4px_4px_0_var(--line2)]"
+          onKeyDown={(event) => {
+            // Do not let the surrounding dialog interpret a picker key as its own.
+            event.stopPropagation();
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              setOpen(false);
+            }
+          }}
+        >
+          <SelectPrimitive.ScrollUpButton className="flex min-h-11 shrink-0 items-center justify-center text-dialog-hint mouse:min-h-7">
+            <ChevronIcon open className="size-3 rotate-180" />
+          </SelectPrimitive.ScrollUpButton>
+          <SelectPrimitive.Viewport className="min-h-0 p-1">
+            {options.map((option) => (
+              <SelectPrimitive.Item
+                key={option.value}
+                value={`${prefix}${option.value}`}
+                disabled={option.disabled}
+                textValue={option.label}
+                aria-selected={option.value === value}
+                onPointerMove={(event) => {
+                  // Hover changes ink only; keep the keyboard focus indicator in place.
+                  if (event.pointerType === 'mouse') event.preventDefault();
+                }}
+                className="flex min-h-11 cursor-default select-none items-center gap-2 rounded-none px-2 py-1.5 outline-none data-[state=checked]:bg-panel-2 data-[disabled]:text-muted data-[disabled]:pointer-events-none [&:not([data-disabled])]:hover:text-accent-ink focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent mouse:min-h-7"
+              >
+                <SelectPrimitive.ItemText className="min-w-0 flex-1 break-words">
+                  {option.label}
+                </SelectPrimitive.ItemText>
+                <span className="ml-auto flex size-3 shrink-0 items-center justify-center">
+                  <SelectPrimitive.ItemIndicator>
+                    <CheckIcon className="size-3" />
+                  </SelectPrimitive.ItemIndicator>
+                </span>
+              </SelectPrimitive.Item>
+            ))}
+          </SelectPrimitive.Viewport>
+          <SelectPrimitive.ScrollDownButton className="flex min-h-11 shrink-0 items-center justify-center text-dialog-hint mouse:min-h-7">
+            <ChevronIcon open className="size-3" />
+          </SelectPrimitive.ScrollDownButton>
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
+  );
+});
 
 /**
  * A SHORT STATE MESSAGE, with one optional title band and one way out.

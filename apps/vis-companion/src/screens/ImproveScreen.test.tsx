@@ -1,16 +1,20 @@
 /** @vitest-environment jsdom */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { ImproveDialog, ImproveWorkspace } from './ImproveScreen';
 import { storyImproveClient, storyImproveFetch, STORY_IMPROVE_PROJECT } from '../dev/story-data';
 import { GatewayError } from '../lib/gateway';
 
+async function pick(name: string, option: string) {
+  await userEvent.click(screen.getByRole('combobox', { name }));
+  await userEvent.click(await screen.findByRole('option', { name: option }));
+}
+
 async function projectIssues(client = storyImproveClient()) {
   render(<ImproveWorkspace client={client} />);
-  await screen.findByRole('option', { name: '/workspace/vis' });
-  fireEvent.change(screen.getByLabelText('Improve project'), {
-    target: { value: STORY_IMPROVE_PROJECT },
-  });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'New issue' })).toBeEnabled());
+  await pick('Improve project', '/workspace/vis');
   await screen.findByText('Make collected reports actionable');
   return client;
 }
@@ -39,9 +43,8 @@ describe('Improve workspace', () => {
     const records = vi.spyOn(client, 'improveRecords');
     render(<ImproveWorkspace client={client} />);
 
-    const option = await screen.findByRole('option', { name: label });
-    expect(option).toHaveValue(STORY_IMPROVE_PROJECT);
-    change('Improve project', STORY_IMPROVE_PROJECT);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New issue' })).toBeEnabled());
+    await pick('Improve project', label);
     await screen.findByText('Make collected reports actionable');
     expect(records).toHaveBeenLastCalledWith(STORY_IMPROVE_PROJECT, 0, expect.any(AbortSignal));
     expect(project).toMatchObject({ name, root });
@@ -75,9 +78,16 @@ describe('Improve workspace', () => {
     const update = vi.spyOn(client, 'updateImproveRecord');
     fireEvent.click(screen.getByText('Make collected reports actionable'));
     click('Edit issue');
-    const picker = screen.getByLabelText('Improvement group') as HTMLSelectElement;
-    expect([...picker.options].map((option) => option.value)).toEqual(['', '3']);
-    change('Improvement group', '3');
+    await userEvent.click(screen.getByLabelText('Improvement group'));
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'No group',
+      '#3 · Let people review reports without selecting a model',
+    ]);
+    await userEvent.click(
+      screen.getByRole('option', {
+        name: '#3 · Let people review reports without selecting a model',
+      }),
+    );
     click('Save issue');
     await screen.findByText('Issue saved.');
     expect(update).toHaveBeenCalledWith(
@@ -147,10 +157,9 @@ describe('Improve workspace', () => {
     const client = await projectIssues();
     const save = vi.spyOn(client, 'setImproveSettings');
     click('Review settings');
-    change('Review mode', 'automatic');
-    await screen.findByRole('option', { name: 'OpenAI' });
-    change('Improve provider', 'openai');
-    change('Improve model', 'gpt-5-mini');
+    await pick('Review mode', 'Automatic');
+    await pick('Improve provider', 'OpenAI');
+    await pick('Improve model', 'gpt-5-mini');
     change('Review interval in minutes', '30');
     click('Save review settings');
     await screen.findByText('Review settings saved.');
@@ -160,7 +169,7 @@ describe('Improve workspace', () => {
       model: 'gpt-5-mini',
       interval_minutes: 30,
     });
-    change('Review mode', 'human');
+    await pick('Review mode', 'Governed by human');
     expect(screen.queryByLabelText('Improve provider')).toBeNull();
     click('Save review settings');
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ mode: 'human' }));
@@ -177,7 +186,7 @@ describe('Improve workspace', () => {
     await screen.findByText('No open issues in this project');
     expect(records).toHaveBeenCalledTimes(2);
     click('Review settings');
-    change('Review mode', 'off');
+    await pick('Review mode', 'Off');
     click('Save review settings');
     await screen.findByText('Review settings saved.');
     click('Back to issues');
@@ -190,7 +199,6 @@ describe('Improve workspace', () => {
     vi.stubGlobal('fetch', storyImproveFetch());
     try {
       render(<ImproveDialog gateways={[{ url: 'http://gateway.example.com' }]} onClose={close} />);
-      await screen.findByRole('option', { name: '/workspace/vis' });
       await waitFor(() => expect(screen.getByRole('button', { name: 'New issue' })).toBeEnabled());
       click('New issue');
       change('Issue content', 'Keep these notes');

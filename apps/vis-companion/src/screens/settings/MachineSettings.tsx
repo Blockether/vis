@@ -52,7 +52,7 @@ import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsPanel } from './SettingsLayout';
 import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 
-/** Native closed-choice setting: keyboard/touch selection, with saving disabling input. */
+/** Closed-choice setting: one shared picker, with saving disabling input. */
 export function EnumSetting({
   toggle,
   busy = false,
@@ -67,18 +67,16 @@ export function EnumSetting({
       className="self-center"
       aria-label={toggle.label}
       aria-busy={busy}
-      value={toggle.value}
+      value={toggle.value ?? ''}
       disabled={busy}
-      onChange={(event) => onPick(event.target.value)}
-    >
-      {toggle.choices?.map((choice) => (
-        <option key={choice} value={choice}>
-          {toggle.id === 'improve_mode'
-            ? (IMPROVE_MODE_LABELS[choice as ImproveMode] ?? choice)
-            : choice}
-        </option>
-      ))}
-    </Select>
+      onValueChange={onPick}
+      options={(toggle.choices ?? []).map((choice) => ({
+        value: choice,
+        label: toggle.id === 'improve_mode'
+          ? (IMPROVE_MODE_LABELS[choice as ImproveMode] ?? choice)
+          : choice,
+      }))}
+    />
   );
 }
 

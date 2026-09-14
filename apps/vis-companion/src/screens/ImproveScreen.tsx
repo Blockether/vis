@@ -73,16 +73,11 @@ export function ImproveDialog({
             <Select
               aria-label="Improve machine"
               value={gateway?.url ?? ''}
-              onChange={(event) => setUrl(event.target.value)}
+              onValueChange={setUrl}
               disabled={dirty}
               className="min-w-0 flex-1"
-            >
-              {gateways.map((item) => (
-                <option key={item.url} value={item.url}>
-                  {item.label || item.url}
-                </option>
-              ))}
-            </Select>
+              options={gateways.map((item) => ({ value: item.url, label: item.label || item.url }))}
+            />
           </label>
         )}
         {client ? (
@@ -321,31 +316,32 @@ export function ImproveWorkspace({
                 aria-label="Improve project"
                 value={project}
                 disabled={busy}
-                onChange={(event) => {
-                  setProject(event.target.value);
+                onValueChange={(value) => {
+                  setProject(value);
                   setPage(null);
                   setError(null);
                 }}
-              >
-                <option value="">Unassigned</option>
-                {(projects ?? []).map((item) => (
-                  <option key={item.project_id!} value={item.project_id!}>
-                    {homeifyPath(item.root)}
-                  </option>
-                ))}
-              </Select>
+                options={[
+                  { value: '', label: 'Unassigned' },
+                  ...(projects ?? []).map((item) => ({
+                    value: item.project_id!,
+                    label: homeifyPath(item.root),
+                  })),
+                ]}
+              />
             </label>
             <label className="flex flex-col gap-2 font-mono text-ui text-dialog-hint">
               Status
               <Select
                 aria-label="Issue status"
                 value={status}
-                onChange={(event) => setStatus(event.target.value)}
-              >
-                <option value="open">Open</option>
-                <option value="closed">Closed</option>
-                <option value="all">All</option>
-              </Select>
+                onValueChange={setStatus}
+                options={[
+                  { value: 'open', label: 'Open' },
+                  { value: 'closed', label: 'Closed' },
+                  { value: 'all', label: 'All' },
+                ]}
+              />
             </label>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-dialog-edge px-3 py-3">
@@ -484,18 +480,18 @@ function ImproveEditor({
             aria-label="Improvement group"
             value={parent}
             disabled={busy}
-            onChange={(event) => setParent(event.target.value)}
-          >
-            <option value="">No group</option>
-            {parent && !parents.some((item) => String(item.id) === parent) && (
-              <option value={parent}>Current group #{parent}</option>
-            )}
-            {parents.map((item) => (
-              <option key={item.id} value={item.id}>
-                #{item.id} · {item.title}
-              </option>
-            ))}
-          </Select>
+            onValueChange={setParent}
+            options={[
+              { value: '', label: 'No group' },
+              ...(parent && !parents.some((item) => String(item.id) === parent)
+                ? [{ value: parent, label: `Current group #${parent}` }]
+                : []),
+              ...parents.map((item) => ({
+                value: String(item.id),
+                label: `#${item.id} · ${item.title}`,
+              })),
+            ]}
+          />
         </label>
         {hasMore && (
           <Button type="button" variant="secondary" disabled={busy} onClick={onMore}>
@@ -716,15 +712,10 @@ function ImproveSettingsForm({
         <Select
           aria-label="Review mode"
           value={mode}
-          onChange={(event) => setMode(event.target.value as ImproveMode)}
+          onValueChange={(value) => setMode(value as ImproveMode)}
           disabled={busy}
-        >
-          {Object.entries(IMPROVE_MODE_LABELS).map(([value, label]) => (
-            <option value={value} key={value}>
-              {label}
-            </option>
-          ))}
-        </Select>
+          options={Object.entries(IMPROVE_MODE_LABELS).map(([value, label]) => ({ value, label }))}
+        />
       </label>
       <p className="font-mono text-body text-dialog-hint">
         {mode === 'automatic'
@@ -742,21 +733,18 @@ function ImproveSettingsForm({
               aria-label="Improve provider"
               value={provider}
               disabled={busy}
-              onChange={(event) => {
-                setProvider(event.target.value);
+              onValueChange={(value) => {
+                setProvider(value);
                 setModel('');
               }}
-            >
-              <option value="">Choose a provider</option>
-              {provider && !providers.some((item) => item.id === provider) && (
-                <option value={provider}>{provider} · unavailable</option>
-              )}
-              {providers.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </Select>
+              options={[
+                { value: '', label: 'Choose a provider' },
+                ...(provider && !providers.some((item) => item.id === provider)
+                  ? [{ value: provider, label: `${provider} · unavailable` }]
+                  : []),
+                ...providers.map((item) => ({ value: item.id, label: item.label })),
+              ]}
+            />
           </label>
           <label className="flex flex-col gap-2 font-mono text-ui">
             Model
@@ -764,18 +752,15 @@ function ImproveSettingsForm({
               aria-label="Improve model"
               value={model}
               disabled={busy || !provider}
-              onChange={(event) => setModel(event.target.value)}
-            >
-              <option value="">Choose a model</option>
-              {model && !models.includes(model) && (
-                <option value={model}>{model} · unavailable</option>
-              )}
-              {models.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </Select>
+              onValueChange={setModel}
+              options={[
+                { value: '', label: 'Choose a model' },
+                ...(model && !models.includes(model)
+                  ? [{ value: model, label: `${model} · unavailable` }]
+                  : []),
+                ...models.map((item) => ({ value: item, label: item })),
+              ]}
+            />
           </label>
           <label className="flex flex-col gap-2 font-mono text-ui">
             Review interval · minutes

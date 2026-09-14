@@ -1,7 +1,7 @@
 import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
 import { useFitRows, type ListGeometry } from '../lib/fit-rows';
 import { CheckIcon, SortIcon } from './icons';
-import { Button } from './ui';
+import { Button, Select } from './ui';
 
 // A CSV/TSV artifact is DATA, not a picture. `attach` emits it as a
 // ````vis-table` fence and BOTH surfaces paint it as a real grid: the TUI through
@@ -434,23 +434,18 @@ export const DataTable = memo(function DataTable({
         <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
           <label className="flex shrink-0 items-center gap-1 text-ui text-code-foreground">
             Rows
-            <select
-              value={pageSize}
+            <Select
+              value={String(pageSize)}
               aria-label={`Rows per page of ${label}`}
-              onChange={(event) => {
-                const next = event.target.value;
-                setPageSize(next === 'fit' ? 'fit' : Number(next));
+              onValueChange={(value) => {
+                setPageSize(value === 'fit' ? 'fit' : Number(value));
                 setPage(0);
               }}
-              className="min-h-11 bg-input px-2 text-ui text-code-foreground"
-            >
-              <option value="fit">Fit</option>
-              {PAGE_SIZES.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: 'fit', label: 'Fit' },
+                ...PAGE_SIZES.map((size) => ({ value: String(size), label: String(size) })),
+              ]}
+            />
           </label>
           <span className="min-w-0 flex-1 truncate text-ui text-code-foreground">
             {`${range.first}–${range.last} of ${ordered.length}`}
