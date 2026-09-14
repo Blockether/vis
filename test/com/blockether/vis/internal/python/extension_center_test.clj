@@ -13,6 +13,8 @@
   (:import [java.io ByteArrayOutputStream]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [java.util.zip ZipEntry ZipOutputStream]
            [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]))
 
@@ -34,6 +36,32 @@
                 (str "Metadata-Version: 2.1\nName: " name "\nVersion: " version "\n")
                 (str dist "WHEEL") "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
                 (str dist "RECORD") ""})))
+
+(deftest versioned-layout-discovers-only-active-package
+  (let [directory
+        (#'fixtures/temp-dir)
+
+        package
+        (io/file directory "vis-layout")
+
+        active
+        (#'fixtures/write-ext! directory "vis-layout/1.1.0/extension.py" "# Active")
+
+        loose
+        (#'fixtures/write-ext! directory "loose.py" "# Authored entry")]
+
+    (#'fixtures/write-ext! directory "vis-layout/1.0.0/extension.py" "# Inactive")
+    (#'fixtures/write-ext! directory "obsolete/extension.py" "# Not a supported layout")
+    (#'fixtures/write-ext!
+     directory
+     ".versions/obsolete/install-old/project/extension.py"
+     "# Ignored")
+    (#'fixtures/write-ext! directory "test_loose.py" "# Test, not an entry")
+    (Files/createSymbolicLink (.toPath (io/file package "current"))
+                              (.toPath (io/file "1.1.0"))
+                              (make-array FileAttribute 0))
+    (is (= #{(.getCanonicalPath active) (.getCanonicalPath loose)}
+           (set (map #(.getCanonicalPath ^java.io.File %) (#'pyx/scan [directory])))))))
 
 (deftest install-subdirectory-prepare-call-and-reload
   (doseq [declarative? [false true]]
@@ -260,8 +288,11 @@
               (is (= "1.1.0" (active-version)))
               (reload-release)
               (is (= "1.0.0" (active-version)))
-              (is (= 3 (count (.listFiles (io/file directory ".versions" "vis-release-fixture")))))
-              (is (.isFile (io/file directory "vis-release-fixture" "extension.py")))))))))))
+              (is (= #{"1.0.0" "1.1.0" "current"}
+                     (set (.list (io/file directory "vis-release-fixture")))))
+              (is (.isFile (io/file directory "vis-release-fixture" "1.0.0" "receipt.json")))
+              (is (.isFile
+                    (io/file directory "vis-release-fixture" "current" "extension.py")))))))))))
 
 (deftest install-save-project-and-sync-roundtrip
   (#'fixtures/with-shared-packages
@@ -306,7 +337,7 @@
                             {:trust true :save true :project true :directory directory})
                           nil
                           (catch Exception error (.getMessage error))))))
-            (is (not (.exists (io/file directory "vis-saved-fixture")))
+            (is (not (.exists (io/file directory "vis-saved-fixture" "current")))
                 "A failed config write removes only the newly admitted link")
             (is (= "# Keep project notes.\nextensions: {}\n" (slurp yaml)))
             (let [manual (pyx/install-package! (str source)

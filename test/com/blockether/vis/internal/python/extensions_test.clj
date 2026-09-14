@@ -2738,16 +2738,16 @@ vis.register_extension(vis.Extension(
                           (finally (ep/dispose-python-context! ctx))))))))
               (finally (.stop server 0)))))))))
 
-;; Package-extension convention — a subdir holding extension.py = ONE extension
+;; Package extensions load only their current entry, not inactive versions.
 
 (defdescribe
   package-extension-convention-test
   (it
-    "a subdir holding extension.py loads as ONE extension; its package/test files are not scanned"
+    "an active package entry loads once; its package/test files are not scanned"
     (with-loaded
-      {"my_ext/mypkg/__init__.py" "VERSION = \"9.9\"\n"
-       "my_ext/mypkg/core.py" "def add(a, b):\n    return a + b\n"
-       "my_ext/extension.py"
+      {"my_ext/current/mypkg/__init__.py" "VERSION = \"9.9\"\n"
+       "my_ext/current/mypkg/core.py" "def add(a, b):\n    return a + b\n"
+       "my_ext/current/extension.py"
        (str
          "import blockether.vis.extension as vis\n" "from mypkg.core import add\n"
          "def mx_add(a, b):\n"
@@ -2756,7 +2756,7 @@ vis.register_extension(vis.Extension(
          "vis.register_extension(vis.Extension(name=\"myext\", description=\"d\", version=\"0.1.0\",\n"
          "              kind=\"integration\", alias=\"mx\",\n"
          "              symbols=[vis.Symbol(mx_add, tag=\"observation\")]))\n")
-       "my_ext/test_core.py" "def test_ok():\n    assert 1 == 1\n"}
+       "my_ext/current/test_core.py" "def test_ok():\n    assert 1 == 1\n"}
       (fn [result _]
         ;; the package dir contributes exactly ONE extension; the
         ;; modules under mypkg/ and the test file are NOT loaded
@@ -4477,35 +4477,40 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
       ;; the LIVE directory, so `import sidecar_impl` inside a symbol read the
       ;; disk when the CALL ran. Editing a sidecar module - never the entry -
       ;; put new bytes in the trusted context with no `/reload` in the chain.
-      (with-fresh-loaded
-        {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
-        (fn [_ {:keys [ext-dir]}]
-          (write-ext! ext-dir "sidecar/sidecar_impl.py" (str/replace sidecar-impl-py "v1" "v2"))
-          (expect (false? (:changed? (pyx/ensure-python-extensions-loaded! {:dirs [(str
-                                                                                     ext-dir)]}))))
-          (expect (= "v1" (:result ((symbol-fn (registered "sidecar") 'peek)))))
-          (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
-          (expect (= "v2" (:result ((symbol-fn (registered "sidecar") 'peek))))))))
+      (with-fresh-loaded {"sidecar/current/sidecar_impl.py" sidecar-impl-py
+                          "sidecar/current/extension.py" sidecar-py}
+                         (fn [_ {:keys [ext-dir]}]
+                           (write-ext! ext-dir
+                                       "sidecar/current/sidecar_impl.py"
+                                       (str/replace sidecar-impl-py "v1" "v2"))
+                           (expect (false? (:changed? (pyx/ensure-python-extensions-loaded!
+                                                        {:dirs [(str ext-dir)]}))))
+                           (expect (= "v1" (:result ((symbol-fn (registered "sidecar") 'peek)))))
+                           (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                           (expect (= "v2" (:result ((symbol-fn (registered "sidecar") 'peek))))))))
   (it "a heal re-runs the frozen tree, never a sidecar module edited since"
       ;; A heal is the one re-execution with no human act behind it, so what it
       ;; proves unchanged is the WHOLE import root - an entry-only check let an
       ;; edited sidecar module ride into the rebuilt trusted context.
-      (with-fresh-loaded
-        {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
-        (fn [_ {:keys [ext-dir]}]
-          (let [captured
-                (symbol-fn (registered "sidecar") 'peek)
+      (with-fresh-loaded {"sidecar/current/sidecar_impl.py" sidecar-impl-py
+                          "sidecar/current/extension.py" sidecar-py}
+                         (fn [_ {:keys [ext-dir]}]
+                           (let [captured
+                                 (symbol-fn (registered "sidecar") 'peek)
 
-                dead
-                (:context (first (vals @@#'pyx/loaded)))]
+                                 dead
+                                 (:context (first (vals @@#'pyx/loaded)))]
 
-            (write-ext! ext-dir "sidecar/sidecar_impl.py" (str/replace sidecar-impl-py "v1" "v2"))
-            (pyx/close-context! dead)
-            (expect (not= "v2" (:result (captured))))
-            (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))
+                             (write-ext! ext-dir
+                                         "sidecar/current/sidecar_impl.py"
+                                         (str/replace sidecar-impl-py "v1" "v2"))
+                             (pyx/close-context! dead)
+                             (expect (not= "v2" (:result (captured))))
+                             (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))
   (it "a torn-down context heals from the frozen tree when nothing changed"
       (with-fresh-loaded
-        {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
+        {"sidecar/current/sidecar_impl.py" sidecar-impl-py
+         "sidecar/current/extension.py" sidecar-py}
         (fn [_ _]
           (let [captured
                 (symbol-fn (registered "sidecar") 'peek)
@@ -4538,9 +4543,9 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
             store
             (ps/db-create-connection! :memory)]
 
-        (write-ext! ext-dir "sidecar/extension.py" sidecar-py)
+        (write-ext! ext-dir "sidecar/current/extension.py" sidecar-py)
         (spit impl sidecar-impl-py)
-        (Files/createSymbolicLink (.toPath (io/file ext-dir "sidecar" "sidecar_impl.py"))
+        (Files/createSymbolicLink (.toPath (io/file ext-dir "sidecar" "current" "sidecar_impl.py"))
                                   (.toPath impl)
                                   (make-array FileAttribute 0))
         (reset! live-load nil)
@@ -4674,17 +4679,17 @@ vis.register_extension(vis.Extension(
                       (when @fail? (throw (ex-info "fixture preparation failure" {})))
                       (io/file (runtime/packages-dir)))]
         (with-fresh-loaded
-          {"greeter/pyproject.toml"
+          {"greeter/current/pyproject.toml"
            (str
              "[project]\nname='vis-greeter'\nversion='1.0.0'\n"
              "description='Greeting tools'\nrequires-python='>=3.11'\n"
              "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\nsource_paths=['src']\n")
-           "greeter/extension.py"
+           "greeter/current/extension.py"
            (str
              "import blockether.vis.extension as vis\nfrom center_greeter import hello\n"
              "vis.register_extension(vis.Extension(name='vis-greeter', description='Greeting tools', "
              "alias='greeter', symbols=[vis.Symbol(hello)]))\n")
-           "greeter/src/center_greeter.py"
+           "greeter/current/src/center_greeter.py"
            "def hello():\n    \"Return the greeting.\"\n    return 'one'\n"}
           (fn [result {:keys [ext-dir]}]
             (expect (= 0 (:failed result)))
@@ -4696,7 +4701,7 @@ vis.register_extension(vis.Extension(
 
               (expect (= "one" (invoke)))
               (write-ext! ext-dir
-                          "greeter/src/center_greeter.py"
+                          "greeter/current/src/center_greeter.py"
                           "def hello():\n    \"Return the greeting.\"\n    return 'two'\n")
               (expect (= "one" (invoke)))
               (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
@@ -4704,7 +4709,7 @@ vis.register_extension(vis.Extension(
               ;; Regression #178: retained tools must be explicitly marked stale.
               (reset! fail? true)
               (write-ext! ext-dir
-                          "greeter/src/center_greeter.py"
+                          "greeter/current/src/center_greeter.py"
                           "def hello():\n    return 'three'\n")
               (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
               (let [failure (first (pyx/load-failures))
@@ -4888,24 +4893,24 @@ vis.register_extension(vis.Extension(
     (with-redefs [python-runtime/ensure-project! (fn [_]
                                                    (io/file (runtime/packages-dir)))]
       (with-fresh-loaded
-        {"skillpack/pyproject.toml"
+        {"skillpack/current/pyproject.toml"
          (str "[project]\nname='vis-skillpack'\nversion='1.0.0'\n"
               "description='Skill package'\nrequires-python='>=3.11'\n"
               "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='workflows'\n"
               "skills=['skills/review']\n")
-         "skillpack/extension.py"
+         "skillpack/current/extension.py"
          "import blockether.vis.extension as vis\nvis.register_extension(vis.Extension(name='vis-skillpack', description='Skill package'))\n"
-         "skillpack/skills/review/SKILL.md"
+         "skillpack/current/skills/review/SKILL.md"
          "---\nname: review\ndescription: Review when requested.\n---\nRead v1.\n"
-         "skillpack/skills/review/references/checklist.md" "Checklist v1."}
+         "skillpack/current/skills/review/references/checklist.md" "Checklist v1."}
         (fn [result {:keys [ext-dir]}]
           (expect (= 1 (:loaded result)))
           (let [find-skill #(some (fn [s]
                                     (when (= "vis-skillpack/review" (:name s)) s))
                                   (discovery/skills))
                 first-skill (find-skill)
-                entry (io/file ext-dir "skillpack/extension.py")
-                skill-file (io/file ext-dir "skillpack/skills/review/SKILL.md")
+                entry (io/file ext-dir "skillpack/current/extension.py")
+                skill-file (io/file ext-dir "skillpack/current/skills/review/SKILL.md")
                 ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
                 check-discovery (fn [body description]
                                   (let [answer (ep/run-python-block
@@ -4992,7 +4997,7 @@ vis.register_extension(vis.Extension(
           sources
           (into {}
                 (map (fn [path]
-                       [(str "greeter/" path) (slurp (io/file example path))]))
+                       [(str "greeter/current/" path) (slurp (io/file example path))]))
                 files)]
 
       (with-redefs [python-runtime/ensure-project! (fn [_]

@@ -1736,12 +1736,11 @@
 (defn- scan
   "Entry `.py` files across the extension dirs, global dir first then project
    dir (name order within a dir) so a project file registering the same
-   extension name wins. Two authoring conventions per dir:
+   extension name wins. Two entry conventions per dir:
      - a top-level `*.py` file is a single-file extension;
-     - an immediate subdirectory holding `extension.py` is a PACKAGE extension —
-       that `extension.py` is the entry and the rest of the package imports via
-       the `sys.path` sugar in `load-file!`; the package's own modules are NEVER
-       scanned as separate extensions.
+     - `<name>/current/extension.py` is the active PACKAGE entry. The installer
+       links `current` to a version directory; inactive versions are never scanned.
+       The package's own modules import via `load-file!`, never as separate entries.
    Test modules (`test_*.py` / `*_test.py`) are skipped — they are run by
    `test-python-extensions!`, not loaded. Deduped on canonical path."
   [dirs]
@@ -1753,8 +1752,9 @@
                                        (str/ends-with? (.getName child) ".py")
                                        (not (test-file? child)))
                                   [child]
-                                  (.isDirectory child) (let [ep (io/file child "extension.py")]
-                                                         (when (.isFile ep) [ep]))
+                                  (.isDirectory child)
+                                  (let [ep (io/file child "current" "extension.py")]
+                                    (when (.isFile ep) [ep]))
                                   :else nil)]
 
                 f)]

@@ -174,12 +174,11 @@ def inspect_source(directory, vis_version=None, python_version=None):
                     "skills and their resources must stay inside the project"
                 )
             _relative(resource.relative_to(directory).as_posix())
-    snapshot = directory.parent
-    store = snapshot.parent.parent
-    if directory.name == "project" and store.name == ".versions":
-        active = store.parent / metadata["name"]
+    container = directory.parent
+    if container.name == metadata["name"] and directory.name == metadata["version"]:
+        active = container / "current"
         if active.is_symlink() and active.resolve() == directory:
-            _, record = _managed(store.parent, metadata["name"])
+            _, record = _managed(container.parent, metadata["name"])
             metadata["repository"] = github_repository(record["repository_url"])[
                 len("https://github.com/") :
             ].lower()
@@ -372,37 +371,82 @@ def _name(name):
     return name
 
 
-def _managed(directory, name):
-    destination = directory / _name(name)
-    store = (directory / ".versions" / name).resolve()
-    if not destination.is_symlink():
+def _destination(directory, name):
+    container = directory / _name(name)
+    if container.is_symlink() or (container.exists() and not container.is_dir()):
         raise ValueError(
-            "Update and rollback require a managed GitHub install, not a local source link or directory"
+            "Installed packages require a name/version directory; no files replaced"
         )
-    project = destination.resolve(strict=True)
-    snapshot = project.parent
-    if project.name != "project" or snapshot.parent != store:
-        raise ValueError("Update and rollback never replace local source links")
-    record = json.loads((snapshot / "receipt.json").read_text(encoding="utf-8"))
-    if record.get("name") != name or not re.fullmatch(
-        r"[0-9a-f]{40}", record.get("revision", "")
+    if (container / "extension.py").exists():
+        raise FileExistsError(
+            "Unmanaged package directory already exists; no files replaced"
+        )
+    return container / "current"
+
+
+def _version(value):
+    if not isinstance(value, str) or len(value) > 80 or str(Version(value)) != value:
+        raise ValueError("Invalid installed package version")
+    return value
+
+
+def _receipt(snapshot, name):
+    path = snapshot / "receipt.json"
+    if snapshot.is_symlink() or path.is_symlink() or path.stat().st_size > MAX_METADATA:
+        raise ValueError("Invalid installed package receipt")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(record, dict)
+        or record.get("name") != name
+        or _version(record.get("version")) != snapshot.name
+        or not re.fullmatch(r"[0-9a-f]{40}", record.get("revision", ""))
     ):
         raise ValueError("Invalid installed package receipt")
-    return snapshot, record
+    return record
+
+
+def _managed(directory, name):
+    destination = _destination(directory, name)
+    if not destination.is_symlink():
+        raise ValueError("Update and rollback require a managed GitHub install")
+    snapshot = destination.parent / _version(os.readlink(destination))
+    if snapshot.is_symlink():
+        raise ValueError("Update and rollback never replace local source links")
+    return snapshot, _receipt(snapshot, name)
+
+
+def _prepare_directory(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    ignore = directory / ".gitignore"
+    if ignore.is_symlink():
+        raise ValueError("Extension ignore rules must not be a symlink")
+    rules = "# Installed packages and private installer state.\n/*/\n/.*\n"
+    existing = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+    if not existing.endswith(rules):
+        with ignore.open("a", encoding="utf-8") as output:
+            output.write(
+                ("\n" if existing and not existing.endswith("\n") else "") + rules
+            )
 
 
 def _installed_repository(directory, repository, subdirectory=None, required=True):
     """Resolve active managed receipts by repository and folder, never by package basename."""
     directory = Path(directory).expanduser().resolve()
     matches = []
-    for store in (directory / ".versions").glob("*"):
-        destination = directory / store.name
+    for container in directory.glob("*"):
+        if (
+            not container.is_dir()
+            or container.is_symlink()
+            or container.name.startswith(".")
+        ):
+            continue
+        destination = container / "current"
         if not destination.is_symlink():
             continue
-        project = destination.resolve()
-        if project.name != "project" or project.parent.parent != store.resolve():
+        snapshot = container / _version(os.readlink(destination))
+        if snapshot.is_symlink():
             continue
-        snapshot, record = _managed(directory, store.name)
+        snapshot, record = _managed(directory, container.name)
         if github_repository(record.get("repository_url")) == repository and (
             subdirectory is None
             or project_subdirectory(record.get("subdirectory", "")) == subdirectory
@@ -487,15 +531,32 @@ def _admit(
             "revision applies only to a GitHub repository, not a local directory"
         )
     directory = Path(directory).expanduser().resolve()
-    directory.mkdir(parents=True, exist_ok=True)
+    _prepare_directory(directory)
     python_version = ".".join(map(str, sys.version_info[:3]))
-    with tempfile.TemporaryDirectory(prefix=".install-", dir=directory) as temporary:
+    with tempfile.TemporaryDirectory(prefix=".staging-", dir=directory) as temporary:
         stage = Path(temporary)
+        cached = None
         if repository:
-            path = stage / "repository"
-            revision = _checkout(repository, path, revision)
-        selected = (path / subdirectory).resolve(strict=True)
-        if not selected.is_relative_to(path.resolve()):
+            if release:
+                candidate = _destination(directory, release["name"]).parent / _version(
+                    str(Version(release["version"]))
+                )
+                if candidate.exists() and not candidate.is_symlink():
+                    receipt = _receipt(candidate, release["name"])
+                    if (
+                        receipt["revision"] != revision
+                        or receipt["repository_url"] != repository
+                        or receipt["subdirectory"] != subdirectory
+                    ):
+                        raise ValueError(
+                            "An installed name/version cannot change its source or revision"
+                        )
+                    cached = candidate
+            if cached is None:
+                path = stage / "repository"
+                revision = _checkout(repository, path, revision)
+        selected = cached or (path / subdirectory).resolve(strict=True)
+        if cached is None and not selected.is_relative_to(path.resolve()):
             raise ValueError("Selected folder must stay inside the repository")
         metadata = inspect_source(selected, vis_version, python_version)
         if expected_name is not None and metadata["name"] != expected_name:
@@ -507,20 +568,21 @@ def _admit(
             raise ValueError("Fetched manifest does not match the approved release")
         if replacing and metadata["name"] != replacing:
             raise ValueError("An update cannot change the installed extension name")
-        destination = directory / metadata["name"]
+        destination = _destination(directory, metadata["name"])
+        snapshot = destination.parent / metadata["version"]
         lock = directory / ("." + metadata["name"] + ".install-lock")
         fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(fd)
         try:
             previous = None
             save_state = None
+            exists = os.path.lexists(destination)
             if sync_records is not None:
                 current = sync_records.get(metadata["name"])
                 if current is None and len(sync_records) >= 128:
                     raise ValueError(
                         "extensions may contain at most 128 named packages"
                     )
-                exists = os.path.lexists(destination)
                 same_manual = False
                 if exists and current is None and destination.is_symlink():
                     if repository:
@@ -542,7 +604,7 @@ def _admit(
                 if exists and not _sync_owned(destination, current) and not same_manual:
                     raise ValueError(
                         "Existing extension is not owned by sync or does not match this source; no files replaced. "
-                        "Preserve the existing installation or remove its installed link before retrying --save"
+                        "Preserve the existing installation or remove its current link before retrying --save"
                     )
                 save_state = {
                     "previous": current,
@@ -564,44 +626,103 @@ def _admit(
                     raise ValueError(
                         "Installation changed during preparation; retry the operation"
                     )
-                previous = active.name
-            elif os.path.lexists(destination):
+            elif exists:
                 raise FileExistsError(
                     "Extension already exists; use extension update or rollback explicitly"
                 )
-            if repository:
-                snapshot = directory / ".versions" / metadata["name"] / stage.name
-                snapshot.parent.mkdir(parents=True, exist_ok=True)
-                prepared = stage / "prepared"
-                prepared.mkdir()
-                _copy_project(selected, prepared / "project")
-                record = {
-                    "name": metadata["name"],
-                    "version": metadata["version"],
-                    "repository_url": repository,
-                    "subdirectory": subdirectory,
-                    "revision": revision,
-                    "release_tag": release.get("release_tag") if release else None,
-                    "previous": previous,
-                }
-                (prepared / "receipt.json").write_text(
-                    json.dumps(record), encoding="utf-8"
-                )
-                prepared.rename(snapshot)
-                pointer = stage / "active"
-                try:
-                    pointer.symlink_to(snapshot / "project", target_is_directory=True)
-                    os.replace(pointer, destination)
-                except BaseException:
-                    shutil.rmtree(snapshot)
-                    raise
-            else:
-                if expected_target is not None:
-                    pointer = stage / "active"
-                    pointer.symlink_to(selected, target_is_directory=True)
-                    os.replace(pointer, destination)
+            if exists and destination.resolve().parent == destination.parent:
+                previous = _version(os.readlink(destination))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            pointer = stage / "active"
+            pointer.symlink_to(snapshot.name, target_is_directory=True)
+            created = False
+            saved_receipt = None
+            saved_link = None
+            try:
+                if repository:
+                    record = {
+                        "name": metadata["name"],
+                        "version": metadata["version"],
+                        "repository_url": repository,
+                        "subdirectory": subdirectory,
+                        "revision": revision,
+                        "release_tag": release.get("release_tag") if release else None,
+                        "previous": previous,
+                    }
+                    if os.path.lexists(snapshot):
+                        installed = _receipt(snapshot, metadata["name"])
+                        if any(
+                            installed.get(key) != record[key]
+                            for key in (
+                                "name",
+                                "version",
+                                "repository_url",
+                                "subdirectory",
+                                "revision",
+                            )
+                        ):
+                            raise ValueError(
+                                "An installed name/version cannot change its source or revision"
+                            )
+                        inspect_source(snapshot, vis_version, python_version)
+                        if previous == snapshot.name:
+                            record["previous"] = installed.get("previous")
+                        backup = stage / "receipt-backup.json"
+                        backup.write_bytes((snapshot / "receipt.json").read_bytes())
+                        prepared_receipt = stage / "receipt.json"
+                        prepared_receipt.write_text(
+                            json.dumps(record), encoding="utf-8"
+                        )
+                        os.replace(prepared_receipt, snapshot / "receipt.json")
+                        saved_receipt = backup
+                    else:
+                        prepared = stage / "prepared"
+                        _copy_project(selected, prepared)
+                        if (prepared / "receipt.json").exists():
+                            raise ValueError(
+                                "receipt.json is reserved for the installed package receipt"
+                            )
+                        (prepared / "receipt.json").write_text(
+                            json.dumps(record), encoding="utf-8"
+                        )
+                        prepared.rename(snapshot)
+                        created = True
                 else:
-                    destination.symlink_to(selected, target_is_directory=True)
+                    if os.path.lexists(snapshot):
+                        if not snapshot.is_symlink():
+                            raise ValueError(
+                                "An installed name/version cannot change its source or revision"
+                            )
+                        if snapshot.resolve() != selected:
+                            if expected_target is None:
+                                raise ValueError(
+                                    "Existing version links another source; no files replaced"
+                                )
+                            backup = stage / "source-backup"
+                            backup.symlink_to(
+                                os.readlink(snapshot), target_is_directory=True
+                            )
+                            link = stage / "source"
+                            link.symlink_to(selected, target_is_directory=True)
+                            os.replace(link, snapshot)
+                            saved_link = backup
+                    else:
+                        snapshot.symlink_to(selected, target_is_directory=True)
+                        created = True
+                os.replace(pointer, destination)
+            except BaseException:
+                if saved_receipt is not None:
+                    os.replace(saved_receipt, snapshot / "receipt.json")
+                if saved_link is not None:
+                    os.replace(saved_link, snapshot)
+                if created:
+                    if snapshot.is_symlink():
+                        snapshot.unlink()
+                    else:
+                        shutil.rmtree(snapshot)
+                if not any(destination.parent.iterdir()):
+                    destination.parent.rmdir()
+                raise
         finally:
             lock.unlink()
     result = {
@@ -611,7 +732,7 @@ def _admit(
         else None,
         "subdirectory": subdirectory,
         "version": metadata["version"],
-        "path": str(destination),
+        "path": str(snapshot),
         "mode": "github" if repository else "source",
         "revision": revision,
         "next": "Start Vis or /reload to prepare dependencies and load the extension",
@@ -718,8 +839,8 @@ def rollback(
 ):
     """Restore a managed repository slug or URL's previous pinned source or an older release.
 
-    Source is re-fetched and validated before the atomic pointer change. Previous
-    snapshots are retained, including local edits; dependencies are resolved on /reload.
+    Retained versions are validated and reactivated, preserving local edits. Missing
+    versions are fetched at their pinned revision; dependencies are resolved on /reload.
     """
     _trust(trust)
     directory = Path(directory).expanduser().resolve()
@@ -737,15 +858,11 @@ def rollback(
             )
     else:
         previous = current.get("previous")
-        if not isinstance(previous, str) or not re.fullmatch(
-            r"\.install-[a-zA-Z0-9_-]+", previous
-        ):
+        if previous is None:
             raise ValueError(
                 "No previous installation; choose an approved older --version"
             )
-        release = json.loads(
-            (active.parent / previous / "receipt.json").read_text(encoding="utf-8")
-        )
+        release = _receipt(active.parent / _version(previous), name)
         if (
             release.get("repository_url") != current["repository_url"]
             or release.get("subdirectory") != current["subdirectory"]
@@ -846,7 +963,7 @@ def _sync_owned(destination, record):
 
 
 def _restore_saved_link(directory, name, expected, target):
-    destination = directory / name
+    destination = _destination(directory, name)
     lock = directory / ("." + name + ".install-lock")
     fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
@@ -863,11 +980,25 @@ def _restore_saved_link(directory, name, expected, target):
         if target is None:
             destination.unlink()
         else:
+            target = Path(target)
             with tempfile.TemporaryDirectory(
                 prefix=".save-rollback-", dir=directory
             ) as temporary:
-                pointer = Path(temporary) / "active"
-                pointer.symlink_to(target, target_is_directory=True)
+                stage = Path(temporary)
+                if target.parent == destination.parent:
+                    version = _version(target.name)
+                else:
+                    version = inspect_source(target)["version"]
+                    snapshot = destination.parent / version
+                    if snapshot.exists() and not snapshot.is_symlink():
+                        raise ValueError(
+                            "Existing version is not a source link; no files replaced"
+                        )
+                    link = stage / "source"
+                    link.symlink_to(target, target_is_directory=True)
+                    os.replace(link, snapshot)
+                pointer = stage / "active"
+                pointer.symlink_to(version, target_is_directory=True)
                 os.replace(pointer, destination)
     finally:
         lock.unlink()
@@ -910,7 +1041,7 @@ def _install_saved(source, directory, subdirectory, revision, vis_version, relea
         record = {
             "spec": spec,
             "transaction": uuid.uuid4().hex,
-            "target": str((directory / name).resolve()),
+            "target": str(_destination(directory, name).resolve()),
             "result": result,
         }
         try:
@@ -966,7 +1097,7 @@ def rollback_saved_install(directory, name, save_state):
 
 
 def _sync_one(name, spec, directory, current, refresh, vis_version):
-    destination = directory / name
+    destination = _destination(directory, name)
     exists = os.path.lexists(destination)
     if exists and not _sync_owned(destination, current):
         raise ValueError(
@@ -978,7 +1109,12 @@ def _sync_one(name, spec, directory, current, refresh, vis_version):
         )
         if metadata["name"] != name:
             raise ValueError("Configured name does not match the package manifest")
-        return {**current["result"], "version": metadata["version"], "status": "cached"}
+        if metadata["version"] == os.readlink(destination):
+            return {**current["result"], "status": "cached"}
+        if current["result"]["mode"] != "source":
+            raise ValueError(
+                "Installed manifest no longer matches its version directory"
+            )
     source, folder = spec["source"], spec["subdirectory"]
     remote = source.startswith("https://")
     release, revision = None, spec["revision"]
@@ -1056,8 +1192,8 @@ def sync(
         results = []
         for name in sorted(set(specs) | set(records)):
             spec, current = specs.get(name), records.get(name)
-            destination = directory / name
             try:
+                destination = _destination(directory, name)
                 if spec is None:
                     result = {"name": name, "status": "orphaned"}
                     if prune:

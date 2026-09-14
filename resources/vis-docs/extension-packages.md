@@ -25,8 +25,29 @@ provider does not need tools, and a small tool does not need a package.
 | `<project>/.vis/extensions/` | That project |
 
 A project extension with the same registered name overrides the global extension.
-Single `.py` files are entries; a package directory loads only `extension.py`.
-Test files (`test_*.py` and `*_test.py`) are not extension entries.
+Top-level `.py` files are entries. Installed packages live at
+`.vis/extensions/<name>/<version>/`, with source files directly inside the version
+directory. A `current` link inside `<name>/` selects the active version; Vis loads
+only its `extension.py`, never every installed version. Test files (`test_*.py` and
+`*_test.py`) are not extension entries.
+
+For example, installing `vis-greeter` version `1.0.0` creates:
+
+```text
+.vis/extensions/
+  vis-greeter/
+    1.0.0/
+      extension.py
+      pyproject.toml
+      src/
+    current -> 1.0.0
+```
+
+GitHub versions contain copied source and an installation receipt. Local versions
+link to your development checkout instead, so edits stay in that checkout. The
+installer adds Git ignore rules for installed package directories and its private
+metadata; loose `.py` extensions remain visible to Git. Commit package declarations
+in `vis.yml`, not downloaded sources or installation receipts.
 
 **Review extensions before loading them.** Their entry files and dependencies
 run with your user permissions, outside the model's jail. Check project
@@ -81,9 +102,9 @@ only when preparation is needed. `uv` owns its lockfile, environment and downloa
 
 Removing a declaration retains its installation as `orphaned`. Preview removals with
 `sync --dry-run --prune`, then explicitly use `sync --trust --prune` to unlink them.
-Only links still owned by sync can be removed. Source checkouts and previous Git
-snapshots are retained. Manually installed or externally changed links are never
-adopted or replaced: preserve them and resolve the conflict before syncing.
+Only current links still owned by sync can be removed. Development checkouts and
+installed version directories are retained. Manually installed or externally changed
+links are never adopted or replaced: preserve them and resolve the conflict before syncing.
 Do not edit the private `.sync.json` receipt or run manual update/rollback on
 sync-owned packages; change their declarations instead. Dry-run writes nothing
 and does not fetch sources, install dependencies or run extension code.
@@ -233,9 +254,10 @@ vis-agent extension versions example/extensions --subdirectory tools/greeting
 `versions` shows the installed version, approved history, latest stable version and
 whether an update is available. `update` selects a newer approved stable release;
 `--version` explicitly selects a newer release, including a prerelease. It never
-downgrades implicitly. `rollback` restores the previous installation's pinned source,
-or an older approved version selected with `--version`. The previous-source form
-needs GitHub but not the catalog; it fetches the saved SHA again, not the current tag.
+downgrades implicitly. `rollback` restores the previous installed version, or an
+older approved version selected with `--version`. Retained versions are reused,
+including any local edits; a version that is not installed is fetched and validated.
+A package name and version cannot be reused for a different Git commit.
 
 All source changes are explicit and require `--trust`. A failed fetch, compatibility
 check or activation leaves the active installation unchanged. After success, start
@@ -243,15 +265,15 @@ Vis or use `/reload` to prepare dependencies and activate the code in running se
 Source rollback does not undo extension state, external side effects or dependency
 changes already made by a build backend. Review release notes before changing versions.
 
-The Python manifest name is still used internally for installed links, dependencies
-and `.versions/<package>/` storage; it is not the GitHub command identifier. Managed
-GitHub installations use a link in `.vis/extensions/` and retain snapshots and receipts
-in that hidden directory. Previous snapshots preserve local edits but are not used
-as release source when rolling back.
-Do not edit receipts or delete snapshots you still need. Local development links and
+The Python manifest name and normalized version determine the installation path;
+the name is not the GitHub command identifier. There is no separate version store
+or nested project directory. Updating changes the `current` link atomically and
+keeps previous version directories available for rollback.
+
+Do not edit receipts or delete versions you still need. Local development links and
 unmanaged directories are never replaced by `update` or `rollback`; use their source
-workflow instead. A pre-existing unmanaged GitHub copy must be preserved and removed
-explicitly before installing it as a managed package.
+workflow instead. Old installation layouts are not loaded or migrated. Preserve any
+local edits before removing an old installation and installing it again.
 
 ## Publish a package
 
@@ -322,7 +344,7 @@ managed installation. Local source links follow their development workflow inste
 | Change a package's dependencies | Deliberately update `uv.lock` if needed, then `/reload` |
 | Change a manually prepared editable project's dependencies | Follow the [explicit sync workflow](extension-development.md#prepare-the-project-environment) |
 | Change a managed GitHub version | Explicit `extension update` or `extension rollback`, then `/reload` |
-| Uninstall | Remove only the installed link or directory, then `/reload`; do not delete a linked development checkout |
+| Uninstall | Remove the package’s `current` link, then `/reload`; keep version directories or remove them separately, without deleting a linked development checkout |
 
 Install never overwrites an existing destination. `/reload` does not fetch a newer
 GitHub revision. It rebuilds extension contexts from installed source; already
