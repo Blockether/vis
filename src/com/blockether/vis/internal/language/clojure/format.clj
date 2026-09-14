@@ -205,6 +205,10 @@
    correctness input, and a rebuild costs one format per live file."
   512)
 
+(def ^:private result-cache-byte-limit
+  "Maximum retained formatted text, conservatively counted as UTF-16 bytes."
+  (* 8 1024 1024))
+
 (def ^:private result-cache
   "[backend config-path config-mtime source-sha] -> formatted source.
 
@@ -230,11 +234,24 @@
    (source-sha source)])
 
 (defn- cache-put!
-  "Remember `out` for `k` and return `out`, dropping the map when it outgrows
-   `result-cache-limit`."
-  [k out]
-  (swap! result-cache (fn [m]
-                        (assoc (if (>= (count m) (long result-cache-limit)) {} m) k out)))
+  "Remember `out` within the entry and byte budgets, then return it unchanged.
+   An oversized result is never cached and does not evict useful entries."
+  [k ^String out]
+  (let [out-bytes (* 2 (.length out))]
+    (when (<= out-bytes (long result-cache-byte-limit))
+      (swap! result-cache (fn [m]
+                            (let [m (dissoc m k)
+                                  retained-bytes (reduce (fn [^long total ^String cached]
+                                                           (+ total (* 2 (.length cached))))
+                                                         0
+                                                         (vals m))]
+
+                              (assoc (if (or (>= (count m) (long result-cache-limit))
+                                             (> (+ retained-bytes out-bytes)
+                                                (long result-cache-byte-limit)))
+                                       {}
+                                       m)
+                                k out))))))
   out)
 
 (defn clear-result-cache!

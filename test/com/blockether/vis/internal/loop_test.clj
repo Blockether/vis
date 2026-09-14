@@ -993,17 +993,44 @@
            request-start-ms)
     :reuse-kind))
 
-(defn- resume-prompt-cache
-  [history provider model turn-position summaries stable-messages turn-messages]
+(defn- complete-prompt-cache!
+  "Build the disk-checkpoint fixture separately from the compact live history."
+  [history provider model messages turn-position summaries stable-count assistant]
+  (swap! history update
+    [provider (str model)]
+    #'lp/completed-prompt-cache-entry
+    messages
+    turn-position
+    summaries
+    stable-count
+    assistant))
+
+(defn- resume-prompt-cache-context
+  [history provider model context turn-position summaries stable-messages turn-messages]
   (#'lp/resumable-prompt-message-base
-   history
+   {:route [provider (str model)] :entry (get @history [provider (str model)])}
    provider
    model
-   test-prompt-cache-context
+   context
    turn-position
    summaries
    stable-messages
    turn-messages))
+
+(defn- resume-prompt-cache
+  [history provider model turn-position summaries stable-messages turn-messages]
+  (resume-prompt-cache-context history
+                               provider
+                               model
+                               test-prompt-cache-context
+                               turn-position
+                               summaries
+                               stable-messages
+                               turn-messages))
+
+(defn- estimate-from-request-fixtures
+  [history & args]
+  (apply #'lp/request-context-estimator (update-vals history #'lp/compact-prompt-cache-entry) args))
 
 (defdescribe
   prompt-cache-prefix-weight-reuse-test
@@ -1267,10 +1294,10 @@
           @#'lp/note-prompt-cache-request!
 
           complete!
-          @#'lp/mark-prompt-cache-turn-complete!
+          complete-prompt-cache!
 
           resume
-          @#'lp/resumable-prompt-message-base
+          resume-prompt-cache-context
 
           context
           {:id "pcctx-v1-current" :fixed-prefix-weight 400}
@@ -1285,7 +1312,7 @@
           (conj stable {:role "user" :content "turn one"})]
 
       (sample! history :anthropic "opus" context request 5000 0 (util/now-ms))
-      (complete! history :anthropic "opus" 1 [] 1 {:role "assistant" :content "done"})
+      (complete! history :anthropic "opus" request 1 [] 1 {:role "assistant" :content "done"})
       (expect (:resumed? (resume history
                                  :anthropic
                                  "opus"
@@ -1311,7 +1338,7 @@
           sample-prompt-cache!
 
           complete!
-          @#'lp/mark-prompt-cache-turn-complete!
+          complete-prompt-cache!
 
           resume
           resume-prompt-cache
@@ -1338,6 +1365,7 @@
       (complete! history
                  :zai-coding-plan
                  "glm-5.3-flash"
+                 request
                  1
                  summaries
                  (count stable)
@@ -1355,7 +1383,7 @@
           sample-prompt-cache!
 
           complete!
-          @#'lp/mark-prompt-cache-turn-complete!
+          complete-prompt-cache!
 
           resume
           resume-prompt-cache
@@ -1379,6 +1407,7 @@
       (complete! history
                  :zai-coding-plan
                  "glm-5.3-flash"
+                 request
                  1
                  summaries
                  (count stable)
@@ -1403,7 +1432,7 @@
           sample-prompt-cache!
 
           complete!
-          @#'lp/mark-prompt-cache-turn-complete!
+          complete-prompt-cache!
 
           resume
           resume-prompt-cache
@@ -1443,6 +1472,7 @@
            (complete! history
                       provider
                       model
+                      request
                       position
                       summaries
                       (count stable)
@@ -1601,13 +1631,15 @@
                                                  :turn-position 1
                                                  :summaries []
                                                  :stable-message-count 1
+                                                 :messages request
                                                  :assistant-message assistant}})]
 
         (let [result (#'lp/run-normal-turn! env "finish" {})]
           (expect (nil? (:prompt-cache-completion result)))
           (expect
             (= {:turn-position 1 :summaries [] :stable-message-count 1 :assistant-message assistant}
-               (get-in @history [[:zai-coding-plan "model"] :completed-turn])))
+               (get-in @stored [1 :entry :completed-turn])))
+          (expect (nil? (get-in @history [[:zai-coding-plan "model"] :completed-turn])))
           (expect (= "state-1" (first @stored)))
           (expect (= [:zai-coding-plan "model"] (get-in @stored [1 :route])))
           (expect (= request (get-in @stored [1 :entry :messages])))
@@ -2167,53 +2199,56 @@
           first-stable
           (atom nil)]
 
-      (try (let [first-env (lp/create-environment ::router {:db db-path :channel :cli})]
-             (try (let [stable (stable-for first-env)
-                        request (conj stable {:role "user" :content "turn one"})
-                        entry {:messages request
-                               :weights (vec (repeat (count request) 1))
-                               :input-tokens 12000
-                               :at-ms (util/now-ms)
-                               :prompt-cache-context test-prompt-cache-context
-                               :completed-turn {:turn-position 1
-                                                :summaries []
-                                                :stable-message-count (count stable)
-                                                :assistant-message {:role "assistant"
-                                                                    :content "done"}}}]
+      (try
+        (let [first-env (lp/create-environment ::router {:db db-path :channel :cli})]
+          (try (let [stable (stable-for first-env)
+                     request (conj stable {:role "user" :content "turn one"})
+                     entry {:messages request
+                            :weights (vec (repeat (count request) 1))
+                            :input-tokens 12000
+                            :at-ms (util/now-ms)
+                            :prompt-cache-context test-prompt-cache-context
+                            :completed-turn {:turn-position 1
+                                             :summaries []
+                                             :stable-message-count (count stable)
+                                             :assistant-message {:role "assistant"
+                                                                 :content "done"}}}]
 
-                    (reset! session-id (:session-id first-env))
-                    (reset! persisted-entry entry)
-                    (reset! first-stable stable)
-                    (expect (some #(str/includes? (:content %) "NON-INTERACTIVE ONE-SHOT RUN")
-                                  stable))
-                    (persistance/db-set-session-prompt-cache-state!
-                      (:db-info first-env)
-                      (:session/state-id first-env)
-                      {:route route :entry entry :standing-ctx standing}))
-                  (finally (lp/dispose-environment! first-env))))
-           (let [resumed (lp/create-environment ::router {:db db-path :session @session-id})]
-             (try (let [stable (stable-for resumed)
-                        next-user [{:role "user" :content "turn two"}]
-                        base (#'lp/resumable-prompt-message-base
-                              (:prompt-cache-history-atom resumed)
-                              (first route)
-                              (second route)
-                              test-prompt-cache-context
-                              2
-                              []
-                              stable
-                              next-user)]
+                 (reset! session-id (:session-id first-env))
+                 (reset! persisted-entry entry)
+                 (reset! first-stable stable)
+                 (expect (some #(str/includes? (:content %) "NON-INTERACTIVE ONE-SHOT RUN") stable))
+                 (persistance/db-set-session-prompt-cache-state!
+                   (:db-info first-env)
+                   (:session/state-id first-env)
+                   {:route route :entry entry :standing-ctx standing}))
+               (finally (lp/dispose-environment! first-env))))
+        (let [resumed (lp/create-environment ::router {:db db-path :session @session-id})]
+          (try (let [stable (stable-for resumed)
+                     next-user [{:role "user" :content "turn two"}]
+                     base
+                     (#'lp/resumable-prompt-message-base
+                      (#'lp/load-prompt-cache-state (:db-info resumed) (:session/state-id resumed))
+                      (first route)
+                      (second route)
+                      test-prompt-cache-context
+                      2
+                      []
+                      stable
+                      next-user)]
 
-                    (expect (= :cli (:channel resumed)))
-                    (expect (= @first-stable stable))
-                    (expect (= {route @persisted-entry} @(:prompt-cache-history-atom resumed)))
-                    (expect (= standing @(:standing-ctx-atom resumed)))
-                    (expect (:resumed? base))
-                    (expect (= (:messages @persisted-entry)
-                               (subvec (:messages base) 0 (count (:messages @persisted-entry))))))
-                  (finally (lp/dispose-environment! resumed))))
-           (finally (doseq [file (reverse (file-seq dir))]
-                      (.delete ^java.io.File file)))))))
+                 (expect (= :cli (:channel resumed)))
+                 (expect (= @first-stable stable))
+                 (expect (nil? (get-in @(:prompt-cache-history-atom resumed) [route :messages])))
+                 (expect (nil? (get-in @(:prompt-cache-history-atom resumed)
+                                       [route :completed-turn])))
+                 (expect (= standing @(:standing-ctx-atom resumed)))
+                 (expect (:resumed? base))
+                 (expect (= (:messages @persisted-entry)
+                            (subvec (:messages base) 0 (count (:messages @persisted-entry))))))
+               (finally (lp/dispose-environment! resumed))))
+        (finally (doseq [file (reverse (file-seq dir))]
+                   (.delete ^java.io.File file)))))))
 
 (defdescribe
   workspace-policy-isolation-test
@@ -3301,29 +3336,60 @@
             (expect (empty? (:attachments block)))))
         (finally (lp/dispose-environment! env))))))
 
+(defn- with-history-fixture
+  "Exercise metadata projection and selected body reads from explicit history rows."
+  [turns iterations test-fn]
+  (let [turns-by-id
+        (into {} (map (juxt :id identity)) turns)
+
+        iterations-by-id
+        (into {} (map (juxt :id identity)) (mapcat val iterations))]
+
+    (with-redefs [persistance/db-list-session-turns-meta
+                  (fn [_db session-id]
+                    (expect (= "s1" session-id))
+                    (mapv #(select-keys % [:id :position :status]) turns))
+
+                  persistance/db-list-session-turns-iterations-meta
+                  (fn [_db ids]
+                    (into {}
+                          (map (fn [id]
+                                 [(str id)
+                                  (mapv #(select-keys %
+                                                      [:id :position :status :provider :model
+                                                       :local-command-candidate?])
+                                        (get iterations (str id)))]))
+                          ids))
+
+                  persistance/db-read-session-turn
+                  (fn [_db session-id turn-id]
+                    (expect (= "s1" session-id))
+                    (get turns-by-id (str turn-id)))
+
+                  persistance/db-list-iterations
+                  (fn [_db ids]
+                    (select-keys iterations-by-id (map str ids)))
+
+                  persistance/db-list-iterations-attachments-meta
+                  (constantly {})]
+
+      (test-fn))))
+
 (defdescribe
   previous-turn-context-test
   ;; Blockether/vis#174: an interrupted user message may be dense code, not prose.
   (it "keeps prior user input when diagnostic token counting is unavailable"
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly
-                      [{:id "t1" :position 1 :status :interrupted :user-request "keep this input"}])
+      (with-history-fixture
+        [{:id "t1" :position 1 :status :interrupted :user-request "keep this input"}]
+        {}
+        (fn []
+          (with-redefs [svar-router/count-messages (fn [_ _]
+                                                     (throw (ex-info "tokenizer unavailable" {})))]
+            (let [ca (atom {})
+                  prior (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom ca} "t2")]
 
-                    persistance/db-list-session-turn-iterations
-                    (constantly [])
-
-                    svar-router/count-messages
-                    (fn [_ _]
-                      (throw (ex-info "tokenizer unavailable" {})))]
-
-        (let [ca
-              (atom {})
-
-              prior
-              (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom ca} "t2")]
-
-          (expect (= "keep this input" (:user-request (first prior))))
-          (expect (nil? (get @ca "engine_turn_weights"))))))
+              (expect (= "keep this input" (:user-request (first prior))))
+              (expect (nil? (get @ca "engine_turn_weights"))))))))
   (it "tokenizes the rendered recap of an interrupted turn without iterations"
       (let [payload
             (apply str (repeat 1000 "ą中42={x:17};\n"))
@@ -3334,381 +3400,284 @@
             model
             "gpt-4"]
 
-        (with-redefs [persistance/db-list-session-turns
-                      (constantly
-                        [{:id "t1" :position 1 :status :interrupted :user-request payload}])
+        (with-history-fixture
+          [{:id "t1" :position 1 :status :interrupted :user-request payload}]
+          {}
+          (fn []
+            (let [prior
+                  (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom ca} "t2" model)
 
-                      persistance/db-list-session-turn-iterations
-                      (constantly [])]
+                  rendered
+                  (prompt/previous-turn-context-block prior)
 
-          (let [prior
-                (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom ca} "t2" model)
+                  expected
+                  (- (svar-router/count-messages model [{:role "user" :content rendered}])
+                     (svar-router/count-messages model []))]
 
-                rendered
-                (prompt/previous-turn-context-block prior)
-
-                expected
-                (- (svar-router/count-messages model [{:role "user" :content rendered}])
-                   (svar-router/count-messages model []))]
-
-            (expect (= expected (get-in @ca ["engine_turn_weights" 1])))
-            (expect (> (get-in @ca ["engine_turn_weights" 1]) (quot (count payload) 4)))))))
+              (expect (= expected (get-in @ca ["engine_turn_weights" 1])))
+              (expect (> (get-in @ca ["engine_turn_weights" 1]) (quot (count payload) 4))))))))
   ;; Cross-process RESUME carry must be a pure function of the DB so the wire is
-  ;; identical regardless of process (see DERIVED_WIRE.md). These pin: ALL prior
-  ;; answered turns carried (not just the latest), each with its r[] scope index;
-  ;; determinism; and summary-awareness (drop/summarize reshape uniformly).
-  (it
-    "carries ALL prior answered turns with their r[] scope index"
-    (with-redefs [persistance/db-list-session-turns
-                  (fn [_db session-id]
-                    (expect (= "s1" session-id))
-                    [{:id "t1"
-                      :status :done
-                      :position 1
-                      :user-request "Read a"
-                      :content [(content/prose "Read it")]}
-                     {:id "t2"
-                      :status :done
-                      :position 2
-                      :user-request "Read b"
-                      :content [(content/prose "Read b too")]}
-                     {:id "t3" :status :running :user-request "yes"}])
-
-                  persistance/db-list-session-turn-iterations
-                  (fn [_db id]
-                    (case id
-                      "t1"
-                      [{:status :done
-                        :position 1
-                        :forms [{:scope "t1/i1/f1" :src "cat(\"a\")" :stdout "a"}
-                                {:scope "t1/i1/f2" :src "set_session_title(...)" :silent? true}]}]
-
-                      "t2"
-                      [{:status :done
-                        :position 1
-                        :forms [{:scope "t2/i1/f1" :src "rg({...})" :stdout ""}]}]
-
-                      []))]
-
-      (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t3")]
-        (expect (= 2 (count out))) ; both answered turns, not just latest
-        (expect (= "Read a" (:user-request (first out))))
-        (expect (= [{:scope "t1/i1/f1" :src "cat(\"a\")"}] (:results (first out)))) ; silent f2 excluded
-        (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
+  ;; identical regardless of process (see DERIVED_WIRE.md). All answered turns
+  ;; retain stored-iteration locations; payloads remain available through read_session.
+  (it "carries ALL prior answered turns with their stored iteration index"
+      (with-history-fixture
+        [{:id "t1"
+          :status :done
+          :position 1
+          :user-request "Read a"
+          :content [(content/prose "Read it")]}
+         {:id "t2"
+          :status :done
+          :position 2
+          :user-request "Read b"
+          :content [(content/prose "Read b too")]}
+         {:id "t3" :status :running :position 3 :user-request "yes"}]
+        {"t1" [{:id "i1" :status :done :position 1}] "t2" [{:id "i2" :status :done :position 1}]}
+        (fn []
+          (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                           "t3")]
+            (expect (= 2 (count out))) ; both answered turns, not just latest
+            (expect (= "Read a" (:user-request (first out))))
+            (expect (= [{:scope "t1/i1" :src "t1/i1 (stored iteration)"}] (:results (first out))))
+            (expect (= [{:scope "t2/i1" :src "t2/i1 (stored iteration)"}]
+                       (:results (second out))))))))
   ;; Regression, reported from the app: interrupt filed the record after the
   ;; iteration had settled, but the next request's resumed context omitted it.
-  (it
-    "carries a late live-view record into the next model request"
-    (with-redefs [persistance/db-list-session-turns
-                  (constantly [{:id "t1"
-                                :status :done
-                                :position 1
-                                :user-request "watch it"
-                                :content [(content/prose "watching")]}])
+  (it "carries a late live-view record into the next model request"
+      (with-history-fixture
+        [{:id "t1"
+          :status :done
+          :position 1
+          :user-request "watch it"
+          :content [(content/prose "watching")]}]
+        {"t1" [{:id "i1" :status :done :position 1}]}
+        (fn []
+          (with-redefs [persistance/db-list-iterations-attachments-meta
+                        (fn [_db ids]
+                          (expect (= ["i1"] (mapv str ids)))
+                          ;; Protocol 7 files no Activity attachment, so there is no
+                          ;; classified sibling here for the replay path to exclude.
+                          {"i1" [{:id "record-1"
+                                  :tool-call-id "call-1"
+                                  :filename "record.live.ndjson"
+                                  :media-type "application/vnd.vis.live+ndjson"}]})]
+            (let [results (:results (first (previous-turn-context
+                                             {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                             "t2")))
+                  records (keep :live-record results)]
 
-                  persistance/db-list-session-turn-iterations
-                  (constantly
-                    [{:id "i1"
-                      :status :done
-                      :forms [{:scope "t1/i1/f1" :svar/tool-call-id "call-1" :stdout "started"}]}])
-
-                  persistance/db-list-iterations-attachments-meta
-                  (fn [_db ids]
-                    (expect (= ["i1"] (mapv str ids)))
-                    ;; Protocol 7 files no Activity attachment, so there is no
-                    ;; classified sibling here for the replay path to exclude.
-                    {"i1" [{:id "record-1"
-                            :tool-call-id "call-1"
-                            :filename "record.live.ndjson"
-                            :media-type "application/vnd.vis.live+ndjson"}]})]
-
-      (let [results
-            (:results (first (previous-turn-context
-                               {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
-                               "t2")))
-
-            records
-            (keep :live-record results)]
-
-        (expect (= 1 (count records)))
-        (expect (str/includes? (first records) "record.live.ndjson"))
-        (expect (str/includes? (first records) "record-1"))
-        (expect (str/includes? (first records) "read_attachment"))
-        (expect (not (str/includes? (str/join "\n" records) "activity.live.ndjson"))))))
+              (expect (= 1 (count records)))
+              (expect (str/includes? (first records) "record.live.ndjson"))
+              (expect (str/includes? (first records) "record-1"))
+              (expect (str/includes? (first records) "read_attachment"))
+              (expect (not (str/includes? (str/join "\n" records) "activity.live.ndjson"))))))))
   (it "keeps synthetic slash commands out of later provider context"
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :user-request "/cd /repo"
-                                  :content [(content/prose "Changed workspace")]}])
-
-                    persistance/db-list-session-turn-iterations
-                    (constantly
-                      [{:status :done
-                        :forms
-                        [{:scope "t1/i1/f1" :tag :user-slash :src "/cd /repo" :silent? true}]}])]
-
-        (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
-                                             "t2")))))
+      (with-history-fixture
+        [{:id "t1"
+          :status :done
+          :position 1
+          :user-request "/cd /repo"
+          :content [(content/prose "Changed workspace")]}]
+        {"t1" [{:id "i1"
+                :status :done
+                :position 1
+                :local-command-candidate? true
+                :forms [{:scope "t1/i1/f1" :tag :user-slash :src "/cd /repo" :silent? true}]}]}
+        (fn []
+          (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                               "t2"))))))
   (it "is deterministic — same DB ⇒ identical output (process-invariant)"
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :position 1
-                                  :user-request "q"
-                                  :content [(content/prose "a")]}])
-
-                    persistance/db-list-session-turn-iterations
-                    (constantly [{:status :done
-                                  :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(x)" :stdout "x"}]}])]
-
-        (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
-          (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
+      (with-history-fixture
+        [{:id "t1" :status :done :position 1 :user-request "q" :content [(content/prose "a")]}]
+        {"t1" [{:id "i1" :status :done :position 1}]}
+        (fn []
+          (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
+            (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9")))))))
   (it "is summary-aware at ITERATION granularity: gist-less folds drop, gists summarize"
-      ;; Folds are recorded at iteration scope (tN/iN) — what the prompt instructs
-      ;; and what the live wire (apply-summaries) matches. Each form carries a FORM
-      ;; scope (tN/iN/fN); prior-turn-scope-index normalizes form→iteration before
-      ;; matching. A gist-less fold collapses to ONE `dropped` audit line; a fold
-      ;; with a gist collapses multiple forms to ONE gist line.
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :position 1
-                                  :user-request "q"
-                                  :content [(content/prose "a")]}])
+      ;; Metadata scopes match the live wire. A gist-less fold keeps one dropped
+      ;; audit line; a gist replaces the iteration's stored-result breadcrumb.
+      (with-history-fixture
+        [{:id "t1" :status :done :position 1 :user-request "q" :content [(content/prose "a")]}]
+        {"t1" [{:id "i1" :status :done :position 1} {:id "i2" :status :done :position 2}]}
+        (fn []
+          (let [env
+                {:session-id "s1"
+                 :db-info ::db
+                 :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "note" "wrong file"}
+                                                       {"scopes" #{"t1/i2"} "gist" "b pinned"}]})}
 
-                    persistance/db-list-session-turn-iterations
-                    (constantly [{:status :done
-                                  :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "a"}
-                                          {:scope "t1/i2/f1" :src "cat(b)" :stdout "b"}
-                                          {:scope "t1/i2/f2" :src "cat(c)" :stdout "c"}]}])]
+                results
+                (:results (first (previous-turn-context env "t9")))]
 
-        (let [env
-              {:session-id "s1"
-               :db-info ::db
-               :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "note" "wrong file"}
-                                                     {"scopes" #{"t1/i2"} "gist" "b pinned"}]})}
-
-              ; fold i2
-              results
-              (:results (first (previous-turn-context env "t9")))]
-
-          (expect (= 2 (count results))) ; i1 dropped-line + i2 gist (each deduped)
-          (let [by-scope (into {} (map (juxt :scope identity)) results)]
-            (expect (= {:scope "t1/i1" :dropped? true :note "wrong file"} (get by-scope "t1/i1")))
-            (expect (= {:scope "t1/i2" :gist "b pinned"} (get by-scope "t1/i2")))))))
+            (expect (= 2 (count results))) ; i1 dropped-line + i2 gist (each deduped)
+            (let [by-scope (into {} (map (juxt :scope identity)) results)]
+              (expect (= {:scope "t1/i1" :dropped? true :note "wrong file"} (get by-scope "t1/i1")))
+              (expect (= {:scope "t1/i2" :gist "b pinned"} (get by-scope "t1/i2"))))))))
   (it "returns nil when every prior turn is current/running/blank-answer"
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :position 1
-                                  :user-request "old"
-                                  :content [(content/prose "")]}
-                                 {:id "t2"
-                                  :status :running
-                                  :user-request "now"
-                                  :content [(content/prose "partial")]}])
-
-                    persistance/db-list-session-turn-iterations
-                    (constantly [])]
-
-        (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
-                                             "t2")))))
+      (with-history-fixture
+        [{:id "t1" :status :done :position 1 :user-request "old" :content [(content/prose "")]}
+         {:id "t2"
+          :status :running
+          :position 2
+          :user-request "now"
+          :content [(content/prose "partial")]}]
+        {}
+        (fn []
+          (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                               "t2"))))))
   (it "carries prior provider-error turns as unfinished cross-turn context"
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :error
-                                  :position 1
-                                  :user-request "fix web"
-                                  :content [(content/error "provider_error" "failed" true)]}
-                                 {:id "t2" :status :running :user-request "continue"}])
-
-                    persistance/db-list-session-turn-iterations
-                    (constantly [{:status :done
-                                  :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(ui)" :stdout "read ui"}]}])]
-
-        (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t2")]
-          (expect (= [{:turn 1
-                       :user-request "fix web"
-                       :answer nil
-                       :interrupted? true
-                       :results [{:scope "t1/i1/f1" :src "cat(ui)"}]}]
-                     out)))))
+      (with-history-fixture
+        [{:id "t1"
+          :status :error
+          :position 1
+          :user-request "fix web"
+          :content [(content/error "provider_error" "failed" true)]}
+         {:id "t2" :status :running :position 2 :user-request "continue"}]
+        {"t1" [{:id "i1" :status :done :position 1}]}
+        (fn []
+          (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                           "t2")]
+            (expect (= [{:turn 1
+                         :user-request "fix web"
+                         :answer nil
+                         :interrupted? true
+                         :results [{:scope "t1/i1" :src "t1/i1 (stored iteration)"}]}]
+                       out))))))
   (it "fold-of-fold removes every covered turn recap; trailer owns one checkpoint"
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :position 1
-                                  :user-request "old q1"
-                                  :content [(content/prose "old a1")]}
-                                 {:id "t2"
-                                  :status :done
-                                  :position 2
-                                  :user-request "old q2"
-                                  :content [(content/prose "old a2")]}
-                                 {:id "t3" :status :running :position 3 :user-request "now"}])
-
-                    persistance/db-list-session-turn-iterations
-                    (fn [_ id]
-                      [{:status :done
-                        :position 1
-                        :forms
-                        [{:scope (str id "/i1/f1") :src (str "cat(" id ")") :stdout "ok"}]}])]
-
-        (let [env {:session-id "s1"
-                   :db-info ::db
-                   :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "fine detail"}
-                                                         {"through" "t2/i1"
-                                                          "issued_turn" 3
-                                                          "gist" "one durable checkpoint"}]})}]
-          (expect (nil? (previous-turn-context env "t3"))))))
+      (with-history-fixture
+        [{:id "t1"
+          :status :done
+          :position 1
+          :user-request "old q1"
+          :content [(content/prose "old a1")]}
+         {:id "t2"
+          :status :done
+          :position 2
+          :user-request "old q2"
+          :content [(content/prose "old a2")]}
+         {:id "t3" :status :running :position 3 :user-request "now"}]
+        {"t1" [{:id "i1" :status :done :position 1}] "t2" [{:id "i2" :status :done :position 1}]}
+        (fn []
+          (let [env {:session-id "s1"
+                     :db-info ::db
+                     :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"}
+                                                            "gist" "fine detail"}
+                                                           {"through" "t2/i1"
+                                                            "issued_turn" 3
+                                                            "gist" "one durable checkpoint"}]})}]
+            (expect (nil? (previous-turn-context env "t3")))))))
   (it "a gist-less whole-turn fold of a no-iteration turn leaves a visible tombstone checkpoint"
       ;; No done iterations → no trailer anchor exists anywhere, so previous-
       ;; turn-context must materialize the checkpoint itself instead of letting
       ;; the turn vanish without a trace.
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :position 1
-                                  :user-request "spent request"
-                                  :content [(content/prose "spent answer")]}
-                                 {:id "t2" :status :running :position 2}])
-
-                    persistance/db-list-session-turn-iterations
-                    (constantly [])]
-
-        (let [out (previous-turn-context {:session-id "s1"
-                                          :db-info ::db
-                                          :ctx-atom (atom {"session_summaries"
-                                                           [{"scopes" #{"t1"} "issued_turn" 2}]})}
-                                         "t2")]
-          (expect (= 1 (count out)))
-          (expect (:checkpoint? (first out)))
-          (expect (= [1] (:turns (first out))))
-          (expect (clojure.string/includes? (str (:gist (first out))) "dropped"))
-          (expect (nil? (:user-request (first out)))))))
+      (with-history-fixture
+        [{:id "t1"
+          :status :done
+          :position 1
+          :user-request "spent request"
+          :content [(content/prose "spent answer")]} {:id "t2" :status :running :position 2}]
+        {}
+        (fn []
+          (let [out (previous-turn-context {:session-id "s1"
+                                            :db-info ::db
+                                            :ctx-atom (atom {"session_summaries"
+                                                             [{"scopes" #{"t1"} "issued_turn" 2}]})}
+                                           "t2")]
+            (expect (= 1 (count out)))
+            (expect (:checkpoint? (first out)))
+            (expect (= [1] (:turns (first out))))
+            (expect (clojure.string/includes? (str (:gist (first out))) "dropped"))
+            (expect (nil? (:user-request (first out))))))))
   (it "an enumerated iteration fold covering EVERY iteration still keeps the turn's Q/A recap"
       ;; Regression: 'all iterations folded' must NOT be inferred as whole-turn
       ;; intent — only a bare tN or a spanning range selector removes Q/A.
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :position 1
-                                  :user-request "keep my question"
-                                  :content [(content/prose "keep my answer")]}
-                                 {:id "t2" :status :running :position 2}])
+      (with-history-fixture
+        [{:id "t1"
+          :status :done
+          :position 1
+          :user-request "keep my question"
+          :content [(content/prose "keep my answer")]} {:id "t2" :status :running :position 2}]
+        {"t1" [{:id "i1" :status :done :position 1}]}
+        (fn []
+          (let [out (previous-turn-context {:session-id "s1"
+                                            :db-info ::db
+                                            :ctx-atom (atom {"session_summaries"
+                                                             [{"scopes" #{"t1/i1"}
+                                                               "gist" "read a"}]})}
+                                           "t2")]
+            (expect (= 1 (count out)))
+            (expect (= "keep my question" (:user-request (first out))))
+            (expect (= "keep my answer" (:answer (first out))))
+            (expect (= [{:scope "t1/i1" :gist "read a"}] (:results (first out))))))))
+  (it
+    "a whole-turn fold ISSUED DURING that turn keeps its Q/A recap next request (answer produced after the fold)"
+    ;; A bare tN or spanning-range fold recorded mid-turn N stamps issued_turn=N.
+    ;; It cannot erase N's answer, produced after the fold: keep Q/A, fold results.
+    (with-history-fixture
+      [{:id "t1"
+        :status :done
+        :position 1
+        :user-request "keep my question"
+        :content [(content/prose "keep my answer")]} {:id "t2" :status :running :position 2}]
+      {"t1" [{:id "i1" :status :done :position 1}]}
+      (fn []
+        (let [env-base
+              {:session-id "s1" :db-info ::db}
 
-                    persistance/db-list-session-turn-iterations
-                    (constantly [{:status :done
-                                  :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "1"}]}])]
+              out
+              (previous-turn-context
+                (assoc env-base
+                  :ctx-atom (atom {"session_summaries"
+                                   [{"scopes" #{"t1"} "issued_turn" 1 "gist" "folded so far"}]}))
+                "t2")
 
-        (let [out (previous-turn-context
-                    {:session-id "s1"
-                     :db-info ::db
-                     :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "read a"}]})}
-                    "t2")]
+              unstamped-out
+              (previous-turn-context (assoc env-base
+                                       :ctx-atom (atom {"session_summaries"
+                                                        [{"scopes" #{"t1"}
+                                                          "gist" "invalid unstamped fold"}]}))
+                                     "t2")]
+
           (expect (= 1 (count out)))
           (expect (= "keep my question" (:user-request (first out))))
           (expect (= "keep my answer" (:answer (first out))))
-          (expect (= [{:scope "t1/i1" :gist "read a"}] (:results (first out)))))))
+          ;; Canonical fold intents always carry issued_turn. Missing ownership
+          ;; cannot erase a complete prior Q/A recap.
+          (expect (= "keep my question" (:user-request (first unstamped-out))))
+          (expect (= "keep my answer" (:answer (first unstamped-out))))))))
   (it
-    "a whole-turn fold ISSUED DURING that turn keeps its Q/A recap next request (answer produced after the fold)"
-    ;; Loophole fix (issued_turn invariant): a bare `tN` / spanning-range fold
-    ;; recorded mid-turn N stamps `issued_turn` = N. It resolves to whole-turn
-    ;; coverage of N against next request's complete universe, but must NOT erase
-    ;; N's own answer — which was produced AFTER the fold, so no gist summarizes
-    ;; it. Degrades to the enumerated path: Q/A recap kept, result lines folded.
-    (with-redefs [persistance/db-list-session-turns
-                  (constantly [{:id "t1"
-                                :status :done
-                                :position 1
-                                :user-request "keep my question"
-                                :content [(content/prose "keep my answer")]}
-                               {:id "t2" :status :running :position 2}])
-
-                  persistance/db-list-session-turn-iterations
-                  (constantly [{:status :done
-                                :position 1
-                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "1"}]}])]
-
-      (let [env-base
-            {:session-id "s1" :db-info ::db}
-
-            out
-            (previous-turn-context
-              (assoc env-base
-                :ctx-atom (atom {"session_summaries"
-                                 [{"scopes" #{"t1"} "issued_turn" 1 "gist" "folded so far"}]}))
-              "t2")
-
-            unstamped-out
-            (previous-turn-context (assoc env-base
-                                     :ctx-atom (atom {"session_summaries"
-                                                      [{"scopes" #{"t1"}
-                                                        "gist" "invalid unstamped fold"}]}))
-                                   "t2")]
-
-        (expect (= 1 (count out)))
-        (expect (= "keep my question" (:user-request (first out))))
-        (expect (= "keep my answer" (:answer (first out))))
-        ;; Canonical fold intents always carry issued_turn. Missing ownership
-        ;; cannot erase a complete prior Q/A recap.
-        (expect (= "keep my question" (:user-request (first unstamped-out))))
-        (expect (= "keep my answer" (:answer (first unstamped-out)))))))
-  (it "a whole-turn fold ISSUED IN A LATER turn still removes the target turn's Q/A recap"
-      ;; The normal prior-turn case: turn 2 folds turn 1 (issued_turn 2 > 1) — it
-      ;; actually saw turn 1's answer, so removal is safe and the trailer owns the
-      ;; one checkpoint. With only turn 1 present, the whole context collapses.
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly [{:id "t1"
-                                  :status :done
-                                  :position 1
-                                  :user-request "old q"
-                                  :content [(content/prose "old a")]}
-                                 {:id "t2" :status :running :position 2}])
-
-                    persistance/db-list-session-turn-iterations
-                    (constantly [{:status :done
-                                  :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "1"}]}])]
-
+    "a whole-turn fold ISSUED IN A LATER turn still removes the target turn's Q/A recap"
+    ;; Turn 2 folds turn 1 after seeing its answer. The trailer owns the checkpoint.
+    (with-history-fixture
+      [{:id "t1" :status :done :position 1 :user-request "old q" :content [(content/prose "old a")]}
+       {:id "t2" :status :running :position 2}]
+      {"t1" [{:id "i1" :status :done :position 1}]}
+      (fn []
         (expect (nil? (previous-turn-context {:session-id "s1"
                                               :db-info ::db
                                               :ctx-atom (atom {"session_summaries"
                                                                [{"scopes" #{"t1"}
                                                                  "issued_turn" 2
                                                                  "gist" "folded prior turn"}]})}
-                                             "t2")))))
+                                             "t2"))))))
   (it "carries cancelled turns with settled work and an explicit cancellation boundary"
-      (with-redefs [persistance/db-list-session-turns
-                    (constantly
-                      [{:id "t1" :status :cancelled :position 1 :user-request "inspect and fix"}
-                       {:id "t2" :status :running :position 2 :user-request "continue"}])
-
-                    persistance/db-list-session-turn-iterations
-                    (constantly [{:status :done
-                                  :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(src)" :stdout "src"}]}
-                                 {:status :running
-                                  :position 2
-                                  :forms [{:scope "t1/i2/f1" :src "patch(src)"}]}])]
-
-        (expect (= [{:turn 1
-                     :user-request "inspect and fix"
-                     :answer nil
-                     :interrupted? false
-                     :cancelled? true
-                     :results [{:scope "t1/i1/f1" :src "cat(src)"}]}]
-                   (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
-                                          "t2"))))))
+      (with-history-fixture
+        [{:id "t1" :status :cancelled :position 1 :user-request "inspect and fix"}
+         {:id "t2" :status :running :position 2 :user-request "continue"}]
+        {"t1" [{:id "i1" :status :done :position 1} {:id "i2" :status :running :position 2}]}
+        (fn []
+          (expect (= [{:turn 1
+                       :user-request "inspect and fix"
+                       :answer nil
+                       :interrupted? false
+                       :cancelled? true
+                       :results [{:scope "t1/i1" :src "t1/i1 (stored iteration)"}]}]
+                     (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                            "t2")))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"
-                 (with-redefs [persistance/db-list-session-turns
+                 (with-redefs [persistance/db-list-session-turns-meta
                                (fn [_db-info session-id]
                                  (expect (= "s1" session-id))
                                  [{:id "t1" :position 1} {:id "t2" :position 2}
@@ -3731,7 +3700,7 @@
                                :last-request-iteration 2}
                               (previous-request-usage {:session-id "s1" :db-info ::db} "t3")))))
              (it "returns nil when no prior iteration has input tokens"
-                 (with-redefs [persistance/db-list-session-turns
+                 (with-redefs [persistance/db-list-session-turns-meta
                                (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
 
                                persistance/db-latest-turn-request-usage
@@ -7737,9 +7706,9 @@
           (expect (not (contains? (eng/enter-turn ctx 3) eng/prompt-cache-status-key)))))
     (it "restores only the latest request size, never provider-cache telemetry from disk"
         (let [asked (atom [])]
-          (with-redefs [persistance/db-list-session-turns (constantly [{:id "t1" :position 1}
-                                                                       {:id "t2" :position 2}
-                                                                       {:id "t3" :position 3}])
+          (with-redefs [persistance/db-list-session-turns-meta (constantly [{:id "t1" :position 1}
+                                                                            {:id "t2" :position 2}
+                                                                            {:id "t3" :position 3}])
                         persistance/db-latest-turn-request-usage
                         (fn [_db-info turn-id]
                           (swap! asked conj turn-id)
@@ -9295,7 +9264,7 @@
              :prompt-cache-context context}
 
             estimate
-            (#'lp/request-context-estimator {[:openai "gpt-4o"] entry} :openai "gpt-4o" context)
+            (estimate-from-request-fixtures {[:openai "gpt-4o"] entry} :openai "gpt-4o" context)
 
             tail
             [{:role "assistant" :content "new reasoning and answer"}
@@ -9328,7 +9297,7 @@
                  [:openai "gpt-4o" nil prior]
                  [:openai "gpt-4o" context [{:role "user" :content "folded recap"}]]]]
           (expect (= (svar-router/count-messages model messages)
-                     ((#'lp/request-context-estimator history provider model ctx) messages))))))
+                     ((estimate-from-request-fixtures history provider model ctx) messages))))))
   (it "ignores missing or invalid usage"
       (let [messages
             [{:role "user" :content (apply str (repeat 1000 "reasoning "))}]
@@ -9341,72 +9310,73 @@
 
         (doseq [input [nil 0 -1]]
           (expect (= local
-                     ((#'lp/request-context-estimator
-                       {[:openai "gpt-4o"]
-                        {:messages messages :input-tokens input :prompt-cache-context context}}
-                       :openai
-                       "gpt-4o"
-                       context)
+                     ((estimate-from-request-fixtures
+                        {[:openai "gpt-4o"]
+                         {:messages messages :input-tokens input :prompt-cache-context context}}
+                        :openai
+                        "gpt-4o"
+                        context)
                        messages)))))))
 
-(defdescribe
-  provider-usage-calibration-regression-test
-  ;; Issue #173: an accepted prefix must not be estimated a second time at 2.2x.
-  (it "uses measured input for the exact prefix and counts only the new tail locally"
-      (let [prior
-            [{:role "user" :content (apply str (repeat 10000 "evidence "))}]
+(defdescribe provider-usage-calibration-regression-test
+             ;; Issue #173: an accepted prefix must not be estimated a second time at 2.2x.
+             (it "uses measured input for the exact prefix and counts only the new tail locally"
+                 (let [prior
+                       [{:role "user" :content (apply str (repeat 10000 "evidence "))}]
 
-            tail
-            [{:role "assistant" :content "new evidence"}]
+                       tail
+                       [{:role "assistant" :content "new evidence"}]
 
-            context
-            {:id "same-route" :fixed-prefix-weight 20}
+                       context
+                       {:id "same-route" :fixed-prefix-weight 20}
 
-            estimate
-            (#'lp/request-context-estimator
-             {[:openai "gpt-4o"] {:messages prior :input-tokens 4500 :prompt-cache-context context}}
-             :openai
-             "gpt-4o"
-             context)]
+                       estimate
+                       (estimate-from-request-fixtures
+                         {[:openai "gpt-4o"]
+                          {:messages prior :input-tokens 4500 :prompt-cache-context context}}
+                         :openai
+                         "gpt-4o"
+                         context)]
 
-        (expect (> (svar-router/count-messages "gpt-4o" prior) 9000))
-        (expect (= 4500 (estimate prior)))
-        (expect (= (+ 4500
-                      (- (svar-router/count-messages "gpt-4o" tail)
-                         (svar-router/count-messages "gpt-4o" [])))
-                   (estimate (into prior tail))))
-        (expect (nil? (#'lp/pre-request-context-projection
-                       {:request-messages (into prior tail)
-                        :model "gpt-4o"
-                        :budget-tokens 6000
-                        :count-messages-fn estimate
-                        :canonical-base-messages-fn (fn []
-                                                      (throw (ex-info "Unexpected lossy fold"
-                                                                      {})))})))))
-  (it "counts only the tail when provider usage already priced the prefix"
-      (let [prior
-            [{:role "user" :content "accepted input"}]
+                   (expect (> (svar-router/count-messages "gpt-4o" prior) 9000))
+                   (expect (= 4500 (estimate prior)))
+                   (expect (= (+ 4500
+                                 (- (svar-router/count-messages "gpt-4o" tail)
+                                    (svar-router/count-messages "gpt-4o" [])))
+                              (estimate (into prior tail))))
+                   (expect (nil? (#'lp/pre-request-context-projection
+                                  {:request-messages (into prior tail)
+                                   :model "gpt-4o"
+                                   :budget-tokens 6000
+                                   :count-messages-fn estimate
+                                   :canonical-base-messages-fn
+                                   (fn []
+                                     (throw (ex-info "Unexpected lossy fold" {})))})))))
+             (it "counts only the tail when provider usage already priced the prefix"
+                 (let [prior
+                       [{:role "user" :content "accepted input"}]
 
-            tail
-            [{:role "assistant" :content "new output"}]
+                       tail
+                       [{:role "assistant" :content "new output"}]
 
-            context
-            {:id "same-route" :fixed-prefix-weight 20}
+                       context
+                       {:id "same-route" :fixed-prefix-weight 20}
 
-            counted
-            (atom [])]
+                       counted
+                       (atom [])]
 
-        (with-redefs [svar-router/count-messages (fn ^long [_ messages]
-                                                   (swap! counted conj (vec messages))
-                                                   (+ 3 (count messages)))]
-          (let [estimate (#'lp/request-context-estimator
-                          {[:openai "gpt-4o"]
-                           {:messages prior :input-tokens 500 :prompt-cache-context context}}
-                          :openai
-                          "gpt-4o"
-                          context)]
-            (expect (= 501 (estimate (into prior tail))))
-            (expect (= [[] tail] @counted)))))))
+                   (with-redefs [svar-router/count-messages (fn ^long [_ messages]
+                                                              (swap! counted conj (vec messages))
+                                                              (+ 3 (count messages)))]
+                     (let [estimate (estimate-from-request-fixtures
+                                      {[:openai "gpt-4o"] {:messages prior
+                                                           :input-tokens 500
+                                                           :prompt-cache-context context}}
+                                      :openai
+                                      "gpt-4o"
+                                      context)]
+                       (expect (= 501 (estimate (into prior tail))))
+                       (expect (= [[] tail] @counted)))))))
 
 (defdescribe
   pre-request-context-projection-test
@@ -9484,11 +9454,11 @@
           {:id "same-prefix" :fixed-prefix-weight 20}
 
           estimate
-          (#'lp/request-context-estimator
-           {[:openai "gpt-4o"] {:messages prior :input-tokens 30000 :prompt-cache-context context}}
-           :openai
-           "gpt-4o"
-           context)
+          (estimate-from-request-fixtures
+            {[:openai "gpt-4o"] {:messages prior :input-tokens 30000 :prompt-cache-context context}}
+            :openai
+            "gpt-4o"
+            context)
 
           projection
           (#'lp/pre-request-context-projection
@@ -9632,7 +9602,7 @@
 (defdescribe attachment-reinspection-wire-test
              (it "renders a reinspection image as a canonical vision message"
                  (let [wired-images
-                       (deref #'lp/iteration-wired-images)
+                       #(get-in (#'lp/replay-image-plan [[1 %]]) [1 :images])
 
                        image-messages
                        (deref #'lp/iteration-image-messages)

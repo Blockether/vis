@@ -1832,27 +1832,33 @@
    is the one place a view differs from a request, which answers `undeliverable`
    at once because a form nobody can see is a thread parked forever."
   [view]
-  (let [view
+  (let [record
         (-> view
             normalize-live-view
             materializer/redact-presentation
             checked-live-view
-            materializer/materialize)
+            materializer/record-view)
 
         view-id
-        (:id view)
+        (:id record)
 
         _
-        (when-not (trimmed (:session-id view))
+        (when-not (trimmed (:session-id record))
           (invalid-live-view! (str "view " view-id
                                    " names no session — set :session-id, or open it "
                                    "from an extension environment that carries one")))
+
+        file
+        (sink/open! record)
+
+        view
+        (materializer/materialize record)
 
         entry
         {:kind :live
          :id view-id
          :view (atom view)
-         :file (sink/open! view)
+         :file file
          :promise (promise)
          :session-id (:session-id view)
          :channel-ids (:channel-ids view)

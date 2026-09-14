@@ -149,9 +149,11 @@
                             [{:op :add-node
                               :node-spec (v/disclosure "late"
                                                        "Added section"
-                                                       [(v/log "late-log" {:lines ["opening"]})])}
+                                                       [(v/log "late-log"
+                                                               {:lines lines :window-lines 2})])}
                              {:op :append :node-id "late-log" :lines ["next"]}])
-        (is (= ["opening" "next"] (:lines (sink/log-range file "late-log" 0 100))))))))
+        (is (= ["line 39" "next"] (:lines (node (engine/live-view id) "late-log"))))
+        (is (= (conj lines "next") (:lines (sink/log-range file "late-log" 0 100))))))))
 
 (deftest receipt-retains-disclosure-tree-test
   ;; Regression #189: the human receipt is not the model's flattened picture.
@@ -194,8 +196,16 @@
             opened
             (engine/open-live! declared)]
 
-        (try (engine/patch-live! (:id opened) [{:op :append :node-id "nested" :lines ["later"]}])
+        (try (is (= ["line 38" "line 39"] (:lines (node opened "nested"))))
+             (is (= 40 (:total-lines (node opened "nested"))))
+             (engine/patch-live! (:id opened) [{:op :append :node-id "nested" :lines ["later"]}])
              (is (= 2 (count (:lines (node (engine/live-view (:id opened)) "nested")))))
+             (is (= (conj lines "later")
+                    (:lines (sink/log-range (sink/view-file (:session-id opened) (:id opened))
+                                            "nested"
+                                            0
+                                            100))))
+             (engine/close-live! (:id opened))
              (is (= (conj lines "later")
                     (:lines (sink/log-range (sink/view-file (:session-id opened) (:id opened))
                                             "nested"

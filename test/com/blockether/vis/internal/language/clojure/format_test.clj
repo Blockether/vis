@@ -146,3 +146,45 @@
   (it "runs after the backend in format-source"
       (fmt/clear-result-cache!)
       (expect (= "(def a 1)\n\n(def b 2)\n" (fmt/format-source "(def a 1)\n(def b 2)\n" nil)))))
+
+(defdescribe format-cache-byte-budget-test
+             (it "bounds retained formatted text across many large distinct versions"
+                 (let [cache (atom {})]
+                   (with-redefs-fn {#'fmt/result-cache cache}
+                     (fn []
+                       (dotimes [n 20]
+                         (#'fmt/cache-put! n (apply str (repeat (* 512 1024) (char (+ 65 n))))))
+                       (expect (<= (* 2 (reduce + 0 (map count (vals @cache))))
+                                   (* 8 1024 1024)))))))
+             (it "returns oversized results without evicting or retaining them"
+                 (let [cache
+                       (atom {:small "small"})
+
+                       out
+                       (apply str (repeat (inc (* 4 1024 1024)) "x"))]
+
+                   (with-redefs-fn {#'fmt/result-cache cache}
+                     (fn []
+                       (expect (identical? out (#'fmt/cache-put! :large out)))
+                       (expect (= #{:small} (set (keys @cache))))
+                       (expect (= "small" (:small @cache)))))))
+             (it "honors the exact byte boundary and accounts for replacements once"
+                 (let [cache (atom {})]
+                   (with-redefs-fn {#'fmt/result-cache cache
+                                    #'fmt/result-cache-byte-limit 8
+                                    #'fmt/result-cache-limit 2}
+                     (fn []
+                       (#'fmt/cache-put! :a "ab")
+                       (#'fmt/cache-put! :b "cd")
+                       (expect (= #{:a :b} (set (keys @cache))))
+                       (#'fmt/cache-put! :a "xy")
+                       (expect (= {:a "xy" :b "cd"} @cache))
+                       (#'fmt/cache-put! :a "abc")
+                       (expect (= {:a "abc"} @cache))))))
+             (it "retains the entry-count cap for small results"
+                 (let [cache (atom {})]
+                   (with-redefs-fn {#'fmt/result-cache cache #'fmt/result-cache-limit 2}
+                     (fn []
+                       (doseq [k [:a :b :c]]
+                         (#'fmt/cache-put! k "x"))
+                       (expect (= {:c "x"} @cache)))))))

@@ -252,16 +252,17 @@
           pool
           (fn [m]
             (let [live
-                  (reduce-kv (fn [acc k e]
-                               (if (and (not= k keep-key)
-                                        (> (- now
-                                              (.get ^java.util.concurrent.atomic.AtomicLong
-                                                    (:last-used e)))
-                                           (long idle-ttl-ms)))
-                                 acc
-                                 (assoc acc k e)))
-                             {}
-                             m)
+                  (reduce-kv
+                    (fn [acc k e]
+                      (if (and (not= k keep-key)
+                               (zero? (.get ^java.util.concurrent.atomic.AtomicInteger (:leases e)))
+                               (> (- now
+                                     (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))
+                                  (long idle-ttl-ms)))
+                        acc
+                        (assoc acc k e)))
+                    {}
+                    m)
 
                   over
                   (- (count live) (long pool-size))]
@@ -282,6 +283,39 @@
 
       (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead e) true)
       (retire! e))))
+
+(def ^:private idle-reap-interval-ms
+  "Maximum scheduling delay after an idle index's TTL expires."
+  1000)
+
+(defonce ^:private idle-reaper (atom nil))
+
+(defn- start-idle-reaper!
+  "Start one runtime-only daemon for the process-owned pool. It releases idle
+   indexes without another search and exits when the pool becomes empty."
+  []
+  (locking idle-reaper
+    (when-not (some-> ^Thread @idle-reaper
+                      .isAlive)
+      (let [runner (Thread. ^Runnable
+                            (fn []
+                              (try
+                                (loop []
+
+                                  (Thread/sleep (long idle-reap-interval-ms))
+                                  (sweep! nil)
+                                  (when (locking idle-reaper
+                                          (if (seq @pool) true (do (reset! idle-reaper nil) false)))
+                                    (recur)))
+                                (catch InterruptedException _ nil)
+                                (finally (locking idle-reaper
+                                           (when (identical? @idle-reaper (Thread/currentThread))
+                                             (reset! idle-reaper nil))))))
+                            "vis-fff-idle-reaper")]
+        (.setDaemon runner true)
+        (reset! idle-reaper runner)
+        (.start runner))))
+  nil)
 
 (def ^:private write-epoch
   "Bumped by `note-fs-write!` on EVERY mutation this process performs. A pooled
@@ -386,7 +420,8 @@
                                 (if (identical? (get m k) e) (dissoc m k) m)))
                   (recur)))))]
 
-    (try (let [idx (try @(:idx entry)
+    (try (start-idle-reaper!)
+         (let [idx (try @(:idx entry)
                         (catch Throwable t
                           (swap! pool (fn [m]
                                         (if (identical? (get m k) entry) (dissoc m k) m)))
@@ -395,7 +430,8 @@
            (sweep! k)
            (resync! entry idx)
            (f idx))
-         (finally (when (and (zero? (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger
+         (finally (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
+                  (when (and (zero? (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger
                                                       (:leases entry)))
                              (.get ^java.util.concurrent.atomic.AtomicBoolean (:dead entry)))
                     (retire! entry))))))

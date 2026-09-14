@@ -57,6 +57,7 @@
     [com.blockether.vis.internal.council.core :as council]
     [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
     [com.blockether.vis.internal.workspace.core :as workspace]
+    [taoensso.nippy :as nippy]
     [taoensso.telemere :as tel])
   (:import [java.util.concurrent ExecutionException ExecutorService Future ThreadFactory]))
 
@@ -2011,7 +2012,7 @@
   (or (try (when-let [session-id (:session-id environment)]
              (some (fn [turn]
                      (when (= (str (:id turn)) (str session-turn-id)) (:position turn)))
-                   (persistance/db-list-session-turns (:db-info environment) session-id)))
+                   (persistance/db-list-session-turns-meta (:db-info environment) session-id)))
            (catch Throwable t
              (tel/log! {:level :warn
                         :id ::session-turn-position-failed
@@ -2144,6 +2145,30 @@
        (:id att)
        "\") opens it)."))
 
+(defn- provider-history-metadata
+  "Read byte-free history, validating only explicitly identified local-command candidates."
+  [db turn-ids]
+  (let [iterations
+        (persistance/db-list-session-turns-iterations-meta db turn-ids)
+
+        candidates
+        (filter :local-command-candidate? (mapcat val iterations))
+
+        candidate-rows
+        (persistance/db-list-iterations db (map :id candidates))
+
+        local-ids
+        (into #{}
+              (keep (fn [[id row]]
+                      (when (user-slash-iteration? row) id)))
+              candidate-rows)]
+
+    {:iterations iterations
+     :local-turn-ids (into #{}
+                           (keep (fn [[id rows]]
+                                   (when (some #(contains? local-ids (str (:id %))) rows) id)))
+                           iterations)}))
+
 (defn- previous-turn-context
   "Prior provider-visible turns as an append-only RESUME sequence, compacted by
    the persisted fold ledger. Q/A removal keys off EXPLICIT whole-turn intent
@@ -2169,61 +2194,70 @@
             summaries (some-> (:ctx-atom environment)
                               deref
                               (get "session_summaries"))
-            include? (fn [turn]
-                       (and (not= (str (:id turn)) (str current-turn-id))
-                            (not= :running (:status turn))
-                            (or (seq (some-> (:content turn)
-                                             answer-markdown
-                                             str
-                                             str/trim))
-                                (terminal-incomplete-turn-status? (:status turn)))))
-            turns (filter include? (persistance/db-list-session-turns d session-id))
-            turn-data
-            (into []
-                  (keep
-                    (fn [turn]
-                      (let [iterations
-                            (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
-                                      (catch Throwable _ []))
-                                 (filter #(= :done (:status %)))
-                                 vec)
-                            atts-by-iter (if (seq iterations)
-                                           (try (persistance/db-list-iterations-attachments-meta
-                                                  d
-                                                  (keep :id iterations))
-                                                (catch Throwable _ {}))
-                                           {})]
-
-                        (when-not (some user-slash-iteration? iterations)
-                          (let [forms
-                                (vec
-                                  (mapcat
-                                    (fn [iteration]
-                                      (let [own (vec (:forms iteration))
-                                            scope (:scope (first own))
-                                            records (filter model-live-record?
-                                                            (or (get atts-by-iter (:id iteration))
-                                                                (get atts-by-iter
-                                                                     (str (:id iteration)))))]
-
-                                        (into own
-                                              (map (fn [att]
-                                                     {:scope scope
-                                                      :svar/tool-call-id (or (:tool-call-id att)
-                                                                             (:tool_call_id att))
-                                                      :stdout (live-record-context-line att)
-                                                      :live-record (live-record-context-line att)}))
-                                              records)))
-                                    iterations))]
-                            {:turn (long (or (:position turn) 0))
-                             :user-request (:user-request turn)
-                             :answer (when-not (terminal-incomplete-turn-status? (:status turn))
-                                       (answer-markdown (:content turn)))
-                             :interrupted? (interrupted-turn-status? (:status turn))
-                             :cancelled? (= :cancelled (:status turn))
-                             :forms forms
-                             :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
+            turns (remove #(or (= (str (:id %)) (str current-turn-id)) (= :running (:status %)))
+                    (persistance/db-list-session-turns-meta d session-id))
+            history (provider-history-metadata d (map :id turns))
+            iterations-by-turn (:iterations history)
+            turns (remove #(contains? (:local-turn-ids history) (str (:id %))) turns)
+            turn-metadata
+            (mapv (fn [turn]
+                    (let [iterations (filter #(= :done (:status %))
+                                             (get iterations-by-turn (str (:id turn))))]
+                      (assoc turn
+                        :turn (:position turn)
+                        :iterations iterations
+                        :iter-scopes (mapv #(str "t" (:position turn) "/i" (:position %))
+                                           iterations))))
                   turns)
+            resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through
+                                                       (or summaries [])
+                                                       (mapcat :iter-scopes turn-metadata)
+                                                       (map :turn turn-metadata)))
+            covering-summary (fn [{:keys [turn]}]
+                               (last (filter #(and (contains? (set (get % "turns")) turn)
+                                                   (integer? (get % "issued_turn"))
+                                                   (> (long (get % "issued_turn")) (long turn)))
+                                             resolved)))
+            folded-scopes (into #{} (mapcat #(get % "scopes")) resolved)
+            turn-data
+            (into
+              []
+              (keep
+                (fn [{:keys [iterations iter-scopes] :as metadata}]
+                  ;; Covered Q/A and all iteration bodies stay on disk. The existing
+                  ;; fold materializer below decides whether the trailer owns the gist.
+                  (if (covering-summary metadata)
+                    (dissoc metadata :iterations)
+                    (let [turn (persistance/db-read-session-turn d session-id (:id metadata))
+                          unfinished? (terminal-incomplete-turn-status? (:status turn))
+                          answer (when-not unfinished? (answer-markdown (:content turn)))
+                          visible-ids (keep (fn [[iteration scope]]
+                                              (when-not (contains? folded-scopes scope)
+                                                (:id iteration)))
+                                            (map vector iterations iter-scopes))
+                          artifacts (persistance/db-list-iterations-attachments-meta d visible-ids)
+                          forms
+                          (into []
+                                (mapcat (fn [[iteration scope]]
+                                          (cons {:scope scope
+                                                 :stdout ""
+                                                 :src (str scope " (stored iteration)")}
+                                                (for [att (get artifacts (str (:id iteration)))
+                                                      :when (model-live-record? att)]
+
+                                                  {:scope scope
+                                                   :live-record (live-record-context-line att)}))))
+                                (map vector iterations iter-scopes))]
+
+                      (when (or unfinished? (not (str/blank? answer)))
+                        {:turn (:turn metadata)
+                         :user-request (:user-request turn)
+                         :answer answer
+                         :interrupted? (interrupted-turn-status? (:status turn))
+                         :cancelled? (= :cancelled (:status turn))
+                         :forms forms
+                         :iter-scopes iter-scopes})))))
+              turn-metadata)
             ;; Blockether/vis#174: user requests can be dense code, not prose.
             ;; Price the rendered recap in the same tokenizer units as iteration weights.
             _ (when-let [ca (:ctx-atom environment)]
@@ -2242,21 +2276,7 @@
                                                          [entry])}])
                                           priming)]))
                                turn-data)))
-                     (catch Exception _ nil)))
-            universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
-            resolved (ctx-engine/supersede-summaries
-                       (ctx-engine/expand-through (or summaries []) universe (map :turn turn-data)))
-            ;; A whole-turn fold removes turn T's Q/A recap only when a later
-            ;; turn issued it and therefore saw T's completed answer. A fold issued
-            ;; during T may collapse settled results but cannot summarize the answer
-            ;; produced afterward. Canonical fold intents always carry issued_turn.
-            covering-summary (fn [{:keys [turn]}]
-                               (last (filter (fn [summary]
-                                               (let [issued-turn (get summary "issued_turn")]
-                                                 (and (contains? (set (get summary "turns")) turn)
-                                                      (integer? issued-turn)
-                                                      (> (long issued-turn) (long turn)))))
-                                             resolved)))]
+                     (catch Exception _ nil)))]
 
         (some->>
           (reduce
@@ -2321,7 +2341,7 @@
   (try
     (when-let [session-id (:session-id environment)]
       (let [db (:db-info environment)
-            turns (or (persistance/db-list-session-turns db session-id) [])
+            turns (or (persistance/db-list-session-turns-meta db session-id) [])
             current-id (str current-turn-id)
             prior (reverse (remove #(= (str (:id %)) current-id) turns))]
 
@@ -3335,13 +3355,13 @@
   (or (:iteration-scope rec) (some iter-of-scope (keep :scope (:forms-vec rec)))))
 
 (defn- apply-summaries
-  "Wire-only rewrite of `trailer-iters` applying `fold_session` intents at
+  "Compact `trailer-iters` using `fold_session` intents, releasing covered payloads at
    iteration granularity. A summary carries concrete `scopes`, an optional
    `gist`, and its owning `at_turn`; a gist-less intent is a drop. Range intents
    are resolved by `expand-through` against the trailer's iteration scopes.
 
    Every covered iteration collapses: its output and assistant/tool-result pair
-   leave the wire. The earliest covered iteration receives one synthetic form
+   leave memory as well as the wire. The earliest covered iteration receives one synthetic form
    containing the gist or a dropped marker. Pure and deterministic; persisted
    iteration records are untouched. Real compaction, not presentation."
   [trailer-iters summaries]
@@ -3397,34 +3417,32 @@
             summaries)]
 
       (vec
-        (map-indexed (fn [i [pos rec]]
-                       (let [collapsed?
-                             (contains? summarized (iter-scope-of rec))
+        (map-indexed
+          (fn [i [pos rec]]
+            (let [collapsed?
+                  (contains? summarized (iter-scope-of rec))
 
-                             gists
-                             (get anchors i)
+                  gists
+                  (get anchors i)
 
-                             gist-forms
-                             (when gists
-                               (mapv (fn [g]
-                                       {:scope :summary
-                                        :summary? true
-                                        :summary-gist (:gist g)
-                                        :summary-drop? (:drop? g)
-                                        :summary-iters (:summary-iters g)
-                                        :summary-note (:note g)})
-                                     gists))]
+                  gist-forms
+                  (when gists
+                    (mapv (fn [g]
+                            {:scope :summary
+                             :summary? true
+                             :summary-gist (:gist g)
+                             :summary-drop? (:drop? g)
+                             :summary-iters (:summary-iters g)
+                             :summary-note (:note g)})
+                          gists))]
 
-                         [pos
-                          (cond-> rec
-                            collapsed?
-                            (assoc :collapsed?
-                              true :forms-vec
-                              [])
-
-                            gist-forms
-                            (assoc :forms-vec (vec gist-forms)))]))
-                     trailer-iters)))))
+              [pos
+               (cond-> (if collapsed?
+                         {:iteration-scope (iter-scope-of rec) :collapsed? true :forms-vec []}
+                         rec)
+                 gist-forms
+                 (assoc :forms-vec (vec gist-forms)))]))
+          trailer-iters)))))
 
 (defn- error->display
   "LLM-legible rendering of a form `:error` for the model wire. The human
@@ -3770,17 +3788,17 @@
    was recorded for the human, and its bytes are not this model's business."
   [attachment]
   (when-not (attachments/hidden-from-model? attachment)
-    (let [wired (attachments/wire-image attachment)]
-      (when (:base64 wired) wired))))
+    (let [stored
+          (if-let [db (::attachment-db attachment)]
+            (persistance/db-read-attachment db (:id attachment))
+            attachment)
 
-(defn- iteration-wired-images
-  "Every IMAGE a prior iteration's tool calls produced (matplotlib figures,
-   `attach`ed images, plus anything `show_attachment` re-queued),
-   each already across the send-time gate (see `wire-image-attachment`) and so
-   carrying verified pixels in a container the wire accepts."
-  [iter-rec]
-  (vec (keep wire-image-attachment
-             (concat (:attachments iter-rec) (:reinspect-attachments iter-rec)))))
+          wired
+          (some-> stored
+                  attachment-storage/hydrate
+                  attachments/wire-image)]
+
+      (when (:base64 wired) wired))))
 
 (def ^:private max-replay-image-bytes
   "Base64 budget for ALL produced images replayed in ONE request.
@@ -3809,28 +3827,43 @@
    is worse than a large one. `:collapsed?` iterations are skipped outright:
    `fold_session` already removed their whole pair.
 
-   Pure. Returns `{pos {:images [...] :dropped [...]}}` keyed by trailer
+   Read only budget-selected image payloads. Returns `{pos {:images [...] :dropped [...]}}` keyed by trailer
    position, so each iteration's verdict lands in ITS place in the transcript."
   [entries]
   (first
-    (reduce (fn [[plan used-bytes used-count] [pos iter-rec]]
-              (let [imgs (when-not (:collapsed? iter-rec) (iteration-wired-images iter-rec))]
-                (if (empty? imgs)
-                  [plan used-bytes used-count]
-                  (let [[kept dropped b c]
-                        (reduce (fn [[kept dropped b c] img]
-                                  (let [sz (long (count (str (:base64 img))))]
-                                    (if (or (zero? (long c))
-                                            (and (<= (+ (long b) sz) (long max-replay-image-bytes))
-                                                 (< (long c) (long max-replay-images))))
-                                      [(conj kept img) dropped (+ (long b) sz) (inc (long c))]
-                                      [kept (conj dropped img) b c])))
-                                [[] [] used-bytes used-count]
-                                imgs)]
-                    [(assoc plan pos {:images kept :dropped dropped}) b c]))))
-            [{} 0 0]
-            ;; newest first: recency wins the budget, distance pays for it
-            (reverse (vec entries)))))
+    (reduce
+      (fn [[plan used-bytes used-count] [pos iter-rec]]
+        (let [imgs (when-not (:collapsed? iter-rec)
+                     (filter #(and (not (attachments/hidden-from-model? %))
+                                   (str/starts-with? (str (:media-type %)) "image/"))
+                             (concat (:attachments iter-rec) (:reinspect-attachments iter-rec))))]
+          (if (empty? imgs)
+            [plan used-bytes used-count]
+            (let [[kept dropped b c]
+                  (reduce
+                    (fn [[kept dropped b c] img]
+                      (let [estimate (if (:base64 img)
+                                       (count (:base64 img))
+                                       (* 4 (quot (+ (long (or (:size img) 0)) 2) 3)))
+                            fits? (or (zero? (long c))
+                                      (and (<= (+ (long b) estimate) (long max-replay-image-bytes))
+                                           (< (long c) (long max-replay-images))))]
+
+                        (if-not fits?
+                          [kept (conj dropped (dissoc img :base64 ::attachment-db)) b c]
+                          (if-let [wired (wire-image-attachment img)]
+                            (let [sz (count (:base64 wired))]
+                              (if (or (zero? (long c))
+                                      (<= (+ (long b) sz) (long max-replay-image-bytes)))
+                                [(conj kept wired) dropped (+ (long b) sz) (inc (long c))]
+                                [kept (conj dropped (dissoc img :base64 ::attachment-db)) b c]))
+                            [kept dropped b c]))))
+                    [[] [] used-bytes used-count]
+                    imgs)]
+              [(assoc plan pos {:images kept :dropped dropped}) b c]))))
+      [{} 0 0]
+      ;; newest first: recency wins the budget, distance pays for it
+      (reverse (vec entries)))))
 
 (defn- attachment-recovery-label
   "How the model names a dropped image when asking for it back — its stored
@@ -4638,16 +4671,45 @@
 
 (defn- shared-cache-breakpoint-prefix-count
   "Message count through the last prior breakpoint contained in `shared-count`."
-  [messages shared-count]
+  [indexes shared-count]
   (last (keep (fn [i]
                 (when (< (long i) (long shared-count)) (inc (long i))))
-              (cache-breakpoint-indexes messages))))
+              indexes)))
 
-(defn- message-weights
-  "Serialized size of each message — the proportional stand-in for the
-   per-message token counts no provider reports."
-  [messages]
-  (mapv #(count (pr-str %)) messages))
+(def ^:private PROMPT_CACHE_ROUTE_LIMIT 8)
+
+(def ^:private PROMPT_CACHE_MESSAGE_LIMIT 4096)
+
+(defn- message-cache-data
+  "Fingerprint messages without retaining their payloads. Weak identity hints avoid
+   serializing unchanged live messages again; collection only costs a rehash."
+  [prior messages]
+  (let [data (mapv (fn [i message]
+                     (let [reference (get (:message-refs prior) i)]
+                       (if (and reference
+                                (identical? message (.get ^java.lang.ref.WeakReference reference)))
+                         [(get (:fingerprints prior) i) (get (:weights prior) i) reference]
+                         (let [rendered (pr-str message)]
+                           [(util/sha256-hex rendered) (count rendered)
+                            (java.lang.ref.WeakReference. message)]))))
+                   (range (count messages))
+                   messages)]
+    {:fingerprints (mapv first data)
+     :weights (mapv second data)
+     :message-refs (mapv #(nth % 2) data)}))
+
+(defn- compact-prompt-cache-entry
+  "Restore telemetry from a disk checkpoint without retaining request or answer text."
+  [entry]
+  (cond-> (select-keys entry [:input-tokens :at-ms :prompt-cache-context])
+    (<= (count (:messages entry)) (long PROMPT_CACHE_MESSAGE_LIMIT))
+    (merge (message-cache-data nil (:messages entry))
+           {:breakpoints (cache-breakpoint-indexes (:messages entry))})))
+
+(defn- bounded-prompt-cache-routes
+  "Bound compact samples while retaining stale denominators for expiry telemetry."
+  [routes]
+  (into {} (take-last (long PROMPT_CACHE_ROUTE_LIMIT) (sort-by (comp :at-ms val) routes))))
 
 (defn- common-prefix-count
   "How many leading messages two request vectors still share."
@@ -4699,7 +4761,7 @@
                 (long (or (:input-tokens prior) 0))
 
                 prior-messages
-                (:messages prior)
+                (:fingerprints prior)
 
                 prior-weights
                 (:weights prior)
@@ -4707,12 +4769,11 @@
                 same-context?
                 (same-prompt-cache-context? (:prompt-cache-context prior) prompt-cache-context)
 
-                prefix
-                (if same-context? (common-prefix-count prior-messages messages) 0)
+                data
+                (message-cache-data (when same-context? prior) messages)
 
-                weights
-                (into (into [] (take prefix) prior-weights)
-                      (message-weights (subvec messages prefix)))
+                prefix
+                (if same-context? (common-prefix-count prior-messages (:fingerprints data)) 0)
 
                 exact?
                 (and same-context? (pos? prefix) (= prefix (count prior-messages)))
@@ -4727,7 +4788,7 @@
                 (+ fixed-weight message-weight)
 
                 cache-prefix-count
-                (long (or (shared-cache-breakpoint-prefix-count prior-messages prefix) 0))
+                (long (or (shared-cache-breakpoint-prefix-count (:breakpoints prior) prefix) 0))
 
                 prefix-message-weight
                 (double (reduce + 0 (take cache-prefix-count prior-weights)))
@@ -4773,12 +4834,13 @@
 
             (vreset! sample
                      {:reusable-tokens reusable :continuity continuity :reuse-kind reuse-kind})
-            (assoc routes
-              route {:messages messages
-                     :weights weights
-                     :input-tokens input
-                     :at-ms at-ms
-                     :prompt-cache-context prompt-cache-context}))))
+            (bounded-prompt-cache-routes
+              (assoc routes
+                route (cond-> {:input-tokens input
+                               :at-ms at-ms
+                               :prompt-cache-context prompt-cache-context}
+                        (<= (count messages) (long PROMPT_CACHE_MESSAGE_LIMIT))
+                        (merge data {:breakpoints (cache-breakpoint-indexes messages)})))))))
       @sample)))
 
 (defn- current-session-summaries
@@ -4841,34 +4903,28 @@
                       :msg "could not restore the provider prefix checkpoint"})
            nil))))
 
-(defn- mark-prompt-cache-turn-complete!
-  "Attach one accepted turn boundary to the exact final request for ROUTE.
-
-   The request itself was recorded by `note-prompt-cache-request!`. Completion is
-   marked only after the turn outcome persists, so a cancelled, rejected, or
-   racing terminal can never become the next turn's conversational prefix."
-  [history-atom provider model turn-position summaries stable-message-count assistant-message]
-  (when (and history-atom
-             provider
-             (some? model)
+(defn- completed-prompt-cache-entry
+  "Build a transient exact checkpoint after the terminal outcome is accepted.
+   Neither the request nor completed answer is attached to live route history."
+  [entry messages turn-position summaries stable-message-count assistant-message]
+  (when (and entry
+             (seq messages)
              (integer? turn-position)
              (integer? stable-message-count)
              (map? assistant-message))
-    (let [route [provider (str model)]]
-      (swap! history-atom update
-        route
-        (fn [entry]
-          (if (seq (:messages entry))
-            (assoc entry
-              :completed-turn {:turn-position (long turn-position)
-                               :summaries summaries
-                               :stable-message-count (long stable-message-count)
-                               :assistant-message assistant-message})
-            entry))))))
+    (assoc (select-keys entry [:weights :input-tokens :at-ms :prompt-cache-context])
+      :messages (vec messages)
+      :weights (if (= (count messages) (count (:weights entry)))
+                 (:weights entry)
+                 (mapv #(count (pr-str %)) messages))
+      :completed-turn {:turn-position (long turn-position)
+                       :summaries summaries
+                       :stable-message-count (long stable-message-count)
+                       :assistant-message assistant-message})))
 
 (defn- persist-prompt-cache-state!
   "Best-effort overwrite of the one restart-safe exact-prefix checkpoint."
-  [environment provider model]
+  [environment provider model completion]
   (when (and (:db-info environment)
              (:session/state-id environment)
              (:prompt-cache-history-atom environment)
@@ -4878,7 +4934,12 @@
           [provider (str model)]
 
           entry
-          (get @(:prompt-cache-history-atom environment) route)
+          (completed-prompt-cache-entry (get @(:prompt-cache-history-atom environment) route)
+                                        (:messages completion)
+                                        (:turn-position completion)
+                                        (:summaries completion)
+                                        (:stable-message-count completion)
+                                        (:assistant-message completion))
 
           standing-ctx
           (some-> (:standing-ctx-atom environment)
@@ -4903,11 +4964,10 @@
    accepted assistant answer and this turn's user message. Same route, adjacent
    turn, fresh cache residency, unchanged fold ledger, and an identical stable
    system prefix are all required; canonical recap assembly owns every miss."
-  [history-atom provider model prompt-cache-context turn-position summaries stable-messages
-   turn-messages]
-  (when (and history-atom provider (some? model) (integer? turn-position))
+  [state provider model prompt-cache-context turn-position summaries stable-messages turn-messages]
+  (when (and state provider (some? model) (integer? turn-position))
     (let [entry
-          (get @history-atom [provider (str model)])
+          (when (= [provider (str model)] (:route state)) (:entry state))
 
           completed
           (:completed-turn entry)
@@ -7876,7 +7936,7 @@
         (get history [provider (str model)])
 
         prior
-        (:messages entry)
+        (:fingerprints entry)
 
         input
         (:input-tokens entry)
@@ -7891,7 +7951,13 @@
         (long (count-messages model []))]
 
     (fn [messages]
-      (if-some [tail (when anchored? (session-message-suffix prior messages))]
+      (if-some [tail (when (and anchored?
+                                (<= (count prior) (count messages))
+                                (= prior
+                                   (:fingerprints (message-cache-data
+                                                    entry
+                                                    (subvec (vec messages) 0 (count prior))))))
+                       (subvec (vec messages) (count prior)))]
         (+ (long input) (- (long (count-messages model tail)) priming))
         (long (count-messages model messages))))))
 
@@ -8070,7 +8136,82 @@
                                        (get-in state [:council :publications]))))
            (finally (ctx-loop/swap-turn-state! environment detach))))))
 
-(defn iteration-loop
+(defn- seed-trailer-iters
+  "Select scopes before reading prior-turn bodies; keep artifacts as disk metadata."
+  [environment session-turn-id summaries]
+  (when-let [session-id (:session-id environment)]
+    (let [db (:db-info environment)
+          turns (remove #(= (str (:id %)) (str session-turn-id))
+                  (persistance/db-list-session-turns-meta db session-id))
+          history (provider-history-metadata db (map :id turns))
+          metadata (:iterations history)
+          turns (remove #(contains? (:local-turn-ids history) (str (:id %))) turns)
+          entries (into []
+                        (mapcat (fn [turn]
+                                  (for [it (get metadata (str (:id turn)))
+                                        :when (= :done (:status it))]
+
+                                    [(str (:id it))
+                                     {:iteration-id (:id it)
+                                      :iteration-scope (str "t" (:position turn)
+                                                            "/i" (:position it))
+                                      :llm-provider (:provider it)
+                                      :llm-model (:model it)
+                                      :cross-turn/turn-status (:status turn)
+                                      :preserved-thinking/replay? false}])))
+                        turns)
+          compacted (apply-summaries entries summaries)
+          visible (remove (comp :collapsed? second) compacted)
+          incomplete-ids (keep (fn [[_ rec]]
+                                 (when (terminal-incomplete-turn-status? (:cross-turn/turn-status
+                                                                           rec))
+                                   (:iteration-id rec)))
+                               visible)
+          bodies (persistance/db-list-iterations db incomplete-ids)
+          artifacts (persistance/db-list-iterations-attachments-meta
+                      db
+                      (map (comp :iteration-id second) visible))]
+
+      (mapv (fn [[pos rec]]
+              (if (:collapsed? rec)
+                [pos rec]
+                (let [body (get bodies (str (:iteration-id rec)))
+                      slash? (user-slash-iteration? body)]
+
+                  [pos
+                   (cond-> (assoc rec
+                             :attachments (mapv #(assoc % ::attachment-db db)
+                                                (get artifacts (str (:iteration-id rec)))))
+                     (and body (not slash?))
+                     (assoc :forms-vec (:forms body)))])))
+            compacted))))
+
+(defn- store-trace!
+  "Append one exact trace entry to the turn-local disk journal; retain only its offset."
+  [^java.io.RandomAccessFile journal entry]
+  (let [offset (.length journal)]
+    (.seek journal offset)
+    (nippy/freeze-to-out! journal entry)
+    offset))
+
+(defn- read-trace
+  [^java.io.RandomAccessFile journal entry]
+  ;; The terminal entry never becomes carry: preserve it directly, including native
+  ;; terminal diagnostics that can contain live callbacks and cannot be serialized.
+  (if (integer? entry) (do (.seek journal (long entry)) (nippy/thaw-from-in! journal)) entry))
+
+(defn- with-trace-store
+  "Keep trace bodies on disk until the terminal response needs its transient snapshot."
+  [f]
+  (let [path (java.nio.file.Files/createTempFile "vis-turn-trace-"
+                                                 ".bin"
+                                                 (make-array java.nio.file.attribute.FileAttribute
+                                                             0))]
+    (try (with-open [journal (java.io.RandomAccessFile. (.toFile path) "rw")]
+           (update (f journal) :trace #(mapv (partial read-trace journal) %)))
+         (finally (java.nio.file.Files/deleteIfExists path)))))
+
+(defn- iteration-loop*
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
   [environment user-request
@@ -8078,7 +8219,8 @@
            ;; The limit feeds pressure hints and the pre-request budget gate;
            ;; canonical history itself is never trimmed.
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
-           reasoning-effort turn-features workspace-overrides]}]
+           reasoning-effort turn-features workspace-overrides]
+    trace-store ::trace-store}]
   (let [system-prompt
         (str (voice-system-prompt system-prompt turn-features)
              (when (goals/check-goal environment) (str "\n\n" goals/prompt)))
@@ -8353,7 +8495,8 @@
         (session-model/model-of (:db-info environment) (:session-id environment))
 
         resumed-message-base
-        (resumable-prompt-message-base (:prompt-cache-history-atom environment)
+        (resumable-prompt-message-base (load-prompt-cache-state (:db-info environment)
+                                                                (:session/state-id environment))
                                        (:provider initial-resolved-model)
                                        (:name initial-resolved-model)
                                        initial-prompt-cache-context
@@ -8374,6 +8517,12 @@
         ;; Transport folds survive subsequent iterations without changing the semantic ledger.
         emergency-summaries-atom
         (atom [])
+
+        compact-trailer
+        (fn [entries]
+          (apply-summaries entries
+                           (into @emergency-summaries-atom
+                                 (current-session-summaries environment))))
 
         initial-messages
         (:messages @message-base-atom)
@@ -8593,74 +8742,14 @@
     ;; Archive hot symbols only after a successful answer. Seed the trailer from prior turns,
     ;; but never replay their provider-native reasoning into a new user turn.
     (let [seeded-trailer-iters
-          (try
-            (when-let [session-id (:session-id environment)]
-              (let [d (:db-info environment)
-                    queries (persistance/db-list-session-turns d session-id)
-                    current-turn-id-str (str session-turn-id)
-                    prior-turns (remove #(= (str (:id %)) current-turn-id-str) queries)
-                    iterations-by-turn
-                    (persistance/db-list-session-turns-iterations d (map :id prior-turns))
-                    ;; Drop CURRENT turn rows (defensive: they should not
-                    ;; exist yet at seed time, but a restart/recover path
-                    ;; could leave partial rows) and PRIOR-turn iterations
-                    ;; whose status is NOT :done. Erroring / running /
-                    ;; interrupted iterations are exploration noise that
-                    ;; poisons follow-up turns when replayed verbatim into a
-                    ;; later turn's trailer. Carry only the iterations that
-                    ;; landed a clean result; defs from earlier exploration
-                    ;; survive independently via the def restore path.
-                    iters (->> prior-turns
-                               (mapcat (fn [q]
-                                         (map #(assoc % :cross-turn/turn-status (:status q))
-                                              (get iterations-by-turn (str (:id q)) []))))
-                               (filter #(= :done (:status %)))
-                               ;; Slash commands are local control-plane events. Keep
-                               ;; their rows for transcript/audit, never provider replay.
-                               (remove user-slash-iteration?)
-                               (sort-by :created-at)
-                               vec)
-                    iters-atts
-                    ;; Batch-load OUTBOUND artifacts (figures/files) once for the
-                    ;; whole carry so a later-turn vision model can SEE prior
-                    ;; generated images — the bytes were persisted, never wired.
-                    (try (persistance/db-list-iterations-attachments d (keep :id iters))
-                         (catch Throwable _ {}))]
-
-                (mapv (fn [it]
-                        [(or (:position it) 1)
-                         {:thinking (:thinking it)
-                          ;; Cross-turn rows render scopes from the SAME forms-vec
-                          ;; the live path uses, so scopes stay consistent.
-                          :forms-vec (:forms it)
-                          :blocks [(cond-> {:position 0 :code (or (:code it) "")}
-                                     (contains? it :error)
-                                     (assoc :error (:error it)))]
-                          :llm-provider (:provider it)
-                          :llm-model (some-> (:model it)
-                                             str)
-                          ;; The provider's assistant envelope is NOT persisted: the
-                          ;; signature inside it replays only to the same provider,
-                          ;; inside the session that earned it, and
-                          ;; `compatible-preserved-thinking-trailer-iters` rejects a
-                          ;; reseeded iteration before replay regardless.
-                          ;; Its produced artifacts still ride to a vision model
-                          ;; (see the `replay? false` branch of `conversation-suffix`),
-                          ;; even though the assistant/thinking chain is dropped.
-                          :attachments (attachment-storage/hydrate-all (get iters-atts
-                                                                            (str (:id it))))
-                          ;; The owning turn's terminal status decides whether settled
-                          ;; outputs need continuity replay on later requests.
-                          :cross-turn/turn-status (:cross-turn/turn-status it)
-                          :preserved-thinking/replay? false}])
-                      iters)))
-            (catch Throwable t
-              (tel/log! {:level :warn
-                         :id ::cross-turn-trailer-seed-failed
-                         :data {:error (ex-message t)}
-                         :msg
-                         "Cross-turn carry seed failed; first iteration starts with an empty tape"})
-              nil))]
+          (try (seed-trailer-iters environment session-turn-id summaries-at-turn-start)
+               (catch Throwable t
+                 (tel/log!
+                   {:level :warn
+                    :id ::cross-turn-trailer-seed-failed
+                    :data {:error (ex-message t)}
+                    :msg "Cross-turn carry seed failed; first iteration starts with an empty tape"})
+                 nil))]
       (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :iteration-loop})]
         (loop [loop-state (merge {:iteration 0 :messages initial-messages :trace []}
                                  FRESH_ITER_CARRY
@@ -9295,10 +9384,10 @@
                         (recur (assoc loop-state
                                  :iteration (inc (long iteration))
                                  :empty-iteration-streak 0
-                                 :trailer-iters council-trailer
+                                 :trailer-iters (compact-trailer council-trailer)
                                  :messages (conj messages {:role "user" :content error-feedback})
                                  :llm-provider {:error llm-provider-error}
-                                 :trace (conj trace trace-entry))))))
+                                 :trace (conj trace (store-trace! trace-store trace-entry)))))))
                   (let [_ (note-prompt-cache-status! (:prompt-cache iteration-result))
                         _ (accumulate-usage! (:api-usage iteration-result))
                         ;; The provider that ACCEPTED the request re-enters routing, never
@@ -9564,6 +9653,7 @@
                               (assoc :prompt-cache-completion
                                      {:provider (:llm-provider iteration-result)
                                       :model (:llm-model iteration-result)
+                                      :messages (:llm-messages iteration-result)
                                       :turn-position (or turn-position 1)
                                       :summaries (current-session-summaries environment)
                                       :stable-message-count (count stable-prompt-messages)
@@ -9630,8 +9720,9 @@
                             (recur (merge loop-state
                                           {:iteration (inc (long iteration))
                                            :empty-iteration-streak empty-streak
-                                           :trailer-iters council-trailer
-                                           :trace (conj trace trace-entry)}))))
+                                           :trailer-iters (compact-trailer council-trailer)
+                                           :trace (conj trace
+                                                        (store-trace! trace-store trace-entry))}))))
                         (do
                           (log-stage! :iteration/stop
                                       iteration
@@ -9723,12 +9814,18 @@
                                          :attachment-count (count iteration-attachments)
                                          :final nil
                                          :done? false}))
-                            (recur (merge (dissoc loop-state :llm-provider)
-                                          {:iteration (inc (long iteration))
-                                           :empty-iteration-streak 0
-                                           :messages messages
-                                           :trace (conj trace trace-entry)
-                                           :trailer-iters next-recent}))))))))))))))))
+                            (recur (merge
+                                     (dissoc loop-state :llm-provider)
+                                     {:iteration (inc (long iteration))
+                                      :empty-iteration-streak 0
+                                      :messages messages
+                                      :trace (conj trace (store-trace! trace-store trace-entry))
+                                      :trailer-iters (compact-trailer next-recent)}))))))))))))))))
+
+(defn iteration-loop
+  "Run the core loop with disk-backed trace history, released on every exit path."
+  [environment user-request opts]
+  (with-trace-store #(iteration-loop* environment user-request (assoc opts ::trace-store %))))
 
 (defn- slash-ctx-for-env
   "Build the slash dispatch ctx from a turn env. Pure data; carries
@@ -10120,16 +10217,10 @@
 
         _prompt-cache-complete
         (when (and persisted? prompt-cache-completion)
-          (mark-prompt-cache-turn-complete! (:prompt-cache-history-atom env)
-                                            (:provider prompt-cache-completion)
-                                            (:model prompt-cache-completion)
-                                            (:turn-position prompt-cache-completion)
-                                            (:summaries prompt-cache-completion)
-                                            (:stable-message-count prompt-cache-completion)
-                                            (:assistant-message prompt-cache-completion))
           (persist-prompt-cache-state! env
                                        (:provider prompt-cache-completion)
-                                       (:model prompt-cache-completion)))]
+                                       (:model prompt-cache-completion)
+                                       prompt-cache-completion))]
 
     (-> result
         (dissoc :prompt-cache-completion)
@@ -11758,15 +11849,13 @@
                   ;; Codex owns one explicit Responses WebSocket/cursor per Vis environment.
                   ;; The socket opens lazily on the first Codex iteration and is closed with env.
                   :llm-session-atom (atom nil)
-                  ;; Exact full-request baselines per provider/model. The next successful
-                  ;; call can name how many PRIOR tokens were genuinely reusable instead
-                  ;; of dividing cache reads by new tool output that never had a chance.
-                  ;; One fresh accepted terminal survives process restart; only its latest
-                  ;; route is stored, keeping persistence linear rather than per-turn.
-                  :prompt-cache-history-atom (atom (if-let [route (:route
-                                                                    persisted-prompt-cache-state)]
-                                                     {route (:entry persisted-prompt-cache-state)}
-                                                     {}))
+                  ;; Compact fingerprints and weights support reuse telemetry without
+                  ;; retaining full requests. Exact accepted prefixes live in the single
+                  ;; disk checkpoint and are read only for cross-turn restoration.
+                  :prompt-cache-history-atom
+                  (atom (if-let [route (:route persisted-prompt-cache-state)]
+                          {route (compact-prompt-cache-entry (:entry persisted-prompt-cache-state))}
+                          {}))
                   :session-title-atom session-title-atom
                   :extensions (atom [])
                   :active-extensions (atom []))]

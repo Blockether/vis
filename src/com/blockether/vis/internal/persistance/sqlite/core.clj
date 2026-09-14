@@ -4176,6 +4176,51 @@
         []))
     []))
 
+(defn db-list-session-turns-meta
+  "Payload-free latest turn metadata in the same state-chain order as db-list-session-turns.
+   Returns identity, position, status, creation time and request kind only."
+  [db-info session-id]
+  (if (and (ds db-info) session-id)
+    (let [state-ids
+          (session-state-chain db-info session-id)
+
+          state-rank
+          (zipmap state-ids (range))]
+
+      (if (seq state-ids)
+        (mapv (fn [row]
+                {:id (->uuid (:id row))
+                 :position (:position row)
+                 :status (->kw-back (:status row))
+                 :created-at (->date (:soul_created_at row))
+                 :request-kind (->kw-back (:request_kind row))})
+              (sort-by (fn [row]
+                         [(get state-rank (:session_state_id row) Long/MAX_VALUE)
+                          (or (:position row) 0) (or (:soul_created_at row) 0)])
+                       (query! db-info
+                               (-> (session-turn-soul+state-query [:in :qs.session_state_id
+                                                                   state-ids])
+                                   (assoc :select [:qs.id :qs.session_state_id :qs.position
+                                                   :qs.request_kind
+                                                   [:qs.created_at :soul_created_at] :qst.status])
+                                   (dissoc :left-join)))))
+        []))
+    []))
+
+(defn db-read-session-turn
+  "Read one latest canonical turn belonging to the session's state chain, or nil.
+   The ID predicate is applied in SQL; no other turn payload is loaded."
+  [db-info session-id turn-id]
+  (when (and (ds db-info) session-id turn-id)
+    (let [state-ids (session-state-chain db-info session-id)]
+      (when (seq state-ids)
+        (some->> (query-one! db-info
+                             (-> (session-turn-soul+state-query [:and [:= :qs.id (str turn-id)]
+                                                                 [:in :qs.session_state_id
+                                                                  state-ids]])
+                                 (update :select conj :qst.prior_outcome)))
+                 ((attach-prior-outcome row->turn)))))))
+
 (defn- fork-activity-histories!
   "Copy the durable Activity histories that `forms` (one copied iteration's stored
    form vector) reference, under `new-soul-id`, with fresh history ids. Returns
@@ -4831,6 +4876,83 @@
                                           (row-routing-summary row (get traces (:id row) [])))))
                 (zipmap ids (repeat []))
                 rows))
+      {})))
+
+(def ^:private iteration-read-batch-size
+  "Bound SQL parameters while selecting history before materializing payloads."
+  500)
+
+(defn db-list-session-turns-iterations-meta
+  "Byte-free latest-state iteration metadata, keyed by string turn ID.
+
+   Read identity, position, status, creation time and actual provider/model.
+   A SQL-only slash-prefix check marks local-command candidates for exact tag verification.
+   Never return code or select/thaw forms, thinking, council data or attachments. Nil
+   IDs are ignored, duplicates read once, and missing/empty turns map to [].
+   Queries bind at most 500 turn IDs each; rows remain position-ordered per turn."
+  [db-info session-turn-ids]
+  (let [ids (into [] (comp (keep ->ref) (distinct)) session-turn-ids)]
+    (if (and (ds db-info) (seq ids))
+      (reduce (fn [result batch]
+                (reduce (fn [result row]
+                          (update result
+                                  (:turn_id row)
+                                  conj
+                                  (cond-> {:id (->uuid (:id row))
+                                           :position (:position row)
+                                           :status (->kw-back (:status row))
+                                           :created-at (->date (:created_at row))
+                                           :local-command-candidate?
+                                           (= 1 (long (or (:local_command_candidate row) 0)))}
+                                    (some? (:llm_actual_provider row))
+                                    (assoc :provider (->kw-back (:llm_actual_provider row)))
+
+                                    (some? (:llm_actual_model row))
+                                    (assoc :model (:llm_actual_model row)))))
+                        result
+                        (query-sql!
+                          db-info
+                          (into [(str "SELECT i.id, i.position, i.status, i.created_at, "
+                                      "i.llm_actual_provider, i.llm_actual_model, "
+                                      "CASE WHEN i.llm_actual_provider IS NULL AND "
+                                      "ltrim(i.code, char(9)||char(10)||char(13)||' ') LIKE '/%' "
+                                      "THEN 1 ELSE 0 END AS local_command_candidate, "
+                                      "s.session_turn_soul_id AS turn_id "
+                                      "FROM session_turn_iteration i "
+                                      "JOIN session_turn_state s ON s.id = i.session_turn_state_id "
+                                      "WHERE s.session_turn_soul_id IN ("
+                                      (str/join "," (repeat (count batch) "?"))
+                                      ") AND s.version = (SELECT MAX(latest.version) "
+                                      "FROM session_turn_state latest "
+                                      "WHERE latest.session_turn_soul_id = s.session_turn_soul_id) "
+                                      "ORDER BY i.position ASC")]
+                                batch))))
+              (zipmap ids (repeat []))
+              (partition-all iteration-read-batch-size ids))
+      {})))
+
+(defn db-list-iterations
+  "Load only the explicitly selected iteration payloads, keyed by string ID.
+
+   Exact IDs may address previous retry states. Nil, duplicate and missing IDs
+   add no rows; nil datasource returns {}. Payloads use the canonical iteration
+   decoder, without fetching attachment bytes or routing-event history. Each
+   query binds at most 500 IDs. Select metadata before calling this reader."
+  [db-info iteration-ids]
+  (let [ids (into [] (comp (keep ->ref) (distinct)) iteration-ids)]
+    (if (and (ds db-info) (seq ids))
+      (reduce (fn [result batch]
+                (reduce (fn [result row]
+                          (assoc result (:id row) (row->iteration row)))
+                        result
+                        (query-sql!
+                          db-info
+                          (into [(str "SELECT i.* FROM session_turn_iteration i WHERE i.id IN ("
+                                      (str/join "," (repeat (count batch) "?"))
+                                      ")")]
+                                batch))))
+              {}
+              (partition-all iteration-read-batch-size ids))
       {})))
 
 (defn db-latest-turn-request-usage

@@ -91,6 +91,55 @@
   ([window] {:id "log" :type :log :label "Output" :lines [] :window-lines window}))
 
 (defdescribe
+  retained-structure-test
+  (it "retains only the visible log window and its corresponding tones"
+      (let [v
+            (reduce (fn [v chunk]
+                      (patched v {:op :append :node-id "log" :lines (mapv str chunk) :tone :warn}))
+                    (view (log-node 50))
+                    (partition-all 100 (range 20000)))
+
+            log
+            (node v "log")]
+
+        (expect (= (mapv str (range 19950 20000)) (:lines log)))
+        (expect (= (vec (repeat 50 :warn)) (:line-tones log)))
+        (expect (= 20000 (:total-lines log)))
+        ;; SubVector equality hides its retained prefix; require independent storage.
+        (expect (instance? clojure.lang.PersistentVector (:lines log)))
+        (expect (instance? clojure.lang.PersistentVector (:line-tones log)))))
+  (it "bounds an added log before another patch arrives"
+      (let [v (patched (view)
+                       {:op :add-node
+                        :node-spec (assoc (log-node 2) :lines (mapv str (range 40)))})]
+        (expect (= ["38" "39"] (:lines (node v "log"))))
+        (expect (= 40 (:total-lines (node v "log"))))))
+  (it "releases removed nodes, including the last sibling"
+      (let [v
+            (view (log-node)
+                  (assoc (log-node)
+                    :id "removed"
+                    :lines ["old payload"]))
+
+            remaining
+            (patched v {:op :remove-node :node-id "removed"})]
+
+        (expect (= ["log"] (mapv :id (:nodes remaining))))
+        (expect (instance? clojure.lang.PersistentVector (:nodes remaining)))))
+  (it "copies budgeted picture collections instead of retaining the omitted items"
+      (let [v
+            (view (assoc (log-node 50) :lines (mapv str (range 50)))
+                  (assoc (table-node :insertion) :rows (mapv #(row (str %) "row" "1") (range 8))))
+
+            picture
+            (:view (live/picture v {:log-tail-lines 2 :table-rows 2}))]
+
+        (expect (= ["48" "49"] (:lines (node picture "log"))))
+        (expect (= 2 (count (:rows (node picture "t")))))
+        (expect (instance? clojure.lang.PersistentVector (:lines (node picture "log"))))
+        (expect (instance? clojure.lang.PersistentVector (:rows (node picture "t")))))))
+
+(defdescribe
   materializer-test
   (it "refuses an op that names a node the view has not got, listing the ones it has"
       (let [v
@@ -684,7 +733,7 @@
         (expect (= [:ok :warn] (mapv :tone (:rows table))))))
   (it "repaints a truncated log exactly, because the count of what scrolled past is stamped"
       (let [{:keys [md again back]}
-            (repainted (view (assoc (log-node) :lines (mapv #(str "line " %) (range 300)))))
+            (repainted (view (assoc (log-node 300) :lines (mapv #(str "line " %) (range 300)))))
 
             node
             (first (:nodes (:view back)))]

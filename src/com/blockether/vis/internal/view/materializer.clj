@@ -190,6 +190,16 @@
   (let [dropped? (set item-ids)]
     (into [] (remove (comp dropped? :id)) existing)))
 
+(defn- trim-log-window
+  "Copy a log's visible tail so discarded lines and tones are no longer reachable."
+  [node]
+  (let [overflow (max 0 (- (count (:lines node)) (long (:window-lines node))))]
+    (if (pos? overflow)
+      (cond-> (update node :lines #(into [] (subvec % overflow)))
+        (:line-tones node)
+        (update :line-tones #(into [] (subvec % overflow))))
+      node)))
+
 (defn- stamped-log
   "A log node carrying `:total-lines` — how many lines its RECORD has, window
    included. Stamped by the engine so `… N earlier lines` is counted, never
@@ -210,12 +220,27 @@
     (seq (:fields node))
     (update :fields #(mapv stamped %))))
 
-(defn materialize
-  "The declared view as the materializer holds it. Only stamps: every log node
-   learns the size of its own record, so the first patch already knows what the
-   window is a window ONTO."
+(defn record-view
+  "Stamp the complete initial declaration before writing it to the journal.
+   This transient record includes every initial log line; use `materialize` for
+   the bounded state retained by a live view."
   [view]
   (update view :nodes #(mapv stamped %)))
+
+(defn- windowed-node
+  [node]
+  (cond-> node
+    (= :log (:type node))
+    trim-log-window
+
+    (seq (:fields node))
+    (update :fields #(mapv windowed-node %))))
+
+(defn materialize
+  "Stamp the declared view and keep only each log's visible window.
+   The complete declaration must be journaled before retaining this projection."
+  [view]
+  (update (record-view view) :nodes #(mapv windowed-node %)))
 
 (defn- checked-node
   "`node` once it still satisfies the declared contract, else the reason it does
@@ -287,19 +312,17 @@
                                (count items)
                                "; split it"))))
       (if (= :log (:type node))
-        (let [window (long (:window-lines node))
-              all (into (:lines node) items)
-              overflow (max 0 (- (count all) window))
+        (let [all (into (:lines node) items)
               styled? (or (contains? node :line-tones) (contains? op :tone))
               tones (when styled?
                       (into (or (:line-tones node) (vec (repeat (count (:lines node)) nil)))
                             (repeat (count items) (:tone op))))]
 
-          (cond-> (assoc node
-                    :lines (if (pos? overflow) (subvec all overflow) all)
-                    :total-lines (+ (long (:total-lines node)) (count items)))
-            styled?
-            (assoc :line-tones (if (pos? overflow) (subvec tones overflow) tones))))
+          (trim-log-window (cond-> (assoc node
+                                     :lines all
+                                     :total-lines (+ (long (:total-lines node)) (count items)))
+                             styled?
+                             (assoc :line-tones tones))))
         (update node k #(checked-count! node (upsert % items)))))))
 
 (defn- prune-selected
@@ -345,12 +368,12 @@
   "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
    next to the node the op named."
   [nodes idx node]
-  (into (conj (subvec nodes 0 (inc (long idx))) node) (subvec nodes (inc (long idx)))))
+  (into (conj (into [] (subvec nodes 0 (inc (long idx)))) node) (subvec nodes (inc (long idx)))))
 
 (defn- drop-at
   "`nodes` without the one at `idx`."
   [nodes idx]
-  (into (subvec nodes 0 (long idx)) (subvec nodes (inc (long idx)))))
+  (into (into [] (subvec nodes 0 (long idx))) (subvec nodes (inc (long idx)))))
 
 (defn- apply-add-node
   "The view with one more node — the shape changing while it runs, because a
@@ -360,7 +383,7 @@
    this way lands with everything inside it."
   [view {:keys [node-spec after]}]
   (let [node
-        (stamped (checked-node node-spec))
+        (windowed-node (stamped (checked-node node-spec)))
 
         max-nodes
         (long (:max-nodes spec/view-defaults))
@@ -784,7 +807,9 @@
                      (long log-tail-lines)
 
                      shown
-                     (if (> (count lines) tail) (subvec lines (- (count lines) tail)) lines)
+                     (if (> (count lines) tail)
+                       (into [] (subvec lines (- (count lines) tail)))
+                       lines)
 
                      behind
                      (- (long (or (:total-lines node) (count lines))) (count shown))]
@@ -802,7 +827,7 @@
                      (long table-rows)
 
                      shown
-                     (if (> (count rows) limit) (subvec rows 0 limit) rows)]
+                     (if (> (count rows) limit) (into [] (subvec rows 0 limit)) rows)]
 
                  (with-meta (-> node
                                 (assoc :rows shown
@@ -1192,7 +1217,7 @@
               (invalid-markdown! at "a log's code fence is never closed"))
 
           window
-          (subvec body 0 (long closing))
+          (into [] (subvec body 0 (long closing)))
 
           behind
           (long (or (counted-behind #"… (\d+) earlier lines.*" (get body (inc (long closing)))) 0))]

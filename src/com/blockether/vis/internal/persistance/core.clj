@@ -492,6 +492,10 @@
 
 (defdelegate db-list-session-turns [db-info session-ref])
 
+(defdelegate db-list-session-turns-meta [db-info session-ref])
+
+(defdelegate db-read-session-turn [db-info session-ref turn-ref])
+
 (defn db-session-turn-stats
   "Per-session turn aggregates. 1-arity: the whole store, `{soul-id-str
    {:turn-count n :latest-turn-at Date}}`. 2-arity: ONE session's stats
@@ -522,6 +526,10 @@
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 
 (defdelegate db-list-session-turns-iterations [db-info session-turn-ids])
+
+(defdelegate db-list-session-turns-iterations-meta [db-info session-turn-ids])
+
+(defdelegate db-list-iterations [db-info iteration-ids])
 
 (defdelegate db-latest-turn-request-usage [db-info session-turn-id])
 

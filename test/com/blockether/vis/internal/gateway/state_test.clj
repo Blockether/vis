@@ -3645,7 +3645,7 @@
                                                 (str/ends-with? (str (get event "block_id"))
                                                                 (str ":" iteration)))
                                        idx))
-                                   (:events (get @@#'state/registry sid)))))
+                                   (state/events-since sid 0))))
 
             idx-of
             (fn [type]
@@ -4446,7 +4446,7 @@
            ;; A watchdog force-cancel is one terminal failure, never a replay.
            (expect (= ["turn.failed" "queue.paused"] @events))
            (expect (= "failed" (get-in @registry [sid :turns "t1" :status])))
-           (expect (= "one" (get-in @registry [sid :turns "t1" :request])))
+           (expect (= "one" (get (state/get-turn sid "t1") "request")))
            (expect (some? (get-in @registry [sid :queue-paused])))
            ;; The later, distinct request is held for an explicit resume.
            (expect (= [] @launched))
@@ -4976,7 +4976,7 @@
                       {:status :ok :answer nil})]
         (#'state/run-turn! sid tid "hi" {}))
       (let [events
-            (:events (get @@#'state/registry sid))
+            (state/events-since sid 0)
 
             of-type
             (fn [type]

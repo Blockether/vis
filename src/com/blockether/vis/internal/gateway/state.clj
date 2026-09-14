@@ -34,6 +34,8 @@
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
+            [com.blockether.vis.internal.gateway.turn-archive :as turn-archive]
+            [com.blockether.vis.internal.gateway.event-store :as event-store]
             [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
@@ -217,6 +219,29 @@
   [sid tid]
   (get-in @registry [(sid-key sid) :turns tid]))
 
+(defn- read-turn-record
+  [turn]
+  (if (or (::archive turn) (::archive-error turn))
+    (merge (try (if-let [archive (::archive turn)]
+                  (turn-archive/read-turn archive)
+                  (throw (java.io.IOException. "Archive write failed")))
+                (catch Exception _
+                  (or (try (when-let [row (persistance/db-read-session-turn (lp/db-info)
+                                                                            (:session_id turn)
+                                                                            (:turn_id turn))]
+                             (when (not= :running (:status row))
+                               {:request (:user-request row)
+                                :content (:content row)
+                                :error (:error row)
+                                :council (:council row)}))
+                           (catch Exception _ nil))
+                      {:error "Terminal turn history is unavailable"
+                       :content [(content/error "history_unavailable"
+                                                "Terminal turn history is unavailable"
+                                                true)]})))
+           (dissoc turn ::archive ::run-key ::archive-error))
+    turn))
+
 (defn- council-state
   [entry]
   (cond (some (fn [[_ turn]]
@@ -290,6 +315,70 @@
 
 (defn- update-turn! [sid tid f] (update-session! sid #(update-in % [:turns tid] f)))
 
+(defn- archive-terminal-turn!
+  "Persist the gateway-only projection, then release execution inputs and hooks.
+   File I/O and callback disposal must never run inside the registry CAS."
+  [sid tid patch]
+  (when-let [turn (turn-record sid tid)]
+    (let [projection (apply dissoc
+                       (merge (read-turn-record turn) patch)
+                       [:cancel-token :messages :engine-opts :extra-body :turn-features
+                        :reasoning-default ::cancel-disposer])
+          archive (try (turn-archive/write! projection)
+                       (catch Exception e
+                         (tel/log!
+                           {:level :error
+                            :id ::terminal-archive-failed
+                            :data {:session-id sid :turn-id tid :error-class (.getName (class e))}})
+                         nil))
+          displaced (volatile! nil)]
+
+      (update-existing-session!
+        sid
+        (fn [entry]
+          (let [current (get-in entry [:turns tid])
+                same-run? (and current
+                               (not (::run-key current))
+                               (identical? (:cancel-token turn) (:cancel-token current)))]
+
+            (vreset! displaced (when same-run? current))
+            (if same-run?
+              (cond-> (assoc-in entry
+                        [:turns tid]
+                        (assoc (select-keys (merge current patch)
+                                            [:turn_id :session_id :status :idempotency_key
+                                             :event_start_seq :started_at :queued_at :completed_at
+                                             :cancelling_at :request_kind])
+                          ::archive archive
+                          ::archive-error (nil? archive)
+                          ::run-key (or (::run-key current)
+                                        (cancellation/cancellation-atom (:cancel-token current))
+                                        ::untokened-turn)))
+                (= tid (:current-turn entry))
+                (assoc :current-turn nil))
+              entry))))
+      (if-let [previous @displaced]
+        (do (when-let [dispose (::cancel-disposer previous)]
+              (dispose))
+            (when-let [old (::archive previous)]
+              (turn-archive/delete! old)))
+        (when archive (turn-archive/delete! archive))))))
+
+(defn- install-turn-cancel-disposer!
+  "Dispose a late registration immediately if completion won the launch race."
+  [sid tid cancel-token dispose]
+  (let [installed? (volatile! false)]
+    (update-existing-session!
+      sid
+      (fn [entry]
+        (let [turn (get-in entry [:turns tid])
+              live?
+              (and turn (not (::run-key turn)) (identical? cancel-token (:cancel-token turn)))]
+
+          (vreset! installed? live?)
+          (if live? (assoc-in entry [:turns tid ::cancel-disposer] dispose) entry))))
+    (when-not @installed? (dispose))))
+
 (defn- put-session! [sid entry] (update-session! sid (constantly entry)))
 
 (council/install-runtime!
@@ -308,14 +397,19 @@
 (defn- drop-session!
   "Forget `sid`'s registry record entirely."
   [sid]
-  (let [sid
-        (sid-key sid)
+  (let [lock (event-store/lock-for sid)]
+    (locking lock
+      (let [sid (sid-key sid)
+            [before after] (swap-vals! registry dissoc sid)]
 
-        [before after]
-        (swap-vals! registry dissoc sid)]
-
-    (retire-council-input! sid before after))
-  nil)
+        (retire-council-input! sid before after)
+        (event-store/discard-replaced! (get-in before [sid :events]) [] nil)
+        (doseq [turn (vals (get-in before [sid :turns]))]
+          (when-let [dispose (::cancel-disposer turn)]
+            (dispose))
+          (when-let [archive (::archive turn)]
+            (turn-archive/delete! archive))))
+      nil)))
 
 (defn- drop-subscriber!
   "Unregister one SSE sink."
@@ -407,7 +501,10 @@
            floor
            (long (:evicted-through entry 0))]
 
-      (if (> (count ring) max-events)
+      (if (and (seq ring)
+               (or (> (count ring) max-events)
+                   (> (reduce + 0 (map #(long (::event-store/bytes % 0)) ring))
+                      event-store/*max-bytes*)))
         (recur (pop ring) (max floor (long (or (get (peek ring) "seq") 0))))
         (assoc entry
           :events ring
@@ -449,6 +546,33 @@
 
         (conj-ring (assoc entry :events events) event))
       entry)))
+
+(defn- retain-event
+  [entry descriptor store?]
+  (cond (::event-store/missing? descriptor) (assoc entry
+                                              :events clojure.lang.PersistentQueue/EMPTY
+                                              :evicted-through (long (get descriptor "seq")))
+        descriptor (-> (cond-> entry
+                         store?
+                         (conj-ring descriptor))
+                       (materialize-form-activity descriptor))
+        :else entry))
+
+(defn- read-replay!
+  "Read under the event lock. A damaged file invalidates the window, never a partial tail."
+  [sid cursor]
+  (let [entry (session-entry sid)]
+    (try (mapv event-store/read-event
+               (filter #(> (long (get % "seq")) (long (or cursor 0))) (:events entry)))
+         (catch Exception e
+           (update-session! sid
+                            #(assoc %
+                               :events clojure.lang.PersistentQueue/EMPTY
+                               :evicted-through (:next-seq entry 0)))
+           (event-store/discard-replaced! (:events entry) [] nil)
+           (throw (ex-info "Replay history is unavailable; reset the cursor"
+                           {:type ::replay-unavailable :floor (:next-seq entry 0)}
+                           e))))))
 
 (defn- fan-out!
   "Deliver `event` to every local SSE sink for `sid`. Runs on the APPENDING
@@ -514,80 +638,54 @@
    poison the appender or sibling subscribers."
   ([sid type payload] (append-event! sid type payload {:store? true}))
   ([sid type payload {:keys [store?]}]
-   (let [captured
-         (volatile! nil)
-
-         ;; Canonicalize the payload ONCE, OUTSIDE the swap!. `wire/canonical` is a
-         ;; FULL recursive walk of the payload, and tool results reach megabytes —
-         ;; while a `swap!` body is re-run from scratch on EVERY CAS retry. There is
-         ;; ONE `registry` atom for every session in the process, so concurrent
-         ;; appends (SSE fan-out, several live turns, the cross-process bus mirror)
-         ;; collide constantly: measured 15155 walks to append 2400 events — 84%
-         ;; of the work thrown away, 8x the wall time. Nothing in the stamp depends
-         ;; on `entry`, so only `seq` has to be decided inside the loop.
-         canonical-payload
+   ;; Serialize cursor assignment, disk publication, and local delivery. Disk I/O
+   ;; never occurs in a retryable registry update. Shared journals keep their own seq.
+   (let [canonical-payload
          (wire/canonical payload)
 
-         ;; Stamped once as well: a CAS retry must not drift the event's timestamp.
-         stamp-ts
-         (util/now-ms)
+         lock
+         (event-store/lock-for sid)
 
-         stamp-sid
-         (str sid)
+         event
+         (locking lock
+           (let [before
+                 (or (session-entry sid) (fresh-entry sid))
 
-         stamp-type
-         (wire/->wire type)]
+                 n
+                 (inc (long (:next-seq before 0)))
 
-     (update-session!
-       sid
-       (fn [entry]
-         (let [entry
-               (or entry (fresh-entry sid))
+                 event
+                 (gateway-contract/stamp-session-event canonical-payload
+                                                       (str sid)
+                                                       n
+                                                       (util/now-ms)
+                                                       (wire/->wire type))
 
-               n
-               (inc (long (:next-seq entry 0)))
+                 descriptor
+                 (when (or store?
+                           (and (= "block.activity" (get event "type")) (form-coordinate event)))
+                   (event-store/write-event! event))]
 
-               event
-               ;; The identity stamp is applied LAST and a payload can NEVER override
-               ;; it: `:session_id`, `:seq`, `:ts`, `:type` and `:schema` are facts
-               ;; of the RING this event is being appended to, not free payload
-               ;; fields. Both dedup guards on the wire key off that pair — the
-               ;; multiplexed SSE body's per-session `last-seqs` and every client's
-               ;; per-session cursor — so an event stamped with ANOTHER session's
-               ;; id while carrying THIS ring's seq taught both sides that the other
-               ;; session had already reached this (much higher) seq. Every later
-               ;; event of that session then looked "already seen" and was dropped:
-               ;; a live turn stopped streaming mid-flight and never delivered its
-               ;; terminal, leaving the channel spinning forever. Cross-session
-               ;; payloads carry their subject under their OWN key (see
-               ;; `broadcast-title-event!`'s `:titled_session_id`).
-               ;;
-               ;; The contract stamper owns these already-canonical spellings and
-               ;; applies them after the canonical payload. A key that merely CANONICALIZES
-               ;; onto a stamp key (`:session-id` -> `session_id`) therefore cannot spoof it.
-               (gateway-contract/stamp-session-event canonical-payload
-                                                     stamp-sid
-                                                     n
-                                                     stamp-ts
-                                                     stamp-type)]
+             (update-session! sid
+                              (fn [entry]
+                                (-> (assoc (or entry before) :next-seq
+                                           n :last-active
+                                           (util/now-ms))
+                                    (cond->
+                                      (and (= type "turn.started")
+                                           (get-in entry [:turns (:turn_id payload)]))
+                                      (assoc-in [:turns (:turn_id payload) :event_start_seq] n))
+                                    (retain-event descriptor store?))))
+             (event-store/discard-replaced! (:events before)
+                                            (:events (session-entry sid))
+                                            descriptor)
+             (fan-out! sid event)
+             (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+             event))]
 
-           (vreset! captured event)
-           (-> (cond-> (assoc entry
-                         :next-seq n
-                         :last-active (util/now-ms))
-                 (and (= type "turn.started") (get-in entry [:turns (:turn_id payload)]))
-                 (assoc-in [:turns (:turn_id payload) :event_start_seq] n)
-
-                 store?
-                 (conj-ring event))
-               (materialize-form-activity event)))))
-     (let [event @captured]
-       (fan-out! sid event)
-       ;; A turn id is single-use. Its only `turn.started` begins a fresh journal;
-       ;; Vis never re-queues or relaunches the failed request under that id.
-       (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
-       (run-event-taps! sid event)
-       event))))
+     ;; Observers can read other sessions; never call them under a replay lock.
+     (run-event-taps! sid event)
+     event)))
 
 (defn ingest-mirrored-event!
   "Deliver a FOREIGN gateway event (produced in another process, arriving via
@@ -614,47 +712,23 @@
    Ignores sessions this process has never touched (no local registry entry), so
    no state accrues for conversations nobody here is watching."
   [sid store? event]
-  (when (session-known? sid)
-    (let [type
-          (get event "type")
+  (let [lock (event-store/lock-for sid)]
+    (locking lock
+      (when-let [before (session-entry sid)]
+        (let [type (get event "type")
+              tid (get event "turn_id")
+              n (inc (long (:next-seq before 0)))
+              ev (assoc event "seq" n)
+              terminal? (contains? #{"turn.completed" "turn.failed" "turn.cancelled"} type)
+              descriptor (when (or store? (and (= "block.activity" type) (form-coordinate ev)))
+                           (event-store/write-event! ev))]
 
-          tid
-          (get event "turn_id")
-
-          terminal?
-          (contains? #{"turn.completed" "turn.failed" "turn.cancelled"} type)
-
-          ;; The registry's internal turn records are keyword-keyed engine
-          ;; state, so the string-keyed wire event is re-keyed at THIS ingress
-          ;; (the one place foreign wire data meets internal records).
-          term-patch
-          (-> (into {}
-                    (map (fn [[k v]]
-                           [(keyword k) v]))
-                    (dissoc event "type" "seq" "turn_id"))
-              (assoc :status (or (get event "status")
-                                 (if (= type "turn.failed") "failed" "completed"))))
-
-          captured
-          (volatile! nil)]
-
-      (update-session!
-        sid
-        (fn [entry]
-          (if entry
-            (let [n
-                  (inc (long (:next-seq entry 0)))
-
-                  ev
-                  (assoc event "seq" n)]
-
-              (vreset! captured ev)
+          (update-session!
+            sid
+            (fn [entry]
               (-> (cond-> (assoc entry
                             :next-seq n
                             :last-active (util/now-ms))
-                    store?
-                    (conj-ring ev)
-
                     (= type "turn.started")
                     (-> (assoc :current-turn tid)
                         (assoc-in [:turns tid]
@@ -663,33 +737,37 @@
                                    :status "running"
                                    :request (get event "request")
                                    :event_start_seq n
-                                   ;; Adopt the PRODUCER's canonical run-start
-                                   ;; clock — stamping mirror-local time here made
-                                   ;; a watcher in another process show a
-                                   ;; different elapsed than the producer.
                                    :started_at (or (get event "started_at") (util/now-ms))})
                         (update :turn-order
                                 (fn [order]
-                                  (if (some #{tid} order) order ((fnil conj []) order tid)))))
+                                  (if (some #{tid} order) order ((fnil conj []) order tid))))))
+                  (retain-event descriptor store?))))
+          (when (and terminal? tid)
+            (archive-terminal-turn! sid
+                                    tid
+                                    (assoc (into {}
+                                                 (map (fn [[k v]]
+                                                        [(keyword k) v]))
+                                                 (dissoc event "type" "seq" "turn_id"))
+                                      :status (or (get event "status")
+                                                  (case type
+                                                    "turn.failed"
+                                                    "failed"
 
-                    (and terminal? tid (get-in entry [:turns tid]))
-                    (update-in [:turns tid] merge term-patch)
+                                                    "turn.cancelled"
+                                                    "cancelled"
 
-                    (and terminal? (= tid (:current-turn entry)))
-                    (assoc :current-turn nil))
-                  (materialize-form-activity ev)))
-            entry)))
-      (when-let [ev @captured]
-        (fan-out! sid ev))))
+                                                    "completed")))))
+          (event-store/discard-replaced! (:events before) (:events (session-entry sid)) descriptor)
+          (fan-out! sid ev)))))
   nil)
 
 (defn- ensure-session-entry!
   "Make sure `sid` HAS a registry entry, so a mirror path that no-ops on an
    unknown session (`ingest-mirrored-event!`) can deliver into it."
   [sid]
-  (update-session! sid
-                   (fn [entry]
-                     (or entry (fresh-entry sid)))))
+  (let [fresh (or (session-entry sid) (fresh-entry sid))]
+    (update-session! sid #(or % fresh))))
 
 (defn- claim-hydrate!
   "Win the right to hydrate `sid`'s foreign turn — or don't, and move on.
@@ -748,14 +826,13 @@
   ;; before we snapshot replay from it.
   (ensure-session-entry! sid)
   (hydrate-foreign-turn! sid)
-  (let [replay (volatile! [])]
-    (update-session!
-      sid
-      (fn [entry]
-        (let [entry (or entry (fresh-entry sid))]
-          (vreset! replay (filterv #(> (long (get % "seq")) (long (or cursor 0))) (:events entry)))
-          (assoc-in entry [:subscribers sub-id] sink))))
-    @replay))
+  (let [lock (event-store/lock-for sid)]
+    (locking lock
+      ;; Forget may have won while hydration ran outside the replay lock.
+      (ensure-session-entry! sid)
+      (let [replay (read-replay! sid cursor)]
+        (update-session! sid #(assoc-in % [:subscribers sub-id] sink))
+        replay))))
 
 (defn unsubscribe! [sid sub-id] (drop-subscriber! sid sub-id) nil)
 
@@ -982,7 +1059,8 @@
    running turn's `turn.started` seq so its SSE reconnect can replay the WHOLE
    in-flight turn instead of only what happens after connect."
   [sid cursor]
-  (filterv #(> (long (get % "seq")) (long (or cursor 0))) (:events (session-entry sid) [])))
+  (let [lock (event-store/lock-for sid)]
+    (locking lock (read-replay! sid cursor))))
 
 (defn running-turn-count
   "Number of live turns currently owned by this gateway process. Used by the
@@ -1813,14 +1891,17 @@
 (defn- wire-turn
   [turn]
   (when turn
-    (let [turn-id
+    (let [turn
+          (read-turn-record turn)
+
+          turn-id
           (str (or (:turn_id turn) (:id turn)))
 
           started-at
           (or (:created_at turn) (:started_at turn) (:queued_at turn))]
 
       (-> turn
-          (dissoc :cancel-token :attachments :id)
+          (dissoc :cancel-token :attachments :id ::archive ::run-key ::cancel-disposer)
           ;; Inline uploads carry base64 pixels: a turn LIST must never ship
           ;; them. `:attachment_previews` is the byte-free chip payload.
           (assoc :turn_id turn-id
@@ -1903,7 +1984,7 @@
    turn is unknown or carried no images."
   [sid tid]
   (when (and sid tid)
-    (let [turn (turn-record sid tid)]
+    (let [turn (read-turn-record (turn-record sid tid))]
       (or (seq (dedupe-attachments-by-filename
                  (wire/canonical (into (vec (:attachments turn)) (request-text-attachments turn)))))
           (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
@@ -2454,11 +2535,7 @@
          (tel/log! {:level :warn
                     :id ::agent-outcome-failed
                     :data {:session-id sid :error-class (.getName (class e))}})))
-  (update-session! sid
-                   (fn [entry]
-                     (cond-> (update-in entry [:turns tid] merge patch)
-                       (= tid (:current-turn entry))
-                       (assoc :current-turn nil)))))
+  (archive-terminal-turn! sid tid patch))
 
 (defn- turn-terminal-payload
   "Payload for a TERMINAL turn event (`turn.completed` / `turn.failed` /
@@ -2472,52 +2549,50 @@
    terminal without that id made the whole independent path unreachable in
    exactly the case it exists for: the spinner kept running and the answer
    painted late, when the stranded worker finally returned."
-  [sid tid status]
-  (let [turn
-        (turn-record sid tid)
+  ([sid tid status] (turn-terminal-payload sid tid status (read-turn-record (turn-record sid tid))))
+  ([sid tid status completion]
+   (let [turn
+         (merge (turn-record sid tid) completion)
 
-        key
-        (:idempotency_key turn)
+         key
+         (:idempotency_key turn)
 
-        ;; A failed turn ships its settled content and reason, so the event alone
-        ;; describes the failure. A completed turn ships its visual prose together
-        ;; with the semantic speech projection. The terminal frame can overtake a
-        ;; client's throttled body deltas (notably in browsers), so speech alone
-        ;; would settle the bubble with a footer but no visible answer until transcript
-        ;; persistence catches up. Code/tool payloads remain transcript-only.
-        content
-        (not-empty (if (= "failed" status)
-                     (vec (:content turn))
-                     (filterv #(contains? #{"prose" "speech"} (get % "type")) (:content turn))))
+         ;; A failed turn ships its settled content and reason, so the event alone
+         ;; describes the failure. A completed turn ships its visual prose together
+         ;; with the semantic speech projection. The terminal frame can overtake a
+         ;; client's throttled body deltas (notably in browsers), so speech alone
+         ;; would settle the bubble with a footer but no visible answer until transcript
+         ;; persistence catches up. Code/tool payloads remain transcript-only.
+         content
+         (not-empty (if (= "failed" status)
+                      (vec (:content turn))
+                      (filterv #(contains? #{"prose" "speech"} (get % "type")) (:content turn))))
 
-        error
-        (when (= "failed" status)
-          (not-empty (some-> (:error turn)
-                             str)))]
+         error
+         (when (= "failed" status)
+           (not-empty (some-> (:error turn)
+                              str)))]
 
-    (cond-> {:turn_id tid
-             :status status
-             :request_kind (or (:request_kind turn) "user")
-             :subagent (boolean (agents/info (lp/db-info) sid))}
-      key
-      (assoc :idempotency_key key)
+     (cond-> {:turn_id tid
+              :status status
+              :request_kind (or (:request_kind turn) "user")
+              :subagent (boolean (agents/info (lp/db-info) sid))}
+       key
+       (assoc :idempotency_key key)
 
-      content
-      (assoc :content content)
+       content
+       (assoc :content content)
 
-      error
-      (assoc :error error))))
+       error
+       (assoc :error error)))))
 
 (defn turn-answer-text
   "Plain-text projection of ONE finished turn's answer content, or nil.
 
-   Read straight from the live registry (`finish-turn!` has already merged the
-   content patch by the time a terminal event is appended), so this costs one
-   map lookup and never touches the DB. Exists for the push alert: a
-   notification that only says \"turn finished\" makes you open the app to learn
-   anything at all."
+   Read the single terminal archive; this never loads the whole transcript.
+   Used by push notifications after the terminal event is appended."
   [sid tid]
-  (try (some-> (:content (turn-record sid tid))
+  (try (some-> (:content (read-turn-record (turn-record sid tid)))
                content/text-projection
                str/trim
                not-empty)
@@ -2741,7 +2816,8 @@
    the registry cannot pin a session and is treated as live."
   [sid tid cancel-token]
   (if-let [turn (turn-record sid tid)]
-    (= (turn-terminal-claim-key cancel-token) (turn-terminal-claim-key (:cancel-token turn)))
+    (= (turn-terminal-claim-key cancel-token)
+       (or (::run-key turn) (turn-terminal-claim-key (:cancel-token turn))))
     true))
 
 (defn- claim-turn-terminal!
@@ -2974,8 +3050,10 @@
                      :role "assistant"
                      :content [block]
                      :error reason
-                     :completed_at (util/now-ms)}))
-    (append-event! sid "turn.failed" (turn-terminal-payload sid tid "failed"))
+                     :completed_at (util/now-ms)})
+      (append-event! sid
+                     "turn.failed"
+                     (turn-terminal-payload sid tid "failed" {:content [block] :error reason})))
     (emit-context-updated! sid)
     (after-turn-terminal! sid tid {:failed? true :cancel-token cancel-token :stalled? true})
     true))
@@ -3357,7 +3435,7 @@
                            "turn.cancelled"
 
                            "turn.completed")
-                         (turn-terminal-payload sid tid status))
+                         (turn-terminal-payload sid tid status patch))
           (emit-context-updated! sid)
           ;; A user cancel means "stop", not "advance": the backlog queued BEFORE
           ;; the cancel is DROPPED with it (`drop-cancelled-backlog!`) so nothing
@@ -3461,7 +3539,7 @@
             (close-blocks! @open-blocks)
             (append-event! sid
                            (if user-cancel? "turn.cancelled" "turn.failed")
-                           (turn-terminal-payload sid tid status))
+                           (turn-terminal-payload sid tid status {:content content :error err}))
             (emit-context-updated! sid)
             (after-turn-terminal!
               sid
@@ -3505,7 +3583,7 @@
       (finish-turn! sid
                     tid
                     {:status "cancelled" :role "assistant" :content [] :completed_at (util/now-ms)})
-      (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
+      (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled" {:content []}))
       (emit-context-updated! sid)
       (after-turn-terminal! sid tid {:failed? false :cancel-token cancel-token :stalled? false}))))
 
@@ -3617,28 +3695,32 @@
       ;; before anything could emit a terminal. THAT is the wedged-session bug.
       ;; Interrupt the worker, then land the cancellation ourselves iff we win the
       ;; claim — winning means the body has not started and never will.
-      (cancellation/on-cancel!
+      (install-turn-cancel-disposer!
+        sid
+        tid
         cancel-token
-        (fn []
-          (try (.cancel ^java.util.concurrent.Future fut true) (catch Throwable _ nil))
-          (if (.compareAndSet claimed false true)
-            ;; Off the cancelling thread: this lands a terminal and drains the
-            ;; queue, which must never run inside an HTTP/UI cancel handler.
-            ;; It must also remain runnable while a cancelled turn pins native code.
-            (cancellation/worker-future (str "gateway-turn-cancel-" tid)
-                                        (fn []
-                                          (cancel-waiting-turn! sid tid cancel-token))
-                                        {:platform? true})
-            ;; The body IS running, so it owns the terminal — unless it never
-            ;; gets there. `cancel!` only fires a token; a worker parked in
-            ;; uninterruptible code (native GIL, stuck cleanup) ignores it and the
-            ;; session stays pinned to a turn nobody runs, with its backlog held.
-            (start-cancel-terminal-backstop! sid
-                                             tid
-                                             cancel-token
-                                             (cancel-terminal-grace-ms stall)
-                                             cancel-waiting-turn!
-                                             release-held-permit!))))
+        (cancellation/on-cancel!
+          cancel-token
+          (fn []
+            (try (.cancel ^java.util.concurrent.Future fut true) (catch Throwable _ nil))
+            (if (.compareAndSet claimed false true)
+              ;; Off the cancelling thread: this lands a terminal and drains the
+              ;; queue, which must never run inside an HTTP/UI cancel handler.
+              ;; It must also remain runnable while a cancelled turn pins native code.
+              (cancellation/worker-future (str "gateway-turn-cancel-" tid)
+                                          (fn []
+                                            (cancel-waiting-turn! sid tid cancel-token))
+                                          {:platform? true})
+              ;; The body IS running, so it owns the terminal — unless it never
+              ;; gets there. `cancel!` only fires a token; a worker parked in
+              ;; uninterruptible code (native GIL, stuck cleanup) ignores it and the
+              ;; session stays pinned to a turn nobody runs, with its backlog held.
+              (start-cancel-terminal-backstop! sid
+                                               tid
+                                               cancel-token
+                                               (cancel-terminal-grace-ms stall)
+                                               cancel-waiting-turn!
+                                               release-held-permit!)))))
       fut)
     (catch Throwable t
       (tel/log! :error ["gateway: turn launch failed" tid (ex-message t)])
