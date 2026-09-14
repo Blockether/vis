@@ -1297,3 +1297,138 @@
                (state/dispatch [:live-record-open "elsewhere" (assoc-in pane [:view :id] "other")])
                (is (= 1 (count (:live-views @state/app-db)))))))
   (is (try (lv/recorded-pane "" "s1") false (catch clojure.lang.ExceptionInfo _ true))))
+
+(defn disclosure-review-pane
+  "A nested log and its sibling, through the production live-view materializer."
+  ([] (disclosure-review-pane false))
+  ([recorded?]
+   (let [view (mounted {:title "Worker checks" :description "Latest observed state"}
+                       {:id "pool"
+                        :type :group
+                        :direction :column
+                        :label "Pool state"
+                        :is-collapsible true
+                        :default-expanded true
+                        :fields [(fixture/log "tail"
+                                              {:label "Observed workers"
+                                               :default-expanded true
+                                               :lines ["monitor revision=42 active=4/4"
+                                                       "  worker ready" "checks finished"]})]}
+                       (fixture/status "other" "Unrelated output" {:label "Other checks"}))]
+     (if recorded?
+       (-> (lv/recorded-pane (str (wire/json-str {:kind :open :at 1000 :view view})
+                                  "\n"
+                                  (wire/json-str
+                                    {:kind :close
+                                     :at 5000
+                                     :result {:reason :completed :is-completed true :view view}})
+                                  "\n")
+                             "s1")
+           (lv/expanded "pool")
+           (lv/expanded "tail"))
+       (lv/opened view)))))
+
+;; #219: a log's search control and every detail row belong below its disclosure.
+(deftest live-disclosure-nesting-test
+  (doseq [cols
+          [40 80 120]
+
+          recorded?
+          [false true]]
+
+    (let [pane
+          (disclosure-review-pane recorded?)
+
+          capture
+          (paint-frames [pane] cols 40)
+
+          lines
+          (str/split-lines (cap/frame-text (last (:frames capture))))
+
+          position
+          (fn [text]
+            (first (keep-indexed (fn [row line]
+                                   (when-let [col (str/index-of line text)]
+                                     {:row row :col col}))
+                                 lines)))
+
+          group
+          (position "▾ Pool state")
+
+          log
+          (position "▾ Observed workers")
+
+          search
+          (position "Search Observed workers")
+
+          detail
+          (position "monitor revision=42")
+
+          whitespace
+          (position "worker ready")
+
+          sibling
+          (position "Other checks")
+
+          hits
+          (.current interactions/hit-map)
+
+          log-hit
+          (first (filter #(and (= :live-expand (:kind %)) (= "tail" (:node-id %))) hits))
+
+          search-hit
+          (first (filter #(= :live-log-search (:kind %)) hits))]
+
+      (is (= recorded? (lv/settled? pane)))
+      (is (nil? (:error capture)))
+      (is (every? some? [group log search detail whitespace sibling]))
+      (is (= (+ 2 (long (:col group))) (:col log)) "child toggle gains one level")
+      (is (= (+ 2 (long (:col log))) (:col search) (:col detail))
+          "search and log rows gain another level")
+      (is (= (+ 2 (long (:col detail))) (:col whitespace)) "the log's own whitespace is preserved")
+      (is (= (:col group) (:col sibling)) "unrelated siblings return to the parent edge")
+      (is (= (:col log) (get-in log-hit [:bounds :col])))
+      (is (= (:col search) (get-in search-hit [:bounds :col])))
+      (is (not= :live-log-search
+                (:kind (.lookup interactions/hit-map (dec (long (:col search))) (:row search))))
+          "the nesting gutter is not part of the child action")
+      (let [collapsed
+            (lv/expanded pane "tail")
+
+            text
+            (painted-text [collapsed] cols 40)]
+
+        (is (str/includes? text "▸ Observed workers"))
+        (is (not (str/includes? text "monitor revision=42")))
+        (is (not (str/includes? text "Search Observed workers")))
+        (is (= lines (str/split-lines (painted-text [(lv/expanded collapsed "tail")] cols 40)))))
+      (is (not (str/includes? (painted-text [(lv/expanded pane "pool")] cols 40)
+                              "Observed workers"))))))
+
+(deftest disclosed-column-width-test
+  ;; #219: reserve the disclosure inset before deciding whether columns still fit.
+  (let [pane
+        (update-in (reading-pane)
+                   [:view :nodes 0]
+                   assoc
+                   :label "Grouped checks"
+                   :is-collapsible true
+                   :default-expanded true)
+
+        narrow
+        (lv/plan pane 54)
+
+        wide
+        (lv/plan pane 56)]
+
+    (is (not-any? #(= :columns (:kind %)) narrow))
+    (is (some #(= :columns (:kind %)) wide))
+    (is (= (:widths (meta (lv/plan (reading-pane) 54))) (:widths (meta wide))))
+    (is (every? #(= 2 (:indent %)) (filter #(= :columns (:kind %)) wide)))
+    (doseq [cols [40 80 120]]
+      (let [capture (paint-frames [pane] cols 40)
+            text (cap/frame-text (last (:frames capture)))]
+
+        (is (nil? (:error capture)))
+        (is (str/includes? text "Jobs"))
+        (is (str/includes? text "Reading"))))))

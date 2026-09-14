@@ -425,8 +425,9 @@
 
       (is (nil? (:error captured)))
       (let [frame (last (:frames captured))
-            line (first (filter #(str/includes? (apply str (map :ch %)) "ERROR compiler") frame))
-            start (str/index-of (apply str (map :ch line)) "ERROR compiler")
+            ;; #219: the disclosure inset leaves less room; preserve the visible error tone.
+            line (first (filter #(str/includes? (apply str (map :ch %)) "ERROR") frame))
+            start (str/index-of (apply str (map :ch line)) "ERROR")
             color theme/footer-error-fg]
 
         (is (some? start))

@@ -995,14 +995,21 @@
    groups: one layout vocabulary, one painter, [[columns/cell-width]] deciding
    how wide a column is for both.
 
+   Disclosed children gain two columns; wrapping and hit targets use that same inset.
    The row of air between two sections belongs to whoever stacks them, never to
    the node, so two nodes standing side by side start on the same line."
   [node ctx fresh text-w]
-  (let [node-ctx
-        (ctx node text-w)
-
-        disclosure?
+  (let [disclosure?
         (or (= :log (:type node)) (:is-collapsible node))
+
+        indent
+        (if disclosure? (min 2 (max 0 (dec (long text-w)))) 0)
+
+        body-w
+        (max 1 (- (long text-w) indent))
+
+        node-ctx
+        (ctx node body-w)
 
         is-open
         (or (not disclosure?) (:is-open node-ctx))
@@ -1011,14 +1018,14 @@
         (not-empty (:fields node))
 
         cell-w
-        (when children (columns/cell-width text-w (count children)))
+        (when children (columns/cell-width body-w (count children)))
 
         is-split
         (boolean (and children (= :row (:direction node)) (>= (long cell-w) (long min-column-w))))
 
         parts
         (when (and is-open children)
-          (mapv #(node-section % ctx fresh (if is-split cell-w text-w)) children))
+          (mapv #(node-section % ctx fresh (if is-split cell-w body-w)) children))
 
         body
         (cond (not is-open) []
@@ -1041,7 +1048,7 @@
                         :is-fresh (contains? (:nodes fresh) (:id node))})
 
                  :always
-                 (into body))
+                 (into (if (pos? indent) (map #(update % :indent (fnil + 0) indent) body) body)))
       {:widths (reduce merge {} (map (comp :widths meta) (or parts [body])))})))
 
 (defn plan
@@ -1513,9 +1520,20 @@
 (defn- paint-entry!
   "Paint ONE plan row and register whatever on it can be clicked. `left` is the
    band's rail and the body opens two columns inside it, exactly like the form's
-   rows, so a view and a form painted in the same band line up."
+   rows, so a view and a form painted in the same band line up. A disclosure's
+   `:indent` shifts both its content and controls without changing row identities."
   [g left row inner-w view-id entry]
-  (case (:kind entry)
+  (case (if (:indent entry) :indented (:kind entry))
+    :indented
+    (let [indent (min (long (:indent entry)) (max 0 (long inner-w)))]
+      (fill! g left row inner-w t/dialog-fg)
+      (paint-entry! g
+                    (+ (long left) indent)
+                    row
+                    (- (long inner-w) indent)
+                    view-id
+                    (dissoc entry :indent)))
+
     :blank
     (fill! g left row inner-w t/dialog-fg)
 

@@ -919,7 +919,7 @@ function NodeCell({
         node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>
       )}
       {(!isDisclosure || isOpen) && (
-        <div id={contentId} className="min-w-0">
+        <div id={contentId} className={`min-w-0 ${isDisclosure ? 'pl-4.5' : ''}`}>
           {node.type === 'group' && (
             <div
               className={

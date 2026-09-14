@@ -327,3 +327,77 @@ export const StyledLog: Story = {
     );
   },
 };
+
+/** #219: every expanded disclosure adds one inset, including nested log controls. */
+export const NestedDisclosures: Story = {
+  args: {
+    onInterrupt: undefined,
+    view: {
+      id: 'nested-disclosures',
+      title: 'Worker inspection',
+      seq: 1,
+      nodes: [
+        {
+          id: 'pool',
+          type: 'group',
+          label: 'Observed pool state',
+          direction: 'column',
+          is_collapsible: true,
+          default_expanded: true,
+          fields: [
+            { id: 'summary', type: 'paragraph', text: '2 workers observed' },
+            {
+              id: 'log',
+              type: 'log',
+              label: 'Worker output',
+              default_expanded: true,
+              window_lines: 200,
+              total_lines: 2,
+              lines: ['monitor active=2/2', 'worker=running'],
+            },
+          ],
+        },
+        { id: 'sibling', type: 'paragraph', text: 'Runtime not checked' },
+      ],
+    },
+  },
+  play: async ({ canvas }) => {
+    const group = canvas.getByRole('button', { name: 'Observed pool state' });
+    if (group.getAttribute('aria-expanded') !== 'true') await userEvent.click(group);
+    const log = canvas.getByRole('button', { name: 'Worker output' });
+    if (log.getAttribute('aria-expanded') !== 'true') await userEvent.click(log);
+    const summary = canvas.getByText('2 workers observed');
+    const search = canvas.getByRole('searchbox', { name: 'Search Worker output' });
+    const output = canvas.getByRole('region', { name: 'Worker output output' });
+    await expect(summary.getBoundingClientRect().left - group.getBoundingClientRect().left).toBe(18);
+    await expect(log.getBoundingClientRect().left).toBe(summary.getBoundingClientRect().left);
+    await expect(search.getBoundingClientRect().left - log.getBoundingClientRect().left).toBe(18);
+    await expect(output.getBoundingClientRect().left).toBe(search.getBoundingClientRect().left);
+    await expect(canvas.getByText('Runtime not checked').getBoundingClientRect().left).toBe(
+      group.getBoundingClientRect().left,
+    );
+    for (const element of [summary, search, output]) {
+      await expect(element.getBoundingClientRect().right).toBeLessThanOrEqual(
+        group.getBoundingClientRect().right,
+      );
+    }
+    log.focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(canvas.queryByRole('searchbox')).not.toBeInTheDocument();
+    await userEvent.keyboard('{Enter}');
+    await expect(canvas.getByRole('region', { name: 'Worker output output' })).toHaveTextContent(
+      'monitor active=2/2',
+    );
+    await userEvent.click(group);
+    await expect(canvas.queryByRole('button', { name: 'Worker output' })).not.toBeInTheDocument();
+    await userEvent.click(group);
+    await expect(canvas.getByRole('region', { name: 'Worker output output' })).toHaveTextContent(
+      'worker=running',
+    );
+  },
+};
+
+export const NestedDisclosuresReceipt: Story = {
+  args: { ...NestedDisclosures.args, isSettled: true },
+  play: NestedDisclosures.play,
+};

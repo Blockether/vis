@@ -13,6 +13,8 @@
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.scroll :as scroll]
+            [com.blockether.vis.tui.live-view :as live-view]
+            [com.blockether.vis.tui.live-view-test :as live-fixture]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as theme]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
@@ -1078,3 +1080,76 @@
                    (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
                                         (get-in grid [y live-x])))))
           (is (not-any? #(str/includes? % "┌─ Live view") lines)))))))
+
+(defn paint-disclosure-review!
+  "Paint the same nested live nodes inline in Activity or in the standalone band."
+  [^TerminalScreen screen pane inline?]
+  (.doResizeIfNecessary screen)
+  (.clear screen)
+  (let [cols
+        (.getColumns (.getTerminalSize screen))
+
+        rows
+        (.getRows (.getTerminalSize screen))
+
+        g
+        (.newTextGraphics screen)]
+
+    (doto g
+      (.setBackgroundColor theme/terminal-bg)
+      (.setForegroundColor theme/text-fg)
+      (.fill \space))
+    (.beginFrame interactions/hit-map)
+    (if inline?
+      (doseq [[row entry] (map-indexed vector (live-view/inline-entries pane (- cols 4)))]
+        (live-view/paint-inline-entry! g 2 (inc (long row)) (- cols 4) 0 (:meta entry)))
+      (live-view/paint! g cols rows [pane] 1 3))
+    (.commitFrame interactions/hit-map)
+    (.refresh screen)))
+
+;; #219: HTML, terminal buffers and inline/restored views share the nesting geometry.
+(deftest live-disclosure-html-native-parity-test
+  (try
+    (doseq [theme-id
+            (map keyword (shared-theme/available-theme-ids))
+
+            cols
+            [40 80 120]
+
+            recorded?
+            [false true]
+
+            inline?
+            [false true]]
+
+      (theme/apply-theme! theme-id)
+      (with-open [html
+                  (activity-review-terminal cols 32)
+
+                  terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 32))
+
+                  hs
+                  (doto (TerminalScreen. html) (.startScreen))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (let [pane (live-fixture/disclosure-review-pane recorded?)]
+          (paint-disclosure-review! hs pane inline?)
+          (paint-disclosure-review! ts pane inline?)
+          (is (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
+          (let [lines (mapv #(apply str
+                               (map (fn [^com.googlecode.lanterna.TextCharacter cell]
+                                      (.getCharacterString cell))
+                                    %))
+                            (cell-grid terminal cols 32))
+                col-of (fn [text]
+                         (some #(str/index-of % text) lines))]
+
+            (is (= (+ 2 (long (col-of "▾ Pool state"))) (col-of "▾ Observed workers")))
+            (is (= (+ 2 (long (col-of "▾ Observed workers")))
+                   (col-of "Search Observed workers")
+                   (col-of "monitor revision=42")))
+            (is (= (col-of "▾ Pool state") (col-of "Other checks")))))))
+    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
