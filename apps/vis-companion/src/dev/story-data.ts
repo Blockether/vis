@@ -30,7 +30,7 @@ import activityRepl from '../../../../packages/vis-contract/resources/vis-contra
 import activityTables from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-tables.json';
 import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
-import { GatewayClient } from '../lib/gateway';
+import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
@@ -759,6 +759,37 @@ export const STORY_SESSION_ROW: Session = {
   created_at: '2030-01-02T11:00:00.000Z',
   modified_at: '2030-01-02T11:59:00.000Z',
   workspace: { root: STORY_SESSION.where, label: STORY_SESSION.project },
+};
+
+/** Search previews retain inline Markdown without opening links or loading images. */
+export const STORY_SESSION_SEARCH_MATCH: SessionMatch = {
+  sessionId: STORY_SESSION_ROW.id,
+  rank: 1,
+  inTitle: false,
+  inRequest: true,
+  inReply: true,
+  inThinking: true,
+  requestSnippet: null,
+  replySnippet: null,
+  hits: [
+    {
+      side: 'request',
+      snippet: '**Windows** and _macOS_ need another check.',
+      at: 1,
+    },
+    {
+      side: 'reply',
+      snippet:
+        '**Checking Windows runtime guards.**\nKeep `WINDOWS` enabled; ~~skip Windows~~ is outdated.',
+      at: 2,
+    },
+    {
+      side: 'thinking',
+      snippet:
+        'Compare [Windows documentation](https://example.com/windows) with the `windows` tests.',
+      at: 3,
+    },
+  ],
 };
 
 export const STORY_SESSION_USAGE: SessionUsage = {

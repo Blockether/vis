@@ -1,4 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import type { Element, Root, Text } from 'hast';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { Banner, ConfirmRow, LIST_EDGE } from './ui';
 import { SessionHealth } from './SessionHealth';
@@ -210,7 +213,7 @@ export const SessionRow = memo(function SessionRow({
   );
 
   return (
-    <div className="[&+&]:border-t [&+&]:border-edge">
+    <div className={`[&+&]:border-t ${needle ? '[&+&]:border-dialog-hint' : '[&+&]:border-edge'}`}>
       {/* Rename is direct manipulation: the row stays put and only its title becomes ink
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
       {deletion ? (
@@ -839,23 +842,42 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
         ].filter((h) => h.snippet.length > 0);
   if (rows.length === 0) return null;
   return (
-    <div className={`border-t border-dialog-edge bg-ink/30 py-1.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
-      <div className="divide-y divide-dialog-edge/70">
+    <div className={`pb-1.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
+      <div role="list" aria-label="Matching messages" className="divide-y divide-edge">
         {rows.map((hit, index) => (
           <div
             key={`${hit.side}-${hit.at ?? index}`}
+            role="listitem"
             className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-2 py-1.5"
           >
             <span
-              className={`font-mono text-meta font-bold ${
+              className={`font-mono text-ui font-bold mouse:text-meta ${
                 hit.side === 'request' ? 'text-you-role' : 'text-vis-role'
               }`}
             >
               {hit.side === 'request' ? 'You' : 'Vis'}
             </span>
-            <p className="line-clamp-2 whitespace-pre-wrap break-words font-mono text-ui text-dialog-foreground">
-              {highlightNeedle(hit.snippet, needle)}
-            </p>
+            <div className="line-clamp-2 whitespace-pre-wrap break-words font-mono text-ui text-dialog-foreground">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[[searchPreviewMarkdown, needle]]}
+                skipHtml
+                allowedElements={['p', 'strong', 'em', 'del', 'code', 'br', 'mark']}
+                unwrapDisallowed
+                components={{
+                  p: ({ children }) => <span className="block">{children}</span>,
+                  strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+                  code: ({ children }) => (
+                    <code className="bg-panel-2 px-0.5 font-mono">{children}</code>
+                  ),
+                  mark: ({ children }) => (
+                    <mark className="bg-accent/20 px-0.5 font-bold text-white">{children}</mark>
+                  ),
+                }}
+              >
+                {hit.snippet}
+              </ReactMarkdown>
+            </div>
           </div>
         ))}
       </div>
@@ -863,20 +885,40 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
   );
 }
 
-// Splits `text` on the (case-insensitive) needle and wraps each hit in a
-// contrast <mark> that reads on both rail colors.
-function highlightNeedle(text: string, needle: string) {
-  if (!needle) return text;
-  const parts = text.split(new RegExp(`(${escapeRegExp(needle)})`, 'ig'));
-  return parts.map((part, index) =>
-    part.toLowerCase() === needle.toLowerCase() && part.length > 0 ? (
-      <mark key={index} className="rounded-none bg-accent/30 px-0.5 font-bold text-white">
-        {part}
-      </mark>
-    ) : (
-      <span key={index}>{part}</span>
-    ),
-  );
+// Highlight parsed text, never Markdown syntax or URL targets. Images become their
+// labels before rendering, so a search preview cannot fetch remote content.
+function searchPreviewMarkdown(needle: string) {
+  const pattern = needle ? new RegExp(`(${escapeRegExp(needle)})`, 'ig') : null;
+  return (tree: Root) => {
+    function visit(node: Root | Element) {
+      // Work backwards so inserted marks are not visited or highlighted again.
+      for (let index = node.children.length - 1; index >= 0; index -= 1) {
+        let child = node.children[index];
+        if (child.type === 'element' && child.tagName === 'img') {
+          child = { type: 'text', value: String(child.properties.alt ?? '') };
+          node.children[index] = child;
+        }
+        if (child.type === 'element') {
+          visit(child);
+        } else if (child.type === 'text' && pattern) {
+          const parts = child.value.split(pattern);
+          if (parts.length === 1) continue;
+          const highlighted = parts.map<Element | Text>((value, part) =>
+            part % 2 === 1
+              ? {
+                  type: 'element',
+                  tagName: 'mark',
+                  properties: {},
+                  children: [{ type: 'text', value }],
+                }
+              : { type: 'text', value },
+          );
+          node.children.splice(index, 1, ...highlighted);
+        }
+      }
+    }
+    visit(tree);
+  };
 }
 
 function escapeRegExp(value: string): string {
