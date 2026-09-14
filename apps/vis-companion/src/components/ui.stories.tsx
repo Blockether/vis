@@ -896,9 +896,17 @@ function HeaderRenameDemo() {
   return <HeaderTitle name={name} onRename={setName} renameLabel={`Rename ${name}`} />;
 }
 
-function PagerDemo({ initialPage = 1 }: { initialPage?: number }) {
+function PagerDemo({
+  initialPage = 1,
+  disabled = false,
+}: {
+  initialPage?: number;
+  disabled?: boolean;
+}) {
   const [page, setPage] = useState(initialPage);
-  return <Pager page={page} pageCount={104} onPage={setPage} label="vis sessions" />;
+  return (
+    <Pager page={page} pageCount={104} onPage={setPage} label="vis sessions" disabled={disabled} />
+  );
 }
 
 // The same compact counter and explicit steps on phones, tablets and desktop rails.
@@ -995,6 +1003,39 @@ export const ProjectPages: Story = {
     expect(document.scrollWidth).toBeLessThanOrEqual(document.clientWidth);
     expect(targets[0].left).toBeGreaterThanOrEqual(0);
     expect(targets[2].right).toBeLessThanOrEqual(document.clientWidth);
+  },
+};
+
+/** Collapsed projects retain their counter without offering navigation or editing. */
+export const ProjectPagesDisabled: Story = {
+  render: () => (
+    <Sheet>
+      <PagerDemo initialPage={2} disabled />
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    const pager = canvas.getByRole('navigation', { name: 'Pages of vis sessions' });
+    const current = canvas.getByRole('textbox', { name: 'Current page' });
+    const previous = canvas.getByRole('button', { name: 'Previous page' });
+    const next = canvas.getByRole('button', { name: 'Next page' });
+    const win = pager.ownerDocument.defaultView!;
+    await expect(pager).toBeVisible();
+    await expect(pager).toHaveAttribute('aria-disabled', 'true');
+    for (const control of [previous, current, next]) {
+      await expect(control).toBeDisabled();
+      await userEvent.click(control);
+      control.focus();
+      await expect(control).not.toHaveFocus();
+    }
+    await userEvent.tab();
+    await expect(pager.contains(pager.ownerDocument.activeElement)).toBe(false);
+    await expect(current).toHaveValue('2');
+    await userEvent.hover(current);
+    await expect(win.getComputedStyle(current).color).toBe(win.getComputedStyle(next).color);
+    await expect(win.getComputedStyle(canvas.getByText('/ 104')).color).toBe(
+      win.getComputedStyle(next).color,
+    );
+    await userEvent.unhover(current);
   },
 };
 

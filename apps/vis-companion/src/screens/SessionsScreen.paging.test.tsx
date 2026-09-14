@@ -37,6 +37,75 @@ afterEach(() => {
 // the size this screen measured, so the header's count and the pager's arithmetic are
 // one number and no page needs the fleet downloaded first.
 describe('gateway-backed project pages', () => {
+  it('keeps the current page visible and inactive while the project is folded', async () => {
+    window.innerHeight = 844;
+    const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
+    try {
+      await waitFor(() => expect(shown(view)).toHaveLength(15));
+      await settle();
+      fireEvent.click(view.getByLabelText('Next page'));
+      await waitFor(() => expect(shown(view)[0]).toBe('alpha 15'));
+      await settle();
+      const pager = view.getByRole('navigation', { name: 'Pages of alpha sessions' });
+      const current = view.getByRole('textbox', { name: 'Current page' });
+      const previous = view.getByRole('button', { name: 'Previous page' });
+      const next = view.getByRole('button', { name: 'Next page' });
+      const reads = pageReads(view).length;
+
+      fireEvent.click(view.getByLabelText('Collapse alpha'));
+      expect(view.getByRole('navigation', { name: 'Pages of alpha sessions' })).toBe(pager);
+      expect(pager).toBeVisible();
+      expect(pager).toHaveAttribute('aria-disabled', 'true');
+      expect(current).toHaveValue('2');
+      for (const control of [previous, current, next]) expect(control).toBeDisabled();
+      fireEvent.click(previous);
+      fireEvent.click(next);
+      current.focus();
+      expect(current).not.toHaveFocus();
+      await settle();
+      expect(shown(view)).toHaveLength(0);
+      expect(pageReads(view)).toHaveLength(reads);
+      expect(current).toHaveValue('2');
+
+      fireEvent.click(view.getByLabelText('Expand alpha'));
+      await waitFor(() => expect(shown(view)[0]).toBe('alpha 15'));
+      expect(view.getByRole('navigation', { name: 'Pages of alpha sessions' })).toBe(pager);
+      for (const control of [previous, current, next]) expect(control).toBeEnabled();
+      fireEvent.click(next);
+      await waitFor(() => expect(current).toHaveValue('3'));
+    } finally {
+      view.unmount();
+      view.restore();
+    }
+  });
+
+  it('shows an inactive pager for a project restored in its folded state', async () => {
+    window.innerHeight = 844;
+    const first = renderSessionsScreen({ machines: [{ sessions: rows }] });
+    let conns;
+    try {
+      await waitFor(() => expect(shown(first)).toHaveLength(15));
+      fireEvent.click(first.getByLabelText('Collapse alpha'));
+      conns = first.conns;
+      first.unmount();
+    } finally {
+      first.restore();
+    }
+    const again = renderSessionsScreen({ machines: [{ sessions: rows }], at: conns });
+    try {
+      const pager = await again.findByRole('navigation', { name: 'Pages of alpha sessions' });
+      expect(pager).toBeVisible();
+      expect(pager).toHaveAttribute('aria-disabled', 'true');
+      expect(again.getByRole('textbox', { name: 'Current page' })).toHaveValue('1');
+      expect(again.getByRole('textbox', { name: 'Current page' })).toBeDisabled();
+      expect(shown(again)).toHaveLength(0);
+      expect(pageReads(again)).toHaveLength(0);
+    } finally {
+      again.unmount();
+      again.restore();
+    }
+  });
+
   it('asks once for the page on screen, and reads the pages after it ahead', async () => {
     window.innerHeight = 844;
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });

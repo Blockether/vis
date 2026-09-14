@@ -400,10 +400,11 @@ export const ProjectGroup = memo(function ProjectGroup({
   }, [rows]);
 
   const pager =
-    isShowing && pageCount > 1 ? (
+    pageCount > 1 ? (
       <Pager
         page={shownPage}
         pageCount={pageCount}
+        disabled={!isShowing}
         onPage={goToPage}
         label={`${project} sessions`}
       />

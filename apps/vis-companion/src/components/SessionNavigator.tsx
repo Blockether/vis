@@ -320,12 +320,14 @@ export function ProjectCrumb({
  * Compact project navigation in every layout: previous, current / total, next.
  * Edit the current number to jump; Enter or blur commits, Escape restores it.
  * The counter reserves its final width and centers its ink so neither arrow moves.
+ * Disabled navigation keeps its place while its project is collapsed.
  */
 export function Pager({
   page,
   pageCount,
   onPage,
   label,
+  disabled = false,
 }: {
   /** 1-based, so it reads the way it is printed. */
   page: number;
@@ -333,16 +335,18 @@ export function Pager({
   onPage: (page: number) => void;
   /** What is being paged, for the screen reader: "vis sessions". */
   label: string;
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const cancelled = useRef(false);
+  if (disabled && draft !== null) setDraft(null);
   if (pageCount <= 1) return null;
   const step = (target: number, isBack: boolean) => (
     <IconButton
       variant="quiet"
       label={isBack ? 'Previous page' : 'Next page'}
       onClick={() => onPage(target)}
-      disabled={target < 1 || target > pageCount}
+      disabled={disabled || target < 1 || target > pageCount}
     >
       <ChevronIcon back={isBack} className="mx-auto size-3" />
     </IconButton>
@@ -350,13 +354,16 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
+      aria-disabled={disabled || undefined}
       className="flex shrink-0 items-center justify-end gap-3.5 whitespace-nowrap mouse:gap-2"
     >
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
       {step(page - 1, true)}
-      <label className="group grid min-h-11 min-w-11 cursor-text items-center font-mono text-ui tabular-nums text-white mouse:min-h-7 mouse:min-w-7">
+      <label
+        className={`group grid min-h-11 min-w-11 items-center font-mono text-ui tabular-nums mouse:min-h-7 mouse:min-w-7 ${disabled ? 'cursor-not-allowed text-muted' : 'cursor-text text-white'}`}
+      >
         <span aria-hidden="true" className="invisible col-start-1 row-start-1">
           {pageCount} / {pageCount}
         </span>
@@ -373,6 +380,7 @@ export function Pager({
               autoComplete="off"
               spellCheck={false}
               fit="track"
+              disabled={disabled}
               value={draft ?? String(page)}
               onFocus={(event) => event.currentTarget.select()}
               onClick={(event) => event.currentTarget.select()}
@@ -380,7 +388,7 @@ export function Pager({
               onBlur={(event) => {
                 const value = event.currentTarget.value.trim();
                 setDraft(null);
-                if (cancelled.current) {
+                if (disabled || cancelled.current) {
                   cancelled.current = false;
                   return;
                 }
@@ -397,7 +405,7 @@ export function Pager({
                   event.currentTarget.blur();
                 }
               }}
-              face="absolute inset-0 text-center focus:underline focus:underline-offset-2 mouse:group-hover:not-focus:text-accent-ink"
+              face="absolute inset-0 text-center focus:underline focus:underline-offset-2 disabled:cursor-not-allowed mouse:group-hover:enabled:not-focus:text-accent-ink"
             />
           </span>
           <span aria-hidden="true">/ {pageCount}</span>

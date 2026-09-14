@@ -14,9 +14,53 @@ describe('project pages', () => {
     const current = screen.getByRole('textbox', { name: 'Current page' });
     expect(current).toHaveValue(String(page));
     // Keep hover ink off the focused field on the focused project band's background.
-    expect(current).toHaveClass('mouse:group-hover:not-focus:text-accent-ink');
+    expect(current).toHaveClass('mouse:group-hover:enabled:not-focus:text-accent-ink');
     expect(screen.getByText('/ 104')).toBeInTheDocument();
     expect(screen.getByText(`Page ${page} of 104`)).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('disables both steps and page editing without hiding the counter', () => {
+    const onPage = vi.fn();
+    const { rerender } = render(
+      <Pager page={40} pageCount={80} label="vis sessions" onPage={onPage} disabled />,
+    );
+    const pager = screen.getByRole('navigation');
+    const field = screen.getByRole('textbox', { name: 'Current page' });
+    expect(pager).toBeVisible();
+    expect(pager).toHaveAttribute('aria-disabled', 'true');
+    expect(field).toHaveValue('40');
+    for (const control of [...screen.getAllByRole('button'), field]) {
+      expect(control).toBeDisabled();
+      fireEvent.click(control);
+    }
+    field.focus();
+    expect(field).not.toHaveFocus();
+    expect(onPage).not.toHaveBeenCalled();
+
+    rerender(<Pager page={40} pageCount={80} label="vis sessions" onPage={onPage} />);
+    expect(screen.getByRole('navigation')).toBe(pager);
+    expect(pager).not.toHaveAttribute('aria-disabled');
+    expect(field).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(41);
+  });
+
+  it('discards an unfinished page edit when disabled without navigating on blur', () => {
+    const onPage = vi.fn();
+    const { rerender } = render(
+      <Pager page={5} pageCount={104} label="vis sessions" onPage={onPage} />,
+    );
+    const field = screen.getByRole('textbox', { name: 'Current page' });
+    field.focus();
+    fireEvent.change(field, { target: { value: '64' } });
+    rerender(<Pager page={5} pageCount={104} label="vis sessions" onPage={onPage} disabled />);
+    expect(field).toBeDisabled();
+    expect(field).toHaveValue('5');
+    fireEvent.blur(field);
+    expect(onPage).not.toHaveBeenCalled();
+    rerender(<Pager page={5} pageCount={104} label="vis sessions" onPage={onPage} />);
+    expect(field).toBeEnabled();
+    expect(field).toHaveValue('5');
   });
 
   it.each([0, 1])('hides navigation when there are %s pages', (pageCount) => {

@@ -88,18 +88,34 @@ export const Fleet: Story = {
       name: /^New session/,
     });
     // Compact paging stays beside the project identity and creation action on every device.
-    let pager = page.getByRole('navigation', {
+    const pager = page.getByRole('navigation', {
       name: 'Pages of uberworkspace sessions',
     });
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
     // The project band stays uniform across its disclosure, paging and creation control.
     const header = fold.closest('header')!;
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
+    const pageField = within(pager).getByRole('textbox', { name: 'Current page' });
+    const pageControls = [...within(pager).getAllByRole('button'), pageField];
+    const pagerWidth = pager.getBoundingClientRect().width;
+    const pageValue = (pageField as HTMLInputElement).value;
     await userEvent.click(fold);
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
+    await expect(within(header).getByRole('navigation')).toBe(pager);
+    await expect(pager).toBeVisible();
+    await expect(pager).toHaveAttribute('aria-disabled', 'true');
+    await expect(pager.getBoundingClientRect().width).toBe(pagerWidth);
+    await expect(pageField).toHaveValue(pageValue);
+    for (const control of pageControls) await expect(control).toBeDisabled();
+    await expect(win.getComputedStyle(pageField).color).toBe(
+      win.getComputedStyle(pageControls[0]).color,
+    );
     await userEvent.click(fold);
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('1px');
-    pager = within(header).getByRole('navigation');
+    await expect(within(header).getByRole('navigation')).toBe(pager);
+    await expect(pager).not.toHaveAttribute('aria-disabled');
+    await expect(pageField).toBeEnabled();
+    await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeEnabled();
     await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
     if (win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
