@@ -20,7 +20,10 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
   const exports = JSON.parse(
     execFileSync(
       process.env.PYTHON || 'python3',
-      ['-c', 'import json; import blockether.vis.engine as engine; print(json.dumps(engine.__all__))'],
+      [
+        '-c',
+        'import json; import blockether.vis.engine as engine; print(json.dumps(engine.__all__))',
+      ],
       {
         env: {
           ...process.env,
@@ -34,7 +37,13 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
   try {
     const document = dom.window.document;
     for (const name of exports) expect(document.getElementById(name), name).not.toBeNull();
-    for (const name of ['Agent.run', 'Agent.send', 'LocalEngine', 'GatewayClient', 'ExecutionLayer'])
+    for (const name of [
+      'Agent.run',
+      'Agent.send',
+      'LocalEngine',
+      'GatewayClient',
+      'ExecutionLayer',
+    ])
       expect(document.getElementById(name), name).not.toBeNull();
     const agent = document.getElementById('Agent').textContent;
     expect(agent).toContain('execution_layer:');
@@ -94,8 +103,8 @@ test('every local API link, anchor and asset resolves, including the landing red
     for (const name of files) {
       const path = prefix + name;
       const document = getDocument(path);
-      const links = [...document.querySelectorAll('[href], [src]')].map((node) =>
-        node.getAttribute('href') || node.getAttribute('src'),
+      const links = [...document.querySelectorAll('[href], [src]')].map(
+        (node) => node.getAttribute('href') ?? node.getAttribute('src'),
       );
       const redirect = document.querySelector('meta[http-equiv="refresh"]');
       if (redirect) links.push(redirect.content.split('url=')[1]);
@@ -134,7 +143,9 @@ test.each(['blockether/vis.html', 'blockether/vis/engine.html'])(
             requested.push(asset.pathname);
             return new Response(readFileSync('dist' + asset.pathname), {
               headers: {
-                'Content-Type': asset.pathname.endsWith('.css') ? 'text/css' : 'application/javascript',
+                'Content-Type': asset.pathname.endsWith('.css')
+                  ? 'text/css'
+                  : 'application/javascript',
               },
             });
           }),
@@ -152,7 +163,9 @@ test.each(['blockether/vis.html', 'blockether/vis/engine.html'])(
       input.focus();
       input.value = 'LocalEngine';
       input.dispatchEvent(new dom.window.Event('input'));
-      await expect.poll(() => document.querySelectorAll('.search-result').length).toBeGreaterThan(0);
+      await expect
+        .poll(() => document.querySelectorAll('.search-result').length)
+        .toBeGreaterThan(0);
       expect(
         [...document.querySelectorAll('.search-result a')].some((link) =>
           link.href.endsWith('engine.html#LocalEngine'),

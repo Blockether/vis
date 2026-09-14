@@ -11,3 +11,20 @@ if (compact) {
     if (compact.matches && event.target.closest('a')) navigation.open = false;
   });
 }
+
+function revealTarget() {
+  let id;
+  try {
+    id = decodeURIComponent(window.location.hash.slice(1));
+  } catch {
+    return;
+  }
+  let ancestor = document.getElementById(id)?.closest('details');
+  while (ancestor) {
+    ancestor.open = true;
+    ancestor = ancestor.parentElement.closest('details');
+  }
+}
+
+revealTarget();
+window.addEventListener('hashchange', revealTarget);

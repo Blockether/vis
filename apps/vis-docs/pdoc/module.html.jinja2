@@ -12,6 +12,8 @@
 
 {% block title %}{{ topics.get(module.modulename, module.modulename) }} API documentation{% endblock %}
 
+{% block head %}<link rel="stylesheet" href="/assets/theme.css">{% endblock %}
+
 {% block body %}
     <a class="api-skip" href="#api-title">Skip to content</a>
     <nav class="pdoc" aria-label="Python SDK">
@@ -67,14 +69,27 @@
         <section id="{{ m.qualname or m.name }}">
             {{ member(m) }}
             {% if m.kind == "class" %}
-                {# Public SDK methods must not disappear because their base is private. #}
-                {% for attr in m.members.values() if attr.kind != "class" and is_public(attr) | trim and attr.taken_from[0].startswith("blockether.vis") %}
-                    <div id="{{ attr.qualname }}" class="classattr">{{ member(attr) }}</div>
-                {% endfor %}
+                {{ attributes(m.own_members) }}
+                {# Keep inherited APIs available without repeating an entire base by default. #}
+                {% set inherited_docs %}
+                    {% for members in m.inherited_members.values() %}{{ attributes(members) }}{% endfor %}
+                {% endset %}
+                {% if inherited_docs | trim %}
+                    <details class="api-inherited">
+                        <summary>Inherited methods and attributes</summary>
+                        {{ inherited_docs }}
+                    </details>
+                {% endif %}
             {% endif %}
         </section>
     {% endfor %}
 {% endblock %}
+
+{% macro attributes(members) %}
+    {% for attr in members if attr.kind != "class" and is_public(attr) | trim and attr.taken_from[0].startswith("blockether.vis") %}
+        <div id="{{ attr.qualname }}" class="classattr">{{ member(attr) }}</div>
+    {% endfor %}
+{% endmacro %}
 
 {% macro nav_members(members) %}
     <ul class="memberlist">

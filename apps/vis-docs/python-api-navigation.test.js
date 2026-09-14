@@ -6,8 +6,11 @@ import { JSDOM } from 'jsdom';
 
 const directory = 'dist/python-sdk-api/';
 
-function page(name) {
-  return new JSDOM(readFileSync(directory + name, 'utf8'));
+function page(name, options = {}) {
+  return new JSDOM(readFileSync(directory + name, 'utf8'), {
+    url: 'https://vis.blockether.com/python-sdk-api/' + name,
+    ...options,
+  });
 }
 
 test('the SDK overview starts with a usable workflow and an API choice guide', () => {
@@ -99,6 +102,93 @@ print(json.dumps(methods))
       'LocalEngine.create_session',
     ])
       expect(document.getElementById(name).querySelector('.docstring'), name).not.toBeNull();
+  } finally {
+    dom.window.close();
+  }
+});
+
+function interactivePage(fragment = '', compact = false) {
+  const dom = page('blockether/vis/engine.html', {
+    url: 'https://vis.blockether.com/python-sdk-api/blockether/vis/engine.html' + fragment,
+    runScripts: 'outside-only',
+  });
+  const media = new dom.window.EventTarget();
+  media.matches = compact;
+  dom.window.matchMedia = () => media;
+  dom.window.eval(readFileSync('pdoc/navigation.js', 'utf8'));
+  return { dom, media };
+}
+
+test('compact navigation closes after choosing a link and reopens on a wide viewport', () => {
+  const { dom, media } = interactivePage('', true);
+  try {
+    const navigation = dom.window.document.querySelector('.api-navigation');
+    expect(navigation.open).toBe(false);
+    navigation.open = true;
+    navigation.querySelector('a[href="#Agent"]').click();
+    expect(navigation.open).toBe(false);
+    media.matches = false;
+    media.dispatchEvent(new dom.window.Event('change'));
+    expect(navigation.open).toBe(true);
+    navigation.querySelector('a[href="#Agent"]').click();
+    expect(navigation.open).toBe(true);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('deep links reveal inherited documentation on load and hash changes', () => {
+  const { dom } = interactivePage('#GatewayClient.create_session', true);
+  try {
+    const document = dom.window.document;
+    const errors = [];
+    dom.window.addEventListener('error', (event) => errors.push(event.message));
+    const target = document.getElementById('GatewayClient.create_session');
+    expect(target.closest('.api-inherited').open).toBe(true);
+    expect(document.getElementById('Events.close').closest('.api-inherited').open).toBe(false);
+    dom.window.history.replaceState(null, '', '#Events.close');
+    dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange'));
+    expect(document.getElementById('Events.close').closest('.api-inherited').open).toBe(true);
+    for (const hash of ['#missing-member', '#%invalid']) {
+      dom.window.history.replaceState(null, '', hash);
+      expect(() =>
+        dom.window.dispatchEvent(new dom.window.HashChangeEvent('hashchange')),
+      ).not.toThrow();
+    }
+    expect(errors).toEqual([]);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('view decoding inherited from private SDK bases remains available on each record', () => {
+  const dom = page('blockether/vis/views.html');
+  try {
+    for (const name of ['InputView', 'LiveView', 'LivePatch', 'LiveResult', 'ViewSnapshot']) {
+      for (const method of ['from_wire', 'to_wire']) {
+        const member = dom.window.document.getElementById(name + '.' + method);
+        expect(member.querySelector('.docstring')).not.toBeNull();
+      }
+    }
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('API tables keep words intact while scrolling inside narrow pages', () => {
+  const dom = page('blockether/vis/engine.html');
+  try {
+    const document = dom.window.document;
+    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+      const style = document.createElement('style');
+      style.textContent = readFileSync('dist' + new URL(link.href).pathname, 'utf8');
+      document.head.append(style);
+    }
+    const table = document.querySelector('.module-info table');
+    const style = dom.window.getComputedStyle(table);
+    expect(style.overflowWrap).toBe('normal');
+    expect(style.overflowX).toBe('auto');
+    expect(style.maxWidth).toBe('100%');
   } finally {
     dom.window.close();
   }
