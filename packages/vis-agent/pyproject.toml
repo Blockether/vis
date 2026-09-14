@@ -25,6 +25,9 @@ classifiers = [
   "Topic :: Software Development :: Build Tools",
 ]
 
+[project.optional-dependencies]
+docs = ["pdoc==16.0.0"]
+
 [project.urls]
 Homepage = "https://vis.blockether.com"
 Documentation = "https://vis.blockether.com"

@@ -5,6 +5,11 @@ to use a separately running gateway. Add your application's functions with
 `extensions=[...]`; they keep access to your Python objects in either mode.
 Both modes provide `run()`, `send()` and one conversation for follow-up requests.
 
+For classes, methods, signatures and type annotations, browse the
+[generated Python SDK API reference](https://vis.blockether.com/python-sdk-api/).
+It is rebuilt from `main` and may include APIs not yet released on PyPI.
+Use this guide for installation and task examples.
+
 ## Install the SDK
 
 **The execution-layer and application-extension API on this page is unreleased.**

@@ -7,7 +7,7 @@ and `/api/*` is its API.
 JavaScript enhances filtering, navigation, copying commands and repository submission.
 There is no Vis gateway, Python web server or browser database credential.
 
-## One renderer and Vis light stylesheet
+## Manual renderer and generated API reference
 
 `build.mjs` invokes the engine's documentation renderer, using its dependency pins and
 canonical Markdown resources. The [documentation stylesheet](../../resources/vis-docs/assets/theme.css),
@@ -19,6 +19,25 @@ The Worker and browser share the catalog renderer in `web/render.js`; all docume
 
 The catalog link is public-site-only. It is neither a `doc()` entry nor a page served
 by the embedded documentation. Local/live documentation rendering remains supported.
+
+## Python SDK API reference
+
+`npm run build` also runs [pdoc](https://pdoc.dev/) on the Python SDK in this checkout.
+The `docs` extra in `packages/vis-agent/pyproject.toml` pins the generator; it is not
+an SDK runtime dependency. The generated HTML and search index are published at
+[/python-sdk-api/](https://vis.blockether.com/python-sdk-api/). They follow `main`,
+so the reference can include APIs not yet released on PyPI.
+
+`python-api.mjs` documents public modules, including the engine's re-exported API,
+and excludes private implementation modules. It keeps pdoc's layout and search,
+extracting inline CSS and JavaScript into content-addressed assets to preserve the
+site's Content Security Policy. No engine, gateway or model call is needed.
+Generated files stay in ignored `dist/`; edit SDK docstrings and type annotations
+rather than the HTML. The [SDK guide](../../resources/vis-docs/python-sdk.md)
+remains the place for installation and task examples.
+
+The docs workflow installs the extra, builds and tests the reference, and publishes
+it with the site after verification on `main`. SDK source changes trigger that workflow.
 
 ## Council diagrams
 
@@ -32,8 +51,9 @@ no Mermaid runtime, remote renderer or browser script is loaded by readers.
 ## Public discovery
 
 `npm run build` regenerates metadata and discovery from the engine's collected documentation
-records, not a second list of pages. `web/discovery.js` owns the public canonical origin
-(`https://vis.blockether.com`), shared head metadata and the accessible header icon.
+records and pdoc's generated module pages, not a second list of pages. `web/discovery.js`
+owns the public canonical origin (`https://vis.blockether.com`), shared head metadata
+and the accessible header icon.
 Local previews retain production canonical URLs; embedded/live docs are unchanged.
 
 - Every public page has a canonical URL, page-specific description, Open Graph and Twitter
@@ -44,10 +64,12 @@ Local previews retain production canonical URLs; embedded/live docs are unchange
   including a 48×48 PNG for search results and an explicit ICO link. Link previews use a
   separate opaque 1200×630 PNG with margins and declared dimensions, not the small transparent
   header logo. No external icon service is used.
-- `/robots.txt` advertises `/sitemap.xml`. That index points to generated `/sitemap-docs.xml`
-  and live `/extensions/sitemap.xml`. Filter URLs and duplicate `/index.html` are excluded.
-- `/llms.txt` is the generated Markdown documentation index; `/llms-full.txt` includes all
-  documentation text. Each document also has a `.md` URL and an HTML alternate link.
+- `/robots.txt` advertises `/sitemap.xml`. That index points to generated `/sitemap-docs.xml`,
+  `/sitemap-python-sdk.xml` and live `/extensions/sitemap.xml`. Filter URLs and duplicate
+  index pages are excluded.
+- `/llms.txt` indexes the manual's Markdown pages and generated HTML API reference;
+  `/llms-full.txt` includes the manual text and a link to the API reference. Each manual
+  page also has a `.md` URL and an HTML alternate link.
   The conventional filename is **llms.txt** (plural); it is a discovery convention, not an
   access-control mechanism or a guarantee that an agent will follow instructions.
 - `/extensions/llms.txt` lists approved catalog entries and links the public JSON API.
@@ -58,13 +80,23 @@ Local previews retain production canonical URLs; embedded/live docs are unchange
   These controls make approved listings discoverable; indexing and ranking are decided by search engines.
 
 Discovery assets remain available without the catalog database. Production verification checks
-both sitemap branches, agent indexes, raw Markdown and favicon signatures after deployment.
+the sitemap branches, agent indexes, raw Markdown and favicon signatures after deployment.
 Changing the public canonical origin requires updating `web/discovery.js` and rebuilding.
 
 ## Local development
 
-Requires Node 22.12+, npm, Clojure CLI and the repository-pinned GraalVM CE. Prepare the
-repository dependencies with `clojure -X:deps prep` at the repository root, then from this directory:
+Requires Node 22.12+, npm, Python 3.11+, Clojure CLI and the repository-pinned GraalVM CE.
+From the repository root, prepare the dependencies in an activated Python environment:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e './packages/vis-agent[docs]'
+clojure -X:deps prep
+```
+
+The build uses `python3` from `PATH`; set `PYTHON` to choose another interpreter with
+these dependencies installed. Then, from this directory:
 
 ```sh
 npm ci
@@ -75,7 +107,7 @@ npm run dev
 Open <http://127.0.0.1:4178> for docs and <http://127.0.0.1:4178/extensions/> for
 the catalog. Wrangler runs the real Worker runtime and a local D1 instance under
 `.wrangler/`. The catalog starts empty. These commands never create Cloudflare resources
-or deploy the app. `npm run build` rebuilds both documentation and catalog assets.
+or deploy the app. `npm run build` rebuilds the manual, Python API reference and catalog assets.
 
 Submissions fail closed until Turnstile is configured. Supply a public
 `TURNSTILE_SITE_KEY` and a server-only `TURNSTILE_SECRET_KEY` in ignored `.dev.vars`.

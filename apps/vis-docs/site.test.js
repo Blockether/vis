@@ -260,6 +260,10 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
       '/robots.txt',
       '/sitemap.xml',
       '/sitemap-docs.xml',
+      '/sitemap-python-sdk.xml',
+      ...readdirSync('dist/python-sdk-api', { recursive: true })
+        .filter((name) => /\.(html|css|js)$/.test(name))
+        .map((name) => '/python-sdk-api/' + name),
       '/llms.txt',
       '/llms-full.txt',
       '/extending.md',
@@ -272,7 +276,7 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
       // Drain every response: leaving asset streams open can block the harness teardown.
       expect(
         Buffer.from(await response.arrayBuffer()).equals(
-          readFileSync('dist' + (path === '/' ? '/index.html' : path)),
+          readFileSync('dist' + (path.endsWith('/') ? path + 'index.html' : path)),
         ),
         path,
       ).toBe(true);
@@ -286,6 +290,8 @@ test('Wrangler serves the home page, HTML paths and assets with production routi
         ['/gateway', '/'],
         ['/gateway.html', '/'],
         ['/gateway.md', '/index.md'],
+        ['/python-sdk-api', '/python-sdk-api/blockether/vis.html'],
+        ['/python-sdk-api/', '/python-sdk-api/blockether/vis.html'],
       ]) {
         const moved = await site.fetch(path, { method, redirect: 'manual' });
         await moved.arrayBuffer();

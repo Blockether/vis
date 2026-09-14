@@ -67,6 +67,7 @@ test('every generated document has canonical metadata, an accessible icon and a 
   expect(descriptions.size).toBe(pages.length);
   expect(xmlLocations(read('sitemap.xml'))).toEqual([
     origin + '/sitemap-docs.xml',
+    origin + '/sitemap-python-sdk.xml',
     origin + '/extensions/sitemap.xml',
   ]);
   expect(read('robots.txt')).toContain('Sitemap: ' + origin + '/sitemap.xml');

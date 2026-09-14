@@ -149,6 +149,9 @@ covers requirements, startup time and memory use.
 
 Start with the [Python SDK](resources/vis-docs/python-sdk.md) to run a task using
 `Agent(project=".")`, continue the conversation or connect to a shared gateway.
+Browse the generated [Python API reference](https://vis.blockether.com/python-sdk-api/)
+for classes, methods, signatures and types. It follows `main` and can include
+unreleased APIs not yet available on PyPI.
 For JVM applications, follow the [Java and Clojure guide](resources/vis-docs/jvm-sdk.md).
 For a shared engine, [run a gateway](resources/vis-docs/gateway-service.md); no native build is needed.
 

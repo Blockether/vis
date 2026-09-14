@@ -6,6 +6,7 @@ import { security } from './headers.js';
 import { JSDOM } from 'jsdom';
 import sharp from 'sharp';
 import { origin, metadataHead, extensionIcon, sitemap } from './web/discovery.js';
+import { buildPythonApi } from './python-api.mjs';
 
 const dist = new URL('./dist/', import.meta.url);
 await rm(dist, { recursive: true, force: true });
@@ -45,13 +46,18 @@ for (const page of pages) {
   dom.window.close();
   await writeFile(new URL(page.slug + '.md', dist), page.md);
 }
+const pythonApi = await buildPythonApi(dist);
 await writeFile(
   new URL('sitemap.xml', dist),
-  sitemap(['/sitemap-docs.xml', '/extensions/sitemap.xml'], true),
+  sitemap(['/sitemap-docs.xml', '/sitemap-python-sdk.xml', '/extensions/sitemap.xml'], true),
 );
 await writeFile(
   new URL('sitemap-docs.xml', dist),
   sitemap(pages.map((page) => (page.slug === 'index' ? '/' : '/' + page.slug + '.html'))),
+);
+await writeFile(
+  new URL('sitemap-python-sdk.xml', dist),
+  sitemap(pythonApi.map((page) => page.path)),
 );
 await writeFile(
   new URL('robots.txt', dist),
@@ -61,13 +67,18 @@ await writeFile(
   new URL('llms.txt', dist),
   `# Vis\n\n> ${site.tagline}\n\n## Documentation\n\n` +
     pages.map((page) => `- [${page.title}](${origin}/${page.slug}.md): ${page.blurb}\n`).join('') +
+    '\n## Python SDK API reference\n\n' +
+    pythonApi
+      .map((page) => `- [${page.title}](${origin}${page.path}): Generated development API reference.\n`)
+      .join('') +
     `\n## Extension Center\n\n- [Public extensions](${origin}/extensions/llms.txt): Live catalog index.\n- [Catalog API](${origin}/api/extensions): Approved listings as JSON.\n\n## Optional\n\n- [Full documentation](${origin}/llms-full.txt)\n`,
 );
 await writeFile(
   new URL('llms-full.txt', dist),
   '# Vis documentation\n\n' +
     pages.map((page) => `Source: ${origin}/${page.slug}.md\n\n${page.md}`).join('\n\n---\n\n') +
-    `\n\nLive extension catalog: ${origin}/extensions/llms.txt\n`,
+    `\n\nGenerated Python SDK API reference: ${origin}/python-sdk-api/\n` +
+    `\nLive extension catalog: ${origin}/extensions/llms.txt\n`,
 );
 // The header logo is only 287×256 and transparent; generate discovery images from the master.
 const logo = await sharp(fileURLToPath(new URL('../../logo.png', import.meta.url)))
@@ -141,7 +152,9 @@ await writeFile(
 // The app setup guide is now part of Getting started; keep existing bookmarks working.
 await writeFile(
   new URL('_redirects', dist),
-  '/ /index.html 200\n/gateway / 301\n/gateway.html / 301\n/gateway.md /index.md 301\n',
+  '/ /index.html 200\n/gateway / 301\n/gateway.html / 301\n/gateway.md /index.md 301\n' +
+    '/python-sdk-api /python-sdk-api/blockether/vis.html 301\n' +
+    '/python-sdk-api/ /python-sdk-api/blockether/vis.html 301\n',
 );
 // A mismatch must fail the build, not silently introduce another theme.
 const source = await readFile(
