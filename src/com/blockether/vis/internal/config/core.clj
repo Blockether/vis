@@ -1938,9 +1938,10 @@
       (throw (ex-info "Configuration changed during installation; retry --save" {:path path})))))
 
 (defn- with-project-extension-save-lock
-  [path f]
-  (let [lock-file (io/file (.getParentFile (io/file path)) ".vis" "extension-save.lock")]
-    (io/make-parents lock-file)
+  "Reuse the machine-store lock so project saves leave no lock file in the project."
+  [f]
+  (ensure-private-dir! (config-dir))
+  (let [lock-file (io/file (str (state-path) ".lock"))]
     (when (Files/isSymbolicLink (.toPath lock-file))
       (throw (ex-info "Refusing a symbolic extension-save lock" {:path (str lock-file)})))
     (with-open [^FileChannel channel (FileChannel/open (.toPath lock-file)
@@ -2016,7 +2017,7 @@
                          (finally (Files/deleteIfExists temporary)))))))
             (invalidate-config-cache!))]
       (locking machine-store-monitor
-        (if (= scope "global") (write!) (with-project-extension-save-lock path write!))))
+        (if (= scope "global") (write!) (with-project-extension-save-lock write!))))
     path))
 
 (defn set-agent-name!

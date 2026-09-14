@@ -47,6 +47,7 @@
                                                    "tools"
                                                    {"source" (str (io/file project "tools"))})))
         (is (= {"extensions" {"tools" {"source" "./tools"}}} (yamlstar/load (slurp path))))
+        (is (= #{"vis.yml"} (set (.list ^java.io.File project))))
         (is (= (.getCanonicalPath (io/file project "tools"))
                (get-in (second (config/extension-package-scopes))
                        [:packages "tools" "source"])))))))
@@ -173,7 +174,8 @@
 
 (deftest project-save-locks-the-write-and-refuses-a-stale-plan
   (with-save-config
-    (fn [project _]
+    (fn [project global]
+      (is (.delete ^java.io.File global))
       (let [first-plan
             (config/prepare-extension-save {:project true})
 
@@ -181,7 +183,7 @@
             (config/prepare-extension-save {:project true})
 
             lock-file
-            (io/file project ".vis/extension-save.lock")
+            (io/file global "state.yml.lock")
 
             render
             @#'config/project-extension-text
