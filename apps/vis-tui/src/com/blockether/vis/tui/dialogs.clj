@@ -1382,7 +1382,7 @@
                 lines]}]
      (let [{:keys [left inner-w]} bounds]
        (draw-dialog-chrome! g cols rows "Session metrics · C-x u" content-w content-h-req)
-       (doseq [[i {:keys [text tone toggle value value-col]}]
+       (doseq [[i {:keys [text tone toggle label value value-col]}]
                (map-indexed vector (take content-h (drop scroll lines)))]
          (let [y (+ (long content-top) (long i))]
            (when toggle (draw-toggle-row! g left y (dec (long inner-w)) false text))
@@ -1403,7 +1403,7 @@
                             t/dialog-fg)
                           t/dialog-bg)
            (when value-col (p/set-fg! g t/dialog-hint))
-           (if (= :heading tone)
+           (if (or label (= :heading tone))
              (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) y (ellipsize text text-w)))
              (p/put-str! g (+ (long left) 2) y (ellipsize text text-w)))
            (when value-col

@@ -310,6 +310,56 @@
                                     (throw (ex-info "offline" {})))]
       (is (= {:phase :error} (client/session-usage "id"))))))
 
+(deftest metric-labels-and-values-are-bold
+  (doseq [cols
+          [40 80 120]
+
+          :let [component
+                (review-component)
+
+                state
+                (assoc (:init component)
+                  :parts? true
+                  :roots? true)
+
+                geom
+                ((:measure component) state cols 80)]
+          scroll
+          (distinct [0 (:max-scroll geom)])]
+
+    (let [capture
+          (cap/capture! {:cols cols
+                         :rows 80
+                         :paint! (fn [{:keys [g]}]
+                                   ((:paint component) g (assoc state :scroll scroll) geom))})
+
+          frame
+          (last (:frames capture))
+
+          x
+          (+ 2 (long (get-in geom [:bounds :left])))
+
+          visible
+          (take (:content-h geom) (drop scroll (:lines geom)))]
+
+      (is (nil? (:error capture)))
+      (doseq [[i {:keys [text label tone]}]
+              (map-indexed vector visible)
+
+              :when (or label (#{:heading :hint} tone))]
+
+        (let [cells
+              (subvec (nth frame (+ (long (:content-top geom)) (long i)))
+                      x
+                      (+ x (p/display-width text)))
+
+              content
+              (remove #(str/blank? (:ch %)) cells)]
+
+          (is (seq content) text)
+          (is (= #{(boolean (or label (= :heading tone)))} (set (map :bold content)))
+              (str cols " columns: " text)))))))
+
 (deftest production-terminal-grid
   (doseq [cols
           [40 80 120]
