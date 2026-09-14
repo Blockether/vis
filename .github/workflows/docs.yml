@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths: &docs_paths
       - 'apps/vis-docs/**'
+      - 'apps/vis-companion/index.html'
+      - 'apps/vis-companion/public/vis-logo.png'
       - 'logo.png'
       - 'scripts/cloudflare-https*.mjs'
       - 'resources/vis-docs/**'

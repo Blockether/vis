@@ -71,6 +71,11 @@ test('API headings have unique anchors without duplicating member definitions', 
 
 test('generated API pages have discovery metadata and no inline executable content', () => {
   const sitemap = read('/sitemap-python-sdk.xml');
+  const docs = new JSDOM(read('/index.html'));
+  const favicons = [...docs.window.document.querySelectorAll('link[rel="icon"]')].map(
+    (node) => node.outerHTML,
+  );
+  docs.window.close();
   for (const name of files.filter((name) => name !== 'index.html')) {
     const path = prefix + name;
     const dom = new JSDOM(read(path));
@@ -79,6 +84,9 @@ test('generated API pages have discovery metadata and no inline executable conte
       expect(document.querySelectorAll('title')).toHaveLength(1);
       expect(document.title).toMatch(/ · Python SDK API · Vis · Blockether$/);
       expect(document.querySelector('link[rel="canonical"]').href).toBe(origin + path);
+      expect(
+        [...document.querySelectorAll('link[rel="icon"]')].map((node) => node.outerHTML),
+      ).toEqual(favicons);
       expect(document.querySelector('meta[name="description"]').content).toContain(
         'development source',
       );

@@ -65,10 +65,11 @@ Local previews retain production canonical URLs; embedded/live docs are unchange
   metadata, JSON-LD with Blockether as publisher, shared PNG favicons, an Apple touch icon
   and a web manifest. Titles identify Vis and Blockether; extension titles also identify
   the repository owner, and each detail page describes its source repository in JSON-LD.
-  Icons are resized from the full-resolution repository `logo.png` and flattened onto white,
-  including a 48×48 PNG for search results and an explicit ICO link. Link previews use a
-  separate opaque 1200×630 PNG with margins and declared dimensions, not the small transparent
-  header logo. No external icon service is used.
+  Browser favicons reuse the app's `apps/vis-companion/public/vis-logo.png`, preserving
+  transparency in the 16×16, 32×32 and 48×48 PNGs and the ICO. Touch and manifest icons
+  are resized from the full-resolution repository `logo.png` and flattened onto white.
+  Link previews use a separate opaque 1200×630 PNG with margins and declared dimensions,
+  not the small transparent header logo. No external icon service is used.
 - `/robots.txt` advertises `/sitemap.xml`. That index points to generated `/sitemap-docs.xml`,
   `/sitemap-python-sdk.xml` and live `/extensions/sitemap.xml`. Filter URLs and duplicate
   index pages are excluded.

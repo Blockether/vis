@@ -74,11 +74,52 @@ test('every generated document has canonical metadata, an accessible icon and a 
   expect(read('llms.txt')).toContain(origin + '/extensions/llms.txt');
   expect(readdirSync('dist')).not.toContain('source.json');
 });
-test('shared favicons have the declared dimensions and a valid ICO directory', async () => {
+
+test.each([16, 32, 48])('favicon %i reuses the transparent Companion artwork', async (size) => {
+  const companion = new JSDOM(readFileSync('../vis-companion/index.html', 'utf8'));
+  try {
+    const href = companion.window.document.querySelector('link[rel="icon"]').getAttribute('href');
+    const source = readFileSync('../vis-companion/public' + href);
+    const name = `favicon-${size}.png`;
+    const actual = readFileSync('dist/' + name);
+    expect(await sharp(actual).metadata()).toMatchObject({
+      width: size,
+      height: size,
+      hasAlpha: true,
+    });
+    // Browser tabs must show the app's artwork, without a white box or extra cropping.
+    expect((await sharp(actual).stats()).isOpaque).toBe(false);
+    const corner = await sharp(actual)
+      .extract({ left: 0, top: 0, width: 1, height: 1 })
+      .ensureAlpha()
+      .raw()
+      .toBuffer();
+    expect(corner[3]).toBe(0);
+    const expected = await sharp(source)
+      .resize(size, size, { fit: 'contain', background: '#00000000' })
+      .png()
+      .toBuffer();
+    expect(actual).toEqual(expected);
+  } finally {
+    companion.window.close();
+  }
+});
+
+test('the ICO embeds the transparent 32-bit favicon with a matching directory', async () => {
+  const ico = readFileSync('dist/favicon.ico');
+  expect(ico.readUInt16LE(2)).toBe(1);
+  expect(ico.readUInt16LE(4)).toBe(1);
+  expect(ico[6]).toBe(32);
+  expect(ico[7]).toBe(32);
+  expect(ico.readUInt16LE(12)).toBe(32);
+  expect(ico.readUInt32LE(14)).toBe(ico.length - 22);
+  expect(ico.readUInt32LE(18)).toBe(22);
+  expect(ico.subarray(22)).toEqual(readFileSync('dist/favicon-32.png'));
+  expect(await sharp(ico.subarray(22)).metadata()).toMatchObject({ channels: 4, hasAlpha: true });
+});
+
+test('touch and manifest icons keep their opaque background and declared dimensions', async () => {
   for (const [name, size] of [
-    ['favicon-16.png', 16],
-    ['favicon-32.png', 32],
-    ['favicon-48.png', 48],
     ['apple-touch-icon.png', 180],
     ['icon-192.png', 192],
     ['icon-512.png', 512],
@@ -86,7 +127,6 @@ test('shared favicons have the declared dimensions and a valid ICO directory', a
     const meta = await sharp('dist/' + name).metadata();
     expect(meta.width).toBe(size);
     expect(meta.height).toBe(size);
-    // Link-preview clients must not fill transparent artwork with their own accent color.
     expect((await sharp('dist/' + name).stats()).isOpaque, name).toBe(true);
     const corner = await sharp('dist/' + name)
       .extract({ left: 0, top: 0, width: 1, height: 1 })
@@ -95,16 +135,12 @@ test('shared favicons have the declared dimensions and a valid ICO directory', a
       .toBuffer();
     expect([...corner], name).toEqual([255, 255, 255]);
   }
-  const ico = readFileSync('dist/favicon.ico');
-  expect(ico.readUInt16LE(2)).toBe(1);
-  expect(ico.readUInt32LE(18)).toBe(22);
-  expect(ico.subarray(22)).toEqual(readFileSync('dist/favicon-32.png'));
-  expect(ico.readUInt16LE(12)).toBe((await sharp(ico.subarray(22)).metadata()).channels * 8);
   const manifest = JSON.parse(read('site.webmanifest'));
   expect(manifest.icons).toHaveLength(2);
   for (const icon of manifest.icons)
     expect(readFileSync('dist' + icon.src).length).toBeGreaterThan(0);
 });
+
 test('docs and catalog previews use a separate opaque social image with room around the logo', async () => {
   for (const html of [
     read('index.html'),

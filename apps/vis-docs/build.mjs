@@ -80,15 +80,23 @@ await writeFile(
     `\n\nGenerated Python SDK API reference: ${origin}/python-sdk-api/\n` +
     `\nLive extension catalog: ${origin}/extensions/llms.txt\n`,
 );
-// The header logo is only 287×256 and transparent; generate discovery images from the master.
+// Browser tabs reuse Companion's transparent artwork without trimming or a background.
+const companionIcon = await readFile(
+  new URL('../vis-companion/public/vis-logo.png', import.meta.url),
+);
+for (const size of [16, 32, 48]) {
+  await sharp(companionIcon)
+    .resize(size, size, { fit: 'contain', background: '#00000000' })
+    .png()
+    .toFile(fileURLToPath(new URL(`favicon-${size}.png`, dist)));
+}
+
+// Home-screen icons and link previews keep their opaque, full-resolution artwork.
 const logo = await sharp(fileURLToPath(new URL('../../logo.png', import.meta.url)))
   .trim()
   .png()
   .toBuffer();
 for (const [name, size] of [
-  ['favicon-16.png', 16],
-  ['favicon-32.png', 32],
-  ['favicon-48.png', 48],
   ['apple-touch-icon.png', 180],
   ['icon-192.png', 192],
   ['icon-512.png', 512],
@@ -113,7 +121,7 @@ ico.writeUInt16LE(1, 4);
 ico[6] = 32;
 ico[7] = 32;
 ico.writeUInt16LE(1, 10);
-ico.writeUInt16LE(24, 12);
+ico.writeUInt16LE(32, 12);
 ico.writeUInt32LE(favicon.length, 14);
 ico.writeUInt32LE(22, 18);
 await writeFile(new URL('favicon.ico', dist), Buffer.concat([ico, favicon]));
