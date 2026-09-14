@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, within } from 'storybook/test';
 import { HumanInputSheetVariant } from './humanInputVariants';
 
 /**
@@ -37,4 +38,29 @@ export const Slider: Story = { args: { state: 'slider' } };
 /** A code, digit by digit, with a second field that failed validation. */
 export const Otp: Story = { args: { state: 'otp' } };
 /** Fields that belong together, and one of them wrong. */
-export const Grouped: Story = { args: { state: 'grouped' } };
+export const Grouped: Story = {
+  args: { state: 'grouped' },
+  play: async () => {
+    const body = within(document.body);
+    const host = body.getByPlaceholderText('db.internal');
+    const port = body.getByPlaceholderText('5432');
+    const group = host.closest('fieldset')!;
+    const originalWidth = group.style.width;
+    const nextGroup = group.nextElementSibling!;
+    await expect(
+      nextGroup.getBoundingClientRect().top - group.getBoundingClientRect().bottom,
+    ).toBeGreaterThanOrEqual(12);
+    // Constrain the actual group, not the viewport: sheets and nested panels
+    // can be narrow on desktop too. Restore the normal gallery presentation.
+    try {
+      group.style.width = '280px';
+      const hostBox = host.getBoundingClientRect();
+      const portBox = port.getBoundingClientRect();
+      await expect(portBox.left).toBe(hostBox.left);
+      await expect(portBox.top).toBeGreaterThanOrEqual(hostBox.bottom + 12);
+      await expect(group.scrollWidth).toBeLessThanOrEqual(group.clientWidth);
+    } finally {
+      group.style.width = originalWidth;
+    }
+  },
+};

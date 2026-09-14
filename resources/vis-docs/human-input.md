@@ -98,9 +98,21 @@ confirmation, whether the answer comes from a dialog or an HTTP request.
 
 ## Layout
 
-Layout nodes do not produce answer values. A `group` arranges `fields` in a
-`column` (default) or `row` and can contain nested groups. A `heading` or
-`paragraph` displays `text`.
+Use the same `row` and `column` layout vocabulary for Ask forms and
+[Live views](live-views.md#layout-and-text). A `group` arranges its `fields` in a
+`column` (default) or `row`. Groups can nest; each nested group uses the width
+available inside its parent, not the full screen width.
+
+In Companion, rows use equal-width columns with a minimum width of `12rem`,
+wrapping into fewer columns as space narrows and eventually stacking. A single
+column can shrink below that minimum to fit a very narrow panel. In the TUI,
+rows use equal-width columns when each child has at least 24 terminal text cells
+after spacing; otherwise the entire row stacks vertically. Columns always stack.
+
+Ask groups can have a `label` and `description`. Layout nodes do not produce
+answer values: a `heading` or `paragraph` displays `text` without an input.
+Shared layout does not change Ask validation or add Live collapse and
+interaction behavior to a form.
 
 ```python
 vis.ask("Where should the pool connect?", [

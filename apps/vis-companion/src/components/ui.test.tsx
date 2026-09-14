@@ -113,6 +113,9 @@ import {
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
   Spinner,
+  ViewHeading,
+  ViewLayout,
+  ViewParagraph,
 } from './ui';
 import {
   HeaderActions,
@@ -2140,6 +2143,45 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
     it('turns amber when it is the answer, and the glyph is decoration', () => {
       expect(html(true)).toContain('aria-hidden="true"');
       expect(html(true)).toContain('production');
+    });
+  });
+
+  describe('view presentation', () => {
+    it('keeps nested direction, child order and an empty layout without controls', () => {
+      const html = renderToStaticMarkup(
+        <ViewLayout direction="row">
+          <ViewHeading>Connection</ViewHeading>
+          <ViewLayout>
+            <ViewParagraph>Host before port</ViewParagraph>
+            <ViewLayout direction="row" />
+          </ViewLayout>
+        </ViewLayout>,
+      );
+      expect(html.match(/data-view-layout="row"/g)).toHaveLength(2);
+      expect(html.match(/data-view-layout="column"/g)).toHaveLength(1);
+      expect(html.indexOf('Connection')).toBeLessThan(html.indexOf('Host before port'));
+      expect(html).not.toMatch(/<(button|input)|tabindex=/);
+    });
+
+    it('keeps native heading levels and leaves text parsing to the caller', () => {
+      for (const level of [1, 2, 3, 4, 5, 6] as const) {
+        expect(renderToStaticMarkup(<ViewHeading level={level}>Review</ViewHeading>)).toMatch(
+          new RegExp(`<h${level}[^>]*>Review</h${level}>`),
+        );
+      }
+      expect(renderToStaticMarkup(<ViewHeading>Section</ViewHeading>)).toContain('<h3');
+      const plain = renderToStaticMarkup(
+        <ViewParagraph>**Keep literal** &amp; safe</ViewParagraph>,
+      );
+      expect(plain).toContain('**Keep literal** &amp; safe');
+      expect(plain).not.toContain('<strong>');
+      expect(
+        renderToStaticMarkup(
+          <ViewParagraph>
+            <strong>Rich text</strong>
+          </ViewParagraph>,
+        ),
+      ).toContain('<strong>Rich text</strong>');
     });
   });
 

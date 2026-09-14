@@ -417,11 +417,11 @@ describe('what a run says about its own layout', () => {
       row.textContent?.includes('Hosts'),
     ) as HTMLElement;
     expect(beside.textContent).toContain('Why');
-    expect(beside.innerHTML).toContain('sm:grid-flow-col');
+    expect(beside.querySelector('[data-view-layout="row"]')).not.toBeNull();
     const alone = [...list.children].find((row) =>
       row.textContent?.includes('Elsewhere'),
     ) as HTMLElement;
-    expect(alone.innerHTML).not.toContain('grid-flow-col');
+    expect(alone.querySelector('[data-view-layout]')).toBeNull();
   });
 
   // A phone reads a table DOWN its first column. The row's own line carries the

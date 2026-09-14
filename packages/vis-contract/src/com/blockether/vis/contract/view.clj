@@ -178,11 +178,12 @@
 (def live-sorted-keys "Every key a `{:by …}` table order may carry." #{:by :dir})
 
 (def live-group-keys
-  "Every key a live layout GROUP may carry — the request's own [[group-type]]
-   node, reused verbatim rather than reinvented, so a `row` arranges the same way
-   whether a human is answering it or watching it.
+  "Every key a live layout group may carry. Shares the row/column layout
+   vocabulary of [[group-type]], not the complete input-group schema: live
+   groups have ids and optional collapse state, while input groups describe
+   answer fields. Nested groups use their own available width in each client.
 
-   No `:name`: a group of a VIEW holds no answer, so there is nothing to key."
+   No `:name`: a live group holds no answer, so there is nothing to key."
   #{:id :type :label :direction :fields :is-collapsible :default-expanded})
 
 (def live-node-keys

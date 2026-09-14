@@ -215,7 +215,7 @@ describe('human input sheet', () => {
     const html = markup('grouped');
     const server = element(html, 'data-group-id="group:host+port"');
     expect(server).toContain('data-direction="row"');
-    expect(server).toContain('flex-row');
+    expect(server).toContain('data-view-layout="row"');
     expect(server).toContain('placeholder="db.internal"');
     expect(server).toContain('placeholder="5432"');
     // The legend names the group; what it does not own stays outside it.
@@ -224,7 +224,7 @@ describe('human input sheet', () => {
 
     // A column INSIDE the form, holding a row: the two directions nest.
     const pool = element(html, 'data-group-id="group:pool"');
-    expect(pool).toContain('flex-col');
+    expect(pool).toContain('data-view-layout="column"');
     const inner = element(pool, 'data-group-id="group:size+tls"');
     expect(inner).toContain('data-direction="row"');
     expect(inner).toContain('placeholder="8"');

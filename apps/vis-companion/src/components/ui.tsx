@@ -39,6 +39,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type HTMLAttributes,
   type InputHTMLAttributes,
   type MouseEvent,
   type PointerEvent,
@@ -837,14 +838,11 @@ export function BandTally({ children }: { children: ReactNode }) {
 }
 
 /**
- * AN OPTION YOU PICK, and there is only one of it.
+ * A checkbox or select option with a decorative mark and a wrapping label.
  *
- * The human-input form's checkbox and its select/multiselect options are the
- * same control asking the same question — a status glyph, a label, a frame that
- * turns amber when it is the answer — and each spelled its own class list, so a
- * checkbox hovered its frame and an option did not. What differs is the GLYPH
- * (`HUMAN_INPUT_CHOICE_MARKS`: `●`/`○` for a choice of one, `[✓]`/`[ ]` for a
- * choice of any) and the ARIA the caller passes, never the face.
+ * The caller owns selection and ARIA semantics. The shared face keeps a 44px
+ * touch target (28px with a mouse); long labels grow the row rather than truncate.
+ * `HUMAN_INPUT_CHOICE_MARKS` supplies the exclusive or inclusive choice glyph.
  */
 export function ChoiceRow({
   isOn,
@@ -860,17 +858,71 @@ export function ChoiceRow({
   return (
     <button
       type="button"
-      className={`flex w-full min-w-0 items-center gap-2 border px-2.5 py-1 text-left font-mono text-meta transition-colors duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none sm:text-ui ${
+      className={`flex min-h-11 w-full min-w-0 items-center gap-2 border px-2.5 py-1 text-left font-mono text-ui transition-colors duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none mouse:min-h-7 ${
         isOn
           ? 'border-accent bg-hover text-accent-ink'
           : 'border-edge bg-input text-white hover:border-accent'
       } ${className}`}
       {...props}
     >
-      <span aria-hidden="true">{mark}</span>
-      <span className="min-w-0 truncate">{children}</span>
+      <span aria-hidden="true" className="shrink-0">
+        {mark}
+      </span>
+      <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
     </button>
   );
+}
+
+/**
+ * Shared layout for Ask fields and Live nodes. Columns stack in source order;
+ * rows fit equal-width columns of at least 12rem with a shared 12px gap, wrapping
+ * when their container is too narrow. Below 12rem, one column fits the space.
+ *
+ * Each nested layout measures its own space through CSS grid, not the viewport.
+ * This component owns no label, fieldset, disclosure, focus or value state.
+ */
+export function ViewLayout({
+  direction = 'column',
+  className = '',
+  children,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & { direction?: 'row' | 'column' }) {
+  return (
+    <div
+      {...props}
+      data-view-layout={direction}
+      className={`grid min-w-0 items-start gap-3 [overflow-wrap:anywhere] [&>*]:min-w-0 ${
+        direction === 'row'
+          ? 'grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))]'
+          : 'grid-cols-1'
+      } ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Shared section typography; callers keep plain text or inline Markdown semantics. */
+export function ViewHeading({
+  level = 3,
+  children,
+}: {
+  level?: 1 | 2 | 3 | 4 | 5 | 6;
+  children: ReactNode;
+}) {
+  const Heading = `h${level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+  return (
+    <Heading
+      className={`font-mono font-bold text-white ${level === 1 ? 'text-head' : level === 2 ? 'text-subhead' : 'text-title'}`}
+    >
+      {children}
+    </Heading>
+  );
+}
+
+/** Readable body text for either kind of view; parsing belongs to the caller. */
+export function ViewParagraph({ children }: { children: ReactNode }) {
+  return <p className={`font-mono text-body text-white ${PROSE}`}>{children}</p>;
 }
 
 /**

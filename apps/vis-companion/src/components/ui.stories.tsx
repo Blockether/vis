@@ -50,6 +50,9 @@ import {
   Spinner,
   Switch,
   TextButton,
+  ViewHeading,
+  ViewLayout,
+  ViewParagraph,
 } from './ui';
 import {
   HeaderActions,
@@ -1043,4 +1046,75 @@ export const Gestures: Story = {
       ))}
     </Sheet>
   ),
+};
+
+/** The same layouts serve forms and live output, including narrow nested columns. */
+export const ViewLayouts: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="ViewLayout — responsive row with a nested row">
+        <ViewLayout direction="row" data-testid="view-row" className="w-full shrink-0">
+          <ViewLayout>
+            <ViewHeading>Connection</ViewHeading>
+            <ViewParagraph>gateway.example.com</ViewParagraph>
+          </ViewLayout>
+          <ViewLayout direction="row" data-testid="nested-row">
+            <ViewParagraph>Port 5432</ViewParagraph>
+            <ViewParagraph>Encrypted transport</ViewParagraph>
+          </ViewLayout>
+        </ViewLayout>
+      </Group>
+      <Group of="ChoiceRow — long, selected and disabled">
+        <ViewLayout className="w-full max-w-72">
+          <ChoiceRow isOn={false} mark={HUMAN_INPUT_CHOICE_MARKS.exclusiveOff} aria-pressed={false}>
+            Require an encrypted connection to gateway.example.com before continuing
+          </ChoiceRow>
+          <ChoiceRow isOn mark={HUMAN_INPUT_CHOICE_MARKS.exclusiveOn} aria-pressed>
+            Use this connection
+          </ChoiceRow>
+          <ChoiceRow isOn={false} mark={HUMAN_INPUT_CHOICE_MARKS.exclusiveOff} disabled>
+            Connection unavailable
+          </ChoiceRow>
+        </ViewLayout>
+      </Group>
+      <Group of="ViewLayout — empty">
+        <ViewLayout direction="row" data-testid="empty-layout" />
+      </Group>
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    const row = canvas.getByTestId('view-row');
+    const nested = canvas.getByTestId('nested-row');
+    const originalWidth = row.style.width;
+    try {
+      // Container width, not a breakpoint: these checks also run on a phone.
+      row.style.width = '640px';
+      const [first, second] = [...row.children].map((child) => child.getBoundingClientRect());
+      await expect(first.top).toBe(second.top);
+      await expect(first.width).toBe(second.width);
+      await expect(second.left - first.right).toBe(12);
+      const [port, transport] = [...nested.children].map((child) => child.getBoundingClientRect());
+      await expect(port.left).toBe(transport.left);
+      await expect(transport.top - port.bottom).toBe(12);
+      row.style.width = '280px';
+      const [narrowFirst, narrowSecond] = [...row.children].map((child) =>
+        child.getBoundingClientRect(),
+      );
+      await expect(narrowSecond.left).toBe(narrowFirst.left);
+      await expect(narrowSecond.top - narrowFirst.bottom).toBe(12);
+      await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+      row.style.width = '160px';
+      await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
+    } finally {
+      row.style.width = originalWidth;
+    }
+    const minimum = matchMedia('(min-width: 640px) and (pointer: fine)').matches ? 28 : 44;
+    for (const button of canvas.getAllByRole('button')) {
+      await expect(button.getBoundingClientRect().height).toBeGreaterThanOrEqual(minimum);
+      await expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+    }
+    await expect(canvas.getByRole('button', { name: 'Connection unavailable' })).toBeDisabled();
+    await expect(canvas.getByTestId('empty-layout').children).toHaveLength(0);
+    await expect(canvas.getByTestId('empty-layout').getBoundingClientRect().height).toBe(0);
+  },
 };

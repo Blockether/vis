@@ -691,3 +691,50 @@ export const NarrowDividers: Story = {
   ],
   play: Dividers.play,
 };
+
+/** A narrow desktop panel must stack a row, regardless of the viewport width. */
+export const NarrowGroups: Story = {
+  args: {
+    onInterrupt: undefined,
+    view: {
+      id: 'narrow-groups',
+      title: 'Connection review',
+      seq: 1,
+      nodes: [
+        {
+          id: 'connection',
+          type: 'group',
+          direction: 'row',
+          fields: [
+            { id: 'host', type: 'paragraph', text: 'gateway.example.com' },
+            {
+              id: 'nested',
+              type: 'group',
+              direction: 'row',
+              fields: [
+                { id: 'port', type: 'paragraph', text: 'Port 5432' },
+                { id: 'transport', type: 'paragraph', text: 'Encrypted transport' },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  },
+  decorators: [
+    (Story) => (
+      <div className="max-w-72">
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvas }) => {
+    const host = canvas.getByText('gateway.example.com').getBoundingClientRect();
+    const port = canvas.getByText('Port 5432').getBoundingClientRect();
+    const transport = canvas.getByText('Encrypted transport').getBoundingClientRect();
+    await expect(port.left).toBe(host.left);
+    await expect(port.top).toBeGreaterThanOrEqual(host.bottom + 12);
+    await expect(transport.left).toBe(port.left);
+    await expect(transport.top).toBeGreaterThanOrEqual(port.bottom + 12);
+  },
+};

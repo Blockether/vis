@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useId, useRef, useState, type InputHTMLAttributes } from 'react';
-import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal } from './ui';
+import {
+  Banner,
+  Button,
+  ChoiceRow,
+  DialogFrame,
+  Input,
+  Modal,
+  ViewHeading,
+  ViewLayout,
+  ViewParagraph,
+} from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -23,7 +33,7 @@ import {
 /** The range field's painted track and finger-sized target. */
 function RangeSlider({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
-    <span className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}>
+    <span className={`flex min-h-11 min-w-0 items-center mouse:min-h-7 ${className}`}>
       <input
         type="range"
         className="h-1 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
@@ -304,19 +314,20 @@ export function HumanInputSheet({
               )}
             </div>
           )}
-          {/* A DECORATION has no name, so position is the only identity a row
-              is guaranteed to have. */}
-          {request.fields.map((field, at) => (
-            <HumanInputFieldRow
-              key={`${request.id}:${at}:${field.id}`}
-              field={field}
-              values={values}
-              errors={errors}
-              disabled={busy}
-              onChange={onChange}
-              onSubmit={onSubmit}
-            />
-          ))}
+          <ViewLayout>
+            {/* A decoration has no name; position is its stable identity. */}
+            {request.fields.map((field, at) => (
+              <HumanInputFieldRow
+                key={`${request.id}:${at}:${field.id}`}
+                field={field}
+                values={values}
+                errors={errors}
+                disabled={busy}
+                onChange={onChange}
+                onSubmit={onSubmit}
+              />
+            ))}
+          </ViewLayout>
         </div>
       </DialogFrame>
     </Modal>
@@ -351,9 +362,9 @@ function FieldShell({
       )}
     </>
   );
-  const labelClass = 'block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint';
+  const labelClass = 'block font-mono text-ui uppercase tracking-[0.08em] text-dialog-hint';
   return (
-    <div className="space-y-1">
+    <div className="min-w-0 space-y-1">
       {controlId ? (
         <label className={labelClass} htmlFor={controlId}>
           {label}
@@ -364,17 +375,14 @@ function FieldShell({
       {field.description && (
         <p
           id={controlId ? `${controlId}-description` : undefined}
-          className="font-mono text-chip italic text-dialog-hint"
+          className="font-mono text-ui text-dialog-hint"
         >
           {field.description}
         </p>
       )}
       {children}
       {error && (
-        <p
-          id={controlId ? `${controlId}-error` : undefined}
-          className="font-mono text-chip text-err"
-        >
+        <p id={controlId ? `${controlId}-error` : undefined} className="font-mono text-ui text-err">
           {error}
         </p>
       )}
@@ -416,46 +424,42 @@ function HumanInputFieldRow({
   // explains one. Neither is a control: nothing keys it, it holds no value and
   // it can carry no error, so it renders as the words it was given and stops.
   if (field.type === 'heading') {
-    return <h3 className="mt-1 font-mono text-ui font-semibold text-white">{field.text}</h3>;
+    return <ViewHeading>{field.text}</ViewHeading>;
   }
   if (field.type === 'paragraph') {
-    return <p className="font-mono text-meta italic text-dialog-hint">{field.text}</p>;
+    return <ViewParagraph>{field.text}</ViewParagraph>;
   }
 
-  // A LAYOUT GROUP renders no control of its own: it is a flex container that
-  // owns fields, and a child may be a group again, so `row` and `column` nest
-  // without a third rule. `fieldset`/`legend` is the group a screen reader
-  // already understands.
+  // Keep form semantics outside the shared layout: groups label their fields,
+  // but neither the group nor a decoration contributes an answer value.
   if (field.type === 'group') {
-    const isRow = field.direction === 'row';
     return (
-      <fieldset className="m-0 space-y-1 border-0 p-0">
+      <fieldset className="m-0 min-w-0 space-y-1 border-0 p-0">
         {field.label && (
-          <legend className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+          <legend className="mb-1 block font-mono text-ui uppercase tracking-[0.08em] text-dialog-hint">
             {field.label}
           </legend>
         )}
         {field.description && (
-          <p className="font-mono text-chip italic text-dialog-hint">{field.description}</p>
+          <p className="font-mono text-ui text-dialog-hint">{field.description}</p>
         )}
-        <div
+        <ViewLayout
+          direction={field.direction}
           data-group-id={field.id}
-          data-direction={isRow ? 'row' : 'column'}
-          className={isRow ? 'flex flex-row flex-wrap items-start gap-3' : 'flex flex-col gap-3'}
+          data-direction={field.direction ?? 'column'}
         >
           {(field.fields ?? []).map((child, at) => (
-            <div key={`${at}:${child.id}`} className={isRow ? 'min-w-[7.5rem] flex-1' : ''}>
-              <HumanInputFieldRow
-                field={child}
-                values={values}
-                errors={errors}
-                disabled={disabled}
-                onChange={onChange}
-                onSubmit={onSubmit}
-              />
-            </div>
+            <HumanInputFieldRow
+              key={`${at}:${child.id}`}
+              field={child}
+              values={values}
+              errors={errors}
+              disabled={disabled}
+              onChange={onChange}
+              onSubmit={onSubmit}
+            />
           ))}
-        </div>
+        </ViewLayout>
       </fieldset>
     );
   }

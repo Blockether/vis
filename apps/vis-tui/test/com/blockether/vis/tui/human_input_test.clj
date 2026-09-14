@@ -1933,6 +1933,60 @@
         (expect (= ["dev" "prod" "free" "paid"] (into [] (keep :value) (:stops form))))
         (expect (= [["dev"] ["prod"] ["free"] ["paid"]] (mapv focused (range 4)))))))
 
+(defdescribe
+  responsive-group-layout-test
+  (it "stacks row groups below the same readable column width as Live"
+      (let [form
+            (hi/init-form (grouped-request (server-group "row")))
+
+            split?
+            (fn [width]
+              (boolean (some #(= :columns (:kind %)) (hi/form-rows form width))))]
+
+        (expect (= [false false true true] (mapv split? [20 53 54 80])))
+        (expect (split? nil))))
+  (it "retains nested labels, errors and focus when a row becomes a column"
+      (let [request
+            (grouped-request {"type" "group"
+                              "direction" "row"
+                              "fields" [(server-group "row") {"name" "region" "label" "Region"}]})
+
+            form
+            (hi/set-errors (hi/init-form request) {"port" "Port is required"})
+
+            rows
+            (hi/form-rows form 40)]
+
+        (expect (not-any? #(= :columns (:kind %)) rows))
+        (expect (= ["Server" "Host *" "Port" "Region" "Notes"]
+                   (mapv :text (filter #(= :label (:kind %)) rows))))
+        (expect (some #(= "Port is required" (:text %)) rows))
+        (expect (= "port" (:field-id (hi/focused-stop form))))
+        (expect (= 1 (count (filter :is-focused rows))))))
+  (it "paints narrow fields on separate rows and keeps their caret inside the frame"
+      (let [form
+            (hi/init-form (grouped-request (server-group "row")))
+
+            positions
+            (mapv (fn [focus]
+                    (let [{:keys [screen g]}
+                          (virtual-screen)
+
+                          pos
+                          (hi/paint! g 40 30 (assoc form :focus focus))
+
+                          lines
+                          (mapv #(screen-row screen %) (range 30))]
+
+                      (expect (not-any? #(and (str/includes? % "Host") (str/includes? % "Port"))
+                                        lines))
+                      (expect (every? #(<= (count %) 40) lines))
+                      [(.getColumn ^TerminalPosition pos) (.getRow ^TerminalPosition pos)]))
+                  [0 1])]
+
+        (expect (= (ffirst positions) (first (second positions))))
+        (expect (< (long (second (first positions))) (long (second (second positions))))))))
+
 ;; Decoration — the ink a form needs that answers nothing
 
 (defn- decorated-request

@@ -20,6 +20,9 @@ import {
   OverlayScreen,
   PROSE,
   Spinner,
+  ViewHeading,
+  ViewLayout,
+  ViewParagraph,
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import {
@@ -920,8 +923,6 @@ function NodeCell({
       (node.type === 'log' || node.type === 'group') &&
       node.default_expanded === true;
   const label = node.label || (node.type === 'log' ? 'Output' : node.id);
-  const Heading =
-    node.type === 'heading' ? (`h${node.level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') : 'h2';
   return (
     <div className="min-w-0 space-y-1.5">
       {isDisclosure ? (
@@ -944,13 +945,7 @@ function NodeCell({
       {(!isDisclosure || isOpen) && (
         <div id={contentId} className={`min-w-0 ${isDisclosure ? 'pl-4.5' : ''}`}>
           {node.type === 'group' && (
-            <div
-              className={
-                node.direction === 'row'
-                  ? 'grid min-w-0 gap-x-4 gap-y-3 sm:auto-cols-fr sm:grid-flow-col'
-                  : 'min-w-0 space-y-3'
-              }
-            >
+            <ViewLayout direction={node.direction}>
               {node.fields.map((child) => (
                 <NodeCell
                   key={child.id}
@@ -960,22 +955,20 @@ function NodeCell({
                   presentation={presentation}
                 />
               ))}
-            </div>
+            </ViewLayout>
           )}
           {node.type === 'divider' && (
             <hr className="m-0 w-full border-0 border-t border-dialog-hint" />
           )}
           {node.type === 'paragraph' && (
-            <p className={`font-mono text-body text-white ${PROSE}`}>
+            <ViewParagraph>
               <InlineMarkdown>{node.text}</InlineMarkdown>
-            </p>
+            </ViewParagraph>
           )}
           {node.type === 'heading' && (
-            <Heading
-              className={`font-mono font-bold text-white ${node.level === 1 ? 'text-head' : node.level === 2 ? 'text-subhead' : 'text-title'}`}
-            >
+            <ViewHeading level={node.level}>
               <InlineMarkdown>{node.text}</InlineMarkdown>
-            </Heading>
+            </ViewHeading>
           )}
           {node.type === 'code' && (
             <div className="min-w-0 bg-panel-2 p-2">

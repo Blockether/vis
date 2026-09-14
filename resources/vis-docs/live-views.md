@@ -431,11 +431,21 @@ itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
 
 ## Layout and text
 
-`vis.row(id, *nodes)` and `vis.column(id, *nodes)` arrange nodes horizontally
-or vertically. Every group has an id. Rows place children side by side when
-space permits and vertically on narrow screens. `view.add(node, after="hosts")`
-inserts into the group containing `hosts`. Removing a group removes its
-children.
+Use `vis.row(id, *nodes)` and `vis.column(id, *nodes)` to arrange nodes with
+the same row/column layout vocabulary as [Ask forms](human-input.md#layout).
+Every Live group has an id. Groups can nest; each nested group uses the width
+available inside its parent, not the full screen width.
+
+In Companion, rows use equal-width columns with a minimum width of `12rem`,
+wrapping into fewer columns as space narrows and eventually stacking. A single
+column can shrink below that minimum to fit a very narrow panel. In the TUI,
+rows use equal-width columns when each child has at least 24 terminal text cells
+after spacing; otherwise the entire row stacks vertically. Columns always stack.
+
+Live groups retain their own collapse behavior and their children’s Live
+interactions; shared layout does not turn them into Ask fields or produce
+answer values. `view.add(node, after="hosts")` inserts into the group containing
+`hosts`. Removing a group removes its children.
 
 Use `vis.divider("section-break")` between sections, like an HTML `<hr>`. It fills
 its current container’s width in the terminal and Companion, including inside

@@ -1019,12 +1019,6 @@
         (conj (more-row id behind "link"))))
     [{:kind :empty :node-id id :text (empty-text :link)}]))
 
-(def ^:private min-column-w
-  "The narrowest column a node may be laid into. Under it the terminal has no room
-   for two of anything and a `row` group STACKS: a row says where its nodes stand
-   when there IS room, never that a surface must cram."
-  24)
-
 (defn- stacked-rows
   "Sections one under the next, a row of air between them — what a `column` group
    paints, what a view's own nodes do, and what a band too narrow to split falls
@@ -1051,13 +1045,10 @@
 (defn- node-section
   "One node's rows, `text-w` columns wide: its label, then what the node paints.
 
-   A LAYOUT GROUP paints its CHILDREN instead — side by side when it is a `:row`
-   and every column would still be at least [[min-column-w]] wide, one under the
-   next otherwise. That is how a table gets prose down its right-hand side, and
-   how the same view stays readable on a terminal half as wide. Groups nest, so
-   the two directions compose without another rule, and they are the FORM's own
-   groups: one layout vocabulary, one painter, [[columns/cell-width]] deciding
-   how wide a column is for both.
+   A layout group paints its children side by side only when its direction is
+   `:row` and [[columns/row-fits?]] allows it. Otherwise children stack in source
+   order. Ask uses the same fit decision, including inside nested groups;
+   [[columns/cell-width]] supplies the text budget for each child.
 
    Disclosed children gain two columns; wrapping and hit targets use that same inset.
    The row of air between two sections belongs to whoever stacks them, never to
@@ -1085,7 +1076,8 @@
         (when children (columns/cell-width body-w (count children)))
 
         is-split
-        (boolean (and children (= :row (:direction node)) (>= (long cell-w) (long min-column-w))))
+        (boolean
+          (and children (= :row (:direction node)) (columns/row-fits? body-w (count children))))
 
         parts
         (when (and is-open children)

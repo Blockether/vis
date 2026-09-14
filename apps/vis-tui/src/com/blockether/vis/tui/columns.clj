@@ -26,6 +26,15 @@
   [text-w n]
   (when text-w (max 4 (- (quot (+ (long text-w) 2) (max 1 (long n))) 2 (long gutter)))))
 
+(defn row-fits?
+  "Whether `n` children can share a row with at least 24 text columns each.
+
+   Live and Ask use this same decision at every nesting level. A row that does
+   not fit stacks its children in source order; no field or control is removed.
+   A nil width is an unbounded measurement plan. Empty groups never split."
+  [text-w n]
+  (and (pos? (long n)) (or (nil? text-w) (>= (long (cell-width text-w n)) 24))))
+
 (defn zip-columns
   "Zip one row-plan per COLUMN into one plan row per LINE: cell `i` of line `n`
    is column `i`'s `n`-th row, or nothing when that column already ran out.

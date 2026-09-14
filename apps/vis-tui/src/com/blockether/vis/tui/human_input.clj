@@ -659,19 +659,19 @@
                  (assoc! (if (contains? option-stop-kinds kind) [field-id value] field-id) i)))))))
 
 (defn- group-rows
-  "Rows for a layout group: its optional heading, then its children — stacked
-   when the group is a `:column`, side by side when it is a `:row`. A child may
-   itself be a group, so the two directions compose without another rule."
+  "A group's optional heading and children. Row groups share columns only when
+   [[columns/row-fits?]] allows it; otherwise they stack in source order, just
+   like Live. Nested groups apply the same rule to their available text width."
   [ctx text-w {:keys [direction fields] :as group}]
   (let [heading
         (into (if (:label group) [{:kind :label :text (:label group)}] [])
               (description-rows (:description group) text-w))
 
         n
-        (max 1 (count fields))
+        (count fields)
 
         body
-        (if (= :row direction)
+        (if (and (= :row direction) (columns/row-fits? text-w n))
           (let [cell-w (columns/cell-width text-w n)]
             (columns/zip-columns (mapv #(vec (field-rows ctx cell-w %)) fields)))
           (into [] (mapcat #(field-rows ctx text-w %)) fields))]
