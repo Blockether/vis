@@ -1164,7 +1164,10 @@
    `command-palette-extra-commands` and remains minimal."
   [_screen]
   (let [base
-        (vec (concat dlg/palette-commands (registry-slash-commands)))
+        (vec (concat (dlg/palette-commands-for
+                       {:has-turns? (boolean (seq (:messages @state/app-db)))
+                        :improve? (improve/enabled? (:improve @state/app-db))})
+                     (registry-slash-commands)))
 
         ;; A registered slash shadows a same-named template (engine
         ;; precedence) — drop the duplicate suggestion.
@@ -2640,35 +2643,36 @@
     settings))
 
 (defn- open-improve-settings!
-  "The Improve mode chooser: Off, Governed by human, or Automatic. Provider,
-   model, schedule and a single review on demand exist in Automatic ONLY — that
-   is the mode that spends model calls. Answers the settings the gateway holds
-   when the chooser closes, so a caller can react to a mode that just changed."
+  "The Improve mode chooser, available only while its experimental flag is on.
+   Provider, model, schedule and on-demand review exist only in Automatic, the
+   mode that spends model calls. Returns the settings the gateway holds when
+   the chooser closes, so a caller can react to a mode that just changed."
   [^TerminalScreen screen]
-  (loop [settings (refresh-improve-settings!)]
-    (if-let [{:keys [action mode]} (with-dialog-lock #(improve/show-settings! screen settings))]
-      (case action
-        :set-mode
-        (recur (write-improve-settings! {:mode (name mode)}
-                                        settings
-                                        "Could not change the Improve mode — it is unchanged"))
+  (when (true? (get (vis/setting "improve") "enabled"))
+    (loop [settings (refresh-improve-settings!)]
+      (if-let [{:keys [action mode]} (with-dialog-lock #(improve/show-settings! screen settings))]
+        (case action
+          :set-mode
+          (recur (write-improve-settings! {:mode (name mode)}
+                                          settings
+                                          "Could not change the Improve mode — it is unchanged"))
 
-        :pick-model
-        (recur (improve-pick-model! screen settings))
+          :pick-model
+          (recur (improve-pick-model! screen settings))
 
-        :set-interval
-        (recur (improve-set-interval! screen settings))
+          :set-interval
+          (recur (improve-set-interval! screen settings))
 
-        :review
-        (do (if-let [result (vis/improve-review!)]
-              (if (improve/review-failed? result)
-                (improve-failed! (improve/review-summary result))
-                (vis/notify! (improve/review-summary result)))
-              (improve-failed! "Could not ask for a review — nothing was started"))
-            (recur settings))
+          :review
+          (do (if-let [result (vis/improve-review!)]
+                (if (improve/review-failed? result)
+                  (improve-failed! (improve/review-summary result))
+                  (vis/notify! (improve/review-summary result)))
+                (improve-failed! "Could not ask for a review — nothing was started"))
+              (recur settings))
 
-        settings)
-      settings)))
+          settings)
+        settings))))
 
 (defn- improve-write-attrs
   "One record write, guarded by the version the human actually saw. The gateway
@@ -2790,13 +2794,11 @@
 (defn- open-improve!
   "Open the Improve register: every project, the issues inside it, and what the
    human can do to the selected one. Each action re-reads the register, so a
-   grouping or a cascade is visible the moment it is written. With Improve Off
-   there is no register to show — the mode chooser opens instead, which is the
-   only way back on."
+   grouping or a cascade is visible the moment it is written. Off opens no
+   view; enable Improve in Settings → Experimental before using this command."
   [^TerminalScreen screen]
   (let [settings (refresh-improve-settings!)]
-    (if-not (improve/enabled? settings)
-      (open-improve-settings! screen)
+    (when (improve/enabled? settings)
       (loop [settings settings]
         (let [{:keys [records projects error]} (improve/fetch-register!)]
           (when-let [{:keys [action row]}
@@ -3553,6 +3555,7 @@
                                 (state/dispatch [:update-settings settings])
                                 (repaint-chat-frame! screen))})]
      (state/dispatch [:update-settings s]))
+   (refresh-improve-settings!)
    nil))
 
 (def ^:private view-churn-keys

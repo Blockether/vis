@@ -6035,11 +6035,10 @@
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}
-   ;; The register itself is offered only while Improve is on, but its MODE is
-   ;; always reachable — otherwise a register switched off could never be
-   ;; switched back on from the palette.
+   ;; Both views stay hidden while Improve is off. Settings → Experimental
+   ;; keeps the opt-in flag and, when enabled, its mode control available.
    {:id :improve :label "Improve — Projects and Issues" :show-when :improve}
-   {:id :improve-settings :label "Improve Mode…"}])
+   {:id :improve-settings :label "Improve Mode…" :show-when :improve}])
 
 (defn fork-turn-items
   "Rows for the fork-at-turn palette (`searchable-select!`), one per turn of the

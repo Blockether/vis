@@ -6,6 +6,7 @@
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.state :as state]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType]))
@@ -255,13 +256,47 @@
       (is (false? (keymap/verb-available? {} verb)))
       (is (false? (keymap/verb-available? {:improve {:mode :off}} verb)))
       (is (true? (keymap/verb-available? {:improve {:mode :human}} verb))))
-    (testing "the palette offers the register only when it is on, the mode always"
+    (testing "both Improve commands stay hidden until the mode is on"
       (let [off (set (map :id (dlg/palette-commands-for nil)))
             on (set (map :id (dlg/palette-commands-for {:improve? true})))]
 
         (is (not (contains? off :improve)))
-        (is (contains? off :improve-settings))
-        (is (contains? on :improve))))))
+        (is (not (contains? off :improve-settings)))
+        (is (contains? on :improve))
+        (is (contains? on :improve-settings))))))
+
+(deftest improve-typed-commands-follow-the-visible-mode-test
+  (doseq [mode [:off :human :automatic :off]]
+    (with-redefs-fn {#'state/app-db (atom {:improve {:mode mode}})
+                     #'vis/registered-slashes (constantly [])
+                     #'screen/template-slash-commands (constantly [])}
+      (fn []
+        (let [ids (set (map :id (#'screen/menu-commands nil)))
+              enabled? (not= :off mode)]
+
+          (is (= enabled? (contains? ids :improve)))
+          (is (= enabled? (contains? ids :improve-settings))))))))
+
+(deftest improve-palette-renders-no-entry-while-disabled-test
+  (doseq [cols
+          [40 96]
+
+          enabled?
+          [false true false]]
+
+    (let [capture
+          (cap/capture! {:cols cols
+                         :rows 32
+                         :keys (concat "Improve" [:esc])
+                         :paint! (fn [{:keys [screen]}]
+                                   (dlg/command-palette! screen [] {:improve? enabled?}))})
+
+          frames
+          (map cap/frame-text (:frames capture))]
+
+      (is (nil? (:error capture)))
+      (is (= enabled? (boolean (some #(str/includes? % "Improve — Projects") frames))))
+      (is (= enabled? (boolean (some #(str/includes? % "Improve Mode") frames)))))))
 
 (deftest improve-walks-every-window-of-the-register-test
   ;; The contract windows `/v1/improve` with `after`/`has_more`, so a register
@@ -359,6 +394,45 @@
 (def ^:private new-improve-record! (deref #'screen/new-improve-record!))
 
 (def ^:private open-improve! (deref #'screen/open-improve!))
+
+(deftest disabled-improve-shortcut-opens-no-view-test
+  (doseq [settings [nil {:mode :off}]]
+    (let [opened (atom [])]
+      (with-redefs-fn {#'screen/refresh-improve-settings! (constantly settings)
+                       #'screen/open-improve-settings! (fn [_]
+                                                         (swap! opened conj :settings))
+                       #'improve/fetch-register! (fn []
+                                                   (swap! opened conj :register))}
+        #(open-improve! nil))
+      (is (empty? @opened)))))
+
+(deftest improve-mode-view-requires-the-experimental-flag-test
+  (doseq [toggle [nil {"enabled" false} {"enabled" true} {"enabled" false}]]
+    (let [paints (atom 0)]
+      (with-redefs-fn {#'vis/setting (fn [id]
+                                       (is (= "improve" id))
+                                       toggle)
+                       #'screen/refresh-improve-settings! (constantly {:mode :off})
+                       #'screen/with-dialog-lock (fn [f]
+                                                   (f))
+                       #'improve/show-settings! (fn [& _]
+                                                  (swap! paints inc)
+                                                  nil)}
+        #(#'screen/open-improve-settings! nil))
+      (is (= (if (true? (get toggle "enabled")) 1 0) @paints)))))
+
+(deftest closing-settings-refreshes-improve-visibility-test
+  (let [db (atom {:settings {} :improve {:mode :human}})]
+    (doseq [mode [:off :human :off]]
+      (with-redefs-fn {#'state/app-db db
+                       #'dlg/settings-dialog! (fn [& _]
+                                                nil)
+                       #'improve/fetch-settings! (constantly {:mode mode})
+                       #'state/dispatch (fn [[event settings]]
+                                          (when (= :set-improve-settings event)
+                                            (swap! db assoc :improve settings)))}
+        #(#'screen/open-settings-modal! nil))
+      (is (= mode (get-in @db [:improve :mode]))))))
 
 (deftest improve-close-is-one-versioned-write-that-names-the-whole-cascade-test
   ;; The gateway closes descendants atomically, so the TUI sends ONE patch and the

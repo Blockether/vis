@@ -124,10 +124,8 @@
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
    {:action :providers :key \o :label "providers" :group "Tools"}
-   ;; Improve is the register Vis keeps about its own behaviour. The verb is
-   ;; advertised only while that mode is not Off, so a surface nobody turned on
-   ;; cannot crowd the Tools pane; the chord, the palette and the help card
-   ;; still carry it.
+   ;; Improve is advertised only while its mode is on. The chord still resolves
+   ;; to this action, but the handler rechecks the gateway before opening a view.
    {:action :improve :key \e :label "improve" :group "Tools" :show-when :improve}])
 
 (def prefix-groups
@@ -245,8 +243,7 @@
    verbs always apply; the tagged ones surface in the hydra ONLY where they can
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
    fork at, `:improve` needs an Improve mode other than Off, and `:never` is
-   palette-only. The chord, palette, and help list every
-   verb regardless."
+   palette-only. Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
     :multi-tab
