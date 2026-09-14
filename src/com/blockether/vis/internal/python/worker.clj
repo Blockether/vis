@@ -197,13 +197,19 @@
    loading at startup, whose REGISTRATION is the gateway's and not a session's."
   "shared")
 
-(defrecord ^:private TrustedExtensionWorker [session])
+(defrecord ^:private TrustedExtensionWorker [session packages])
 
 (defn extension-worker-key
   "Host-owned worker identity for a session's trusted extensions, not its sandbox.
-   The key is never accepted from Python or reconstructed from a wire payload."
-  [session]
-  (->TrustedExtensionWorker session))
+   The key is never accepted from Python or reconstructed from a wire payload.
+   A declared project's package directory is immutable startup data, not a later
+   sys.path override; nil keeps the shared-package default."
+  ([session] (->TrustedExtensionWorker session nil))
+  ([session packages]
+   (->TrustedExtensionWorker session
+                             (some-> packages
+                                     io/file
+                                     .getCanonicalPath))))
 
 (defn- trusted-worker? [k] (or (= k shared-key) (instance? TrustedExtensionWorker k)))
 
@@ -264,9 +270,9 @@
   "Existing working directory, JVM classpath, Java home, package cache, runtime
    tree and Vis guest modules needed before the child can connect. They are
    read-only, not session roots."
-  [library guest-dir runtime-roots]
-  (->> (concat [(System/getProperty "user.dir") (System/getProperty "java.home")
-                (runtime/packages-dir) (Locations/sourcesDir) guest-dir]
+  [library guest-dir runtime-roots packages]
+  (->> (concat [(System/getProperty "user.dir") (System/getProperty "java.home") packages
+                (Locations/sourcesDir) guest-dir]
                runtime-roots
                (str/split (System/getProperty "java.class.path" "")
                           (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))
@@ -360,7 +366,8 @@
                                         :id ::no-library-to-hand-over
                                         :data {:error (ex-message t)}})
                              nil))
-              packages (some-> (runtime/packages-dir)
+              packages (some-> (or (when (instance? TrustedExtensionWorker k) (:packages k))
+                                   (runtime/packages-dir))
                                io/file)
               _ (when packages
                   (Files/createDirectories (.toPath packages)
@@ -371,7 +378,11 @@
               policy (launch-policy! k
                                      (.getAbsolutePath dir)
                                      (.getAbsolutePath socket)
-                                     (boot-read-paths library guest-dir runtime-roots))
+                                     (boot-read-paths library
+                                                      guest-dir
+                                                      runtime-roots
+                                                      (some-> packages
+                                                              .getCanonicalPath)))
               extra (cond-> {"VIS_PYTHON_TLS_STRICT" (str (tls-strict?))}
                       packages
                       (assoc Locations/PACKAGES_ENV (.getCanonicalPath packages))

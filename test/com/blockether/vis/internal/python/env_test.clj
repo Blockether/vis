@@ -1249,6 +1249,33 @@ Follow every fixture step without truncation."}]))
                  (expect (.await second-returned 10 java.util.concurrent.TimeUnit/SECONDS)))
                (finally (.countDown release) (reset! @flag was)))))))
 
+(defdescribe interpreter-package-selection-test
+             ;; Regression #226: late path changes cannot undo shared package hooks/imports.
+             (it "selects packages before startup and rejects changing a live process"
+                 (let [started
+                       (atom false)
+
+                       calls
+                       (atom [])]
+
+                   (with-redefs-fn {#'ep/interpreter-started started
+                                    #'python-runtime/ensure-library! (constantly nil)
+                                    #'worker/guest-source-dir (constantly "/guest")
+                                    #'runtime/initialize! (fn [options]
+                                                            (swap! calls conj options)
+                                                            options)
+                                    #'runtime/logs! (constantly nil)}
+                     (fn []
+                       (ep/ensure-interpreter! {:packages nil})
+                       (ep/ensure-interpreter!)
+                       (ep/ensure-interpreter! {:packages nil})
+                       (expect (= [{:source-paths ["/guest"] :packages nil}] @calls))
+                       (let [error (try (ep/ensure-interpreter! {:packages "/shared"})
+                                        nil
+                                        (catch Exception e e))]
+                         (expect (= ::ep/environment-already-selected (:type (ex-data error)))))
+                       (expect (= 1 (count @calls))))))))
+
 (defdescribe
   jail-decides-confinement-test
   ;; ONE switch, and it means what it says. With a jail the guest is confined to

@@ -4664,6 +4664,127 @@ vis.register_extension(vis.Extension(
           (expect (= 1 (get-in first-step ["__vis_attrs__" "exit_code"]))))))))
 
 (defdescribe
+  project-extension-environment-isolation-test
+  ;; Regression #226: project workers must never activate shared .pth hooks or
+  ;; cache shared imports, at registration or when realized for an agent session.
+  (it
+    "isolates two project environments while retaining shared extension packages"
+    (with-shared-packages
+      (fn [shared]
+        (let
+          [home
+           (.getParentFile shared)
+
+           shared-editable
+           (io/file home "shared-editable")
+
+           source
+           (fn [name alias]
+             (str
+               "import importlib.util, sys\n"
+               "import blockether.vis.extension as vis\n"
+               "import isolation_collision\n"
+               "def snapshot():\n"
+               "    return {'value': isolation_collision.VALUE,\n"
+               "            'shared': importlib.util.find_spec('isolation_shared_only') is not None,\n"
+               "            'editable': importlib.util.find_spec('isolation_shared_editable') is not None,\n"
+               "            'hook': hasattr(sys, '_isolation_shared_hook'),\n"
+               "            'project': importlib.util.find_spec('isolation_project_editable') is not None}\n"
+               "BOOT = snapshot()\n"
+               "def probe():\n"
+               "    \"Inspect the selected environment.\"\n"
+               "    return {'boot': BOOT, 'call': snapshot()}\n"
+               "vis.register_extension(vis.Extension(name='"
+               name
+               "', description='Environment probe', alias='"
+               alias
+               "', symbols=[vis.Symbol(probe)]))\n"))
+
+           sources
+           (merge
+             {"shared.py" (source "isolation-shared" "isolation_shared")}
+             (into
+               {}
+               (mapcat
+                 (fn [name]
+                   [[(str name "/current/pyproject.toml")
+                     (str
+                       "[project]\nname='isolation-"
+                       name
+                       "'\nversion='1.0.0'\n"
+                       "description='Environment probe'\nrequires-python='>=3.11'\ndependencies=['vis-agent>=0.1.0']\n"
+                       "[tool.vis]\ncategory='tools'\n")]
+                    [(str name "/current/extension.py")
+                     (source (str "isolation-" name) (str "isolation_" name))]])
+                 ["one" "two"])))]
+
+          (.mkdirs shared-editable)
+          (spit (io/file shared "isolation_collision.py") "VALUE = 'shared'\n")
+          (spit (io/file shared "isolation_shared_only.py") "VALUE = 'shared-only'\n")
+          (spit (io/file shared-editable "isolation_shared_editable.py")
+                "VALUE = 'shared-editable'\n")
+          (spit (io/file shared "isolation.pth")
+                (str (.getCanonicalPath shared-editable)
+                     "\nimport isolation_collision, sys; sys._isolation_shared_hook = True\n"))
+          (doseq [name ["one" "two"]]
+            (let [site (io/file home name)
+                  editable (io/file home (str name "-editable"))]
+
+              (.mkdirs site)
+              (.mkdirs editable)
+              (spit (io/file site "isolation_collision.py") (str "VALUE = '" name "'\n"))
+              (spit (io/file editable "isolation_project_editable.py") "VALUE = 'project'\n")
+              (spit (io/file site "project.pth") (str (.getCanonicalPath editable) "\n"))))
+          (with-redefs [python-runtime/ensure-project!
+                        (fn [project]
+                          (io/file home (.getName (.getParentFile ^java.io.File project))))]
+            (with-fresh-loaded
+              sources
+              (fn [result _]
+                (expect (= 0 (:failed result)) (pr-str (pyx/load-failures)))
+                (doseq [name ["one" "two" "shared"]]
+                  (let [ext (registered (str "isolation-" name))
+                        shared? (= name "shared")
+                        expected {"value" name
+                                  "shared" shared?
+                                  "editable" shared?
+                                  "hook" shared?
+                                  "project" (not shared?)}
+                        report (:result ((symbol-fn ext 'probe)))]
+
+                    (expect (= expected (get report "boot")))
+                    (expect (= expected (get report "call")))
+                    (let [made (ep/create-python-context
+                                 {}
+                                 nil
+                                 {:worker? true :jail-enabled? false :enabled? false}
+                                 nil)
+                          ctx (:python-context made)
+                          env {:python-context ctx
+                               :session-id (str "isolation-" name)
+                               :extensions (atom [ext])
+                               :active-extensions (atom [])}]
+
+                      (try
+                        (lp/sync-active-extension-symbols! env [ext])
+                        (let
+                          [reply
+                           (ep/run-python-block
+                             ctx
+                             (str
+                               "report = await probe()\n"
+                               "print(report['boot'] == report['call'], report['call']['value'], "
+                               "report['call']['shared'], report['call']['editable'], "
+                               "report['call']['hook'], report['call']['project'])"))]
+                          (expect (nil? (:error reply)) (pr-str (:error reply)))
+                          (expect
+                            (= (str "True "
+                                    name
+                                    (if shared? " True True True False" " False False False True"))
+                               (str/trim (:stdout reply)))))
+                        (finally (ep/dispose-python-context! ctx))))))))))))))
+
+(defdescribe
   pyproject-package-reload-test
   (it
     "prepares a pyproject package automatically and reloads source with last-good fallback"

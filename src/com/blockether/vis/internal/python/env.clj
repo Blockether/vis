@@ -1070,7 +1070,8 @@
 
 (defn ensure-interpreter!
   "Start the process's ONE interpreter, with Vis' own guest modules on the path.
-   Idempotent: the runtime's own `initialize!` is, and so is this.
+   Idempotent. Optional `:packages` selects the startup package directory; nil
+   excludes shared packages. Explicit selection cannot change in a live process.
 
    Public because a session is not the only thing that needs the interpreter up:
    a Python EXTENSION loads at startup, before any sandbox exists, and the first
@@ -1086,18 +1087,24 @@
    Measured on a gateway building two sessions at once. The flag
    is set only after a start SUCCEEDS, so a machine that could not fetch the
    interpreter this time gets to try again rather than serving a dead one."
-  []
-  (when-not @interpreter-started
-    (locking interpreter-lock
-      (when-not @interpreter-started
-        (python-runtime/ensure-library!)
-        (runtime/initialize! {:source-paths [(pyext/guest-source-dir)]})
-        (runtime/logs! (fn [ndjson]
-                         (doseq [line (str/split-lines (str ndjson))]
-                           (when-not (str/blank? line)
-                             (tel/log! {:level :debug :id ::python-runtime} line)))))
-        (reset! interpreter-started true))))
-  nil)
+  ([] (ensure-interpreter! {}))
+  ([options]
+   (locking interpreter-lock
+     (when (and @interpreter-started
+                (contains? options :packages)
+                (not= (:packages options) (:packages @interpreter-started)))
+       (throw (ex-info "Python package environment is already selected; start a fresh process"
+                       {:type ::environment-already-selected})))
+     (when-not @interpreter-started
+       (python-runtime/ensure-library!)
+       (let [startup (runtime/initialize! (merge {:source-paths [(pyext/guest-source-dir)]}
+                                                 (select-keys options [:packages])))]
+         (runtime/logs! (fn [ndjson]
+                          (doseq [line (str/split-lines (str ndjson))]
+                            (when-not (str/blank? line)
+                              (tel/log! {:level :debug :id ::python-runtime} line)))))
+         (reset! interpreter-started (or startup {})))))
+   nil))
 
 (defonce ^:private session-counter (atom 0))
 

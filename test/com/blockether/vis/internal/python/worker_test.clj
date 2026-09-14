@@ -397,7 +397,11 @@ print(worker_value)"))))
             (vec (com.blockether.vispython.Sources/roots))
 
             paths
-            (set (#'worker/boot-read-paths nil "/tmp/host-modules" roots))]
+            (set (#'worker/boot-read-paths
+                  nil
+                  "/tmp/host-modules"
+                  roots
+                  (com.blockether.vis-python-runtime/packages-dir)))]
 
         (expect (contains? paths
                            (.getCanonicalPath (java.io.File.

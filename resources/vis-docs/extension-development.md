@@ -223,11 +223,15 @@ model's sandbox is a separate confined process.
 ## Project and shared environments
 
 `uv sync` installs project dependencies and editable `.pth` files or backend import
-hooks into the project's environment, normally `.venv`. Vis activates that environment
-for the matching trusted extension worker. Preparing it does not install the project
-into the model sandbox.
+hooks into the project's environment, normally `.venv`. Vis selects that environment
+before starting the matching trusted extension worker, both for registration and
+session calls. The worker does not load shared Vis packages or their startup hooks;
+missing project dependencies fail instead of falling back to shared installations.
+Preparing it does not install the project into the model sandbox. Vis still supplies
+its bundled extension SDK; install your extension's other dependencies in its project.
 
-`~/.vis/python/packages` remains shared storage for standalone Vis Python installs.
+`~/.vis/python/packages` remains shared storage for the model sandbox, extensions
+without a declared project, and standalone `vis-agent python --shared` commands.
 Sandbox imports still need their checkout in an allowed
 [workspace root](jail.md#filesystem-access); editable installs do not widen access.
 

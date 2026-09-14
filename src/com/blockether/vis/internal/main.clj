@@ -3094,44 +3094,59 @@
 ;; behaviour straight from the shell. Behaves identically under the JVM and the
 ;; native image: both drive the same `env/*` machinery.
 
+(defn- python-cli-project-environment
+  "Select a project before interpreter startup; shared tools opt out explicitly."
+  [cwd environment shared?]
+  (when-not shared?
+    (let [configured
+          (not-empty (get environment "UV_PROJECT_ENVIRONMENT"))
+
+          path
+          (io/file (or configured ".venv"))
+
+          venv
+          (if (.isAbsolute path) path (io/file cwd path))]
+
+      (when (or configured (.exists venv) (.isFile (io/file cwd "pyproject.toml")))
+        (.getCanonicalPath venv)))))
+
 (defn- activate-python-cli-environment!
   "Load an existing uv environment after confinement, without syncing or granting paths.
    Resolve UV_PROJECT_ENVIRONMENT relative to cwd; otherwise use cwd/.venv."
   [ctx cwd environment]
   (pyrt/exec!
     ctx
-    (str "def __vis_activate_cli_environment__(cwd, configured):\n"
-         "    import sys, sysconfig\n"
-         "    from pathlib import Path\n"
-         "    import package_paths\n"
-         "    venv = Path(configured or '.venv')\n"
-         "    if not venv.is_absolute():\n"
-         "        venv = Path(cwd) / venv\n"
-         "    if not venv.exists() and not configured:\n"
-         "        return\n"
-         "    sites = list(dict.fromkeys(\n"
-         "        sysconfig.get_path(name, vars={'base': str(venv), 'platbase': str(venv)})\n"
-         "        for name in ('purelib', 'platlib')))\n"
-         "    if not any(Path(path).is_dir() for path in sites):\n"
-         "        raise RuntimeError(\n"
-         "            f'Project environment {venv} has no site-packages for embedded Python '\n"
-         "            f'{sys.version_info.major}.{sys.version_info.minor}. '\n"
-         "            'Sync with a compatible --python, or use '\n"
-         "            'vis-agent python uv run --no-sync python to run its own interpreter.')\n"
-         "    before = list(sys.path)\n"
-         "    for path in sites:\n"
-         "        if Path(path).is_dir():\n"
-         "            package_paths.refresh(path)\n"
-         "    added = [path for path in sys.path if path not in before]\n"
-         "    sys.path[:] = added + before\n"
-         "try:\n"
-         "    __vis_activate_cli_environment__("
-         (env/py-json-literal cwd)
-         ", "
-         (env/py-json-literal (get environment "UV_PROJECT_ENVIRONMENT"))
-         ")\n"
-         "finally:\n"
-         "    del __vis_activate_cli_environment__\n")))
+    (str
+      "def __vis_activate_cli_environment__(cwd, configured):\n"
+      "    import sys, sysconfig\n"
+      "    from pathlib import Path\n"
+      "    import package_paths\n"
+      "    venv = Path(configured or '.venv')\n"
+      "    if not venv.is_absolute():\n"
+      "        venv = Path(cwd) / venv\n"
+      "    sites = list(dict.fromkeys(\n"
+      "        sysconfig.get_path(name, vars={'base': str(venv), 'platbase': str(venv)})\n"
+      "        for name in ('purelib', 'platlib')))\n"
+      "    if not any(Path(path).is_dir() for path in sites):\n"
+      "        raise RuntimeError(\n"
+      "            f'Project environment {venv} has no site-packages for embedded Python '\n"
+      "            f'{sys.version_info.major}.{sys.version_info.minor}. '\n"
+      "            'Run vis-agent python uv sync --python with a compatible interpreter, or use '\n"
+      "            'vis-agent python uv run --no-sync python to run its own interpreter.')\n"
+      "    before = list(sys.path)\n"
+      "    for path in sites:\n"
+      "        if Path(path).is_dir():\n"
+      "            package_paths.refresh(path)\n"
+      "    added = [path for path in sys.path if path not in before]\n"
+      "    sys.path[:] = added + before\n"
+      "try:\n"
+      "    __vis_activate_cli_environment__("
+      (env/py-json-literal cwd)
+      ", "
+      (env/py-json-literal (get environment "UV_PROJECT_ENVIRONMENT"))
+      ")\n"
+      "finally:\n"
+      "    del __vis_activate_cli_environment__\n")))
 
 (defn- python-cli-context
   "Build a fresh standalone Python sandbox for `vis-agent python`: the same
@@ -3144,11 +3159,19 @@
    into `os.environ`; and `sys.path` is prepended with `PYTHONPATH`, the
    configured `python.source_paths`, and any `src`-layout import root the
    project's packaging metadata declares. An existing cwd/.venv (or
-   UV_PROJECT_ENVIRONMENT) supplies installed packages and editable hooks. The
+   UV_PROJECT_ENVIRONMENT) supplies installed packages and editable hooks, without
+   shared packages. A pyproject.toml without an environment reports a sync error.
+   `shared?` skips project activation and inferred/configured source roots. The
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
-  [{:keys [network? argv env]}]
+  [{:keys [network? argv env shared?]}]
   (let [cwd
         (.getCanonicalPath (io/file "."))
+
+        project-environment
+        (python-cli-project-environment cwd env shared?)
+
+        _
+        (env/ensure-interpreter! {:packages (when-not project-environment (pyrt/packages-dir))})
 
         {:keys [python-context]}
         (env/create-python-context {}
@@ -3162,7 +3185,10 @@
     ;; Forward script argv + (by default) the caller's env — real-python CLI
     ;; semantics, distinct from the scrubbed agent sandbox.
     (env/seed-cli-runtime! python-context {:argv argv :env env})
-    (try (activate-python-cli-environment! python-context cwd env)
+    (try (when project-environment
+           (activate-python-cli-environment! python-context
+                                             cwd
+                                             {"UV_PROJECT_ENVIRONMENT" project-environment}))
          (catch Throwable t (env/dispose-python-context! python-context) (throw t)))
     ;; The interpreter receives the environment after startup, so PYTHONPATH
     ;; needs the same explicit sys.path setup a process launch would perform.
@@ -3177,7 +3203,7 @@
                        (re-pattern (java.util.regex.Pattern/quote separator))))
 
           roots
-          (distinct (concat explicit (pyproj/import-roots python-context cwd)))]
+          (distinct (concat explicit (when-not shared? (pyproj/import-roots python-context cwd))))]
 
       (when (seq roots)
         (pyrt/exec! python-context
@@ -3251,7 +3277,7 @@
 
 (defn- parse-python-cli-args
   "Parse `vis-agent python` residual args into a runtime plan. Leading options
-   (`--no-network`, `--no-env`, `--env K=V`, and an explicit `--`) are
+   (`--shared`, `--no-network`, `--no-env`, `--env K=V`, and an explicit `--`) are
    consumed until the program selector (`-c`, `-`, or a FILE); everything
    from the selector on is the program plus its verbatim script `argv`
    (mirrors CPython: trailing args land in `sys.argv`, flags included).
@@ -3266,6 +3292,9 @@
          env-overrides
          []
 
+         shared?
+         false
+
          args
          (vec residual)]
 
@@ -3273,23 +3302,29 @@
       (cond (nil? a) {:network? network?
                       :inherit-env? inherit-env?
                       :env-overrides env-overrides
+                      :shared? shared?
                       :mode :interactive
                       :argv []}
-            (= a "--no-network") (recur false inherit-env? env-overrides (subvec args 1))
-            (= a "--no-env") (recur network? false env-overrides (subvec args 1))
+            (= a "--shared") (recur network? inherit-env? env-overrides true (subvec args 1))
+            (= a "--no-network") (recur false inherit-env? env-overrides shared? (subvec args 1))
+            (= a "--no-env") (recur network? false env-overrides shared? (subvec args 1))
             (= a "--env") (recur network?
                                  inherit-env?
                                  (cond-> env-overrides
                                    (some? (second args))
                                    (conj (second args)))
+                                 shared?
                                  (subvec args (min (count args) 2)))
             (str/starts-with? a "--env=")
-            (recur network? inherit-env? (conj env-overrides (subs a 6)) (subvec args 1))
-            :else
-            (let [prog (if (= a "--") (subvec args 1) args)]
-              (merge
-                {:network? network? :inherit-env? inherit-env? :env-overrides env-overrides}
-                (if (empty? prog) {:mode :interactive :argv []} (python-program-plan prog))))))))
+            (recur network? inherit-env? (conj env-overrides (subs a 6)) shared? (subvec args 1))
+            :else (let [prog (if (= a "--") (subvec args 1) args)]
+                    (merge {:network? network?
+                            :inherit-env? inherit-env?
+                            :env-overrides env-overrides
+                            :shared? shared?}
+                           (if (empty? prog)
+                             {:mode :interactive :argv []}
+                             (python-program-plan prog))))))))
 
 (def ^:private python-module-runner-src
   "Python helper installed for `vis-agent python -m MODULE`.
@@ -3337,10 +3372,11 @@
    piped stdin (run stdin), or an interactive REPL on a bare TTY. Trailing args
    after the program selector become `sys.argv`. `--no-network` disables sandbox
    network; the caller's environment is inherited into `os.environ` by default
-   (`--no-env` scrubs it, `--env K=V` sets/overrides one var)."
+   (`--no-env` scrubs it, `--env K=V` sets/overrides one var). `--shared` selects
+   Vis's shared packages instead of the current project's environment."
   [_parsed residual]
   (config/init-cli!)
-  (let [{:keys [network? inherit-env? env-overrides mode code file module argv]}
+  (let [{:keys [network? inherit-env? env-overrides shared? mode code file module argv]}
         (parse-python-cli-args residual)
 
         env
@@ -3348,12 +3384,13 @@
                (python-cli-env-overrides->map env-overrides))
 
         ctx
-        (when-not (= :uv mode) (python-cli-context {:network? network? :argv argv :env env}))
+        (when-not (= :uv mode)
+          (python-cli-context {:network? network? :argv argv :env env :shared? shared?}))
 
         exit
         (case mode
           :uv
-          (try (when (or (not network?) (not inherit-env?) (seq env-overrides))
+          (try (when (or shared? (not network?) (not inherit-env?) (seq env-overrides))
                  (throw (ex-info
                           "Python sandbox options do not apply to uv; put uv directly after python"
                           {})))
@@ -3461,7 +3498,8 @@
      "Run embedded Python, or pass commands unchanged to bundled uv: vis-agent python uv [ARGS...]"
      :cmd/usage "vis-agent python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples
-     ["vis-agent python -c \"import requests; print(requests.__version__)\""
+     ["vis-agent python --shared -c \"import requests; print(requests.__version__)\""
+      "vis-agent python --shared -m pip install requests   # shared sandbox packages"
       "vis-agent python uv sync --project ./einmal --locked   # prepare extension dependencies"
       "vis-agent python -m pytest tests/ -q   # module run as __main__"
       "vis-agent python -m pytest tests/   # src layout inferred from project metadata"

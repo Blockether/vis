@@ -790,9 +790,10 @@
    touching the Clojure registry."
   [worker label ^File snap entry-path source packages bound-env]
   (let [ctx
-        (build-context
-          (if packages (pyext/extension-worker-key [worker (.getCanonicalPath snap)]) worker)
-          label)
+        (build-context (if packages
+                         (pyext/extension-worker-key [worker (.getCanonicalPath snap)] packages)
+                         worker)
+                       label)
 
         frozen-home
         (.getCanonicalPath (.getParentFile snap))]

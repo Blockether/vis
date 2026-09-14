@@ -63,13 +63,21 @@ Host functions exposed from Clojure apply their own permission checks. See
 `python_execution` imports explicitly installed shared packages from
 **`~/.vis/python/packages`**, which is read-only to sandbox code. Extensions without
 a uv project also use that directory. Project extensions instead use dependencies
-from their uv environment in separate trusted workers.
+from their uv environment in separate trusted workers, without shared-package
+fallback. Preparing an extension does not add its dependencies to `python_execution`.
 
-Imports do not install packages. Use `vis-agent python -m pip install <package>` for
-shared sandbox packages; `vis-agent python -m <module>` runs against that directory.
+Imports do not install packages. Use `vis-agent python --shared -m pip install <package>`
+for shared sandbox packages and `vis-agent python --shared -m <module>` to run a
+shared tool, including from a project directory.
+
 `vis-agent python uv sync --project PATH` is upstream uv: it prepares the project's
-environment, normally `.venv`, not shared sandbox packages. Use `vis-agent python uv
-run --project PATH python -m <module>` to run against that project environment.
+environment, normally `.venv`, not shared sandbox packages. From that project,
+`vis-agent python -m <module>` uses its environment with Vis's embedded Python,
+without shared packages or their startup hooks. A missing or incompatible environment
+reports an error; it does not fall back to shared packages. Without a project, the
+CLI defaults to shared packages. See [Python import roots](configuration.md#python-import-roots)
+for selection rules and explicit source paths. To use the project's own interpreter,
+run `vis-agent python uv run --project PATH --no-sync python -m <module>`.
 
 Missing imports raise `ModuleNotFoundError`. Sharing installed files does not relax
 sandbox restrictions: a package requiring refused native operations may work only

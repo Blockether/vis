@@ -10,7 +10,6 @@
             [com.blockether.vis.internal.main]
             [com.blockether.vis.internal.python.project]
             [com.blockether.vis.internal.python.test-runner]
-            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -471,74 +470,30 @@
                           (expect (re-find #"stderr fd 2" (str stdout))))
                         (finally (env/dispose-python-context! ctx))))))
 
-;; Regression #226: a successful uv sync must make the editable install visible
-;; to the next standalone invocation, not just to the environment's own Python.
 (defdescribe
-  python-cli-synced-environment-test
-  (it
-    "imports a uv-synced editable package and its distribution metadata"
-    (let [project (write-project!
-                    (str "[project]\nname = 'vis-cli-sync-fixture'\nversion = '0.1.0'\n"
-                         "[build-system]\nrequires = ['hatchling']\n"
-                         "build-backend = 'hatchling.build'\n"
-                         "[tool.hatch.build.targets.wheel]\npackages = ['src/cli_sync_fixture']\n")
-                    ["src/cli_sync_fixture"])]
-      (try (spit (java.io.File. project "src/cli_sync_fixture/__init__.py") "VALUE = 226\n")
-           (spit (java.io.File. project "src/cli_sync_fixture/__main__.py")
-                 "from . import VALUE\nprint(VALUE)\n")
-           (python-runtime/ensure-library!)
-           (#'python-runtime/run-uv!
-            project
-            [(#'python-runtime/bundled-uv!) "sync" "--project" "." "--python"
-             (com.blockether.vispython.Interpreter/pythonExecutable)])
-           (let [ctx (python-cli-context {:network? false
-                                          :env {"UV_PROJECT_ENVIRONMENT"
-                                                (.getCanonicalPath (java.io.File. project
-                                                                                  ".venv"))}})]
-             (try (let [{:keys [exit out]} (run-src
-                                             ctx
-                                             (str "from cli_sync_fixture import VALUE\n"
-                                                  "from importlib.metadata import version\n"
-                                                  "print(VALUE, version('vis-cli-sync-fixture'))"))]
-                    (expect (= 0 exit) out)
-                    (expect (re-find #"226 0.1.0" out)))
-                  (let [baos (java.io.ByteArrayOutputStream.)
-                        ps (java.io.PrintStream. baos true "UTF-8")
-                        exit (with-redefs [config/original-stdout ps]
-                               (#'com.blockether.vis.internal.main/run-python-module!
-                                ctx
-                                "cli_sync_fixture"))]
+  python-cli-project-selection-test
+  ;; Regression #226: select before boot; live interpreters cannot change imports.
+  (it "selects only the current project and lets shared tools opt out"
+      (let [dir
+            (scratch-dir! "vis-cli-selection-")
 
-                    (expect (= 0 exit) (.toString baos "UTF-8"))
-                    (expect (re-find #"226" (.toString baos "UTF-8"))))
-                  (finally (env/dispose-python-context! ctx))))
-           (doseq [environment [{} {"UV_PROJECT_ENVIRONMENT" ".venv"}]]
-             (let [ctx (python-cli-context {:network? false})]
-               (try (#'com.blockether.vis.internal.main/activate-python-cli-environment!
-                     ctx
-                     (.getCanonicalPath project)
-                     environment)
-                    (let [{:keys [exit out]}
-                          (run-src ctx "from cli_sync_fixture import VALUE; print(VALUE)")]
-                      (expect (= 0 exit) out)
-                      (expect (re-find #"226" out)))
-                    (finally (env/dispose-python-context! ctx)))))
-           (let [shadow (java.io.File. project "shadow")
-                 _ (.mkdirs shadow)
-                 ;; A new name avoids imports cached by earlier contexts in this JVM.
-                 _ (spit (java.io.File. project "src/cli_priority_fixture.py") "VALUE = 226\n")
-                 _ (spit (java.io.File. shadow "cli_priority_fixture.py") "VALUE = 999\n")
-                 ctx (python-cli-context {:network? false
-                                          :env {"UV_PROJECT_ENVIRONMENT"
-                                                (.getCanonicalPath (java.io.File. project ".venv"))
-                                                "PYTHONPATH" (.getCanonicalPath shadow)}})]
+            cwd
+            (.toString dir)
 
-             (try (let [{:keys [exit out]}
-                        (run-src ctx "from cli_priority_fixture import VALUE; print(VALUE)")]
-                    (expect (= 0 exit) out)
-                    (expect (re-find #"999" out)))
-                  (finally (env/dispose-python-context! ctx))))
-           (finally (delete-tree! (.toPath project)))))))
+            select
+            #'com.blockether.vis.internal.main/python-cli-project-environment]
+
+        (try (expect (nil? (select cwd {} false)))
+             (spit (java.io.File. cwd "pyproject.toml") "[project]\nname = 'fixture'\n")
+             (expect (= (.getCanonicalPath (java.io.File. cwd ".venv")) (select cwd {} false)))
+             (expect (= (.getCanonicalPath (java.io.File. cwd "custom"))
+                        (select cwd {"UV_PROJECT_ENVIRONMENT" "custom"} false)))
+             (expect (nil? (select cwd {"UV_PROJECT_ENVIRONMENT" "custom"} true)))
+             (finally (delete-tree! dir)))))
+  (it "consumes --shared only before the program selector"
+      (expect (true? (:shared? (parse-python-cli-args ["--shared" "-m" "pip" "list"]))))
+      (expect (false? (:shared? (parse-python-cli-args ["-c" "print(1)" "--shared"]))))
+      (expect (= ["-c" "--shared"] (:argv (parse-python-cli-args ["-c" "print(1)" "--shared"]))))))
 
 (defdescribe
   python-cli-incompatible-environment-test

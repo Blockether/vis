@@ -436,3 +436,56 @@ Reproduction execution remains outside this draft: automatic reviews write analy
 and safe verification plans, explicitly marked not attempted. They do not run report
 commands, apply code fixes or close issues. No paid model call, native-image run,
 commit, push, deployment or live service restart was performed.
+
+# Separate Python project and shared environments (#226)
+
+Choose one dependency environment before Python starts.
+
+## Context
+
+The CLI currently activates `.venv` after loading shared Vis packages, which can
+hide undeclared dependencies and retain shared editable hooks. The CLI owner is
+`internal/main.clj`; interpreter and extension startup are in `internal/python/`.
+Keep uv's normal project environment locations. Do not merge project dependencies
+into `~/.vis/python/packages` or try to undo executed hooks by filtering `sys.path`.
+Preserve concurrent worker-diagnostic and Companion changes.
+
+## 1. Reproduce and select environments at startup
+
+- Rationale: package hooks and cached imports make late path precedence insufficient.
+- Data: CLI baseline passes 43 tests; current startup admits shared packages first.
+- Acceptance criteria: project code cannot import shared-only wheels, editable
+  roots or hooks; shared tools remain available through an explicit selection.
+- Unknowns: extension-worker startup must receive the declared package location.
+
+## 2. Verify host, CLI and extension boundaries
+
+- Rationale: separate module globals do not isolate a process's import state.
+- Data: clean-process regression tests, existing extension tests and native CLI tests.
+- Acceptance criteria: synced/editable project packages work; undeclared shared
+  packages do not; missing or incompatible environments fail with useful guidance;
+  standard uv behavior and bundled SDK availability remain intact.
+- Unknowns: native build coordination with the concurrent diagnostics work.
+
+## 3. Document and publish
+
+- Rationale: users need to know which environment a command selects.
+- Data: affected tests, formatting/lint/reflection, documentation and scoped diff.
+- Acceptance criteria: required checks pass, commit only these changes, push main
+  and update #226 with the verified isolation follow-up.
+- Unknowns: safely separating any concurrent edits before staging.
+
+## Plan state
+
+1. Implementation complete — CLI and declared extension workers select packages
+   before interpreter startup. Project imports exclude shared packages and hooks;
+   `--shared` explicitly selects general tools. No runtime or dependency-pin changes.
+2. Verification complete — 134 affected host/CLI/runtime/uv cases and the clean-process
+   CLI regression pass. The clean native build passes five isolation cases, four uv
+   parity cases and locked-extension registration. Broad extension/worker suites pass
+   147/148 and 53/54 cases; their remaining failures reproduce an existing disposed-DB
+   assertion and concurrent, unpublished stack-diagnostic work. The changed worker
+   entrypoint cases pass 4/4. Formatting and clj-kondo are clean; general reflection
+   findings were checked against the baseline and warning-free JVM compilation.
+3. Documentation and scoped diff reviewed. Publication: commit only this task, push
+   main and report the verified follow-up on #226. No installation or live restart.

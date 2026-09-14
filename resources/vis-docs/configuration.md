@@ -383,10 +383,11 @@ network rules and how to diagnose a refusal. If a native tool such as `bb` or
 `clj-kondo` fails with `CSunMiscSignal.open() failed` after an upgrade, restart
 Vis: the jail profile is inherited by running processes.
 
-Python installs packages in `~/.vis/python/packages` and writes bytecode caches
-in `~/.vis/python/pycache`. Override these locations with `VIS_PYTHON_PACKAGES`
-and `VIS_PYTHON_PYCACHE_PREFIX`. `VIS_PYTHON_HOME` and `VIS_PYTHON_NATIVE_PATH`
-select another runtime. All four variables are read at startup.
+Shared Python installs use `~/.vis/python/packages`; project installs stay in their
+uv environment. `VIS_PYTHON_PACKAGES` overrides only the shared location. Bytecode
+caches use `~/.vis/python/pycache`, overridden by `VIS_PYTHON_PYCACHE_PREFIX`.
+`VIS_PYTHON_HOME` and `VIS_PYTHON_NATIVE_PATH` select another runtime. These variables
+are read at startup.
 
 ## Python TLS validation
 
@@ -456,10 +457,22 @@ public index. Existing installed packages are not reinstalled by this setting.
 
 After `vis-agent python uv sync --project .`, run your package from the same
 project directory with `vis-agent python -m your_package`. The standalone CLI
-loads installed packages, distribution metadata and editable `.pth` files or
-import hooks from the existing `.venv`. `UV_PROJECT_ENVIRONMENT` selects another
-environment; relative paths resolve against the current directory. It does not
-search parent directories, create an environment or sync dependencies on startup.
+selects one dependency environment before Python starts:
+
+- A current-directory `.venv`, `pyproject.toml`, or `UV_PROJECT_ENVIRONMENT`
+  selects project mode. Only that environment supplies installed packages,
+  distribution metadata and editable `.pth` files or import hooks. Shared Vis
+  packages and their startup hooks are not loaded.
+- Without a project, the CLI uses shared packages in `~/.vis/python/packages`
+  (or `VIS_PYTHON_PACKAGES`).
+- `vis-agent python --shared -m your_tool` explicitly selects shared packages,
+  even inside a project. It skips project activation and configured or inferred
+  source roots. An explicit `PYTHONPATH` still applies.
+
+`UV_PROJECT_ENVIRONMENT` selects another project environment; relative paths
+resolve against the current directory. The CLI does not search parent directories,
+create an environment or sync dependencies on startup. A `pyproject.toml` with no
+prepared environment reports a sync error instead of borrowing shared packages.
 
 The CLI still uses Vis's embedded Python, so the environment must match its
 Python version and platform. If the matching site-packages directory is missing,
@@ -486,7 +499,7 @@ python:
 ```
 
 Configured paths come first, then inferred ones; `PYTHONPATH` precedes both.
-These roots precede project-environment packages, which precede shared packages.
+These roots precede packages from the selected environment; project and shared packages are not merged.
 An [editable package install](extension-development.md) supplies its own import
 roots through `.pth` files or backend hooks; it does not need these layout overrides.
 Import roots do not grant filesystem permissions or install dependencies.
