@@ -1074,7 +1074,12 @@
         sections
         (mapv #(node-section % ctx fresh (long text-w)) (:nodes view))]
 
-    (with-meta (into head (stacked-rows sections))
+    (with-meta (stacked-rows (cond-> []
+                               (seq head)
+                               (conj head)
+
+                               true
+                               (into sections)))
       {:widths (reduce merge {} (map (comp :widths meta) sections))})))
 
 (defn controls
@@ -1874,10 +1879,12 @@
                rule-at (long foot-row)
                hint-rule-at (dec hint-at)
                visible (max 1 (dec (long visible)))
-               ;; Expanded headings reserve a blank row on each side. On a very
-               ;; short terminal, keep one content row and use the compact title.
-               heading-h
-               (if (and (not is-minimized) (>= (- visible (count collapsed) (if stop 2 0)) 4)) 3 0)
+               ;; Keep the description directly below the expanded title (#220).
+               ;; Without a description, retain the title's blank separator row.
+               heading-h (if (and (not is-minimized)
+                                  (>= (- visible (count collapsed) (if stop 2 0)) 4))
+                           (if (str/blank? (get-in front [:view :description])) 3 2)
+                           0)
                title-row (if (pos? heading-h) (inc (long body-top)) (long sep-row))
                body-top (+ (long body-top) heading-h)
                visible (- visible heading-h)

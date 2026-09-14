@@ -134,10 +134,10 @@
           plan
           (rows-of p)]
 
-      (is (= [:prose :node :trule :thead :trule :empty :trule] (mapv :kind plan))
+      (is (= [:prose :blank :node :trule :thead :trule :empty :trule] (mapv :kind plan))
           "top rail, the header, a rail, the sentence, and the box closed under it")
-      (is (str/includes? (:text (nth plan 3)) "Job"))
-      (is (str/includes? (:text (nth plan 5)) "no rows yet")
+      (is (str/includes? (:text (nth plan 4)) "Job"))
+      (is (str/includes? (:text (nth plan 6)) "no rows yet")
           "the sentence stands INSIDE the box, between its rails"))))
 
 (deftest live-view-window-test
@@ -680,7 +680,7 @@
              (is (every? #(= "view-1" (:view-id %)) controls)))
            (finally (.reset interactions/hit-map))))))
 
-;; Regression: the expanded title touched the top border and its description.
+;; Regression #220: description follows the title, then one blank row before nodes.
 (deftest live-view-heading-spacing-test
   (doseq [cols
           [40 80 120]
@@ -710,11 +710,21 @@
     (is (str/blank? (str/replace (nth lines (inc (long from))) "│" ""))
         "one empty row separates the border from the title")
     (is (str/includes? (nth lines title-row) "Release checks"))
-    (is (str/blank? (str/replace (nth lines (inc title-row)) "│" ""))
-        "one empty row separates the title from its description")
-    (is (str/includes? (nth lines (+ title-row 2)) "Three jobs"))
+    (is (str/includes? (nth lines (inc title-row)) "Three jobs"))
+    (is (str/blank? (str/replace (nth lines (+ title-row 2)) "│" ""))
+        "one empty row separates the description from the first node")
+    (is (str/includes? (nth lines (+ title-row 3)) "Watching"))
     (is (= [title-row] (mapv #(get-in % [:bounds :row]) controls))
         "the minimize hit target follows the title")))
+
+(deftest live-view-description-separator-test
+  ;; #220: a description is a section, not padding before or inside the first node.
+  (doseq [description [nil "" "   "]]
+    (let [p (lv/opened (mounted {:description description}
+                                (fixture/status "now" "Watching" {:tone :running})))]
+      (is (= :status (:kind (first (rows-of p)))))))
+  (let [p (lv/opened (mounted {:description "Three jobs"}))]
+    (is (= [:prose] (mapv :kind (rows-of p))) "an empty view has no trailing separator")))
 
 (deftest live-view-short-heading-test
   (let [p

@@ -1068,7 +1068,9 @@ export function LiveViewPanel({
       role={isSettled ? undefined : 'status'}
       aria-live={isSettled ? undefined : 'polite'}
     >
-      <header className="flex items-start gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
+      <header
+        className={`flex items-start gap-2 bg-panel-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'}`}
+      >
         <span className="min-w-0 flex-1">
           <span className="block truncate font-mono text-title font-bold text-white">
             {view.title}
@@ -1131,7 +1133,9 @@ export function LiveViewPanel({
           {error}
         </p>
       )}
-      <ul className="divide-y divide-dialog-edge">
+      <ul
+        className={`divide-y divide-dialog-edge ${view.description ? '[&>li:first-child]:pt-0' : ''}`}
+      >
         {view.nodes.map((node) => (
           // Table cells own their padding; an outer inset makes the first and last
           // rows uneven relative to the internal separators. Keep labelled headings inset.

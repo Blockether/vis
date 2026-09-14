@@ -149,7 +149,7 @@ export const LabelledJobs: Story = {
     const table = canvas.getByRole('table');
     const node = table.closest('li')!;
     await expect(canvas.getByText('Jobs')).toBeVisible();
-    await expect(getComputedStyle(node).paddingTop).toBe('10px');
+    await expect(getComputedStyle(node).paddingTop).toBe('0px');
     await expect(getComputedStyle(node).paddingBottom).toBe('0px');
     await expect(
       node.getBoundingClientRect().bottom - table.getBoundingClientRect().bottom,
