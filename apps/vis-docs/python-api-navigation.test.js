@@ -13,6 +13,14 @@ function page(name, options = {}) {
   });
 }
 
+function loadStyles(document) {
+  for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+    const style = document.createElement('style');
+    style.textContent = readFileSync('dist' + new URL(link.href).pathname, 'utf8');
+    document.head.append(style);
+  }
+}
+
 test('the SDK overview starts with a usable workflow and an API choice guide', () => {
   const dom = page('blockether/vis.html');
   try {
@@ -175,15 +183,40 @@ test('view decoding inherited from private SDK bases remains available on each r
   }
 });
 
+test('SDK search has room around its text and readable placeholder and focus states', () => {
+  const dom = page('blockether/vis/activity.html');
+  try {
+    const document = dom.window.document;
+    loadStyles(document);
+    const input = document.querySelector('input[type="search"]');
+    const style = dom.window.getComputedStyle(input);
+    expect(input.getAttribute('aria-label')).toBe('Search Python SDK');
+    expect(style.paddingLeft).toBe('0.75rem');
+    expect(style.paddingRight).toBe('0.75rem');
+    expect(style.paddingTop).toBe('0.625rem');
+    expect(style.paddingBottom).toBe('0.625rem');
+    expect(style.minHeight).toBe('2.75rem');
+    const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]);
+    const searchStyle = (suffix = '') =>
+      rules.findLast(
+        (rule) =>
+          rule.selectorText?.replace(/['"]/g, '') === 'nav.pdoc input[type=search]' + suffix,
+      ).style;
+    expect(searchStyle().border).toBe('1px solid var(--faint)');
+    expect(searchStyle('::placeholder').color).toBe('var(--dim)');
+    expect(searchStyle('::placeholder').opacity).toBe('1');
+    expect(searchStyle(':hover').borderColor).toBe('var(--dim)');
+    expect(searchStyle(':focus').borderColor).toBe('var(--primary)');
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('API tables keep words intact while scrolling inside narrow pages', () => {
   const dom = page('blockether/vis/engine.html');
   try {
     const document = dom.window.document;
-    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
-      const style = document.createElement('style');
-      style.textContent = readFileSync('dist' + new URL(link.href).pathname, 'utf8');
-      document.head.append(style);
-    }
+    loadStyles(document);
     const table = document.querySelector('.module-info table');
     const style = dom.window.getComputedStyle(table);
     expect(style.overflowWrap).toBe('normal');

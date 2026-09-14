@@ -54,12 +54,26 @@ nav.pdoc a[aria-current='page'] {
   text-decoration: underline;
 }
 nav.pdoc input[type='search'] {
+  appearance: none;
   width: 100%;
   min-height: 2.75rem;
   margin: 0.5rem 0 1rem;
-  border: 1px solid var(--line);
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--faint);
   border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
   font: inherit;
+}
+nav.pdoc input[type='search']::placeholder {
+  color: var(--dim);
+  opacity: 1;
+}
+nav.pdoc input[type='search']:hover {
+  border-color: var(--dim);
+}
+nav.pdoc input[type='search']:focus {
+  border-color: var(--primary);
 }
 .api-guides {
   margin-top: 1rem;
