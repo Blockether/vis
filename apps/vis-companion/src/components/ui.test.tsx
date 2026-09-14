@@ -694,8 +694,9 @@ describe('Pager', () => {
 // Counts and navigation belong to the same project band, without competing for width.
 describe('a project band carries its own count and its own pager', () => {
   const band =
-    /<SwipeActions\s+label=\{project\}[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0] ??
-    '';
+    /<SectionHeader isCollapsed=\{!isShowing\}>[\s\S]*?<\/SectionHeader>/.exec(
+      sessionsListSource,
+    )?.[0] ?? '';
   const qualifier = band.slice(band.indexOf('qualifier={'), band.indexOf('qualifierTitle='));
   const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? '';
 

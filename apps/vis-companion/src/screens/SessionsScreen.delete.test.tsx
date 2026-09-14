@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
@@ -83,37 +83,46 @@ describe('deleting one session confirms inside its own row', () => {
   });
 });
 
-// Regression, user request: project bands had no swipe drawer, so their destructive
-// verb was missing from the working list where the project and its sessions live.
-describe('deleting a project from its list band', () => {
-  it('uses the row drawer, confirms in place, and removes the project', async () => {
-    const view = renderSessionsScreen({ machines: machines() });
+// Project deletion belongs in project management, not in the navigation band.
+describe('project removal is available only from project management', () => {
+  it.each([0, 2])('keeps the project band free of action menus with %i sessions', async (count) => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          ...machines()[0],
+          sessions: machines()[0].sessions.slice(0, count),
+          projects: [
+            {
+              project_id: 'p-project',
+              root: '/Users/dev/project',
+              name: 'project',
+              session_count: count,
+              live_count: 0,
+              awaiting_count: 0,
+              last_activity_ms: 0,
+            },
+          ],
+        },
+      ],
+    });
     restore = view.restore;
-    await screen.findByText('First');
-    view.requests.length = 0;
+    const project = await screen.findByRole('region', { name: 'project sessions' });
+    const header = project.querySelector('header')!;
 
-    const actions = screen.getByRole('group', { name: 'project actions' });
-    expect(actions.closest('[data-swipe-track]')).not.toBeNull();
-    fireEvent.click(actions.querySelector("button[aria-label='Delete']")!);
-
-    expect(await screen.findByRole('group', { name: 'Delete project?' })).toBeTruthy();
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByText('First')).toBeTruthy();
+    expect(within(header).queryByRole('button', { name: 'Actions for project' })).toBeNull();
+    expect(within(header).queryByRole('group', { name: 'project actions' })).toBeNull();
+    expect(header.querySelector('[data-swipe-track]')).toBeNull();
+    expect(within(header).getByRole('button', { name: /^New session/ })).toBeEnabled();
+    if (count > 0) {
+      fireEvent.click(within(header).getByRole('button', { name: 'Collapse project' }));
+      expect(within(project).queryByText('First')).toBeNull();
+      fireEvent.click(within(header).getByRole('button', { name: 'Expand project' }));
+      expect(await within(project).findByText('First')).toBeInTheDocument();
+    } else {
+      expect(within(header).queryByRole('button', { name: /^(Collapse|Expand) / })).toBeNull();
+    }
+    expect(screen.getByRole('button', { name: 'Projects on alpha' })).toBeEnabled();
     expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
-
-    fireEvent.click(screen.getByRole('button', { name: 'No, keep' }));
-    const restored = await screen.findByRole('group', { name: 'project actions' });
-    fireEvent.click(restored.querySelector("button[aria-label='Delete']")!);
-    fireEvent.click(await screen.findByRole('button', { name: 'Yes, delete' }));
-
-    await waitFor(() =>
-      expect(
-        view.requests.some(
-          (request) => request.method === 'DELETE' && request.path === '/v1/sessions/a1',
-        ),
-      ).toBe(true),
-    );
-    await waitFor(() => expect(screen.queryByLabelText('project sessions')).toBeNull());
   });
 
   // Regression, user report: a completed project deletion left its "Deleting..."
@@ -142,6 +151,8 @@ describe('deleting a project from its list band', () => {
     });
     restore = view.restore;
     await screen.findByText('Unassigned session');
+    fireEvent.click(screen.getByRole('button', { name: 'Projects on alpha' }));
+    await screen.findByRole('dialog', { name: 'Manage projects on alpha' });
     view.requests.length = 0;
     let complete!: () => void;
     const response = new Promise<void>((resolve) => {
@@ -153,11 +164,7 @@ describe('deleting a project from its list band', () => {
       return gateway(input, init);
     };
 
-    fireEvent.click(
-      screen
-        .getByRole('group', { name: 'project actions' })
-        .querySelector("button[aria-label='Delete']")!,
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Remove every transcript in project' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Yes, delete' }));
     expect(await screen.findByRole('button', { name: 'Deleting...' })).toBeDisabled();
     await act(async () => complete());
@@ -166,7 +173,7 @@ describe('deleting a project from its list band', () => {
       expect(screen.queryByRole('group', { name: 'Delete project?' })).toBeNull(),
     );
     expect(screen.queryByText('Deleting...')).toBeNull();
-    expect(screen.getByRole('group', { name: 'project actions' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove every transcript in project' })).toBeNull();
     expect(screen.getByText('Unassigned session')).toBeInTheDocument();
     expect(
       view.requests.filter((request) => request.method === 'DELETE').map((request) => request.path),

@@ -86,7 +86,7 @@ export const Fleet: Story = {
     // Phones keep paging inline; desktop rails reserve a row for direct numbered jumps.
     let pager = page.getByRole('navigation', { name: 'Pages of uberworkspace sessions' });
     const fold = page.getByRole('button', { name: 'Collapse uberworkspace' });
-    // The project band stays uniform across its disclosure, paging and open menu.
+    // The project band stays uniform across its disclosure, paging and creation control.
     const header = fold.closest('header')!;
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('0px');
     await userEvent.click(fold);
@@ -94,18 +94,16 @@ export const Fleet: Story = {
     await userEvent.click(fold);
     await expect(win.getComputedStyle(header).borderBottomWidth).toBe('0px');
     pager = within(header).getByRole('navigation');
+    await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
+    await expect(header.querySelector('[data-swipe-track]')).toBeNull();
     if (win.matchMedia('(min-width: 640px) and (pointer: fine)').matches) {
-      const trigger = within(header).getByRole('button', { name: 'Actions for uberworkspace' });
       await userEvent.hover(fold);
       const band = win.getComputedStyle(header).backgroundColor;
       await expect(win.getComputedStyle(fold).backgroundColor).toBe('rgba(0, 0, 0, 0)');
       await userEvent.unhover(fold);
-      await userEvent.hover(trigger);
+      await userEvent.hover(create);
       await expect(win.getComputedStyle(header).backgroundColor).toBe(band);
-      await userEvent.click(trigger);
-      await userEvent.unhover(trigger);
-      await expect(win.getComputedStyle(header).backgroundColor).toBe(band);
-      await userEvent.keyboard('{Escape}');
+      await userEvent.unhover(create);
     }
     const centerY = (node: Element) => {
       const box = node.getBoundingClientRect();
@@ -178,7 +176,7 @@ export const Fleet: Story = {
     const before = [create, disclosure].map((control) => control.getBoundingClientRect());
     await expect(before[0].right).toBe(before[1].right);
 
-    for (const control of [create, disclosure]) {
+    for (const control of [disclosure]) {
       const track = control.closest<HTMLElement>('[data-swipe-track]')!;
       const trigger = within(track).getByRole('button', { name: /^Actions for/ });
       const content = track.firstElementChild!.firstElementChild!;
@@ -239,27 +237,37 @@ export const DeleteProject: Story = {
   globals: { viewport: { value: 'desktop', isRotated: false } },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
-    const project = await page.findByRole('region', { name: 'uberworkspace sessions' });
-    const group = within(project);
+    await page.findByRole('region', { name: 'uberworkspace sessions' });
+    await userEvent.click(page.getByRole('button', { name: 'Projects on tower' }));
+    const sheet = within(
+      await within(canvasElement.ownerDocument.body).findByRole('dialog', {
+        name: 'Manage projects on tower',
+      }),
+    );
     const ask = async () => {
-      await userEvent.click(group.getByRole('button', { name: 'Actions for uberworkspace' }));
-      const menu = within(canvasElement.ownerDocument.body).getByRole('dialog', {
-        name: 'uberworkspace actions',
-      });
-      await userEvent.click(within(menu).getByRole('button', { name: 'Delete' }));
+      await userEvent.click(
+        sheet.getByRole('button', {
+          name: 'Remove every transcript in uberworkspace',
+        }),
+      );
     };
 
     await ask();
-    await expect(group.getByRole('group', { name: 'Delete uberworkspace?' })).toBeVisible();
-    await userEvent.click(group.getByRole('button', { name: 'No, keep' }));
-    await expect(group.getByRole('button', { name: 'Actions for uberworkspace' })).toBeVisible();
+    await expect(sheet.getByRole('group', { name: 'Delete uberworkspace?' })).toBeVisible();
+    await userEvent.click(sheet.getByRole('button', { name: 'No, keep' }));
+    await expect(
+      sheet.getByRole('button', {
+        name: 'Remove every transcript in uberworkspace',
+      }),
+    ).toBeVisible();
 
     await ask();
-    await userEvent.click(group.getByRole('button', { name: 'Yes, delete' }));
+    await userEvent.click(sheet.getByRole('button', { name: 'Yes, delete' }));
+    await expect(sheet.queryByRole('group', { name: 'Delete uberworkspace?' })).toBeNull();
+    await userEvent.keyboard('{Escape}');
     // Held same-root rows survive; without the saved name, the band uses its folder name.
-    await expect(await page.findByRole('button', { name: 'Actions for rewrite' })).toBeVisible();
+    await expect(await page.findByRole('region', { name: 'rewrite sessions' })).toBeVisible();
     await expect(page.queryByText('Deleting...')).toBeNull();
-    await expect(page.queryByRole('group', { name: 'Delete rewrite?' })).toBeNull();
     await expect(page.getByRole('region', { name: 'reviewer sessions' })).toBeVisible();
   },
 };

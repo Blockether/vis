@@ -98,8 +98,7 @@ describe('a mouse never slides', () => {
     expect(html).not.toContain('group-hover/swipe:opacity');
   });
 
-  // Regression: desktop hover put Delete over the project's + and pager.
-  // Browser geometry and hit-testing live in the ProjectHeader story.
+  // Row actions must not cover permanent controls such as session details.
   it('reserves space beside row controls rather than overlaying them', () => {
     const html = markup();
     expect(html).not.toContain('mouse:absolute');

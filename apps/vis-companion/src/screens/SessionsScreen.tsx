@@ -1898,7 +1898,6 @@ export function SessionsScreen({
                           context={rowContext}
                           reading={reading}
                           creation={projectCreation}
-                          onRemove={removeManagedProject}
                           // The order already put the machine's live work on top; the
                           // project it lands on is the one that opens by itself.
                           initiallyOpen={groupIndex === 0}

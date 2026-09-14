@@ -54,6 +54,8 @@ export const GroupedSessions: Story = {
     );
     const session = sessionTitle.closest<HTMLElement>('[data-session-id]')!;
     const rowHeight = session.getBoundingClientRect().height;
+    await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
+    await expect(header.querySelector('[data-swipe-track]')).toBeNull();
 
     // Regression: project names and full-width row rules previously had nearly
     // the same visual weight. Hierarchy must survive without relying on hue.
@@ -61,7 +63,7 @@ export const GroupedSessions: Story = {
       Number(style(sessionTitle).fontWeight),
     );
     await expect(Number(style(title).fontWeight)).toBeGreaterThanOrEqual(700);
-    const rows = header.parentElement!.nextElementSibling!;
+    const rows = header.nextElementSibling!;
     await expect(rows.children.length).toBeGreaterThan(1);
     await expect(style(rows.children[1]).borderTopColor).not.toBe(style(header).borderTopColor);
     await expect(style(rows.children[1]).borderTopWidth).toBe(style(header).borderTopWidth);
@@ -76,6 +78,8 @@ export const GroupedSessions: Story = {
     await expect(within(header).getByRole('button', { name: /^New session/ })).toBeEnabled();
     await userEvent.click(page.getByRole('button', { name: 'Expand infrastructure' }));
     const reopened = await within(group).findByText('Rotate the relay signing key');
-    await expect(reopened.closest('[data-session-id]')!.getBoundingClientRect().height).toBe(rowHeight);
+    await expect(reopened.closest('[data-session-id]')!.getBoundingClientRect().height).toBe(
+      rowHeight,
+    );
   },
 };
