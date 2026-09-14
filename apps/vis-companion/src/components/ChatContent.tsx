@@ -1144,6 +1144,11 @@ const ToolCard = memo(function ToolCard({
             isOpen={resultOpen}
             tone="execution"
             inlineChevron
+            tally={
+              !failed && !resultOpen && resultLines > 0 ? (
+                <BandTally> +{resultLines} more</BandTally>
+              ) : undefined
+            }
             className="min-w-0"
             aria-label={
               failed
@@ -1156,12 +1161,7 @@ const ToolCard = memo(function ToolCard({
             }
             onClick={() => setResultOpen((open) => !open)}
           >
-            <BandLabel tone={stateTone}>
-              {failed ? 'Failed' : 'RESULT'}
-              {!failed && !resultOpen && resultLines > 0 && (
-                <BandTally> +{resultLines} more</BandTally>
-              )}
-            </BandLabel>
+            <BandLabel tone={stateTone}>{failed ? 'Failed' : 'RESULT'}</BandLabel>
           </Disclosure>
         )}
         {resultShown &&
@@ -1286,11 +1286,12 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             isOpen={expanded}
             tone="execution"
             inlineChevron
+            tally={!expanded ? <BandTally> +{lineCount} more</BandTally> : undefined}
             className="min-w-0 flex-1"
             aria-label={expanded ? 'Collapse code' : 'Expand code'}
             onClick={() => setExpanded((open) => !open)}
           >
-            <BandLabel>CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}</BandLabel>
+            <BandLabel>CODE</BandLabel>
           </Disclosure>
         ) : (
           <BandLabel className="min-w-0 flex-1">CODE</BandLabel>

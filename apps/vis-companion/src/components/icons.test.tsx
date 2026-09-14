@@ -235,7 +235,9 @@ describe('the icon set', () => {
 
     expect(shape(shut)).toBe(shape(open));
     expect(shut).not.toContain('rotate-90');
-    expect(open).toContain('motion-reduce:transition-none');
+    expect(open).toContain('[&amp;&gt;path]:rotate-90');
+    expect(open).toContain('motion-reduce:[&amp;&gt;path]:transition-none');
+    expect(renderToStaticMarkup(<ChevronIcon back />)).toContain('[&amp;&gt;path]:rotate-180');
   });
 
   // Regression: the star was drawn in the legible amber INK a text glyph needs,

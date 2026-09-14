@@ -743,13 +743,22 @@ export const CodeWithResult: Story = {
       await expect(button).toHaveTextContent(label);
       const text = button.firstElementChild!.getBoundingClientRect();
       const chevron = button.querySelector('svg')!.getBoundingClientRect();
+      // The path turns inside a fixed viewport; rotating the SVG enlarged its box mid-turn.
+      await expect(getComputedStyle(button.querySelector('svg')!).rotate).toBe('none');
       await expect(chevron.left - text.right).toBeGreaterThanOrEqual(4);
       await expect(chevron.left - text.right).toBeLessThanOrEqual(8);
       await expect(
         button.getBoundingClientRect().left - code.getBoundingClientRect().left,
       ).toBeCloseTo(12, 0);
+      return [button, button.firstElementChild!, button.querySelector('svg')!].map((element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { x, y, width, height };
+      });
     };
-    await assertHeader(canvas.getByRole('button', { name: 'Expand code' }), 'CODE +2 more');
+    const closedCodeHeader = await assertHeader(
+      canvas.getByRole('button', { name: 'Expand code' }),
+      'CODE +2 more',
+    );
     const copy = canvas.getByRole('button', { name: 'Copy code' });
     const duration = within(code as HTMLElement).getByText('57ms');
     await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(
@@ -762,6 +771,10 @@ export const CodeWithResult: Story = {
       code.getBoundingClientRect().right,
     );
     await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    // Regression: removing the tally shifted the heading and moved its chevron.
+    await expect(
+      await assertHeader(canvas.getByRole('button', { name: 'Collapse code' }), 'CODE'),
+    ).toEqual(closedCodeHeader);
     const band = canvasElement.querySelector('[data-execution-code]')!;
     const result = canvasElement.querySelector('[data-code-result]')!;
     const codeBody = code.querySelector('[data-code-body]')!;
@@ -789,11 +802,17 @@ export const CodeWithResult: Story = {
     await expect(activity.getBoundingClientRect().top).toBeGreaterThan(
       result.getBoundingClientRect().top,
     );
-    await assertHeader(canvas.getByRole('button', { name: 'Expand result' }), 'RESULT +1 more');
+    const closedResultHeader = await assertHeader(
+      canvas.getByRole('button', { name: 'Expand result' }),
+      'RESULT +1 more',
+    );
     await expect(band.textContent).not.toContain('Listed 5 entries.');
     canvas.getByRole('button', { name: 'Expand result' }).focus();
     await userEvent.keyboard('{Enter}');
     await expect(band.textContent).toContain('Listed 5 entries.');
+    await expect(
+      await assertHeader(canvas.getByRole('button', { name: 'Collapse result' }), 'RESULT'),
+    ).toEqual(closedResultHeader);
     const firstResultLine = result.querySelector('pre code > div')!;
     await expect(
       firstResultLine.getBoundingClientRect().top - headerBottom('Collapse result'),
@@ -813,6 +832,9 @@ export const CodeWithResult: Story = {
     await expect(band.textContent).toContain('57ms');
     await expect(canvas.getByText('42ms')).toBeTruthy();
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
+    await expect(
+      await assertHeader(canvas.getByRole('button', { name: 'Expand code' }), 'CODE +2 more'),
+    ).toEqual(closedCodeHeader);
     await expect(canvas.queryByText('Listed 5 entries.')).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Expand result' })).toBeNull();
     await expect(code.querySelector('[data-code-body]')).toBeNull();

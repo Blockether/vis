@@ -677,6 +677,7 @@ export function Disclosure({
   tone = 'muted',
   bleed = false,
   inlineChevron = false,
+  tally,
   density = 'default',
   className = '',
   children,
@@ -696,8 +697,10 @@ export function Disclosure({
    * of the column it sits in read as a row missing its last eight pixels.
    */
   bleed?: boolean;
-  /** Keep the chevron immediately after the label and tally, not at either row edge. */
+  /** Keep the chevron immediately after the label, not at either row edge. */
   inlineChevron?: boolean;
+  /** Optional metadata after the chevron, so hiding it never shifts the label or icon. */
+  tally?: ReactNode;
   /** Compact operation rows or comfortable 44px touch / 28px mouse controls. */
   density?: 'default' | 'compact' | 'comfortable';
 }) {
@@ -737,6 +740,7 @@ export function Disclosure({
           className={`${inlineChevron ? '' : 'ml-auto'} size-3 shrink-0`}
         />
       )}
+      {tally}
     </button>
   );
 }

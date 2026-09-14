@@ -132,9 +132,9 @@ export function ImproveIcon({ className }: { className?: string }) {
 }
 
 /**
- * A disclosure. ONE icon in two states: it points right when closed and turns a
- * quarter clockwise when open, so opening a section is a MOVE the eye follows
- * rather than one character being swapped for a different character.
+ * A disclosure: the same Lucide path points right when closed and down when open.
+ * Rotate the path inside its fixed SVG viewport, not the viewport itself, so
+ * the icon box stays the same size throughout the transition.
  *
  * `back` is the third state, and it exists because the two controls in this app that
  * mean "return to where you came from" — the session header's back button and a
@@ -158,8 +158,8 @@ export function ChevronIcon({
     <Mark
       icon={ChevronRight}
       className={classes(
-        'transition-transform duration-150 motion-reduce:transition-none',
-        open ? 'rotate-90' : back && 'rotate-180',
+        '[&>path]:origin-center [&>path]:transition-transform [&>path]:duration-150 motion-reduce:[&>path]:transition-none',
+        open ? '[&>path]:rotate-90' : back && '[&>path]:rotate-180',
         className,
       )}
     />
