@@ -105,7 +105,17 @@
            "print('NATIVE_FFF_READY')\n"
            ;; Regression: native lint could not locate clj_kondo/core__init.class.
            "linted = lint_code('clojure', {'code': '(ns probe) (unknown-call)'})\n"
-           "assert 'unresolved-symbol' in str(linted), str(linted)\n" "print('NATIVE_LINT_READY')")
+           "assert 'unresolved-symbol' in str(linted), str(linted)\n" "print('NATIVE_LINT_READY')\n"
+           ;; #225: Ruff binds configured FFM calls before returning any lint result.
+           "for options in [{'code': 'import os\\n'}, {'paths': ['lint_target.py'], 'cwd': str(project_root_path)}]:\n"
+           "    linted = lint_code('python', options)\n"
+           "    assert linted['providers'] == ['ruff'] and linted['files'] == 1, str(linted)\n"
+           "    assert linted['warning'] == 1 and linted['error'] == 0, str(linted)\n"
+           "    assert linted['findings'][0]['type'] == 'F401', str(linted)\n"
+           "clean = lint_code('python', {'code': 'print(42)\\n'})\n"
+           "assert clean['findings'] == [] and clean['error'] == 0, str(clean)\n"
+           "formatted = format_code('python', {'code': 'x= 1\\n'})\n"
+           "assert formatted['changed'], str(formatted)\n" "print('NATIVE_PYTHON_LINT_READY')")
          tool {:id "format-native"
                :type "function"
                :function {:name "python_execution" :arguments (json/write-json-str {:code code})}}
@@ -185,6 +195,7 @@
           (spit (io/file dir "test_error.py") "import native_missing_dependency\n")
           ;; Issue #70: zero discovered tests must not produce a successful 0/0.
           (spit (io/file dir "test_empty.py") "# No tests defined.\n")
+          (spit (io/file dir "lint_target.py") "import os\n")
           (with-redefs-fn {#'native/whole-body #(reply false %)
                            #'native/stream-body #(reply true %)}
             (fn []
@@ -238,12 +249,12 @@
                                   output)
                           (expect (str/includes? (pr-str tool-results) "NATIVE_FFF_READY") output)
                           (expect (str/includes? (pr-str tool-results) "NATIVE_LINT_READY") output)
-                          (doseq [marker ["NATIVE_KEYWORDS_READY" "NATIVE_PYTHON_REPL_READY"
-                                          "NATIVE_PYTHON_TESTS_COLD_READY"
-                                          "NATIVE_PYTHON_TESTS_RESTART_READY"
-                                          "NATIVE_TEST_SUBPROCESS_READY"
-                                          "NATIVE_PROCESS_CLEANUP_READY"
-                                          "NATIVE_CLOJURE_REPL_DEADLINE_READY"]]
+                          (doseq [marker
+                                  ["NATIVE_KEYWORDS_READY" "NATIVE_PYTHON_REPL_READY"
+                                   "NATIVE_PYTHON_TESTS_COLD_READY"
+                                   "NATIVE_PYTHON_TESTS_RESTART_READY"
+                                   "NATIVE_TEST_SUBPROCESS_READY" "NATIVE_PROCESS_CLEANUP_READY"
+                                   "NATIVE_CLOJURE_REPL_DEADLINE_READY" "NATIVE_PYTHON_LINT_READY"]]
                             (expect (str/includes? (pr-str tool-results) marker) output))
                           (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                           (expect (every? #(= model
