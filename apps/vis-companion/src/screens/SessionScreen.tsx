@@ -4339,7 +4339,7 @@ export function SessionScreen({
             >
               <div
                 ref={transcriptRef}
-                className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
+                className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 mouse:max-w-4xl ${
                   !turns.length && !runningTurn
                     ? 'flex flex-col pb-4 sm:pb-6'
                     : 'flex flex-col justify-end pb-10'
@@ -4427,7 +4427,7 @@ export function SessionScreen({
             the caret and the queued turns survive a look at what the session made. */}
           <footer
             style={safeBottomStyle}
-            className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 ${artifactsOpen ? 'hidden' : ''}`}
+            className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 mouse:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_var(--container-4xl))/2_+_1.5rem))] mouse:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_var(--container-4xl))/2_+_1.5rem))] ${artifactsOpen ? 'hidden' : ''}`}
           >
             {/* Anchored to the footer's top edge, so it always clears the queue
               tray and composer no matter how tall they grow. Hidden while a
@@ -4561,7 +4561,7 @@ export function SessionScreen({
                   }
                   aria-autocomplete="list"
                   aria-haspopup="listbox"
-                  className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:whitespace-nowrap placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1.5 mouse:text-meta"
+                  className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:whitespace-nowrap placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1 mouse:text-title"
                   onPaste={handlePaste}
                   onFocus={handleComposerFocus}
                   onSelect={(event) => {

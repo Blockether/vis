@@ -703,7 +703,7 @@ export const Markdown = memo(function Markdown({
               {/* The scroll viewport owns the frame; separate cell borders stay inside
                   it in WebKit, including the bottom edge and partly visible columns. */}
               <table
-                className={`w-full border-separate border-spacing-0 ${compact ? 'text-meta' : 'text-ui'} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
+                className={`w-full border-separate border-spacing-0 ${compact ? 'text-meta' : 'text-ui mouse:text-title'} [&_a]:[word-break:normal] [&_code]:[word-break:normal]`}
               >
                 {table}
               </table>
@@ -1217,9 +1217,7 @@ const ToolCard = memo(function ToolCard({
         {headline}
         {isCopyable && <CopyChip value={body} label="Copy result" className="shrink-0" />}
       </summary>
-      {/* A tool result is SUBORDINATE to the answer it feeds: its body is `text-meta`
-          (10px), the step its compact code blocks and diffs already render at, so the
-          card is internally uniform and steps down from the answer's `text-ui`. */}
+      {/* Tool payloads retain the compact code/diff scale, below message prose. */}
       {wasOpened && (
         <div
           className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result ${failed ? 'text-code-error-result' : ''}`}
@@ -1520,7 +1518,7 @@ const FormTrace = memo(function FormTrace({
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {forms[0].comment?.trim() && (
-        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui text-vis-message">
+        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui text-vis-message mouse:text-title">
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
@@ -1712,7 +1710,7 @@ export const ThinkingBand = memo(function ThinkingBand({
     // A step's reasoning and code share one edge with no margin between them.
     // Standalone bands retain their spacing among other message blocks.
     <section
-      className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking ${railed ? 'relative z-0' : 'my-2 first:mt-0'}`}
+      className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking mouse:text-title ${railed ? 'relative z-0' : 'my-2 first:mt-0'}`}
     >
       {collapsible && (
         <Disclosure
@@ -2402,7 +2400,7 @@ const TraceSegment = memo(function TraceSegment({
       {segment.head.thinking && <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>}
       {segment.head.prose && (
         // The trace owns outer gaps; prose only separates bands within this segment.
-        <div className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 [&+*]:mt-0">
+        <div className="py-2.5 text-ui text-vis-message first:pt-0 last:pb-0 mouse:text-title [&+*]:mt-0">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
@@ -2877,7 +2875,7 @@ export function SpeechBlock({ text }: { text: string }) {
           <div className="border-t border-edge">
             <p
               lang={language}
-              className={`${PROSE} px-2.5 py-2.5 text-body text-dialog-foreground`}
+              className={`${PROSE} px-2.5 py-2.5 text-body text-dialog-foreground mouse:text-title`}
             >
               {text}
             </p>
@@ -3535,13 +3533,11 @@ export const AssistantMessage = memo(function AssistantMessage({
           sid={sid}
           liveViews={liveViews}
         />
-        {/* Message prose sits on the SAME canonical step as the trace it grows out of:
-            tool results, thinking bands and code cards are all `text-ui` (11px), so an
-            answer at `text-body` (12px) was one px of drift, not a hierarchy. The role
-            label (`text-meta`) and the meta footer (`text-chip`) still step down from it. */}
+        {/* Desktop messages share the reading scale with the composer and session title.
+            Controls and tool payloads stay compact; touch keeps its existing density. */}
         {(blocks.length > 0 || fallback || emptyStatus) && (
           <div
-            className={`bg-answer text-ui ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}
+            className={`bg-answer text-ui mouse:text-title ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}
           >
             {blocks.map((block) => (
               <ContentBlockView key={block.id} block={block} onOpenAttachment={onOpenAttachment} />
@@ -3568,7 +3564,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           />
         ) : null}
         {meta && (
-          <footer className="mt-5 min-w-0 text-right font-mono text-chip text-footer-muted">
+          <footer className="mt-5 min-w-0 text-right font-mono text-chip text-footer-muted mouse:text-meta">
             <div className="overflow-hidden text-ellipsis whitespace-nowrap" title={meta}>
               {meta}
             </div>
@@ -3766,7 +3762,7 @@ export const UserMessage = memo(function UserMessage({
         </span>
       </div>
       <div
-        className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}
+        className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui mouse:text-title text-you-message-foreground ${PROSE}`}
       >
         {requestKind === 'council' ? (
           <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>

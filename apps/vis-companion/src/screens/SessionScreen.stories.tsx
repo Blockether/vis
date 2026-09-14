@@ -213,3 +213,48 @@ export const QueuedComposer: Story = {
     await expect(composer).toHaveValue('Keep this message queued.');
   },
 };
+
+/** Desktop prose and input use the reading scale, not control or metadata sizes. */
+export const ReadingLayout: Story = {
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const composer = await page.findByRole('textbox', { name: 'Message Vis' });
+    await composer.ownerDocument.fonts.ready;
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const title = page.getByRole('heading', { name: session.title! });
+    const transcript = page.getByRole('region', { name: 'Transcript' });
+    const column = transcript.firstElementChild!;
+    const answer = transcript.querySelector('.bg-answer')!;
+    const prose = transcript.querySelectorAll(
+      '.bg-answer p, .text-you-message-foreground, .text-thinking p, .text-vis-message p',
+    );
+    await expect(prose.length).toBeGreaterThan(2);
+    for (const element of [...prose, composer]) {
+      const style = getComputedStyle(element);
+      await expect(style.fontFamily).toBe(getComputedStyle(title).fontFamily);
+      await expect(style.fontSize).toBe(pointer ? getComputedStyle(title).fontSize : '11px');
+      await expect(style.lineHeight).toBe(pointer ? '20px' : '16px');
+    }
+    const cap = pointer ? 896 : 768;
+    await expect(column.getBoundingClientRect().width).toBe(Math.min(cap, transcript.clientWidth));
+    await expect(getComputedStyle(column).maxWidth).toBe(`${cap}px`);
+    await expect(transcript.scrollWidth).toBe(transcript.clientWidth);
+    if (pointer) {
+      const field = composer.closest('.bg-input')!.getBoundingClientRect();
+      const message = answer.getBoundingClientRect();
+      await expect(field.left).toBe(message.left);
+      await expect(field.right).toBe(message.right);
+      await expect(getComputedStyle(transcript.querySelector('footer')!).fontSize).toBe('10px');
+    }
+    // Larger type must not clip a wrapped draft or change the single-line control height.
+    await userEvent.type(composer, 'First line{Shift>}{Enter}{/Shift}Second line');
+    await expect(composer.getBoundingClientRect().height).toBeGreaterThan(pointer ? 28 : 32);
+    await userEvent.clear(composer);
+    await expect(composer.getBoundingClientRect().height).toBe(pointer ? 28 : 32);
+  },
+};
+
+export const ReadingLayoutPointer: Story = {
+  ...ReadingLayout,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};

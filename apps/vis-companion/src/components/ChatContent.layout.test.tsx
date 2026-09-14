@@ -23,6 +23,9 @@ describe('answer and table geometry', () => {
     expect(answer.classList.contains('pl-3')).toBe(false);
     const narration = view.getByText('Narration').closest('.text-vis-message')!;
     expect(narration.classList.contains('pr-3')).toBe(false);
+    for (const prose of [answer, narration]) {
+      expect(prose).toHaveClass('text-ui', 'mouse:text-title');
+    }
   });
 
   it('keeps the grid inside the scrollable table without collapsed paint', () => {

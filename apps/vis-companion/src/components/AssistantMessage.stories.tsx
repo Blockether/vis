@@ -44,6 +44,8 @@ export const AnswerTable: Story = {
     const answer = table.closest('.bg-answer')!;
     const style = getComputedStyle(answer);
     expect(style.paddingLeft).toBe(style.paddingRight);
+    expect(getComputedStyle(table).fontSize).toBe(style.fontSize);
+    expect(getComputedStyle(table).lineHeight).toBe(style.lineHeight);
     expect(getComputedStyle(table).borderCollapse).toBe('separate');
     expect(getComputedStyle(table).borderSpacing).toBe('0px');
     const rows = (table as HTMLTableElement).rows;
