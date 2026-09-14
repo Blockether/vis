@@ -401,3 +401,176 @@ export const NestedDisclosuresReceipt: Story = {
   args: { ...NestedDisclosures.args, isSettled: true },
   play: NestedDisclosures.play,
 };
+
+/** #221: a result set has one frame and uses available width, not viewport width. */
+export const LinkResults: Story = {
+  args: {
+    onInterrupt: undefined,
+    view: {
+      id: 'build-links',
+      title: 'Build results',
+      seq: 1,
+      nodes: [
+        {
+          id: 'links',
+          type: 'link',
+          label: 'Build references',
+          links: [
+            {
+              id: 'console',
+              label: 'Full console · router #4344',
+              target_kind: 'url',
+              target: 'https://gateway.example.com/build/4344',
+            },
+            {
+              id: 'review',
+              label: 'Review 24206 · PS 9 · SUCCESS',
+              target_kind: 'url',
+              target: 'https://gateway.example.com/review/24206',
+            },
+            {
+              id: 'checks',
+              label: 'Checks · gateway #812',
+              target_kind: 'url',
+              target: 'https://gateway.example.com/build/812',
+            },
+            {
+              id: 'report',
+              label: 'Build report',
+              target_kind: 'path',
+              target: '/tmp/build-report.txt',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  play: async ({ canvas }) => {
+    const list = canvas.getByRole('link', { name: 'Full console · router #4344' }).closest('ul')!;
+    const items = Array.from(list.children);
+    const box = list.getBoundingClientRect();
+    await expect(getComputedStyle(list).borderTopStyle).toBe('solid');
+    await expect(parseFloat(getComputedStyle(list).borderTopWidth)).toBeGreaterThan(0);
+    const luminance = (color: string) => color.match(/\d+/g)!.slice(0, 3)
+      .map((channel) => Number(channel) / 255)
+      .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const ink = luminance(getComputedStyle(list).borderTopColor);
+    const paper = luminance(getComputedStyle(list.closest('section')!).backgroundColor);
+    await expect((Math.max(ink, paper) + 0.05) / (Math.min(ink, paper) + 0.05)).toBeGreaterThanOrEqual(3);
+    if (box.width >= 550) {
+      await expect(items[0].getBoundingClientRect().top).toBe(items[1].getBoundingClientRect().top);
+      await expect(items[1].getBoundingClientRect().left).toBeGreaterThan(
+        items[0].getBoundingClientRect().right,
+      );
+    } else {
+      await expect(items[1].getBoundingClientRect().top).toBeGreaterThan(
+        items[0].getBoundingClientRect().bottom,
+      );
+    }
+    for (const item of items) {
+      await expect(item.getBoundingClientRect().right).toBeLessThanOrEqual(box.right);
+    }
+    const links = canvas.getAllByRole('link');
+    await expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      'https://gateway.example.com/build/4344',
+      'https://gateway.example.com/review/24206',
+      'https://gateway.example.com/build/812',
+    ]);
+    links[0].focus();
+    await userEvent.tab();
+    await expect(links[1]).toHaveFocus();
+    await expect(canvas.getByText('/tmp/build-report.txt')).toBeVisible();
+  },
+};
+
+export const LinkResultsReceipt: Story = {
+  args: { ...LinkResults.args, isSettled: true },
+  play: LinkResults.play,
+};
+
+export const NarrowLinkResults: Story = {
+  args: LinkResults.args,
+  decorators: [
+    (Story) => (
+      <div className="max-w-72">
+        <Story />
+      </div>
+    ),
+  ],
+  play: LinkResults.play,
+};
+
+export const LinkResultStates: Story = {
+  decorators: [
+    (Story) => (
+      <div className="max-w-72">
+        <Story />
+      </div>
+    ),
+  ],
+  args: {
+    onInterrupt: undefined,
+    view: {
+      id: 'link-states',
+      title: 'Result references',
+      seq: 1,
+      nodes: [
+        {
+          id: 'long',
+          type: 'link',
+          label: 'Detailed references',
+          links: [
+            {
+              id: 'long-url',
+              label: 'Full console · gateway-router-integration-checks #4344 · SUCCESS',
+              target_kind: 'url',
+              target: 'https://gateway.example.com/build/4344',
+            },
+            {
+              id: 'long-path',
+              label: 'Retained integration report',
+              target_kind: 'path',
+              target:
+                '/tmp/gateway-router-integration-checks/build-report-with-complete-results.txt',
+            },
+          ],
+        },
+        {
+          id: 'single',
+          type: 'link',
+          label: 'One reference',
+          links: [
+            {
+              id: 'one',
+              label: 'Build summary',
+              target_kind: 'url',
+              target: 'https://gateway.example.com/summary',
+            },
+          ],
+        },
+        { id: 'empty', type: 'link', label: 'Pending references', links: [] },
+      ],
+    },
+  },
+  play: async ({ canvas }) => {
+    const long = canvas.getByRole('link', {
+      name: 'Full console · gateway-router-integration-checks #4344 · SUCCESS',
+    });
+    const list = long.closest('ul')!;
+    const path = canvas.getByText(
+      '/tmp/gateway-router-integration-checks/build-report-with-complete-results.txt',
+    );
+    const label = canvas.getByText('Retained integration report');
+    for (const element of [long, path, label]) {
+      await expect(element.scrollWidth).toBeLessThanOrEqual(element.clientWidth);
+      await expect(element.getBoundingClientRect().right).toBeLessThanOrEqual(
+        list.getBoundingClientRect().right,
+      );
+    }
+    await expect(long.getBoundingClientRect().height).toBeGreaterThan(28);
+    const single = canvas.getByRole('link', { name: 'Build summary' });
+    await expect(parseFloat(getComputedStyle(single.closest('ul')!).borderTopWidth)).toBe(0);
+    await expect(canvas.getByText('no links')).toBeVisible();
+  },
+};

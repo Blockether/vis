@@ -797,30 +797,41 @@ function TableRows({
  * Where the work also lives. A `url` is reachable from the phone and opens; a
  * path or an attachment names a place on the MACHINE, so it is stated as text
  * rather than dressed as a link that would do nothing under the thumb.
+ * A result set shares one frame and fills columns in source order when they fit.
  */
 function LinkRows({ node }: { node: LiveLinkNode }) {
   if (node.links.length === 0) return <Empty>{EMPTY_LINE.link}</Empty>;
+  const isGrid = node.links.length > 1;
   return (
-    <ul className="space-y-1.5 font-mono text-ui">
+    <ul
+      className={`font-mono text-ui ${isGrid ? 'grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-2 border border-dialog-hint p-2' : 'space-y-1.5'}`}
+    >
       {node.links.map((link) => (
-        <li key={link.id} className="flex min-w-0 items-baseline gap-2">
+        <li
+          key={link.id}
+          className={`flex min-w-0 gap-2 ${isGrid ? 'min-h-11 items-center mouse:min-h-7' : 'items-baseline'}`}
+        >
           <ArrowOutIcon className={`size-3 ${MARK_NUDGE} text-dialog-hint`} />
           {link.target_kind === 'url' ? (
             <a
               href={link.target}
               target="_blank"
               rel="noreferrer"
-              className="min-w-0 flex-1 truncate text-accent-ink underline underline-offset-2"
+              className={`min-w-0 flex-1 text-accent-ink underline underline-offset-2 ${isGrid ? 'flex min-h-11 items-center wrap-anywhere mouse:min-h-7' : 'truncate'}`}
             >
-              <InlineMarkdown>{link.label}</InlineMarkdown>
+              <span className="min-w-0">
+                <InlineMarkdown>{link.label}</InlineMarkdown>
+              </span>
             </a>
           ) : (
-            <span className="min-w-0 flex-1 truncate text-white">
+            <span className={`min-w-0 flex-1 text-white ${isGrid ? 'wrap-anywhere' : 'truncate'}`}>
               <InlineMarkdown>{link.label}</InlineMarkdown>
             </span>
           )}
           {link.target_kind !== 'url' && (
-            <span className="min-w-0 shrink truncate text-meta text-dialog-hint">
+            <span
+              className={`min-w-0 shrink text-meta text-dialog-hint ${isGrid ? 'basis-1/2 wrap-anywhere' : 'truncate'}`}
+            >
               {link.target}
             </span>
           )}

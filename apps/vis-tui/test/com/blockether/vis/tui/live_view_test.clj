@@ -1432,3 +1432,132 @@
         (is (nil? (:error capture)))
         (is (str/includes? text "Jobs"))
         (is (str/includes? text "Reading"))))))
+
+(defn link-grid-review-pane
+  "Build results for the production link-grid review, live or retained (#221)."
+  ([] (link-grid-review-pane false))
+  ([recorded?]
+   (let [view (mounted {:title "Build results" :description "Latest verification"}
+                       {:id "builds"
+                        :type :link
+                        :label "Builds and reviews"
+                        :links (mapv (fn [i]
+                                       {:id (str "build-" i)
+                                        :label (str "Build " i " · SUCCESS")
+                                        :target-kind :url
+                                        :target (str "https://gateway.example.com/build/" i)})
+                                     (range 1 7))})]
+     (if recorded?
+       (lv/recorded-pane (str (wire/json-str {:kind :open :at 1000 :view view})
+                              "\n"
+                              (wire/json-str {:kind :close
+                                              :at 5000
+                                              :result
+                                              {:reason :completed :is-completed true :view view}})
+                              "\n")
+                         "s1")
+       (lv/opened view)))))
+
+(deftest live-link-grid-test
+  ;; #221: a multi-item link result is one framed, row-major grid, not loose rows.
+  (doseq [recorded? [false true]]
+    (let [pane (link-grid-review-pane recorded?)
+          wide (lv/plan pane 100)
+          narrow (lv/plan pane 28)
+          rows (filterv #(= :link-grid (:kind %)) wide)
+          lines (str/split-lines (painted-text [pane] 110 40))]
+
+      (is (= 2 (count (filter #(= :trule (:kind %)) wide))))
+      (is (< (count rows) 6))
+      (is (= (mapv #(str "build-" %) (range 1 7))
+             (mapv :item-id (mapcat #(remove nil? (:links %)) rows))))
+      (is (= 6 (count (filter #(= :link-grid (:kind %)) narrow))))
+      (is (some #(and (str/includes? % "Build 1") (str/includes? % "Build 2")) lines))
+      (is (some #(str/includes? % "┌") lines))
+      (is (some #(str/includes? % "└") lines))
+      (let [hits (filterv #(= :url (:kind %)) (.current interactions/hit-map))]
+        (is (= (mapv #(str "https://gateway.example.com/build/" %) (range 1 7)) (mapv :url hits)))
+        (is (= (get-in (first hits) [:bounds :row]) (get-in (second hits) [:bounds :row])))
+        (doseq [{:keys [bounds url]} hits]
+          (is (= url (:url (.lookup interactions/hit-map (:col bounds) (:row bounds))))))))))
+
+(deftest live-link-grid-boundaries-test
+  ;; #221: framing must not discard labels, invent targets, or absorb its gutter.
+  (let [link
+        {:id "one"
+         :label "One build"
+         :target-kind :url
+         :target "https://gateway.example.com/build/one"}
+
+        open-links
+        (fn [links]
+          (lv/opened (mounted {:description nil} {:id "links" :type :link :links links})))]
+
+    (is (= [:empty] (mapv :kind (lv/plan (open-links []) 28))))
+    (is (= [:link] (mapv :kind (lv/plan (open-links [link]) 28))))
+    (let [long-label
+          "Full console for the release build with detailed verification results"
+
+          pane
+          (open-links
+            [(assoc link
+               :label long-label
+               :target-kind :path
+               :target "/tmp/build.log")
+             {:id "two" :label "Review 界 · SUCCESS" :target-kind :document :target "receipt-1"}])
+
+          plan
+          (lv/plan pane 28)
+
+          cells
+          (mapcat :links (filter #(= :link-grid (:kind %)) plan))
+
+          label-text
+          (str/join " " (mapcat #(map :text (:runs %)) (filter #(= "one" (:item-id %)) cells)))
+
+          capture
+          (paint-frames [pane] 40 40)
+
+          hits
+          (.current interactions/hit-map)
+
+          file-hits
+          (filter #(= :file (:kind %)) hits)]
+
+      (is (every? #(str/includes? label-text %) (str/split long-label #" ")))
+      (is (not (str/includes? label-text "…")))
+      (is (nil? (:error capture)))
+      (is (seq file-hits))
+      (is (every? #(= "/tmp/build.log" (:url %)) file-hits))
+      (is (not-any? #(= "receipt-1" (:url %)) hits))
+      (doseq [{:keys [bounds]} file-hits]
+        (is (not= :file
+                  (:kind
+                    (.lookup interactions/hit-map (dec (long (:col bounds))) (:row bounds)))))))
+    (let [links
+          (mapv #(assoc link
+                   :id (str "link-" %)
+                   :label (str "Build " %))
+                (range 40))
+
+          pane
+          (open-links links)
+
+          first-plan
+          (lv/plan pane 80)
+
+          more
+          (first (filter #(= :more (:kind %)) first-plan))
+
+          expanded
+          (lv/plan (lv/expanded pane "links") 80)
+
+          ids
+          (fn [plan]
+            (mapv :item-id
+                  (mapcat #(remove nil? (:links %)) (filter #(= :link-grid (:kind %)) plan))))]
+
+      (is (some? more))
+      (is (= 40 (+ (count (ids first-plan)) (long (:count more)))))
+      (is (= (mapv :id links) (ids expanded)))
+      (is (not-any? #(= :more (:kind %)) expanded)))))

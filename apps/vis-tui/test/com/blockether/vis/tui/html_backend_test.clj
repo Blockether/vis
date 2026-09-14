@@ -1154,3 +1154,51 @@
                    (col-of "monitor revision=42")))
             (is (= (col-of "▾ Pool state") (col-of "Other checks")))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+
+(deftest live-link-grid-html-native-parity-test
+  ;; #221: one framed link group has identical cells and hit targets in both backends.
+  (try
+    (doseq [theme-id
+            (map keyword (shared-theme/available-theme-ids))
+
+            cols
+            [40 80 120]
+
+            recorded?
+            [false true]
+
+            inline?
+            [false true]]
+
+      (theme/apply-theme! theme-id)
+      (with-open [html
+                  (activity-review-terminal cols 32)
+
+                  terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 32))
+
+                  hs
+                  (doto (TerminalScreen. html) (.startScreen))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (let [pane (live-fixture/link-grid-review-pane recorded?)]
+          (paint-disclosure-review! hs pane inline?)
+          (let [html-hits (.current interactions/hit-map)]
+            (paint-disclosure-review! ts pane inline?)
+            (is (= html-hits (.current interactions/hit-map))))
+          (is (= (cell-grid html cols 32) (cell-grid terminal cols 32)))
+          (let [lines (mapv #(apply str
+                               (map (fn [^com.googlecode.lanterna.TextCharacter cell]
+                                      (.getCharacterString cell))
+                                    %))
+                            (cell-grid terminal cols 32))
+                text (str/join "\n" lines)]
+
+            (is (every? #(str/includes? text (str "Build " % " · SUCCESS")) (range 1 7)))
+            (is (some #(str/includes? % "┌") lines))
+            (is (some #(str/includes? % "└") lines))
+            (when (>= (long cols) 80)
+              (is (some #(and (str/includes? % "Build 1") (str/includes? % "Build 2")) lines)))))))
+    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))

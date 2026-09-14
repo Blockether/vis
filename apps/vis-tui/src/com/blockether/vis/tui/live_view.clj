@@ -937,20 +937,80 @@
       {:widths {id measured}})))
 
 (defmethod node-rows :link
-  [{:keys [id links]} {:keys [fresh is-expanded]}]
+  [{:keys [id links]} {:keys [fresh is-expanded text-w]}]
   (if (seq links)
-    (let [{:keys [shown behind]} (windowed links is-expanded false)]
-      (cond-> (mapv (fn [{:keys [label target-kind target tone] :as link}]
-                      {:kind :link
-                       :node-id id
-                       :item-id (:id link)
-                       :text (flat-text label)
-                       :runs (md-runs label)
-                       :target (str target)
-                       :target-kind target-kind
-                       :tone tone
-                       :is-fresh (contains? fresh (:id link))})
-                    shown)
+    (let [{:keys [shown behind]}
+          (windowed links is-expanded false)
+
+          entries
+          (mapv (fn [{:keys [label target-kind target tone] :as link}]
+                  {:kind :link
+                   :node-id id
+                   :item-id (:id link)
+                   :label label
+                   :text (flat-text label)
+                   :runs (md-runs label)
+                   :target (str target)
+                   :target-kind target-kind
+                   :tone tone
+                   :is-fresh (contains? fresh (:id link))})
+                shown)
+
+          body
+          (if (= 1 (count entries))
+            entries
+            ;; One frame for the result group, with row-major cells. The longest
+            ;; label chooses the column count; cramped labels wrap instead of
+            ;; disappearing behind a newly introduced column boundary.
+            (let [desired
+                  (+ 2 (long (reduce max 0 (map #(runs-width (:runs %)) entries))))
+
+                  n
+                  (max 1 (min (count entries) (quot (dec (long text-w)) (+ desired 3))))
+
+                  widths
+                  (filled-widths (vec (repeat n
+                                              (max 1 (quot (- (long text-w) (table-chrome n)) n))))
+                                 text-w)
+
+                  wrap
+                  (fn [link w]
+                    (when link
+                      (mapv (fn [idx runs]
+                              (assoc link
+                                :runs (into [{:text (if (zero? (long idx)) "→ " "  ")}] runs)))
+                            (range)
+                            (md-lines (:label link) (max 1 (- (long w) 2))))))
+
+                  rule
+                  (fn [edge]
+                    {:kind :trule :node-id id :text (rule-line widths edge)})]
+
+              (into [(rule :top)]
+                    (concat (mapcat (fn [batch]
+                                      (mapv (fn [{:keys [cells]}]
+                                              (let [segments (table-segments
+                                                               widths
+                                                               (mapv #(or (:runs %) []) cells)
+                                                               (repeat :left)
+                                                               t/link-chrome-fg
+                                                               [])]
+                                                {:kind :link-grid
+                                                 :node-id id
+                                                 :item-id (:item-id (first (remove nil? cells)))
+                                                 :links cells
+                                                 :widths widths
+                                                 :segments segments
+                                                 :text (segment-line segments)}))
+                                            (columns/zip-columns (mapv (fn [idx w]
+                                                                         (wrap (nth batch idx nil)
+                                                                               w))
+                                                                       (range n)
+                                                                       widths))))
+                                    (partition-all n entries))
+                            [(rule :bottom)]))))]
+
+      (cond-> body
         (pos? (long behind))
         (conj (more-row id behind "link"))))
     [{:kind :empty :node-id id :text (empty-text :link)}]))
@@ -1517,6 +1577,24 @@
 
 (def ^:private ^:dynamic *hit-row-offset* 0)
 
+(defn- register-link!
+  "Register a link cell with the transcript's existing URL/path opener."
+  [left row width {:keys [target-kind target]}]
+  (when-let [kind (case target-kind
+                    :url
+                    :url
+
+                    :path
+                    :file
+
+                    nil)]
+    (when (pos? (long width))
+      (.register interactions/hit-map
+                 {:bounds {:row (+ (long row) (long *hit-row-offset*)) :col left :width width}
+                  :kind kind
+                  :url target
+                  :enabled? true}))))
+
 (defn- paint-entry!
   "Paint ONE plan row and register whatever on it can be clicked. `left` is the
    band's rail and the body opens two columns inside it, exactly like the form's
@@ -1659,24 +1737,15 @@
                          inner-w
                          (into [{:text "→ " :fg t/link-chrome-fg}]
                                (run-segments (:runs entry) t/link-chrome-fg [])))
-        ;; The terminal already knows how to open a URL and a path — a live link
-        ;; registers as the SAME click region the transcript's own links do, so
-        ;; there is no second opener to keep in step.
-        (when-let [kind (case (:target-kind entry)
-                          :url
-                          :url
+        (register-link! (+ (long left) 2) row (max 0 (- (long inner-w) 3)) entry))
 
-                          :path
-                          :file
-
-                          nil)]
-          (.register interactions/hit-map
-                     {:bounds {:row (+ (long row) (long *hit-row-offset*))
-                               :col (+ (long left) 2)
-                               :width (max 0 (- (long inner-w) 3))}
-                      :kind kind
-                      :url (:target entry)
-                      :enabled? true})))
+    :link-grid
+    (do (paint-segments! g left row inner-w (:segments entry))
+        (reduce (fn [^long offset [link width]]
+                  (when link (register-link! (+ (long left) 4 offset) row width link))
+                  (+ offset (long width) 3))
+                0
+                (map vector (:links entry) (:widths entry))))
 
     ;; `+ N more` is a CONTROL, so it wears the accent the rest of the TUI gives
     ;; a thing you can press, and it registers the region that expands its node.
