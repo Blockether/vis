@@ -1086,7 +1086,7 @@ describe('settings is ONE dialog with two columns', () => {
     // a group of 48px rows opened with two lines of grey prose. Every band had
     // lost its own sentence one report at a time; these were the last three, and
     // the prop went with them.
-    expect(settings).not.toContain('description=');
+    expect(settings).not.toMatch(/\sdescription=/);
     expect(settings).not.toContain('description?: string;');
   });
 
@@ -1131,9 +1131,9 @@ describe('settings is ONE dialog with two columns', () => {
     // the list's own full-width last row, which is where the reader found it again.
     const mcp = settings.slice(
       settings.indexOf('title="MCP servers"'),
-      settings.indexOf('function mcpServerMark'),
+      settings.indexOf('function mcpServerState'),
     );
-    expect(mcp).not.toContain('description=');
+    expect(mcp).not.toMatch(/\sdescription=/);
     expect(mcp).not.toContain('meta=');
     expect(mcp).toContain('variant="quiet"');
     expect(mcp).toContain('edge');
@@ -1217,9 +1217,8 @@ describe('settings is ONE dialog with two columns', () => {
   // nothing. A row gets ONE anchor (anti-slop 3 and 5, and "say a state only when
   // it is worth saying"); the band's meta counted rows the reader is looking at.
   it('gives a settings row one anchor, and no ring that restates its control', () => {
-    // The MCP list is the one settings list whose rows carry a mark, because a
-    // server's REACH is something its switch cannot say; every other settings
-    // row ends in the control that is its whole state.
+    // MCP enablement leads the row too. Its separate connection status stays in
+    // the trailing text and accessible description, not another leading mark.
     const mcp = machineSettingsSource.slice(
       machineSettingsSource.indexOf('export function McpServersPanel'),
     );
@@ -1230,7 +1229,8 @@ describe('settings is ONE dialog with two columns', () => {
     expect(rows).not.toContain('CircleDashedIcon');
     expect(rows).not.toContain('CircleDotIcon');
     expect(rows).not.toContain('MARK_NUDGE');
-    expect(mcp).toContain('<state.Mark className={`${MARK_NUDGE} ${state.tone}`} />');
+    expect(mcp).not.toContain('<state.Mark');
+    expect(mcp).toContain('aria-description={state.label}');
     // Label then control: the name starts on the same left edge as the band
     // title above it, and the description gets the glyph column's width back.
     expect(settings).toContain(

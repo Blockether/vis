@@ -1,16 +1,14 @@
 import { useMemo } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent, within } from 'storybook/test';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 import type { McpServer } from '../../lib/types';
 import { McpServersPanel } from './MachineSettings';
 
 /**
- * ONE MACHINE'S MCP SERVERS, in the rhythm every other list in Settings keeps:
- * a reach mark on the name's line, the transport target under it, the state or
- * the tool count at the end, and the verbs under a slide (a hover strip with a
- * pointer). The enable switch is the row's one permanent control, as it is on
- * every other on/off setting in the dialog; a config-file server has no switch
- * because this API never rewrites a hand-written tier.
+ * MCP servers start with their enable switch, followed by the name and endpoint.
+ * The trailing word reports connection status or the available tool count.
+ * Config-file switches show their saved state but cannot edit that file; runtime
+ * actions remain available through the row's swipe drawer or overflow menu.
  *
  * The gateway is replaced at the client's own boundary by a fixture that
  * answers the list from memory and echoes every action back into it.
@@ -127,6 +125,57 @@ type Story = StoryObj<typeof meta>;
 /** Every reach a server can have: connected, waiting for sign-in, killed, off, and a config-file tier. */
 export const Fleet: Story = {
   args: { servers: SERVERS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const isMouse = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    let previousTargetBottom: number | undefined;
+    for (const server of SERVERS) {
+      const control = canvas.getByRole('switch', {
+        name: `${server.name} MCP server: ${server.enabled ? 'on' : 'off'}`,
+      });
+      const row = canvas.getByRole('button', { name: new RegExp(`^${server.name}`) });
+      const switchBox = control.getBoundingClientRect();
+      const rowBox = row.getBoundingClientRect();
+      const reach = getComputedStyle(control, '::after');
+      const targetTop = switchBox.top + parseFloat(reach.top);
+      const targetBottom = switchBox.bottom - parseFloat(reach.bottom);
+      if (previousTargetBottom !== undefined) {
+        await expect(targetTop - previousTargetBottom).toBeGreaterThanOrEqual(8);
+      }
+      previousTargetBottom = targetBottom;
+      // The switch replaces the leading mark, outside the details button. Its
+      // invisible touch reach remains separate from that button's target.
+      await expect(switchBox.right + 8).toBeLessThanOrEqual(rowBox.left);
+      await expect(
+        Math.abs(switchBox.top + switchBox.height / 2 - rowBox.top - rowBox.height / 2),
+      ).toBeLessThan(1);
+      await expect(
+        switchBox.height - parseFloat(reach.top) - parseFloat(reach.bottom),
+      ).toBeGreaterThanOrEqual(isMouse ? 28 : 44);
+      await expect(switchBox.width).toBeGreaterThanOrEqual(isMouse ? 28 : 44);
+      await expect(row.contains(control)).toBe(false);
+      await expect(row.querySelector('svg[class*="lucide-circle"]')).toBeNull();
+      await expect(control).toHaveAttribute('aria-checked', String(server.enabled));
+      if (!server.is_managed) {
+        await expect(control).toBeDisabled();
+        await expect(control).toHaveAccessibleDescription(/config file; edit it there/i);
+      }
+    }
+    const control = canvas.getByRole('switch', { name: 'filesystem MCP server: on' });
+    const row = canvas.getByRole('button', { name: /^filesystem/ });
+    control.focus();
+    await userEvent.keyboard('[Space]');
+    await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'false'));
+    await waitFor(() => expect(control).not.toBeDisabled());
+    await expect(row).toHaveAttribute('aria-expanded', 'false');
+    control.focus();
+    await userEvent.keyboard('[Enter]');
+    await waitFor(() => expect(control).toHaveAttribute('aria-checked', 'true'));
+    await userEvent.click(row);
+    await expect(canvas.getByRole('region', { name: 'filesystem details' })).toBeVisible();
+    await expect(control).toHaveAttribute('aria-checked', 'true');
+    await userEvent.click(row);
+  },
 };
 
 /** Desktop: the verbs wait at the trailing edge and show on hover. */

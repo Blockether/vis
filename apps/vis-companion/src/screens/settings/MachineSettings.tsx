@@ -22,12 +22,7 @@ import type {
 import {
   ArrowOutIcon,
   ChevronIcon,
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotIcon,
   CircleSlashIcon,
-  MARK_NUDGE,
   PencilIcon,
   PlayIcon,
   PlusIcon,
@@ -513,7 +508,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   }, [load]);
 
   useEffect(() => {
-    if (!servers?.some((server) => mcpServerMark(server).isSettling)) {
+    if (!servers?.some((server) => mcpServerState(server).isSettling)) {
       settlingSince.current = null;
       return;
     }
@@ -901,7 +896,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
         )}
         {servers?.map((server) => {
           const isSigningIn = authFlow?.server === server.name;
-          const state = mcpServerMark(server, isSigningIn);
+          const state = mcpServerState(server, isSigningIn);
           const isOpen = expanded.has(server.name);
           const panelId = `mcp-server-${server.name}`;
           const idle = busy === null;
@@ -1010,42 +1005,34 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
 
           return (
             <div key={server.name} className="min-w-0">
-              <SwipeActions
-                label={server.name}
-                actions={actions}
-                // The switch is the ONE permanent control, the way every other
-                // on/off setting in this dialog ends its row; a config-file server
-                // has nothing this API may flip, so its row ends in the chevron.
-                trailing={
-                  server.is_managed ? (
-                    <div className="flex items-center pr-3 sm:pr-4">
-                      <Switch
-                        label={`${server.name} MCP server`}
-                        isOn={server.enabled}
-                        isBusy={busy === server.name}
-                        disabled={!idle}
-                        onClick={() => void toggle(server)}
-                      />
-                    </div>
-                  ) : undefined
-                }
-              >
-                <div className="min-w-0">
+              <SwipeActions label={server.name} actions={actions}>
+                <div className="flex min-h-13 min-w-0 items-center gap-2 pl-3 sm:pl-4 mouse:min-h-0">
+                  {/* Enablement leads the row; connection status remains in its
+                      trailing text. Config-file settings are visible but read-only. */}
+                  <Switch
+                    label={`${server.name} MCP server`}
+                    isOn={server.enabled}
+                    isBusy={busy === server.name}
+                    disabled={!server.is_managed || !idle}
+                    title={
+                      server.is_managed
+                        ? state.label
+                        : 'Listed from a hand-written config file; edit it there.'
+                    }
+                    aria-description={
+                      server.is_managed
+                        ? state.label
+                        : `${state.label}. Listed from a hand-written config file; edit it there.`
+                    }
+                    onClick={() => void toggle(server)}
+                  />
                   <ListRow
-                    className="min-w-0 gap-3"
+                    className="min-w-0 flex-1 gap-3"
                     aria-expanded={isOpen}
                     aria-controls={isOpen ? panelId : undefined}
+                    aria-description={state.label}
                     onClick={() => toggleOpen(server.name)}
                   >
-                    {/* One rule with the provider rows: the mark rides the name's
-                        own line, and the state is the RING's interior, never the
-                        ink alone. */}
-                    <span
-                      className={`shrink-0 self-start ${state.isSettling ? 'animate-pulse motion-reduce:animate-none' : ''}`}
-                      title={state.label}
-                    >
-                      <state.Mark className={`${MARK_NUDGE} ${state.tone}`} />
-                    </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-2">
                         <span className="truncate font-mono text-body font-bold text-white">
@@ -1071,9 +1058,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                       className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${state.tone === 'text-ok' ? 'text-dialog-hint' : state.tone}`}
                       title={state.label}
                     >
-                      {/* A managed server's switch already says "off"; the word is
-                          for the config-file row that has no switch to say it. */}
-                      {server.is_managed && !server.enabled ? '' : state.word}
+                      {server.enabled ? state.word : ''}
                     </span>
                     <ChevronIcon
                       open={isOpen}
@@ -1106,27 +1091,19 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   );
 }
 
-/**
- * THE VERDICT AS A SHAPE, one rule with `providerStatusMark`: a ring whose
- * interior says the state, in an ink that agrees with it. `word` is the row's
- * trailing chip — the count of what a connected server offers, the state of one
- * that is not — so the row never says the same thing twice.
- */
-function mcpServerMark(
+/** Connection status is separate from the enable switch, which only reports configuration. */
+function mcpServerState(
   server: McpServer,
   isSigningIn = false,
 ): {
-  Mark: typeof CircleCheckIcon;
   tone: string;
   label: string;
   word: string;
   isSettling?: boolean;
 } {
   const tools = `${server.tools} ${server.tools === 1 ? 'tool' : 'tools'}`;
-  // The browser has the sign-in; the row says so in the ring, not in a panel.
   if (isSigningIn)
     return {
-      Mark: CircleDotIcon,
       tone: 'text-warn',
       label: 'Waiting for the browser to finish sign-in',
       word: 'signing in',
@@ -1134,24 +1111,19 @@ function mcpServerMark(
     };
   if (server.is_killed)
     return {
-      Mark: CircleSlashIcon,
       tone: 'text-dialog-hint',
       label: 'Killed — start it to reconnect',
       word: 'killed',
     };
-  if (!server.enabled)
-    return { Mark: CircleDashedIcon, tone: 'text-dialog-hint', label: 'Disabled', word: 'off' };
-  if (server.is_connected)
-    return { Mark: CircleCheckIcon, tone: 'text-ok', label: 'Connected', word: tools };
+  if (!server.enabled) return { tone: 'text-dialog-hint', label: 'Disabled', word: 'off' };
+  if (server.is_connected) return { tone: 'text-ok', label: 'Connected', word: tools };
   if (server.url && !server.is_authorized)
     return {
-      Mark: CircleAlertIcon,
       tone: 'text-warn',
       label: 'Not signed in — sign in to connect',
       word: 'sign in',
     };
   return {
-    Mark: CircleDotIcon,
     tone: 'text-warn',
     label: 'Connecting',
     word: 'connecting',
