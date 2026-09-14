@@ -100,7 +100,6 @@ import {
   DialogHeader,
   IconButton,
   ListRow,
-  LIST_EDGE,
   LoadMore,
   MetaButton,
   NotifyConnectionSwitch,
@@ -208,7 +207,8 @@ describe('ProjectCrumb', () => {
       />,
     );
 
-    expect(folded).toContain(LIST_EDGE);
+    expect(folded).toContain('pl-4');
+    expect(folded).not.toContain('sm:pl-4');
     expect(folded).not.toContain('pl-6');
     expect(folded).toContain('aria-expanded="false"');
   });
@@ -632,8 +632,8 @@ describe('HeaderActions', () => {
     expect(band).not.toContain('px-');
     // The leading edge belongs to whichever half starts the header, so a pressable
     // one can reach the screen edge with its hover.
-    expect(renderToStaticMarkup(<HeaderTitle name="tower" />)).toContain('pl-3');
-    expect(renderToStaticMarkup(<HeaderTitle name="tower" />)).toContain('sm:pl-4');
+    expect(renderToStaticMarkup(<HeaderTitle name="tower" />)).toContain('pl-4');
+    expect(renderToStaticMarkup(<HeaderTitle name="tower" />)).not.toContain('sm:pl-4');
   });
 });
 
@@ -704,8 +704,10 @@ describe('Pager', () => {
 
 // Counts and navigation belong to the same project band, without competing for width.
 describe('a project band carries its own count and its own pager', () => {
-  const band = /<SectionHeader>[\s\S]*?<\/SectionHeader>/.exec(sessionProjectGroupsSource)?.[0] ?? '';
-  const qualifier = /const qualifier = \([\s\S]*?\n  \);/.exec(sessionProjectGroupsSource)?.[0] ?? '';
+  const band =
+    /<SectionHeader>[\s\S]*?<\/SectionHeader>/.exec(sessionProjectGroupsSource)?.[0] ?? '';
+  const qualifier =
+    /const qualifier = \([\s\S]*?\n  \);/.exec(sessionProjectGroupsSource)?.[0] ?? '';
   const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? '';
 
   it('keeps project pages inside the band but outside its action cluster', () => {
@@ -853,7 +855,7 @@ describe('HeaderTitle rename', () => {
 });
 
 describe('the list grid', () => {
-  const leading = (html: string) => html.includes('pl-3') && html.includes('sm:pl-4');
+  const leading = (html: string) => html.includes('pl-4') && !html.includes('sm:pl-4');
 
   it('starts every header on one leading edge', () => {
     expect(
@@ -1395,7 +1397,7 @@ describe("a row's pressable slab", () => {
 describe('the trailing control cluster', () => {
   it('adds no gutter of its own in front of the first control', () => {
     expect(navigatorSource).toContain(
-      "const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';",
+      "const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-2 mouse:pr-2.5';",
     );
   });
 });

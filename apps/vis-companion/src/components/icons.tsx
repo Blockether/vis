@@ -267,24 +267,16 @@ export function TrashIcon({ className }: { className?: string }) {
 }
 
 /**
- * The favorite mark. Filled is "starred": the BODY carries `fill=currentColor`
- * itself so a webview cannot drop the state with a missing utility; `text-accent`
- * gives that body the brand yellow (#ffc420). Yellow on yellow paper is not a mark,
- * though — #ffc420 on the light theme's #faf3eb measures 1.45:1, under the 3:1 a
- * graphic owes. The EDGE carries the contrast the fill cannot: `accent-ink` (light
- * #7a4a00, 6.8:1 on that paper; dark #fde68a on panel). The shape is legible, the
- * colour is still the brand yellow.
- *
- * The un-starred outline stays adaptive (`stroke-current`) so it reads among the
- * other action icons; the fill alone is too quiet to spot at a glance in a list,
- * so the swipe action still shows both states.
+ * A favorite uses one accessible accent ink for both fill and stroke. The SVG
+ * carries its fill explicitly so the marked state survives in native webviews.
+ * Unstarred action icons remain outlines in their control's current color.
  */
 export function StarIcon({ filled = false, className }: { filled?: boolean; className?: string }) {
   return (
     <Mark
       icon={Star}
       fill={filled ? 'currentColor' : 'none'}
-      className={classes(filled ? 'text-accent stroke-accent-ink' : 'stroke-current', className)}
+      className={classes(filled ? 'text-accent-ink stroke-current' : 'stroke-current', className)}
     />
   );
 }

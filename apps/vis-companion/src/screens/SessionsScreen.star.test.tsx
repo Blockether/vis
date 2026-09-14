@@ -274,10 +274,9 @@ describe('starring a session', () => {
     expect(asked.some((options) => options?.behavior === 'smooth')).toBe(false);
   });
 
-  // Reported from a phone screenshot: favorite marks formed a second status column on
-  // the row's far edge. The list already owns a fixed leading mark column, so the star
-  // belongs there in every row while the status remains only status.
-  it("reserves the favorite slot at the row's leading edge", async () => {
+  // Regression: the leading favorite column indented every title. Keep a stable
+  // slot immediately before the status instead, including on unstarred rows.
+  it('reserves the favorite slot immediately before the status', async () => {
     const view = renderSessionsScreen({
       machines: [
         {
@@ -298,8 +297,10 @@ describe('starring a session', () => {
     const starredFavorite = favorite('starred');
     const plainFavorite = favorite('plain');
 
-    expect(row('starred').children[0]).toBe(starredFavorite);
-    expect(row('plain').children[0]).toBe(plainFavorite);
+    expect(starredFavorite.nextElementSibling).toBe(status('starred'));
+    expect(plainFavorite.nextElementSibling).toBe(status('plain'));
+    expect(row('starred').firstElementChild).not.toBe(starredFavorite);
+    expect(row('plain').firstElementChild).not.toBe(plainFavorite);
     expect(starredFavorite.querySelector("svg[fill='currentColor']")).not.toBeNull();
     expect(plainFavorite.querySelector('svg')).toBeNull();
     expect(starredFavorite.className).toBe(plainFavorite.className);

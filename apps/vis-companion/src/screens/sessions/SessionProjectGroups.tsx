@@ -18,7 +18,7 @@ import {
   ProjectStatusCounts,
   SectionHeader,
 } from '../../components/SessionNavigator';
-import { Button, LIST_EDGE } from '../../components/ui';
+import { Button } from '../../components/ui';
 import {
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
@@ -475,7 +475,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             </div>
             {hasPending && (
               <div
-                className={`${LIST_EDGE} ${LIST_EDGE_END} flex min-h-11 min-w-0 items-center gap-2 mouse:min-h-7`}
+                className={`${LIST_EDGE_END} flex min-h-11 min-w-0 items-center gap-2 pl-4 mouse:min-h-7`}
               >
                 <span aria-hidden="true" className={LIST_MARK} />
                 <div className="flex min-w-0 flex-1 items-center gap-3 font-mono text-ui text-dialog-hint mouse:text-meta">

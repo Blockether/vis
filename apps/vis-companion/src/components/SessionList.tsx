@@ -10,7 +10,6 @@ import {
   HeaderActions,
   HeaderTitle,
   LIST_EDGE_END,
-  LIST_MARK,
   RowDisclosure,
   SectionHeader,
 } from './SessionNavigator';
@@ -78,7 +77,8 @@ function SessionRowSurface({
   onOpen: () => void;
   children: ReactNode;
 }) {
-  const layout = `flex min-h-12 min-w-0 flex-1 items-center gap-2 py-1.5 text-left mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`;
+  const layout =
+    'flex min-h-12 min-w-0 flex-1 items-center py-1.5 pl-4 pr-2 text-left mouse:min-h-8 mouse:py-1';
   if (isEditing) {
     return (
       <div className={layout} data-session-id={sessionId}>
@@ -97,6 +97,7 @@ function SessionRowSurface({
     </button>
   );
 }
+
 export const SessionRow = memo(function SessionRow({
   session,
   draft,
@@ -235,8 +236,7 @@ export const SessionRow = memo(function SessionRow({
                     key: 'favorite',
                     label: isStarred ? 'Unstar' : 'Star',
                     icon: <StarIcon filled={isStarred} className="size-4" />,
-                    // The one action on the strip that is not a neutral verb: it wears the
-                    // same brand yellow as the mark it leaves on the row.
+                    // The action and the row mark share the accessible accent ink.
                     tone: 'accent',
                     onSelect: toggleFavorite,
                   },
@@ -272,34 +272,10 @@ export const SessionRow = memo(function SessionRow({
               sessionId={session.id}
               onOpen={() => void commands.open(conn, session.id)}
             >
-              {/* THE LEADING MARK COLUMN. The project band spends it on its fold; a session
-              spends it on its favorite. Empty or filled, the fixed slot keeps every title
-              on the same edge. */}
-              <span data-session-favorite-slot className={LIST_MARK} aria-hidden={!isStarred}>
-                {isStarred && (
-                  <>
-                    <StarIcon filled className="size-3" />
-                    <span className="sr-only">Favorite</span>
-                  </>
-                )}
-              </span>
-              {/* One row of facts, laid out twice from ONE dom order.
-            A phone stacks it: what the session IS on the first line, what it has DONE
-            on the second, each line's own trailing fact right-aligned against it.
-            With room for the whole sentence on one line — and the ROOM IS THE LIST'S,
-            asked of the scroller the rows are poured into (`@container`), never of the
-            window: a desk stands this list in a 32rem sidebar beside the transcript,
-            where a viewport `sm:` would still lay five fixed columns into 512px — the
-            facts stop floating: the wrapper below turns to `contents` so its children
-            become grid items of the row itself, and id / turns / status / time land on
-            FIXED tracks. That is the difference between a list and a phone list
-            stretched to 1400px, where a title sat at x=56 and its own status badge at
-            x=1325 with nothing between them to carry the eye across.
-            Each fixed track is its own content's width. `INPUT NEEDED` is the widest status,
-            so that cluster owns 6rem; the favorite lives in the row's leading mark column
-            instead of forming a second status column at the far edge. The id track pays for
-            its 8 hex characters inside 4.5rem instead of charging that width to the title. */}
-              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] @3xl:gap-y-0">
+              {/* Narrow lists stack metadata under the title. The container, not the
+                  viewport, selects the full-width table so desktop sidebars stay readable.
+                  The favorite shares the status cluster; no leading mark indents the title. */}
+              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.5rem_6rem] @3xl:gap-y-0">
                 {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
@@ -406,23 +382,36 @@ export const SessionRow = memo(function SessionRow({
                     {turns} {turns === 1 ? 'turn' : 'turns'}
                   </span>
                 </span>
-                <span
-                  data-session-status
-                  role={renameBusy ? 'status' : undefined}
-                  className={`col-start-3 row-start-1 shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start ${
-                    // IN THE SIDEBAR ONLY A DEMAND IS A MARK: a row that is live or
-                    // waiting on the reader shows its dot beside the title, and a row
-                    // that is merely idle shows nothing — thirty grey squares down a
-                    // column say less than one green one.
-                    status === 'IDLE' ? 'hidden @sm:inline-flex' : 'inline-flex'
-                  } ${statusTone(session)}`}
-                >
+                <span className="col-start-3 row-start-1 inline-flex shrink-0 items-center gap-2 justify-self-end @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start">
                   <span
-                    data-session-status-dot
-                    aria-hidden="true"
-                    className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
-                  />
-                  <span className="sr-only @sm:not-sr-only">{renameBusy ? 'Saving' : status}</span>
+                    data-session-favorite-slot
+                    className="grid size-3.5 shrink-0 place-items-center"
+                    aria-hidden={!isStarred}
+                  >
+                    {isStarred && (
+                      <>
+                        <StarIcon filled className="size-3" />
+                        <span className="sr-only">Favorite</span>
+                      </>
+                    )}
+                  </span>
+                  <span
+                    data-session-status
+                    role={renameBusy ? 'status' : undefined}
+                    className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
+                      // Narrow sidebars show only live or input-needed marks.
+                      status === 'IDLE' ? 'hidden @sm:inline-flex' : 'inline-flex'
+                    } ${statusTone(session)}`}
+                  >
+                    <span
+                      data-session-status-dot
+                      aria-hidden="true"
+                      className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+                    />
+                    <span className="sr-only @sm:not-sr-only">
+                      {renameBusy ? 'Saving' : status}
+                    </span>
+                  </span>
                 </span>
                 <span
                   className="col-start-2 col-end-4 row-start-2 hidden justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums @sm:block @3xl:col-start-auto @3xl:col-end-auto @3xl:row-start-auto"

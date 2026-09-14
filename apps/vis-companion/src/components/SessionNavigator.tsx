@@ -15,7 +15,7 @@ import {
 import type { MachineColor } from '../lib/machine-colors';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
-import { Button, IconButton, LIST_EDGE } from './ui';
+import { Button, IconButton } from './ui';
 
 const HEADER_TYPE = 'text-title';
 
@@ -60,27 +60,13 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
  */
 export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 
-/** Shared trailing control column and edge gutter for list rows. */
-// The cluster keeps its edge whether optional controls appear; controls supply their
-// own hit-area padding and only gaps between siblings are added here.
-const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';
-const CENTERED_TRAIL = 'flex shrink-0 items-center gap-2 self-stretch pr-3 sm:pr-4';
+/** Shared trailing controls keep their full hit targets, with roughly 16px to the icon. */
+// Account for the icon's inset within its 32px touch / 28px mouse target rather
+// than adding a second full gutter outside the button.
+const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-2 mouse:pr-2.5';
+const CENTERED_TRAIL = 'flex shrink-0 items-center gap-2 self-stretch pr-2 mouse:pr-2.5';
 
-/**
- * THE MARK COLUMN, and every band AND every row in the list reserves it.
- *
- * A machine is marked by a 6px identity block and a project by a 14px disclosure, so
- * with each sized to its own ink the machine's name began at x=28 and the project's
- * name directly below it at x=36 — the last 8px of the same misalignment, surviving
- * inside the two components that had just been taught to share every other edge.
- * One column, and the names start together.
- *
- * A session row carries no mark at all and reserves it anyway, empty. Measured on the
- * desk: a project's name stood at x=302 and the titles of the rows it heads at x=279,
- * so the heading and the things it heads sat on two different left edges — the last
- * one of the five this file was written to collapse. A column that exists only where
- * something fills it is not a column.
- */
+/** Machine and project headers align their identity and disclosure marks. */
 export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
 
 /**
@@ -245,7 +231,7 @@ export function HeaderTitle({
     // The glyph centres against the STACK (`items-center`), which is the whole block
     // it marks — a fold owns both lines of the name it folds. Baseline-aligning the
     // mark alongside them drops a 10px block below the ink it belongs to.
-    <span className={`flex min-w-0 flex-1 items-center gap-2 overflow-hidden ${LIST_EDGE}`}>
+    <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden pl-4">
       {/* The column is RESERVED, marked or not: the machine header wears a hue
           block here and the project header below it wears nothing, and a column
           that only exists when it is filled put the machine's name at x=36 and

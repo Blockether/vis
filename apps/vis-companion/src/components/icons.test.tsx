@@ -247,17 +247,13 @@ describe('the icon set', () => {
   // utility-only fill could disappear from the shipped webview. The SVG therefore
   // carries its filled state itself; the semantic classes still choose the colours.
   //
-  // Regression, user report ("the star is not showing on the session row"): the
-  // whole mark was then painted in that fill and nothing else — #ffc420 on the
-  // light theme's #faf3eb paper is 1.45:1, so the starred row carried a glyph
-  // that could not be seen. The FILL stays the brand yellow; the OUTLINE is the
-  // amber ink, which is what makes the shape visible on paper.
-  it('fills a starred star with the brand accent and outlines it in the ink', () => {
+  // Regression: a contrasting outline made favorites look two-tone. Use the
+  // accessible accent ink for the entire mark, not the low-contrast accent fill.
+  it('paints a filled favorite in one accessible accent color', () => {
     const filled = renderToStaticMarkup(<StarIcon filled />);
     expect(filled).toContain('fill="currentColor"');
-    expect(filled).toContain('text-accent stroke-accent-ink');
-    // Not the ink as a FILL: that was the brown star an earlier report rejected.
-    expect(filled).not.toContain('fill-accent-ink');
+    expect(filled).toContain('text-accent-ink stroke-current');
+    expect(filled).not.toContain('stroke-accent-ink');
     expect(renderToStaticMarkup(<StarIcon />)).toContain('fill="none"');
   });
 
