@@ -664,7 +664,7 @@ describe('Pager', () => {
     expect(html.match(/Page 1 of 80/g)).toHaveLength(1);
     expect(html).toContain('Next page');
     expect(html).toContain('Previous page');
-    for (const n of [1, 2, 3, 4, 5, 80]) {
+    for (const n of [1, 2, 80]) {
       expect(html).toContain(`aria-label="Page ${n}"`);
     }
   });
@@ -673,21 +673,20 @@ describe('Pager', () => {
     const html = renderToStaticMarkup(
       <Pager page={5} pageCount={73} onPage={() => {}} label="vis sessions" />,
     );
-    for (const n of [1, 4, 5, 6, 73]) {
+    for (const n of [1, 5, 73]) {
       expect(html).toContain(`aria-label="Page ${n}"`);
     }
     expect(html).toContain('aria-current="page"');
   });
 
-  // A strip of 73 numbers does not fit a 390px phone, and a gap marker that hides
-  // exactly one page is a lie that costs a tap.
+  // Keep three page numbers, including both ends, within a narrow sidebar.
   it('windows the numbers around the current page and pins both ends', () => {
     expect(pageWindow(1, 1)).toEqual([1]);
-    expect(pageWindow(3, 5)).toEqual([1, 2, 3, 4, 5]);
-    expect(pageWindow(5, 73)).toEqual([1, null, 4, 5, 6, null, 73]);
-    expect(pageWindow(1, 73)).toEqual([1, 2, 3, 4, 5, null, 73]);
-    expect(pageWindow(72, 73)).toEqual([1, null, 69, 70, 71, 72, 73]);
-    expect(pageWindow(4, 73)).toEqual([1, 2, 3, 4, 5, null, 73]);
+    expect(pageWindow(3, 5)).toEqual([1, null, 3, null, 5]);
+    expect(pageWindow(5, 73)).toEqual([1, null, 5, null, 73]);
+    expect(pageWindow(1, 73)).toEqual([1, 2, null, 73]);
+    expect(pageWindow(72, 73)).toEqual([1, null, 72, 73]);
+    expect(pageWindow(4, 73)).toEqual([1, null, 4, null, 73]);
   });
 });
 
@@ -759,11 +758,10 @@ describe('a project band carries its own count and its own pager', () => {
     expect(pager).not.toContain('sticky');
   });
 
-  it('keeps the same number of navigation slots while crossing a large history', () => {
-    expect(pageWindow(1, 100)).toHaveLength(7);
-    expect(pageWindow(4, 100)).toHaveLength(7);
-    expect(pageWindow(50, 100)).toHaveLength(7);
-    expect(pageWindow(100, 100)).toHaveLength(7);
+  it('keeps three numbered jumps while crossing a large history', () => {
+    for (const page of [1, 4, 50, 100]) {
+      expect(pageWindow(page, 100).filter((entry) => entry !== null)).toHaveLength(3);
+    }
   });
 });
 

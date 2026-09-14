@@ -6,15 +6,16 @@ import { Pager, pageWindow } from './SessionNavigator';
 
 // Desktop rails offer direct jumps; phones keep previous/next steps.
 describe('project pages', () => {
-  it('offers the first five pages as direct jumps on desktop', () => {
+  it('offers at most three numbered jumps on desktop', () => {
     const onPage = vi.fn();
-    render(<Pager page={1} pageCount={80} label="vis sessions" onPage={onPage} />);
-    for (const page of [1, 2, 3, 4, 5, 80]) {
+    render(<Pager page={1} pageCount={102} label="vis sessions" onPage={onPage} />);
+    for (const page of [1, 2, 102]) {
       expect(screen.getByRole('button', { name: `Page ${page}` })).toBeInTheDocument();
     }
+    expect(screen.getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'page');
-    fireEvent.click(screen.getByRole('button', { name: 'Page 5' }));
-    expect(onPage).toHaveBeenCalledExactlyOnceWith(5);
+    fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(2);
   });
 
   it.each([1, 40, 80])('keeps mobile steps in range on page %s', (page) => {
@@ -41,16 +42,59 @@ describe('project pages', () => {
     expect(screen.getByText(`Page ${page} of 80`)).toHaveAttribute('aria-live', 'polite');
   });
 
-  it('keeps a bounded window with both ends and no gap hiding just one page', () => {
+  // Regression: the desktop pager should read `1 2 … 102`, not five numbers.
+  it('limits the window to three page numbers while keeping both ends reachable', () => {
     expect(pageWindow(1, 1)).toEqual([1]);
-    expect(pageWindow(1, 5)).toEqual([1, 2, 3, 4, 5]);
-    expect(pageWindow(4, 7)).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(pageWindow(1, 80)).toEqual([1, 2, 3, 4, 5, null, 80]);
-    expect(pageWindow(40, 80)).toEqual([1, null, 39, 40, 41, null, 80]);
-    expect(pageWindow(80, 80)).toEqual([1, null, 76, 77, 78, 79, 80]);
+    expect(pageWindow(1, 2)).toEqual([1, 2]);
+    expect(pageWindow(2, 3)).toEqual([1, 2, 3]);
+    expect(pageWindow(1, 4)).toEqual([1, 2, null, 4]);
+    expect(pageWindow(4, 7)).toEqual([1, null, 4, null, 7]);
+    expect(pageWindow(1, 102)).toEqual([1, 2, null, 102]);
+    expect(pageWindow(2, 102)).toEqual([1, 2, null, 102]);
+    expect(pageWindow(40, 80)).toEqual([1, null, 40, null, 80]);
+    expect(pageWindow(80, 80)).toEqual([1, null, 79, 80]);
+    for (let count = 1; count <= 102; count += 1) {
+      for (let page = 1; page <= count; page += 1) {
+        const numbers = pageWindow(page, count).filter((entry) => entry !== null);
+        expect(numbers).toHaveLength(Math.min(3, count));
+        expect(numbers).toContain(page);
+        expect(numbers).toContain(1);
+        expect(numbers).toContain(count);
+        expect(new Set(numbers).size).toBe(numbers.length);
+      }
+    }
+  });
+
+  it.each([
+    [1, 3],
+    [2, 3],
+    [40, 39],
+    [40, 41],
+    [80, 78],
+  ])('lets the gap on page %s open the nearest omitted page %s', (page, target) => {
+    const onPage = vi.fn();
+    render(<Pager page={page} pageCount={80} label="vis sessions" onPage={onPage} />);
+    const gap = screen.getByRole('button', { name: `Go to page ${target}` });
+    expect(gap).toHaveTextContent('…');
+    fireEvent.click(gap);
+    expect(onPage).toHaveBeenCalledExactlyOnceWith(target);
+  });
+
+  it('keeps both adjacent pages reachable through numbers or gaps', () => {
+    const onPage = vi.fn();
+    const { rerender } = render(
+      <Pager page={1} pageCount={80} label="vis sessions" onPage={onPage} />,
+    );
     for (let page = 1; page <= 80; page += 1) {
-      expect(pageWindow(page, 80)).toHaveLength(7);
-      expect(pageWindow(page, 80)).toContain(page);
+      rerender(<Pager page={page} pageCount={80} label="vis sessions" onPage={onPage} />);
+      for (const target of [page - 1, page + 1]) {
+        if (target < 1 || target > 80) continue;
+        fireEvent.click(
+          screen.getByRole('button', { name: new RegExp(`^(?:Page|Go to page) ${target}$`) }),
+        );
+        expect(onPage).toHaveBeenCalledExactlyOnceWith(target);
+        onPage.mockClear();
+      }
     }
   });
 });

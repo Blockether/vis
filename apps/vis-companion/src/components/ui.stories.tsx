@@ -687,11 +687,27 @@ export const ProjectPages: Story = {
     const pager = canvas.getByRole('navigation', { name: 'Pages of vis sessions' });
     if (pager.ownerDocument.defaultView!.innerWidth >= 640) {
       expect(canvas.queryByRole('button', { name: 'Next page' })).toBeNull();
-      for (const page of [1, 2, 3, 4, 5, 80]) {
+      for (const page of [1, 2, 80]) {
         await expect(canvas.getByRole('button', { name: `Page ${page}` })).toBeVisible();
       }
-      await userEvent.click(canvas.getByRole('button', { name: 'Page 5' }));
-      await expect(canvas.getByRole('button', { name: 'Page 5' })).toHaveAttribute(
+      expect(canvas.getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
+      await userEvent.click(canvas.getByRole('button', { name: 'Page 2' }));
+      await expect(canvas.getByRole('button', { name: 'Page 2' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      await userEvent.click(canvas.getByRole('button', { name: 'Go to page 3' }));
+      await expect(canvas.getByRole('button', { name: 'Page 3' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      await userEvent.keyboard('{Enter}');
+      await expect(canvas.getByRole('button', { name: 'Page 4' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      await userEvent.click(canvas.getByRole('button', { name: 'Go to page 3' }));
+      await expect(canvas.getByRole('button', { name: 'Page 3' })).toHaveAttribute(
         'aria-current',
         'page',
       );

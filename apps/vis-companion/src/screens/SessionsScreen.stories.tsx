@@ -141,9 +141,11 @@ export const Fleet: Story = {
       await expect(centerY(control)).toBe(centerY(pager));
     }
     if (numbered) {
-      for (const n of [1, 2, 3, 4, 5]) {
+      for (const n of [1, 2]) {
         await expect(within(pager).getByRole('button', { name: `Page ${n}` })).toBeVisible();
       }
+      expect(within(pager).getAllByRole('button', { name: /^Page \d+$/ })).toHaveLength(3);
+      await expect(within(pager).getByRole('button', { name: 'Go to page 3' })).toBeVisible();
       expect(within(pager).queryByRole('button', { name: 'Next page' })).toBeNull();
     } else {
       await expect(within(pager).getByRole('button', { name: 'Next page' })).toBeVisible();
@@ -156,6 +158,18 @@ export const Fleet: Story = {
     await expect(fold).toHaveAttribute('aria-expanded', 'true');
     for (const control of within(pager).getAllByRole('button')) {
       await expect(centerY(control)).toBe(centerY(pager));
+    }
+    if (numbered) {
+      await userEvent.click(within(pager).getByRole('button', { name: 'Go to page 3' }));
+      await expect(await within(pager).findByText(/^Page 3 of /)).toHaveAttribute(
+        'aria-live',
+        'polite',
+      );
+      await userEvent.click(within(pager).getByRole('button', { name: 'Go to page 2' }));
+      await expect(await within(pager).findByText(/^Page 2 of /)).toHaveAttribute(
+        'aria-live',
+        'polite',
+      );
     }
     await userEvent.click(
       within(pager).getByRole('button', { name: numbered ? 'Page 1' : 'Previous page' }),

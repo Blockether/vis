@@ -349,19 +349,20 @@ export function ProjectCrumb({
 }
 
 /**
- * The page numbers a pager PAINTS: always the first, the last, and a window
- * around the current one, with a gap marker (`null`) wherever the run breaks.
- *
- * Desktop page numbers allow direct jumps without filling a narrow sidebar.
- * Both ends stay reachable alongside the pages nearest the current one.
+ * At most three page numbers: the first, the current (or nearest interior) page,
+ * and the last, with a gap marker (`null`) wherever the run breaks.
+ * Pager makes each gap a jump to the nearest omitted page so the compact window
+ * still supports sequential navigation.
  */
 export function pageWindow(page: number, pageCount: number): (number | null)[] {
-  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
-  if (page <= 4) return [1, 2, 3, 4, 5, null, pageCount];
-  if (page >= pageCount - 3) {
-    return [1, null, pageCount - 4, pageCount - 3, pageCount - 2, pageCount - 1, pageCount];
-  }
-  return [1, null, page - 1, page, page + 1, null, pageCount];
+  if (pageCount <= 3) return Array.from({ length: pageCount }, (_, index) => index + 1);
+  const current = Math.max(2, Math.min(page, pageCount - 1));
+  const pages: (number | null)[] = [1];
+  if (current > 2) pages.push(null);
+  pages.push(current);
+  if (current < pageCount - 1) pages.push(null);
+  pages.push(pageCount);
+  return pages;
 }
 
 /**
@@ -416,25 +417,26 @@ export function Pager({
         {step(page + 1, false)}
       </div>
       <div className="hidden flex-wrap items-center justify-end gap-2 sm:flex">
-        {pageWindow(page, pageCount).map((entry, index) =>
-          entry === null ? (
-            <span key={`gap-${index}`} aria-hidden className="font-mono text-ui text-dialog-hint">
-              &#8230;
-            </span>
-          ) : (
+        {pageWindow(page, pageCount).map((entry, index, pages) => {
+          const target =
+            entry ??
+            (index === 1 ? (pages[index + 1] as number) - 1 : (pages[index - 1] as number) + 1);
+          const label = entry === null ? `Go to page ${target}` : `Page ${entry}`;
+          return (
             <Button
-              key={entry}
+              key={entry ?? (index === 1 ? 'previous-gap' : 'next-gap')}
               variant={entry === page ? 'secondary' : 'quiet'}
               density="page"
               pressEffect="none"
-              aria-label={`Page ${entry}`}
+              aria-label={label}
+              title={entry === null ? label : undefined}
               aria-current={entry === page ? 'page' : undefined}
-              onClick={() => onPage(entry)}
+              onClick={() => onPage(target)}
             >
-              {entry}
+              {entry ?? '…'}
             </Button>
-          ),
-        )}
+          );
+        })}
       </div>
     </nav>
   );
