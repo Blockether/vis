@@ -289,6 +289,28 @@
         (expect (not (.exists (.getParentFile stale))))
         (expect (.exists fresh))
         (expect (.isDirectory logs))))
+  (it "sweeps dated diagnostics by file age and removes only empty date directories"
+      (let [logs
+            (tmp-dir "vis-hk-dated-logs")
+
+            old-report
+            (touch! logs "2026-08-01/gateway-hang-1/report.json" 40 "{}")
+
+            old-shell
+            (touch! logs "2026-08-01/shell/session/build.log" 40 "old")
+
+            live-log
+            (touch! logs "2026-08-02/gateway-live.log" 0 "still running")
+
+            report
+            (target (with-homes {:logs logs} #(housekeeping/sweep-stale! nil)) :logs)]
+
+        (expect (= 3 (:file-count report)))
+        (expect (= 2 (:deleted report)))
+        (expect (not (.exists old-report)))
+        (expect (not (.exists old-shell)))
+        (expect (not (.exists (io/file logs "2026-08-01"))))
+        (expect (.exists live-log))))
   (it "honours an explicit :days window"
       (let [logs (tmp-dir "vis-hk-logs-days")]
         (touch! logs "a.log" 5 "a")

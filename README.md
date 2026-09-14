@@ -170,4 +170,4 @@ Only when adding Java/Clojure capabilities inside Vis, follow
 Apache License 2.0 — see [LICENSE](LICENSE).
 
 The speech service can install third-party models with separate license terms.
-[THIRD_PARTY_MODELS.md](THIRD_PARTY_MODELS.md) lists their authors and licenses; it is generated from the installer's model manifest.
+[THIRD_PARTY_MODELS.md](THIRD_PARTY_MODELS.md) lists their authors and licenses.

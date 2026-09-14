@@ -6,7 +6,8 @@
    command prints more than the ring holds, the head is gone before the first
    poll and no sequence of reads can recover it. That is the whole reported bug,
    and it is a storage bug, so the fix is storage: every byte the pump reads is
-   appended to `~/.vis/logs/shell/<session>/<id>.log`, and a read names the byte
+   appended to `~/.vis/logs/YYYY-MM-DD/shell/<session>/<id>.log`, using the UTC
+   start date, and a read names the byte
    it starts at.
 
    A chunk is the paging contract for a growing file, key for key: give an
@@ -35,6 +36,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as persistance])
   (:import (java.io File InputStream OutputStream RandomAccessFile)
            (java.nio.charset StandardCharsets)))
@@ -62,8 +64,6 @@
   262144)
 
 ;; Where the bytes live
-
-(defn- vis-home ^File [] (io/file (System/getProperty "user.home") ".vis"))
 
 (defn- id-digest
   "Eight hex chars of SHA-1 over the RAW id — enough to separate two ids that
@@ -99,22 +99,27 @@
     (if (= raw cleaned) cleaned (str cleaned "-" (id-digest raw)))))
 
 (defn session-dir
-  "Directory holding every shell log of ONE session."
+  "Directory for new shell logs of one session on the current UTC date."
   ^File [session]
-  (io/file (vis-home) "logs" "shell" (safe-name session)))
+  (io/file (paths/log-date-dir) "shell" (safe-name session)))
 
 (defn log-file
-  "The log file of shell `id` in `session`. Deterministic, so the bytes are
-   reachable with `cat` and `grep` like any other file."
+  "Newest dated log for `session`/`id`, or today's path when none exists.
+   Date discovery preserves lookup across midnight and gateway restarts."
   ^File [session id]
-  (io/file (session-dir session) (str (safe-name id) ".log")))
+  (let [filename (str (safe-name id) ".log")]
+    (or (some (fn [^File date-dir]
+                (let [^File file (io/file date-dir "shell" (safe-name session) filename)]
+                  (when (.isFile file) file)))
+              (paths/log-date-dirs))
+        (io/file (session-dir session) filename))))
 
 (defn open!
   "Create (truncating) the log file for `session`/`id` and return the sink the
    pump writes through: `{:path :out}`. Truncating is the point — a new spawn
    under an id IS a new shell, and its log starts at offset 0."
   [session id]
-  (let [f (log-file session id)]
+  (let [^File f (io/file (session-dir session) (str (safe-name id) ".log"))]
     (io/make-parents f)
     {:path (.getPath f) :out (java.io.BufferedOutputStream. (java.io.FileOutputStream. f false))}))
 
@@ -153,16 +158,15 @@
   nil)
 
 (defn delete-session-logs!
-  "Delete every shell log of `session`. The retention rule: a log dies with the
-   session that produced it, and with nothing else — a build log is large and
-   boring the day after, but only the session knows when that day came."
+  "Delete a session's shell logs across all date directories."
   [session]
-  (let [dir (session-dir session)]
-    (when (.isDirectory dir)
-      (doseq [^File f (.listFiles dir)]
-        (try (.delete f) (catch Throwable _ nil)))
-      (try (.delete dir) (catch Throwable _ nil)))
-    nil))
+  (doseq [^File date-dir (paths/log-date-dirs)]
+    (let [dir (io/file date-dir "shell" (safe-name session))]
+      (when (.isDirectory dir)
+        (doseq [^File f (.listFiles dir)]
+          (try (.delete f) (catch Throwable _ nil)))
+        (try (.delete dir) (catch Throwable _ nil)))))
+  nil)
 
 ;; Reading a chunk
 

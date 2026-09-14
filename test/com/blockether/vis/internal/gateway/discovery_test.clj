@@ -6,7 +6,8 @@
             [clojure.string :as str]
             [lazytest.core :as lt]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
-            [com.blockether.vis.internal.gateway.discovery :as disco]))
+            [com.blockether.vis.internal.gateway.discovery :as disco]
+            [com.blockether.vis.internal.paths :as paths]))
 
 (def ^:dynamic *tmp* nil)
 
@@ -403,3 +404,36 @@
   (testing "an unusable endpoint is never mistaken for a live daemon"
     (is (false? (disco/endpoint-listening? "127.0.0.1" nil)))
     (is (false? (disco/endpoint-listening? "" 0)))))
+
+(deftest boot-logs-are-dated-and-unique
+  (let [logs
+        (io/file *tmp* "logs")
+
+        seen
+        (atom [])
+
+        db
+        "/tmp/boot-log-test.db"]
+
+    (with-redefs [paths/logs-dir
+                  #(.getPath logs)
+
+                  disco/spawn-argv
+                  (constantly ["vis-agent" "gateway" "start"])
+
+                  disco/unix-launch-cmd
+                  (fn [_ path]
+                    (swap! seen conj (io/file path))
+                    (throw (ex-info "Intercepted launch" {:intercepted true})))]
+
+      (dotimes [_ 2]
+        (try (disco/spawn-detached! {:db db})
+             (catch clojure.lang.ExceptionInfo error (is (:intercepted (ex-data error)))))))
+    (let [[a b] @seen]
+      (is (= 2 (count @seen)))
+      (is (not= a b))
+      (doseq [^java.io.File file [a b]]
+        (is (= logs (.getParentFile (.getParentFile file))))
+        (is (some? (re-matches #"\d{4}-\d{2}-\d{2}" (.getName (.getParentFile file)))))
+        (is (str/starts-with? (.getName file) (str "gateway-boot-" (disco/registry-key db) "-")))
+        (is (.isFile file))))))

@@ -10,6 +10,8 @@ import inspect
 import json
 import os
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 
 import blockether.vis.extension as vis
 import pytest
@@ -189,6 +191,49 @@ def test_shell_runs_a_command_and_answers_the_engine_shape():
     assert run["status"] == "exited"
     assert set(run) == set(_outside._SHELL_RESULT_KEYS)
     assert run.logs()["out"] == "hello"
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_shell_logs_use_the_utc_date_and_keep_state_separate(
+    tmp_path, monkeypatch, override
+):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    if override:
+        log_root = tmp_path / "logs"
+        state_root = tmp_path
+    else:
+        monkeypatch.delenv("VIS_OUTSIDE_HOME")
+        log_root = home / ".vis" / "logs"
+        state_root = home / ".vis" / "outside"
+    started = datetime.fromisoformat("2026-09-14T00:00:01+00:00").timestamp()
+    monkeypatch.setattr(_outside.time, "time", lambda: started)
+
+    run = vis.shell({"command": "printf dated"}).wait(10)
+
+    assert run["exit"] == 0
+    assert Path(run["log_path"]).parent == log_root / "2026-09-14" / "outside"
+    assert Path(run["log_path"]).read_text() == "dated"
+    assert _outside.state_home() == state_root
+    assert not list(state_root.glob("shell-*.log"))
+
+
+def test_shell_log_paths_survive_utc_midnight_without_overwriting(monkeypatch):
+    clock = [datetime(2026, 9, 13, 23, 59, 59, tzinfo=UTC).timestamp()]
+    monkeypatch.setattr(_outside.time, "time", lambda: clock[0])
+    first = vis.shell({"command": "printf first"}).wait(10)
+    first_path = Path(first["log_path"])
+    clock[0] += 2
+    second = vis.shell({"command": "printf second"}).wait(10)
+    third = vis.shell({"command": "printf third"}).wait(10)
+
+    assert first_path.parent.parent.name == "2026-09-13"
+    assert Path(second["log_path"]).parent.parent.name == "2026-09-14"
+    assert len({first["log_path"], second["log_path"], third["log_path"]}) == 3
+    assert first.logs()["log_path"] == str(first_path)
+    assert first.logs()["out"] == first_path.read_text() == "first"
+    assert second.logs()["out"] == "second"
+    assert third.logs()["out"] == "third"
 
 
 @pytest.mark.parametrize("environment", [None, {}, {"VIS_SHELL_OVERRIDE": "child"}])

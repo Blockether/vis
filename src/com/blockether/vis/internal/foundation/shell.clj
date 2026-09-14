@@ -1820,34 +1820,34 @@
   [{:keys [session id proc sink script cwd drains exit-atom exited-at stopped? index-fn]}]
   (swap! bg-procs assoc-in [(str session) id :dir] cwd)
   (index-fn {:dir cwd})
-  (try (resources/register!
-         session
-         {:id id
-          :kind :shell
-          :label (one-line script 48)
-          :detail script
-          :pid (:pid proc)
-          :owner "foundation-core"
-          :status :running}
-         {:stop-fn (fn []
-                     (reset! stopped? true)
-                     (kill-tree! proc)
-                     (try (.close ^java.io.InputStream (:in proc)) (catch Throwable _ nil))
-                     (shell-log/close! sink)
-                     (drop-bg-entry! session id))
-          :alive-fn (fn []
-                      (some? (bg-entry session id)))
-          ;; A run keeps no line ring: the log FILE is the view, so the
-          ;; registry card reads its tail the same way `logs` does.
-          :logs-fn (fn []
-                     (-> (shell-log/read-chunk id (shell-log/log-file session id))
-                         :text
-                         str/split-lines))
-          :health-fn (fn []
-                       (cond (nil? (bg-entry session id)) :down
-                             (nil? @exit-atom) :running
-                             (zero? (long @exit-atom)) :exited
-                             :else :failed))})
+  (try (resources/register! session
+                            {:id id
+                             :kind :shell
+                             :label (one-line script 48)
+                             :detail script
+                             :pid (:pid proc)
+                             :owner "foundation-core"
+                             :status :running}
+                            {:stop-fn (fn []
+                                        (reset! stopped? true)
+                                        (kill-tree! proc)
+                                        (try (.close ^java.io.InputStream (:in proc))
+                                             (catch Throwable _ nil))
+                                        (shell-log/close! sink)
+                                        (drop-bg-entry! session id))
+                             :alive-fn (fn []
+                                         (some? (bg-entry session id)))
+                             ;; A run keeps no line ring: the log FILE is the view, so the
+                             ;; registry card reads its tail the same way `logs` does.
+                             :logs-fn (fn []
+                                        (-> (shell-log/read-chunk id (io/file (:path sink)))
+                                            :text
+                                            str/split-lines))
+                             :health-fn (fn []
+                                          (cond (nil? (bg-entry session id)) :down
+                                                (nil? @exit-atom) :running
+                                                (zero? (long @exit-atom)) :exited
+                                                :else :failed))})
        (catch Throwable _ nil))
   (doto (Thread.
           (fn []
@@ -2130,8 +2130,13 @@
          entry
          (bg-entry session id)
 
+         retired
+         (when-not entry (retired-log-core env session id))
+
          ^java.io.File file
-         (shell-log/log-file session id)]
+         (io/file (or (:log-path entry)
+                      (get retired "log_path")
+                      (.getPath (shell-log/log-file session id))))]
 
      (authorize-origin! env session id)
      (when-not (or entry (.isFile file))
@@ -2148,9 +2153,7 @@
          ;; while running. `out` is the window this read returned, already joined
          ;; — the SAME key a foreground run puts its bytes under, so "what did it
          ;; print" is one field whether the call waited or came back for it later.
-         {:result (assoc (if entry
-                           (bg-core "logs" id entry {:sample-usage? sample-usage?})
-                           (retired-log-core env session id))
+         {:result (assoc (if entry (bg-core "logs" id entry {:sample-usage? sample-usage?}) retired)
                     ;; Every shell is a PTY, so a tool writes for a SCREEN: CRLF line ends,
                     ;; progress redrawn with a bare CR, colour and keypad escapes it only
                     ;; sent because isatty() was true. The model reads TEXT, so this window

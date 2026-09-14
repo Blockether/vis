@@ -87,6 +87,9 @@ extension guides and API reference address developers building with it.
 - Address the reader as "you". Use plain words, active voice, short paragraphs and a clear,
   conversational but professional tone. Be direct and literal; avoid unexplained jargon,
   metaphors, slogans, rhetorical filler and forced friendliness.
+- Do not use apologetic or defensive prose, AI/generated-content disclaimers, or commentary
+  about how the text or screenshots were produced. State facts, actions and limitations directly;
+  retain provenance only when it affects how the reader uses or verifies the information.
 - Organize guides around tasks, with realistic examples and expected results. Explain relevant
   prerequisites, costs, permissions and destructive consequences before the reader acts.
 - Keep tutorials, task guides, explanations and API reference distinct. Put low-level protocol

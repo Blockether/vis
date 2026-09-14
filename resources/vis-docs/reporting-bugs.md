@@ -20,13 +20,14 @@ credential leak or unauthenticated gateway access. Email
 3. What you did, what happened and what you expected.
 4. A minimal reproduction, ideally in an empty directory.
 5. The relevant part of your config with secrets replaced by `${ENV_VAR}`.
-6. The error text and the lines around it, not the whole log.
+6. The error text and the lines around it, not the whole log. See
+   [Logs and diagnostics](logging.md) for file locations and retention.
 
 ## What to leave out
 
-- API keys, tokens and anything under `~/.vis/` such as `state.yml`,
-  `gateway.token`, `devices.edn`, the session database `vis.mdb` and the event
-  logs in `gateway/events/`. They contain credentials or full transcripts.
+- API keys and tokens, credential-bearing configuration such as `state.yml`,
+  `gateway.token`, `devices.edn`, session databases such as `vis.mdb`, and raw
+  event journals in `~/.vis/gateway/events/`.
 - Private source code, diffs and API details. Use a minimal public example instead.
 - Employer, client and product names, internal hostnames and private URLs.
 - Personal data. Public issues are permanent and indexed.

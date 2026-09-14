@@ -517,6 +517,8 @@
 
                    (expect (not= (.getName a) (.getName b)))
                    (expect (= (.getParentFile a) (.getParentFile b)))
+                   (expect (some? (re-matches #"\d{4}-\d{2}-\d{2}" (.getName (.getParentFile a)))))
+                   (expect (= "logs" (.getName (.getParentFile (.getParentFile a)))))
                    (expect (str/starts-with? (.getName a) "vis-nrepl-"))
                    (expect (str/ends-with? (.getName a) ".log"))
                    ;; the project dir stays legible in the name, so a log is greppable

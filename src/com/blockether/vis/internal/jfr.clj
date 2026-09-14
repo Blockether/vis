@@ -4,7 +4,7 @@
    Turned on per-process by the `VIS_JFR` env var (set by `bin/vis-agent --jfr`). The
    var is INHERITED by the detached gateway daemon that a client spawns, so both
    the client (TUI/web) process AND the gateway daemon each start their OWN
-   recording into a role+pid-tagged file under `~/.vis/logs/`:
+   recording into a role+pid-tagged file under `~/.vis/logs/YYYY-MM-DD/` (UTC):
 
      vis-client-<pid>-<ts>.jfr     ← the TUI / web / one-shot process
      vis-gateway-<pid>-<ts>.jfr    ← the long-lived gateway daemon
@@ -16,10 +16,12 @@
    with `--enable-monitoring=jfr` (see the app's native-image.properties). Never
    throws and never blocks startup — if JFR is unavailable it just no-ops."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths])
   (:import (java.io File)
            (java.lang ProcessHandle)
-           (java.time LocalDateTime)
+           (java.nio.file Files)
+           (java.time Instant ZoneOffset)
            (java.time.format DateTimeFormatter)
            (jdk.jfr Configuration Recording)))
 
@@ -35,17 +37,18 @@
                            str/trim
                            str/lower-case))))
 
-(defn- jfr-dir ^File [] (io/file (System/getProperty "user.home") ".vis" "logs"))
-
 (defn- recording-file
   ^File [role]
-  (let [ts
-        (.format (DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss") (LocalDateTime/now))
+  (let [now
+        (Instant/now)
+
+        ts
+        (.format (.withZone (DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss") ZoneOffset/UTC) now)
 
         pid
         (.pid (ProcessHandle/current))]
 
-    (io/file (jfr-dir) (format "vis-%s-%s-%s.jfr" role pid ts))))
+    (io/file (paths/log-date-dir now) (format "vis-%s-%s-%s.jfr" role pid ts))))
 
 (def ^:private MAX_RECORDINGS
   "Newest JFR dumps to keep under ~/.vis/logs; older ones are pruned on each start so
@@ -60,13 +63,16 @@
   (* 1024 1024 (if (= role "gateway") 256 128)))
 
 (defn- prune-old-recordings!
-  "Keep only the newest `MAX_RECORDINGS` `vis-*.jfr` dumps under ~/.vis/logs and delete
-   the rest (dead processes' orphaned recordings). Never throws."
+  "Keep the newest `MAX_RECORDINGS` `vis-*.jfr` dumps across UTC date directories.
+   Skip symlinks. Never throws."
   []
-  (try (let [files (->> (.listFiles (jfr-dir))
+  (try (let [files (->> (paths/log-date-dirs)
+                        (mapcat (fn [^File dir]
+                                  (.listFiles dir)))
                         (filter (fn [^File f]
                                   (let [n (.getName f)]
                                     (and (.isFile f)
+                                         (not (Files/isSymbolicLink (.toPath f)))
                                          (str/starts-with? n "vis-")
                                          (str/ends-with? n ".jfr")))))
                         (sort-by (fn [^File f]
@@ -81,10 +87,12 @@
    Returns the destination `File` when a recording started, else nil."
   [role]
   (when (and (enabled?) (compare-and-set! started false true))
-    (try (.mkdirs (jfr-dir))
-         (prune-old-recordings!)
+    (try (prune-old-recordings!)
          (let [f
                (recording-file role)
+
+               _
+               (io/make-parents f)
 
                rec
                (Recording. (Configuration/getConfiguration "profile"))]

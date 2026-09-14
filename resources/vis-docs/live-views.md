@@ -14,9 +14,8 @@ with ongoing work. Stopping the view stops watching, not necessarily the externa
 
 ## In the terminal
 
-The example below updates a single pane as jobs finish, rather than printing a
-new message on every poll. This capture shows example job data in the actual
-Vis terminal renderer. Select an image to view it full size.
+The example below updates a single pane as jobs finish. Select the image to view
+it full size.
 
 [![Vis live view showing CI run 42, one of three jobs complete and a job status table](assets/screenshots/live-running.png)](assets/screenshots/live-running.png)
 
@@ -120,8 +119,6 @@ This adapter is your CI client's code, **not a Vis API**. It must:
 
 A socket read timeout alone is not a total request deadline. Python cannot forcibly
 stop a running thread; use a client with bounded operations and test its cleanup.
-The example deliberately accepts this adapter rather than claiming a generic HTTP
-`timeout=` guarantees it.
 
 ```python
 # monitor.py

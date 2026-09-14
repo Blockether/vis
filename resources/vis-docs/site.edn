@@ -118,7 +118,11 @@
     {:blurb
      "Install or update Vis, choose a release track and compare native releases with JVM source builds."
      :page "distributions"
-     :title "Runtime distributions"}]
+     :title "Runtime distributions"}
+    {:blurb
+     "Find diagnostic logs, command output and hang reports, understand retention and review files before sharing."
+     :page "logging"
+     :title "Logs and diagnostics"}]
    :section "Reference"}]
  :site {:extension-center {:section "Community" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"

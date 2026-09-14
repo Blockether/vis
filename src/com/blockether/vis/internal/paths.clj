@@ -1,9 +1,10 @@
 (ns com.blockether.vis.internal.paths
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
    layer — core, extensions, tests — can normalize without a require cycle."
-  (:import [java.nio.file Path Paths]
-           [java.time Instant ZoneOffset]
-           [java.time.format DateTimeFormatter]
+  (:import [java.io File]
+           [java.nio.file Files Path Paths]
+           [java.time Instant LocalDate ZoneOffset]
+           [java.time.format DateTimeFormatter DateTimeParseException]
            [java.util Locale]))
 
 (defn unixify
@@ -75,11 +76,9 @@
             (catch Throwable _ path))))))
 
 (defn logs-dir
-  "Directory for vis diagnostic logs — `~/.vis/logs`. A DEDICATED subdir (not
-   `~/.vis` itself) so the native file tools and the Python sandbox can be
-   granted always-on access to logs without exposing `config.edn`, the session
-   DB, or gateway tokens. Returns the path string (native separators are fine
-   for real I/O)."
+  "Root for diagnostic logs and reports: `~/.vis/logs`. Writers use UTC date
+   directories below it. This dedicated root is accessible to the file tools and
+   sandbox without exposing configuration, session databases or gateway tokens."
   ^String []
   (str (System/getProperty "user.home") "/.vis/logs"))
 
@@ -90,6 +89,37 @@
   (let [d (logs-dir)]
     (try (.mkdirs (java.io.File. d)) (catch Throwable _ nil))
     d))
+
+(defn log-date-dir
+  "Diagnostic directory for an instant's UTC date: `~/.vis/logs/YYYY-MM-DD`.
+   Defaults to now; does not create directories. Long-lived writers retain the
+   path chosen at startup rather than switching files at midnight."
+  (^String [] (log-date-dir (Instant/now)))
+  (^String [^Instant instant]
+   (str (logs-dir)
+        "/"
+        (.format DateTimeFormatter/ISO_LOCAL_DATE (.atOffset instant ZoneOffset/UTC)))))
+
+(defn ensure-log-date-dir!
+  "Create the UTC date directory and return its path. Filesystem errors propagate."
+  (^String [] (ensure-log-date-dir! (Instant/now)))
+  (^String [^Instant instant]
+   (let [dir (log-date-dir instant)]
+     (Files/createDirectories (.toPath (File. dir))
+                              (make-array java.nio.file.attribute.FileAttribute 0))
+     dir)))
+
+(defn log-date-dirs
+  "Existing UTC date directories, newest first. Ignores files, invalid dates and
+   symlinks; retention and session log lookup share this directory boundary."
+  []
+  (->> (.listFiles (File. (logs-dir)))
+       (filter (fn [^File dir]
+                 (and (.isDirectory dir)
+                      (not (Files/isSymbolicLink (.toPath dir)))
+                      (re-matches #"\d{4}-\d{2}-\d{2}" (.getName dir))
+                      (try (LocalDate/parse (.getName dir)) (catch DateTimeParseException _ nil)))))
+       (sort-by #(.getName ^File %) #(compare %2 %1))))
 
 (defn sandbox-defs-dir
   "Directory for persisted Python sandbox helper definitions — `~/.vis/sandbox`.
@@ -119,12 +149,9 @@
 
 (def ^:private log-roles "Every vis writer whose diagnostics land in `~/.vis/logs`." process-roles)
 
-(def ^:private process-start-stamp
-  ;; Delayed for native-image: forcing this at namespace initialization would put
-  ;; the image builder's clock into every installed binary.
-  (delay (.format (.withZone (DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'" Locale/ROOT)
-                             ZoneOffset/UTC)
-                  (Instant/now))))
+(def ^:private process-start-time
+  ;; Delay the clock read so native-image does not bake in its builder's date.
+  (delay (Instant/now)))
 
 (defn set-log-role!
   "Set this process's diagnostic role before its first log path is opened.
@@ -143,7 +170,7 @@
 
 (defn log-file
   "Diagnostic log file for this process. The name carries its role, UTC start
-   time, and pid: `~/.vis/logs/<role>-<yyyyMMddTHHmmssZ>-pid<pid>.log`.
+   time, and pid: `~/.vis/logs/YYYY-MM-DD/<role>-<yyyyMMddTHHmmssZ>-pid<pid>.log`.
 
    TUI and gateway are separate writers because Telemere rotates by renaming its
    file; sharing a path lets the non-rotating process keep writing to an orphaned
@@ -155,4 +182,10 @@
    (let [role (name role)]
      (when-not (contains? log-roles role)
        (throw (ex-info (str "unknown log role: " role) {:role role :allowed log-roles})))
-     (str (ensure-logs-dir!) "/" role "-" @process-start-stamp "-pid" (process-id) ".log"))))
+     (let [instant @process-start-time
+           stamp (.format (.withZone (DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'"
+                                                                  Locale/ROOT)
+                                     ZoneOffset/UTC)
+                          instant)]
+
+       (str (ensure-log-date-dir! instant) "/" role "-" stamp "-pid" (process-id) ".log")))))

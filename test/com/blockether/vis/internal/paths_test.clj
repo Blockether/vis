@@ -1,7 +1,13 @@
 (ns com.blockether.vis.internal.paths-test
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import (java.io File)
+           (java.nio.file Files FileVisitOption Path)
+           (java.nio.file.attribute FileAttribute)
+           (java.time Instant)
+           (java.util TimeZone)))
 
 (defdescribe unixify-test
              (it "normalizes Windows separators and leaves POSIX paths alone"
@@ -71,6 +77,56 @@
                    ;; idempotent: a second call on an existing dir still returns it
                    (expect (= d (paths/ensure-logs-dir!))))))
 
+(defn- with-test-logs
+  [f]
+  (let [dir (.toFile (Files/createTempDirectory "vis-dated-logs-test-"
+                                                (make-array FileAttribute 0)))]
+    (try (with-redefs [paths/logs-dir #(.getPath dir)]
+           (f dir))
+         (finally (with-open [stream (Files/walk (.toPath dir) (make-array FileVisitOption 0))]
+                    (doseq [^Path path (reverse (iterator-seq (.iterator stream)))]
+                      (Files/deleteIfExists path)))))))
+
+(defdescribe
+  dated-logs-test
+  (it "uses UTC at midnight regardless of the machine's timezone"
+      (with-test-logs (fn [dir]
+                        (let [previous (TimeZone/getDefault)]
+                          (try (TimeZone/setDefault (TimeZone/getTimeZone "Pacific/Auckland"))
+                               (doseq [[instant date] [["2026-09-01T23:59:59.999Z" "2026-09-01"]
+                                                       ["2026-09-02T00:00:00Z" "2026-09-02"]]]
+                                 (let [at (Instant/parse instant)
+                                       expected (.getPath (io/file dir date))]
+
+                                   (expect (= expected (paths/log-date-dir at)))
+                                   (expect (not (.exists (io/file expected))))
+                                   (expect (= expected (paths/ensure-log-date-dir! at)))
+                                   (expect (.isDirectory (io/file expected)))
+                                   (expect (= expected (paths/ensure-log-date-dir! at)))))
+                               (finally (TimeZone/setDefault previous)))))))
+  (it "lists only real date directories and does not follow links"
+      (with-test-logs (fn [dir]
+                        (doseq [name ["2026-09-02" "2026-08-31" "2026-02-30" "notes"]]
+                          (.mkdirs (io/file dir name)))
+                        (spit (io/file dir "2026-09-03") "not a directory")
+                        (Files/createSymbolicLink (.toPath (io/file dir "2026-09-04"))
+                                                  (.toPath (io/file dir "notes"))
+                                                  (make-array FileAttribute 0))
+                        (expect (= ["2026-09-02" "2026-08-31"]
+                                   (mapv #(.getName ^File %) (paths/log-date-dirs)))))))
+  (it "returns no dates before the log root exists"
+      (with-test-logs (fn [dir]
+                        (with-redefs [paths/logs-dir #(.getPath (io/file dir "absent"))]
+                          (expect (empty? (paths/log-date-dirs)))))))
+  (it "keeps a process log under its startup date after midnight"
+      (with-test-logs
+        (fn [dir]
+          (with-redefs [paths/process-start-time (delay (Instant/parse "2026-09-01T23:59:59Z"))]
+            (let [file (io/file (paths/log-file "gateway"))]
+              (expect (= (io/file dir "2026-09-01") (.getParentFile file)))
+              (expect (str/starts-with? (.getName file) "gateway-20260901T235959Z-pid"))
+              (expect (= (.getPath file) (paths/log-file "gateway")))))))))
+
 ;; Regression: two vis processes (TUI + gateway daemon) shared `~/.vis/vis.log`;
 ;; Telemere's rolling handler rotates by RENAMING the file, so the process that
 ;; did not rotate went on appending into a deleted inode and everything it
@@ -86,6 +142,9 @@
                        pid
                        (paths/process-id)]
 
+                   (expect (some? (re-matches #"\d{4}-\d{2}-\d{2}"
+                                              (.getName (.getParentFile (java.io.File. ^String
+                                                                                       f))))))
                    (expect (some? (re-matches #"gateway-\d{8}T\d{6}Z-pid\d+\.log" filename)))
                    (expect (str/ends-with? filename (str "pid" pid ".log")))
                    (expect (= f (paths/log-file "gateway")))

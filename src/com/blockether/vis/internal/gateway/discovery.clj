@@ -23,13 +23,15 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io RandomAccessFile)
            (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.lang.management ManagementFactory)
            (java.net InetSocketAddress Socket)
            (java.nio.channels FileChannel FileLock)
-           (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)))
+           (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)
+           (java.nio.file.attribute FileAttribute)))
 
 ;; Paths + registry key
 
@@ -416,21 +418,17 @@
    reparented to init) and renames it to `vis-agent gateway start …`; elsewhere it
    falls back to a plain detached ProcessBuilder. The daemon
    SELF-REGISTERS its pid/port on startup, so we never need its pid here. Its
-   stdout+stderr are captured to a per-DB boot log under the registry dir so a
-   daemon that dies on startup is diagnosable instead of vanishing. Returns nil."
+   stdout+stderr are captured to a unique per-start boot log under
+   `~/.vis/logs/YYYY-MM-DD/` (UTC). Returns nil."
   [{:keys [db] :as opts}]
   (let [argv
         (spawn-argv opts)
 
-        _
-        (.mkdirs (registry-dir))
-
-        ;; Per-DB boot log so a daemon that dies on startup (route conflict,
-        ;; bad flag, port clash, …) leaves a diagnosable trace instead of only
-        ;; surfacing to clients as a generic :gateway/start-timeout. Truncated
-        ;; on each spawn, so it always reflects the latest boot.
         log
-        (io/file (registry-dir) (str (registry-key db) ".log"))
+        (.toFile (Files/createTempFile (.toPath (io/file (paths/ensure-log-date-dir!)))
+                                       (str "gateway-boot-" (registry-key db) "-" (util/now-ms) "-")
+                                       ".log"
+                                       (make-array FileAttribute 0)))
 
         pb
         (ProcessBuilder. ^java.util.List (vec (unix-launch-cmd argv (.getPath log))))]

@@ -171,38 +171,14 @@ restart policy does not undo your action.
 
 ## Collect evidence when work stops progressing
 
-Vis automatically saves a local diagnostic before its gateway watchdog cancels a
-stalled turn, including a turn waiting for a model, or gives up on a cancellation
-that did not finish. You do not need a Python tool to be running. Collection waits
-at most 500 ms and does not change the existing stall deadlines.
+Vis saves a JSON report before the gateway watchdog cancels a stalled turn or
+gives up on a cancellation. A running local CLI client can also capture JVM
+threads when the gateway stops answering.
 
-Look under `~/.vis/logs/gateway-hang-*/report.json` on the gateway machine. Each
-UTF-8 JSON report contains the session and turn IDs, the observed phase or
-cancellation reason, and up to 256 platform-thread stacks with 64 frames each.
-The stalled turn's thread is listed first. This snapshot does not enumerate JVM
-virtual threads.
-
-If the whole JVM gateway stops answering, a running local Vis CLI client can also
-collect evidence from outside that process. After an authenticated local health
-check has succeeded, a later failed check triggers a best-effort `jcmd` dump of
-platform and virtual threads. This requires the same JVM process to still be
-alive and `jcmd` beside its Java executable. The client saves `threads.json`,
-`attach.log` and `report.json` in **its own** log directory. Attempts are limited to
-one per minute per client, and the diagnostic command has a five-second deadline.
-Vis never sends a signal to, stops or restarts the gateway to collect this evidence.
-
-The external path does not attach to native gateways or remote targets, and it
-needs a local client that continues checking the connection. A severely frozen
-JVM can also refuse or time out during attach; the report records that failure
-rather than claiming a stack dump succeeded. Killing the diagnostic command does
-not cancel a dump the JVM already accepted.
-
-Vis keeps the ten newest completed reports. On POSIX filesystems, directories are
-owner-only (`700`) and files are owner-readable/writable (`600`); other filesystems
-use the account's inherited access controls. Reports omit prompts, tool arguments,
-HTTP bodies and credentials, but stack frames and thread names can identify local
-files or application details. Review the files before sharing them with a bug
-report. A diagnostic describes what was observed, not a proven cause of the hang.
+Reports live under `~/.vis/logs/YYYY-MM-DD/gateway-hang-<id>/`, using the UTC
+capture date. See [Hang reports](logging.md#hang-reports) for contents, collection
+limits and client-side paths, and [retention](logging.md#rotation-and-retention)
+for cleanup rules. Review the files before sharing them.
 
 ## See also
 

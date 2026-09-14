@@ -104,9 +104,8 @@ and explicitly make its source editable:
 shared-tools = { path = "../shared-tools", editable = true }
 ```
 
-That sibling needs packaging metadata too. A path dependency without
-`editable = true` is not a promise of live imports. Published wheels are ordinary
-installed dependencies, not editable source trees.
+That sibling needs packaging metadata too. Set `editable = true` to import its
+live source. Published wheels remain ordinary installed dependencies.
 
 ## Prepare the project environment
 

@@ -22,10 +22,9 @@ Vis sends the question to an active relevant session. Independent sessions are
 leaders: they never start one another automatically. For work that should start
 now, ask your leader to create a managed subagent with a bounded task.
 
-A sent message is not an answer. If the other session cannot be reached or has
-not replied, Vis should tell you rather than claim that it agreed. Earlier
-findings may also be out of date; important claims still need checking against
-the current code or running system.
+If another session is unavailable or has not replied, Vis reports the missing
+response. Check earlier findings against the current code or running system;
+they may be out of date.
 
 ## Work on a task together
 

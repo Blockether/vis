@@ -98,10 +98,9 @@ uses the current project's repository.” For `None`, say whether it means autom
 selection, no limit, or absence. Avoid vague phrases such as “uses the default.”
 
 Vis does not automatically export non-`None` default values or call their `repr()`:
-a host default can be a credential, client or other private object. This restriction
-is not a ban on documenting known public defaults. Write their meaning in the
-docstring or `Annotated` description; never copy a resolved credential or environment
-value there. The [contract reference](extension-api.md#defaults-and-introspection)
+a host default can be a credential, client or other private object. Document known
+public defaults in the docstring or `Annotated` description; never copy a resolved
+credential or environment value there. The [contract reference](extension-api.md#defaults-and-introspection)
 explains `...`, `has_default` and sandbox introspection.
 
 ## Keep the entrypoint small
@@ -227,7 +226,7 @@ operations cannot be proved by an outside test. For views, use the existing
 3. Call `await greet.hello("Ada")` and `await greet.hello("Ada", uppercase=True)`.
    Check the returned `.text`, not only registration or the extension list.
 4. After an edit, reload and repeat a call. If the last working version was retained
-   as stale, resolve the load failure before claiming that the edit works.
+   as stale, resolve the load failure and repeat the call with the updated code.
 
 The repository's regression suite executes the documented package and loads it
 through the real host, including discovery, sandbox results, skill reload and
@@ -406,8 +405,7 @@ force the agent to fix anything. The registered tool provides the visible check.
 It runs a fresh scan, so you can also ask for it before making an edit. This quick
 local check uses `show_start=False`: you see the result, not a running row.
 
-These static captures use example results in Vis's actual terminal Activity
-renderer, not a separate mockup. Select either image to view it full size.
+Select either image to view it full size.
 
 **Before the fix:** four files checked, with one location above the nesting limit.
 

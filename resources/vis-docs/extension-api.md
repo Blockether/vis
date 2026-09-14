@@ -458,8 +458,9 @@ vis.log("info", "loaded 3 rules")        # trace, debug, info, warn, error
 vis.notify("Rules reloaded", "success")  # info, success, warn, error
 ```
 
-`vis.log` writes to the gateway log under `~/.vis/logs/`. `vis.notify` shows a
-toast in the active channel.
+`vis.log` writes to the gateway log in `~/.vis/logs/YYYY-MM-DD/`. See
+[Logs and diagnostics](logging.md) for filenames, retention and sharing.
+`vis.notify` shows a toast in the active channel.
 
 ## Asking the human and showing live work
 

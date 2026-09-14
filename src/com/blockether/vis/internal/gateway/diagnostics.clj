@@ -76,7 +76,7 @@
 
 (defn- report-directory!
   ^File []
-  (let [parent (Path/of (paths/ensure-logs-dir!) (make-array String 0))]
+  (let [parent (Path/of (paths/ensure-log-date-dir!) (make-array String 0))]
     (.toFile
       (Files/createTempDirectory parent "gateway-hang-" (private-attributes parent "rwx------")))))
 
@@ -87,11 +87,15 @@
 
 (defn- prune-reports!
   []
-  (let [reports (->> (.listFiles (io/file (paths/logs-dir)))
+  (let [reports (->> (paths/log-date-dirs)
+                     (mapcat (fn [^File date-dir]
+                               (.listFiles date-dir)))
                      (filter (fn [^File dir]
                                (and (re-matches #"gateway-hang-[0-9]+" (.getName dir))
                                     (not (Files/isSymbolicLink (.toPath dir)))
-                                    (.isFile (io/file dir "report.json")))))
+                                    (.isFile (io/file dir "report.json"))
+                                    (not (Files/isSymbolicLink (.toPath
+                                                                 (io/file dir "report.json")))))))
                      (sort-by (fn [^File dir]
                                 (- (.lastModified dir)))))]
     (doseq [^File dir (drop MAX_REPORTS reports)]
@@ -154,7 +158,7 @@
   "Save private, bounded platform stacks before a gateway watchdog tears down a
    stalled turn. Adds at most CAPTURE_MS of waiting; failures never prevent recovery.
    Reports are UTF-8 JSON with snake_case field names under
-   ~/.vis/logs/gateway-hang-*/report.json (newest ten retained).
+   ~/.vis/logs/YYYY-MM-DD/gateway-hang-*/report.json (newest ten across all dates retained).
    JVM virtual threads are not enumerated by Thread/getAllStackTraces."
   [context]
   (try (bounded! capturing? CAPTURE_MS #(write-snapshot! context))

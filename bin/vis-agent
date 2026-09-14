@@ -130,8 +130,7 @@ fi
 # own role-tagged recording. This works for both JVM source and native-image.
 if (( jfr )); then
   export VIS_JFR=1
-  mkdir -p "$vis_home" 2>/dev/null || true
-  warn "JFR profiling on → $vis_home/vis-{client,gateway}-<pid>-<ts>.jfr"
+  warn "JFR profiling on → $HOME/.vis/logs/<YYYY-MM-DD>/vis-{client,gateway}-<pid>-<ts>.jfr (UTC)"
   warn "  snapshot: jcmd <pid> JFR.dump name=vis-<role>"
 fi
 

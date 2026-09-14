@@ -9,6 +9,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
+            [com.blockether.vis.internal.paths :as paths]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)))
 
@@ -296,6 +297,68 @@
                           (:text
                             (shell-log/read-chunk "p" (shell-log/log-file sid "p") {:offset 0})))))
              (finally (shell-log/delete-session-logs! sid))))))
+
+(defn- with-dated-logs
+  [f]
+  (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-dated-shell-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try (with-redefs [paths/logs-dir #(.getPath dir)]
+           (f dir))
+         (finally (doseq [^File file (reverse (file-seq dir))]
+                    (io/delete-file file true))))))
+
+(defdescribe
+  dated-logs-test
+  (it "writes a new shell under its UTC start date"
+      (with-dated-logs
+        (fn [dir]
+          (let [sid (session-id "dated")]
+            (try (let [sink (write-log! sid "build" "today\n")
+                       date (str (java.time.LocalDate/now java.time.ZoneOffset/UTC))]
+
+                   (expect (= (.getPath (io/file dir date "shell" sid "build.log")) (:path sink))))
+                 (finally (shell-log/delete-session-logs! sid)))))))
+  (it "finds an older day's log after restart and gives an explicit restart today's path"
+      (with-dated-logs
+        (fn [dir]
+          (let [sid
+                (session-id "midnight")
+
+                older
+                (io/file dir "2000-01-01" "shell" sid "build.log")
+
+                latest
+                (io/file dir "2000-01-02" "shell" sid "build.log")]
+
+            (io/make-parents older)
+            (io/make-parents latest)
+            (spit older "first\n")
+            (spit latest "second\n")
+            (try (expect (= latest (shell-log/log-file sid "build")))
+                 (let [sink (write-log! sid "build" "new run\n")]
+                   (expect (not= (.getPath latest) (:path sink)))
+                   (expect (= "second\n" (slurp latest)))
+                   (expect (= "new run\n" (read-all sid "build" nil))))
+                 (finally (shell-log/delete-session-logs! sid)))))))
+  (it "deletes a session's logs across dates without deleting another session"
+      (with-dated-logs (fn [dir]
+                         (let [sid
+                               (session-id "delete")
+
+                               files
+                               (mapv #(io/file dir % "shell" sid "build.log")
+                                     ["2000-01-01" "2000-01-02"])
+
+                               keep
+                               (io/file dir "2000-01-01" "shell" "other-session" "build.log")]
+
+                           (doseq [file (conj files keep)]
+                             (io/make-parents file)
+                             (spit file "keep until deleted\n"))
+                           (shell-log/delete-session-logs! sid)
+                           (expect (every? #(not (.exists ^File %)) files))
+                           (expect (.isFile keep)))))))
 
 (defdescribe retention-test
              (it "deletes every log of a session and nothing of another"

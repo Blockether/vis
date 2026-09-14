@@ -228,8 +228,13 @@ class _Run:
         self.command = command
         self.cwd = str(Path(cwd).expanduser()) if cwd else os.getcwd()
         self.timeout_secs = timeout_secs
-        self.log_path = str(state_home() / (f"shell-{self.id}.log"))
         self.started_at = time.time()
+        home = os.environ.get("VIS_OUTSIDE_HOME")
+        log_root = Path(home) if home else Path.home() / ".vis"
+        date = time.strftime("%Y-%m-%d", time.gmtime(self.started_at))
+        log_dir = log_root / "logs" / date / "outside"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_path = str(log_dir / f"shell-{self.id}.log")
         self.finished_at = None
         self.timed_out = False
         self.stopped = False

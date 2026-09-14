@@ -141,58 +141,81 @@
                 (.setDaemon true)
                 (.start))]
 
-          (try (expect (true? (deref ready 2000 false)))
-               (let [result (diagnostics/capture! {:session-id "session"
-                                                   :turn-id "fixture"
-                                                   :phase :provider-call
-                                                   :reason :turn-stall
-                                                   :prompt "must-not-be-in-report"})]
-                 (expect (= :written (:status result)))
-                 (when-let [path (:path result)]
-                   (let [text (slurp path :encoding "UTF-8")
-                         report (wire/parse-json text)
-                         target (first (get report "threads"))
-                         file (.toPath (io/file path))]
+          (try
+            (expect (true? (deref ready 2000 false)))
+            (let [result (diagnostics/capture! {:session-id "session"
+                                                :turn-id "fixture"
+                                                :phase :provider-call
+                                                :reason :turn-stall
+                                                :prompt "must-not-be-in-report"})]
+              (expect (= :written (:status result)))
+              (when-let [path (:path result)]
+                (let [text (slurp path :encoding "UTF-8")
+                      report (wire/parse-json text)
+                      target (first (get report "threads"))
+                      file (.toPath (io/file path))]
 
-                     (expect (= "report.json" (.getName (io/file path))))
-                     (expect (= #{"report.json"} (set (.list (.getParentFile (io/file path))))))
-                     (expect (map? report))
-                     (expect (= 1 (get report "schema_version")))
-                     (expect (pos-int? (get report "recorded_ms")))
-                     (expect (= {"status" "written"
-                                 "session_id" "session"
-                                 "turn_id" "fixture"
-                                 "phase" "provider-call"
-                                 "reason" "turn-stall"
-                                 "coverage" "platform-threads"}
-                                (select-keys report
-                                             ["status" "session_id" "turn_id" "phase" "reason"
-                                              "coverage"])))
-                     (expect (= "gateway-turn-fixture" (get target "name")))
-                     (expect (seq (get target "stack")))
-                     (expect (<= (count (get report "threads")) 256))
-                     (expect (str/ends-with? text "\n"))
-                     (expect (not (str/includes? text "must-not-be-in-report")))
-                     (when (.supportsFileAttributeView (Files/getFileStore file) "posix")
-                       (expect (= "rw-------"
-                                  (PosixFilePermissions/toString (Files/getPosixFilePermissions
-                                                                   file
-                                                                   (make-array LinkOption 0)))))
-                       (expect (= "rwx------"
-                                  (PosixFilePermissions/toString (Files/getPosixFilePermissions
-                                                                   (.getParent file)
-                                                                   (make-array LinkOption 0)))))))))
-               (finally (.countDown gate) (.join thread 2000)))))))
-  (it "retains only its newest reports and leaves unrelated files alone"
-      (with-logs (fn [dir]
-                   (spit (io/file dir "unrelated.log") "keep")
-                   (with-redefs [diagnostics/MAX_REPORTS 2]
-                     (dotimes [_ 3]
-                       (expect (= :written
-                                  (:status (#'diagnostics/write-snapshot!
-                                            {:reason :turn-stall}))))))
-                   (expect (= 2 (count (filter #(.isDirectory ^File %) (.listFiles ^File dir)))))
-                   (expect (= "keep" (slurp (io/file dir "unrelated.log")))))))
+                  (expect (= "report.json" (.getName (io/file path))))
+                  (expect (re-matches #"\d{4}-\d{2}-\d{2}"
+                                      (.getName (.getParentFile (.getParentFile (io/file path))))))
+                  (expect (= #{"report.json"} (set (.list (.getParentFile (io/file path))))))
+                  (expect (map? report))
+                  (expect (= 1 (get report "schema_version")))
+                  (expect (pos-int? (get report "recorded_ms")))
+                  (expect (= {"status" "written"
+                              "session_id" "session"
+                              "turn_id" "fixture"
+                              "phase" "provider-call"
+                              "reason" "turn-stall"
+                              "coverage" "platform-threads"}
+                             (select-keys report
+                                          ["status" "session_id" "turn_id" "phase" "reason"
+                                           "coverage"])))
+                  (expect (= "gateway-turn-fixture" (get target "name")))
+                  (expect (seq (get target "stack")))
+                  (expect (<= (count (get report "threads")) 256))
+                  (expect (str/ends-with? text "\n"))
+                  (expect (not (str/includes? text "must-not-be-in-report")))
+                  (when (.supportsFileAttributeView (Files/getFileStore file) "posix")
+                    (expect (= "rw-------"
+                               (PosixFilePermissions/toString
+                                 (Files/getPosixFilePermissions file (make-array LinkOption 0)))))
+                    (expect (= "rwx------"
+                               (PosixFilePermissions/toString (Files/getPosixFilePermissions
+                                                                (.getParent file)
+                                                                (make-array LinkOption 0)))))))))
+            (finally (.countDown gate) (.join thread 2000)))))))
+  (it "retains the newest completed reports across dates without touching unrelated files"
+      (with-logs
+        (fn [dir]
+          (let [old
+                (doto (io/file dir "2026-09-01" "gateway-hang-1") .mkdirs)
+
+                recent
+                (doto (io/file dir "2026-09-02" "gateway-hang-2") .mkdirs)
+
+                incomplete
+                (doto (io/file dir "2026-09-01" "gateway-hang-3") .mkdirs)]
+
+            (spit (io/file dir "unrelated.log") "keep")
+            (spit (io/file incomplete ".report.json") "unfinished")
+            (spit (io/file old "report.json") "{}")
+            (spit (io/file recent "report.json") "{}")
+            (.setLastModified old 1000)
+            (.setLastModified recent 2000)
+            (with-redefs [diagnostics/MAX_REPORTS 2]
+              (let [first-result (#'diagnostics/write-snapshot! {:reason :turn-stall})
+                    second-result (#'diagnostics/write-snapshot! {:reason :turn-stall})]
+
+                (expect (= :written (:status first-result)))
+                (expect (= :written (:status second-result)))
+                (expect (not= (:path first-result) (:path second-result)))
+                (expect (.isFile (io/file (:path first-result))))
+                (expect (.isFile (io/file (:path second-result))))))
+            (expect (not (.exists old)))
+            (expect (not (.exists recent)))
+            (expect (= "unfinished" (slurp (io/file incomplete ".report.json"))))
+            (expect (= "keep" (slurp (io/file dir "unrelated.log"))))))))
   (it "bounds a stuck helper and refuses to accumulate more helpers"
       (let [busy?
             (atom false)

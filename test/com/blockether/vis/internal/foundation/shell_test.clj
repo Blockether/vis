@@ -144,6 +144,37 @@
          (do (Thread/sleep 25) (recur (inc n))))))))
 
 (defdescribe
+  shell-stored-log-path-test
+  (it "reads live and retired shells from their recorded path rather than a newer date"
+      (let [recorded
+            (java.io.File/createTempFile "vis-shell-recorded-" ".log")
+
+            newer
+            (java.io.File/createTempFile "vis-shell-newer-" ".log")
+
+            identity
+            {"id" "build" "status" "running" "log_path" (.getPath recorded)}]
+
+        (try (spit recorded "original run\n")
+             (spit newer "different run\n")
+             (doseq [live? [true false]]
+               (with-redefs-fn {#'shell/bg-entry
+                                (fn [& _]
+                                  (when live? {:log-path (.getPath recorded) :origin "tool"}))
+                                #'shell/bg-core (fn [& _]
+                                                  identity)
+                                #'shell-log/log-file (fn [& _]
+                                                       newer)
+                                #'shell-log/session-logs (fn [& _]
+                                                           [identity])}
+                 (fn []
+                   (let [result (:result
+                                  (shell-logs* {:session-id "dated-read"} "build" {:offset 0}))]
+                     (expect (= "original run\n" (get result "out")))
+                     (expect (= (.getPath recorded) (get result "log_path")))))))
+             (finally (.delete recorded) (.delete newer))))))
+
+(defdescribe
   shell-env-injection-test
   (it "uses declarative env injection rather than a before middleware shim"
       (expect (true? (:ext.symbol/inject-env? shell/shell-symbol)))

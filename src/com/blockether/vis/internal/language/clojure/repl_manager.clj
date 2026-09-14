@@ -333,17 +333,10 @@
           :else nil)))
 
 (defn- log-file
-  "MINT a fresh subprocess log path under `~/.vis/logs` (never inside the user's
-   project tree, never the OS temp dir) for ONE nREPL start.
-
-   Called exactly once per spawn, and every call returns a DIFFERENT file: the
-   dir-derived stem keeps the log greppable, the random suffix makes it the
-   private log of that one process. A name keyed by the directory alone was a
-   shared file — `ProcessBuilder`'s output redirect TRUNCATES, so a second
-   session (or a plain restart) in the same directory erased the log the live
-   REPL was still writing into, and every resource view pointed at that one
-   path. The `~/.vis/logs` sweep (`foundation.housekeeping`) is what bounds the
-   resulting one-file-per-start growth. The logs dir is created on demand."
+  "Create a unique subprocess log path under `~/.vis/logs/YYYY-MM-DD/` (UTC).
+   Called once per nREPL start; the returned path stays with that process.
+   The project name and random suffix distinguish simultaneous sessions.
+   Housekeeping removes stale logs."
   ^java.io.File [dir]
   (let [home
         (System/getProperty "user.home")
@@ -361,9 +354,8 @@
             (str/replace #"(^_+|_+$)" ""))
 
         logs-dir
-        (io/file home ".vis" "logs")]
+        (io/file (paths/ensure-log-date-dir!))]
 
-    (.mkdirs logs-dir)
     (io/file logs-dir (str "vis-nrepl-" safe "-" (java.util.UUID/randomUUID) ".log"))))
 
 (def ^:private default-log-line-limit 500)

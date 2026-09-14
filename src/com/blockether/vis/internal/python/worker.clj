@@ -40,6 +40,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
@@ -238,7 +239,7 @@
 
 (defn- worker-dir
   ^File [stamp]
-  (doto (io/file (System/getProperty "user.home") ".vis" "run" (str "pyext-" stamp)) (.mkdirs)))
+  (doto (io/file (paths/ensure-log-date-dir!) (str "pyext-" stamp)) (.mkdirs)))
 
 (defn configure!
   "Register the live session policy used whenever worker `k` starts or restarts.

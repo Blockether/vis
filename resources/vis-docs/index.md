@@ -465,3 +465,4 @@ A value `<= 0` disables an eviction threshold.
 
 - [Process jail and network policy](jail.md) — rules for child processes.
 - [Runtime distributions](distributions.md) — installation methods and updates.
+- [Logs and diagnostics](logging.md) — file locations, formats, retention and sharing.
