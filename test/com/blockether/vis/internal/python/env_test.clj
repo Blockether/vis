@@ -1300,7 +1300,7 @@ Follow every fixture step without truncation."}]))
         (expect (nil? (:error setup)) (pr-str setup))
         (expect (nil? (:error answer)) (pr-str answer))
         (expect (= "bounded and searchable\n" (:stdout answer))))))
-  (it "documents the filtered index and advisory detail contract"
+  (it "documents the filtered index, advisory details and the saved-set contract"
       (tpc/with-own [ctx {}]
                     (let [answer
                           (ep/run-python-block ctx "print(doc('defs'))")
@@ -1310,7 +1310,9 @@ Follow every fixture step without truncation."}]))
 
                       (expect (nil? (:error answer)))
                       (doseq [text ["pattern=None" "limit=20" "offset=0" "details=False"
-                                    "case-sensitive" "SHA-256" "liveness unknown" "Improve"]]
+                                    "case-sensitive" "SHA-256" "liveness unknown" "Improve"
+                                    "replaces its saved source" "`del name` removes it"
+                                    "(restored)"]]
                         (expect (str/includes? out text) text))))))
 
 (defdescribe

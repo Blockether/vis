@@ -533,6 +533,19 @@ gather, worker diagnostics, Windows runtime and Companion work.
 - Unknowns: unrelated local-only work may fail broader suites; no service restart,
   native build, release, version bump or tag is authorized by this plan.
 
+## 4. Keep the prompt to policy
+
+- Rationale: three of seven helper prompt lines described source fingerprints and
+  Improve proposals, a rare workflow paid for in every request, while no surface said
+  how redefinition and deletion change the saved definitions.
+- Data: prompt character budget, the four documentation surfaces and the host
+  persistence tests.
+- Acceptance criteria: the prompt keeps search, stable-name refinement, saved-set
+  semantics, explicit deletion and the post-restart dependency check; fingerprints
+  and Improve proposals stay on `doc("defs")` and the guide; prompt and host suites pass.
+- Unknowns: the runtime docstring repeats the advisory limits until the next runtime
+  release.
+
 ## Plan state
 
 1. Complete locally: regression reduced a 241-helper catalogue from 57,855,102
@@ -549,3 +562,6 @@ gather, worker diagnostics, Windows runtime and Companion work.
    Vis pins that exact revision and includes the regenerated audit. Pinned-consumer
    verification and scoped diff review are complete; concurrent work stays excluded
    from this task's Vis commit.
+4. Complete: the prompt drops the fingerprint and Improve lines and states how saved
+   definitions follow redefinition and `del`; `doc("defs")` and the guide carry the
+   same contract. Prompt and host suites pass; the Vis commit is pushed.

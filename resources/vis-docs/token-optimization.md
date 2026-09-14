@@ -40,6 +40,10 @@ name. A one-line docstring makes a helper easier to find: its first line appears
 in the index, and `doc(name)` returns the full docstring. Session helpers are not
 included in `apropos`.
 
+After each block, Vis saves the current definitions. Redefining a name replaces
+its saved source and `del obsolete_name` removes it, so both changes survive a
+gateway restart. The save is best effort: when it fails, the previous copy stays.
+
 At a phase boundary, you can ask Vis to review the helpers it owns and remove
 obsolete names. Deletion is explicit, not based on age. Python's usual reference
 rules still apply: redefining a name does not update aliases or functions saved

@@ -559,7 +559,9 @@
       ;; 8.3k → 8.5k for optional ls glob filtering and per-path overrides.
       ;; Deduplication keeps the same contracts below the previous 8.5k ceiling.
       ;; 8.1k → 8.7k for bounded helper discovery, explicit cleanup and verified Improve proposals.
-      (expect (< (count text) 8700))
+      ;; 8.7k → 8.5k: fingerprints and Improve proposals moved to the `doc("defs")` page;
+      ;; the prompt keeps helper policy and how the saved definitions follow the namespace.
+      (expect (< (count text) 8500))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -1304,20 +1306,25 @@
                  (let [text (prompt/build-system-prompt {})]
                    (doseq [rule ["Before a new helper, search `defs(pattern=\"...\")`"
                                  "read `defs(name)` and refine a stable name"
-                                 "`defs(name, details=True)`" "liveness unknown"]]
+                                 "After a restart, `defs(name, details=True)`"
+                                 "whether each is present"]]
                      (expect (str/includes? text rule) rule))))
-             (it "makes cleanup explicit and checks references rather than collecting by age"
+             ;; User report: no rule said whether redefining or deleting a helper changes the
+             ;; saved definitions, so the model had to read the host to answer that.
+             (it "states that the saved set follows redefinition and explicit deletion"
                  (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["At phase boundaries, review your helpers"
-                                 "callers, aliases and captured defaults" "`del obsolete_name`"
-                                 "Never delete by age"]]
+                   (doseq [rule ["mirror the namespace after each block" "redefining replaces"
+                                 "`del obsolete_name` removes"
+                                 "callers, aliases and captured defaults" "Never delete by age"]]
                      (expect (str/includes? text rule) rule))))
-             (it "ties Improve proposals to demonstrated reuse and the verified source version"
+             ;; User report: three of seven helper lines described source fingerprints and
+             ;; Improve proposals, a rare workflow paid for in every request. That contract
+             ;; stays on the `doc("defs")` page and in the token-optimization guide.
+             (it "keeps fingerprints and Improve proposals out of the per-request prompt"
                  (let [text (prompt/build-system-prompt {})]
-                   (doseq [rule ["propose to Improve" "concrete uses" "sanitized source" "SHA-256"
-                                 "globals/preconditions" "verification of that source"
-                                 "Create Python extensions only when asked"]]
-                     (expect (str/includes? text rule) rule)))))
+                   (doseq [rule ["SHA-256" "propose to Improve" "liveness unknown"]]
+                     (expect (not (str/includes? text rule)) rule))
+                   (expect (str/includes? text "Create Python extensions only when asked")))))
 
 ;; Regression: name the prebound paths and lifetime of reusable helpers so blocks
 ;; do not redefine paths or helpers that the session already provides.
