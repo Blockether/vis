@@ -4,7 +4,6 @@
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
-            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.highlight :as hl]
@@ -2232,7 +2231,6 @@
                                        (#{:top :bottom} row) border-fg
                                        (and (= :status row) (:live-card-error? meta))
                                        t/code-error-fg
-                                       (= :hint row) t/dialog-hint
                                        :else t/text-fg)]
 
                       (p/set-colors! g row-fg row-bg)
@@ -4945,12 +4943,9 @@
 
         rows
         (if nested?
-          [[:title (str "RUN " title)] [:status status]
-           [:hint (str "Click or " (keymap/label-for :toggle-detail-labels) " to open")]]
+          [[:title (str "RUN " title)] [:status status]]
           [[:top (edge "┌" "─ Live view " "┐")] [:pad (body "")] [:title (body title)]
-           [:pad (body "")] [:status (body status)]
-           [:hint (body (str "Click or " (keymap/label-for :toggle-detail-labels) " to open"))]
-           [:pad (body "")] [:bottom (edge "└" "" "┘")]])]
+           [:pad (body "")] [:status (body status)] [:pad (body "")] [:bottom (edge "└" "" "┘")]])]
 
     (into (if nested? [] [{:line ""}])
           (concat (map (fn [[row line]]
@@ -6747,7 +6742,7 @@
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
-            show-python-code?]
+            show-python-code? bubble-w]
      :or {show-header? false live-preview? false show-python-code? true}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
@@ -7381,7 +7376,7 @@
                 artifact-block
                 (artifact-disclosure-entries (remove (set nested-artifacts) form-artifacts)
                                              session-id
-                                             fill-w
+                                             (or bubble-w code-width)
                                              (mapcat :runs forms)
                                              false)
 
@@ -7889,8 +7884,9 @@
   "Unified renderer for iteration traces in live, cancelled, and completed
    assistant bubbles. Live progress and final/cancel rendering must call this
    instead of formatting iterations themselves. The only caller-specific UI is
-   the trailer after these entries (spinner, final answer, or cancelled note)."
-  [{:keys [iterations content-w settings session-id session-turn-id detail-expansions live?
+   the trailer after these entries (spinner, final answer, or cancelled note).
+   Recorded live cards use `bubble-w`; trace text keeps the narrower `content-w`."
+  [{:keys [iterations content-w bubble-w settings session-id session-turn-id detail-expansions live?
            suppress-trace?]
     :or {live? false suppress-trace? false}}]
   (let [raw-iterations
@@ -7940,7 +7936,7 @@
 
                 k
                 [::iter-entries (if live? :live :final) iter-num (iteration-fingerprint stripped)
-                 (long content-w) show-iteration-headers? (boolean show-thinking?)
+                 (long content-w) bubble-w show-iteration-headers? (boolean show-thinking?)
                  (boolean show-silent?) (get settings :show-python-code true) session-id
                  session-turn-id
                  ;; Tool-badge / op-row disclosures are keyed
@@ -7956,6 +7952,7 @@
 
                 inner-opts
                 {:show-header? show-iteration-headers?
+                 :bubble-w bubble-w
                  :show-python-code? (get settings :show-python-code true)
                  :session-id session-id
                  :session-turn-id session-turn-id
@@ -8191,7 +8188,7 @@
          ;; avoiding an O(bubble) rebuild on every animation tick.
          body
          (live-throttled-cached*
-           [::progress-body (long content-w) (mapv iteration-fingerprint iterations)
+           [::progress-body (long bubble-w) (long content-w) (mapv iteration-fingerprint iterations)
             (boolean (get settings :show-thinking true))
             (boolean (get settings :show-iterations true))
             (boolean (get settings :show-silent false)) (get settings :show-python-code true)
@@ -8211,6 +8208,7 @@
              (let [trace-entries
                    (trace-render-entries {:iterations iterations
                                           :content-w content-w
+                                          :bubble-w bubble-w
                                           :settings settings
                                           :now-ms now-ms
                                           :viewport-rows viewport-rows
@@ -8350,6 +8348,7 @@
         trace-entries
         (trace-render-entries {:iterations trace
                                :content-w content-w
+                               :bubble-w bubble-w
                                :settings settings
                                :session-id (:session-id opts)
                                :session-turn-id (:session-turn-id opts)

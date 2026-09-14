@@ -8405,7 +8405,9 @@ print(paths)"
             text
             (str/join "\n" (map :line card))]
 
-        (expect (= 8 (count card)))
+        ;; #228: the open instruction no longer takes a row.
+        (expect (= 7 (count card)))
+        (expect (not (str/includes? text "Click or")))
         (expect (str/includes? text "Live view"))
         (expect (str/includes? text "Release"))
         (expect (str/includes? text "Recorded"))
@@ -8511,12 +8513,14 @@ print(paths)"
             owned (filter #(= "build" (get-in % [:meta :artifact :view-id])) entries)
             unmatched (filter #(= "other" (get-in % [:meta :artifact :view-id])) entries)]
 
-        (expect (= 3 (count owned)))
+        ;; #228: neither nested nor standalone recordings show the open instruction.
+        (expect (= 2 (count owned)))
+        (expect (not-any? #(str/includes? (:line %) "Click or") (concat owned unmatched)))
         (expect (every? #(and (get-in % [:meta :trace-inset?])
                               (str/starts-with? (:line %) p/MARKER_ACTIVITY))
                         owned))
         (expect (not-any? #(get-in % [:meta :live-card-row]) owned))
-        (expect (= 8 (count unmatched)))
+        (expect (= 7 (count unmatched)))
         (expect (every? #(get-in % [:meta :live-card-row]) unmatched))))))
 
 (defdescribe

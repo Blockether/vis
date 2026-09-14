@@ -16,27 +16,45 @@
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (defn live-card-message
-  "Deterministic production transcript fixture for #205, including the adjacent run."
-  [width {:keys [reason title recorded-only?] :or {reason :completed title "Jenkins · build pool"}}]
+  "Deterministic production transcript fixture for #205 and #228, including the adjacent run."
+  [width
+   {:keys [reason title recorded-only? live?] :or {reason :completed title "Jenkins · build pool"}}]
   (let [run
         {:view-id "live-review" :title title :reason reason :lines 13 :elapsed-ms 2200}
 
-        entries
-        (#'render/format-iteration-entry-entries
-         {:iteration-id "iteration-review"
-          :attachments [{"source" "tool"
-                         "kind" "file"
-                         "filename" "jenkins-build-pool.live.ndjson"
-                         "media_type" "application/vnd.vis.live+ndjson"
-                         "view_id" "live-review"
-                         "size" 2048}]
-          :forms
-          [{:code "await jenkins.watch()" :success? true :runs (if recorded-only? [] [run])}]}
-         width
-         1
-         {:session-id "live-review" :session-turn-id "turn-review"})]
+        iteration
+        {:iteration-id "iteration-review"
+         :attachments [{"source" "tool"
+                        "kind" "file"
+                        "filename" "jenkins-build-pool.live.ndjson"
+                        "media_type" "application/vnd.vis.live+ndjson"
+                        "view_id" "live-review"
+                        "size" 2048}]
+         :forms [{:code "await jenkins.watch()" :success? true :runs (if recorded-only? [] [run])}]}
 
-    {:role :assistant :prewrapped-lines (mapv :line entries) :line-meta (mapv :meta entries)}))
+        settings
+        {:show-iterations true :show-thinking false}
+
+        options
+        {:session-id "live-review" :session-turn-id "turn-review"}
+
+        payload
+        (if live?
+          (render/progress->lines-data {:iterations [iteration]}
+                                       width
+                                       settings
+                                       (assoc options
+                                         :now-ms 3000
+                                         :turn-start-ms 1000))
+          (render/format-answer-with-thinking-data* nil
+                                                    [iteration]
+                                                    width
+                                                    settings
+                                                    nil
+                                                    false
+                                                    options))]
+
+    {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}))
 
 (defn paint-live-card-review!
   "Paint the same transcript on HtmlTerminal and DefaultVirtualTerminal; no copied layout."
@@ -52,13 +70,21 @@
         g
         (.newTextGraphics screen)
 
+        width
+        (- cols render/MESSAGE_SIDE_PAD)
+
         message
-        (live-card-message (- cols 4) options)]
+        (live-card-message width options)]
 
     (p/set-colors! g theme/text-fg theme/terminal-bg)
     (.fill g \space)
     (.beginFrame interactions/hit-map)
-    (let [consumed (render/draw-chat-bubble! g message 2 start-row (- cols 4) {:viewport-h rows})]
+    (let [consumed (render/draw-chat-bubble! g
+                                             message
+                                             start-row
+                                             render/MESSAGE_MARGIN_LEFT
+                                             width
+                                             {:viewport-h rows})]
       (.commitFrame interactions/hit-map)
       (when labels? (render/draw-detail-labels! g true nil))
       (.refresh screen)
@@ -67,15 +93,19 @@
 (defn- card-regions [] (filterv :live-card? (.current interactions/hit-map)))
 
 (deftest live-card-status-and-width-test
-  ;; #205: retain the view's real status without a second tightly stacked RUN receipt.
+  ;; #228: the live card uses the full message column, not the inset trace width.
   (doseq [width
           [6 12 24 40 80]
 
           reason
-          [:completed :failed :interrupted :timeout :cancelled]]
+          [:completed :failed :interrupted :timeout :cancelled]
+
+          live?
+          [false true]]
 
     (let [message
-          (live-card-message width {:reason reason :title "界界界 Jenkins · build pool 👩‍💻"})
+          (live-card-message width
+                             {:reason reason :title "界界界 Jenkins · build pool 👩‍💻" :live? live?})
 
           rows
           (keep-indexed #(when (:live-card-row %2) (nth (:prewrapped-lines message) %1))
@@ -84,9 +114,11 @@
           text
           (str/join "\n" rows)]
 
-      (is (= 8 (count rows)))
+      (is (= 7 (count rows)))
       (is (not (str/includes? text (str \u0000))))
-      (is (every? #(<= (p/display-width (subs % 1)) (max 1 (- width 2))) rows))
+      (is (every? #(= width (p/display-width (subs % 1))) rows))
+      (is (not (str/includes? text "Click or")))
+      (is (not-any? #(= :hint (:live-card-row %)) (:line-meta message)))
       (when (>= width 24) (is (str/includes? text (str/capitalize (name reason)))))
       (is (not-any? #(= :live-reopen (:kind %)) (:line-meta message)))))
   (let [message
@@ -97,12 +129,25 @@
 
     (is (str/includes? text "Recorded"))
     (is (not (str/includes? text "Completed")))
-    (is (str/includes? text (keymap/label-for :toggle-detail-labels)))))
+    (is (not (str/includes? text (keymap/label-for :toggle-detail-labels))))))
+
+(deftest live-card-nested-hint-test
+  ;; #228: owned recordings keep their target and status without the open instruction.
+  (let [artifact
+        {:filename "jenkins.live.ndjson" :iteration-id "i" :index 0}
+
+        entries
+        (#'render/live-artifact-card-entries artifact "s" 80 {:reason :completed} true)]
+
+    (is (= 2 (count entries)))
+    (is (= ["RUN jenkins" "Completed"] (mapv #(subs (:line %) 1) entries)))
+    (is (every? #(= artifact (get-in % [:meta :artifact])) entries))
+    (is (every? #(get-in % [:meta :activity-live?]) entries))))
 
 (deftest live-card-pointer-and-clipping-test
   (binding [interactions/hit-map (interactions/create-hit-map)]
     (doseq [cols [24 40 80]
-            start-row [1 -6]]
+            start-row [1 -10 14]]
 
       (let [capture (cap/capture! {:cols cols
                                    :rows 24
@@ -113,6 +158,8 @@
 
         (is (nil? (:error capture)))
         (is (seq regions))
+        (is (every? #(= render/MESSAGE_MARGIN_LEFT (get-in % [:bounds :col])) regions))
+        (is (every? #(= (- cols render/MESSAGE_SIDE_PAD) (get-in % [:bounds :width])) regions))
         (is (= 1
                (count (filter (comp :live-card? second)
                               (interactions/assign-labels (.current interactions/hit-map))))))
@@ -218,7 +265,7 @@
     (.setHovered interactions/hit-map nil)))
 
 (deftest live-card-label-identity-test
-  ;; #205: all eight painted rows form one target; distinct artifacts stay distinct.
+  ;; #205: all painted rows form one target; distinct artifacts stay distinct.
   (let [card
         {:kind :artifact :live-card? true :session-id "s" :artifact {:iteration-id "i" :index 0}}
 
