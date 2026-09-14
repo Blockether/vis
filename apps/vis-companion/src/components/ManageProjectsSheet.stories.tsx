@@ -41,11 +41,18 @@ export const Inventory: Story = {
       const box = action.getBoundingClientRect();
       const row = action.parentElement!.getBoundingClientRect();
       const icon = action.querySelector('svg')!.getBoundingClientRect();
-      // Regression: deletion must be an inset circle, not a stretched edge cell.
+      // Keep deletion inset and centered, without a decorative frame.
       await expect(box.width).toBe(box.height);
-      await expect(parseFloat(getComputedStyle(action).borderRadius)).toBeGreaterThanOrEqual(
-        box.width / 2,
-      );
+      const style = getComputedStyle(action);
+      await expect(parseFloat(style.borderRadius)).toBe(0);
+      for (const width of [
+        style.borderTopWidth,
+        style.borderRightWidth,
+        style.borderBottomWidth,
+        style.borderLeftWidth,
+      ]) {
+        await expect(parseFloat(width)).toBe(0);
+      }
       await expect(row.right - box.right).toBeGreaterThanOrEqual(8);
       await expect(box.top - row.top).toBeGreaterThanOrEqual(8);
       await expect(Math.abs(icon.x + icon.width / 2 - (box.x + box.width / 2))).toBeLessThan(1);

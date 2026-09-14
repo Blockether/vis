@@ -1115,15 +1115,8 @@ export function ArtifactsChip({
   onToggle: () => void;
 }) {
   if (!count) return null;
-  // At rest it is CHROME: the page's ink on the band's own paper, no frame, like every
-  // other control on a header. It used to wear `--dialog-title`, which IS the accent in
-  // `blockether-dark`, so a filled amber block sat in the navigation bar beside a way
-  // out wearing the same token. OPEN keeps the amber fill and stays the one filled
-  // accent on the screen: the composer it could compete with is hidden underneath the
-  // sheet this chip just opened.
-  const tone = open
-    ? 'border-accent bg-accent text-accent-foreground'
-    : 'border-transparent text-white hover:bg-hover';
+  // Opening changes the ink and underlines the label, never frames the paperclip.
+  const tone = open ? 'text-accent-ink underline underline-offset-4' : 'text-white';
   const label = `${count} artifacts produced by the model`;
   return (
     <button
@@ -1133,7 +1126,7 @@ export function ArtifactsChip({
       aria-controls={controls}
       aria-label={label}
       title={label}
-      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-control border px-2 font-mono text-ui font-bold transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-6 mouse:text-meta mouse:after:content-none ${tone}`}
+      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent px-2 font-mono text-ui font-bold transition-colors duration-150 hover:bg-hover after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:underline focus-visible:underline-offset-4 focus-visible:outline-none motion-reduce:transition-none mouse:h-6 mouse:text-meta mouse:after:content-none ${tone}`}
     >
       <ClipIcon className="size-3" />
       <span aria-hidden="true" className="hidden sm:inline">

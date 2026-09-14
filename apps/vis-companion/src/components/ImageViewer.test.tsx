@@ -113,16 +113,13 @@ describe('ImageViewer', () => {
     const header = document.querySelector('[role="dialog"] header');
     expect(header?.querySelector('h2')?.textContent).toBe('chart.png');
 
-    // The target still inherits the band's full ink. Its compact face is circular, and both
-    // Blockether palettes fill it with the same amber pair mirrored — Light amber over dark
-    // ink, Dark ink marked in amber — so neither band shows an unfilled way out.
+    // The close inherits the band's ink without a separate frame in either palette.
     const close = control('Close chart.png');
-    const face = close.querySelector('span');
     expect(header?.className).not.toContain('text-dialog-title-foreground/70');
-    expect(face?.className).toContain('blockether-light:bg-accent');
-    expect(face?.className).toContain('blockether-light:text-accent-foreground');
-    expect(face?.className).toContain('blockether-dark:bg-accent-foreground');
-    expect(face?.className).toContain('blockether-dark:text-accent');
+    expect(close.className).toContain('border-0');
+    expect(close.className).toContain('text-current');
+    expect(close.querySelector('span')).toBeNull();
+    expect(close.className).not.toContain('rounded-full');
   });
 
   // Regression, same phone report ("the headline has wrong height"): the title band is

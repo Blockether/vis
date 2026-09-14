@@ -33,6 +33,9 @@ describe('project pages', () => {
       ['Next page', page + 1],
     ] as const) {
       const button = screen.getByLabelText(label);
+      expect(button).toHaveClass('border-0');
+      expect(button).not.toHaveClass('rounded-full');
+      expect(button).toHaveClass('after:-inset-1.5');
       if (target < 1 || target > 80) {
         expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
         expect(button).toBeDisabled();

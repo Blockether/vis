@@ -7,10 +7,7 @@ import { Button } from './ui';
 export function ErrorFallback({ message, onReload }: { message: string; onReload: () => void }) {
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-4 bg-ink px-[max(1.25rem,env(safe-area-inset-left))] py-[max(1.25rem,env(safe-area-inset-top))] text-center text-white">
-      <div
-        className="grid size-9 place-items-center border border-dialog-edge bg-panel-2"
-        aria-hidden="true"
-      >
+      <div className="grid size-9 place-items-center" aria-hidden="true">
         <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
       </div>
       <p className="text-title">Vis hit an error</p>

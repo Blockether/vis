@@ -90,31 +90,12 @@ export const Button = forwardRef<
      * `page` reserves a full-width touch target for a short page number.
      */
     density?: 'default' | 'compact' | 'panel' | 'page';
-    /**
-     * A WORD SETS A CONTROL'S WIDTH; A MARK DOES NOT.
-     *
-     * `box` is the button with a word in it — the word measures it, so it is a
-     * rounded rectangle on the control rung. `disc` is the same button with its
-     * word replaced by a glyph: nothing inside it has a width to earn, so it is a
-     * 32px circle (28px under a pointer), which is the box `CloseButton isBand`
-     * has drawn since it was written and nothing else in the app copied.
-     *
-     * It is a PROP rather than a `className` because the two shapes disagree about
-     * `px-*` and `rounded-*`, and two utilities of equal specificity are settled by
-     * Tailwind's emission order and never by the call site: `IconButton` asked for
-     * `px-0` here for as long as it has existed and lost every time. Measured on the
-     * shipping app before this prop: every icon-only control was a 38x32 rectangle
-     * around a 16px mark, and 42x24 under a pointer — a face 1.75 times as wide as
-     * it was tall, on a row of boxes that were 36, 38 and 42 wide.
-     */
-    shape?: 'box' | 'disc';
   }
 >(function Button(
   {
     variant = 'primary',
     pressEffect = 'scale',
     density = 'default',
-    shape = 'box',
     className = '',
     disabled = false,
     onClick,
@@ -125,9 +106,7 @@ export const Button = forwardRef<
   ref,
 ) {
   const tapPress = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
-  // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
-  // frameless while it is busy, and a shared `disabled:border-edge` would fight it
-  // on equal specificity (whoever Tailwind emits last wins).
+  // Disabled colours belong to each text-button variant.
   const dimmed = 'disabled:border-edge disabled:bg-panel-2 disabled:text-muted';
   // ONE hover system, and it only ever moves the SURFACE.
   //
@@ -147,13 +126,7 @@ export const Button = forwardRef<
   const styles = {
     primary: `border-accent bg-accent text-accent-foreground ${dimmed}`,
     secondary: `border-edge-strong bg-transparent text-white hover:bg-hover ${dimmed}`,
-    // For a SECONDARY action sitting next to the primary: two bordered boxes
-    // side by side read as rivals, so this one keeps the button's box (transparent
-    // border, identical metrics) and NEVER draws a frame — not at rest and not on
-    // hover. A frame that arrives under the pointer is a box appearing out of
-    // nowhere around a glyph that was never a box; on touch there is no pointer at
-    // all, so tapping the `⋯` simply boxed it and left it boxed. The surface moving
-    // already says "you are on it", and the keyboard still gets its own ring.
+    // Quiet text actions stay frameless beside the primary.
     quiet:
       'border-transparent bg-transparent text-dialog-hint hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     // TAKING SOMETHING AWAY, when the mark is not the ✕ — a trash can that empties a
@@ -195,15 +168,7 @@ export const Button = forwardRef<
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
     page: `${touchReach} min-h-8 min-w-11 px-1.5 font-mono text-ui tabular-nums aria-[current=page]:bg-hover aria-[current=page]:text-white mouse:min-h-7 mouse:min-w-7 mouse:px-1.5 mouse:text-meta`,
   }[density];
-  // THE DISC IS THE BOX THAT NEVER LEARNED A WORD. It keeps the header's own 32px
-  // rhythm and the 6px of invisible reach above and below it that makes the 44px
-  // finger target, and under a pointer it is 28px — square, where the rectangle it
-  // replaces was 24px tall and 42px wide: under the 28px floor on the one side an
-  // eye checks against the control standing beside it.
-  const frame =
-    shape === 'disc'
-      ? 'relative grid size-8 self-center place-items-center rounded-full after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:size-7 mouse:after:content-none'
-      : `rounded-control py-0.5 ${scale}`;
+  const frame = `rounded-control py-0.5 ${scale}`;
 
   return (
     <button
@@ -216,31 +181,16 @@ export const Button = forwardRef<
   );
 });
 
+// Icon controls never draw an enclosing border, ring or circular face. Keyboard
+// focus adds an underline instead; the hit target remains independent of the glyph.
+const iconControlClass =
+  'relative border-0 rounded-none focus-visible:outline-none before:pointer-events-none before:absolute focus-visible:before:inset-x-1 focus-visible:before:bottom-0 focus-visible:before:h-0.5 focus-visible:before:bg-current focus-visible:before:content-[""]';
+
 /**
- * An icon-only control is still a BUTTON.
- *
- * A kebab, a close, a retry: they carry no word, so they used to be written by
- * hand at the call site — and the machine header's `⋯` ended up a 32px bordered
- * box while the project header's, one row below it, was a 44px borderless slab
- * with a bigger glyph. Two controls that do the same thing looked like two
- * different affordances, and neither looked like the yellow button beside them.
- *
- * So it is `Button` with its word replaced by a glyph: the same box, border,
- * focus ring, transition and desktop rhythm as every other button in the app.
- * `pressEffect="none"` because these anchor menus and sheets — a transform moves
- * the box the popover was measured against.
- * AND IT IS A DISC. A word is what makes a control wide and a mark is not, so the box
- * around a mark is square — and a square control's honest corner is the circle, the
- * one this app already drew on the way out of a dialog and nowhere else. Reported
- * (paraphrased: line the borders and the icons up, and make them round): the bar's
- * glass and cog, the strip's folder mark, the band's plus and the pager's two steps
- * were five rectangles at three different widths around marks at three different
- * sizes, every one of them wider than it was tall.
- *
- * A control that ENDS a row keeps the row's cell instead (`edge`): it is not a box
- * standing on the page, it is that row's trailing edge, and a circle cannot stretch
- * to a row's height.
- *
+ * A named, borderless icon action. Variants change intent and ink, not framing.
+ * The 32px / 28px layout box keeps a 44px touch target through invisible reach.
+ * `edge` stretches into the row's trailing gutter without drawing a cell border.
+ * Over-content controls retain a square backing for contrast, never a circle.
  */
 export const IconButton = forwardRef<
   HTMLButtonElement,
@@ -281,42 +231,40 @@ export const IconButton = forwardRef<
     edge,
     fullCell,
     children,
+    disabled = false,
+    onClick,
+    onPointerDown,
+    onPointerUp,
     ...props
   },
   ref,
 ) {
-  // `border-r-0`: this box ends ON the paper's own edge, and the paper already draws
-  // that line. A hover frame that redraws it puts two hairlines in one pixel column.
-  //
-  // `h-auto self-stretch`: it ends a ROW, so its hover is the row's own height. The
-  // compact scale's 32px face centred in a 44px row painted a floating band with a
-  // 6px dead strip above and below it — the trash in "Manage projects" hovered short
-  // of the row it belongs to. Stretching also makes the invisible `after:` reach
-  // pointless, so it is dropped (`after:content-none`) rather than left to overhang.
-  //
-  // The cancellation is spelled at EVERY density the scale pins a height at, because
-  // one `h-auto` cannot outrank a `mouse:h-6` written in a variant of its own: the
-  // desktop list kept a 24px disclosure at the TOP of its 32px row, its chevron four
-  // pixels above the title beside it.
+  const tapPress = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   const box = edge
-    ? `h-auto justify-items-end self-stretch border-r-0 pl-0 pr-3 -mr-3 after:content-none sm:pr-4 sm:-mr-4 mouse:h-auto ${
+    ? `h-auto justify-items-end self-stretch pl-0 pr-3 -mr-3 sm:pr-4 sm:-mr-4 ${
         fullCell ? 'w-12 mouse:w-9' : 'min-w-10 sm:min-w-12 mouse:min-w-10'
       }`
-    : 'place-items-center';
+    : 'size-8 self-center place-items-center after:absolute after:-inset-1.5 after:content-[""] mouse:size-7 mouse:after:content-none';
+  const ink = {
+    primary: 'bg-transparent text-accent-ink hover:bg-hover',
+    secondary: 'bg-transparent text-white hover:bg-hover',
+    quiet: 'bg-transparent text-dialog-hint hover:bg-hover',
+    danger: 'bg-transparent text-err-ink hover:bg-err/15',
+    remove: 'bg-transparent text-white hover:bg-err/15 hover:text-err-ink',
+    overlay: 'bg-dialog-title text-dialog-title-foreground hover:bg-accent hover:text-accent-ink',
+  }[variant];
   return (
-    <Button
+    <button
       ref={ref}
       type="button"
-      variant={variant}
-      pressEffect="none"
-      shape={edge ? 'box' : 'disc'}
-      density={density}
       aria-label={label}
-      className={`grid shrink-0 items-center ${box} ${className}`}
+      disabled={disabled}
+      className={`${iconControlClass} grid shrink-0 items-center font-bold transition-colors duration-150 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none ${density === 'compact' ? 'text-ui mouse:text-meta' : 'text-ui'} ${box} ${ink} ${className}`}
+      {...tapPress}
       {...props}
     >
       {children}
-    </Button>
+    </button>
   );
 });
 
@@ -468,6 +416,7 @@ export function CopyChip({
       // Clipboard access can be unavailable in an untrusted mobile webview.
     }
   }
+  const tapPress = useTapPress(copy, false);
   if (children === undefined) {
     const icon = isCopied ? (
       <CheckIcon className="size-3 text-ok" />
@@ -477,18 +426,15 @@ export function CopyChip({
     if (edge) {
       // Reserve less space before the glyph; keep the 44px touch target in the outer gutter.
       return (
-        <Button
+        <button
           type="button"
-          variant="quiet"
-          pressEffect="none"
-          density={density}
           aria-label={isCopied ? 'Copied' : label}
           title={isCopied ? 'Copied' : (title ?? label)}
-          onClick={copy}
-          className={`relative grid h-auto w-8 shrink-0 self-stretch items-center justify-items-end border-0 pl-0 pr-3 -mr-3 after:absolute after:top-0 after:bottom-0 after:left-0 after:-right-3 after:content-[""] sm:w-9 sm:pl-0 sm:pr-4 sm:-mr-4 sm:after:-right-2 mouse:h-auto mouse:w-7 mouse:after:content-none ${className}`}
+          {...tapPress}
+          className={`${iconControlClass} grid h-auto w-8 shrink-0 self-stretch items-center justify-items-end bg-transparent text-dialog-hint transition-colors duration-150 hover:bg-hover pl-0 pr-3 -mr-3 after:absolute after:top-0 after:bottom-0 after:left-0 after:-right-3 after:content-[""] motion-reduce:transition-none sm:w-9 sm:pl-0 sm:pr-4 sm:-mr-4 sm:after:-right-2 mouse:h-auto mouse:w-7 mouse:after:content-none ${className}`}
         >
           {icon}
-        </Button>
+        </button>
       );
     }
     return (
@@ -931,8 +877,7 @@ export function ViewParagraph({ children }: { children: ReactNode }) {
  * which is two filled accents on one screen and a bar outranking its own screen. A bar
  * carries navigation, and navigation is a glyph in the page's ink.
  */
-const bandEdgeClass =
-  'grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center pl-[env(safe-area-inset-left)] text-white transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]';
+const bandEdgeClass = `${iconControlClass} grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center bg-transparent pl-[env(safe-area-inset-left)] text-white transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-hover active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]`;
 
 export function BackButton({
   label,
@@ -1077,9 +1022,9 @@ function useTapPress(
  * no rhythm at all. They also each re-spelled the same transition list and the
  * same `active:scale-[0.94]`, and none of them had a focus ring.
  *
- * Every tone uses the same circular face: 32px on touch, 28px under a pointer.
- * `tone` changes its meaning and colour, not its shape. An overlay keeps a full
- * 44px face; a strip control reaches beyond its smaller face for touch.
+ * Every tone is a bare glyph in the same 32px / 28px layout box. Intent changes
+ * the ink, never an enclosing border or circular fill. Overlays keep a full
+ * 44px target; strip controls use invisible reach for touch.
  *
  * The PRESS itself is `useTapPress` above: this strip is tapped with the
  * keyboard up more than anything else in the app, and on iOS a tap is not
@@ -1114,23 +1059,14 @@ export function ComposerButton({
   const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   const frame =
     surface === 'overlay'
-      ? 'size-11 border border-dialog-edge shadow-[4px_4px_0_var(--dialog-shadow)]'
+      ? 'size-11'
       : 'size-8 after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none';
   const face = {
-    quiet: 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted',
-    recording:
-      'animate-pulse bg-warn-surface text-err disabled:text-muted motion-reduce:animate-none',
-    // The mode changes the microphone's paper, not its shape.
-    voice:
-      'bg-accent text-accent-foreground hover:bg-accent-2 disabled:bg-button disabled:text-muted',
-    // NOTHING TO SEND is a control with no PAPER, not a dimmed arrow on paper.
-    // Dimming kept the filled square and greyed the mark inside it: hint ink on
-    // button paper measures 1.96:1 in blockether-light, under the 3:1 floor, so
-    // the reader could not see the thing being greyed. The paper is what leaves
-    // — the state is a SHAPE — and the arrow, now on the field's own paper,
-    // measures 5.27:1.
-    send: 'border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:border-transparent disabled:bg-transparent disabled:text-dialog-hint',
-    stop: 'border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0',
+    quiet: 'text-dialog-hint hover:text-dialog-hint-key disabled:text-muted',
+    recording: 'animate-pulse text-err-ink disabled:text-muted motion-reduce:animate-none',
+    voice: 'text-accent-ink disabled:text-muted',
+    send: 'text-accent-ink disabled:scale-100 disabled:text-muted',
+    stop: 'text-err-ink starting:scale-90 starting:opacity-0',
   }[tone];
   return (
     <button
@@ -1138,14 +1074,11 @@ export function ComposerButton({
       aria-label={label}
       disabled={disabled}
       {...press}
-      className={`relative grid shrink-0 place-items-center rounded-full transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${frame} ${face} ${className}`}
+      className={`${iconControlClass} grid shrink-0 place-items-center bg-transparent transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 hover:bg-hover active:scale-[0.94] motion-reduce:transition-none ${frame} ${face} ${className}`}
       {...props}
     >
       {isHolding && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 overflow-hidden rounded-full"
-        >
+        <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
           <span className="absolute inset-0 origin-bottom scale-y-100 bg-accent/30 transition-transform duration-[450ms] ease-linear starting:scale-y-0 motion-reduce:hidden" />
         </span>
       )}
@@ -1287,8 +1220,8 @@ export function ChoiceCell({
   /** Hide the choice glyph when an adjacent action occupies its trailing place. */
   showSelectionMark?: boolean;
   /**
-   * An independent icon action that sits before the value's name, never after it. Its compact
-   * fixed-width cell ends at the grid's dark hairline; the choice owns the breathing room beyond it.
+   * An independent, borderless icon action before the value's name. Its compact
+   * fixed-width cell preserves the choice's breathing room without a dividing rule.
    */
   leadingAction?: {
     label: string;
@@ -1349,7 +1282,7 @@ export function ChoiceCell({
         aria-label={leadingAction.label}
         disabled={leadingAction.disabled}
         onClick={leadingAction.onClick}
-        className={`grid min-h-9 place-items-center border-r border-dialog-edge transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
+        className={`${iconControlClass} grid min-h-9 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
           isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
         }`}
       >
@@ -1365,8 +1298,8 @@ export function ChoiceCell({
  *
  * Selection and disclosure used to be one accidental action: choosing an engine exposed
  * its children, while an unselected engine had no way to show its own catalogue. The row
- * is one visual surface split by one hairline, but it remains two keyboard targets. Both
- * halves keep the selected fill so the chevron never looks detached from its owner.
+ * is one visual surface with two keyboard targets and no border around the chevron.
+ * Both halves keep the selected fill so the chevron stays part of its owner's row.
  */
 export function SettingsChoiceDisclosure({
   title,
@@ -1394,10 +1327,10 @@ export function SettingsChoiceDisclosure({
         aria-expanded={isOpen}
         aria-controls={controls}
         onClick={onToggle}
-        className={`grid min-h-10 w-10 place-items-center border-l transition-[background-color,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:bg-accent-2 motion-reduce:transition-none mouse:min-h-9 ${
+        className={`${iconControlClass} grid min-h-10 w-10 place-items-center transition-[background-color,color] duration-150 active:bg-accent-2 motion-reduce:transition-none mouse:min-h-9 ${
           isSelected
-            ? 'border-accent-foreground/30 bg-accent text-accent-foreground'
-            : 'border-dialog-edge bg-input text-dialog-hint hover:bg-hover hover:text-white'
+            ? 'bg-accent text-accent-foreground'
+            : 'bg-input text-dialog-hint hover:bg-hover hover:text-white'
         }`}
       >
         <ChevronIcon open={isOpen} className="size-3 shrink-0" />
@@ -1620,43 +1553,10 @@ export function NotifyConnectionSwitch({
 }
 
 /**
- * THE ✕, AND THERE IS EXACTLY ONE OF IT.
- *
- * Eight surfaces were left by three different buttons in five different boxes,
- * measured on an iPhone 14 with the shipped stylesheet. They had already been made
- * one MARK; they were never one BUTTON, and an eye reads the face before it reads the
- * stroke.
- *
- * So there is one, and everything about its face is decided here:
- *
- * - TARGET AND FACE ARE DIFFERENT. A ✕ either ends a band (`isBand`) with the band's
- *   full 48×48 target (36×36 for a mouse), stands alone at the end of a compact row
- *   (`isStandalone`) as a 24px / 20px target, or sits inside another control as a
- *   32px mark (`mouse:size-6`). Band and standalone controls each carry a circular
- *   FACE: 32px for the band and 16px for a row, shrinking to 28px and 14px for a
- *   mouse. A wrapped title can make the band taller; the target still stretches with
- *   it while its face stays round.
- * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. The two Blockether
- *   palettes carry the SAME amber pair, mirrored: on Light's dark title paper the face is
- *   an amber fill with dark ink, and on Dark's amber title band it is that pair swapped —
- *   an ink fill with an amber mark. Leaving Dark's face transparent made the way out the
- *   faintest thing on a screen whose Share is a filled amber block: one hairline in the
- *   band's own colour. Every other palette keeps the hairline face, which is the only one
- *   its quieter band can afford. This one fixed circle may coexist with Share or Download
- *   because it identifies the way out rather than offering a competing act; it never
- *   licenses another filled label in chrome. Hover deepens the disc — amber to its darker
- *   step, ink to the theme's hover paper — and never paints a square across the band's
- *   last cell.
- * - A standalone row close stays subordinate, except on Blockether Light where its compact
- *   face carries the palette's amber fill so the removal mark does not disappear into paper.
- * - A close inside another control keeps the established hairline and red intent wash.
- *   Its parent already supplies the face, so wrapping that mark in another circle would
- *   be a box inside a box.
- *
- * WHERE it sits is the call site's only business: `className` may POSITION it (the
- * attachment chip hangs it on the chip's right edge) and nothing else. `isBand` and
- * `isStandalone` name PLACES — a band's last target or a row action without a parent
- * face — rather than caller-selected paint.
+ * The shared close/remove mark, without a border or a filled face in any theme.
+ * A band close keeps its full-height trailing cell. Compact row and attachment
+ * removes keep their placement and extend their touch reach invisibly.
+ * Keyboard focus uses the same underline as other icon controls.
  */
 export function CloseButton({
   label,
@@ -1667,13 +1567,9 @@ export function CloseButton({
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   /** Icon-only, so the name is not optional: "Close artifacts", "Remove notes.md". */
   label: string;
-  /**
-   * This ✕ IS THE BAND'S LAST TARGET — a dialog title, a menu heading — rather than
-   * a mark inside another control. It fills the band's height; the compact circular
-   * face inside it stays on the control rhythm instead of inflating to the touch target.
-   */
+  /** This close action fills the band's final cell, including wrapped titles. */
   isBand?: boolean;
-  /** This ✕ ends a row: its compact target carries a smaller circular face. */
+  /** This close action ends a compact row rather than a title band. */
   isStandalone?: boolean;
 }) {
   const mark = <CloseIcon className={isStandalone ? 'size-2.5' : undefined} />;
@@ -1682,26 +1578,14 @@ export function CloseButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`grid shrink-0 place-items-center text-current motion-reduce:transition-none ${
+      className={`${iconControlClass} grid shrink-0 place-items-center bg-transparent text-current transition-colors duration-150 hover:bg-current/10 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
         isBand
-          ? 'group w-12 self-stretch transition-opacity duration-150 focus-visible:outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40 mouse:w-9'
-          : isStandalone
-            ? 'group size-6 self-center focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 mouse:size-5'
-            : 'size-8 self-center border-l border-current/20 transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current mouse:size-6'
+          ? 'w-12 self-stretch mouse:w-9'
+          : 'size-8 self-center after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[""] mouse:size-7 mouse:after:content-none'
       } ${className}`}
       {...props}
     >
-      {isBand ? (
-        <span className="grid size-8 place-items-center rounded-full border border-current transition-[background-color,box-shadow,transform] duration-150 blockether-light:bg-accent blockether-light:text-accent-foreground blockether-dark:bg-accent-foreground blockether-dark:text-accent group-hover:bg-current/15 blockether-light:group-hover:bg-accent-2 blockether-dark:group-hover:bg-hover group-focus-visible:ring-2 group-focus-visible:ring-current/60 blockether-dark:group-focus-visible:ring-accent-foreground/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-7">
-          {mark}
-        </span>
-      ) : isStandalone ? (
-        <span className="pointer-events-none grid size-4 place-items-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 group-hover:bg-err/15 group-hover:text-err group-focus-visible:bg-err/15 group-focus-visible:text-err group-focus-visible:ring-2 group-focus-visible:ring-accent/60 group-active:scale-[0.94] blockether-light:bg-accent blockether-light:text-accent-foreground blockether-light:group-hover:bg-accent-2 blockether-light:group-hover:text-accent-foreground blockether-light:group-focus-visible:bg-accent blockether-light:group-focus-visible:text-accent-foreground motion-reduce:transition-none mouse:size-3.5">
-          {mark}
-        </span>
-      ) : (
-        mark
-      )}
+      {mark}
     </button>
   );
 }
@@ -1710,9 +1594,8 @@ export function CloseButton({
  * A VERB IN A BAND, and there is only one of it.
  *
  * Text actions fill the band and keep their dividing rule. Supplying `label`
- * makes an action icon-only: its circular face matches the other icon controls,
- * while the transparent cell keeps the band's full-height touch target.
- * Hover and keyboard focus belong to that face, not the rectangular cell.
+ * makes the action a bare icon in a full-height, borderless touch target.
+ * Keyboard focus underlines it; primary intent never adds a circle.
  *
  * A CELL WITH SOMETHING TO COMMIT WEARS THE ACCENT (`isPrimary`). The accent exists
  * only while the commit is live; a disabled cell drops it instead of dimming a false
@@ -1730,7 +1613,7 @@ export function BandButton({
   isFirst?: boolean;
   /** This cell COMMITS something, and wears the accent while it has something to commit. */
   isPrimary?: boolean;
-  /** The accessible name of an icon-only action with a circular face. */
+  /** The accessible name of an icon-only action. */
   label?: string;
 }) {
   const isLive = isPrimary && !props.disabled;
@@ -1740,7 +1623,7 @@ export function BandButton({
       type="button"
       className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap font-mono text-meta font-bold focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 sm:text-ui mouse:text-meta ${
         isIconOnly
-          ? 'group w-12 px-0 mouse:w-9'
+          ? `${iconControlClass} group w-12 bg-transparent px-0 text-current hover:bg-current/10 mouse:w-9`
           : `${isFirst ? '' : 'border-l border-current/20'} px-3 transition-colors duration-150 disabled:hover:bg-transparent motion-reduce:transition-none sm:px-4 mouse:px-3 ${
               isLive
                 ? 'bg-accent text-accent-foreground hover:bg-accent-2 focus-visible:bg-accent-2'
@@ -1754,11 +1637,7 @@ export function BandButton({
       <span
         className={
           isIconOnly
-            ? `pointer-events-none grid size-8 place-items-center rounded-full border border-current/20 transition-[background-color,box-shadow,transform] duration-150 group-focus-visible:ring-2 group-focus-visible:ring-current/60 group-active:scale-[0.94] group-disabled:scale-100 motion-reduce:transition-none mouse:size-7 ${
-                isLive
-                  ? 'bg-accent text-accent-foreground group-hover:bg-accent-2'
-                  : 'text-current group-hover:bg-current/10 group-disabled:bg-transparent'
-              }`
+            ? 'pointer-events-none grid size-8 place-items-center transition-transform duration-150 group-active:scale-[0.94] group-disabled:scale-100 motion-reduce:transition-none mouse:size-7'
             : 'translate-y-px'
         }
       >

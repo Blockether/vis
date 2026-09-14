@@ -364,13 +364,16 @@ describe('NewSessionButton', () => {
     expect(html()).not.toContain('active:scale');
   });
 
-  // Regression, user report: the 28px desktop box still read as a tall slab beside the
-  // 24px machine action — and then (paraphrased: line the borders and the icons up):
-  // a word's padding around a glyph that has no word made every one of these a
-  // rectangle, 38px wide on a phone around a 16px mark. It wears the disc the way out
-  // of a dialog already drew: 32px of face, 28px under a pointer.
-  it('wears the same disc as the machine action beside it', () => {
+  it('keeps the compact header rhythm without a circular face', () => {
     expect(html()).not.toContain('mouse:h-7');
+  });
+
+  it('stays borderless at rest, while busy and when disabled', () => {
+    for (const props of [{}, { isBusy: true }, { disabled: true }]) {
+      expect(html(props)).toContain('border-0');
+      expect(html(props)).not.toContain('rounded-full');
+      expect(html(props)).not.toContain('border-current');
+    }
   });
 
   it('is refused while the machine is busy or not answering', () => {
@@ -391,18 +394,15 @@ describe('IconButton', () => {
       </IconButton>,
     );
 
-  it('is the app’s button with a glyph where its word would be', () => {
-    expect(html()).toContain('focus-visible:ring-accent/60');
+  it('underlines keyboard focus without enclosing the icon', () => {
+    expect(html()).toContain('focus-visible:before:bg-current');
+    expect(html()).not.toContain('focus-visible:ring');
   });
 
-  // Regression, user report (paraphrased: line the borders and the icons up, and make
-  // them round): a word's padding sized a box with no word in it, so one 16px glyph
-  // sat in a 38x32 rectangle on the phone and a 42x24 one on the desk while the way
-  // out of a dialog, two components away, was already a 32px disc.
-  it("wears one disc, the size of the header's own rhythm", () => {
+  it("keeps the header's compact layout box", () => {
     const primary = renderToStaticMarkup(<NewSessionButton machine="tower" onPress={() => {}} />);
 
-    for (const rhythm of ['size-8', 'rounded-full', 'self-center', 'mouse:size-7']) {
+    for (const rhythm of ['size-8', 'self-center', 'mouse:size-7']) {
       expect(html()).toContain(rhythm);
       expect(primary).toContain(rhythm);
     }
@@ -412,12 +412,33 @@ describe('IconButton', () => {
     const primary = renderToStaticMarkup(<NewSessionButton machine="tower" onPress={() => {}} />);
 
     // 32px of ink + 6px above + 6px below = 44px of touchable button.
-    for (const reach of ['after:absolute', 'after:-top-1.5', 'after:-bottom-1.5']) {
+    for (const reach of ['after:absolute', 'after:-inset-1.5']) {
       expect(html()).toContain(reach);
       expect(primary).toContain(reach);
     }
-    // A cursor needs no invisible reach, and the desktop box is 24px anyway.
+    // A cursor needs no invisible reach.
     expect(primary).toContain('mouse:after:content-none');
+  });
+
+  it('keeps every variant borderless, including disabled and row-edge controls', () => {
+    for (const variant of [
+      'primary',
+      'secondary',
+      'quiet',
+      'danger',
+      'overlay',
+      'remove',
+    ] as const) {
+      for (const disabled of [false, true]) {
+        for (const edge of [false, true]) {
+          const icon = html({ variant, disabled, edge });
+          expect(icon).toContain('border-0');
+          expect(icon).not.toMatch(/(?:border-(?:current|edge|accent|err)|rounded-full|ring-)/);
+        }
+      }
+    }
+    const text = renderToStaticMarkup(<Button variant="secondary">Cancel</Button>);
+    expect(text).toContain('border-edge-strong');
   });
 
   it('is named, because it carries no word', () => {
@@ -444,7 +465,7 @@ describe('CloseButton', () => {
   const html = (props: Partial<Parameters<typeof CloseButton>[0]> = {}) =>
     renderToStaticMarkup(<CloseButton label="Close artifacts" onClick={() => {}} {...props} />);
 
-  it("is welded to the band it closes, by that band's own hairline", () => {
+  it('has no frame of its own', () => {
     expect(html()).not.toMatch(/class="[^"]*\bborder\s/);
   });
 
@@ -464,7 +485,7 @@ describe('CloseButton', () => {
     const band = html({ isBand: true });
     // A cell takes its height from the band, so a wrapped three-line question cannot
     // leave paper above and below the way out; it still spells no height of its own.
-    expect(/\bh-\d/.test(band), 'a height of its own').toBe(false);
+    expect(/(?:^|\s)h-\d/.test(band), 'a height of its own').toBe(false);
     expect(band).not.toContain('self-center');
     expect(/<button[^>]*class="[^"]*\bsize-8\b/.test(band)).toBe(false);
 
@@ -472,40 +493,22 @@ describe('CloseButton', () => {
     expect(mark).not.toContain('self-stretch');
     // A square is declared once: no separate width, no separate height. None of the
     // five old boxes survive either.
-    expect(/\bw-\d/.test(mark), 'a width of its own').toBe(false);
-    expect(/\bh-\d/.test(mark), 'a height of its own').toBe(false);
-    for (const box of ['min-h-8', 'mouse:min-h-6', 'min-w-9', 'w-7', 'min-h-7']) {
+    expect(/(?:^|\s)w-\d/.test(mark), 'a width of its own').toBe(false);
+    expect(/(?:^|\s)h-\d/.test(mark), 'a height of its own').toBe(false);
+    for (const box of ['min-h-8', 'mouse:min-h-6', 'min-w-9', 'min-h-7']) {
       expect(mark, box).not.toContain(box);
     }
   });
 
-  // Regression, user screenshot: queued-message remove controls painted their entire
-  // target as a large circle. The target must remain generous while its face stays
-  // subordinate to the queued message.
-  it('separates a standalone row target from its compact face', () => {
-    const standalone = html({ isStandalone: true });
-    expect(standalone).toMatch(/<button[^>]*>[\s\S]*<span[^>]*>[\s\S]*<svg/);
-  });
-
-  // Design request: the full-size target stays part of the band while the visible close is
-  // a compact circle, and the two Blockether palettes carry the same amber pair mirrored —
-  // Light fills the face with amber over dark ink, Dark fills it with the ink and marks it
-  // in amber. Navigation identity is not a second primary verb in either.
-  //
-  // Regression, user report (the dark theme looked unfinished): the fill was Light-only, so
-  // on Blockether Dark's amber title band the way out stayed a hairline ring in the band's
-  // own colour — the faintest thing on a screen whose Share was a filled amber block.
-  it('mirrors the filled close face across both Blockether palettes', () => {
-    const band = html({ isBand: true });
-    expect(band).toContain('blockether-light:bg-accent');
-    expect(band).toContain('blockether-light:text-accent-foreground');
-    expect(band).toContain('blockether-dark:bg-accent-foreground');
-    expect(band).toContain('blockether-dark:text-accent');
-    // A filled face has to STAY filled: the generic hover wash and a focus ring in the
-    // mark's own amber would each repaint the dark disc back into its band.
-    expect(band).toContain('blockether-dark:group-hover:bg-hover');
-    expect(band).toContain('blockether-dark:group-focus-visible:ring-accent-foreground/60');
-    expect(band).not.toContain('border-l');
+  // Regression: removing a frame must not remove touch reach or keyboard focus.
+  it('keeps standalone and band closes unframed in every theme', () => {
+    for (const props of [{}, { isBand: true }, { isStandalone: true }]) {
+      const close = html(props);
+      expect(close).toContain('border-0');
+      expect(close).toContain('focus-visible:before:bg-current');
+      expect(close).not.toMatch(/rounded-full|border-current|border-l|ring-|blockether-.*:bg-/);
+    }
+    expect(html({ isStandalone: true })).toContain('after:size-11');
   });
 
   // Regression, user report ("Why not black like all buttons"): the artifacts sheet has
@@ -572,15 +575,15 @@ describe('BandButton', () => {
     expect(icon).toContain('aria-label="Refresh models"');
     expect(icon).toContain('title="Refresh models"');
     expect(icon).not.toContain('>Refresh models<');
-    expect(icon).toContain('rounded-full');
+    expect(icon).not.toContain('rounded-full');
+    expect(icon).toContain('border-0');
     expect(icon).toContain('size-8');
     expect(icon).toContain('mouse:size-7');
-    expect(icon).toContain('group-focus-visible:ring-2');
+    expect(icon).toContain('focus-visible:before:bg-current');
     expect(icon).not.toContain('border-l');
-    expect(html({ label: 'Save changes', isPrimary: true })).toContain('bg-accent');
-    expect(html({ label: 'Save changes', isPrimary: true, disabled: true })).not.toContain(
-      'bg-accent',
-    );
+    for (const disabled of [false, true]) {
+      expect(html({ label: 'Save changes', isPrimary: true, disabled })).not.toContain('bg-accent');
+    }
   });
   it('takes only the ink of the band it stands in', () => {
     expect(html()).not.toContain('bg-dialog-title');
@@ -1350,16 +1353,11 @@ describe('the confirm that IS the row', () => {
 // row painted a floating hover band inside a taller row, with a dead strip above
 // and below it. A control that ENDS a row hovers the row.
 describe('a row-ending icon button fills its row', () => {
-  // The class list `edge` puts on the box, read out of the source it is written in.
-  const edgeBox = () => {
-    const edge = uiSource.slice(uiSource.indexOf('const box = edge'));
-    return edge.slice(0, edge.indexOf('\n', edge.indexOf('?')));
-  };
-
-  it('stretches instead of centring a fixed face', () => {
-    const line = edgeBox();
-    // A stretched box needs no invisible reach for its target.
-    expect(line).toContain('after:content-none');
+  it('stretches without a fixed face or an overhanging touch target', () => {
+    const edge = renderToStaticMarkup(<IconButton edge label="Row actions" />);
+    expect(edge).toContain('self-stretch');
+    expect(edge).not.toContain('self-center');
+    expect(edge).not.toContain('after:');
   });
 
   // Regression, user report: the trash ending a project row occupied a narrower column
@@ -1658,14 +1656,15 @@ describe('MachineSwitcher', () => {
 describe('MachineProjectsButton', () => {
   const html = renderToStaticMarkup(<MachineProjectsButton machine="tower" onPress={() => {}} />);
 
-  it('keeps project navigation outlined rather than primary', () => {
-    expect(html).toContain('border-edge-strong');
+  it('keeps project navigation borderless rather than primary', () => {
+    expect(html).toContain('border-0');
     expect(html).toContain('bg-transparent');
     expect(html).not.toContain('bg-accent');
     const quiet = renderToStaticMarkup(
       <MachineProjectsButton machine="tower" isQuiet onPress={() => {}} />,
     );
-    expect(quiet).toContain('border-transparent');
+    expect(quiet).toContain('border-0');
+    expect(quiet).not.toContain('border-current');
     expect(quiet).not.toContain('border-edge-strong');
   });
 
@@ -1969,7 +1968,9 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
 
     it('uses the shared quiet icon button when no visible value is supplied', () => {
       const iconOnly = renderToStaticMarkup(<CopyChip value="abc" label="Copy code" />);
-      const iconButton = renderToStaticMarkup(<IconButton label="Copy code" variant="quiet" />);
+      const iconButton = renderToStaticMarkup(
+        <IconButton label="Copy code" variant="quiet" density="default" />,
+      );
       expect(first(iconOnly)).toStrictEqual(first(iconButton));
       expect(iconOnly).toContain('aria-label="Copy code"');
       expect(iconOnly).toContain('<svg');
@@ -2347,9 +2348,10 @@ describe("the composer's own controls", () => {
         ),
       );
     for (const tone of ['quiet', 'send', 'stop', 'recording', 'voice'] as const) {
-      // None of the four had a focus ring when each was written by hand.
-      expect(box(tone)).toContain('focus-visible:ring-accent/60');
-      expect(box(tone)).toContain('rounded-full');
+      expect(box(tone)).toContain('focus-visible:before:bg-current');
+      expect(box(tone)).toContain('border-0');
+      expect(box(tone)).not.toContain('rounded-full');
+      expect(box(tone)).not.toContain('focus-visible:ring-accent/60');
       expect(box(tone)).toContain('size-8');
       expect(box(tone)).toContain('mouse:size-7');
       expect(box(tone)).toContain('after:size-11');
@@ -2516,9 +2518,8 @@ describe('a setting is picked and switched by one control each', () => {
     expect(classes(off)).not.toContain('border');
   });
 
-  // A pale gap reads as a missing strip of the selected fill. The preview is a compact cell
-  // divided by the grid's dark hairline, with breathing room on the content side.
-  it('divides and spaces a compact leading action from its choice', () => {
+  // The icon keeps its own target and shares the row's fill, without a dividing border.
+  it('spaces a compact, borderless leading action from its choice', () => {
     const html = renderToStaticMarkup(
       <ChoiceCell
         title="Albert"
@@ -2540,7 +2541,10 @@ describe('a setting is picked and switched by one control each', () => {
     expect(buttons).toHaveLength(2);
     expect(wrapper).toContain('grid-cols-[2.5rem_minmax(0,1fr)]');
     expect(wrapper).not.toContain('gap-1');
-    expect(buttons[0]).toEqual(expect.arrayContaining(['border-r', 'border-dialog-edge']));
+    expect(buttons[0]).toContain('border-0');
+    expect(buttons[0]).toContain('focus-visible:before:bg-current');
+    expect(buttons[0]).not.toContain('border-r');
+    expect(buttons[0]).not.toContain('focus-visible:ring-2');
   });
 
   // Regression, user report over the open TTS panel ("that full-width stack of things still
@@ -2600,6 +2604,11 @@ describe('a setting is picked and switched by one control each', () => {
       />,
     );
     expect(open).toContain('aria-expanded="true"');
+    for (const html of [closed, open]) {
+      expect(html).toContain('border-0');
+      expect(html).toContain('focus-visible:before:bg-current');
+      expect(html).not.toContain('border-l');
+    }
   });
 
   it('opens a settings direction with one full-row chevron control', () => {

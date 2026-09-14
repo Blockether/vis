@@ -6,7 +6,6 @@ import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
 import { Markdown } from './ChatContent';
 import {
   CheckIcon,
-  CopyIcon,
   DownloadIcon,
   MicIcon,
   PlusIcon,
@@ -121,6 +120,19 @@ function Sheet({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-5 p-4">{children}</div>;
 }
 
+/** Icons stay unframed in every state; glyph strokes are not CSS borders. */
+async function expectUnframedIcon(button: HTMLElement) {
+  for (const element of [button, ...button.querySelectorAll('*')]) {
+    if (element.closest('svg')) continue;
+    const style = getComputedStyle(element);
+    for (const side of ['Top', 'Right', 'Bottom', 'Left'] as const) {
+      await expect(parseFloat(style[`border${side}Width`])).toBe(0);
+    }
+    await expect(parseFloat(style.borderRadius)).toBe(0);
+    await expect(style.boxShadow).toBe('none');
+  }
+}
+
 /** RUN is a launch target, not a collapse control. */
 export const ExecutionLaunch: Story = {
   render: () => (
@@ -204,12 +216,21 @@ export const Marks: Story = {
   render: () => (
     <Sheet>
       <Group of="Icon-only, so the name is spoken">
-        <IconButton label="Settings" variant="quiet">
-          <SettingsIcon />
-        </IconButton>
-        <IconButton label="Settings" variant="secondary">
-          <SettingsIcon />
-        </IconButton>
+        {(['primary', 'secondary', 'quiet', 'danger', 'overlay', 'remove'] as const).map(
+          (variant) => (
+            <span key={variant} className="flex gap-2">
+              <IconButton label={`${variant} action`} variant={variant}>
+                <SettingsIcon />
+              </IconButton>
+              <IconButton label={`${variant} unavailable`} variant={variant} disabled>
+                <SettingsIcon />
+              </IconButton>
+              <IconButton label={`${variant} row action`} variant={variant} edge fullCell>
+                <SettingsIcon />
+              </IconButton>
+            </span>
+          ),
+        )}
       </Group>
       <Group of="Band chrome, named by its mark">
         <div className="flex min-h-12 justify-end bg-dialog-title text-dialog-title-foreground">
@@ -239,20 +260,17 @@ export const Marks: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    // Regression: artifact actions painted rectangular cells instead of circular faces.
-    for (const name of ['Refresh models', 'Save changes', 'Save unavailable']) {
-      const button = canvas.getByRole('button', { name });
-      const face = button.firstElementChild!;
-      const box = face.getBoundingClientRect();
-      const radius = getComputedStyle(face).borderTopLeftRadius;
-      await expect(box.width).toBe(box.height);
-      await expect(radius === '50%' || parseFloat(radius) >= box.width / 2).toBe(true);
-      await expect(getComputedStyle(button).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    // Regression: circles and row-end borders must not return around any icon.
+    for (const button of canvas.getAllByRole('button')) {
+      await expectUnframedIcon(button);
     }
     await expect(canvas.getByRole('button', { name: 'Save unavailable' })).toBeDisabled();
     const refresh = canvas.getByRole('button', { name: 'Refresh models' });
     refresh.focus();
     await expect(refresh).toHaveFocus();
+    await expectUnframedIcon(refresh);
+    const focusMark = getComputedStyle(refresh, '::before');
+    await expect(parseFloat(focusMark.height)).toBeGreaterThan(0);
     await userEvent.keyboard('{Enter}');
   },
 };
@@ -541,6 +559,9 @@ export const Rows: Story = {
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    await expectUnframedIcon(canvas.getByRole('button', { name: 'Download Piper English' }));
+  },
 };
 
 /**
@@ -606,9 +627,8 @@ export const Composer: Story = {
     ]) {
       for (const button of canvas.getAllByRole('button', { name })) {
         const box = button.getBoundingClientRect();
-        const radius = getComputedStyle(button).borderTopLeftRadius;
         await expect(box.width).toBe(box.height);
-        await expect(radius === '50%' || parseFloat(radius) >= box.width / 2).toBe(true);
+        await expectUnframedIcon(button);
         if (name.endsWith('overlay')) {
           await expect(box.width).toBe(44);
         } else {
@@ -649,13 +669,14 @@ export const Feedback: Story = {
           Sign in again to keep this provider.
         </Banner>
       </Group>
-      <Group of="A copy that already happened">
-        <CopyChip value="done" label="Copy the id" density="compact">
-          <CopyIcon className="size-3" />
-        </CopyChip>
+      <Group of="Icon-only copy">
+        <CopyChip value="done" label="Copy the id" density="compact" />
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    await expectUnframedIcon(canvas.getByRole('button', { name: 'Copy the id' }));
+  },
 };
 
 /** A pick that owns which one is picked, because a sheet has to show both faces. */
@@ -932,11 +953,22 @@ export const Machines: Story = {
           onPress={noop}
         />
         <NewSessionButton machine={STORY_MACHINES[0].name} isBusy onPress={noop} />
+        <NewSessionButton machine={STORY_MACHINES[2].name} disabled onPress={noop} />
         <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={noop} />
         <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={noop} />
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    const buttons = canvas.getAllByRole('button', { name: /^New session/ });
+    // Busy and disabled states must not restore the old project circles.
+    for (const button of buttons) await expectUnframedIcon(button);
+    await expect(buttons).toHaveLength(3);
+    await expect(buttons[0]).toBeEnabled();
+    await expect(buttons[1]).toBeDisabled();
+    await expect(buttons[1]).toHaveAttribute('aria-busy', 'true');
+    await expect(buttons[2]).toBeDisabled();
+  },
 };
 
 function SettingsChoiceDemo() {
@@ -1001,6 +1033,13 @@ export const Settings: Story = {
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    for (const button of canvas.getAllByRole('button', { name: /^Settings for/ })) {
+      await expectUnframedIcon(button);
+      await userEvent.click(button);
+      await expectUnframedIcon(button);
+    }
+  },
 };
 
 /**

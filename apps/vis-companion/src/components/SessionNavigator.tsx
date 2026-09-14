@@ -386,11 +386,9 @@ export function Pager({
   const step = (target: number, isBack: boolean) => {
     const available = target >= 1 && target <= pageCount;
     return (
-      <Button
+      <IconButton
         variant="quiet"
-        density="page"
-        pressEffect="none"
-        aria-label={isBack ? 'Previous page' : 'Next page'}
+        label={isBack ? 'Previous page' : 'Next page'}
         onClick={() => onPage(target)}
         disabled={!available}
         className={available ? '' : 'invisible'}
@@ -398,7 +396,7 @@ export function Pager({
         tabIndex={available ? undefined : -1}
       >
         <ChevronIcon back={isBack} className="mx-auto size-3" />
-      </Button>
+      </IconButton>
     );
   };
   return (
@@ -693,16 +691,10 @@ export function MachineTab({
 /**
  * The verb of one project: start a session in it.
  *
- * A project header REPEATS, so this control repeats with it — and a filled amber disc
- * repeated four times is four primary verbs on one screen, which is the count the design
- * contract allows once. The screen's one filled verb stays where the screen itself begins;
- * this repeating plus is amber INK on the band's own paper, enough to say "create" without
- * turning every project boundary into a primary action.
- *
- * The face stays on the compact 32px header rhythm while `IconButton` preserves a 44px
- * touch target outside the painted box. `where` remains in the tooltip and `machine` in
- * the accessible name. While creation is in flight, the same disc stays put and its plus
- * becomes a familiar turning ring; progress must not make one project header change width.
+ * Repeated project actions use amber ink without a border or a circular fill.
+ * The compact 32px layout box keeps a 44px touch target through `IconButton`.
+ * `where` stays in the tooltip and `machine` in the accessible name. Creation
+ * replaces the plus with a spinner without changing the header's width.
  */
 export function NewSessionButton({
   machine,

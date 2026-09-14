@@ -187,6 +187,13 @@ describe('the artifacts chip', () => {
     expect(text(html)).toContain('12');
   });
 
+  it.each([false, true])('keeps the artifact icon unframed when open=%s', (open) => {
+    const html = renderToStaticMarkup(<ArtifactsChip count={3} open={open} onToggle={() => {}} />);
+    expect(buttonClasses(html)).toContain('border-0');
+    expect(buttonClasses(html)).not.toContain('border-accent');
+    expect(buttonClasses(html)).not.toContain('focus-visible:ring-2');
+  });
+
   // Regression: the chip stood 44px, then 32px, tall beside a 24px session id, so the
   // header read as one big button with some text next to it. Both wear the band's own
   // rhythm now — and they are still measured against each other, never against a number.

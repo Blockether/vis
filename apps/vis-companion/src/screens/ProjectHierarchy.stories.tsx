@@ -57,6 +57,16 @@ export const GroupedSessions: Story = {
     await expect(within(header).queryByRole('button', { name: /^Actions for/ })).toBeNull();
     await expect(header.querySelector('[data-swipe-track]')).toBeNull();
 
+    // Regression: repeated project pluses and row controls must stay unframed.
+    const create = within(header).getByRole('button', { name: /^New session/ });
+    const face = style(create);
+    const box = create.getBoundingClientRect();
+    await expect(box.width).toBe(box.height);
+    await expect(parseFloat(face.borderRadius)).toBe(0);
+    for (const side of ['Top', 'Right', 'Bottom', 'Left'] as const) {
+      await expect(parseFloat(face[`border${side}Width`])).toBe(0);
+    }
+
     // Regression: project names and full-width row rules previously had nearly
     // the same visual weight. Hierarchy must survive without relying on hue.
     await expect(Number(style(title).fontWeight)).toBeGreaterThan(

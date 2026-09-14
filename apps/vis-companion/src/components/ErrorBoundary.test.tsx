@@ -16,4 +16,9 @@ describe('the render failure surface', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Reload Vis' }));
     expect(reload).toHaveBeenCalledOnce();
   });
+
+  it('does not put a decorative frame around the logo', () => {
+    const { container } = render(<ErrorFallback message="timeline failed" onReload={() => {}} />);
+    expect(container.querySelector('img')?.parentElement).not.toHaveClass('border');
+  });
 });

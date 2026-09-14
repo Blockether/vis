@@ -94,6 +94,27 @@ try {
       );
     }
     const violations = await page.evaluate(async (source) => {
+      // Audit every rendered icon-only action, including portal and artifact controls.
+      // SVG strokes express the glyph itself; only HTML enclosures are forbidden.
+      const frames = [];
+      for (const button of document.querySelectorAll('button, a, [role="button"]')) {
+        if (!button.querySelector('svg') || button.innerText.trim() || !button.checkVisibility())
+          continue;
+        for (const element of [button, ...button.querySelectorAll('*')]) {
+          if (element.closest('svg')) continue;
+          const style = getComputedStyle(element);
+          const borders = ['Top', 'Right', 'Bottom', 'Left'].map((side) =>
+            parseFloat(style[`border${side}Width`]),
+          );
+          if (borders.some((width) => width > 0) || parseFloat(style.borderRadius) > 0) {
+            frames.push({
+              rule: 'icon-frame',
+              target: button.getAttribute('aria-label') || button.getAttribute('title'),
+              data: { borders, radius: style.borderRadius },
+            });
+          }
+        }
+      }
       // Keep the scanner independent of Storybook's concurrent a11y addon.
       const previousAxe = window.axe;
       const module = { exports: {} };
@@ -106,12 +127,14 @@ try {
         iframes: false,
         runOnly: { type: 'rule', values: ['color-contrast'] },
       });
-      return result.violations.flatMap((violation) =>
-        violation.nodes.map((node) => ({
-          rule: violation.id,
-          target: String(node.target),
-          data: node.any[0]?.data ?? {},
-        })),
+      return frames.concat(
+        result.violations.flatMap((violation) =>
+          violation.nodes.map((node) => ({
+            rule: violation.id,
+            target: String(node.target),
+            data: node.any[0]?.data ?? {},
+          })),
+        ),
       );
     }, axeSource);
     failures.push(...violations.map((violation) => ({ id, theme, ...violation })));
@@ -149,10 +172,12 @@ try {
       );
     }
     if (failures.length > 100) console.error(`…and ${failures.length - 100} more.`);
-    throw new Error(`${failures.length} Storybook contrast checks failed.`);
+    throw new Error(`${failures.length} Storybook contrast/icon-frame checks failed.`);
   }
 
-  console.log(`${storyIds.length} stories × ${themes.length} themes: contrast clean.`);
+  console.log(
+    `${storyIds.length} stories × ${themes.length} themes: contrast and icon frames clean.`,
+  );
 } finally {
   await browser.close();
   await new Promise((resolveClose, rejectClose) =>

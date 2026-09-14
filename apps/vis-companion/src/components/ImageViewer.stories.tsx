@@ -40,24 +40,26 @@ export const DrawingToolsHidden: Story = {
   },
 };
 
-/** Regression: zoom marks use circular faces, without a segmented square override. */
+/** Regression: zoom controls keep their targets without borders or circular faces. */
 export const ZoomControls: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     const zoomIn = page.getByRole('button', { name: 'Zoom in' });
     const zoomOut = page.getByRole('button', { name: 'Zoom out' });
     for (const button of [zoomOut, zoomIn]) {
-      const assertCircle = async () => {
+      const assertUnframed = async () => {
         const box = button.getBoundingClientRect();
+        const style = getComputedStyle(button);
         await expect(box.width).toBe(box.height);
         await expect(box.width).toBeGreaterThanOrEqual(28);
-        await expect(parseFloat(getComputedStyle(button).borderRadius)).toBeGreaterThanOrEqual(
-          box.width / 2,
-        );
+        await expect(parseFloat(style.borderRadius)).toBe(0);
+        for (const side of ['Top', 'Right', 'Bottom', 'Left'] as const) {
+          await expect(parseFloat(style[`border${side}Width`])).toBe(0);
+        }
       };
-      await assertCircle();
+      await assertUnframed();
       await userEvent.hover(button);
-      await assertCircle();
+      await assertUnframed();
       await userEvent.unhover(button);
     }
     const reset = page.getByRole('button', { name: 'Reset zoom' });
