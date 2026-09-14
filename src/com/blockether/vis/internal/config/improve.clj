@@ -12,13 +12,14 @@
 
 (defonce ^:private mode-listener
   (toggles/add-listener! (fn [{:keys [id]}]
-                           (when (= id "improve_mode") (swap! generation inc)))))
+                           (when (contains? #{"improve" "improve_mode"} id)
+                             (swap! generation inc)))))
 
 (defn settings
   "Current live mode and merged, persisted review route. No implicit provider or model."
   []
   (let [raw (get (config/load-config-raw) "improve")]
-    {:mode (toggles/value-of "improve_mode")
+    {:mode (if (toggles/enabled? "improve") (toggles/value-of "improve_mode") "off")
      :provider (get raw "provider")
      :model (get raw "model")
      :interval_minutes (get raw "interval_minutes" 60)}))
@@ -68,6 +69,7 @@
 (defn current?
   "Quick read-only commit gate; detects route edits and intervening mode changes."
   [snapshot]
-  (and (= (:generation snapshot) @generation)
+  (and (toggles/enabled? "improve")
+       (= (:generation snapshot) @generation)
        (= "automatic" (toggles/value-of "improve_mode"))
        (= (:settings snapshot) (settings))))

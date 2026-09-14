@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.session.agents-integration-test
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
@@ -13,11 +14,18 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
 (set-ns-context! [(around-each [f]
-                               (let [registered? (some #(= "foundation-core" (:ext/name %))
-                                                       (extension/registered-extensions))]
+                               (let [enabled?
+                                     (toggles/enabled? "subagents")
+
+                                     registered?
+                                     (some #(= "foundation-core" (:ext/name %))
+                                           (extension/registered-extensions))]
+
                                  (when-not registered? (foundation/register!))
+                                 (toggles/set-enabled! "subagents" true)
                                  (try (f)
-                                      (finally (when-not registered?
+                                      (finally (toggles/set-enabled! "subagents" enabled?)
+                                               (when-not registered?
                                                  (extension/deregister-extension!
                                                    "foundation-core"))))))])
 

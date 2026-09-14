@@ -246,6 +246,8 @@ export function MachineSettings({
     setPending(toggle.id);
     try {
       patch(await client.setSetting(toggle.id, 'toggle'));
+      // Feature flags can reveal or hide their dependent settings.
+      if (toggle.is_experimental) await load();
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -389,9 +391,16 @@ export function MachineSettings({
                     className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4 sm:py-2"
                   >
                     <div className="min-w-0">
-                      <Text as="p" variant="label" className="break-words">
-                        {toggle.label}
-                      </Text>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Text as="p" variant="label" className="break-words">
+                          {toggle.label}
+                        </Text>
+                        {toggle.is_experimental && (
+                          <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">
+                            Experimental
+                          </span>
+                        )}
+                      </div>
                       {toggle.description && (
                         <Text as="p" variant="description" className="mt-0.5 break-words">
                           {toggle.description}

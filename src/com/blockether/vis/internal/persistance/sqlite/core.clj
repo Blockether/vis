@@ -25,6 +25,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.diff :as diff]
             [com.blockether.vis.contract.improve :as improve-contract]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -234,7 +235,7 @@
   [^DataSource ds]
   (migration/migrate! ds MIGRATIONS)
   ;; Backfill only missing workflow rows. Reopening never overwrites human analysis or state.
-  (jdbc/execute! ds [improve-intake-sql]))
+  (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql])))
 
 ;; Connection management
 ;;
@@ -3875,7 +3876,7 @@
 (defn- insert-improve!
   "The register is part of the publication transaction, including idempotent replays."
   [db id row]
-  (when (= "complain" (:kind row))
+  (when (and (toggles/enabled? "improve") (= "complain" (:kind row)))
     (let [{:keys [scope] :as source} (:source_ref row)]
       (execute! db
                 {:insert-into :improve

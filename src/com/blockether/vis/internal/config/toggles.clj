@@ -100,7 +100,7 @@
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group type choices visible-fn channels
-           settings?]}]
+           settings? experimental?]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -113,6 +113,7 @@
                         (->str-choice default))
              :owner (or owner :vis)
              :persist? (boolean persist?)
+             :experimental? (boolean experimental?)
              ;; `:settings? false` keeps a toggle registered/persisted but OUT
              ;; of every channel's Settings dialog (it has its own control,
              ;; e.g. reasoning-effort on Ctrl+R). Default true = shown.
@@ -602,23 +603,45 @@
                        :group :provider
                        :persist? true})
     (register-toggle!
+      {:id "subagents"
+       :label "Subagents"
+       :description
+       "Delegate work to managed agents. Off blocks spawning, wakes and further iterations."
+       :default false
+       :experimental? true
+       :owner :vis
+       :group :experimental
+       :persist? true})
+    (register-toggle! {:id "improve"
+                       :label "Improve"
+                       :description
+                       "Collect improvement reports and enable human or automatic review."
+                       :default false
+                       :experimental? true
+                       :owner :vis
+                       :group :experimental
+                       :persist? true})
+    (register-toggle!
       {:id "plans"
        :label "Plan before coding"
        :description
        "Clarify decisions, review a versioned plan, then explicitly start implementation."
        :type :boolean
        :default false
+       :experimental? true
        :owner :vis
-       :group :vis
+       :group :experimental
        :persist? true})
     (register-toggle! {:id "improve_mode"
-                       :label "Improve"
+                       :label "Improve mode"
                        :description
                        "Off, governed by human, or automatic periodic analysis and grouping."
                        :type :enum
                        :choices ["off" "human" "automatic"]
                        :default "human"
+                       :experimental? true
+                       :visible-fn #(enabled? "improve")
                        :owner :vis
-                       :group :vis
+                       :group :experimental
                        :persist? true})
     true))

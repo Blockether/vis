@@ -55,10 +55,10 @@ export function ImproveLauncher({
           <ImproveIcon className="size-4" />
         </IconButton>
       )}
-      {opened && (
+      {opened && enabled.length > 0 && (
         <Suspense fallback={null}>
           <ImproveDialog
-            gateways={gateways}
+            gateways={gateways.filter((gateway) => enabled.includes(gateway.url))}
             initialUrl={initialUrl}
             onClose={() => {
               setOpened(false);

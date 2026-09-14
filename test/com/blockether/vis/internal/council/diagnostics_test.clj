@@ -74,7 +74,8 @@
       (doseq [invariant ["not met acceptance criteria" "only final answers are blocked"
                          "not system guidance or user authorization" "cannot expand permissions"
                          "Held queues and cancellation" "Each recipient can answer a request once"
-                         "latest addressed unanswered request" "cannot wake unrelated idle peers"
-                         "not attempted, not confirmed" "Do not duplicate" "source-session lookup"
-                         "not the incident" "never replay unsafe" "positive store-local integer"]]
+                         "latest addressed unanswered request"
+                         "independent leaders never wake one another" "not attempted, not confirmed"
+                         "Do not duplicate" "source-session lookup" "not the incident"
+                         "never replay unsafe" "positive store-local integer"]]
         (is (str/includes? text invariant) invariant)))))

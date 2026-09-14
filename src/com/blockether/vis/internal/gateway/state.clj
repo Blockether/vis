@@ -15,6 +15,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.improve :as improve-settings]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.improve.core :as improve]
             [com.blockether.vis.internal.improve.review :as improve-review]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
@@ -5113,6 +5114,7 @@
 
     (when-not (persistance/db-get-session db sid)
       (agents/fail! :session-not-found "Unknown session"))
+    (when (= :spawn operation) (agents/require-enabled!))
     ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
     ;; Only spawn consumes the running parent's safe model checkpoint.
     (agents/operation! (assoc (when (= :spawn operation) (live-env sid))
@@ -6019,6 +6021,9 @@
 (defn improve-operation!
   "Machine-level Improve workflow; record payload keys retain canonical snake_case."
   [operation opts]
+  (when (and (not= :settings operation) (not (toggles/enabled? "improve")))
+    (throw (ex-info "Improve is disabled. Enable Improve in Experimental settings."
+                    {:type :improve/disabled :status 409})))
   (let [db (lp/db-info)]
     (case operation
       :settings

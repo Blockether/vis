@@ -16,7 +16,7 @@
             [taoensso.nippy :as nippy]
             [taoensso.telemere :as tel]))
 
-(h/use-mem-store!)
+(h/use-mem-store! {"subagents" true "improve" true})
 
 (defn- council [op & args] (apply (ns-resolve 'com.blockether.vis.internal.council.core op) args))
 
@@ -25,7 +25,7 @@
   `(if (io/resource "com/blockether/vis/internal/council/core.clj")
      (do (require 'com.blockether.vis.internal.council.core)
          (with-redefs [toggles/enabled? (fn [id#]
-                                          (= "council" id#))]
+                                          (contains? #{"council" "subagents" "improve"} id#))]
            ~@body))
      (is false "Council operations have not been implemented")))
 
@@ -2523,7 +2523,7 @@
           record!
           #(council 'record-failure! env %1 %2)]
 
-      (with-redefs [toggles/enabled? (constantly false)]
+      (with-redefs [toggles/enabled? #(= "improve" %)]
         (let [result (record! tool failure)
               id (get-in result [:error :complain_entry_id])
               entry (ps/db-council-get db id)]

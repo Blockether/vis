@@ -90,6 +90,10 @@
         "is_persist": {
           "type": "boolean"
         },
+        "is_experimental": {
+          "type": "boolean",
+          "description": "Marks an opt-in experimental feature in settings."
+        },
         "is_settings": {
           "type": "boolean"
         },

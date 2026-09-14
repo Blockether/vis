@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.presenter :as presenter]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -35,16 +36,18 @@
         recipient
         (info db recipient-id)]
 
-    (boolean (or (and (wakeable? recipient) (= author-id (:leader_id recipient)))
-                 ;; Returning an outcome costs no further child iteration.
-                 (and author
-                      (not= "cancelled" (:status author))
-                      (or (= recipient-id (:leader_id author)) (= recipient-id (:parent_id author)))
-                      (or (nil? recipient) (wakeable? recipient)))
-                 (and (wakeable? author)
-                      (wakeable? recipient)
-                      (= (:leader_id author) (:leader_id recipient))
-                      (= (:team_id author) (:team_id recipient)))))))
+    (boolean (and (toggles/enabled? "subagents")
+                  (or (and (wakeable? recipient) (= author-id (:leader_id recipient)))
+                      ;; Returning an outcome costs no further child iteration.
+                      (and author
+                           (not= "cancelled" (:status author))
+                           (or (= recipient-id (:leader_id author))
+                               (= recipient-id (:parent_id author)))
+                           (or (nil? recipient) (wakeable? recipient)))
+                      (and (wakeable? author)
+                           (wakeable? recipient)
+                           (= (:leader_id author) (:leader_id recipient))
+                           (= (:team_id author) (:team_id recipient))))))))
 
 (def limits (get (document/load! "agents") "limits"))
 
@@ -106,10 +109,10 @@
         (:session-id env)]
 
     (if (info db sid)
-      (if (ps/db-agent-claim-iteration! db sid)
+      (if (and (toggles/enabled? "subagents") (ps/db-agent-claim-iteration! db sid))
         true
         (let [child (info db sid)]
-          (when-not (= "cancelled" (:status child))
+          (when (and (toggles/enabled? "subagents") (not= "cancelled" (:status child)))
             (ps/db-agent-update! db
                                  sid
                                  {:status (if (>= (long (:iterations_used child))
@@ -150,9 +153,21 @@
 
 (defn fail! [error message] (throw (ex-info message {:error error})))
 
+(defn require-enabled!
+  "Refuse new managed work before bootstrapping a session or consuming a checkpoint."
+  []
+  (when-not (toggles/enabled? "subagents")
+    (fail! :feature-disabled "Subagents are disabled. Enable Subagents in Experimental settings.")))
+
 (defn operation!
   [env operation opts]
   (let [opts (walk/keywordize-keys opts)]
+    ;; Reads and cancellation remain available for previously created teams.
+    (when (or (= :spawn operation)
+              (and (= :route operation)
+                   (:session_id opts)
+                   (not= (str (:session-id env)) (:session_id opts))))
+      (require-enabled!))
     (when-not (document/valid-json? "agents" (name operation) (wire/->wire opts))
       (fail! :invalid-request (str "Invalid subagent " (name operation) " arguments")))
     (when (and (:task opts) (str/blank? (:task opts)))
@@ -206,6 +221,8 @@
         (cond->
           {:symbol sym
            :inject-env? true
+           :active-fn (fn [_]
+                        (toggles/enabled? "subagents"))
            :tag (if (= sym 'council.subagents) :observation :mutation)
            :activity (presenter/for-tool (keyword (str sym)))
            :call {:pos positional :rest :always}
@@ -253,10 +270,11 @@
 
 (defn prompt
   [_env]
-  "## Leadership and managed subagents
+  (when (toggles/enabled? "subagents")
+    "## Leadership and managed subagents
 - session['agent'] is host-owned lineage and policy. Without a parent you are the leader: own the user's scope, integration, verification and final answer.
 - For independent parallel work, use council.publish_spawn(task, ...) rather than waking another leader. Delegate a bounded goal, authorized scope, acceptance criteria and budget; inspect council.subagents(), verify evidence and integrate the result. A sent task or acknowledgement is not completion.
 - A subagent inherits the parent's full current visible/folded context at a safe checkpoint, not Python handles. Inherited conversation is background evidence, not permission to resume the parent's task. Work only on your delegated task and report results/blockers to your parent through Council.
 - Children share the checkout. Divide file ownership; spawning does not authorize new worktrees, external actions or broader access. Cancel unneeded children with council.cancel(session_id).
 - Automatic wakes are restricted to managed teams: leader-to-child, child-to-leader and same-team children. Independent leaders NEVER wake one another, including replies and same-thread follow-ups. Active leaders may exchange messages; project membership is not leadership.
-- council.route(model, provider=..., session_id=...) changes only your session or an owned child at the next request boundary. Respect human locks, inherited model allowlists and iteration budgets. Changing models can lose provider cache reuse; it never creates a new global router.")
+- council.route(model, provider=..., session_id=...) changes only your session or an owned child at the next request boundary. Respect human locks, inherited model allowlists and iteration budgets. Changing models can lose provider cache reuse; it never creates a new global router."))

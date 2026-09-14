@@ -11,7 +11,7 @@
             [reitit.core :as r])
   (:import (java.io ByteArrayInputStream)))
 
-(h/use-mem-store!)
+(h/use-mem-store! {"improve" true})
 
 (defn- request
   [method path body query]

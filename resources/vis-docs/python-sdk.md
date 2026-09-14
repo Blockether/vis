@@ -37,6 +37,10 @@ credentials and engine state outside the project you ask the agent to inspect.
 
 ## Delegate managed subagents
 
+Enable **Subagents** under **Settings → Experimental** on the gateway first. It is
+off by default. Turning it off blocks creation, automatic team wakes and subsequent
+child iterations, while preserving existing teams for inspection or cancellation.
+
 Ask your main agent to divide independent work into bounded tasks. It remains
 responsible for verifying and integrating the results. You can ask it to list its
 subagents, report progress or stop a child and its descendants. Children share the

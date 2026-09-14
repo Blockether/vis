@@ -8,6 +8,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.attachment-intake-test :as intake-fixture]
@@ -628,11 +629,15 @@
         (let [ids (mapv :id (menu-commands nil))]
           (expect (some #{:new-session} ids))
           (expect (some #{:voice} ids)))))
-  (it "Ctrl+K palette gets no registry slash roots by default"
-      (with-redefs [vis/registered-slashes
-                    (constantly [{:slash/name "voice" :slash/doc "Voice toggle"}
-                                 {:slash/name "workspace" :slash/doc "Workspace ops"}])]
-        (expect (= [:agent-team] (mapv :id (command-palette-extra-commands)))))))
+  (it "Ctrl+K offers team inspection only after Subagents is enabled"
+      (doseq [enabled? [false true]]
+        (with-redefs [vis/registered-slashes
+                      (constantly [{:slash/name "voice" :slash/doc "Voice toggle"}
+                                   {:slash/name "workspace" :slash/doc "Workspace ops"}])
+                      agent-team/enabled? (constantly enabled?)]
+
+          (expect (= (if enabled? [:agent-team] [])
+                     (mapv :id (command-palette-extra-commands))))))))
 
 (defdescribe channel-status-error-routing-test
              (it "routes error status events to the notification lane only"

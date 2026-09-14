@@ -10,7 +10,7 @@
             [reitit.core :as r])
   (:import [java.io ByteArrayInputStream]))
 
-(h/use-mem-store!)
+(h/use-mem-store! {"subagents" true})
 
 (defn- request
   [method path body]

@@ -12,10 +12,11 @@ allow comments; implementation records are read-only reports that Vis updates as
 
 ## Turn planning on
 
-Open **Settings** in Companion or the TUI and enable **Plan before coding**. The
-setting is off by default and is shared by interactive clients of that gateway.
-It applies to subsequent prompts, not a turn already running. One-shot CLI
-requests do not include the planning prompt.
+Open **Settings → Experimental** in Companion or the TUI and enable **Plan before
+coding**. The switch has an **Experimental** badge and is off by default. It is
+shared by interactive clients of that gateway and applies to subsequent prompts,
+not a turn already running. One-shot CLI requests do not include the planning prompt.
+Turning it off hides planning actions but keeps your documents and comments.
 
 Then describe your goal normally, for example:
 

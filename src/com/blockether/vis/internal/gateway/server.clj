@@ -1761,7 +1761,7 @@
   "One settings row as JSON — the wire twin of the server-side
    `toggle-row` hiccup: boolean rows carry `enabled`, enum rows carry
    `value` + `choices`."
-  [{:keys [id label description type]}]
+  [{:keys [id label description type experimental?]}]
   (let [choices
         (try (toggles/choices-of id) (catch Throwable _ nil))
 
@@ -1775,6 +1775,7 @@
         base
         {:id id
          :label (str (or label id))
+         :is-experimental (boolean experimental?)
          :type (name (or type (if (seq choices) :enum :boolean)))}]
 
     (cond-> base

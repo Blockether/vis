@@ -4216,9 +4216,12 @@
      "block ends by printing exactly what the answer needs. Batch, filter and chain work here: "
      "`await gather(...)` runs independent calls together. State persists; "
      "project packages need a project REPL. "
-     "Nothing is silent: errors surface whether the block printed or not. Each failed python_execution is "
-     "automatically saved in improve as complain from autocomplain, with its session and turn/iteration/form; "
-     "it never auto-pings peers. The failure reports those coordinates and its entry ID. "
+     "Nothing is silent: errors surface whether the block printed or not. "
+     (when (toggles/enabled? "improve")
+       (str
+         "Each failed python_execution is automatically saved in Improve as complain from autocomplain, "
+         "with its session and turn/iteration/form; it never auto-pings peers. "
+         "The failure reports those coordinates and its entry ID. "))
      "Every capability is a plain Python "
      "name here, so a result is an ordinary value you keep in a variable — but a value you never printed "
      "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "

@@ -10,10 +10,14 @@
   (let [old
         (toggles/value-of "improve_mode")
 
+        enabled?
+        (toggles/enabled? "improve")
+
         raw
         (atom {"toggles" {"plans" true}})]
 
-    (try (toggles/set-value! "improve_mode" "human")
+    (try (toggles/set-enabled! "improve" true)
+         (toggles/set-value! "improve_mode" "human")
          (with-redefs [config/load-config-raw
                        (fn []
                          @raw)
@@ -23,7 +27,8 @@
                          (swap! raw update-fn))]
 
            (f raw))
-         (finally (toggles/set-value! "improve_mode" old)))))
+         (finally (toggles/set-value! "improve_mode" old)
+                  (toggles/set-enabled! "improve" enabled?)))))
 
 (defn- status [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:status (ex-data e)))))
 

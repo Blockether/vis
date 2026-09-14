@@ -271,6 +271,7 @@ export interface Toggle {
   type: ToggleType;
   description?: string;
   enabled?: boolean;
+  is_experimental?: boolean;
   value?: string;
   choices?: string[];
   max_length?: number;

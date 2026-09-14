@@ -56,8 +56,9 @@ describe('agent team controller', () => {
     vi.useFakeTimers();
     const first = deferred<Subagent[]>();
     const agents = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue([child]);
-    const client = { agents, cancelAgent: vi.fn() } as unknown as GatewayClient;
+    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent: vi.fn() } as unknown as GatewayClient;
     const { rerender, unmount } = render(<AgentTeam client={client} sid="leader" onOpen={vi.fn()} />);
+    await act(async () => {});
     const signal = agents.mock.calls[0][1] as AbortSignal;
     await act(async () => { vi.advanceTimersByTime(15000); });
     expect(agents).toHaveBeenCalledTimes(1);
@@ -84,7 +85,7 @@ describe('agent team controller', () => {
     vi.useFakeTimers();
     const agents = vi.fn().mockResolvedValue([child]);
     const cancelAgent = vi.fn().mockRejectedValue(new Error('Stop failed. Try again.'));
-    const client = { agents, cancelAgent } as unknown as GatewayClient;
+    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent } as unknown as GatewayClient;
     render(<AgentTeam client={client} sid="leader" onOpen={vi.fn()} />);
     await act(async () => {});
     fireEvent.click(screen.getByRole('button', { name: /Agents: 1/ }));
@@ -103,9 +104,9 @@ describe('agent team controller', () => {
   it('rejects malformed responses, recovers on refresh and opens the parent', async () => {
     const agents = vi.fn().mockResolvedValueOnce({}).mockResolvedValue([child]);
     const onOpen = vi.fn();
-    const client = { agents, cancelAgent: vi.fn() } as unknown as GatewayClient;
+    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent: vi.fn() } as unknown as GatewayClient;
     render(<AgentTeam client={client} sid="child" parentId="leader" onOpen={onOpen} />);
-    fireEvent.click(screen.getByRole('button', { name: /Agents: 0/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Agents: 0/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('invalid agent team');
     fireEvent.click(screen.getByRole('button', { name: 'Refresh team' }));
     expect(await screen.findByText('Verify the contract')).toBeInTheDocument();
@@ -117,11 +118,34 @@ describe('agent team controller', () => {
   it('ignores a late response from an aborted session request', async () => {
     const old = deferred<Subagent[]>();
     const agents = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue([]);
-    const client = { agents, cancelAgent: vi.fn() } as unknown as GatewayClient;
+    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent: vi.fn() } as unknown as GatewayClient;
     const { rerender } = render(<AgentTeam client={client} sid="old" onOpen={vi.fn()} />);
+    await act(async () => {});
     rerender(<AgentTeam client={client} sid="new" onOpen={vi.fn()} />);
     await act(async () => {});
     await act(async () => { old.resolve([child]); });
     expect(screen.getByRole('button', { name: /Agents: 0 total/ })).toBeInTheDocument();
+  });
+  it('keeps the team hidden and does not fetch agents until the feature is enabled', async () => {
+    vi.useFakeTimers();
+    const setting = vi.fn().mockResolvedValue({ enabled: false });
+    const agents = vi.fn().mockResolvedValue([child]);
+    const client = { setting, agents } as unknown as GatewayClient;
+    render(<AgentTeam client={client} sid="leader" onOpen={vi.fn()} />);
+    await act(async () => {});
+    expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
+    expect(agents).not.toHaveBeenCalled();
+    setting.mockResolvedValue({ enabled: true });
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(screen.getByRole('button', { name: /Agents: 1/ })).toBeInTheDocument();
+    setting.mockResolvedValue({ enabled: false });
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
+    expect(agents).toHaveBeenCalledTimes(1);
+    expect(setting).toHaveBeenCalledWith('subagents', expect.any(AbortSignal));
+    setting.mockRejectedValue(new Error('Settings unavailable'));
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
+    expect(agents).toHaveBeenCalledTimes(1);
   });
 });

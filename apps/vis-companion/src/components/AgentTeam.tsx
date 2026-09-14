@@ -144,6 +144,7 @@ export function AgentTeam({ client, sid, parentId, onOpen }: {
   parentId?: string;
   onOpen: (sid: string) => void;
 }) {
+  const [enabled, setEnabled] = useState(false);
   const [agents, setAgents] = useState<Subagent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +158,10 @@ export function AgentTeam({ client, sid, parentId, onOpen }: {
       if (fetching || controller.signal.aborted || document.hidden) return;
       fetching = true;
       try {
+        const setting = await client.setting('subagents', controller.signal).catch(() => null);
+        if (controller.signal.aborted) return;
+        setEnabled(setting?.enabled === true);
+        if (setting?.enabled !== true) return;
         const rows = await client.agents(sid, controller.signal);
         if (!Array.isArray(rows)) throw new Error('Gateway returned an invalid agent team');
         if (!controller.signal.aborted) {
@@ -193,6 +198,7 @@ export function AgentTeam({ client, sid, parentId, onOpen }: {
       setPending(null);
     }
   };
+  if (!enabled) return null;
   return (
     <AgentTeamPanel
       agents={agents}

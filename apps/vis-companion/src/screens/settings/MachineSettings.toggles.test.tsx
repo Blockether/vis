@@ -107,3 +107,53 @@ describe('draft backend dropdown', () => {
     expect(screen.queryByText('Setting could not be saved')).toBeNull();
   });
 });
+
+describe('experimental feature flags', () => {
+  it('renders badges from metadata and refreshes dependent rows after a flip', async () => {
+    const feature: Toggle = {
+      id: 'improve',
+      label: 'Improve',
+      type: 'boolean',
+      enabled: false,
+      is_experimental: true,
+    };
+    const mode: Toggle = {
+      id: 'improve_mode',
+      label: 'Improve mode',
+      type: 'enum',
+      value: 'human',
+      choices: ['off', 'human', 'automatic'],
+      is_experimental: true,
+    };
+    let enabled = false;
+    const settings = vi.mocked(GatewayClient.prototype.settings).mockImplementation(async () => ({
+      groups: [{
+        id: 'experimental',
+        title: 'Experimental',
+        toggles: [{ ...feature, enabled }, ...(enabled ? [mode] : [])],
+      }],
+    }));
+    vi.spyOn(GatewayClient.prototype, 'setSetting').mockImplementation(async () => {
+      enabled = !enabled;
+      return { ...feature, enabled };
+    });
+    render(
+      <MachineSettings
+        gateway={gateway}
+        speechPrefs={DEFAULT_SPEECH_PREFS}
+        onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
+      />,
+    );
+    const toggle = await screen.findByRole('switch', { name: /^Improve:/ });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getAllByText('Experimental')).toHaveLength(2);
+    expect(screen.queryByRole('combobox', { name: 'Improve mode' })).toBeNull();
+    await userEvent.click(toggle);
+    await screen.findByRole('combobox', { name: 'Improve mode' });
+    expect(toggle).toBeChecked();
+    expect(screen.getAllByText('Experimental')).toHaveLength(3);
+    await userEvent.click(toggle);
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Improve mode' })).toBeNull());
+    expect(settings).toHaveBeenCalledTimes(3);
+  });
+});

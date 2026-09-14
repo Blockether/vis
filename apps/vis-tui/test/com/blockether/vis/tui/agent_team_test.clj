@@ -7,12 +7,51 @@
             [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as theme]
+            [lazytest.core :as lt]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.html HtmlTerminal HtmlTerminalView]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
+
+(lt/set-ns-context! [(lt/around-each [f]
+                                     (with-redefs [vis/setting (constantly {"enabled" true})]
+                                       (f)))])
+
+(deftest feature-opt-in-controls-fetches-and-cached-availability-test
+  (let [enabled
+        (atom false)
+
+        requests
+        (atom 0)]
+
+    (with-redefs [vis/setting
+                  (fn [id]
+                    (is (= "subagents" id))
+                    {"enabled" @enabled})
+
+                  vis/request!
+                  (fn [& _]
+                    (swap! requests inc)
+                    {:status 200 :body "[]"})]
+
+      (is (not (team/enabled? "experimental-team")))
+      (team/fetch! "experimental-team")
+      (is (zero? @requests))
+      (is (not (team/enabled? "experimental-team")))
+      (reset! enabled true)
+      (team/fetch! "experimental-team")
+      (is (team/enabled? "experimental-team"))
+      (is (= 1 @requests))
+      (reset! enabled false)
+      (team/fetch! "experimental-team")
+      (is (not (team/enabled? "experimental-team")))
+      (is (= 1 @requests)))
+    (with-redefs [vis/setting (fn [_]
+                                (throw (java.io.IOException. "offline")))]
+      (team/fetch! "experimental-team")
+      (is (not (team/enabled? "experimental-team"))))))
 
 (deftest read-errors-are-recoverable-test
   (doseq [response [{:status 503} {:status 200 :body "not json"} {:status 200 :body "{}"}
@@ -89,7 +128,11 @@
              (:session-id (::dlg/done ((:on-key c) next (KeyStroke. KeyType/Enter) geom))))))
     (reset! snapshot {:agents []})
     (is (some #(str/includes? (:label %) "No subagents yet")
-              (:filtered ((:measure c) initial 40 20))))))
+              (:filtered ((:measure c) initial 40 20))))
+    (reset! snapshot {:enabled? false})
+    (let [disabled ((:measure c) initial 40 20)]
+      (is (str/includes? (:title disabled) "Disabled"))
+      (is (not-any? :action (:filtered disabled))))))
 
 (deftest inspect-and-confirmed-cancel-test
   (doseq [confirmed? [false true]]

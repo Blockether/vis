@@ -2213,6 +2213,19 @@ export function storySettingsFetch(populated = false): typeof fetch {
         },
       ]
     : [];
+  const features = ['subagents', 'improve', 'plans'].map((id) => ({
+    id,
+    label: id === 'plans' ? 'Plan before coding' : id === 'improve' ? 'Improve' : 'Subagents',
+    description:
+      id === 'subagents'
+        ? 'Delegate work to managed agents.'
+        : id === 'improve'
+          ? 'Collect improvement reports and review them.'
+          : 'Review a versioned plan before implementation.',
+    type: 'boolean',
+    enabled: false,
+    is_experimental: true,
+  }));
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(href);
@@ -2221,6 +2234,14 @@ export function storySettingsFetch(populated = false): typeof fetch {
     }
     let body: unknown = {};
     if (url.pathname === '/v1/router') body = { providers: populated ? STORY_PROVIDERS : [] };
+    if (url.pathname === '/v1/settings' && init?.method === 'POST') {
+      const request = JSON.parse(String(init.body));
+      const feature = features.find((item) => item.id === request.id);
+      if (feature) feature.enabled = !feature.enabled;
+      body = feature;
+    } else if (url.pathname === '/v1/settings') {
+      body = { groups: [{ id: 'experimental', title: 'Experimental', toggles: features }] };
+    }
     if (url.pathname === '/v1/mcp/servers') body = { servers };
     const enable = url.pathname.match(/^\/v1\/mcp\/servers\/([^/]+)\/actions\/enable$/);
     if (enable && init?.method === 'POST') {

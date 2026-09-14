@@ -6,7 +6,7 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
-(h/use-mem-store!)
+(h/use-mem-store! {"subagents" true})
 
 (deftest independent-leaders-never-wake-test
   ;; Regression: coordination between independent leaders created new user-facing turns.

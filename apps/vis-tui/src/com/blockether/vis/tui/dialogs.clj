@@ -3394,7 +3394,8 @@
           toggle-val
           (vis/toggle-value toggle-id)]
 
-      (if (= :enum (:type spec)) (str label ": " (clojure.core/name toggle-val)) label))
+      (str (if (= :enum (:type spec)) (str label ": " (clojure.core/name toggle-val)) label)
+           (when (:experimental? spec) "  [Experimental]")))
 
     label))
 

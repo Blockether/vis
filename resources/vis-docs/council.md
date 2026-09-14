@@ -20,7 +20,9 @@ contact the other agent. To ask for its help, be explicit:
 
 Vis sends the question to an active relevant session. Independent sessions are
 leaders: they never start one another automatically. For work that should start
-now, ask your leader to create a managed subagent with a bounded task.
+now, enable **Subagents** under **Settings → Experimental**, then ask your leader
+to create a managed subagent with a bounded task. Subagents are off by default;
+you do not need them to exchange Council messages.
 
 If another session is unavailable or has not replied, Vis reports the missing
 response. Check earlier findings against the current code or running system;
@@ -201,6 +203,11 @@ unknowns.
 
 ### Create and manage subagents
 
+First enable **Subagents** under **Settings → Experimental** on the gateway. This
+opt-in is separate from Council. Disabling it blocks new children, automatic team
+wakes and subsequent child iterations without deleting existing teams. An iteration
+already running can finish.
+
 Use `council.publish_spawn` to create a child session and publish its delegated
 task in one call. Council must be enabled, and the parent must be active with
 a complete model-input checkpoint. Each child can incur model charges and
@@ -364,7 +371,10 @@ If Council is disabled or the session has no available group, the handle still
 allows `subagents`, `cancel` and `route`: these controls use session ownership,
 not group membership. Communication and `group_id` access report the captured
 binding error. Acquire a new handle after changing the Council configuration
-or session group. Creating a subagent still requires Council to be enabled.
+or session group. Creating a subagent requires both Council and the experimental
+Subagents switch to be enabled. Team wakes and routing another session also require
+Subagents; listing or cancelling an existing team and routing your own session
+remain available through the session-bound API when it is off.
 
 ### Wake the bound session
 

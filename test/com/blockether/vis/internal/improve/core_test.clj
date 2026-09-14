@@ -7,7 +7,7 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [next.jdbc :as jdbc]))
 
-(h/use-mem-store!)
+(h/use-mem-store! {"improve" true})
 
 (defn- error-type [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
 

@@ -10,7 +10,7 @@
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
-(h/use-mem-store!)
+(h/use-mem-store! {"subagents" true})
 
 (defn child!
   [db parent opts]

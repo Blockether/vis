@@ -10,6 +10,7 @@
 
    Each test gets an isolated in-memory DB. No manual setup/teardown."
   (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [honey.sql :as sql]
             [lazytest.core :as lt]
             [next.jdbc :as jdbc]
@@ -22,13 +23,22 @@
 
 (defn use-mem-store!
   "Call at top-level in a test ns to get a fresh in-memory SQLite store
-   for each test. Access via `(h/store)`."
-  []
-  (lt/set-ns-context! [(lt/around-each [f]
-                                       (let [s (vis/db-create-connection! :memory)]
-                                         (try (binding [*store* s]
-                                                (f))
-                                              (finally (vis/db-dispose-connection! s)))))]))
+   for each test. Access via `(h/store)`. Optional toggle overrides are restored after each test."
+  ([] (use-mem-store! {}))
+  ([overrides]
+   (lt/set-ns-context! [(lt/around-each [f]
+                                        (let [before (into {}
+                                                           (map (fn [id]
+                                                                  [id (toggles/value-of id)]))
+                                                           (keys overrides))]
+                                          (try (doseq [[id value] overrides]
+                                                 (toggles/set-value! id value))
+                                               (let [s (vis/db-create-connection! :memory)]
+                                                 (try (binding [*store* s]
+                                                        (f))
+                                                      (finally (vis/db-dispose-connection! s))))
+                                               (finally (doseq [[id value] before]
+                                                          (toggles/set-value! id value))))))])))
 
 (defn raw-query
   "Execute raw HoneySQL against the store's datasource."

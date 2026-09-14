@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.improve.core
-  "Project-scoped improvement workflow. Intake is independent of UI and automation settings.
+  "Project-scoped improvement workflow. Intake requires the experimental Improve toggle.
    Source content is evidence, not permission to execute it; review only edits workflow records."
   (:require [com.blockether.vis.contract.improve :as contract]
             [com.blockether.vis.internal.persistance.core :as ps]))

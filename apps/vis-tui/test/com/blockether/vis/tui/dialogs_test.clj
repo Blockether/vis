@@ -661,7 +661,7 @@
 
 (defn- exercise-backend-picker
   "Run the production Settings picker on a virtual terminal with a fixture gateway."
-  [keys {:keys [width fail?] :or {width 80}}]
+  [keys {:keys [width fail? experimental?] :or {width 80}}]
   (let [id
         "dialogs_draft_backend"
 
@@ -688,6 +688,7 @@
                                :type :enum
                                :choices ["auto" "worktree" "rift" "off"]
                                :default "worktree"
+                               :experimental? (boolean experimental?)
                                :settings? false})
     (try (.startScreen screen)
          (doseq [key keys]
@@ -721,6 +722,17 @@
 
 (defdescribe
   settings-enum-dropdown-test
+  (it "marks experimental settings in the production terminal render"
+      (doseq [id ["subagents" "improve" "plans"]]
+        (expect (false? (:default (toggles/toggle-spec id))))
+        (expect (true? (:experimental? (toggles/toggle-spec id))))
+        (expect (str/includes?
+                  (#'dlg/settings-option-label
+                   {:type :registry-toggle :toggle-id id :label (:label (toggles/toggle-spec id))}
+                   {})
+                  "[Experimental]")))
+      (let [{:keys [frames]} (exercise-backend-picker [:esc] {:width 100 :experimental? true})]
+        (expect (some #(str/includes? % "[Experimental]") frames))))
   (it "shows every backend and the current choice without saving on open or Escape"
       (doseq [width [40 100]]
         (let [{:keys [requests frames value]} (exercise-backend-picker [:enter :esc :esc]

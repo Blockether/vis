@@ -18,21 +18,36 @@
   [sid]
   (get @snapshots sid))
 
+(defn enabled?
+  "Whether the last gateway check enabled Subagents; never fetch during painting."
+  [sid]
+  (true? (:enabled? (summary sid))))
+
 (defn fetch!
   [sid]
-  (let [result (try (let [response (vis/request! :get (path sid "") {:timeout-ms 2000})]
-                      (if (= 200 (:status response))
-                        (let [rows (wire/parse-json (:body response))]
-                          (if (and (vector? rows)
-                                   (every? #(and (map? %)
-                                                 (string? (get % "session_id"))
-                                                 (string? (get % "task"))
-                                                 (string? (get % "status")))
-                                           rows))
-                            {:agents rows}
-                            {:error "Invalid team response. Refresh to retry."}))
-                        {:error "Could not load team. Refresh to retry."}))
-                    (catch Exception _ {:error "Could not load team. Refresh to retry."}))]
+  (let [enabled?
+        (try (true? (get (vis/setting "subagents") "enabled")) (catch Exception _ false))
+
+        result
+        (if enabled?
+          (try (let [response (vis/request! :get (path sid "") {:timeout-ms 2000})]
+                 (if (= 200 (:status response))
+                   (let [rows (wire/parse-json (:body response))]
+                     (if (and (vector? rows)
+                              (every? #(and (map? %)
+                                            (string? (get % "session_id"))
+                                            (string? (get % "task"))
+                                            (string? (get % "status")))
+                                      rows))
+                       {:agents rows}
+                       {:error "Invalid team response. Refresh to retry."}))
+                   {:error "Could not load team. Refresh to retry."}))
+               (catch Exception _ {:error "Could not load team. Refresh to retry."}))
+          {:agents []})
+
+        result
+        (assoc result :enabled? enabled?)]
+
     (swap! snapshots assoc sid (assoc result :checked-at (System/currentTimeMillis)))
     result))
 
@@ -131,13 +146,16 @@
     (assoc base
       :measure
       (fn [state cols rows]
-        (let [{:keys [agents error loading?]} (snapshot)
-              title (cond loading? "Agent team · Loading…"
+        (let [{:keys [agents error loading? enabled?]} (snapshot)
+              title (cond (false? enabled?) "Agent team · Disabled"
+                          loading? "Agent team · Loading…"
                           error "Agent team · Unavailable"
                           :else (str "Agent team · "
                                      (count agents)
                                      (if (= 1 (count agents)) " subagent" " subagents")))
-              entries (cond loading? [{:label "Loading team…"}]
+              entries (cond (false? enabled?) [{:label
+                                                "Enable Subagents in Settings → Experimental."}]
+                            loading? [{:label "Loading team…"}]
                             error (into [{:label error}] (items [] parent-id))
                             (empty? agents)
                             (into [{:label "No subagents yet. Delegate a task to create one."}]

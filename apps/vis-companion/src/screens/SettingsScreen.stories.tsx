@@ -141,6 +141,24 @@ export const SingleMachine: Story = {
   },
 };
 
+/** Experimental workflows require a separate, explicit opt-in on each machine. */
+export const ExperimentalFeatures: Story = {
+  args: { gateways: STORY_GATEWAYS.slice(0, 1) },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    for (const label of ['Subagents', 'Improve', 'Plan before coding']) {
+      const toggle = await page.findByRole('switch', { name: `${label}: off` });
+      await expect(toggle).not.toBeChecked();
+      const row = toggle.closest('.grid')!;
+      await expect(within(row as HTMLElement).getByText('Experimental')).toBeVisible();
+      await userEvent.click(toggle);
+      await waitFor(() => expect(toggle).toBeChecked());
+      await userEvent.click(toggle);
+      await waitFor(() => expect(toggle).not.toBeChecked());
+    }
+  },
+};
+
 /** Settings names and explanatory copy follow the desktop hierarchy without shrinking touch. */
 export const ReadingLayout: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },

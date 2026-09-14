@@ -1151,7 +1151,9 @@
 (defn- command-palette-extra-commands
   "Built-in team inspection is also reachable without a pointer."
   []
-  [{:id :agent-team :label "Agent team" :description "Inspect tasks, budgets and subagents"}])
+  (if (agent-team/enabled? (get-in @state/app-db [:session :id]))
+    [{:id :agent-team :label "Agent team" :description "Inspect tasks, budgets and subagents"}]
+    []))
 
 (defn- menu-commands
   "Command universe for typed slash suggestion/exact-match handling.
@@ -6437,7 +6439,8 @@
                                         :level :warn
                                         :ttl-ms copy-success-ttl-ms))))))
                  show-agent-team! (fn []
-                                    (when-not (:dialog-open? @state/app-db)
+                                    (when (and (agent-team/enabled? (current-session-id))
+                                               (not (:dialog-open? @state/app-db)))
                                       (when-let [id (with-dialog-lock #(agent-team/show!
                                                                          screen
                                                                          (current-session-id)
