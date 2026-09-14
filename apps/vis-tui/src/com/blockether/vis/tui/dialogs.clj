@@ -1221,30 +1221,24 @@
                          :else "Working budget was not recorded"))
                  (stat "Model input limit" (metric-count limit)) (row "")]
                 (if (some? estimate)
-                  (concat
-                    [{:text (str (if parts? "▾" "▸") " Context breakdown [b]")
-                      :tone :heading
-                      :toggle :parts?}
-                     (hint (str (if prepared? "Prepared request" "Logical request")
-                                " · not measured usage"))]
-                    (when parts?
-                      (concat
-                        [(stat "Local estimate" (metric-tokens estimate))
-                         (stat "Provider-reported input" (metric-tokens input))
-                         (stat "Estimate − reported" (or (metric-token-difference health) "—"))
-                         (row "")]
-                        (mapcat (fn [part]
-                                  (cond-> [(stat (get part "label")
-                                                 (str "≈" (metric-count (get part "tokens"))))]
-                                    (get part "path")
-                                    (conj (hint (get part "path")))))
-                                breakdown)
-                        [(hint
-                           (str
-                             (if prepared?
-                               "≈ Local estimates describe the full prepared request after provider adaptation, including retained replay and wire-shaped tools, not just a WebSocket delta. "
-                               "≈ Local estimates describe logical messages and tools before provider adaptation, not the prepared request used for preflight. Adapters may drop or reshape content. ")
-                             "Svar tokenizes text and tool payloads and estimates images, reasoning and framing. Provider-reported input for this same call, including cached input, determines context pressure above; estimates do not."))])))
+                  (concat [{:text (str (if parts? "▾" "▸") " Context breakdown [b]")
+                            :tone :heading
+                            :toggle :parts?}
+                           (hint (str (if prepared? "Prepared request" "Logical request")
+                                      " · not measured usage"))]
+                          (when parts?
+                            (concat [(stat "Local estimate" (metric-tokens estimate))
+                                     (stat "Provider-reported input" (metric-tokens input))
+                                     (stat "Estimate − reported"
+                                           (or (metric-token-difference health) "—")) (row "")]
+                                    (mapcat (fn [part]
+                                              (cond-> [(stat (get part "label")
+                                                             (str "≈"
+                                                                  (metric-count (get part
+                                                                                     "tokens"))))]
+                                                (get part "path")
+                                                (conj (hint (get part "path")))))
+                                            breakdown))))
                   [(hint "Prompt breakdown unavailable")])
                 [(row "")]
                 (if (some? roots)

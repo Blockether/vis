@@ -97,13 +97,11 @@
             (is (= (get health "budget_used_ratio") (some :meter rows)) name))
         (is (not-any? :meter rows) name))
       (if-let [projection (get expected "projection")]
-        (do (is (str/includes? text (str projection " · not measured usage")) name)
-            (is (str/includes? text (get expected "scope")) name)
-            (is (str/includes? text "Svar tokenizes") name)
-            (is (str/includes? text "including cached input") name))
+        (is (str/includes? text (str projection " · not measured usage")) name)
         (is (not-any? #(= :parts? (:toggle %)) rows) name))
       (when (get health "stale") (is (str/includes? text "Earlier measurement") name))
-      (is (not (str/includes? text "four characters per token")) name))))
+      (doseq [note ["Local estimates describe" "Svar tokenizes" "four characters per token"]]
+        (is (not (str/includes? text note)) name)))))
 
 (deftest supplied-metrics-are-not-recalculated
   ;; #186: inconsistent source rows intentionally expose calculations in clients.
@@ -165,15 +163,14 @@
         (str/replace (lines component full 100 45) #"\s+" " ")]
 
     (is (not (str/includes? text "not live")))
-    (doseq [label ["Session health" "Fold reminder" "Last measured call" "#24"
-                   "Context / working budget" "96000 / 120000" "80%" "24000 budget left"
-                   "Reminder at 90000" "200000" "Instructions" "Tool definitions" "History"
-                   "4 available" "1 with guidance estimates" "840 tokens on disk"
-                   "No AGENTS.md or CLAUDE.md" "Could not read guidance"
-                   "Guidance estimate unavailable" "Svar tokenizes" "Disk estimates"
-                   "Session totals" "repeated context" "Total input" "842190" "Total output" "12842"
-                   "$1.2749" "Folds" "Turns" "Calls" "Tools" "72%" "≈91%" "20 of 24 calls"
-                   "example-model" "example-provider" "Active"]]
+    (doseq [label
+            ["Session health" "Fold reminder" "Last measured call" "#24" "Context / working budget"
+             "96000 / 120000" "80%" "24000 budget left" "Reminder at 90000" "200000" "Instructions"
+             "Tool definitions" "History" "4 available" "1 with guidance estimates"
+             "840 tokens on disk" "No AGENTS.md or CLAUDE.md" "Could not read guidance"
+             "Guidance estimate unavailable" "Disk estimates" "Session totals" "repeated context"
+             "Total input" "842190" "Total output" "12842" "$1.2749" "Folds" "Turns" "Calls" "Tools"
+             "72%" "≈91%" "20 of 24 calls" "example-model" "example-provider" "Active"]]
       (is (str/includes? text label) label))
     (is (not (str/includes? (lines component initial 100 45) "Tool definitions")))
     (is (= full
