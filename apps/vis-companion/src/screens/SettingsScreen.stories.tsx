@@ -2,8 +2,9 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { STORY_GATEWAYS, storySettingsFetch } from '../dev/story-data';
-import { setThemePref } from '../lib/storage';
+import { getThemePref, setThemePref } from '../lib/storage';
 import { resolveTheme } from '../lib/theme';
+import { THEMES } from '../lib/themes.generated';
 import { SettingsDialog } from './SettingsScreen';
 
 /** The real dialog over a fixture transport; preferences remain local to this preview. */
@@ -72,6 +73,54 @@ export const Appearance: Story = {
       name: resolveTheme(String(globals.theme)).label,
     });
     await waitFor(() => expect(theme).toHaveAttribute('aria-pressed', 'true'));
+    const heading = page.getByRole('heading', { name: 'Theme' });
+    const panel = heading.closest('section')!;
+    const body = panel.lastElementChild!;
+    const choices = within(panel).getAllByRole('button');
+    const grid = choices[0].parentElement!;
+    await expect(choices).toHaveLength(THEMES.length);
+    // Regression: the theme picker was an inset input-colored slab without row separators.
+    await expect(getComputedStyle(grid).rowGap).toBe('1px');
+    await expect(getComputedStyle(grid).backgroundColor).toBe(
+      getComputedStyle(body).borderTopColor,
+    );
+    for (const [index, choice] of choices.entries()) {
+      const box = choice.getBoundingClientRect();
+      const style = getComputedStyle(choice);
+      await expect(box.left).toBe(body.getBoundingClientRect().left);
+      await expect(box.width).toBe(body.getBoundingClientRect().width);
+      await expect(choice.firstElementChild!.getBoundingClientRect().left).toBe(
+        heading.getBoundingClientRect().left,
+      );
+      await expect(style.borderTopWidth).toBe('0px');
+      await expect(style.borderBottomWidth).toBe('0px');
+      if (index > 0) {
+        await expect(box.top - choices[index - 1].getBoundingClientRect().bottom).toBe(1);
+      }
+      if (choice !== theme) {
+        await expect(style.backgroundColor).toBe(getComputedStyle(panel).backgroundColor);
+      }
+    }
+    await expect(getComputedStyle(theme).backgroundColor).not.toBe(
+      getComputedStyle(panel).backgroundColor,
+    );
+    await expect(choices.at(-1)!.getBoundingClientRect().bottom).toBe(
+      body.getBoundingClientRect().bottom,
+    );
+    const alternative = THEMES.find(
+      (choice) => choice.id !== resolveTheme(String(globals.theme)).id,
+    )!;
+    const next = within(panel).getByRole('button', { name: alternative.label });
+    await userEvent.click(next);
+    await waitFor(() => expect(next).toHaveAttribute('aria-pressed', 'true'));
+    await expect(theme).toHaveAttribute('aria-pressed', 'false');
+    await expect(getThemePref()).resolves.toBe(alternative.id);
+    // Keyboard selection keeps the original theme and its persisted preference in sync.
+    theme.focus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(theme).toHaveAttribute('aria-pressed', 'true'));
+    await expect(next).toHaveAttribute('aria-pressed', 'false');
+    await expect(getThemePref()).resolves.toBe(resolveTheme(String(globals.theme)).id);
   },
 };
 

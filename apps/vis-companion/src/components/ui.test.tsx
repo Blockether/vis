@@ -2548,6 +2548,36 @@ describe('a setting is picked and switched by one control each', () => {
   const classes = (html: string) =>
     (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? '').split(' ');
 
+  it.each(['cell', 'list'] as const)(
+    'keeps the requested %s surface and selection on both targets',
+    (variant) => {
+      for (const isSelected of [false, true]) {
+        const html = renderToStaticMarkup(
+          <ChoiceCell
+            title="Blockether Light"
+            isSelected={isSelected}
+            variant={variant}
+            leadingAction={{ label: 'Preview theme', icon: null, onClick: () => {} }}
+          />,
+        );
+        const buttons = [...html.matchAll(/<button[^>]*class="([^"]*)"/g)].map((match) =>
+          match[1].split(' '),
+        );
+        expect(buttons).toHaveLength(2);
+        for (const button of buttons) {
+          expect(button.filter((name) => name.startsWith('bg-'))).toEqual([
+            isSelected ? 'bg-accent' : variant === 'list' ? 'bg-panel' : 'bg-input',
+          ]);
+        }
+        expect(html).not.toContain('variant=');
+      }
+      const defaultCell = renderToStaticMarkup(
+        <ChoiceCell title="System voice" isSelected={false} />,
+      );
+      expect(classes(defaultCell)).toContain('bg-input');
+    },
+  );
+
   it('fills the chosen cell in amber and marks it once', () => {
     const on = renderToStaticMarkup(<ChoiceCell title="Gruvbox" sub="dark" isSelected />);
     expect(on).toContain('●');

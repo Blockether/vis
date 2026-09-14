@@ -257,7 +257,7 @@ export function SettingsDialog({
               </div>
             </SettingsPanel>
             <SettingsPanel title="Theme">
-              <div className="grid grid-cols-1 px-1 pb-2 sm:px-2">
+              <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                 {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized
                     Dark`, `Vis Light`, so a trailing `light`/`dark` restated the last word
                     of its own row six times down the list. The name is the whole answer. */}
@@ -265,6 +265,7 @@ export function SettingsDialog({
                   <ChoiceCell
                     key={choice.id}
                     title={choice.label}
+                    variant="list"
                     isSelected={pref === choice.id}
                     isLeaf
                     disabled={pending?.startsWith('theme:') ?? false}

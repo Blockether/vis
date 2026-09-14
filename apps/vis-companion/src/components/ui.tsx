@@ -1316,6 +1316,7 @@ export function ChoiceCell({
   isSelected,
   isLeaf = false,
   showSelectionMark = true,
+  variant = 'cell',
   leadingAction,
   className = '',
   ...props
@@ -1331,6 +1332,8 @@ export function ChoiceCell({
   isLeaf?: boolean;
   /** Hide the choice glyph when an adjacent action occupies its trailing place. */
   showSelectionMark?: boolean;
+  /** List rows share the panel's paper and heading inset; cells retain the input surface. */
+  variant?: 'cell' | 'list';
   /**
    * An independent, borderless icon action before the value's name. Its compact
    * fixed-width cell preserves the choice's breathing room without a dividing rule.
@@ -1343,6 +1346,9 @@ export function ChoiceCell({
   };
 }) {
   const isNested = useContext(IsNestedChoice);
+  const fill = isSelected
+    ? 'bg-accent text-accent-foreground'
+    : `${variant === 'list' ? 'bg-panel' : 'bg-input'} text-white enabled:hover:text-accent-ink`;
   const choice = (
     <button
       type="button"
@@ -1354,12 +1360,10 @@ export function ChoiceCell({
             : 'pl-6 pr-3'
           : leadingAction
             ? 'pl-3 pr-3'
-            : 'px-3'
-      } ${isLeaf ? 'min-h-11 mouse:min-h-8' : 'min-h-11 justify-between py-2 mouse:min-h-9'} ${
-        isSelected
-          ? 'bg-accent text-accent-foreground'
-          : 'bg-input text-white enabled:hover:text-accent-ink'
-      } ${className}`}
+            : variant === 'list'
+              ? 'px-3 sm:px-4'
+              : 'px-3'
+      } ${isLeaf ? 'min-h-11 mouse:min-h-8' : 'min-h-11 justify-between py-2 mouse:min-h-9'} ${fill} ${className}`}
       {...props}
     >
       {isLeaf ? (
@@ -1409,11 +1413,7 @@ export function ChoiceCell({
         aria-label={leadingAction.label}
         disabled={leadingAction.disabled}
         onClick={leadingAction.onClick}
-        className={`${iconControlClass} grid min-h-11 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
-          isSelected
-            ? 'bg-accent text-accent-foreground'
-            : 'bg-input text-white enabled:hover:text-accent-ink'
-        }`}
+        className={`${iconControlClass} grid min-h-11 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${fill}`}
       >
         {leadingAction.icon}
       </button>
