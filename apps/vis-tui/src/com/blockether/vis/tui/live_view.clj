@@ -2008,11 +2008,11 @@
      (paint-generic! g cols rows panes content-top prompt-h now-ms))))
 
 (defn inline-entries
-  "Bounded transcript rows for an owned live pane, using its ordinary node plan.
+  "Bounded sibling RUN section using the pane's ordinary node plan.
    Each row carries the pane geometry so painting and wheel handling agree."
   [pane width]
   (let [rows
-        (if (minimized? pane) [(minimized-row pane 1)] (plan pane (max 8 (- (long width) 4))))
+        (if (minimized? pane) [] (plan pane (max 8 (- (long width) 4))))
 
         visible
         (min 12 (count rows))
@@ -2032,7 +2032,10 @@
            :widths (:widths (meta rows))})
 
         entries
-        (concat [{:kind :inline-title :text (flat-text (get-in pane [:view :title]))}]
+        (concat [{:kind :inline-title
+                  :text (str "RUN "
+                             (if (minimized? pane) "▸ " "▾ ")
+                             (flat-text (get-in pane [:view :title])))}]
                 (subvec (vec rows) start (+ start visible))
                 (when-let [stop (stop-prompt pane)]
                   [{:kind :inline-stop :text (str (:label stop) (:note stop) "▏") :stop stop}])
@@ -2041,6 +2044,7 @@
     (mapv (fn [entry]
             {:line (or (:text entry) "")
              :meta {:kind :activity-live-entry
+                    :run-header? (= :inline-title (:kind entry))
                     :view-id (view-id pane)
                     :live-pane pane
                     :live-entry entry
@@ -2048,7 +2052,7 @@
           entries)))
 
 (defn paint-inline-entry!
-  "Paint a live node inside Activity; viewport-top translates hits to terminal rows."
+  "Paint a sibling RUN row; viewport-top translates hits to terminal rows."
   [g left row width viewport-top {:keys [live-pane live-entry live-geometry]}]
   (binding [t/dialog-bg
             t/code-block-bg
@@ -2063,14 +2067,26 @@
                 :geometry live-geometry})
     (case (:kind live-entry)
       :inline-title
-      (do (paint-styled! g
-                         left
-                         row
-                         (max 1 (- (long width) 5))
-                         t/dialog-fg
-                         [p/BOLD]
-                         (:text live-entry))
-          (paint-fold-control! g {:left left :inner-w (dec (long width))} row live-pane))
+      (let [status
+            (if (settled? live-pane) "Recorded" "LIVE")
+
+            status-w
+            (p/display-width status)
+
+            title-w
+            (max 1 (- (long width) status-w 1))]
+
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/styled g [p/BOLD] (p/put-str! g left row (p/ellipsize (:text live-entry) title-w)))
+        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+        (p/styled g [p/BOLD] (p/put-str! g (+ (long left) (long width) (- status-w)) row status))
+        (.register interactions/hit-map
+                   {:bounds {:row (+ (long row) (long viewport-top)) :col left :width width}
+                    :kind (cond (settled? live-pane) :live-reopen
+                                (minimized? live-pane) :live-restore
+                                :else :live-minimize)
+                    :view-id (view-id live-pane)
+                    :enabled? true}))
 
       :inline-stop
       (paint-segments! g
@@ -2084,7 +2100,8 @@
       :inline-hint
       (dialogs/draw-hint-bar! g left row width (hint live-pane []))
 
-      (paint-entry! g left row width (view-id live-pane) live-entry))))
+      ;; The standalone painter reserves two rail cells; this shared surface has no inner rail.
+      (paint-entry! g (- (long left) 2) row width (view-id live-pane) live-entry))))
 
 (defn transcript-run
   "A live receipt with the existing planner/painter attached for transcript projection.

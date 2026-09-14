@@ -4945,8 +4945,8 @@
 
         rows
         (if nested?
-          [[:title (str "  ▸ Live view · " title)] [:status (str "    " status)]
-           [:hint (str "    Click or " (keymap/label-for :toggle-detail-labels) " to open")]]
+          [[:title (str "RUN ▸ " title)] [:status status]
+           [:hint (str "Click or " (keymap/label-for :toggle-detail-labels) " to open")]]
           [[:top (edge "┌" "─ Live view " "┐")] [:pad (body "")] [:title (body title)]
            [:pad (body "")] [:status (body status)]
            [:hint (body (str "Click or " (keymap/label-for :toggle-detail-labels) " to open"))]
@@ -4959,6 +4959,7 @@
                           :meta {:artifact artifact
                                  :session-id session-id
                                  :activity-live? nested?
+                                 :run-header? (and nested? (= row :title))
                                  :live-card-row (when-not nested? row)
                                  :live-card-width width
                                  :live-card-error? (contains? #{"failed" "interrupted" "timeout"
@@ -6573,40 +6574,43 @@
                      [blank]))))))
 
 (defn- run-row-entries
-  "Transcript receipts for the extension runs a form left behind. Activity is not one
-   of them: it belongs to the form and paints from the form's own snapshot. Anchored
-   rows sit directly after their executing form and unplaced legacy rows receive one
-   leading margin."
+  "Transcript receipts associated with a form by trusted ownership.
+   Owned RUN sections follow Activity at the same level; unmatched rows stay standalone."
   ([runs max-w session-id] (run-row-entries runs max-w session-id true))
   ([runs max-w session-id leading-margin?]
    (if (empty? runs)
      []
-     (into
-       (if leading-margin? [{:line "" :meta nil}] [])
-       (mapcat
-         (fn [{:keys [view-id title reason lines elapsed-ms is-reopened]}]
-           (let [verdict
-                 (some-> reason
-                         name)
+     (into (if leading-margin? [{:line "" :meta nil}] [])
+           (mapcat (fn [{:keys [view-id title reason lines elapsed-ms is-reopened]}]
+                     (let [verdict
+                           (some-> reason
+                                   name)
 
-                 verdict
-                 (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
-                   (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
-                   verdict)
+                           verdict
+                           (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
+                             (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
+                             verdict)
 
-                 parts
-                 (remove str/blank?
-                   [title verdict
-                    (when (pos? (long (or lines 0)))
-                      (str lines (if (= 1 (long lines)) " line" " lines")))
-                    (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])]
+                           parts
+                           (remove str/blank?
+                             [title verdict
+                              (when (pos? (long (or lines 0)))
+                                (str lines (if (= 1 (long lines)) " line" " lines")))
+                              (when (pos? (long (or elapsed-ms 0)))
+                                (vis/format-duration elapsed-ms))])]
 
-             [{:line
-               (ellipsize-cols
-                 (str (if is-reopened " ▾ " " ▸ ") (band-label "RUN") " " (str/join " · " parts))
-                 (max 1 (long max-w)))
-               :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}]))
-         runs)))))
+                       [{:line (ellipsize-cols
+                                 (str (if leading-margin?
+                                        (str (if is-reopened " ▾ " " ▸ ") (band-label "RUN"))
+                                        (str (band-label "RUN") (if is-reopened " ▾" " ▸")))
+                                      " "
+                                      (str/join " · " parts))
+                                 (max 1 (long max-w)))
+                         :meta {:kind :live-reopen
+                                :run-header? true
+                                :view-id (str view-id)
+                                :session-id (str session-id)}}]))
+                   runs)))))
 
 (defn- place-run-rows
   "Attach run rows only to their trusted Activity owner.
@@ -7425,15 +7429,32 @@
                 activity-surface
                 (when activity-run
                   (let [entries
-                        (activity-detail-entries activity-run (max 1 (long fill-w)) session-id)]
-                    (vec (concat
-                           (butlast entries)
-                           (map #(update % :line (partial str activity-marker)) generic-run-entries)
-                           (map #(update % :line (partial str activity-marker)) inline-live-entries)
-                           live-artifact-block
-                           (take-last 1 entries)))))]
+                        (activity-detail-entries activity-run (max 1 (long fill-w)) session-id)
 
-            ;; Live receipts share their owning Activity's background and inset.
+                        run-sections
+                        (reduce (fn [sections entry]
+                                  (cond-> sections
+                                    (and (seq sections) (get-in entry [:meta :run-header?]))
+                                    (conj (line-entry ""))
+
+                                    true
+                                    (conj entry)))
+                                []
+                                (concat generic-run-entries
+                                        inline-live-entries
+                                        live-artifact-block))]
+
+                    (vec (concat entries
+                                 (map #(update %
+                                               :line
+                                               (fn [line]
+                                                 (if (str/starts-with? line activity-marker)
+                                                   line
+                                                   (str activity-marker line))))
+                                      run-sections)
+                                 (when (seq run-sections) [(line-entry activity-marker)])))))]
+
+            ;; CODE, ACTIVITY and RUN are siblings on one execution surface.
             (vec (concat (inset-entries
                            (concat comment-block code-block execution-details activity-surface))
                          artifact-block
@@ -8124,10 +8145,9 @@
          queue-held?
          (boolean (and queue-paused (empty? iterations) (not cancelling?)))
 
-         ;; Run receipts anchor onto the LIVE iterations exactly as they will onto
-         ;; the settled trace: `place-run-rows` rides the captured iteration/form
-         ;; anchor, and what cannot be placed trails the trace. The placed `:runs`
-         ;; join `form-fingerprint`, so the body cache below busts on every patch.
+         ;; Trusted ownership places RUN sections next to their Activity during
+         ;; streaming and after settlement. Pane snapshots join form-fingerprint,
+         ;; so every live patch invalidates the cached body.
          run-layout
          (place-run-rows iterations
                          (concat (remove #(contains? (set (map :view-id live-runs)) (:view-id %))

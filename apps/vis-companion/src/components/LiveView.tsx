@@ -7,7 +7,7 @@ import {
   useState,
   type HTMLAttributes,
 } from 'react';
-import { Button, Disclosure, Input, ListRow, LoadMore, PROSE, Spinner } from './ui';
+import { BandLabel, Button, Disclosure, Input, ListRow, LoadMore, PROSE, Spinner } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import {
   ArrowOutIcon,
@@ -1034,7 +1034,7 @@ export function LiveViewPanel({
    * itself to a screen reader as one that can.
    */
   isSettled?: boolean;
-  /** The owning Activity supplies the frame and background. */
+  /** ACTIVITY and RUN share the execution group surface and horizontal inset. */
   embedded?: boolean;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
@@ -1056,6 +1056,7 @@ export function LiveViewPanel({
         values: { ...(held.phase === phase ? held.values : {}), [id]: value },
       })),
   };
+  const [open, setOpen] = useState(true);
   const [note, setNote] = useState<string | null>(null);
   const isArmed = note !== null;
   const typed = note ?? '';
@@ -1068,24 +1069,47 @@ export function LiveViewPanel({
   return (
     <section
       className={
-        embedded ? 'overflow-hidden' : 'overflow-hidden border border-dialog-edge bg-panel'
+        embedded
+          ? 'min-w-0 overflow-hidden pt-3'
+          : 'overflow-hidden border border-dialog-edge bg-panel'
       }
+      data-execution-run={embedded || undefined}
       role={isSettled ? undefined : 'status'}
       aria-live={isSettled ? undefined : 'polite'}
     >
       <header
-        className={`flex items-start gap-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} ${embedded ? '' : 'bg-panel-2'}`}
+        className={
+          embedded
+            ? 'flex min-w-0 items-center gap-2'
+            : `flex items-start gap-2 px-3 ${view.description ? 'pt-2.5 pb-4' : 'border-b border-dialog-edge py-2.5'} bg-panel-2`
+        }
       >
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-title font-bold text-white">
-            {view.title}
-          </span>
-          {view.description && (
-            <span className="block truncate font-mono text-meta text-dialog-hint">
-              <InlineMarkdown>{view.description}</InlineMarkdown>
+        {embedded ? (
+          <Disclosure
+            className="min-w-0 flex-1"
+            tone="execution"
+            isOpen={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} run ${view.title}`}
+            onClick={() => setOpen((value) => !value)}
+          >
+            <BandLabel>RUN</BandLabel>
+            <span className="min-w-0 flex-1 truncate">{view.title}</span>
+          </Disclosure>
+        ) : (
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-mono text-title font-bold text-white">
+              {view.title}
             </span>
-          )}
-        </span>
+            {view.description && (
+              <span className="block truncate font-mono text-meta text-dialog-hint">
+                <InlineMarkdown>{view.description}</InlineMarkdown>
+              </span>
+            )}
+          </span>
+        )}
+        {embedded && !isSettled && (
+          <span className="shrink-0 font-mono text-ui text-dialog-hint">LIVE</span>
+        )}
         <ViewState view={view} isSettled={isSettled} />
         {!isSettled && onInterrupt && !isArmed && (
           <Button
@@ -1098,9 +1122,14 @@ export function LiveViewPanel({
           </Button>
         )}
       </header>
+      {embedded && open && view.description && (
+        <p className="pb-4 font-mono text-ui text-dialog-hint mouse:text-meta">
+          <InlineMarkdown>{view.description}</InlineMarkdown>
+        </p>
+      )}
       {!isSettled && isArmed && onInterrupt && (
         <form
-          className="flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge bg-panel-2 px-3 py-2"
+          className={`flex flex-wrap items-center gap-x-2 gap-y-5 border-b border-dialog-edge py-2 ${embedded ? '' : 'bg-panel-2 px-3'}`}
           onSubmit={(event) => {
             event.preventDefault();
             sendStop(onInterrupt);
@@ -1134,11 +1163,14 @@ export function LiveViewPanel({
         </form>
       )}
       {error && (
-        <p className="border-b border-dialog-edge px-3 py-2 font-mono text-chip text-err">
+        <p
+          className={`border-b border-dialog-edge py-2 font-mono text-chip text-err ${embedded ? '' : 'px-3'}`}
+        >
           {error}
         </p>
       )}
       <ul
+        hidden={embedded && !open}
         className={`divide-y divide-dialog-edge ${view.description ? '[&>li:first-child]:pt-0' : ''}`}
       >
         {view.nodes.map((node) => (
@@ -1146,7 +1178,7 @@ export function LiveViewPanel({
           // rows uneven relative to the internal separators. Keep labelled headings inset.
           <li
             key={node.id}
-            className={`min-w-0 px-3 ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+            className={`min-w-0 ${embedded ? '' : 'px-3'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
           >
             <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
           </li>
@@ -1332,21 +1364,18 @@ export function LiveView({
     (viewId: string) => (nodeId: string, from: number, limit: number, query?: string) =>
       client.liveViewLog(sid, viewId, nodeId, from, limit, query);
 
-  return (
-    <div className="space-y-3">
-      {views.map((view) => (
-        <LiveViewPanel
-          key={view.id}
-          view={view}
-          embedded={embedded}
-          error={stopping === null ? error : null}
-          isInterrupting={stopping === view.id}
-          onInterrupt={(note) => interrupt(view.id, note)}
-          onSelect={(nodeId, itemIds) => select(view.id, nodeId, itemIds)}
-          onActivate={(nodeId) => activate(view.id, nodeId)}
-          load={readLog(view.id)}
-        />
-      ))}
-    </div>
-  );
+  const panels = views.map((view) => (
+    <LiveViewPanel
+      key={view.id}
+      view={view}
+      embedded={embedded}
+      error={stopping === null ? error : null}
+      isInterrupting={stopping === view.id}
+      onInterrupt={(note) => interrupt(view.id, note)}
+      onSelect={(nodeId, itemIds) => select(view.id, nodeId, itemIds)}
+      onActivate={(nodeId) => activate(view.id, nodeId)}
+      load={readLog(view.id)}
+    />
+  ));
+  return embedded ? panels : <div className="space-y-3">{panels}</div>;
 }

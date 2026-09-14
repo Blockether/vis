@@ -34,6 +34,7 @@ const activity: ActivityProjection = {
 const view: LiveView = {
   id: 'build-pool',
   title: 'Jenkins build pool',
+  description: 'Checking the build before continuing',
   seq: 1,
   owner: { invocation_id: activity.rows[0].id, activity_id: activity.history!.id },
   nodes: [
@@ -77,11 +78,17 @@ type Story = StoryObj<typeof meta>;
 export const Running: Story = {
   play: async ({ canvas }) => {
     const title = canvas.getByText('Jenkins build pool');
-    const activitySurface = title.closest('[data-execution-activity]');
+    const activitySurface = title.closest('[data-execution-group]');
     await expect(activitySurface).not.toBeNull();
     await expect(title.closest('section')).not.toHaveClass('border');
     const controls = within(activitySurface as HTMLElement);
     await expect(controls.getByText('ACTIVITY')).toBeInTheDocument();
+    await expect(controls.getByText('RUN')).toBeInTheDocument();
+    await expect(title.closest('[data-execution-activity]')).toBeNull();
+    await userEvent.click(controls.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(controls.getByRole('button', { name: 'Collapse Activity' }));
+    await expect(title).toBeVisible();
+    await userEvent.click(controls.getByRole('button', { name: 'Expand Activity' }));
     await userEvent.click(controls.getByRole('button', { name: 'Build log' }));
     await expect(controls.getByText(/Compile completed/)).toBeInTheDocument();
     await userEvent.click(controls.getByRole('button', { name: 'Build log' }));
@@ -122,5 +129,15 @@ export const Settled: Story = {
         ],
       },
     ],
+  },
+  play: async ({ canvas }) => {
+    const run = canvas.getByRole('button', { name: 'Open run Jenkins build pool' });
+    await expect(run.closest('[data-execution-group]')).not.toBeNull();
+    await expect(run.closest('[data-execution-activity]')).toBeNull();
+    await expect(run.closest('.border')).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse Activity' }));
+    await expect(run).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
   },
 };

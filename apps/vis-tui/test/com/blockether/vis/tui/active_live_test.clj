@@ -23,7 +23,7 @@
 (defn review-pane
   []
   (lv/opened (-> (fixture/view
-                   {:title "Build verification"}
+                   {:title "Build verification" :description "Checking the build before continuing"}
                    (fixture/status "status" "Running the focused tests" {:tone :running})
                    (fixture/log "output"
                                 {:label "Output"
@@ -48,30 +48,62 @@
                                      :omitted {:rows 0 :by-classification {}}}}]}]})
 
 (defn review-payload
-  [pane width]
-  (render/progress->lines-data
-    review-progress
-    width
-    {:show-thinking true :show-iterations true}
-    {:session-id "inline-review" :now-ms 1000 :live-runs [(lv/transcript-run pane)]}))
+  ([pane width] (review-payload pane width {}))
+  ([pane width options]
+   (render/progress->lines-data review-progress
+                                width
+                                {:show-thinking true :show-iterations true}
+                                (merge {:session-id "inline-review"
+                                        :now-ms 1000
+                                        :live-runs (when-not (lv/dormant? pane)
+                                                     [(lv/transcript-run pane)])
+                                        :runs (when (lv/dormant? pane) [(lv/run-row pane)])}
+                                       options))))
 
-(deftest active-picture-belongs-to-activity
-  ;; #222: running live nodes, not only a finished RUN receipt, belong inside Activity.
-  (render/invalidate-cache!)
-  (let [payload
-        (review-payload (review-pane) 90)
+(deftest live-run-is-an-activity-sibling
+  ;; #222: RUN is a sibling section, not a child of the Activity operation.
+  (doseq [width
+          [40 80 120]
 
-        text
-        (str/join "\n" (:lines payload))]
+          collapsed?
+          [false true]]
 
-    (is (str/includes? text "ACTIVITY"))
-    (is (str/includes? text "Running the focused tests"))
-    (is (some #(= :activity-live-entry (:kind %)) (:line-meta payload)))))
+    (render/invalidate-cache!)
+    (let [payload
+          (render/progress->lines-data review-progress
+                                       width
+                                       {:show-iterations true}
+                                       {:session-id "inline-review"
+                                        :now-ms 1000
+                                        :detail-expansions
+                                        (if collapsed? {:vis.channel-tui/baseline :collapse} {})
+                                        :live-runs [(lv/transcript-run (review-pane))]})
+
+          lines
+          (:lines payload)
+
+          activity-index
+          (first (keep-indexed #(when (= :activity-header (:kind %2)) %1) (:line-meta payload)))
+
+          run-index
+          (first (keep-indexed #(when (= :inline-title (get-in %2 [:live-entry :kind])) %1)
+                               (:line-meta payload)))
+
+          run-line
+          (nth lines run-index)]
+
+      (is (str/includes? run-line "RUN ▾ Build verification"))
+      (is (zero? (get-in payload [:line-meta activity-index :operation-col])))
+      (is (< activity-index (dec run-index)))
+      (is (str/blank? (subs (nth lines (dec run-index)) 1)))
+      (is (str/includes? (str/join "\n" lines) "Running the focused tests"))
+      (is (str/includes? (nth lines (inc run-index)) "Checking the build")))))
 
 (defn paint-review!
   "Paint the real transcript inside a clipped terminal viewport for #222 review."
   ([screen pane] (paint-review! screen pane 0))
-  ([^TerminalScreen screen pane scroll]
+  ([screen pane scroll] (paint-review! screen pane scroll {}))
+  ([^TerminalScreen screen pane scroll options]
    (.doResizeIfNecessary screen)
    (.clear screen)
    (let [cols
@@ -81,7 +113,7 @@
          (.getRows (.getTerminalSize screen))
 
          payload
-         (review-payload pane (- cols 4))
+         (review-payload pane (- cols 4) options)
 
          graphics
          (.newTextGraphics screen)
@@ -149,6 +181,7 @@
             (is (= (:view-id disclosure) (lv/view-id pane)))
             (is (= "▾ Output · 1 lines" (str/trim (nth lines row))))
             (let [header-row (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
+                  run-row (first (keep-indexed #(when (str/includes? %2 "RUN ▾") %1) lines))
                   background-cols
                   (fn [r]
                     (into #{}
@@ -159,7 +192,14 @@
                                             col)))
                           (nth (grid vt cols 44) r)))]
 
-              (when header-row
+              (when (and header-row run-row)
+                (is (= (.indexOf ^String (nth lines header-row) "ACTIVITY")
+                       (.indexOf ^String (nth lines run-row) "RUN")))
+                (is (= [(apply min (background-cols header-row))
+                        (apply max (background-cols header-row))]
+                       [(apply min (background-cols run-row))
+                        (apply max (background-cols run-row))]))
+                (is (str/blank? (nth lines (dec run-row))))
                 (is (= [(apply min (background-cols header-row))
                         (apply max (background-cols header-row))]
                        [(apply min (background-cols row)) (apply max (background-cols row))]))))
@@ -200,6 +240,8 @@
     (is (str/includes? (str/join "\n" (:lines after)) "Focused tests passed"))
     (is (not-any? #(= :live-reopen (:kind %)) (:line-meta after)))
     (is (< (count (:lines compact)) (count (:lines after))))
+    (is (= 1 (count (filter #(str/includes? % "Build verification") (:lines compact)))))
+    (is (str/includes? (str/join "\n" (:lines compact)) "RUN ▸"))
     (is (some #(= :inline-stop (get-in % [:live-entry :kind]))
               (:line-meta (review-payload armed 90))))
     (is (= :stop (:action (lv/typed armed {:kind :enter}))))))
@@ -422,3 +464,97 @@
          {:last-db db :db db :last-layout {} :cols 100 :same-size? true})]
 
     (is (every? false? (vals flags)))))
+
+(deftest multiple-runs-keep-sibling-separation
+  ;; #222: each owned live pane starts a separate RUN section, never another nested row.
+  (let [pane
+        (review-pane)
+
+        second-pane
+        (-> pane
+            (assoc-in [:view :id] "33333333-3333-4333-8333-333333333333")
+            (assoc-in [:view :title] "Release verification"))
+
+        payload
+        (render/progress->lines-data review-progress
+                                     90
+                                     {:show-iterations true}
+                                     {:session-id "multi-run"
+                                      :now-ms 0
+                                      :live-runs (mapv lv/transcript-run [pane second-pane])})
+
+        rows
+        (keep-indexed #(when (= :inline-title (get-in %2 [:live-entry :kind])) %1)
+                      (:line-meta payload))]
+
+    (is (= 2 (count rows)))
+    (doseq [row rows]
+      (is (str/blank? (subs (nth (:lines payload) (dec row)) 1))))))
+
+(deftest sibling-header-keeps-live-control-route
+  ;; #222: the full RUN heading restores/minimizes live work and closes a reopened record.
+  (with-open [terminal
+              (DefaultVirtualTerminal. (TerminalSize. 80 44))
+
+              ts
+              (doto (TerminalScreen. terminal) (.startScreen))]
+
+    (doseq [[pane kind] [[(review-pane) :live-minimize] [(lv/minimized (review-pane)) :live-restore]
+                         [(lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))
+                          :live-reopen]]]
+      (binding [interactions/hit-map (interactions/create-hit-map)]
+        (paint-review! ts pane)
+        (let [hit (first (filter #(= kind (:kind %)) (.current interactions/hit-map)))
+              events (atom [])]
+
+          (is (some? hit))
+          (with-redefs [state/dispatch #(swap! events conj %)]
+            (is (#'screen/activate-live-region! {:live-views [pane]} hit)))
+          (is (some #{[(case kind
+                         :live-minimize
+                         :live-view-minimize
+
+                         :live-restore
+                         :live-view-restore
+
+                         :live-reopen
+                         :live-view-reopen) (lv/view-id pane)]}
+                    @events))
+          (when (= kind :live-reopen) (is (lv/dormant? (lv/reopened pane)))))))))
+
+(deftest mixed-and-saved-runs-keep-sibling-separation
+  ;; #222: saved receipts and running panes have the same one-row section boundary.
+  (doseq [width
+          [40 80]
+
+          mixed?
+          [false true]]
+
+    (let [pane
+          (review-pane)
+
+          saved
+          (assoc (lv/run-row pane)
+            :view-id "saved-one"
+            :title "Saved one"
+            :reason :completed)
+
+          options
+          {:session-id "mixed-run"
+           :now-ms 0
+           :runs (cond-> [saved]
+                   (not mixed?)
+                   (conj (assoc saved
+                           :view-id "saved-two"
+                           :title "Saved two")))
+           :live-runs (when mixed? [(lv/transcript-run pane)])}
+
+          payload
+          (render/progress->lines-data review-progress width {:show-iterations true} options)
+
+          rows
+          (keep-indexed #(when (:run-header? %2) %1) (:line-meta payload))]
+
+      (is (= 2 (count rows)))
+      (doseq [row rows]
+        (is (str/blank? (subs (nth (:lines payload) (dec row)) 1)))))))

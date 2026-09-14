@@ -337,12 +337,13 @@ describe('the settled run in the transcript', () => {
     expect(c.liveViewLog).toHaveBeenCalledWith('s1', fixture.id, 'tail', 0, 200, 'error');
   });
 
-  it('opens the picture the run ended on, and nothing about it can be pressed', async () => {
+  // Regression #222: sibling RUN bands open the same sealed recording as standalone rows.
+  it.each([false, true])('opens and closes the final picture (embedded=%s)', async (embedded) => {
     serve(
       [openLine, closeLine({ reason: 'interrupted', note: 'enough', view: sealed })].join('\n'),
     );
     const { client: c, attachmentUrl } = rowClient();
-    render(<LiveRunRow client={c} sid="s1" attachment={record()} />);
+    render(<LiveRunRow client={c} sid="s1" attachment={record()} embedded={embedded} />);
     fireEvent.click(screen.getByRole('button', { name: 'Open run release' }));
     await waitFor(() => expect(screen.getByText('swept 3 hosts')).toBeTruthy());
     expect(attachmentUrl).toHaveBeenCalledWith('s1', 'it-1', 2);
@@ -352,7 +353,9 @@ describe('the settled run in the transcript', () => {
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
     expect(document.querySelector('[role="status"]')).toBeNull();
     // The way out is the band's own, and it names the run.
-    expect(screen.getByRole('button', { name: 'Close release' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close release' }));
+    await waitFor(() => expect(screen.queryByText('swept 3 hosts')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Open run release' })).toBeVisible();
   });
 
   it('says so when the record cannot be fetched, in the same screen', async () => {

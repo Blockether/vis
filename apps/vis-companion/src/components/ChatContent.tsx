@@ -1507,11 +1507,14 @@ const FormTrace = memo(function FormTrace({
   const ownedViews = liveViews.filter((view) =>
     forms.some((source) => liveOwnerMatches(view.owner, source.activity)),
   );
-  const ownedAttachments = attachments.filter(
-    (attachment) =>
-      attachmentIsLive(attachment) &&
-      forms.some((source) => liveOwnerMatches(attachment.owner, source.activity)),
-  );
+  const ownedAttachments = collapseAttachmentVersions(
+    attachments.filter(
+      (attachment) =>
+        attachmentIsLive(attachment) &&
+        attachment.iteration_id &&
+        forms.some((source) => liveOwnerMatches(attachment.owner, source.activity)),
+    ),
+  ).map((thread) => thread[0]);
   const hasActivity = detectedActivity || ownedViews.length > 0 || ownedAttachments.length > 0;
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
@@ -1539,19 +1542,31 @@ const FormTrace = memo(function FormTrace({
       )}
       <div
         className={hasActivity ? 'relative z-0 min-w-0 bg-code px-3' : 'min-w-0'}
-        data-execution-activity={hasActivity || undefined}
-        role={running ? 'status' : 'group'}
-        aria-live={running ? 'polite' : undefined}
-        aria-label="Execution trace"
+        data-execution-group={hasActivity || undefined}
       >
-        {status && <span className="sr-only">{status}</span>}
-        {detectedActivity && (
-          <ActivityPanel activity={forms.flatMap((source) => source.activity ?? [])} />
-        )}
+        <div
+          data-execution-activity={hasActivity || undefined}
+          role={running ? 'status' : 'group'}
+          aria-live={running ? 'polite' : undefined}
+          aria-label="Execution trace"
+        >
+          {status && <span className="sr-only">{status}</span>}
+          {detectedActivity && (
+            <ActivityPanel activity={forms.flatMap((source) => source.activity ?? [])} />
+          )}
+        </div>
         {client && sid && (
           <>
             <LiveView views={ownedViews} client={client} sid={sid} embedded />
-            <AttachmentRail client={client} sid={sid} attachments={ownedAttachments} />
+            {ownedAttachments.map((attachment) => (
+              <section
+                key={`run-${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
+                className="pt-3"
+                data-execution-run
+              >
+                <LiveRunRow client={client} sid={sid} attachment={attachment} embedded />
+              </section>
+            ))}
           </>
         )}
       </div>

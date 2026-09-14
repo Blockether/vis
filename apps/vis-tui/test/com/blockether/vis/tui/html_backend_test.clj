@@ -1019,8 +1019,8 @@
     :presentation {:headline "Watch Jenkins build" :summary "Build interrupted"}
     :evidence []}])
 
-;; #222: terminal cells, hit targets and HTML all share one Activity background.
-(deftest activity-live-nested-grid-test
+;; #222: sibling ACTIVITY and RUN share terminal alignment, hit targets and background.
+(deftest activity-live-sibling-grid-test
   (doseq [cols
           [40 80]
 
@@ -1064,16 +1064,17 @@
               (first (keep-indexed #(when (str/includes? %2 "ACTIVITY") %1) lines))
 
               live-y
-              (first (keep-indexed #(when (str/includes? %2 (if recorded? "Live view" "RUN")) %1)
-                                   lines))
+              (first (keep-indexed #(when (str/includes? %2 "RUN") %1) lines))
 
               live-x
-              (.indexOf ^String (nth lines live-y) (if recorded? "Live view" "RUN"))
+              (.indexOf ^String (nth lines live-y) "RUN")
 
               hit
               (.lookup interactions/hit-map live-x live-y)]
 
           (is (< header-y live-y))
+          (is (= live-x (.indexOf ^String (nth lines header-y) "ACTIVITY")))
+          (is (str/blank? (nth lines (dec live-y))))
           (is (= (if recorded? :artifact :live-reopen) (:kind hit)))
           (doseq [y (range header-y (inc live-y))]
             (is (= theme/code-block-bg

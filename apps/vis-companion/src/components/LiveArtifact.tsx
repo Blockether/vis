@@ -26,7 +26,7 @@ import { useStickyOverlay } from '../lib/sticky-overlay';
 import type { IterationAttachment } from '../lib/types';
 import { LiveViewPanel } from './LiveView';
 import { ChevronIcon } from './icons';
-import { ListRow, overlayLayer, OverlayScreen } from './ui';
+import { BandLabel, Disclosure, ListRow, overlayLayer, OverlayScreen } from './ui';
 
 /** Under this, the whole record is folded patch by patch — the honest replay. */
 export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
@@ -204,10 +204,13 @@ export const LiveRunRow = memo(function LiveRunRow({
   client,
   sid,
   attachment,
+  embedded = false,
 }: {
   client: GatewayClient;
   sid: string;
   attachment: IterationAttachment;
+  /** The execution group supplies the shared surface and horizontal inset. */
+  embedded?: boolean;
 }) {
   const name = liveRunName(attachment.filename);
   const iterationId = attachment.iteration_id ?? '';
@@ -244,18 +247,24 @@ export const LiveRunRow = memo(function LiveRunRow({
 
   return (
     <>
-      {/* The row IS the control, so the whole line is the target a finger gets:
-          `ListRow` is the app's one pressable row and owns that box. */}
-      <ListRow onClick={open} title={name} aria-label={`Open run ${name}`}>
-        <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">
-          RUN
-        </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">{name}</span>
-        {sizeLabel ? (
-          <span className="shrink-0 font-mono text-chip text-footer-muted">{sizeLabel}</span>
-        ) : null}
-        <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
-      </ListRow>
+      {embedded ? (
+        <Disclosure tone="execution" isOpen={opened} onClick={open} aria-label={`Open run ${name}`}>
+          <BandLabel>RUN</BandLabel>
+          <span className="min-w-0 flex-1 truncate">{name}</span>
+          {sizeLabel && <span className="shrink-0 text-dialog-hint">{sizeLabel}</span>}
+        </Disclosure>
+      ) : (
+        <ListRow onClick={open} title={name} aria-label={`Open run ${name}`}>
+          <span className="shrink-0 border border-edge-strong px-1.5 text-chip text-accent-ink">
+            RUN
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-chip text-muted">{name}</span>
+          {sizeLabel ? (
+            <span className="shrink-0 font-mono text-chip text-footer-muted">{sizeLabel}</span>
+          ) : null}
+          <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
+        </ListRow>
+      )}
       {/* The opened run is a SCREEN, not a part of the transcript — portalled
           out of the turn into the viewport-pinned shell, exactly as an opened
           document is, so the composer strip cannot paint over it. */}

@@ -6083,8 +6083,8 @@ h = 8"
                  (.indexOf ^String body "Nightly")
                  (.indexOf ^String body "Watched it."))
               "both run records remain inside their execution group, before the answer")
-      (expect (str/includes? body "▸ RUN Release · gh") "a dormant record offers open")
-      (expect (str/includes? body "▾ RUN Nightly") "a reopened record offers collapse")))
+      (expect (str/includes? body "RUN ▸ Release · gh") "a dormant record offers open")
+      (expect (str/includes? body "RUN ▾ Nightly") "a reopened record offers collapse")))
   (it "invalidates the hot iteration cache when the record opens and closes"
       (render/invalidate-cache!)
       (let [trace
@@ -6107,9 +6107,9 @@ h = 8"
                   strip-ansi
                   strip-sentinels))]
 
-        (expect (str/includes? (render-row false) "▸ RUN CI"))
-        (expect (str/includes? (render-row true) "▾ RUN CI"))
-        (expect (str/includes? (render-row false) "▸ RUN CI"))))
+        (expect (str/includes? (render-row false) "RUN ▸ CI"))
+        (expect (str/includes? (render-row true) "RUN ▾ CI"))
+        (expect (str/includes? (render-row false) "RUN ▸ CI"))))
   (it
     "collapses tool source with its details and opens the evidence hierarchy"
     (render/invalidate-cache!)
@@ -8387,9 +8387,9 @@ print(paths)"
 
 ;; #222: a form's live receipt must share its Activity surface, not float below it.
 (defdescribe
-  activity-live-nesting-test
+  activity-live-sibling-test
   (it
-    "keeps anchored run receipts inside the Activity fill and inset"
+    "keeps owned RUN receipts beside Activity with matching fill and alignment"
     (doseq [width [40 80]]
       (let [entries (format-iteration-entry-entries
                       {:forms [{:code "watch()"

@@ -833,7 +833,8 @@ export const JoinedActivity: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const code = canvasElement.querySelector('[data-execution-code]')!;
-    const activity = canvasElement.querySelector('[data-execution-activity]')!;
+    // Regression #222: the execution group owns the common CODE/ACTIVITY/RUN surface.
+    const activity = canvasElement.querySelector('[data-execution-group]')!;
     const copyIcon = code.querySelector('button[aria-label="Copy code"] svg')!;
     const activityCopyIcon = activity.querySelector('button[aria-label="Copy activity"] svg')!;
     await expect(copyIcon.getBoundingClientRect().right).toBeCloseTo(
