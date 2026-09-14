@@ -101,7 +101,7 @@ jobs:
         run: npm ci
 
       - name: Test desktop packaging
-        run: npm exec vitest -- run scripts/desktop-package.test.mjs
+        run: npm exec vitest -- run scripts/desktop-package.test.mjs scripts/version.test.mjs
 
       - name: Build web bundle
         run: npm run build

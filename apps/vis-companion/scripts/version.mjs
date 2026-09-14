@@ -78,7 +78,7 @@ export function syncPythonVersion({ quiet = false } = {}) {
   const version = visVersion();
   const text = readFileSync(pyprojectFile, 'utf8');
   const next = text.replace(/^(version = )"[^"]*"/m, `$1"${version}"`);
-  if (!next.includes(`\nversion = "${version}"\n`)) {
+  if (!next.split(/\r?\n/).includes(`version = "${version}"`)) {
     throw new Error(`could not rewrite "version" in ${pyprojectFile}`);
   }
   if (next !== text) {
