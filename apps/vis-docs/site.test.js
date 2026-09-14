@@ -20,6 +20,11 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
     ),
   ).toBe(true);
   expect(readFileSync('dist/assets/docs.js', 'utf8')).toContain('Prism.highlightAll()');
+  for (const name of ['select.js', 'select-init.js']) {
+    expect(readFileSync('dist/assets/' + name)).toEqual(
+      readFileSync('../../resources/vis-docs/assets/' + name),
+    );
+  }
   for (const file of htmlFiles) {
     const dom = new JSDOM(readFileSync('dist/' + file, 'utf8'), {
       url: 'https://gateway.example.com/' + file,
@@ -32,6 +37,9 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
         ),
         file,
       ).toBeNull();
+      expect(
+        document.querySelector('script[type="module"][src="assets/select-init.js"]'),
+      ).not.toBeNull();
       expect(document.querySelector('.top .center-link').getAttribute('href'), file).toBe(
         '/extensions/',
       );

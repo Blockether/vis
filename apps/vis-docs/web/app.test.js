@@ -51,6 +51,22 @@ function change(selector, value, type = 'input') {
   $(selector).value = value;
   $(selector).dispatchEvent(new window.Event(type, { bubbles: true }));
 }
+function choose(selector, value) {
+  const select = $(selector);
+  const trigger = select.closest('.vis-select')?.querySelector('[role="combobox"]');
+  expect(trigger).not.toBeNull();
+  expect(trigger).toBeDefined();
+  expect(select.hidden).toBe(true);
+  trigger.click();
+  const label = [...select.options].find((option) => option.value === value).label;
+  const list = document.getElementById(trigger.getAttribute('aria-controls'));
+  const option = [...list.querySelectorAll('[role="option"]')].find(
+    (node) => node.textContent.trim() === label,
+  );
+  expect(option).toBeDefined();
+  option.click();
+  expect(trigger.textContent).toContain(label);
+}
 function names() {
   return [...document.querySelectorAll('[data-name]')].map((e) => e.dataset.name);
 }
@@ -125,7 +141,7 @@ test('sort controls affect real results and persist when the search form is subm
     ['newest', 'example/extension-examples'],
     ['name', 'example/browser-tools'],
   ]) {
-    change('#sort', sort, 'change');
+    choose('#sort', sort);
     expect(names()[0]).toBe(expected);
   }
   const submit = new window.Event('submit', { bubbles: true, cancelable: true });
@@ -133,6 +149,41 @@ test('sort controls affect real results and persist when the search form is subm
   expect(submit.defaultPrevented).toBe(true);
   expect(window.location.search).toBe('?sort=name');
   expect(names()[0]).toBe('example/browser-tools');
+});
+
+test('dropdown keys stay in the control and browser navigation refreshes its visible value', async () => {
+  setup();
+  await tick();
+  const select = $('#sort');
+  const trigger = select.closest('.vis-select').querySelector('[role="combobox"]');
+  const key = (value) =>
+    trigger.dispatchEvent(
+      new window.KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }),
+    );
+  const original = select.value;
+  trigger.focus();
+  key('/');
+  expect(document.activeElement).toBe(trigger);
+  key('ArrowDown');
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  expect(document.activeElement).toBe(trigger);
+  key('End');
+  expect(select.value).toBe(original);
+  key('Escape');
+  expect(select.value).toBe(original);
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(trigger);
+  key('End');
+  key('Enter');
+  expect(select.value).toBe([...select.options].at(-1).value);
+  expect(trigger.textContent).toContain(select.selectedOptions[0].label);
+
+  window.history.replaceState(null, '', '/extensions/?sort=updated');
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+  await tick();
+  expect(select.value).toBe('updated');
+  expect(trigger.textContent).toContain(select.selectedOptions[0].label);
+  expect(names()[0]).toBe('example/extension-examples');
 });
 
 test.each(['grid', 'list'])(
@@ -196,7 +247,7 @@ test('catalog CSS uses a two-column grid on wide screens and border-separated ro
   expect(style.textContent).not.toMatch(/data-view|view-switch/);
 });
 
-test('release controls retain pointer and touch targets without replacing native selects', () => {
+test('release controls retain pointer and touch targets, including native no-JS fallbacks', () => {
   const style = document.createElement('style');
   style.textContent = readFileSync('web/style.css', 'utf8');
   document.body.append(style);
@@ -314,12 +365,14 @@ test('install choices render highlighted multiline shell commands and reset copy
   $('#copy-command').click();
   await tick();
   expect($('#copy-command').textContent).toBe('Copied');
-  change('#install-scope', 'global', 'change');
+  choose('#install-scope', 'global');
   expect($('#install-command').textContent).toBe(installCommand(item, 'global'));
   expect($('#install-command').textContent).toContain('--global');
   expect($('#install-command').textContent).not.toContain('--project');
   expect($('#install-scope-help').textContent).toContain('~/.vis/extensions');
-  expect($('#install-scope-help').textContent).toContain('does not add an extensions entry to vis.yml');
+  expect($('#install-scope-help').textContent).toContain(
+    'does not add an extensions entry to vis.yml',
+  );
   expect($('#install-scope-help code').textContent).toBe('--save');
   expect($('#install-scope-help a').getAttribute('href')).toBe(
     '/extension-packages.html#save-an-installation-in-configuration',
@@ -329,7 +382,7 @@ test('install choices render highlighted multiline shell commands and reset copy
   $('#copy-command').click();
   await tick();
   expect(writeText).toHaveBeenLastCalledWith(installCommand(item, 'global'));
-  change('#install-scope', 'project', 'change');
+  choose('#install-scope', 'project');
   expect($('#install-command').textContent).toBe(installCommand(item));
 });
 
@@ -716,8 +769,8 @@ test('version selection changes the pinned detail, is linkable, and survives bac
   $('.card-main').click();
   await tick();
   expect($('#release-version').value).toBe('1.2.0');
-  change('#install-scope', 'global', 'change');
-  change('#release-version', '1.0.0', 'change');
+  choose('#install-scope', 'global');
+  choose('#release-version', '1.0.0');
   $('#version-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await tick();
   expect(window.location.search).toBe('?version=1.0.0');
@@ -748,6 +801,12 @@ test('version selection changes the pinned detail, is linkable, and survives bac
   window.dispatchEvent(new window.PopStateEvent('popstate'));
   await tick();
   expect($('#release-version').value).toBe('1.2.0');
+  for (const selector of ['#release-version', '#install-scope']) {
+    const select = $(selector);
+    const trigger = select.closest('.vis-select').querySelector('[role="combobox"]');
+    expect(trigger.textContent).toContain(select.selectedOptions[0].label);
+  }
+  expect(document.querySelector('[role="listbox"]')).toBeNull();
 });
 
 test('slug deep links resolve the listing after catalog loading and preserve the version', async () => {

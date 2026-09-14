@@ -375,13 +375,13 @@
       (when-let [r (:repo site)]
         (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>"))
       "</div>"
-      "</article></main>"
-      (or (toc-html toc) "<div></div>")
+      "</article></main>" (or (toc-html toc) "<div></div>")
       "</div>"
       (if (= mode :static)
         "<script src=\"assets/prism.min.js\" defer></script><script src=\"assets/docs.js\" defer></script>"
         (str "<script>" @prism-js "\nPrism.highlightAll();</script>"))
-      "</body></html>")))
+      "<script type=\"module\" src=\"" (asset mode "select-init.js")
+      "\"></script>" "</body></html>")))
 
 ;; static site
 
@@ -415,6 +415,8 @@
    "vis-docs/assets/fonts/jetbrains-mono.woff2" "assets/fonts/jetbrains-mono.woff2"
    "vis-docs/assets/theme.css" "assets/theme.css"
    "vis-docs/assets/docs.js" "assets/docs.js"
+   "vis-docs/assets/select.js" "assets/select.js"
+   "vis-docs/assets/select-init.js" "assets/select-init.js"
    "vis-transcript/prism.min.js" "assets/prism.min.js"})
 
 (defn- copy-assets!
@@ -476,6 +478,7 @@
                    (str/ends-with? rel ".png") "image/png"
                    (str/ends-with? rel ".svg") "image/svg+xml"
                    (str/ends-with? rel ".mmd") "text/plain; charset=utf-8"
+                   (str/ends-with? rel ".js") "text/javascript; charset=utf-8"
                    :else "application/octet-stream")]
       {:status 200
        :headers {"content-type" ct "cache-control" "public,max-age=31536000,immutable"}

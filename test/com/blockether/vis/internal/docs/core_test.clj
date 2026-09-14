@@ -55,6 +55,28 @@
         (expect (str/includes? html (str "href=\"" path "\"")))))))
 
 (defdescribe
+  dropdown-assets-test
+  (it "loads the shared dropdown entrypoint in static and live documentation"
+      (let [{:keys [pages] :as site} (docs/collect)]
+        (doseq [[mode prefix] [[:static "assets/"] [:live "/docs/assets/"]]]
+          (expect (str/includes?
+                    (docs/page-html site (first pages) mode)
+                    (str "<script type=\"module\" src=\"" prefix "select-init.js\"></script>"))))))
+  (it "copies and serves the shared dropdown modules with a JavaScript media type"
+      (doseq [name
+              ["select.js" "select-init.js"]
+
+              :let [response
+                    (docs/handle {:uri (str "/docs/assets/" name)})]]
+
+        (expect (= (str "assets/" name) (get @#'docs/asset-files (str "vis-docs/assets/" name))))
+        (expect (= 200 (:status response)))
+        (expect (= "text/javascript; charset=utf-8" (get-in response [:headers "content-type"])))
+        (when-let [body (:body response)]
+          (with-open [in ^java.io.InputStream body]
+            (expect (str/includes? (slurp in) "mountSelects")))))))
+
+(defdescribe
   screenshot-assets-test
   (it "serves every screenshot as a PNG and includes it in static assets"
       (doseq [name

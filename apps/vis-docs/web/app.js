@@ -16,6 +16,7 @@ export { installCommand } from './render.js';
 import { catalogMetadata, extensionPath } from './discovery.js';
 import { mountCommunity } from './community.js';
 import { loadTurnstile } from './turnstile.js';
+import { mountSelects } from '../../../resources/vis-docs/assets/select.js';
 function updateMetadata(data = {}) {
   document.head.querySelectorAll('[data-discovery]').forEach((node) => node.remove());
   document.head.insertAdjacentHTML('beforeend', catalogMetadata(data));
@@ -25,6 +26,7 @@ export function mount(container, request = fetch, initial) {
   const $ = (selector) => container.querySelector(selector);
   if (!$('#catalog-page'))
     container.innerHTML = shellHTML(initial || { search: window.location.search });
+  const dropdowns = mountSelects(container);
   let state = filters(window.location.search),
     items = initial?.items || [],
     disposed = false,
@@ -79,6 +81,7 @@ export function mount(container, request = fetch, initial) {
     $('#search').value = state.q;
     $('#sort').value = state.sort;
     $('#filters [name=category]').value = state.category;
+    dropdowns.refresh();
   }
   function saveFilters() {
     window.history.replaceState(null, '', filterURL(state));
@@ -103,6 +106,7 @@ export function mount(container, request = fetch, initial) {
   function renderInstall() {
     ++copyRevision;
     $('#install-scope').value = installScope;
+    dropdowns.refresh();
     $('#install-command code').innerHTML = installCommandHTML(detailItem, installScope);
     $('#install-scope-help').innerHTML = installScopeHelp(installScope);
     $('#copy-command').textContent = 'Copy install command';
@@ -123,6 +127,7 @@ export function mount(container, request = fetch, initial) {
       revision = ++routeRevision;
     $('#catalog-page').hidden = detail;
     $('#detail-page').hidden = !detail;
+    dropdowns.refresh();
     $('.toc').innerHTML = tocHTML(detail);
     $('#back-to-catalog').href = filterURL(state);
     if (!detail) {
@@ -130,6 +135,7 @@ export function mount(container, request = fetch, initial) {
       return;
     }
     $('#detail').innerHTML = '<p>Loading extension…</p>';
+    dropdowns.refresh();
     try {
       const listing = items.find((item) => extensionPath(item) === path);
       if (!listing) throw new Error('Repository not listed.');
@@ -418,7 +424,7 @@ export function mount(container, request = fetch, initial) {
   container.addEventListener('submit', versionSubmit);
   container.addEventListener('click', click);
   const keys = (event) => {
-    if (dialog.open) return;
+    if (dialog.open || event.defaultPrevented) return;
     if (mobile.matches && navigation.checked) {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -435,7 +441,7 @@ export function mount(container, request = fetch, initial) {
       }
     }
     if ($('#catalog-page').hidden) return;
-    const editable = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    const editable = document.activeElement?.matches('input, textarea, select, [role=combobox]');
     if (event.key === '/' && !editable) {
       event.preventDefault();
       closeNavigation();
@@ -470,6 +476,7 @@ export function mount(container, request = fetch, initial) {
   return () => {
     disposed = true;
     cleanupCommunity?.();
+    dropdowns.dispose();
     ++routeRevision;
     ++submissionRevision;
     removeChallenge();
