@@ -240,20 +240,13 @@ describe('the icon set', () => {
     expect(renderToStaticMarkup(<ChevronIcon back />)).toContain('[&amp;&gt;path]:rotate-180');
   });
 
-  // Regression: the star was drawn in the legible amber INK a text glyph needs,
-  // so "starred" never showed the brand yellow.
-  //
-  // Regression, user report (phone screenshot: favorite marks looked hollow): a
-  // utility-only fill could disappear from the shipped webview. The SVG therefore
-  // carries its filled state itself; the semantic classes still choose the colours.
-  //
-  // Regression: a contrasting outline made favorites look two-tone. Use the
-  // accessible accent ink for the entire mark, not the low-contrast accent fill.
-  it('paints a filled favorite in one accessible accent color', () => {
+  // Regression: text ink made filled favorites brown instead of yellow. Keep
+  // the accent fill explicit for native webviews and use the same stroke color.
+  it('paints a filled favorite with the accent fill, not the darker text ink', () => {
     const filled = renderToStaticMarkup(<StarIcon filled />);
     expect(filled).toContain('fill="currentColor"');
-    expect(filled).toContain('text-accent-ink stroke-current');
-    expect(filled).not.toContain('stroke-accent-ink');
+    expect(filled).toContain('text-accent stroke-current');
+    expect(filled).not.toContain('accent-ink');
     expect(renderToStaticMarkup(<StarIcon />)).toContain('fill="none"');
   });
 

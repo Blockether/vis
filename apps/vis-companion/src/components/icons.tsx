@@ -267,8 +267,8 @@ export function TrashIcon({ className }: { className?: string }) {
 }
 
 /**
- * A favorite uses one accessible accent ink for both fill and stroke. The SVG
- * carries its fill explicitly so the marked state survives in native webviews.
+ * A filled favorite uses the accent fill, not the darker ink used for text.
+ * Keep fill and stroke together, with an explicit fill for native webviews.
  * Unstarred action icons remain outlines in their control's current color.
  */
 export function StarIcon({ filled = false, className }: { filled?: boolean; className?: string }) {
@@ -276,7 +276,7 @@ export function StarIcon({ filled = false, className }: { filled?: boolean; clas
     <Mark
       icon={Star}
       fill={filled ? 'currentColor' : 'none'}
-      className={classes(filled ? 'text-accent-ink stroke-current' : 'stroke-current', className)}
+      className={classes(filled ? 'text-accent stroke-current' : 'stroke-current', className)}
     />
   );
 }

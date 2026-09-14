@@ -174,6 +174,8 @@ export const Favorites: Story = {
       );
     }
     const star = favorite(rows[0]).querySelector('svg')!;
+    await expect(star).toHaveClass('text-accent');
+    await expect(star).not.toHaveClass('text-accent-ink');
     await expect(win.getComputedStyle(star).fill).toBe(win.getComputedStyle(star).stroke);
     await expect(favorite(rows[1]).querySelector('svg')).toBeNull();
 

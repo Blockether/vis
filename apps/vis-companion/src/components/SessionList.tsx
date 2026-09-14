@@ -236,7 +236,7 @@ export const SessionRow = memo(function SessionRow({
                     key: 'favorite',
                     label: isStarred ? 'Unstar' : 'Star',
                     icon: <StarIcon filled={isStarred} className="size-4" />,
-                    // The action and the row mark share the accessible accent ink.
+                    // The favorite keeps its accent fill; the caption uses readable ink.
                     tone: 'accent',
                     onSelect: toggleFavorite,
                   },
