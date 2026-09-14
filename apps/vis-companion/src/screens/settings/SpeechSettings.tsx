@@ -351,7 +351,7 @@ export function VoicesPanel({
         )}
 
         {catalogue === null && !err && (
-          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
+          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4 mouse:text-body">
             Reading this machine's voices…
           </p>
         )}
@@ -471,7 +471,7 @@ export function VoicesPanel({
               )}
               {confirmingInstall === voice.id && (
                 <div className="border-t border-dialog-edge">
-                  <div className="space-y-2 px-3 pt-3 font-mono text-meta text-dialog-hint sm:px-4">
+                  <div className="space-y-2 px-3 pt-3 font-mono text-meta text-dialog-hint sm:px-4 mouse:text-body">
                     <p>{voice.notice ?? `This voice requires acceptance of ${voice.license}.`}</p>
                     {voice.license && <p className="font-bold text-white">{voice.license}</p>}
                     {voice.source_url && (
@@ -772,7 +772,7 @@ function EngineProblem({
   return (
     <div className="space-y-2 border-t border-dialog-edge px-3 py-3 sm:px-4">
       {reading?.absence && (
-        <p className="font-mono text-chip text-dialog-hint">
+        <p className="font-mono text-chip text-dialog-hint mouse:text-body">
           {reading.absence.reasons?.length
             ? reading.absence.reasons.join(' · ')
             : 'This machine has no engine for this direction installed.'}
@@ -1078,7 +1078,7 @@ export function SpeechEnginesPanel({
                 </div>
               ) : (
                 <>
-                  <p className="px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                  <p className="px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4 mouse:text-body">
                     No ASR engine is registered on this machine.
                   </p>
                   <EngineProblem
@@ -1118,12 +1118,12 @@ export function SpeechEnginesPanel({
                     {openTtsSettings.has('device') && (
                       <div id="speech-tts-settings-device" className="grid">
                         {voices === null && (
-                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4 mouse:text-body">
                             Asking this device what it can speak in…
                           </p>
                         )}
                         {voices !== null && voices.length === 0 && (
-                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4 mouse:text-body">
                             This device has no system TTS engine installed.
                           </p>
                         )}
@@ -1188,7 +1188,7 @@ export function SpeechEnginesPanel({
                               })}
                             </div>
                             {voiceDownloadGuidance && (
-                              <p className="border-t border-dialog-edge p-3 font-mono text-meta text-dialog-hint sm:p-4">
+                              <p className="border-t border-dialog-edge p-3 font-mono text-meta text-dialog-hint sm:p-4 mouse:text-body">
                                 {voiceDownloadGuidance}
                               </p>
                             )}

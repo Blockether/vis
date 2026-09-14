@@ -965,9 +965,9 @@ describe('Modal and DialogFrame as a phone sheet', () => {
     expect(source).toContain('sm:pb-[max(1rem,env(safe-area-inset-bottom))]');
   });
 
-  it('gives every dialog ONE desktop box and a full-height phone sheet', () => {
+  it('keeps question dialogs compact and gives desktop settings a wider box', () => {
     expect(source).toContain("DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'");
-    expect(source).toContain("'sm:max-w-4xl' : 'sm:max-w-xl'");
+    expect(source).toContain("'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl'");
     expect(source).toContain(
       "'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT",
     );

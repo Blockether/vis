@@ -1117,12 +1117,43 @@ export const Settings: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    const labels = ['Voice', 'Piper (gateway)', 'This device'].map((name) => canvas.getByText(name));
+    await labels[0].ownerDocument.fonts.ready;
+    for (const label of labels) {
+      const style = getComputedStyle(label);
+      await expect(style.fontSize).toBe(pointer ? '13px' : '11px');
+      await expect(style.lineHeight).toBe(pointer ? '20px' : '16px');
+      await expect(style.fontFamily).toBe(getComputedStyle(labels[0]).fontFamily);
+    }
+    for (const value of ['Piper English', 'ready', 'system TTS']) {
+      const style = getComputedStyle(canvas.getByText(value));
+      await expect(style.fontSize).toBe(pointer ? '10px' : '8px');
+      await expect(style.lineHeight).toBe(pointer ? '16px' : '14px');
+    }
+    await expect(getComputedStyle(canvas.getByRole('heading', { name: 'TTS engines' })).fontSize).toBe(
+      pointer ? '11px' : '8px',
+    );
     for (const button of canvas.getAllByRole('button', { name: /^Settings for/ })) {
       await expectUnframedIcon(button);
       await userEvent.click(button);
       await expectUnframedIcon(button);
     }
+    await userEvent.click(canvas.getByText('This device'));
+    await expect(canvas.getByText('This device').closest('button')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(canvas.getByText('Piper (gateway)').closest('button')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
   },
+};
+
+export const SettingsPointer: Story = {
+  ...Settings,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 /**

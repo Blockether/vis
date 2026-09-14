@@ -243,8 +243,10 @@ export function SettingsDialog({
             <SettingsPanel title="Transcript">
               <div className="flex items-center justify-between gap-4 px-4 py-3">
                 <div className="min-w-0">
-                  <p className="font-mono text-ui font-bold text-white">Show Python code</p>
-                  <p className="text-ui text-dialog-hint">
+                  <p className="font-mono text-ui font-bold text-white mouse:text-title">
+                    Show Python code
+                  </p>
+                  <p className="text-ui text-dialog-hint mouse:text-body">
                     One expandable source line before Activity. Hiding code keeps every activity and
                     result.
                   </p>

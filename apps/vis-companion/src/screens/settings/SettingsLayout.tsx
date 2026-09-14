@@ -13,9 +13,11 @@ export function FormLabel({
 }) {
   return (
     <label className="block space-y-1">
-      <span className="block font-mono text-chip font-bold text-white">{label}</span>
+      <span className="block font-mono text-chip font-bold text-white mouse:text-title">{label}</span>
       {children}
-      {hint && <span className="block font-mono text-chip text-dialog-hint">{hint}</span>}
+      {hint && (
+        <span className="block font-mono text-chip text-dialog-hint mouse:text-body">{hint}</span>
+      )}
     </label>
   );
 }
@@ -96,12 +98,12 @@ export function SettingsColumn({
       <TitleHeading
         role="heading"
         aria-level={3}
-        className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white"
+        className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white mouse:text-title"
       >
         {title}
       </TitleHeading>
       {meta && (
-        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint mouse:text-meta">
           {meta}
         </span>
       )}
@@ -163,12 +165,12 @@ export function SettingsPanel({
       <TitleHeading
         role="heading"
         aria-level={3}
-        className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint"
+        className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint mouse:text-title"
       >
         {title}
       </TitleHeading>
       {meta && (
-        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint mouse:text-meta">
           {meta}
         </span>
       )}

@@ -235,7 +235,7 @@ export const ReadingLayout: Story = {
       await expect(style.fontSize).toBe(pointer ? getComputedStyle(title).fontSize : '11px');
       await expect(style.lineHeight).toBe(pointer ? '20px' : '16px');
     }
-    const cap = pointer ? 896 : 768;
+    const cap = pointer ? 1152 : 768;
     await expect(column.getBoundingClientRect().width).toBe(Math.min(cap, transcript.clientWidth));
     await expect(getComputedStyle(column).maxWidth).toBe(`${cap}px`);
     await expect(transcript.scrollWidth).toBe(transcript.clientWidth);

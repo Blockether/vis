@@ -28,9 +28,19 @@ const pick = fn();
 export const Fleet: Story = {
   args: { onPick: pick },
   play: async ({ args, canvas }) => {
+    const name = canvas.getByText('tower');
+    await name.ownerDocument.fonts.ready;
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '12px');
+    await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '18px');
     await userEvent.click(canvas.getByRole('button', { name: /tower/i }));
     await expect(args.onPick).toHaveBeenCalledWith(STORY_GATEWAYS[0]);
   },
+};
+
+export const FleetPointer: Story = {
+  ...Fleet,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 /** One machine pays no width for fleet rank. */

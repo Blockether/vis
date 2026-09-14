@@ -1325,14 +1325,22 @@ export function ChoiceCell({
     >
       {isLeaf ? (
         <>
-          <span className="min-w-0 truncate font-mono text-ui font-bold">{title}</span>
-          {sub && <span className="ml-auto min-w-0 truncate font-mono text-chip">{sub}</span>}
+          <span className="min-w-0 truncate font-mono text-ui font-bold mouse:text-title">
+            {title}
+          </span>
+          {sub && (
+            <span className="ml-auto min-w-0 truncate font-mono text-chip mouse:text-meta">
+              {sub}
+            </span>
+          )}
         </>
       ) : (
         <span className="min-w-0">
-          <span className="block truncate font-mono text-ui font-bold">{title}</span>
+          <span className="block truncate font-mono text-ui font-bold mouse:text-title">
+            {title}
+          </span>
           {sub && (
-            <span className="block truncate font-mono text-chip uppercase tracking-wider">
+            <span className="block truncate font-mono text-chip uppercase tracking-wider mouse:text-meta">
               {sub}
             </span>
           )}
@@ -1453,7 +1461,7 @@ export function SettingsChoiceGroup({
       >
         <h4
           id={headingId}
-          className="font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint"
+          className="font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint mouse:text-ui"
         >
           {label}
         </h4>
@@ -1489,10 +1497,10 @@ export function SettingsDisclosure({
       {...props}
     >
       <span className="min-w-0 flex-1">
-        <span className="block font-mono text-ui font-black uppercase tracking-[0.08em] text-white">
+        <span className="block font-mono text-ui font-black uppercase tracking-[0.08em] text-white mouse:text-title">
           {label}
         </span>
-        <span className="block truncate font-mono text-chip text-dialog-hint">{value}</span>
+        <span className="block truncate font-mono text-chip text-dialog-hint mouse:text-meta">{value}</span>
       </span>
       <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
     </button>
@@ -1949,7 +1957,7 @@ export function Modal({
           moved out; `sm:max-w-xl` is its width, for the same reason. */}
       <div
         className={`flex w-full flex-col ${
-          size === 'wide' ? 'sm:max-w-4xl' : 'sm:max-w-xl'
+          size === 'wide' ? 'sm:max-w-4xl mouse:max-w-6xl' : 'sm:max-w-xl'
         } ${size === 'fit' ? 'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
@@ -2066,7 +2074,7 @@ export function DialogHeader({
             The band's height is a minimum, not a cap. */}
         <h2
           id={titleId}
-          className="line-clamp-3 font-mono text-body font-bold tracking-wide"
+          className="line-clamp-3 font-mono text-body font-bold tracking-wide mouse:text-title"
           title={typeof title === 'string' ? title : undefined}
         >
           {title}

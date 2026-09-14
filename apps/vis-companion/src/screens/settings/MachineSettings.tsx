@@ -107,9 +107,11 @@ export function StringSetting({
       }}
     >
       <div>
-        <p className="font-mono text-ui font-bold text-white">{toggle.label}</p>
+        <p className="font-mono text-ui font-bold text-white mouse:text-title">{toggle.label}</p>
         {toggle.description && (
-          <p className="mt-0.5 font-mono text-ui text-dialog-hint">{toggle.description}</p>
+          <p className="mt-0.5 font-mono text-ui text-dialog-hint mouse:text-body">
+            {toggle.description}
+          </p>
         )}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -292,7 +294,7 @@ export function MachineSettings({
         <SettingsPanel title="Settings">
           <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
             <p className="font-mono text-body font-bold text-err">Machine unreachable</p>
-            <p className="font-mono text-meta text-dialog-hint">
+            <p className="font-mono text-meta text-dialog-hint mouse:text-body">
               Can't load settings — vis isn't responding on this machine.
             </p>
             <Button variant="secondary" onClick={() => void load()}>
@@ -306,7 +308,7 @@ export function MachineSettings({
             <p className="font-mono text-body font-bold text-warn-strong">
               Token missing or invalid
             </p>
-            <p className="max-w-sm font-mono text-meta text-dialog-hint">
+            <p className="max-w-sm font-mono text-meta text-dialog-hint mouse:text-body">
               The machine is online, but rejected this token. Re-pair from{' '}
               <code className="text-accent-ink">vis-agent gateway pair</code> and paste the fresh
               link to load its settings.
@@ -327,7 +329,7 @@ export function MachineSettings({
             aria-live="polite"
             aria-label="Loading settings"
           >
-            <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint">
+            <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint mouse:text-body">
               Loading settings…
             </p>
             {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
@@ -379,11 +381,13 @@ export function MachineSettings({
                     className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 sm:px-4 sm:py-2"
                   >
                     <div className="min-w-0">
-                      <p className="break-words font-mono text-ui font-bold text-white">
+                      <p className="break-words font-mono text-ui font-bold text-white mouse:text-title">
                         {toggle.label}
                       </p>
                       {toggle.description && (
-                        <p className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint`}>
+                        <p
+                          className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint mouse:text-body`}
+                        >
                           {toggle.description}
                         </p>
                       )}
@@ -798,7 +802,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               value={args}
               onChange={(event) => setArgs(event.target.value)}
               placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'}
-              className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+              className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none mouse:text-ui"
             />
           </FormLabel>
           <FormLabel label="Working directory (optional)">
@@ -822,7 +826,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               value={env}
               onChange={(event) => setEnv(event.target.value)}
               placeholder="API_TOKEN=…"
-              className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+              className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none mouse:text-ui"
             />
           </FormLabel>
         </>
@@ -850,7 +854,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
               value={headers}
               onChange={(event) => setHeaders(event.target.value)}
               placeholder="Authorization=Bearer …"
-              className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+              className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none mouse:text-ui"
             />
           </FormLabel>
         </>
@@ -1035,7 +1039,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                   >
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-mono text-body font-bold text-white">
+                        <span className="truncate font-mono text-body font-bold text-white mouse:text-title">
                           {server.name}
                         </span>
                         {!server.is_managed && (
@@ -1076,12 +1080,12 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           );
         })}
         {servers === null && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
             Checking MCP servers…
           </p>
         )}
         {servers?.length === 0 && !showForm && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
             No MCP servers on this gateway.
           </p>
         )}
@@ -1207,13 +1211,13 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       )}
 
       {providers === null && (
-        <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+        <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
           Checking provider sign-in…
         </p>
       )}
 
       {providers?.length === 0 && (
-        <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+        <p className="py-4 text-center font-mono text-meta text-dialog-hint mouse:text-body">
           No providers configured on this machine.
         </p>
       )}

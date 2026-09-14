@@ -1045,7 +1045,7 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
                       }}
                     >
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate font-mono text-ui font-bold text-white">
+                        <span className="block truncate font-mono text-ui font-bold text-white mouse:text-title">
                           {preset.label}
                         </span>
                         <span className="block truncate font-mono text-meta text-dialog-hint">
@@ -1278,13 +1278,13 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                       two-line row it floated 8px below the label it marks, between
                       the name and its meta line, marking neither. `self-start` plus
                       the two pixels every mark takes inside a line of type puts it
-                      on the name's own 18px line. */}
+                      on the name's first line. */}
                   <span className="shrink-0 self-start" title={status.label}>
                     <status.Mark className={`${MARK_NUDGE} ${status.tone}`} />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate font-mono text-body font-bold text-white">
+                      <span className="truncate font-mono text-body font-bold text-white mouse:text-title">
                         {provider.label}
                       </span>
                       {provider.is_default && (
@@ -1303,7 +1303,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     </span>
                   </span>
                   <span
-                    className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint"
+                    className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint mouse:text-meta"
                     title={providerLimitsLine(provider) ?? status.label}
                   >
                     {!authed ? 'Sign in' : (mark ?? '')}

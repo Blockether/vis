@@ -727,7 +727,7 @@ export function MachineRows({
                     <hv.Mark />
                   </span>
                   <span className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className="truncate font-mono text-body font-bold text-white">
+                    <span className="truncate font-mono text-body font-bold text-white mouse:text-title">
                       {name}
                     </span>
                     {isFleet && conn.url === primaryUrl && (

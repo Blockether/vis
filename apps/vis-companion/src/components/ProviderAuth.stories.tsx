@@ -30,6 +30,20 @@ type Story = StoryObj<typeof meta>;
 /** The verdicts told apart: verified default, degraded fallback, never signed in. */
 export const Fleet: Story = {
   args: { auth: storyProviderAuth() },
+  play: async ({ args, canvas }) => {
+    const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
+    for (const provider of args.auth.providers!) {
+      const name = canvas.getByText(provider.label, { exact: true });
+      await name.ownerDocument.fonts.ready;
+      await expect(getComputedStyle(name).fontSize).toBe(pointer ? '13px' : '12px');
+      await expect(getComputedStyle(name).lineHeight).toBe(pointer ? '20px' : '18px');
+    }
+  },
+};
+
+export const FleetPointer: Story = {
+  ...Fleet,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
 };
 
 /** Extension-owned providers keep their routing controls but cannot be removed. */
