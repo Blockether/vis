@@ -3094,6 +3094,45 @@
 ;; behaviour straight from the shell. Behaves identically under the JVM and the
 ;; native image: both drive the same `env/*` machinery.
 
+(defn- activate-python-cli-environment!
+  "Load an existing uv environment after confinement, without syncing or granting paths.
+   Resolve UV_PROJECT_ENVIRONMENT relative to cwd; otherwise use cwd/.venv."
+  [ctx cwd environment]
+  (pyrt/exec!
+    ctx
+    (str "def __vis_activate_cli_environment__(cwd, configured):\n"
+         "    import sys, sysconfig\n"
+         "    from pathlib import Path\n"
+         "    import package_paths\n"
+         "    venv = Path(configured or '.venv')\n"
+         "    if not venv.is_absolute():\n"
+         "        venv = Path(cwd) / venv\n"
+         "    if not venv.exists() and not configured:\n"
+         "        return\n"
+         "    sites = list(dict.fromkeys(\n"
+         "        sysconfig.get_path(name, vars={'base': str(venv), 'platbase': str(venv)})\n"
+         "        for name in ('purelib', 'platlib')))\n"
+         "    if not any(Path(path).is_dir() for path in sites):\n"
+         "        raise RuntimeError(\n"
+         "            f'Project environment {venv} has no site-packages for embedded Python '\n"
+         "            f'{sys.version_info.major}.{sys.version_info.minor}. '\n"
+         "            'Sync with a compatible --python, or use '\n"
+         "            'vis-agent python uv run --no-sync python to run its own interpreter.')\n"
+         "    before = list(sys.path)\n"
+         "    for path in sites:\n"
+         "        if Path(path).is_dir():\n"
+         "            package_paths.refresh(path)\n"
+         "    added = [path for path in sys.path if path not in before]\n"
+         "    sys.path[:] = added + before\n"
+         "try:\n"
+         "    __vis_activate_cli_environment__("
+         (env/py-json-literal cwd)
+         ", "
+         (env/py-json-literal (get environment "UV_PROJECT_ENVIRONMENT"))
+         ")\n"
+         "finally:\n"
+         "    del __vis_activate_cli_environment__\n")))
+
 (defn- python-cli-context
   "Build a fresh standalone Python sandbox for `vis-agent python`: the same
    interpreter the agent runs, filesystem rooted at the current working
@@ -3104,7 +3143,8 @@
    real-`python` niceties: `argv` is bound to `sys.argv`; `env` is merged
    into `os.environ`; and `sys.path` is prepended with `PYTHONPATH`, the
    configured `python.source_paths`, and any `src`-layout import root the
-   project's packaging metadata declares. The
+   project's packaging metadata declares. An existing cwd/.venv (or
+   UV_PROJECT_ENVIRONMENT) supplies installed packages and editable hooks. The
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
   [{:keys [network? argv env]}]
   (let [cwd
@@ -3122,6 +3162,8 @@
     ;; Forward script argv + (by default) the caller's env — real-python CLI
     ;; semantics, distinct from the scrubbed agent sandbox.
     (env/seed-cli-runtime! python-context {:argv argv :env env})
+    (try (activate-python-cli-environment! python-context cwd env)
+         (catch Throwable t (env/dispose-python-context! python-context) (throw t)))
     ;; The interpreter receives the environment after startup, so PYTHONPATH
     ;; needs the same explicit sys.path setup a process launch would perform.
     ;; Explicit entries come first; configured and inferred project roots are

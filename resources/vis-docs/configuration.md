@@ -454,7 +454,25 @@ public index. Existing installed packages are not reinstalled by this setting.
 
 ## Python import roots
 
-`vis-agent python` puts the project's packages on `sys.path`, so
+After `vis-agent python uv sync --project .`, run your package from the same
+project directory with `vis-agent python -m your_package`. The standalone CLI
+loads installed packages, distribution metadata and editable `.pth` files or
+import hooks from the existing `.venv`. `UV_PROJECT_ENVIRONMENT` selects another
+environment; relative paths resolve against the current directory. It does not
+search parent directories, create an environment or sync dependencies on startup.
+
+The CLI still uses Vis's embedded Python, so the environment must match its
+Python version and platform. If the matching site-packages directory is missing,
+the CLI reports a diagnostic rather than silently falling back to shared packages.
+To use the project's own interpreter instead, run
+`vis-agent python uv run --no-sync python -m your_package`.
+
+Environment activation happens inside the sandbox: editable source and custom
+environments still need to be within allowed filesystem roots. Only activate
+environments you trust; editable import hooks can execute code. This standalone
+CLI behavior does not add the project's environment to agent `python_execution`.
+
+`vis-agent python` also puts declared source roots on `sys.path`, so
 `vis-agent python -m pytest tests/` imports a `src/` layout without
 `PYTHONPATH`. Roots are read from `pyproject.toml` (setuptools, pdm, poetry,
 hatch, pytest `pythonpath`), `setup.cfg`, `pytest.ini` and `tox.ini`. No roots
@@ -468,6 +486,7 @@ python:
 ```
 
 Configured paths come first, then inferred ones; `PYTHONPATH` precedes both.
+These roots precede project-environment packages, which precede shared packages.
 An [editable package install](extension-development.md) supplies its own import
 roots through `.pth` files or backend hooks; it does not need these layout overrides.
 Import roots do not grant filesystem permissions or install dependencies.
