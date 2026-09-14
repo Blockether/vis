@@ -1,14 +1,10 @@
 (ns com.blockether.vis.internal.foundation.shell-log
-  "The output of ONE background shell, stored as a FILE and read by BYTE OFFSET.
+  "Shell output stored on disk and read in bounded windows.
 
-   The file is the STORAGE and the in-memory ring buffer is only a VIEW. A ring
-   is a display convenience: it answers \"what is on screen now\", and the moment a
-   command prints more than the ring holds, the head is gone before the first
-   poll and no sequence of reads can recover it. That is the whole reported bug,
-   and it is a storage bug, so the fix is storage: every byte the pump reads is
-   appended to `~/.vis/logs/YYYY-MM-DD/shell/<session>/<id>.log`, using the UTC
-   start date, and a read names the byte
-   it starts at.
+   Every byte read from a shell is appended to
+   `~/.vis/logs/YYYY-MM-DD/shell/<session>/<id>.log`, using the UTC start date.
+   The pump keeps only a fixed-size transfer buffer, not a copy of the output.
+   Live views and later reads use the same file.
 
    A chunk is the paging contract for a growing file, key for key: give an
    `offset`, get the bytes and the `next-offset` to continue from; a NEGATIVE
@@ -123,30 +119,23 @@
     (io/make-parents f)
     {:path (.getPath f) :out (java.io.BufferedOutputStream. (java.io.FileOutputStream. f false))}))
 
-(defn tee
-  "Wrap `in` so every byte READ is also written to `sink`. The pump keeps its
-   character-level line splitting for the ring view while the file receives the
-   stream verbatim, so the two can never disagree about what the shell printed."
-  ^InputStream [^InputStream in sink]
-  (let [^OutputStream out (:out sink)]
-    (proxy [java.io.FilterInputStream] [in]
-      (read
-        ([]
-         (let [c (.read in)]
-           (when-not (neg? c) (try (.write out c) (.flush out) (catch Throwable _ nil)))
-           c))
-        ([b]
-         (let [^bytes b b
-               n (.read in b 0 (alength b))]
+(defn drain!
+  "Copy raw bytes from `in` to `sink` with a fixed-size transfer buffer.
 
-           (when (pos? n) (try (.write out b 0 n) (.flush out) (catch Throwable _ nil)))
-           n))
-        ([b off len]
-         (let [^bytes b b
-               n (.read in b (int off) (int len))]
+   Each chunk is flushed before the next read so partial lines are visible while
+   the shell runs. No text, lines or output history are retained. Read, write and
+   flush failures propagate to the caller, which owns closing both streams."
+  [^InputStream in sink]
+  (let [^OutputStream out
+        (:out sink)
 
-           (when (pos? n) (try (.write out b (int off) n) (.flush out) (catch Throwable _ nil)))
-           n))))))
+        buffer
+        (byte-array 8192)]
+
+    (loop []
+
+      (let [n (.read in buffer 0 (alength buffer))]
+        (when-not (neg? n) (when (pos? n) (.write out buffer 0 n) (.flush out)) (recur))))))
 
 (defn close!
   "Flush and close a sink. Idempotent and never throws — a log that cannot be

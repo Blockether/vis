@@ -285,10 +285,10 @@
   (get-in @registry [(skey session) (str id) :data]))
 
 (defn logs
-  "Captured output lines for `session`+`id`, via the resource's `:logs-fn` thunk.
+  "Output lines for `session`+`id`, via the resource's `:logs-fn` thunk.
    Returns a vector of line strings (newest last), or nil when the resource has
-   no logs-fn (`can_logs false`) or is unknown. Shell backgrounds expose their
-   ring buffer; managed language REPLs can expose launcher logs."
+   no logs-fn (`can_logs false`) or is unknown. Shell resources read a bounded
+   tail from their log file; managed language REPLs can expose launcher logs."
   [session id]
   (when-let [f (get-in @registry [(skey session) (str id) :logs-fn])]
     (try (vec (f)) (catch Throwable _ nil))))

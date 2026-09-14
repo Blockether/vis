@@ -115,34 +115,12 @@
    separately, so capturing a parseable stream costs context nothing."
   300000)
 
-(def ^:private max-bg-lines
-  "Ring-buffer cap per background shell; older lines are dropped (counted)."
-  2000)
-
-(def ^:private max-line-chars
-  "Per-line char cap in the background pump. A newline-free stream (e.g.
-   `cat big.bin`) would otherwise let a line builder grow one unbounded line
-   in memory; we force a break at this width instead."
-  16000)
-
 ;; Small helpers
 
 (defn- capped-capture
-  "A capture of ONE stream that can be READ WHILE IT IS STILL FILLING.
-
-   `:drain!` pumps a Reader to EOF keeping the HEAD and the TAIL of the stream and
-   dropping only the MIDDLE when it exceeds `head-limit`+`tail-limit` — so neither
-   the opening context nor the closing failure/summary is ever silently lost (the
-   old tail-only cap swallowed everything before the last N chars). Memory stays at
-   ~cap: the middle is collapsed at read time, so a megabyte-then-killed command
-   cannot balloon the heap. It never throws — a stream closed mid-read just ends
-   the drain.
-
-   `:snapshot` answers `{:text :truncated :omitted}` for what has arrived SO FAR,
-   with the exact dropped-char count (0 when nothing was dropped) and a visible
-   omitted-count marker spliced in at the boundary. Snapshotting mid-stream is the
-   whole point: a run that outstays its wait is no longer killed, so the bytes it
-   had already printed must be answerable before its stream ends."
+  "A request-local bounded head/tail result, never background log storage.
+   `:append!` accepts text read from disk; `:snapshot` returns
+   `{:text :truncated :omitted}` with an exact omitted-character count."
   [^long head-limit ^long tail-limit]
   (let [sb
         (StringBuilder.)
@@ -157,9 +135,7 @@
         (atom false)
 
         append!
-        ;; The ONE place text enters this capture — a pumped Reader and a `wait`
-        ;; accumulating log windows are the same problem, so they share the same
-        ;; bounded buffer instead of one of them growing without a cap.
+        ;; Keep result assembly bounded while a wait reads successive disk windows.
         (fn [^String s]
           (when (pos? (.length s))
             (locking sb
@@ -173,13 +149,6 @@
                 (.delete sb (int head-limit) (int (- (.length sb) tail-limit)))))))]
 
     {:append! append!
-     :drain! (fn [^java.io.Reader r]
-               (let [buf (char-array 8192)]
-                 (try (loop []
-
-                        (let [n (.read r buf 0 (alength buf))]
-                          (when (pos? n) (append! (String. buf 0 n)) (recur))))
-                      (catch Throwable _ nil))))
      :snapshot (fn []
                  (locking sb
                    (let [s
@@ -197,6 +166,31 @@
                       ;; Exact dropped-char count: the text now carries an inline marker, so a
                       ;; caller can SEE both that it is no longer parseable and how much is gone.
                       :omitted omitted})))}))
+
+(defn- capture-log
+  "Read a fixed on-disk snapshot into the request's bounded head/tail result.
+   A growing file cannot extend this read beyond the length observed at entry."
+  [^File file]
+  (let [capture
+        (capped-capture max-sync-head-chars max-sync-tail-chars)
+
+        length
+        (.length file)]
+
+    (loop [offset 0]
+      (when (< offset length)
+        (when (.isInterrupted (Thread/currentThread))
+          (throw (InterruptedException. "Shell log read interrupted")))
+        (let [chunk (shell-log/read-chunk "run"
+                                          file
+                                          {:offset offset
+                                           :limit (min (long shell-log/max-chunk-bytes)
+                                                       (- length offset))})
+              next-offset (long (:next-offset chunk))]
+
+          ((:append! capture) (:text chunk))
+          (when (> next-offset offset) (recur next-offset)))))
+    ((:snapshot capture))))
 
 (defn- truncation-note
   "Note for a command whose capture lost a middle. Truncation splices a marker
@@ -866,34 +860,21 @@
     (str "'" (str/replace token "'" "'\\''") "'")))
 
 (defn- shell-run-impl
-  "Run ONE command and answer the `run`-stage [[shell-result-base]] map: the
-   command, its bytes and its outcome. `shell-run-call` merges the handle's
-   identity onto it, so a command's line and output have exactly one home.
-
-   `cmd` is either one bash line (a string) or a literal argv (a sequential,
-   used by an argv run). The echoed `cmd` is always the display string.
-
-   `handle` is what makes the run a HANDLE: `:sink` is the log file every captured
-   byte is teed into, and `:on-spawn` is handed the live process the moment it
-   exists, so the registry knows what is running before the wait even begins. A
-   handled run that outstays its wait is NOT killed — the wait expired, the process
-   did not, and the caller comes back to it by id — while a handle-less run
-   still dies on its deadline, because nothing could ever read it again."
+  "Run one command with disk-only output storage and a bounded result read.
+   `cmd` is a bash line or literal argv. A supplied handle owns its sink and
+   adopts a process whose wait expires. Standalone argv calls get a persistent
+   log too, but still kill their process tree on timeout."
   ([env cmd] (shell-run-impl env cmd nil nil))
   ([env cmd opts] (shell-run-impl env cmd opts nil))
   ([env cmd opts {:keys [sink on-spawn]}]
    (let [argv
          (when (sequential? cmd) (mapv str cmd))
 
-         ;; An argv is echoed as the bash LINE that would run it — quoted token by
-         ;; token, so the `command` a caller reads back is copy-pasteable and can be
-         ;; split into exactly the tokens it named.
          cmd
          (if argv (str/join " " (map shell-quote argv)) (str cmd))]
 
      (when (str/blank? cmd)
-       (throw (ex-info (str "shell needs a non-blank command — pass it as `command`,"
-                            " the first argument.")
+       (throw (ex-info "shell needs a non-blank command — pass it as `command`, the first argument."
                        {:type ::blank-command})))
      (let [timeout-secs
            (clamp-timeout-secs (get opts "timeout_secs"))
@@ -907,93 +888,95 @@
            t0
            (util/now-ms)
 
-           p
-           (spawn! (or argv cmd) dir policy)
+           own-log?
+           (nil? sink)
 
-           _
-           (when on-spawn (on-spawn p))
+           id
+           (when own-log? (str "run-" (random-uuid)))
 
-           ;; ONE reader future on the ONE merged stream — avoids the classic
-           ;; full-pipe deadlock on chatty commands. `capped-capture` bounds memory
-           ;; to the head+tail budget at READ time (dropping only the MIDDLE of a
-           ;; huge stream, not its start), so a megabyte-then-killed command can't
-           ;; balloon the heap yet the opening context survives — and it can be
-           ;; snapshotted while the process is still printing.
-           out-cap
-           (capped-capture max-sync-head-chars max-sync-tail-chars)
+           sink
+           (or sink (shell-log/open! (:session-id env) id))
 
-           ;; Every captured byte is written through to the log file, so the handle's
-           ;; log holds what the call returned AND everything printed after it.
-           reader-of
-           (fn [^java.io.InputStream s]
-             (io/reader (if sink (shell-log/tee s sink) s)))
+           drain-stopped?
+           (atom false)
 
-           out-f
-           (future ((:drain! out-cap) (reader-of (.getInputStream p))))
+           ^Process p
+           (try (spawn! (or argv cmd) dir policy)
+                (catch Throwable t (shell-log/close! sink) (throw t)))]
 
-           finished?
-           (try (.waitFor p timeout-secs TimeUnit/SECONDS)
-                (catch InterruptedException ie
-                  ;; Turn cancellation: kill the spawned tree before
-                  ;; the interrupt propagates to the loop.
-                  (kill-tree! p)
-                  (throw ie)))]
+       (try (when on-spawn (on-spawn p))
+            (when own-log?
+              (shell-log/index! (:db-info env)
+                                (:session-id env)
+                                id
+                                {:command cmd
+                                 :dir (.getPath dir)
+                                 :log-path (:path sink)
+                                 :started-at t0
+                                 :ended-at nil
+                                 :exit nil}))
+            (let [out-f
+                  (future (try (with-open [in (.getInputStream p)]
+                                 (shell-log/drain! in sink))
+                               (catch Throwable t
+                                 ;; Deliberately closing a timed-out run can wake the
+                                 ;; reader with IOException; a real IO failure must
+                                 ;; still kill the undrained child and reach the caller.
+                                 (when-not (and @drain-stopped? (instance? java.io.IOException t))
+                                   (when (.isAlive p) (kill-tree! p))
+                                   (throw t)))))
 
-       (when (and (not finished?) (nil? sink))
-         (kill-tree! p)
-         ;; Closing the stream unblocks the reader future on a wedged child
-         ;; so its thread doesn't linger past our 5s deref ceiling.
-         (try (.close (.getInputStream p)) (catch Throwable _ nil)))
-       ;; A handled run that timed out is STILL PRINTING: waiting on its drains
-       ;; would be waiting on the very command whose wait already expired.
-       (when (or finished? (nil? sink)) (deref out-f 5000 nil))
-       (let [out
-             ((:snapshot out-cap))
+                  finished?
+                  (.waitFor p timeout-secs TimeUnit/SECONDS)]
 
-             exit
-             (when finished? (.exitValue p))
+              (when (and (not finished?) own-log?)
+                (reset! drain-stopped? true)
+                (kill-tree! p)
+                (try (.close (.getInputStream p)) (catch Throwable _ nil)))
+              (when (or finished? own-log?) (deref out-f 5000 nil))
+              (let [out
+                    (capture-log (io/file (:path sink)))
 
-             t1
-             (util/now-ms)]
+                    exit
+                    (when finished? (.exitValue p))
 
-         (with-meta (shell-result "run"
-                                  ;; TOTAL shape ([[shell-result-base]]). The old "lean" map dropped a
-                                  ;; key whenever it carried no signal, so ordinary model Python
-                                  ;; (`c[\"out\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
-                                  ;; "the tool broke", retried with cosmetic variations, and spun.
-                                  {"command" cmd
-                                   ;; The OS pid of the spawned child — `(:pid p)` here read a
-                                   ;; keyword off a `Process` and answered nil on every run, so the
-                                   ;; one stage that spawns was the one stage with no pid.
-                                   "pid" (.pid p)
-                                   ;; The SAME vocabulary every other stage answers with: a run that
-                                   ;; finished is "exited", one whose wait expired is still "running"
-                                   ;; — never nil, or "did it work" has no answer on the one stage
-                                   ;; that actually knows.
-                                   "status" (if finished? "exited" "running")
-                                   ;; What the terminal SHOWED, not the control stream that
-                                   ;; painted it: `log_path` still holds every byte.
-                                   "out" (normalize-terminal-output (:text out))
-                                   "exit" exit
-                                   "duration_ms" (- t1 t0)
-                                   "started_at" t0
-                                   "finished_at" (when finished? t1)
-                                   "timed_out" (not finished?)
-                                   ;; 0 exactly when nothing was dropped, so no truncation flag is owed
-                                   ;; beside it.
-                                   "out_omitted_chars" (long (or (:omitted out) 0))
-                                   ;; A dropped middle makes the stream unparseable: name it here rather
-                                   ;; than let a caller's parser fail with an opaque message.
-                                   "note" (command-note env out)})
-           ;; Request scope, IDENTICAL for every entry of a batch: carried as metadata
-           ;; so the group summarises one `cwd`/`timeout_secs` instead of every entry
-           ;; repeating them, and nothing extra crosses to Python. A relative dir is
-           ;; `/`-separated on every OS. A run left alive past its wait carries the
-           ;; process and its still-running drains, which is what adoption needs.
-           {:dir (paths/unixify (.getPath dir))
-            :timeout-secs timeout-secs
-            :process (when-not finished? p)
-            :drains [out-f]}))))))
+                    t1
+                    (util/now-ms)]
+
+                (when own-log?
+                  (shell-log/index! (:db-info env)
+                                    (:session-id env)
+                                    id
+                                    {:command cmd
+                                     :dir (.getPath dir)
+                                     :log-path (:path sink)
+                                     :started-at t0
+                                     :ended-at t1
+                                     :exit (when-not (.isAlive p) (.exitValue p))}))
+                (with-meta (shell-result "run"
+                                         {"id" id
+                                          "command" cmd
+                                          "pid" (.pid p)
+                                          "status" (if finished? "exited" "running")
+                                          "out" (normalize-terminal-output (:text out))
+                                          "exit" exit
+                                          "duration_ms" (- t1 t0)
+                                          "started_at" t0
+                                          "finished_at" (when finished? t1)
+                                          "log_path" (:path sink)
+                                          "timed_out" (not finished?)
+                                          "out_omitted_chars" (long (or (:omitted out) 0))
+                                          "note" (command-note env out)})
+                  {:dir (paths/unixify (.getPath dir))
+                   :timeout-secs timeout-secs
+                   :process (when-not finished? p)
+                   :drains (when-not finished? [out-f])})))
+            (catch Throwable t
+              (reset! drain-stopped? true)
+              (when (.isAlive p) (kill-tree! p))
+              (try (.close (.getInputStream p)) (catch Throwable _ nil))
+              (throw t))
+            (finally (when own-log? (shell-log/close! sink))))))))
 
 (defn- command-line
   "ONE bash line from the caller's `command`. A string IS the line. An array of tokens —
@@ -1032,7 +1015,7 @@
 ;; BACKGROUND — Python sandbox: `await shell({"command": "npm run dev", "id": "dev"})`
 
 (defonce ^:private bg-procs
-  ;; { session-key -> { id -> {:proc :buffer :exit :pump :stopped? :cmd :dir
+  ;; { session-key -> { id -> {:proc :exit :pump :stopped? :command :dir
   ;; :started-at} } }. defonce so a dev `:reload` never orphans live processes.
   (atom {}))
 
@@ -1308,85 +1291,101 @@
                   (when (= token (:claim entry)) id))
                 (get committed sk))))))
 
-(defn- push-line!
-  [buffer line]
-  ;; A char-pump split on `\n` leaves the `\r` of a CRLF line behind; strip it
-  ;; so a CRLF-emitted line reads identically to a POSIX one.
-  (let [line
-        (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]
-    (swap! buffer (fn [{:keys [lines next-seq dropped]}]
-                    (let [lines (conj lines [next-seq line])
-                          over (- (count lines) (long max-bg-lines))]
+(defn- retire-bg-entry!
+  "Keep completed handle metadata, never its process, streams or pump closures.
+   The caller holds the lifecycle lock; an old pump cannot retire a successor."
+  [session id p]
+  (swap! bg-procs (fn [m]
+                    (let [path
+                          [(str session) (str id)]
 
-                      {:lines (if (< 0 over) (subvec lines over) lines)
-                       :next-seq (inc (long next-seq))
-                       :dropped (+ (long dropped) (long (max over 0)))})))))
+                          entry
+                          (get-in m path)]
+
+                      (if (identical? p (:proc entry))
+                        (assoc-in m
+                          path
+                          (-> entry
+                              (dissoc :pump :send :bridge)
+                              (assoc :proc {:pid (:pid p)})))
+                        m))))
+  nil)
+
+(defn- stop-bg-generation!
+  "Stop only the generation this callback registered, looking up its live state.
+   Completed entries have no process callbacks: their old OS pid is not a target."
+  [session id exit-atom]
+  #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+  (locking (bg-lifecycle-lock session id)
+    (let [entry (bg-entry session id)]
+      (when (identical? exit-atom (:exit entry))
+        (reset! (:stopped? entry) true)
+        (let [p (:proc entry)]
+          (when (:destroy p) (kill-tree! p))
+          (when-let [in (:in p)]
+            (try (.close ^java.io.InputStream in) (catch Throwable _ nil))))
+        (when-let [pump (:pump entry)]
+          (try (.join ^Thread pump 3000) (catch InterruptedException _ nil)))
+        (when-let [bridge (:bridge entry)]
+          (try ((:stop bridge)) (catch Throwable _ nil)))
+        (when (identical? exit-atom (:exit (bg-entry session id))) (drop-bg-entry! session id)))))
+  nil)
+
+(defn- shell-resource-fns
+  "Resource callbacks retain only identity and a path, not process/output state."
+  [session id exit-atom file]
+  {:stop-fn (fn []
+              (stop-bg-generation! session id exit-atom))
+   :alive-fn (fn []
+               (identical? exit-atom (:exit (bg-entry session id))))
+   :logs-fn (fn []
+              (-> (shell-log/read-chunk id file)
+                  :text
+                  normalize-terminal-output
+                  str/split-lines))
+   :health-fn (fn []
+                (cond (not (identical? exit-atom (:exit (bg-entry session id)))) :down
+                      (some-> (:log-error (bg-entry session id))
+                              deref)
+                      :failed
+                      (nil? @exit-atom) :running
+                      (zero? (long @exit-atom)) :exited
+                      :else :failed))})
 
 (defn- start-pump!
-  "Daemon thread: drain the process's merged output into its log FILE and the ring
-   buffer, then record WHEN it ended and its exit code, and flip the registered
-   resource to :exited.
-   The resource stays listed (logs + exit readable) until resource_stop.
-
-   The FILE is the log: every byte read is written through `sink`, so a reader can
-   come back to any offset of it for as long as the session lives. The ring buffer
-   is only the LINE view the attach bridge replays and the resource card shows, and
-   it stays free to forget.
-
-   `stopped?` is the cooperative-shutdown flag the stop-fn or an exited-entry
-   replacement sets before retiring this generation. Final bridge/registry work
-   is serialized with same-id start/stop and guarded by process identity, so an
-   old pump can never update or unlink its successor. Returns the started Thread."
-  ^Thread [session id p buffer exit-atom exited-at stopped? bridge-atom sink index-fn]
-  (doto
-    (Thread.
-      (fn []
-        ;; Char-level drain (not `line-seq`) so a newline-free stream
-        ;; (`cat big.bin`) can't grow one unbounded line in memory: a line
-        ;; is force-flushed at `max-line-chars`. The tee is UNDER that splitting,
-        ;; so the file holds the stream exactly as the shell printed it.
-        (try (with-open [r (io/reader (shell-log/tee ^java.io.InputStream (:in p) sink))]
-               (let [sb (StringBuilder.)]
-                 (loop []
-
-                   (let [c (.read r)]
-                     (cond (= c -1) (when (pos? (.length sb)) (push-line! buffer (str sb)))
-                           (= c (int \newline))
-                           (do (push-line! buffer (str sb)) (.setLength sb 0) (recur))
-                           :else (do (.append sb (char c))
-                                     (when (>= (.length sb) (long max-line-chars))
-                                       (push-line! buffer (str sb " …[line truncated]"))
-                                       (.setLength sb 0))
-                                     (recur)))))))
-             (catch Throwable _ nil))
-        ;; The stream is finished, so the file is complete: flush and close it
-        ;; BEFORE the exit code is published, or a reader that already saw
-        ;; `exited` could still be missing the last buffered bytes.
-        (shell-log/close! sink)
-        (let [code (try ((:wait p)) (catch Throwable _ nil))]
-          ;; Stamp the ENDING before publishing the code: `uptime_ms` is read off
-          ;; these two atoms, and a reader that saw `exit` already set with no end
-          ;; stamp would fall back to the clock and report the age of the READ.
-          (compare-and-set! exited-at nil (util/now-ms))
-          (reset! exit-atom code)
-          (index-fn {:ended-at @exited-at :exit code})
-          ;; Avoid contending with a manual stop in the normal case: it sets the
-          ;; flag before closing the reader and then joins this thread.
-          (when-not @stopped?
-            #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-            (locking (bg-lifecycle-lock session id)
-              ;; Re-check under the same monitor a replacement uses. If it won,
-              ;; its entry and socket path belong to the successor and are sacred.
-              (when (and (not @stopped?) (identical? p (:proc (bg-entry session id))))
-                (when-let [b @bridge-atom]
-                  (try ((:stop b)) (catch Throwable _ nil)))
-                (try (resources/update! session
-                                        id
-                                        {:status :exited
-                                         :detail
-                                         (str "exit " code " — logs retained until resource_stop")})
-                     (catch Throwable _ nil))))))
-        (cleanup-jail-policy! {::cleanup (::cleanup p)})))
+  "Drain raw process bytes to disk, then release live process state.
+   Only bounded transfer buffers exist while pumping. Resource/log readers open
+   the file on demand; completed handles keep lightweight metadata until stopped."
+  ^Thread [session id p exit-atom exited-at stopped? bridge-atom sink index-fn log-error]
+  (doto (Thread.
+          (fn []
+            (try (with-open [in ^java.io.InputStream (:in p)]
+                   (shell-log/drain! in sink))
+                 (catch Throwable t
+                   (when-not @stopped?
+                     (reset! log-error (str "Shell log write failed: " (.getMessage t)))
+                     (kill-tree! p))))
+            ;; Publish exit only after the final log bytes are visible on disk.
+            (shell-log/close! sink)
+            (let [code (try ((:wait p)) (catch Throwable _ nil))]
+              (compare-and-set! exited-at nil (util/now-ms))
+              (reset! exit-atom code)
+              (index-fn {:ended-at @exited-at :exit code})
+              (when-not @stopped?
+                #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+                (locking (bg-lifecycle-lock session id)
+                  (when (and (not @stopped?) (identical? p (:proc (bg-entry session id))))
+                    (when-let [b @bridge-atom]
+                      (try ((:stop b)) (catch Throwable _ nil)))
+                    (reset! bridge-atom nil)
+                    (retire-bg-entry! session id p)
+                    (try (resources/update! session
+                                            id
+                                            {:status :exited
+                                             :detail (or @log-error
+                                                         (str "exit " code " — log on disk"))})
+                         (catch Throwable _ nil))))))
+            (cleanup-jail-policy! {::cleanup (::cleanup p)})))
     (.setName (str "vis-shell-bg-" id))
     (.setDaemon true)
     (.start)))
@@ -1558,6 +1557,8 @@
          ;; The log FILE, by absolute path: readable with `cat`/`grep` by a
          ;; human, with no handle and no session in hand.
          "log_path" (:log-path entry)
+         "note" (some-> (:log-error entry)
+                        deref)
          "attach" (when bridge (str "vis-agent extension shell attach " id))}))))
 
 (defn- shell-bg-spawn!
@@ -1602,18 +1603,17 @@
           dir
           (resolve-dir-for-policy opts env policy)
 
-          p
-          (pty-spawn! script dir policy)
-
-          ;; The log is a FILE, opened BEFORE the pump so not one byte of a fast
-          ;; command's output can be printed before there is somewhere to keep it.
+          ;; Open storage before spawning; failure cannot orphan a new process.
           sink
           (shell-log/open! session id)
 
-          buffer
-          (atom {:lines [] :next-seq 1 :dropped 0})
+          p
+          (try (pty-spawn! script dir policy) (catch Throwable t (shell-log/close! sink) (throw t)))
 
           exit-atom
+          (atom nil)
+
+          log-error
           (atom nil)
 
           ;; Stamped ONCE, by whichever stage first observes the child is gone: an
@@ -1634,9 +1634,12 @@
           ;; One sidecar row per log, so "what did that build print" is answerable a
           ;; turn later with no handle in hand. Written at spawn, and again by the
           ;; pump once the child is gone.
+          db-info
+          (:db-info env)
+
           index-fn
           (fn [m]
-            (shell-log/index! (:db-info env)
+            (shell-log/index! db-info
                               session
                               id
                               (merge {:command script
@@ -1649,7 +1652,16 @@
                                      m)))
 
           pump
-          (start-pump! session id p buffer exit-atom exited-at stopped? bridge-atom sink index-fn)
+          (start-pump! session
+                       id
+                       p
+                       exit-atom
+                       exited-at
+                       stopped?
+                       bridge-atom
+                       sink
+                       index-fn
+                       log-error)
 
           ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
           ;; so a HUMAN can `vis-agent extension shell attach <id>` into the live terminal
@@ -1657,14 +1669,13 @@
           ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
           ;; runs, just without human attach.
           bridge
-          (try (pty-bridge/serve! {:pty p
-                                   :path (pty-bridge/socket-path session id)
-                                   :replay-fn (fn []
-                                                (let [ls (:lines @buffer)]
-                                                  (when (seq ls)
-                                                    (.getBytes
-                                                      (str (str/join "\n" (map second ls)) "\n")
-                                                      java.nio.charset.StandardCharsets/UTF_8))))})
+          (try (pty-bridge/serve!
+                 {:pty p
+                  :path (pty-bridge/socket-path session id)
+                  :replay-fn (fn []
+                               (.getBytes ^String
+                                          (:text (shell-log/read-chunk id (io/file (:path sink))))
+                                          java.nio.charset.StandardCharsets/UTF_8))})
                (catch Throwable _ nil))]
 
       (reset! bridge-atom bridge)
@@ -1672,8 +1683,8 @@
       (swap! bg-procs assoc-in
         [(str session) id]
         {:proc p
-         :buffer buffer
          :exit exit-atom
+         :log-error log-error
          :exited-at exited-at
          :pump pump
          :stopped? stopped?
@@ -1693,52 +1704,14 @@
                             :pid (:pid p)
                             :owner "foundation-core"
                             :status :running}
-                           {:stop-fn
-                            (fn []
-                              ;; Serialize teardown with replacement of this id. The
-                              ;; registry claims the old resource before calling us, so a
-                              ;; concurrent fresh start is valid; identity-check the final
-                              ;; drop to prevent this old callback erasing its successor.
-                              #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-                              (locking (bg-lifecycle-lock session id)
-                                (reset! stopped? true)
-                                (kill-tree! p)
-                                ;; Close the read end so the pump's blocking `.read`
-                                ;; returns even if a detached grandchild still holds the
-                                ;; write end — the pump thread can't outlive the stop.
-                                (try (.close ^java.io.InputStream (:in p)) (catch Throwable _ nil))
-                                (try (.join pump 3000) (catch InterruptedException _ nil))
-                                ;; Tear down the attach socket last: no more human attachers
-                                ;; once the child is gone.
-                                (when bridge (try ((:stop bridge)) (catch Throwable _ nil)))
-                                (when (identical? p (:proc (bg-entry session id)))
-                                  (drop-bg-entry! session id))))
-                            ;; Alive while the buffer entry exists — an EXITED process is kept
-                            ;; (status :exited) so its logs stay readable; only resource_stop
-                            ;; (or replacing the id) lets the registry drop it.
-                            :alive-fn (fn []
-                                        (some? (bg-entry session id)))
-                            ;; Ring-buffer tail so TUI/web can VIEW a background's
-                            ;; output (same lines as the `logs` op), not just stop it.
-                            :logs-fn (fn []
-                                       (mapv second (:lines @buffer)))
-                            ;; "alive, but is it WORKING?" for the registry's
-                            ;; per-render health probe: running / exited-clean /
-                            ;; failed (non-zero exit).
-                            :health-fn (fn []
-                                         (cond (nil? (bg-entry session id)) :down
-                                               (nil? @exit-atom) :running
-                                               (zero? (long @exit-atom)) :exited
-                                               :else :failed))})
+                           (shell-resource-fns session id exit-atom (io/file (:path sink))))
       (extension/success
         ;; TOTAL result shape, shared with every other stage through `bg-core`:
         ;; run / background / logs / send / stop all answer with the same key set
         ;; (`op` says which stage ran), so model Python never KeyErrors on a field
         ;; another stage would have carried. `already_running` false on a fresh
         ;; spawn, `note` nil when there is nothing to say.
-        {:result (assoc (bg-core "background" id (bg-entry session id))
-                   "already_running" false
-                   "note" nil)
+        {:result (assoc (bg-core "background" id (bg-entry session id)) "already_running" false)
          :op :shell
          :metadata
          {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
@@ -1811,66 +1784,51 @@
               (if force? (.destroyForcibly p) (.destroy p)))})
 
 (defn- adopt-run!
-  "Promote a run that outstayed its wait into an ordinary background handle: the
-   child is NOT killed, its log keeps filling, and `logs`/`stop` reach it by the id
-   the run already answered with. The watcher thread finishes what the background
-   pump finishes — wait out the drains, close the log, stamp the ending, publish the
-   exit code — so a caller that comes back later reads a complete file and a real
-   exit instead of a process nobody is accounting for."
+  "Adopt a blocking run whose wait expired; its existing pump writes only to disk.
+   The watcher closes the sink and retires process state after the drain finishes."
   [{:keys [session id proc sink script cwd drains exit-atom exited-at stopped? index-fn]}]
   (swap! bg-procs assoc-in [(str session) id :dir] cwd)
   (index-fn {:dir cwd})
-  (try (resources/register! session
-                            {:id id
-                             :kind :shell
-                             :label (one-line script 48)
-                             :detail script
-                             :pid (:pid proc)
-                             :owner "foundation-core"
-                             :status :running}
-                            {:stop-fn (fn []
-                                        (reset! stopped? true)
-                                        (kill-tree! proc)
-                                        (try (.close ^java.io.InputStream (:in proc))
-                                             (catch Throwable _ nil))
-                                        (shell-log/close! sink)
-                                        (drop-bg-entry! session id))
-                             :alive-fn (fn []
-                                         (some? (bg-entry session id)))
-                             ;; A run keeps no line ring: the log FILE is the view, so the
-                             ;; registry card reads its tail the same way `logs` does.
-                             :logs-fn (fn []
-                                        (-> (shell-log/read-chunk id (io/file (:path sink)))
-                                            :text
-                                            str/split-lines))
-                             :health-fn (fn []
-                                          (cond (nil? (bg-entry session id)) :down
-                                                (nil? @exit-atom) :running
-                                                (zero? (long @exit-atom)) :exited
-                                                :else :failed))})
-       (catch Throwable _ nil))
-  (doto (Thread.
+  (let [log-error
+        (atom nil)
+
+        watcher
+        (Thread.
           (fn []
             (doseq [f drains]
-              (try (deref f) (catch Throwable t (cancellation/preserve-interrupt! t) nil)))
-            ;; The stream is finished, so the file is complete: flush and close it
-            ;; BEFORE the exit code is published, or a reader that already saw the
-            ;; exit could still be missing the last buffered bytes.
+              (try (deref f)
+                   (catch Throwable t
+                     (cancellation/preserve-interrupt! t)
+                     (when-not @stopped?
+                       (reset! log-error (str "Shell log write failed: " (.getMessage t)))))))
             (shell-log/close! sink)
             (let [code (try ((:wait proc)) (catch Throwable _ nil))]
               (compare-and-set! exited-at nil (util/now-ms))
               (reset! exit-atom code)
               (index-fn {:dir cwd :ended-at @exited-at :exit code})
               (when-not @stopped?
-                (try (resources/update! session
-                                        id
-                                        {:status :exited
-                                         :detail
-                                         (str "exit " code " — logs retained until resource_stop")})
-                     (catch Throwable _ nil))))))
-    (.setName (str "vis-shell-run-" id))
-    (.setDaemon true)
-    (.start))
+                #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+                (locking (bg-lifecycle-lock session id)
+                  (when (and (not @stopped?) (identical? proc (:proc (bg-entry session id))))
+                    (retire-bg-entry! session id proc)
+                    (try (resources/update! session
+                                            id
+                                            {:status :exited
+                                             :detail (or @log-error
+                                                         (str "exit " code " — log on disk"))})
+                         (catch Throwable _ nil))))))))]
+
+    (swap! bg-procs update-in [(str session) id] assoc :pump watcher :log-error log-error)
+    (resources/register! session
+                         {:id id
+                          :kind :shell
+                          :label (one-line script 48)
+                          :detail script
+                          :pid (:pid proc)
+                          :owner "foundation-core"
+                          :status :running}
+                         (shell-resource-fns session id exit-atom (io/file (:path sink))))
+    (doto watcher (.setName (str "vis-shell-run-" id)) (.setDaemon true) (.start)))
   nil)
 
 (defn- live-run-result
@@ -1976,9 +1934,12 @@
         stopped?
         (atom false)
 
+        db-info
+        (:db-info env)
+
         index-fn
         (fn [m]
-          (shell-log/index! (:db-info env)
+          (shell-log/index! db-info
                             session
                             id
                             (merge {:command command
@@ -1998,7 +1959,6 @@
         (swap! bg-procs assoc-in
           [(str session) id]
           {:proc nil
-           :buffer (atom {:lines [] :next-seq 1 :dropped 0})
            :exit exit-atom
            :exited-at exited-at
            :stopped? stopped?
@@ -2006,6 +1966,7 @@
            :script command
            :dir nil
            :origin (env-origin env)
+           :log-path (:path sink)
            :started-at t0})
 
         r
@@ -2016,7 +1977,7 @@
                              command
                              (assoc opts "timeout_secs" wait-secs)
                              {:sink sink :on-spawn on-spawn})
-             (catch Throwable t (drop-bg-entry! session id) (throw t)))
+             (catch Throwable t (shell-log/close! sink) (drop-bg-entry! session id) (throw t)))
 
         cwd
         (:dir (meta r))
@@ -2389,7 +2350,7 @@
                             " await shell({\"command\": \"…\", \"wait\": 0, \"id\": id});"
                             " live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
-     (when-not ((:alive? (:proc entry)))
+     (when-not (live-entry? entry)
        (throw (ex-info (str "Background shell '" id
                             "' has exited — nothing to send"
                             " to. Its logs stay readable until resource_stop.")
@@ -2438,8 +2399,8 @@
    was undiscoverable from the thing that started it; it is now a method on the
    handle. Routes through
    `resources/stop!` — the single stop path the footer and `resource_stop` share —
-   so the process tree dies, the retained logs are dropped, and the registry
-   entry disappears exactly once."
+   so the process tree dies and the registry entry disappears exactly once.
+   The log stays on disk and remains readable by id."
   [env id]
   (let [session
         (:session-id env)
@@ -2629,8 +2590,8 @@
 
 (defn run-argv
   "Run ONE literal argv through the SAME bounded machinery `shell` runs its own
-   command with: cwd authorization, process-jail policy, head+tail capped
-   capture, timeout and kill-tree. Returns that command's own total entry — the
+   command with: cwd authorization, process-jail policy, disk-backed output,
+   head/tail bounded reads, timeout and kill-tree. Returns its own total entry — the
    SAME [[shell-result-base]] map `shell` itself answers a foreground call with,
    carrying the request's `:dir`/`:timeout-secs` as metadata, so an argv run and `shell`
    have ONE result shape and there is no envelope to unwrap.

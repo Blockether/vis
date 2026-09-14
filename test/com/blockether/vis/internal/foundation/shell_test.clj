@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -1105,20 +1106,20 @@
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
             (let [sid "shell-ext-stop-replace-race"
                   env {:session-id sid}
-                  kill-var (ns-resolve 'com.blockether.vis.internal.foundation.shell 'kill-tree!)
-                  original-kill (var-get kill-var)
+                  drop-var #'shell/drop-bg-entry!
+                  original-drop (var-get drop-var)
                   entered (promise)
                   release (promise)]
 
               (try (shell-bg* env "same" "exit 0")
                    (poll #(:result (shell-logs* env "same")) #(= "exited" (get % "status")))
-                   (with-redefs-fn {kill-var (fn [p]
+                   (with-redefs-fn {drop-var (fn [session id]
                                                (deliver entered true)
                                                @release
-                                               (original-kill p))}
+                                               (original-drop session id))}
                      (fn []
                        (let [stopping (future (resources/stop! sid "same"))]
-                         @entered
+                         (expect (not= ::timed-out (deref entered 5000 ::timed-out)))
                          (let [starting (future (shell-bg* env "same" "sleep 60"))]
                            ;; The replacement waits behind teardown instead of being
                            ;; installed and then erased by the old callback's keyed drop.
@@ -1164,6 +1165,232 @@
                            (expect (= (get replacement "pid") (get registered "pid")))
                            (expect (= "running" (get registered "status")))))))
                    (finally (deliver release true) (resources/stop-all! sid)))))))))
+
+(defdescribe
+  shell-disk-only-output-test
+  (it "keeps neither a live nor an exited shell's output in the process registry"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-only-registry-" (System/nanoTime))
+              env {:session-id sid}
+              id "large"]
+
+          (try (shell-bg* env id "seq 1 10000; printf 'ready> '; read ignored")
+               (poll #(slurp (shell-log/log-file sid id)) #(str/ends-with? % "ready> ") 200)
+               ;; The old SubVector tail kept all 10,000 source lines reachable.
+               ;; Disk is the only output store, even while the process is alive.
+               (expect (not (contains? (@#'shell/bg-entry sid id) :buffer)))
+               (expect (= "ready> " (last (resources/logs sid id))))
+               (shell-send* env id "done\n")
+               (poll #(:result (shell-logs* env id)) #(= "exited" (get % "status")))
+               (let [entry (poll #(@#'shell/bg-entry sid id) #(not (contains? % :pump)))]
+                 (expect (not-any? #(contains? entry %) [:buffer :pump :bridge :send]))
+                 (expect (= #{:pid} (set (keys (:proc entry))))))
+               (expect (= ::shell/bg-exited
+                          (try (shell-send* env id "late")
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+               (let [lines (str/split-lines (log-text env id))]
+                 (expect (= (mapv str (range 1 10001)) (vec (take 10000 lines)))))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
+  (it "reads a finished resource's current disk tail instead of retained output"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-only-resource-" (System/nanoTime))
+              env {:session-id sid}
+              id "finished"]
+
+          (try (shell-bg* env id "printf 'original\n'; exit 7")
+               (poll #(:result (shell-logs* env id)) #(= "exited" (get % "status")))
+               (poll #(resources/get-resource sid id) #(= "exited" (get % "status")))
+               ;; Change the source after the pump ended: every resource read must
+               ;; see disk, not a second copy closed over by its logs callback.
+               (spit (shell-log/log-file sid id) "disk-only\nprompt> " :encoding "UTF-8")
+               (expect (= ["disk-only" "prompt> "] (resources/logs sid id)))
+               (expect (= 7 (get (:result (shell-logs* env id)) "exit")))
+               (spit (shell-log/log-file sid id)
+                     (str (apply str (repeat (* 2 shell-log/max-chunk-bytes) "x")) "tail> ")
+                     :encoding
+                     "UTF-8")
+               (let [tail (str/join "\n" (resources/logs sid id))]
+                 (expect (<= (count tail) shell-log/max-chunk-bytes))
+                 (expect (str/ends-with? tail "tail> ")))
+               (let [kills (atom 0)]
+                 ;; A completed handle's pid is metadata. It may already name a
+                 ;; different OS process when its resource card is dismissed.
+                 (with-redefs-fn {#'shell/kill-tree! (fn [_]
+                                                       (swap! kills inc))}
+                   #(expect (= :stopped (:result (resources/stop! sid id)))))
+                 (expect (zero? @kills)))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
+  (it "replays the current disk tail to an attached PTY without inventing a newline"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-only-attach-" (System/nanoTime))
+              env {:session-id sid}
+              id "prompt"
+              replay (atom nil)]
+
+          (try (with-redefs [pty-bridge/serve! (fn [{:keys [replay-fn]}]
+                                                 (reset! replay replay-fn)
+                                                 {:stop (fn [])})]
+                 (shell-bg* env id "printf 'ready> '; read ignored"))
+               (poll #(slurp (shell-log/log-file sid id)) #(= "ready> " %))
+               (expect (some? @replay))
+               (expect (= "ready> "
+                          (some-> ^bytes (@replay)
+                                  (String. java.nio.charset.StandardCharsets/UTF_8))))
+               (spit (shell-log/log-file sid id) "from disk> " :encoding "UTF-8")
+               (expect (= "from disk> "
+                          (some-> ^bytes (@replay)
+                                  (String. java.nio.charset.StandardCharsets/UTF_8))))
+               (spit (shell-log/log-file sid id)
+                     (str (apply str (repeat (* 2 shell-log/max-chunk-bytes) "x")) "tail> ")
+                     :encoding
+                     "UTF-8")
+               (let [^bytes bytes (@replay)]
+                 (expect (<= (alength bytes) shell-log/max-chunk-bytes))
+                 (expect (str/ends-with? (String. bytes java.nio.charset.StandardCharsets/UTF_8)
+                                         "tail> ")))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
+  (it "persists a large newline-free stream without splitting or retaining it"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-only-no-newline-" (System/nanoTime))
+              env {:session-id sid}
+              id "unbroken"]
+
+          (try (shell-bg* env id "printf 'BEGIN'; printf '%01000000d' 0; printf 'END'")
+               (poll #(:result (shell-logs* env id)) #(= "exited" (get % "status")) 200)
+               (let [raw (slurp (shell-log/log-file sid id))
+                     paged (log-text env id)]
+
+                 (expect (= 1000008 (count raw)))
+                 (expect (some? (re-matches #"BEGIN0+END" raw)))
+                 (expect (= raw paged))
+                 (expect (not (contains? (@#'shell/bg-entry sid id) :buffer))))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
+
+(defdescribe
+  shell-disk-only-run-lifecycle-test
+  (it "keeps complete raw blocking output on disk while bounding the returned view"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-blocking-" (System/nanoTime))
+              env {:session-id sid}
+              id "blocking"]
+
+          (try (let [r (:result
+                         (shell/run-blocking
+                           env
+                           "printf '\033[32mżółć\033[0m'; printf '%01000000d' 0; printf 'END'"
+                           {"id" id}))
+                     raw (slurp (get r "log_path") :encoding "UTF-8")]
+
+                 (expect (= 0 (get r "exit")))
+                 (expect (str/starts-with? raw "\u001b[32mżółć\u001b[0m"))
+                 (expect (str/ends-with? raw "END"))
+                 (expect (= 1000016 (count raw)))
+                 (expect (pos? (get r "out_omitted_chars")))
+                 (expect (< (count (get r "out")) 500000))
+                 (expect (str/starts-with? (get r "out") "żółć"))
+                 (expect (str/ends-with? (get r "out") "END")))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
+  (it "retires an adopted timed-out run without losing its exit or disk log"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-adopted-" (System/nanoTime))
+              env {:session-id sid}
+              id "adopted"]
+
+          (try
+            (let [r (:result (shell/run-blocking
+                               env
+                               "printf 'before\n'; sleep 2; printf 'after\n'; exit 7"
+                               {"id" id "timeout_secs" 1}))]
+              (expect (true? (get r "timed_out")))
+              (expect (= "running" (get r "status")))
+              (let [done (poll #(:result (shell-logs* env id)) #(= "exited" (get % "status")) 200)
+                    entry (poll #(@#'shell/bg-entry sid id) #(= #{:pid} (set (keys (:proc %)))))]
+
+                (expect (= 7 (get done "exit")))
+                (expect (some? (get done "finished_at")))
+                (expect (= #{:pid} (set (keys (:proc entry)))))
+                (expect (not-any? #(contains? entry %) [:buffer :pump :bridge :send]))
+                (expect (= "before\nafter\n" (log-text env id)))
+                (spit (get r "log_path") "fresh disk\n")
+                (expect (= ["fresh disk"] (resources/logs sid id)))))
+            (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))
+  (it "terminates a background writer and reports failure when its disk pump fails"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-write-failure-" (System/nanoTime))
+              env {:session-id sid}
+              id "failed-write"]
+
+          (try (with-redefs [shell-log/drain! (fn [& _]
+                                                (throw (java.io.IOException.
+                                                         "test disk write failed")))]
+                 (let [started (:result (shell-bg* env id "while :; do printf 'output\n'; done"))
+                       done
+                       (poll #(:result (shell-logs* env id)) #(= "exited" (get % "status")) 200)]
+
+                   (expect (= "exited" (get done "status")))
+                   (expect (some? (get done "exit")))
+                   (expect (re-find #"(?i)(log|disk|write)" (str (get done "note"))))
+                   (expect (= (get started "log_path") (get done "log_path")))
+                   (expect (= (get started "started_at") (get done "started_at")))
+                   (expect (some? (get done "finished_at")))
+                   (expect (= "" (slurp (get done "log_path"))))))
+               (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))
+
+(defdescribe
+  shell-disk-only-cancellation-test
+  (it "returns the timeout result when deliberate input closure interrupts the drain"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [sid (str "shell-disk-close-" (System/nanoTime))
+              closed (promise)
+              alive? (atom true)
+              in (proxy [java.io.ByteArrayInputStream] [(byte-array 0)]
+                   (close [] (deliver closed true)))
+              process (proxy [Process] []
+                        (getInputStream [] in)
+                        (isAlive [] @alive?)
+                        (pid [] 123)
+                        (exitValue [] 143)
+                        (waitFor ([] 143) ([_ _] false)))]
+
+          (try (with-redefs-fn {#'shell/spawn! (fn [& _]
+                                                 process)
+                                #'shell/kill-tree! (fn [_]
+                                                     (reset! alive? false))
+                                #'shell-log/drain!
+                                (fn [& _]
+                                  (when-not (= true (deref closed 5000 ::timeout))
+                                    (throw (ex-info "input was not closed" {})))
+                                  (throw (java.io.IOException. "stream closed")))}
+                 (fn []
+                   (let [r (@#'shell/shell-run-impl {:session-id sid} "unused" {"timeout_secs" 1})]
+                     (expect (true? (get r "timed_out")))
+                     (expect (= "" (get r "out")))
+                     (expect (false? @alive?))
+                     (expect (= true (deref closed 0 false))))))
+               (finally (.close in) (shell-log/delete-session-logs! sid))))))
+  (it "stops a disk snapshot before reading when the caller is interrupted"
+      (let [file
+            (java.io.File/createTempFile "vis-shell-interrupted-" ".log")
+
+            reads
+            (atom 0)
+
+            read-chunk
+            shell-log/read-chunk]
+
+        (try (spit file "not read after cancellation")
+             (with-redefs [shell-log/read-chunk (fn [& args]
+                                                  (swap! reads inc)
+                                                  (apply read-chunk args))]
+               (.interrupt (Thread/currentThread))
+               (expect (= :interrupted
+                          (try (@#'shell/capture-log file)
+                               :completed
+                               (catch InterruptedException _ :interrupted)
+                               (finally (Thread/interrupted)))))
+               (expect (zero? @reads)))
+             (finally (Thread/interrupted) (.delete file))))))
 
 (defdescribe shell-send-test
              (it "types into a running background shell's stdin and the program reads it"

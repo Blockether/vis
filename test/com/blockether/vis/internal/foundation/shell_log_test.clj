@@ -281,22 +281,109 @@
            (finally (shell-log/delete-session-logs! sid))))))
 
 (defdescribe
-  tee-test
-  (it "writes through every byte the pump reads"
-      (let [sid (session-id "tee")]
-        (try (let [sink (shell-log/open! sid "p")
-                   source (java.io.ByteArrayInputStream. (.getBytes "alpha\nbeta\n" "UTF-8"))
-                   copy (with-open [r (io/reader (shell-log/tee source sink))]
-                          (slurp r))]
+  drain-test
+  (it
+    "copies UTF-8, terminal controls and newline-free output using one bounded buffer"
+    (let [sid
+          (session-id "drain")
 
-               (shell-log/close! sink)
-               ;; What the pump saw and what the file holds are the same bytes —
-               ;; the two views can never disagree about what the shell printed.
-               (expect (= "alpha\nbeta\n" copy))
-               (expect (= "alpha\nbeta\n"
-                          (:text
-                            (shell-log/read-chunk "p" (shell-log/log-file sid "p") {:offset 0})))))
-             (finally (shell-log/delete-session-logs! sid))))))
+          text
+          (apply str (repeat 10000 "→ 🚀 \u001b[31moutput\u001b[0m\r"))
+
+          bytes
+          (.getBytes ^String text "UTF-8")
+
+          source
+          (java.io.ByteArrayInputStream. bytes)
+
+          buffer-seen
+          (atom nil)
+
+          read-sizes
+          (atom #{})
+
+          input
+          (proxy [java.io.InputStream] []
+            (read
+              ([] (throw (AssertionError. "Expected a bulk read")))
+              ([b off len]
+               (swap! read-sizes conj len)
+               (if-let [previous @buffer-seen]
+                 (expect (identical? previous b))
+                 (reset! buffer-seen b))
+               (.read source ^bytes b (int off) (int len)))))
+
+          sink
+          (shell-log/open! sid "raw")]
+
+      (try (expect (nil? (shell-log/drain! input sink)))
+           (expect (= #{8192} @read-sizes))
+           (expect (= text (read-all sid "raw" 4096)))
+           (expect (java.util.Arrays/equals bytes
+                                            (java.nio.file.Files/readAllBytes
+                                              (.toPath (shell-log/log-file sid "raw")))))
+           (finally (.close input) (shell-log/close! sink) (shell-log/delete-session-logs! sid)))))
+  (it
+    "flushes a partial line before reading again and leaves stream closure to the caller"
+    (let [sid
+          (session-id "drain-live")
+
+          sink
+          (shell-log/open! sid "prompt")
+
+          file
+          (shell-log/log-file sid "prompt")
+
+          source
+          (java.io.ByteArrayInputStream. (.getBytes "prompt> " "UTF-8"))
+
+          read-count
+          (atom 0)
+
+          closed?
+          (atom false)
+
+          input
+          (proxy [java.io.InputStream] []
+            (read
+              ([] (throw (AssertionError. "Expected a bulk read")))
+              ([b off len]
+               (when (= 2 (swap! read-count inc))
+                 (expect (= "prompt> " (:text (shell-log/read-chunk "prompt" file)))))
+               (.read source ^bytes b (int off) (int len))))
+            (close [] (reset! closed? true)))]
+
+      (try (shell-log/drain! input sink)
+           (expect (false? @closed?))
+           (.write ^java.io.OutputStream (:out sink) (.getBytes "answer" "UTF-8"))
+           (.flush ^java.io.OutputStream (:out sink))
+           (expect (= "prompt> answer" (:text (shell-log/read-chunk "prompt" file))))
+           (finally (.close input) (shell-log/close! sink) (shell-log/delete-session-logs! sid)))))
+  (it "propagates read, write and flush failures without silently discarding output"
+      (doseq [operation [:read :write :flush]]
+        (let [failure (java.io.IOException. (name operation))
+              source (java.io.ByteArrayInputStream. (.getBytes "output" "UTF-8"))
+              closed (atom #{})
+              input (proxy [java.io.InputStream] []
+                      (read
+                        ([] (throw (AssertionError. "Expected a bulk read")))
+                        ([b off len]
+                         (when (= :read operation) (throw failure))
+                         (.read source ^bytes b (int off) (int len))))
+                      (close [] (swap! closed conj :input)))
+              output (proxy [java.io.OutputStream] []
+                       (write
+                         ([_] (when (= :write operation) (throw failure)))
+                         ([_ _ _] (when (= :write operation) (throw failure))))
+                       (flush [] (when (= :flush operation) (throw failure)))
+                       (close [] (swap! closed conj :output)))]
+
+          (expect (identical? failure
+                              (try (shell-log/drain! input {:out output})
+                                   (catch java.io.IOException e e))))
+          (expect (empty? @closed))
+          (.close input)
+          (.close output)))))
 
 (defn- with-dated-logs
   [f]
