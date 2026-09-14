@@ -575,12 +575,12 @@
           (str/join "\n"
                     (map #(str/replace (:line %) #"[\uE110-\uE2FF]" "") (entries rows opened))))]
 
-    (it "shows all operations by default and folds only on explicit request"
+    (it "shows all operations after the reader opens the band"
         (let [shut
               (text rows {"#band" false})
 
               shown
-              (text rows {})]
+              (text rows {"#band" true})]
 
           (expect (str/includes? shut "ACTIVITY"))
           (expect (str/includes? shut "6 operations"))
@@ -2215,7 +2215,7 @@
 
         (expect (str/includes? body "ACTIVITY"))
         (expect (str/includes? body "1 running · 2 operations"))
-        (expect (str/includes? body "npm test"))))
+        (expect (not (str/includes? body "npm test")))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
     (let [;; Tool output paints purely as the program's stdout — both live
@@ -5296,7 +5296,7 @@
         (expect (not (str/includes? text "</>")))
         (expect (not (str/includes? text "[0, 2, 4, 6]")))))
   (it
-    "keeps Activity visible independently of source and result disclosures"
+    "keeps Activity closed independently of source and result disclosures"
     (let [iteration
           (iteration/canonicalize
             {:position 0
@@ -5329,7 +5329,7 @@
           expanded
           (render-text {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "Searched source"))
+      (expect (not (str/includes? collapsed "Searched source")))
       (expect (not (str/includes? collapsed "answer = search()")))
       (expect (not (str/includes? collapsed "PYTHON")))
       (expect (not (str/includes? collapsed "one match")))
@@ -6145,10 +6145,10 @@ h = 8"
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "test evidence companion suite"))
+      (expect (not (str/includes? collapsed "test evidence companion suite")))
       (expect (str/includes? collapsed "CODE"))
       (expect (not (str/includes? collapsed "PYTHON")))
-      (expect (str/includes? collapsed "18 matches"))
+      (expect (not (str/includes? collapsed "18 matches")))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (str/includes? expanded "test evidence companion suite"))
       (expect (< (.indexOf ^String expanded "grep({...})")
@@ -6299,10 +6299,10 @@ h = 8"
             :text
             strip-ansi
             strip-sentinels)]
-      ;; Activity starts open independently of the source disclosure.
-      (expect (str/includes? receipt "2 steps omitted"))
+      ;; The closed header retains totals without exposing individual operations.
+      (expect (str/includes? receipt "2 omitted"))
       (doseq [label ["Patched" "Searched" "Ran tests"]]
-        (expect (str/includes? receipt label)))
+        (expect (not (str/includes? receipt label))))
       (expect (str/includes? receipt "ACTIVITY"))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
@@ -6761,7 +6761,26 @@ h = 8"
                   "its paths wait behind the step's own fold")
           (expect (not-any? #(str/includes? % "added-line") lines) "and so does the patch")))))
 
-;; Explicit folds remain available, but no operation is folded automatically.
+(defdescribe activity-default-disclosure-test
+             (it "keeps Activity closed until the reader opens it, including running calls"
+                 (doseq [state ["running" "succeeded" "failed"]]
+                   (let [node {:node-id "default"
+                               :activity-rows [{:id "call"
+                                                :operation "Search files"
+                                                :state state
+                                                :summary "disclosure-regression-needle"}]}
+                         entries (#'render/activity-detail-entries node 100 "s1")
+                         opened (#'render/activity-detail-entries
+                                 (assoc node
+                                   :activity-expanded? (fn [_ _]
+                                                         true))
+                                 100
+                                 "s1")]
+
+                     (expect (not-any? #(= :activity-row (get-in % [:meta :kind])) entries))
+                     (expect (some #(= :activity-row (get-in % [:meta :kind])) opened))))))
+
+;; Explicit folds remain available inside an opened Activity band.
 (defdescribe
   activity-explicit-folding-test
   (let [outcome
@@ -8546,7 +8565,7 @@ print(paths)"
 
 (defdescribe
   activity-all-operations-visible-test
-  (it "shows every nested operation and its content without opening disclosures"
+  (it "shows every nested operation and its content after opening the band"
       ;; A shell receipt groups lifecycle calls. Counting only its parent reported
       ;; fewer operations than the retained history even when every call was loaded.
       (doseq [cols [40 80 120]]
@@ -8569,6 +8588,8 @@ print(paths)"
               entries (#'render/activity-detail-entries
                        {:node-id "all-activity"
                         :activity-rows rows
+                        :activity-expanded? (fn [_ _]
+                                              true)
                         :activity-sources [{:rows rows :counts {:succeeded 11}}]}
                        (- cols 4)
                        "fixture")
@@ -8598,13 +8619,15 @@ print(paths)"
             (expect (str/includes? (cap/frame-text captured) (str "Output " i))))))))
 
 (defdescribe activity-all-files-visible-test
-             (it "shows every resource without requesting more files"
+             (it "shows every resource inside an explicitly opened band"
                  (let [paths
                        (mapv #(str "src/file-" % ".clj") (range 6))
 
                        entries
                        (#'render/activity-detail-entries
                         {:node-id "files"
+                         :activity-expanded? (fn [_ _]
+                                               true)
                          :activity-rows [{:id "read-files"
                                           :operation "cat"
                                           :state "succeeded"

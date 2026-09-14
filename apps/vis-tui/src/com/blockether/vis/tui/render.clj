@@ -5873,8 +5873,8 @@
         (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
-  "A joined Activity band that starts fully open, including nested operations and details.
-   Only explicit reader choices fold its band, groups, rows or files."
+  "A joined Activity band, closed until the reader explicitly opens it.
+   Disclosure choices inside the band remain independent of its outer fold."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts
            activity-histories activity-sources activity-fetch]} max-w session-id]
   (let [rows
@@ -5891,7 +5891,7 @@
             (boolean (answer item-key default-open?))))
 
         band-open?
-        (expanded? "#band" true)
+        (expanded? "#band" false)
 
         width
         (max 1 (long max-w))
