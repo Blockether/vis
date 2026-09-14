@@ -5193,6 +5193,38 @@
         (expect (true? (get (first frames) "is_awaiting_input"))))))
 
 (defdescribe
+  fleet-watch-initial-status-test
+  (it
+    "announces a goal turn already running at the first fleet tick"
+    ;; A run starting after the cold list read must not disappear into the baseline.
+    (let [previous
+          @(var-get #'state/fleet-watcher)
+
+          emitted
+          (atom [])]
+
+      (when (instance? Thread previous) (.interrupt ^Thread previous) (.join ^Thread previous 1000))
+      (with-redefs-fn {#'state/fleet-sinks (atom {"watch" #(swap! emitted conj %)})
+                       #'state/fleet-seq (atom 0)
+                       #'state/fleet-snapshot (fn []
+                                                ;; Exactly one tick, without a timer or a second snapshot to hide the gap.
+                                                (.interrupt (Thread/currentThread))
+                                                {"goal-session" {"is_live" true
+                                                                 "is_awaiting_input" false
+                                                                 "current_turn_id" "goal-turn"}})}
+        (fn []
+          (let [watcher (#'state/spawn-fleet-watch-thread!)]
+            (try (.join ^Thread watcher 1000)
+                 (expect (not (.isAlive ^Thread watcher)))
+                 (expect (= [{"type" "session.status"
+                              "session_id" "goal-session"
+                              "is_live" true
+                              "current_turn_id" "goal-turn"}]
+                            (mapv #(select-keys % ["type" "session_id" "is_live" "current_turn_id"])
+                                  @emitted)))
+                 (finally (.interrupt ^Thread watcher) (.join ^Thread watcher 1000)))))))))
+
+(defdescribe
   bounded-diagnostics-test
   "Diagnostic truncation must never emit half a UTF-16 surrogate pair."
   (it "steps back when a cut would split an emoji"

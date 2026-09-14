@@ -1913,10 +1913,8 @@
               (atom {})
 
               baselines
-              ;; The watcher's FIRST tick only takes a baseline and publishes
-              ;; nothing. Changing `snapshot` before that tick lands folds the
-              ;; change INTO the baseline, so no delta can ever follow it — and
-              ;; under the full suite that tick is scheduled late.
+              ;; Observe the empty baseline before exercising a later transition;
+              ;; first-tick liveness has its own regression test.
               (atom 0)
 
               write-body
@@ -1994,6 +1992,45 @@
       {}
       (fn []
         (is (= 400 (:status ((rv 'multi-events-handler) {:query-params {} :headers {}}))))))))
+
+(deftest fleet-ready-follows-subscription
+  ;; Reconnecting clients resync on ready; changes from that instant must be queued.
+  (with-server-state!
+    {}
+    (fn []
+      (let [attached?
+            (atom false)
+
+            writes
+            (atom [])
+
+            out
+            (proxy [java.io.ByteArrayOutputStream] [] (flush [] (swap! writes conj @attached?)))
+
+            status
+            {"schema" 1
+             "type" "session.status"
+             "session_id" "goal-session"
+             "seq" 1
+             "is_live" true
+             "current_turn_id" "goal-turn"}]
+
+        (with-redefs-fn {#'server/stop! (constantly nil)
+                         #'state/subscribe-fleet! (fn [_ sink]
+                                                    (reset! attached? true)
+                                                    (sink status))
+                         #'state/unsubscribe-fleet! (fn [_]
+                                                      (reset! attached? false))
+                         (rv 'pump-sse!)
+                         (fn [_ queue _ write!]
+                           (when-let [event (.poll ^java.util.concurrent.ArrayBlockingQueue queue)]
+                             (write! event)))}
+          (fn []
+            (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil) {} out)
+            (is (= [true true] @writes))
+            (is (= ["subscription.ready" "session.status"]
+                   (mapv #(get % "type") (sse-jobs (.toString out "UTF-8")))))
+            (is (false? @attached?))))))))
 
 ;; ── `subscription.ready` states the daemon's OWN turn, so a reconnect needs no probe ──
 ;; A client that went dark cannot tell "nothing happened" from "I missed the

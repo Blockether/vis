@@ -381,6 +381,16 @@ export function SessionsScreen({
   // must not re-run the effect that owns the timer.
   const fleetStreamingRef = useRef(false);
   const lastWindowReadAt = useRef(0);
+  // Only in-flight reads retain newer frames; settled snapshots need no overlay cache.
+  // null parks a row until the post-terminal read has warmed its transcript.
+  const fleetReads = useRef(
+    new Set<{
+      key: string;
+      updates: Map<string, Partial<Session> | null>;
+      superseded: boolean;
+    }>(),
+  );
+  const fleetRefreshQueued = useRef(false);
   // The row action belongs to one session on one machine. Renaming needs an input
   // dialog; deleting asks through `ConfirmRow` exactly where that session row stood.
   // Forking is the transcript's verb — it is cut at a turn, on that turn.
@@ -480,6 +490,9 @@ export function SessionsScreen({
     ): Promise<string | null> => {
       const key = machineKey(conn);
       const api = clientFor(conn);
+      const updates = new Map<string, Partial<Session> | null>();
+      const flight = { key, updates, superseded: false };
+      fleetReads.current.add(flight);
       // A BOUNDED READ FAILS ON ITS OWN DEADLINE. The outer signal is a cancellation —
       // the screen went away, nobody is owed an answer — and stays one. The deadline is
       // this read's own verdict: the machine did not speak, and the tile must say so.
@@ -508,7 +521,15 @@ export function SessionsScreen({
         // — re-ran under a reader who was only reading.
         const settle = (rows: Session[]) => {
           const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
-          const merged = reconcileSessions(held?.sessions ?? null, rows);
+          const current = rows.flatMap((row) => {
+            const update = updates.get(row.id);
+            if (update === null) {
+              const previous = held?.sessions?.find((session) => session.id === row.id);
+              return previous ? [previous] : [];
+            }
+            return [update ? { ...row, ...update } : row];
+          });
+          const merged = reconcileSessions(held?.sessions ?? null, current);
           // The stable project totals arrive BESIDE the head window. Adopt both in one
           // patch so no intermediate frame tallies whichever session pages landed first.
           const reportedOverview = api.projectsOverview();
@@ -534,12 +555,18 @@ export function SessionsScreen({
           }));
         };
         const next = await api.listSessions(probe?.signal ?? signal);
-        if (signal?.aborted) return null;
+        if (signal?.aborted || flight.superseded) return null;
+        // Set insertion order is request order. A newer accepted snapshot supersedes
+        // older reads of this machine, not a later read that is still in flight.
+        for (const pending of fleetReads.current) {
+          if (pending === flight) break;
+          if (pending.key === key) pending.superseded = true;
+        }
         alive();
         settle(next);
         return null;
       } catch (cause) {
-        if (signal?.aborted) return null;
+        if (signal?.aborted || flight.superseded) return null;
         const failure =
           probe?.signal.aborted && silence !== null ? silence : (cause as Error).message;
         const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
@@ -565,6 +592,7 @@ export function SessionsScreen({
           }));
         return failure;
       } finally {
+        fleetReads.current.delete(flight);
         if (giveUp !== undefined) window.clearTimeout(giveUp);
         signal?.removeEventListener('abort', cancel);
       }
@@ -713,13 +741,18 @@ export function SessionsScreen({
         machinesRef.current.find((machine) => machineKey(machine.conn) === machineKey(conn))
           ?.answered !== true;
       try {
-        await Promise.all(
-          paired
-            .filter((conn) => !dark(conn))
-            .map((conn) =>
-              loadMachine(conn, signal, unconfirmed(conn) ? COLD_PROBE_TIMEOUT_MS : undefined),
-            ),
-        );
+        do {
+          if (background) fleetRefreshQueued.current = false;
+          await Promise.all(
+            paired
+              .filter((conn) => !dark(conn))
+              .map((conn) =>
+                loadMachine(conn, signal, unconfirmed(conn) ? COLD_PROBE_TIMEOUT_MS : undefined),
+              ),
+          );
+          // A terminal or reconnect during a slow poll still needs one fresh read.
+          // Ordinary timer ticks remain droppable, and every response can paint.
+        } while (background && fleetRefreshQueued.current && !signal?.aborted);
       } finally {
         if (background) pollStartedAt.current = null;
       }
@@ -835,7 +868,10 @@ export function SessionsScreen({
       let update: Partial<Session>;
       if (event.type === 'session.status') {
         if (typeof event.is_live !== 'boolean') return false;
-        if (!event.is_live) return false;
+        if (!event.is_live) {
+          for (const { updates } of fleetReads.current) updates.set(sid, null);
+          return false;
+        }
         update = {
           live: event.is_live,
           is_awaiting_input: event.is_awaiting_input === true,
@@ -845,6 +881,11 @@ export function SessionsScreen({
         update = { title: event.title };
       } else {
         return false;
+      }
+      for (const { updates } of fleetReads.current) {
+        const previous = updates.get(sid);
+        if (previous !== null || event.type === 'session.status')
+          updates.set(sid, { ...previous, ...update });
       }
       const holders = machinesRef.current.filter((machine) =>
         machine.sessions?.some((row) => row.id === sid),
@@ -874,12 +915,24 @@ export function SessionsScreen({
     const readWindow = () => {
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       // Coalesce lifecycle bursts, then ask the gateway for its canonical order.
-      refreshTimer = window.setTimeout(() => void load(undefined, true), 120);
+      refreshTimer = window.setTimeout(() => {
+        fleetRefreshQueued.current = true;
+        void load(undefined, true);
+      }, 120);
     };
     const stopState = subscriptions.subscribeFleetState((streaming) => {
+      if (streaming && !fleetStreamingRef.current) {
+        readWindow();
+      }
       fleetStreamingRef.current = streaming;
     });
     const unsubscribe = subscriptions.subscribeFleet((event) => {
+      // Ready is sent after the server registered this subscriber. An HTTP open
+      // alone can precede registration, and reconnects carry no replay.
+      if (event.type === 'subscription.ready' && event.scope === 'fleet') {
+        readWindow();
+        return;
+      }
       if (FLEET_ROW_EVENTS.has(event.type)) {
         if (!applyFleetFrame(event)) readWindow();
         return;

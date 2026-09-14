@@ -3,7 +3,9 @@ import { act, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SseEvent } from '../lib/types';
-import { listSession, renderSessionsScreen } from './sessions-screen-harness';
+import { STORY_GOAL } from '../dev/story-data';
+import { GatewayClient } from '../lib/gateway';
+import { listSession, renderSessionsScreen, sessionsWindow } from './sessions-screen-harness';
 
 /** Let every poll, repaint and effect that fits inside `ms` happen. */
 const settle = async (ms = 0) => {
@@ -42,6 +44,8 @@ function fleetHub() {
         };
       },
     },
+    /** Inject from a fetch callback already running inside the test's act scope. */
+    dispatch: (event: SseEvent) => deliver?.(event),
     emit: async (event: SseEvent) => {
       await act(async () => {
         deliver?.(event);
@@ -196,11 +200,202 @@ describe('a session list carried by the fleet stream', () => {
     expect(listReads(view.requests)).toBeGreaterThan(read);
   });
 
+  // A long-running goal must not stay IDLE because its start crossed a list read
+  // or happened while the fleet connection was down.
+  it.each(['connection', 'ready'])('refreshes current status on fleet %s', async (signal) => {
+    const fleet = fleetHub();
+    const row = listSession({ id: 's1', title: 'First', live: false, goal: STORY_GOAL });
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [row] }],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    await settle(200);
+    expect(screen.queryByText('LIVE')).toBeNull();
+    if (signal === 'connection') await fleet.streaming(false);
+    view.setRows(0, [{ ...row, live: true, current_turn_id: 'goal-turn' }]);
+    const read = listReads(view.requests);
+    if (signal === 'connection') await fleet.streaming(true);
+    else await fleet.emit({ type: 'subscription.ready', scope: 'fleet' });
+    await settle(200);
+    expect(listReads(view.requests)).toBeGreaterThan(read);
+    expect(screen.getByText('LIVE')).toBeTruthy();
+  });
+
+  it('does not overwrite a reconnect snapshot with an older cold response', async () => {
+    const fleet = fleetHub();
+    const row = listSession({ id: 's1', title: 'First', live: false, goal: STORY_GOAL });
+    const routes: Record<string, unknown> = {};
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [row], holdsList: true, routes }],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    await settle();
+    routes['/v1/sessions'] = sessionsWindow(
+      [{ ...row, live: true }],
+      new URL('http://gateway.example.com/v1/sessions'),
+    );
+    await fleet.emit({ type: 'subscription.ready', scope: 'fleet' });
+    await settle(200);
+    expect(screen.getByText('LIVE')).toBeTruthy();
+    view.releasePages();
+    await settle();
+    expect(screen.getByText('LIVE')).toBeTruthy();
+  });
+
+  it('does not count superseded read failures against a newer successful connection', async () => {
+    const fleet = fleetHub();
+    const rejectReads: (() => void)[] = [];
+    const holdFailure = () =>
+      new Promise<ReturnType<typeof listSession>[]>((_resolve, reject) => {
+        rejectReads.push(() => reject(new Error('obsolete read')));
+      });
+    const read = vi.spyOn(GatewayClient.prototype, 'listSessions')
+      .mockImplementationOnce(holdFailure)
+      .mockImplementationOnce(holdFailure);
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [listSession({ id: 's1', title: 'First', live: true })] }],
+      subscriptions: fleet.hub as never,
+    });
+    restore = () => {
+      read.mockRestore();
+      view.restore();
+    };
+    await settle(200);
+    expect(rejectReads).toHaveLength(2);
+    view.setVisible(false);
+    view.setVisible(true);
+    await settle(200);
+    expect(screen.getByText('LIVE')).toBeTruthy();
+    await act(async () => {
+      for (const reject of rejectReads) reject();
+    });
+    expect(screen.queryByText('obsolete read')).toBeNull();
+    expect(screen.getByText('LIVE')).toBeTruthy();
+    // One genuine failure is still only a blip, not the second failure of an outage.
+    read.mockRejectedValueOnce(new Error('current blip'));
+    await fleet.streaming(false);
+    await settle(5_000);
+    expect(screen.getByText('LIVE')).toBeTruthy();
+  });
+
+  it.each([false, true])('does not let a stale list erase a goal start (cold=%s)', async (cold) => {
+    const fleet = fleetHub();
+    const row = listSession({ id: 's1', title: 'First', live: false, goal: STORY_GOAL });
+    const routes: Record<string, unknown> = {};
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [row], holdsList: cold, routes }],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    await settle(cold ? 0 : 200);
+    if (!cold) {
+      expect(screen.queryByText('LIVE')).toBeNull();
+      view.holdList();
+      await settle(30_000);
+    }
+    await fleet.emit({
+      type: 'session.status',
+      session_id: 's1',
+      is_live: true,
+      is_awaiting_input: false,
+      current_turn_id: 'goal-turn',
+    });
+    // The held response already passed the routes seam and still carries IDLE.
+    // A read begun after the start receives the gateway's current LIVE row.
+    const url = new URL('http://gateway.example.com/v1/sessions');
+    routes['/v1/sessions'] = sessionsWindow(
+      [{ ...row, live: true, current_turn_id: 'goal-turn' }],
+      url,
+    );
+    const read = listReads(view.requests);
+    if (cold) view.releasePages();
+    else view.releaseList();
+    await settle();
+    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(listReads(view.requests)).toBe(read);
+    await settle(200);
+
+    routes['/v1/sessions'] = sessionsWindow([row], url);
+    await fleet.emit({
+      type: 'session.status',
+      session_id: 's1',
+      is_live: false,
+      is_awaiting_input: false,
+      current_turn_id: null,
+    });
+    await settle(200);
+    expect(screen.queryByText('LIVE')).toBeNull();
+  });
+
+  it('accepts snapshots during continual fleet activity without retrying them', async () => {
+    const fleet = fleetHub();
+    const view = oneRow(fleet);
+    restore = view.restore;
+    await settle(200);
+    const fetch = globalThis.fetch;
+    let reads = 0;
+    let announce = true;
+    globalThis.fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      const url = new URL(String(input));
+      if (url.pathname === '/v1/sessions' && !url.searchParams.has('root')) {
+        reads += 1;
+        // Every returning snapshot crosses a newer status. Cap the fixture at three
+        // announcements so the former retry loop fails a count rather than hanging.
+        if (announce && reads <= 3)
+          fleet.dispatch({
+            type: 'session.status',
+            session_id: 's1',
+            is_live: true,
+            current_turn_id: `turn-${reads}`,
+          });
+      }
+      return response;
+    };
+    await settle(30_000);
+    expect(screen.getByText('LIVE')).toBeTruthy();
+    expect(reads).toBe(1);
+
+    announce = false;
+    await fleet.emit({ type: 'session.status', session_id: 's1', is_live: false });
+    await settle(200);
+    expect(screen.queryByText('LIVE')).toBeNull();
+    expect(reads).toBe(2);
+  });
+
+  it('keeps a terminal resync queued behind a slow poll', async () => {
+    const fleet = fleetHub();
+    const row = listSession({ id: 's1', title: 'First', live: true });
+    const routes: Record<string, unknown> = {};
+    const view = renderSessionsScreen({
+      machines: [{ sessions: [row], routes }],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    await settle(200);
+    view.holdList();
+    await settle(30_000);
+    const read = listReads(view.requests);
+    await fleet.emit({ type: 'session.status', session_id: 's1', is_live: false });
+    routes['/v1/sessions'] = sessionsWindow(
+      [{ ...row, live: false }],
+      new URL('http://gateway.example.com/v1/sessions'),
+    );
+    await settle(200);
+    expect(screen.getByText('LIVE')).toBeTruthy();
+    view.releaseList();
+    await settle();
+    expect(screen.queryByText('LIVE')).toBeNull();
+    expect(listReads(view.requests)).toBe(read + 1);
+  });
+
   it('slows its safety net while the stream delivers, and speeds back up when it drops', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);
     restore = view.restore;
-    await settle(50);
+    await settle(200);
     const read = listReads(view.requests);
 
     // The five-second reachability poll is what the stream replaces.

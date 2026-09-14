@@ -859,19 +859,19 @@
 
 (defn- spawn-fleet-watch-thread!
   "Create, mark daemon and START the single fleet watcher. While no stream is
-   open it does NO directory work and holds no baseline, so the next subscriber
-   diffs against a fresh snapshot instead of receiving a backlog of transitions
-   nobody was listening for."
+   open it does NO directory work and holds no baseline. The first tick announces
+   the busy fleet too: a run that started after a client's cold read must not be
+   swallowed as the initial baseline."
   []
   (let [t (Thread. ^Runnable
                    (fn []
                      (loop [before nil]
                        (let [next-snapshot
-                             (try (cond (empty? @fleet-sinks) nil
-                                        (nil? before) (fleet-snapshot)
-                                        :else (let [after (fleet-snapshot)]
-                                                (publish-fleet! (fleet-status-frames before after))
-                                                after))
+                             (try (if (empty? @fleet-sinks)
+                                    nil
+                                    (let [after (fleet-snapshot)]
+                                      (publish-fleet! (fleet-status-frames (or before {}) after))
+                                      after))
                                   (catch Throwable err
                                     (tel/log! :debug
                                               ["gateway: fleet watch tick failed" (ex-message err)])

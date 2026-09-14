@@ -1041,13 +1041,12 @@
                                               {:pid owner-pid :close! close!}))))
           (try
             (when proxied? (sse-proxy-pad! out))
-            ;; Ready BEFORE the sink is attached: a client reads its cold
-            ;; window on this frame, so the read and the deltas that follow
-            ;; cannot cross and leave the list describing two different
-            ;; instants.
+            ;; Attach before ready: the client's resync must overlap an active
+            ;; subscription, otherwise a transition between its read and this
+            ;; registration disappears. The queue keeps ready first on the wire.
+            (state/subscribe-fleet! sub-id sink)
             (write!
               {"schema" 1 "type" "subscription.ready" "scope" "fleet" "seq" 0 "ts" (util/now-ms)})
-            (state/subscribe-fleet! sub-id sink)
             (pump-sse! out queue dead? write!)
             (catch Throwable _ nil)
             (finally (state/unsubscribe-fleet! sub-id)
