@@ -22,7 +22,7 @@ function GoalTime({ goal }: { goal: SessionGoal }) {
   const hours = Math.floor(seconds / 3_600);
   const minutes = Math.floor(seconds / 60) % 60;
   const duration = `${hours ? `${hours}h ` : ''}${hours || minutes ? `${minutes}m ` : ''}${seconds % 60}s`;
-  return <p className="text-ui text-dialog-hint">Time in goal: {duration}</p>;
+  return duration;
 }
 
 export type SessionHeaderModel = Readonly<{
@@ -78,7 +78,7 @@ export function SessionHeader({
   return (
     /* The notch strip stands above the 52px band via box-content. Edge controls
        own horizontal safe-area padding so the header's paper still reaches the glass. */
-    <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:min-h-9 mouse:pt-0">
+    <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:pt-0">
       {!isDesk && <BackButton label="Back to sessions" onClick={commands.back} />}
       {isDesk && sidebar && <SidebarToggle isShown={sidebar.isShown} onClick={sidebar.onToggle} />}
       <div
@@ -100,16 +100,15 @@ export function SessionHeader({
           {goal && (
             <Button
               variant="quiet"
-              density="panel"
+              density="compact"
               pressEffect="none"
-              className="min-w-0 max-w-full"
-              aria-label={`Goal: ${GOAL_STATUS[goal.status]} — ${goal.objective}`}
+              className="min-w-0 max-w-full mouse:-my-1.5"
+              title={goal.objective}
               aria-haspopup="dialog"
               onClick={() => setGoalDetails(true)}
             >
               <span className="block max-w-full truncate">
-                Goal: {goal.status !== 'active' && `${GOAL_STATUS[goal.status]} — `}
-                {goal.objective}
+                Goal: {GOAL_STATUS[goal.status]} - <GoalTime key={goal.id} goal={goal} />
               </span>
             </Button>
           )}
@@ -137,7 +136,9 @@ export function SessionHeader({
                 Iterations: {goal.iterations_used.toLocaleString('en-US')} /{' '}
                 {goal.iteration_budget?.toLocaleString('en-US') ?? 'unlimited'}
               </p>
-              <GoalTime key={goal.id} goal={goal} />
+              <p className="text-ui text-dialog-hint">
+                Time in goal: <GoalTime key={goal.id} goal={goal} />
+              </p>
               {goal.reason && <p className="whitespace-pre-wrap break-words">{goal.reason}</p>}
               <p className="text-ui text-dialog-hint">
                 Use /goal --pause, --resume or --cancel in the composer.

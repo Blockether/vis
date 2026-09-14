@@ -22,7 +22,14 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Connected: Story = {};
+export const Connected: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async ({ canvasElement }) => {
+    // Regression: the transcript border must align with the 52px machine strip.
+    const header = within(canvasElement).getByRole('banner');
+    await expect(header.getBoundingClientRect().height).toBe(53);
+  },
+};
 
 export const Reconnecting: Story = {
   args: {
@@ -36,10 +43,14 @@ export const Reconnecting: Story = {
 };
 
 export const ActiveGoal: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
   args: { model: { ...meta.args.model, goal: STORY_GOAL } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    // A goal must not push the transcript border below the machine strip.
+    expect(canvas.getByRole('banner').getBoundingClientRect().height).toBe(53);
     const button = canvas.getByRole('button', { name: /^Goal: Active/ });
+    expect(button).toHaveTextContent(/^Goal: Active - /);
     const label = button.querySelector('span')!;
     expect(label.getBoundingClientRect().right).toBeLessThanOrEqual(
       button.getBoundingClientRect().right,
