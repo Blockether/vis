@@ -175,7 +175,11 @@ export const ProjectGroup = memo(function ProjectGroup({
   // fight and truncated to `~/v…`. `HeaderTitle` already refuses exactly this for a
   // machine whose address IS its name; a project is the same rule one level down.
   const where = compactProjectPath(root, project);
-  const qualifierPath = where ? (where === `~/${project}` ? '' : where) : 'No workspace path';
+  const qualifierPath = where
+    ? where === project || where === `~/${project}`
+      ? ''
+      : where
+    : 'No workspace path';
   // A FILTER is a fleet-wide question and its answer may not sit behind a fold: while
   // a query is on, every project that still has rows shows them. The fold the reader
   // set is untouched and is back the moment the query is.

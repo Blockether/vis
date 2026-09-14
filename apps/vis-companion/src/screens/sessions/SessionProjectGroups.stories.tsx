@@ -87,6 +87,24 @@ export const NewerSession: Story = {};
 
 export const Collapsed: Story = { args: { initiallyOpen: false } };
 
+/** A path-derived project name appears once; the second line carries only counts. */
+export const ProjectPathName: Story = {
+  args: {
+    reading: { ...meta.args.reading, epoch: null, pendingByRoot: new Map() },
+  },
+  play: async ({ canvasElement, args }) => {
+    const page = within(canvasElement);
+    const heading = page.getByRole('button', { name: `Collapse ${args.group.label}` });
+    await expect(within(heading).getAllByText(args.group.label)).toHaveLength(1);
+    await expect(heading.querySelector('[title]')?.textContent).toBe('4 sessions');
+    await userEvent.click(heading);
+    await expect(page.getByRole('button', { name: `Expand ${args.group.label}` })).toBeVisible();
+    await expect(canvasElement.querySelector('[data-session-id]')).toBeNull();
+    await userEvent.click(heading);
+    await expect(canvasElement.querySelectorAll('[data-session-id]')).toHaveLength(4);
+  },
+};
+
 export const AcceptNewerSession: Story = {
   play: async ({ canvasElement, args }) => {
     const page = within(canvasElement);

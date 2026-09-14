@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
@@ -61,6 +61,60 @@ describe('what a project header counts', () => {
     ).toHaveLength(1);
     expect(view.requests.some(({ path }) => path === '/v1/projects/overview')).toBe(false);
   });
+});
+
+// Regression: path-derived project names were repeated above the session count.
+describe('what a project header names', () => {
+  it.each([
+    { name: '~/project', root: '/Users/dev/project', qualifier: '' },
+    { name: '/project', root: '/project', qualifier: '' },
+    { name: '~/project', root: 'C:\\Users\\dev\\project', qualifier: '' },
+    { name: 'project', root: '/Users/dev/project', qualifier: '' },
+    { name: 'project', root: '/Users/dev/work/project', qualifier: '~/work' },
+  ])(
+    'shows $name once and preserves distinct checkout details',
+    async ({ name, root, qualifier }) => {
+      const session = listSession({ id: 'project-row', workspace: { root } });
+      const view = renderSessionsScreen({
+        machines: [
+          {
+            label: 'alpha',
+            sessions: [session],
+            routes: {
+              '/v1/sessions': {
+                sessions: [session],
+                total: 1,
+                has_more: false,
+                overview: {
+                  projects: [
+                    {
+                      root,
+                      project_id: 'p-a',
+                      name,
+                      session_count: 1,
+                      live_count: 0,
+                      awaiting_count: 0,
+                      last_activity_ms: 1,
+                    },
+                  ],
+                  project_count: 1,
+                  session_count: 1,
+                  live_count: 0,
+                  awaiting_count: 0,
+                },
+              },
+            },
+          },
+        ],
+      });
+      restore = view.restore;
+      const heading = await screen.findByRole('button', { name: `Collapse ${name}` });
+      expect(within(heading).getAllByText(name)).toHaveLength(1);
+      const detail = heading.querySelector('[title]');
+      expect(detail).toHaveAttribute('title', root);
+      expect(detail?.textContent).toBe(`${qualifier ? `${qualifier} ·` : ''}1 session`);
+    },
+  );
 });
 
 // Regression, measured against a 1192-session machine: opening the list drained the
