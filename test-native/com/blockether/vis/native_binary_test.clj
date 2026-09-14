@@ -823,54 +823,54 @@
           (com.blockether.vispython.Locations/pythonExecutable
             (str (io/file (.getParentFile (python-library bin)) "python")))]
 
-      (try (with-open [out (io/output-stream (io/file dir wheel-name))]
-             (.write out ^bytes (pip-wheel)))
-           (spit (io/file dir "vis.yml") "python:\n  index_url: http://127.0.0.1:9/simple\n")
-           (spit (io/file project "pyproject.toml")
-                 (str "[project]\nname = 'native-extension-project'\nversion = '1.0'\n"
-                      "requires-python = '>=3.12'\ndependencies = ['vis-cli-fixture==1.0']\n"
-                      "[tool.uv.sources]\nvis-cli-fixture = {path = '../"
-                      wheel-name
-                      "'}\n"))
-           (spit (io/file source "fixture_value.py")
-                 "from vis_cli_fixture import VALUE\ndef answer():\n    return VALUE\n")
-           (spit (io/file entries "fixture.py")
-                 (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
-                      "# project = '../../implementation'\n"
-                      "# source_paths = ['../../implementation/src']\n# ///\n"
-                      "import blockether.vis.extension as vis\nfrom fixture_value import answer\n"
-                      "vis.register(vis.Extension(name='native-uv-value-' + str(answer()), "
-                      "description='Native locked project fixture'))\n"))
-           (let [locked (run-binary dir
-                                    ["uv" "lock" "--project" (str project) "--offline" "--python"
-                                     python "--no-python-downloads"]
-                                    60)]
-             (expect (= 0 (:exit locked)) (:output locked)))
-           ;; #178: an unrelated shared distribution update must not invalidate this project.
-           (io/make-parents unrelated)
-           (spit unrelated "Name: unrelated\nVersion: 1\n")
-           (let [synced (run-binary dir
-                                    [(.getAbsolutePath bin)
-                                     (str "-Duser.home=" (.getAbsolutePath dir)) "python" "uv"
-                                     "sync" "--project" (str project) "--locked" "--offline"
-                                     "--python" python]
-                                    120)]
-             (expect (= 0 (:exit synced)) (:output synced)))
-           (spit unrelated "Summary: updated metadata\n" :append true)
-           (let [lock-before
-                 (slurp (io/file project "uv.lock"))
+      (try
+        (with-open [out (io/output-stream (io/file dir wheel-name))]
+          (.write out ^bytes (pip-wheel)))
+        (spit (io/file dir "vis.yml") "python:\n  index_url: http://127.0.0.1:9/simple\n")
+        (spit (io/file project "pyproject.toml")
+              (str "[project]\nname = 'native-extension-project'\nversion = '1.0'\n"
+                   "requires-python = '>=3.12'\ndependencies = ['vis-cli-fixture==1.0']\n"
+                   "[tool.uv.sources]\nvis-cli-fixture = {path = '../"
+                   wheel-name
+                   "'}\n"))
+        (spit (io/file source "fixture_value.py")
+              "from vis_cli_fixture import VALUE\ndef answer():\n    return VALUE\n")
+        (spit (io/file entries "fixture.py")
+              (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
+                   "# project = '../../implementation'\n"
+                   "# source_paths = ['../../implementation/src']\n# ///\n"
+                   "import blockether.vis.extension as vis\nfrom fixture_value import answer\n"
+                   "vis.register_extension(vis.Extension(name='native-uv-value-' + str(answer()), "
+                   "description='Native locked project fixture'))\n"))
+        (let [locked (run-binary dir
+                                 ["uv" "lock" "--project" (str project) "--offline" "--python"
+                                  python "--no-python-downloads"]
+                                 60)]
+          (expect (= 0 (:exit locked)) (:output locked)))
+        ;; #178: an unrelated shared distribution update must not invalidate this project.
+        (io/make-parents unrelated)
+        (spit unrelated "Name: unrelated\nVersion: 1\n")
+        (let [synced (run-binary dir
+                                 [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))
+                                  "python" "uv" "sync" "--project" (str project) "--locked"
+                                  "--offline" "--python" python]
+                                 120)]
+          (expect (= 0 (:exit synced)) (:output synced)))
+        (spit unrelated "Summary: updated metadata\n" :append true)
+        (let [lock-before
+              (slurp (io/file project "uv.lock"))
 
-                 result
-                 (run-binary dir
-                             [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))
-                              "extension" "list"]
-                             120)]
+              result
+              (run-binary dir
+                          [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))
+                           "extension" "list"]
+                          120)]
 
-             (expect (= 0 (:exit result)) (:output result))
-             (expect (str/includes? (:output result) "native-uv-value-42") (:output result))
-             (expect (= lock-before (slurp (io/file project "uv.lock"))))
-             (expect (.isDirectory (io/file project ".venv"))))
-           (finally (delete-tree! dir))))))
+          (expect (= 0 (:exit result)) (:output result))
+          (expect (str/includes? (:output result) "native-uv-value-42") (:output result))
+          (expect (= lock-before (slurp (io/file project "uv.lock"))))
+          (expect (.isDirectory (io/file project ".venv"))))
+        (finally (delete-tree! dir))))))
 
 (defdescribe
   native-installs-extension-center-source-test
@@ -940,7 +940,7 @@
          "from pathlib import Path\nimport blockether.vis.extension as vis\n"
          "Path(" (pr-str (str (io/file dir "imported")))
          ").write_text('loaded')\n"
-         "vis.register(vis.Extension(name='native-github-example', description='Git fixture'))\n")
+         "vis.register_extension(vis.Extension(name='native-github-example', description='Git fixture'))\n")
 
        url
        "https://github.com/example-owner/extensions"
@@ -1101,7 +1101,7 @@
             "from dataclasses import dataclass\n"
             "@dataclass(frozen=True, slots=True)\nclass PackageStatus:\n    state: str\n"
             "def packages_status():\n    \"Return a typed extension result.\"\n    return PackageStatus('ready')\n"
-            "vis.register(vis.Extension(name='package-check', alias='packages', "
+            "vis.register_extension(vis.Extension(name='package-check', alias='packages', "
             "description='Native package compatibility', "
             "symbols=[vis.Symbol(packages_check), vis.Symbol(packages_status)]))\n"))
         (let [locked (run-binary dir
@@ -1292,7 +1292,7 @@
               (str "# /// script\n# [tool.vis]\n# project = '../../project'\n# ///\n"
                    "import blockether.vis.extension as vis\n"
                    "from vis_editable_fixture import VALUE\n"
-                   "vis.register(vis.Extension(name='native-editable-' + str(VALUE), "
+                   "vis.register_extension(vis.Extension(name='native-editable-' + str(VALUE), "
                    "description='Native editable source fixture'))\n"))
         (let [locked (run-binary dir
                                  ["uv" "lock" "--project" (str project) "--offline" "--python"

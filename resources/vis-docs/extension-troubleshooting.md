@@ -43,7 +43,7 @@ and `doc()` difference as an extension reload failure.
 
 ## Already registered
 
-`vis.register() may only be called once per file` identifies the previously
+`vis.register_extension() may only be called once per file` identifies the previously
 registered extension. Keep one registration in the entrypoint. If a tool import
 triggers it, check for a filename collision: an entry named `demo.py` can shadow an
 imported `demo` package. Rename the entry to `demo_tools.py`.

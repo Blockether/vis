@@ -23,8 +23,7 @@ from urllib.parse import urlencode
 from blockether.vis._contracts import GATEWAY
 
 from ._client import (
-    Events,
-    GatewayClient,
+    ExecutionLayer,
     JobEvents,
     ProtocolError,
     Session,
@@ -32,6 +31,8 @@ from ._client import (
     VisTimeout,
     _duration,
     _gateway_error,
+    _PollingEvents,
+    _SessionPollingEvents,
 )
 
 
@@ -44,7 +45,7 @@ class _Reply(io.BytesIO):
             self.headers[name] = str(value)
 
 
-class LocalEngine(GatewayClient):
+class LocalEngine(ExecutionLayer):
     """Run a private engine via sdk-stdio; executable may be an argv sequence.
 
     root is the working directory. startup_timeout bounds initial boot; timeout
@@ -52,8 +53,10 @@ class LocalEngine(GatewayClient):
     reply must never be mistaken for the next request's answer.
     """
 
-    def __init__(self, *, executable, root, timeout=30, startup_timeout=120):
-        super().__init__("http://127.0.0.1", timeout=timeout)
+    def __init__(
+        self, *, executable="vis-agent", root=".", timeout=30, startup_timeout=120
+    ):
+        super().__init__(timeout=timeout)
         if os.name != "posix":
             raise ValueError("local engines currently support Linux and macOS")
         self._command = (
@@ -65,11 +68,22 @@ class LocalEngine(GatewayClient):
             isinstance(arg, str) and arg for arg in self._command
         ):
             raise ValueError("executable must be a nonempty argv sequence")
-        self._root = str(Path(root).resolve(strict=True))
+        self._root = self.session_options(root)["root"]
         self._startup_timeout = _duration(startup_timeout)
         self._process = None
         self._home = None
         self._buffer = b""
+
+    def session_options(self, project=".") -> dict:
+        """Resolve an existing local directory before the caller changes directory."""
+        path = Path(project).resolve(strict=True)
+        if not path.is_dir():
+            raise NotADirectoryError(str(path))
+        return {"root": str(path)}
+
+    def _ensure_client_lease(self) -> str:
+        # Stdio shares the application host; its PID keeps idle callbacks alive.
+        return super()._ensure_client_lease(pid=os.getpid())
 
     def _read_line(self, deadline):
         while b"\n" not in self._buffer:
@@ -138,6 +152,8 @@ class LocalEngine(GatewayClient):
             "route": route,
             "query": urlencode(query) if query else None,
         }
+        if self._lease is not None:
+            request["headers"] = {GATEWAY["headers"]["client_id"]: self._lease}
         if body is not None:
             request["body"] = body
         if content is not None:
@@ -185,6 +201,7 @@ class LocalEngine(GatewayClient):
         if self._closed:
             return
         self._closed = True
+        self._clear_client_extensions()
         for stream in tuple(self._streams):
             stream.close()
         process = self._process
@@ -213,40 +230,7 @@ class _LocalSession(Session):
     __slots__ = ()
 
     def events(self, **options):
-        return _LocalEvents(self, **options)
-
-
-class _PollingEvents:
-    """Common bounded stdio polling; identity/replay stay in the typed stream."""
-
-    def _iterate(self):
-        deadline = time.monotonic() + self.client.timeout
-        try:
-            while not self._closed:
-                if time.monotonic() >= deadline:
-                    raise VisTimeout("local event stream idle timeout")
-                for name, value in self._page():
-                    event = self._accept(name, value)
-                    if event is not None:
-                        yield event
-                        if self._terminal(event):
-                            return
-                        deadline = time.monotonic() + self.client.timeout
-                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
-        finally:
-            self.client._streams.discard(self)
-
-
-class _LocalEvents(_PollingEvents, Events):
-    """Read the owned engine journal over stdio; no hidden SSE connection."""
-
-    def _page(self):
-        data = self.client.get_session_events_since(
-            self.session.id, query={"cursor": self.cursor}
-        )
-        if not isinstance(data, dict) or not isinstance(data.get("events"), list):
-            raise ProtocolError("malformed local event page")
-        return [(None, value) for value in data["events"]]
+        return _SessionPollingEvents(self, **options)
 
 
 class _LocalJobEvents(_PollingEvents, JobEvents):

@@ -5,6 +5,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.extension.client :as client-extensions]
             [ring.core.protocols :as body]
             [com.blockether.vis.internal.gateway.view :as view])
   (:import [java.io Reader Writer ByteArrayInputStream ByteArrayOutputStream]
@@ -65,11 +66,14 @@
               {:request-method method
                :uri uri
                :query-string (get frame "query")
-               :headers {"x-vis-protocol" (str contract/protocol-version)
-                         "x-vis-min-gateway-protocol" (str contract/minimum-gateway-protocol)
-                         "content-type"
-                         (if (contains? frame "body") "application/json" "application/octet-stream")
-                         "content-length" (str (alength bytes))}
+               :headers
+               (cond-> {"x-vis-protocol" (str contract/protocol-version)
+                        "x-vis-min-gateway-protocol" (str contract/minimum-gateway-protocol)
+                        "content-type"
+                        (if (contains? frame "body") "application/json" "application/octet-stream")
+                        "content-length" (str (alength bytes))}
+                 (string? (get-in frame ["headers" "x-vis-client-id"]))
+                 (assoc "x-vis-client-id" (get-in frame ["headers" "x-vis-client-id"])))
                :body (ByteArrayInputStream. bytes)}
 
               response
@@ -89,10 +93,17 @@
    an ambiguously aligned pipe. Leaving this loop flushes and removes the bridge."
   [^Reader reader ^Writer writer handler]
   (view/install!)
-  (try (reply! writer {:protocol contract/protocol-version})
-       (loop []
+  (let [owners (atom #{})]
+    (try (reply! writer {:protocol contract/protocol-version})
+         (loop []
 
-         (when-let [line (read-frame reader)]
-           (reply! writer (dispatch handler (wire/parse-json line)))
-           (recur)))
-       (finally (view/uninstall!))))
+           (when-let [line (read-frame reader)]
+             (let [frame (wire/parse-json line)
+                   owner (get-in frame ["headers" "x-vis-client-id"])]
+
+               (when (string? owner) (swap! owners conj owner))
+               (reply! writer (dispatch handler frame)))
+             (recur)))
+         (finally (doseq [owner @owners]
+                    (client-extensions/detach-owner! owner))
+                  (view/uninstall!)))))

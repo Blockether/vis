@@ -157,7 +157,7 @@
                        "    def mapping(self, payload):\n"
                        "        \"Echo a positional mapping unchanged.\"\n"
                        "        return payload\n"
-                       "vis.register(vis.Extension(name='keyword-probe', alias='probe', "
+                       "vis.register_extension(vis.Extension(name='keyword-probe', alias='probe', "
                        "description='Native keyword transport fixture', "
                        "symbols=[vis.Symbol(Probe(), name='probe')]))\n")))
           (io/make-parents (io/file dir "configured/example.clj"))

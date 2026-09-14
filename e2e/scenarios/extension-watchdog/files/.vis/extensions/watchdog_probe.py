@@ -60,7 +60,7 @@ class WatchdogProbe:
         return Observation(self._count, timed_out=True)
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="watchdog-probe",
         description="Local extension-lifetime regression probe.",

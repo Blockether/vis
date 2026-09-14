@@ -31,7 +31,7 @@
     "\"\n"
     "        return HelpDocument(" (if typed? "tool" "'doctor'")
     " + ':' + str(answer()))\n"
-    "vis.register(vis.Extension(name='editable-fixture', alias='editable', "
+    "vis.register_extension(vis.Extension(name='editable-fixture', alias='editable', "
     "description='Editable fixture', symbols=[vis.Symbol(editable_value), vis.Symbol(editable_source), "
     "vis.Symbol(Doctor(), name='doctor')]))\n"))
 
@@ -74,7 +74,7 @@
          "def sdk_count():\n" "    \"Increment persisted state through the injected host.\"\n"
          "    vis.state['count'] = vis.state.get('count', 0) + 1\n"
          "    return vis.state['count']\n"
-         "vis.register(vis.Extension(name='editable-sdk', alias='sdk', description='Editable SDK fixture', "
+         "vis.register_extension(vis.Extension(name='editable-sdk', alias='sdk', description='Editable SDK fixture', "
          "symbols=[vis.Symbol(sdk_count, activity=vis.Activity(label='Count calls', show_start=False))]))\n")}
       (fn [result {:keys [ext-dir store]}]
         (is (= {:loaded 1 :failed 0 :changed? true} result) (pr-str (extensions/load-failures)))

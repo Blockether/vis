@@ -681,7 +681,7 @@ def _slash_host(ctx: dict) -> dict:
     return vis.ok(f"remote server set: {target} port {port}")
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="uplink",
         description=(

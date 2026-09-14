@@ -239,7 +239,7 @@ class _Run:
             if isinstance(command, (list, tuple))
             else ["/bin/sh", "-c", command],
             cwd=self.cwd,
-            env=env,
+            env={**os.environ, **(env or {})},
             stdin=subprocess.PIPE,
             stdout=self._sink,
             stderr=subprocess.STDOUT,

@@ -8,6 +8,8 @@ package, and not in an extension somebody wrote against it.
 
 import inspect
 import json
+import os
+import sys
 
 import blockether.vis.extension as vis
 import pytest
@@ -187,6 +189,31 @@ def test_shell_runs_a_command_and_answers_the_engine_shape():
     assert run["status"] == "exited"
     assert set(run) == set(_outside._SHELL_RESULT_KEYS)
     assert run.logs()["out"] == "hello"
+
+
+@pytest.mark.parametrize("environment", [None, {}, {"VIS_SHELL_OVERRIDE": "child"}])
+def test_shell_environment_overlays_the_parent_without_mutating_it(
+    monkeypatch, environment
+):
+    monkeypatch.setenv("VIS_SHELL_INHERITED", "parent")
+    monkeypatch.setenv("VIS_SHELL_OVERRIDE", "parent")
+    names = ["PATH", "VIS_SHELL_INHERITED", "VIS_SHELL_OVERRIDE"]
+    expected = {name: os.environ.get(name) for name in names}
+    expected.update(environment or {})
+    options = {
+        "command": [
+            sys.executable,
+            "-c",
+            "import json, os; "
+            f"print(json.dumps({{name: os.environ.get(name) for name in {names!r}}}))",
+        ]
+    }
+    if environment is not None:
+        options["env"] = environment
+    run = vis.shell(options).wait(10)
+    assert run["exit"] == 0
+    assert json.loads(run["out"]) == expected
+    assert os.environ["VIS_SHELL_OVERRIDE"] == "parent"
 
 
 def test_a_shell_handle_stops_what_it_started():

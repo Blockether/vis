@@ -251,9 +251,9 @@ class SDK:
         """Verify the Vis SDK checkout with isolated source and installed-package gates.
 
         `root` must be a Vis checkout. `python` is one executable, not a shell command,
-        with pytest, build, ruff and twine installed. Requires network access for build
-        isolation and a disposable venv's pytest/wheel installation. No live environment
-        is pip-installed into. All temporary files and started processes are cleaned up.
+        with pytest, pyright, build, ruff and twine installed. Requires network access
+        for build isolation and a disposable venv's test dependencies and wheel. No live
+        environment is pip-installed into. Temporary files and processes are cleaned up.
 
         Checks formatting/lint, source tests, direct/sdist wheel parity, exact SDK and
         canonical contract contents, strict distribution metadata and documented examples.
@@ -398,6 +398,7 @@ class SDK:
                         "install",
                         "--disable-pip-version-check",
                         "pytest",
+                        "pyright",
                         str(wheel),
                     ],
                 ),
@@ -425,7 +426,7 @@ class SDK:
 
 
 sdk = SDK()
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="sdk",
         description="Verify SDK source, distributions and installed HTTP/stdio consumers.",

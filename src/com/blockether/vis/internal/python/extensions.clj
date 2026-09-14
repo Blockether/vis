@@ -30,7 +30,7 @@
    (tool, activation, prompt, slash, op hook) are serialized with `locking` on its
    session name, the same proven pattern as the printer context.
 
-   The file's top-level `vis.register(vis.Extension(...))` call registers through the
+   The file's top-level `vis.register_extension(vis.Extension(...))` call registers through the
    ordinary `register-extension!` — from the registry's perspective a
    Python extension is indistinguishable from a Clojure one (activation,
    prompt assembly, slash dispatch, `vis-agent extension list` all just work).
@@ -40,7 +40,6 @@
             [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [clojure.string :as str]
-            [com.blockether.vis.contract.document :as contract-document]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.validation :as config-validation]
@@ -1036,7 +1035,7 @@
            nil))))
 
 (defn- ctx-adapter
-  "`:ext/ctx-fn` for a Python `vis.register(vis.Extension(ctx=...))` callable. Runs per turn
+  "`:ext/ctx-fn` for a Python `vis.register_extension(vis.Extension(ctx=...))` callable. Runs per turn
    during ctx render: hands the Python fn the `slim-env` dict and folds the
    dict it returns into the model's `session` bag (deep-merged with every
    other extension's slice). The returned map MUST be STRING-keyed all the way
@@ -1199,62 +1198,10 @@
   [spec]
   (clojure.core/symbol (str (get spec "name"))))
 
-;; Extension TAG vocabulary: the .py author declares "observation"/"mutation";
-;; the registry stores the internal tag keyword. Bounded map — no minting.
-(def ^:private symbol-tags {"observation" :observation "mutation" :mutation})
-
 (defn- ->symbol-entry
   "Turn one Python callable registration into an ordinary observed tool entry."
   [ext-name ctx sym spec]
-  (let [pyfn
-        (get spec "fn")
-
-        argv
-        (cond-> (mapv clojure.core/symbol (get spec "params"))
-          (get spec "varargs")
-          (-> (conj '&)
-              (conj 'args)))
-
-        activity
-        (get spec "activity")
-
-        contract
-        (get spec "contract")
-
-        _
-        (when-not (and (contract-document/valid-json? "symbol" "callable" contract)
-                       (= (str sym) (get contract "name"))
-                       (= (get spec "tag") (get contract "tag")))
-          (throw (ex-info (str "Invalid Python symbol contract for " sym)
-                          {:type :extension/invalid-symbol-contract})))
-
-        _
-        (when (and activity (not (contract-document/valid-json? "activity" "declaration" activity)))
-          (throw (ex-info "Invalid Python Activity declaration"
-                          {:type :extension/invalid-activity})))
-
-        opts
-        (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation) :contract contract}
-          (get spec "hidden")
-          (assoc :hidden? true)
-
-          activity
-          (assoc :presenter
-            (keyword (get activity "presenter")) :activity
-            (cond-> {:show-start (get activity "show_start" true)}
-              (get activity "label")
-              (assoc :headline (get activity "label"))))
-
-          (get activity "label")
-          (assoc :ticker-fn
-            (fn [_env _args]
-              (get activity "label"))))]
-
-    (extension/symbol-entry {:symbol sym
-                             :fn (tool-adapter ext-name sym ctx pyfn)
-                             :doc (str (get spec "doc"))
-                             :arglists [argv]}
-                            opts)))
+  (extension/python-symbol-entry sym spec (tool-adapter ext-name sym ctx (get spec "fn"))))
 
 (defn- ->symbol-entries
   "Expand a flat function or an object namespace into registry tool entries."
@@ -1631,7 +1578,7 @@
         (on-selected-fn-adapter ext-name ctx (get spec "on_selected_fn"))))))
 
 (defn- registration->spec
-  "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."
+  "`reg` is the dict handed to Python `vis.register_extension(...)` — STRING keys."
   [ctx reg]
   (let [ext-name
         (str (get reg "name"))
@@ -2184,7 +2131,8 @@
      (try
        (let [reg (:registration initialized)]
          (when (nil? reg)
-           (throw (ex-info (str (.getName f) " never called vis.register(vis.Extension(...))")
+           (throw (ex-info (str (.getName f)
+                                " never called vis.register_extension(vis.Extension(...))")
                            {:type ::no-registration :file path})))
          (let [metadata (:package-metadata frozen)
                spec (registration->spec ctx reg)

@@ -195,7 +195,7 @@ def test_wrapped_methods_keep_annotations_and_actual_registered_invocation(monke
     catalog = vis.Catalog([symbol])
     assert catalog.spec("wrapped.write").returns.fields[0].name == "value"
     monkeypatch.setattr(vis, "_registration", {"spec": None})
-    vis.register(
+    vis.register_extension(
         vis.Extension(
             name="catalog-test",
             description="Catalog test.",

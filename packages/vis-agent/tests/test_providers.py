@@ -194,7 +194,7 @@ def test_typed_callback_results_cross_only_at_registration_boundary(monkeypatch)
     assert invoked == []
     assert isinstance(provider.get_token_fn(), vis.ProviderCredential)
     invoked.clear()
-    vis.register(
+    vis.register_extension(
         vis.Extension(
             name="provider-example", description="Provider", providers=[provider]
         )
@@ -337,7 +337,7 @@ def status() -> vis.ProviderStatus:
     )
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="provider-example",
         description="An OpenAI-compatible provider.",

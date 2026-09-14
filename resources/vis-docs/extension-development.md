@@ -73,7 +73,7 @@ def status_activity(*, phase, result, **_):
     return vis.ActivityPresentation("Check integration status", f"Status: {result[:160]}")
 
 
-vis.register(vis.Extension(
+vis.register_extension(vis.Extension(
     name="einmal",
     description="Package example.",
     alias="einmal",

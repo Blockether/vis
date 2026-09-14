@@ -239,3 +239,50 @@ def test_local_errors_preserve_the_canonical_gateway_code(tmp_path):
             engine.get_session("s")
         assert failure.value.status == 404
         assert failure.value.code == "not_found"
+
+
+def test_execution_layers_are_siblings_without_http_state(tmp_path):
+    from blockether.vis.engine import ExecutionLayer, GatewayClient
+
+    assert issubclass(LocalEngine, ExecutionLayer)
+    assert issubclass(GatewayClient, ExecutionLayer)
+    assert not issubclass(LocalEngine, GatewayClient)
+    engine = LocalEngine(root=tmp_path)
+    assert engine.timeout == 30
+    assert engine._command == ["vis-agent"]
+    for name in ("_url", "_token", "_opener", "_heartbeat", "_heartbeat_stop"):
+        assert not hasattr(engine, name)
+    engine.close()
+
+
+def test_local_client_lease_uses_only_the_whitelisted_frame_header(tmp_path):
+    import json
+    import sys
+
+    from blockether.vis._contracts import GATEWAY
+
+    hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
+    code = f"""import base64, json, sys
+print({hello!r}, flush=True)
+for count, line in enumerate(sys.stdin, 1):
+    request = json.loads(line)
+    if request["route"] == "/v1/clients":
+        assert request["method"] == "POST"
+        assert "headers" not in request
+        assert request["body"] == {{"kind": "python-sdk", "pid": {os.getpid()}}}
+        value = {{"client_id": "local-owner"}}
+    else:
+        value = {{"request": request, "count": count}}
+    content = base64.b64encode(json.dumps(value).encode()).decode()
+    print(json.dumps({{"status": 200, "headers": {{}}, "content": content}}), flush=True)
+"""
+    with LocalEngine(executable=[sys.executable, "-c", code], root=tmp_path) as engine:
+        assert engine._ensure_client_lease() == "local-owner"
+        assert engine._ensure_client_lease() == "local-owner"
+        reply = engine.get_capabilities()
+        assert reply["count"] == 2
+        assert reply["request"]["headers"] == {
+            GATEWAY["headers"]["client_id"]: "local-owner"
+        }
+    with pytest.raises(TransportError, match="closed"):
+        engine._ensure_client_lease()

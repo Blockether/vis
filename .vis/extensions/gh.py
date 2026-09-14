@@ -1814,7 +1814,7 @@ the human can watch and stop; its WatchOutcome carries every job, step and faile
 watch() instead of a shell polling loop — it signs in by itself when needed."""
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="gh",
         description="GitHub through the gh CLI: sign in, list runs, watch Actions live.",

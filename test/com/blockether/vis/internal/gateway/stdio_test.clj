@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.stdio-test
   (:require [clojure.string]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
+            [com.blockether.vis.internal.extension.client :as client]
             [com.blockether.vis.internal.gateway.stdio :as stdio]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.view :as view])
@@ -52,3 +53,24 @@
         (try (stdio/serve! (StringReader. input) (StringWriter.) (constantly nil))
              (catch Exception _ nil)))
       (is (= [:install :uninstall] @seen)))))
+
+(deftest client-header-is-whitelisted-and-owner-detaches-on-eof-or-malformed-input
+  (doseq [tail ["" "not-json\n"]]
+    (let [seen (atom nil)
+          detached (atom [])
+          frame {:method "GET"
+                 :route "/v1/sessions"
+                 :headers
+                 {"x-vis-client-id" "sdk-owner" "authorization" "ignored" "x-arbitrary" "ignored"}}]
+
+      (with-redefs [client/detach-owner! #(swap! detached conj %)]
+        (try (stdio/serve! (StringReader. (str (wire/json-str frame) "\n" tail))
+                           (StringWriter.)
+                           (fn [request]
+                             (reset! seen (:headers request))
+                             {:status 200 :body {}}))
+             (catch Exception _ nil)))
+      (is (= "sdk-owner" (get @seen "x-vis-client-id")))
+      (is (nil? (get @seen "authorization")))
+      (is (nil? (get @seen "x-arbitrary")))
+      (is (= ["sdk-owner"] @detached)))))

@@ -33,6 +33,7 @@
     [com.blockether.vis.internal.attachment.storage :as attachment-storage]
     [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
     [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.extension.client :as client-extensions]
     [com.blockether.vis.internal.extension.manifest :as manifest]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.channel.render :as render]
@@ -11798,6 +11799,8 @@
         ;; this process's own start and `/reload` may pick an edit up.
         (python-extensions/ensure-python-extensions-loaded!)
         (extension/register-extensions! env install-extension!)
+        (doseq [ext (client-extensions/extensions-for session-id)]
+          (install-extension! env ext))
         (let [final-env (kickoff-session-providers env)]
           ;; Callbacks installed above closed over `environment-atom`; publish the
           ;; fully decorated session before create-environment returns.
@@ -12785,6 +12788,22 @@
 ;; Host title setter + public env accessor
 
 (defn env-for [id] (:environment (ensure-env! id)))
+
+(defn register-client-extensions!
+  "Install application-owned declarations under the session's one-turn lock."
+  [id owner payload live?]
+  (let [{:keys [environment ^java.util.concurrent.locks.ReentrantLock lock] :as entry} (ensure-env!
+                                                                                         id)]
+    (when-not (.tryLock lock)
+      (throw (ex-info "Cannot register extensions during a turn"
+                      {:status 409 :code :client_extension_busy})))
+    (try (when-not (identical? entry (get @cache (cache-key id)))
+           (throw (ex-info "Session environment changed; retry registration"
+                           {:status 409 :code :client_extension_busy})))
+         (doseq [ext (client-extensions/register! id owner payload live? environment)]
+           (install-extension! environment ext))
+         {}
+         (finally (.unlock lock)))))
 
 (defn set-title!
   "Host-driven title change. Resolves the live env (if any) so the

@@ -29,6 +29,7 @@
     [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.docs.core :as docs]
     [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.extension.client :as client-extensions]
     [com.blockether.vis.internal.channel.file-picker :as file-picker]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.gateway.discovery :as discovery]
@@ -211,6 +212,8 @@
                                                   duplicates)))
                                   (do (vreset! applied? false) current))))
           (when @applied?
+            (doseq [client-id (remove #(contains? clients %) (keys before))]
+              (client-extensions/detach-owner! client-id))
             (log-client-lease-warning! :client-leases-compacted
                                        {:before (count before)
                                         :after (count clients)
@@ -1181,6 +1184,9 @@
   (when (seq (str client-id))
     (let [lease (get-in @server-state [:clients client-id])]
       (when (and lease
+                 (or (some? (:pid lease))
+                     (<= (- (long now) (long (or (:last-seen-at lease) (:connected-at lease) 0)))
+                         (long CLIENT_LEASE_TTL_MS)))
                  (> (- (long now) (long (or (:last-seen-at lease) (:connected-at lease) 0)))
                     (long CLIENT_LEASE_TOUCH_MS)))
         (swap! server-state (fn [current]
@@ -1256,6 +1262,7 @@
                                 (update :clients dissoc client-id)
                                 (update :client-releases-total (fnil inc 0)))
                             st)))
+    (client-extensions/detach-owner! client-id)
     ;; Re-arm the lifecycle before judging it: the reaper is what evaluates refcount
     ;; shutdown, and a daemon whose reaper died must not become immortal just
     ;; because the sweep that would have noticed is gone.
@@ -2373,8 +2380,9 @@
 
 (defn- delete-session-handler
   [request]
-  (some-> (path-sid request)
-          state/close-session!)
+  (when-let [sid (path-sid request)]
+    (client-extensions/detach! sid)
+    (state/close-session! sid))
   {:status 204 :headers {} :body nil})
 
 (defn- release-session-handler
@@ -2386,6 +2394,57 @@
   (some-> (path-sid request)
           state/release-session!)
   {:status 204 :headers {} :body nil})
+
+(defn- live-client?
+  [client-id]
+  (when-let [lease (get-in @server-state [:clients client-id])]
+    (if-let [pid (:pid lease)]
+      (discovery/pid-alive-cached? pid)
+      (<= (- (util/now-ms) (long (or (:last-seen-at lease) (:connected-at lease) 0)))
+          CLIENT_LEASE_TTL_MS))))
+
+(defn- client-extension-handler
+  [operation]
+  (fn [request]
+    (let [sid
+          (path-sid request)
+
+          owner
+          (get-in request [:headers "x-vis-client-id"])
+
+          live?
+          #(boolean (live-client? owner))]
+
+      (cond (not (live?))
+            (error-response 403 :client_extension_owner "A live client lease is required")
+            (not (and sid (state/soul sid))) (session-404 (get-in request [:path-params :sid]))
+            :else (try (json-response
+                         (case operation
+                           :register
+                           (lp/register-client-extensions! sid owner (body-json request) live?)
+
+                           :detach
+                           (client-extensions/detach-owned! sid owner)
+
+                           :pending
+                           (client-extensions/pending sid owner)
+
+                           :result
+                           (client-extensions/complete! sid
+                                                        owner
+                                                        (get-in request [:path-params :call_id])
+                                                        (body-json request))
+
+                           :activity
+                           (client-extensions/activity! sid
+                                                        owner
+                                                        (get-in request [:path-params :call_id])
+                                                        (body-json request))))
+                       (catch clojure.lang.ExceptionInfo e
+                         (let [{:keys [status code]} (ex-data e)]
+                           (error-response (or status 400)
+                                           (or code :invalid_client_extension)
+                                           (ex-message e)))))))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
 
@@ -4482,6 +4541,11 @@
         ["/projects/:pid/sessions" {:patch reorder-project-sessions-handler}]
         [(sid-route "")
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
+        [(sid-route "/client-extensions")
+         {:put (client-extension-handler :register) :delete (client-extension-handler :detach)}]
+        [(sid-route "/client-calls") {:get (client-extension-handler :pending)}]
+        [(sid-route "/client-calls/:call_id/result") {:post (client-extension-handler :result)}]
+        [(sid-route "/client-calls/:call_id/activity") {:post (client-extension-handler :activity)}]
         [(sid-route "/slashes") {:get slashes-handler}]
         [(sid-route "/release") {:post release-session-handler}]
         [(sid-route "/views/input") {:get list-input-views-handler}]

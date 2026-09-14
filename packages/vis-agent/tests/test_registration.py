@@ -13,6 +13,11 @@ def fresh_registration(monkeypatch):
     monkeypatch.setattr(vis, "_registration", {"spec": None})
 
 
+def test_registration_api_has_explicit_name_without_legacy_alias():
+    assert callable(vis.register_extension)
+    assert not hasattr(vis, "register")
+
+
 def test_importable_extension_exposes_typed_tools(tmp_path):
     source = tmp_path / "greeter.py"
     source.write_text(
@@ -29,7 +34,7 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
                 '    """Greet one person, optionally in uppercase."""',
                 '    text = "Hello " + name',
                 "    return Greeting(text.upper() if loud else text)",
-                'vis.register(vis.Extension(name="greeter", description="Greeting tools.",',
+                'vis.register_extension(vis.Extension(name="greeter", description="Greeting tools.",'
                 '              alias="greet", symbols=[vis.Symbol(greet)]))',
             ]
         ),
@@ -52,7 +57,7 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
     with pytest.raises(FrozenInstanceError):
         result.text = "changed"
     with pytest.raises(ValueError, match="once per file") as error:
-        vis.register(
+        vis.register_extension(
             vis.Extension(name="second", description="A duplicate declaration.")
         )
     assert "extension 'greeter' is already registered" in str(error.value)
@@ -73,7 +78,7 @@ def test_thin_entry_registers_tool_from_separate_package(tmp_path, monkeypatch):
     entry = tmp_path / ".vis" / "extensions" / "einmal.py"
     entry.parent.mkdir(parents=True)
     entry.write_text(
-        'import blockether.vis.extension as vis\nfrom einmal import status\nvis.register(vis.Extension(name="einmal", description="Company tools.", alias="einmal", symbols=[vis.Symbol(status)]))\n',
+        'import blockether.vis.extension as vis\nfrom einmal import status\nvis.register_extension(vis.Extension(name="einmal", description="Company tools.", alias="einmal", symbols=[vis.Symbol(status)]))\n',
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(package.parent))
@@ -112,7 +117,7 @@ def test_entrypoint_import_collision_has_actionable_error(
         "def ping():\n"
         "    'Return the implementation value.'\n"
         "    return importlib.import_module('issue176_demo.core').VALUE\n"
-        "vis.register(vis.Extension(name='issue176-collision', "
+        "vis.register_extension(vis.Extension(name='issue176-collision', "
         "description='Import collision fixture', alias='issue176_demo', "
         "symbols=[vis.Symbol(ping)]))\n",
         encoding="utf-8",
@@ -189,7 +194,7 @@ def test_object_tools_keep_method_metadata_and_raise_normally():
 )
 def test_invalid_declarations_fail_before_registration(kwargs, message):
     with pytest.raises(ValueError, match=message):
-        vis.register(vis.Extension(**kwargs))
+        vis.register_extension(vis.Extension(**kwargs))
     assert vis._registration["spec"] is None
 
 
@@ -233,7 +238,7 @@ def greeting_activity(phase, result, **_) -> vis.ActivityPresentation:
     )
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="greeter",
         description="Greeting tools.",

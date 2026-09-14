@@ -21,7 +21,7 @@ Greeter.hello = vis.method(
     )
 )(Greeter.hello)
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="vis-greeter",
         description="Typed greeting tools and an optional greeting procedure.",

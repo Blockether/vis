@@ -10,6 +10,7 @@ from ._agents import Subagent
 from ._client import (
     Event,
     Events,
+    ExecutionLayer,
     GatewayClient,
     GatewayError,
     JobEvent,
@@ -48,6 +49,7 @@ __all__ = [
     "CouncilThread",
     "Event",
     "Events",
+    "ExecutionLayer",
     "GatewayClient",
     "GatewayError",
     "JobEvent",

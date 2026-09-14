@@ -119,7 +119,7 @@
                  "package_paths._test_extension_contexts = contexts\n"
                  "assert all(sys.modules.get(ctx.__name__) is ctx for ctx in contexts)\n"
                  "assert all(callable(ctx.__vis_registration__) for ctx in contexts)\n"
-                 "vis.register(vis.Extension(name=" (pr-str name)
+                 "vis.register_extension(vis.Extension(name=" (pr-str name)
                  ", description='Native editable SDK fixture'))\n"
                  "Path(__file__).with_suffix('.loaded').write_text('registered')\n")))
            (let [port

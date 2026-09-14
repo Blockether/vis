@@ -33,7 +33,7 @@ def status() -> vis.ProviderStatus:
                               source="env-var")
 
 
-vis.register(vis.Extension(
+vis.register_extension(vis.Extension(
     name="provider-example",
     description="An OpenAI-compatible provider.",
     env=["EXAMPLE_API_KEY"],

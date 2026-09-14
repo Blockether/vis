@@ -57,7 +57,7 @@ def sdk_native_wait(marker: str):
         threading.Thread(target=notify_waiting, daemon=True).start()
         condition.wait(120)
 
-vis.register(vis.Extension(name="sdk-fixture", description="SDK integration fixture", alias="sdk",
+vis.register_extension(vis.Extension(name="sdk-fixture", description="SDK integration fixture", alias="sdk",
     symbols=[vis.Symbol(sdk_flow, activity=vis.Activity(presenter="observation", label="SDK flow", render=sdk_activity)),
              vis.Symbol(sdk_native_wait)]))
 """
@@ -73,7 +73,7 @@ def enrich(provider, router_opts):
     return [vis.ProviderModel(m["name"], context=200000, is_tool_call=True)
             for m in provider["models"]]
 
-vis.register(vis.Extension(name="sdk-provider", description="Typed provider integration",
+vis.register_extension(vis.Extension(name="sdk-provider", description="Typed provider integration",
     providers=[vis.Provider("sdk-fixture", "SDK fixture", is_managed=__MANAGED__,
         preset=vis.ProviderPreset(base_url="http://127.0.0.1:1/v1", api_style="openai",
             default_models=["sdk-test"], llm_headers={"X-SDK-Preset": "kept"},

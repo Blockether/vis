@@ -38,7 +38,7 @@ does not change these globals.
 ## Registration
 
 Examples on this page use `import blockether.vis.extension as vis` inside a trusted
-extension, not in `python_execution`. Call `vis.register(vis.Extension(...))` once
+extension, not in `python_execution`. Call `vis.register_extension(vis.Extension(...))` once
 per entry file. The declaration constructors validate and copy values without IO;
 registration applies them and resolves the declared environment.
 
@@ -473,13 +473,13 @@ read-only polling with fail-fast, Stop and owned cleanup, use the
 ## Environment
 
 An extension does not automatically receive the full host environment.
-Declare the variables it needs in `env`. `vis.register()` resolves them and
+Declare the variables it needs in `env`. `vis.register_extension()` resolves them and
 adds them to the extension's `os.environ`; read them after registration.
 
 ```python
 import os
 
-vis.register(vis.Extension(
+vis.register_extension(vis.Extension(
     name="acme",
     description="Acme integration.",
     env=["ACME_API_KEY"],
@@ -503,7 +503,7 @@ A `ctx` callable adds data to the model's `session` dict each turn:
 def _ctx(env):
     return {"session_env": {"todo": {"open": len(vis.state.get("todos", []))}}}
 
-vis.register(vis.Extension(name="todo", description="Todo list.", ctx=_ctx))
+vis.register_extension(vis.Extension(name="todo", description="Todo list.", ctx=_ctx))
 ```
 
 Return a string-keyed dict under a key unique to your extension. Results from

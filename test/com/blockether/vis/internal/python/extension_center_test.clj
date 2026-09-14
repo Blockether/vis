@@ -113,7 +113,7 @@
                 (io/file source "extension.py")
                 (str
                   "import blockether.vis.extension as vis\nfrom center_logic import greet\n"
-                  "vis.register(vis.Extension(name='vis-center-greeter',description='Greeting tools',"
+                  "vis.register_extension(vis.Extension(name='vis-center-greeter',description='Greeting tools',"
                   "alias='center',symbols=[vis.Symbol(greet)]))\n"))
               (.mkdirs (io/file source "src"))
               (spit (io/file source "src/center_logic.py") code)
@@ -208,7 +208,7 @@
              "    version = '1.0.0' if revision == 'a' * 40 else '1.1.0'\n"
              "    (selected / 'extension.py').write_text("
              (#'pyx/python-string-literal
-              "import blockether.vis.extension as vis\nVERSION = SELECTED_VERSION\ndef current_version():\n    \"Return the active release.\"\n    return VERSION\nvis.register(vis.Extension(name=\"vis-release-fixture\", description=\"Release fixture\", alias=\"release\", symbols=[vis.Symbol(current_version, activity=vis.Activity(label=\"Read active release\", show_start=False))]))\n")
+              "import blockether.vis.extension as vis\nVERSION = SELECTED_VERSION\ndef current_version():\n    \"Return the active release.\"\n    return VERSION\nvis.register_extension(vis.Extension(name=\"vis-release-fixture\", description=\"Release fixture\", alias=\"release\", symbols=[vis.Symbol(current_version, activity=vis.Activity(label=\"Read active release\", show_start=False))]))\n")
              ".replace('SELECTED_VERSION', repr(version)))\n"
              "    (selected / 'pyproject.toml').write_text("
              "'[project]\\nname=\"vis-release-fixture\"\\nversion=\"' + version + '\"\\n'"

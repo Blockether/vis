@@ -877,6 +877,48 @@
   [parts opts]
   (build-symbol-entry parts opts))
 
+(defn python-symbol-entry
+  "Build an observed entry from portable Python metadata and an implementation fn.
+   Used by both trusted extension workers and application-owned SDK callbacks."
+  [sym spec invoke]
+  (let [contract
+        (get spec "contract")
+
+        activity
+        (get spec "activity")
+
+        argv
+        (cond-> (mapv clojure.core/symbol (get spec "params"))
+          (get spec "varargs")
+          (into ['& 'args]))]
+
+    (when-not (and (contract-document/valid-json? "symbol" "callable" contract)
+                   (= (str sym) (get contract "name"))
+                   (= (get spec "tag") (get contract "tag")))
+      (throw (ex-info (str "Invalid Python symbol contract for " sym)
+                      {:type :extension/invalid-symbol-contract})))
+    (when (and activity (not (contract-document/valid-json? "activity" "declaration" activity)))
+      (throw (ex-info "Invalid Python Activity declaration" {:type :extension/invalid-activity})))
+    (symbol-entry {:symbol sym :fn invoke :doc (str (get spec "doc")) :arglists [argv]}
+                  (cond-> {:tag (get {"observation" :observation "mutation" :mutation}
+                                     (get spec "tag")
+                                     :observation)
+                           :contract contract}
+                    (get spec "hidden")
+                    (assoc :hidden? true)
+
+                    activity
+                    (assoc :presenter
+                      (keyword (get activity "presenter")) :activity
+                      (cond-> {:show-start (get activity "show_start" true)}
+                        (get activity "label")
+                        (assoc :headline (get activity "label"))))
+
+                    (get activity "label")
+                    (assoc :ticker-fn
+                      (fn [_env _args]
+                        (get activity "label")))))))
+
 (defn helper
   "Build a raw callable helper entry FROM A CLOJURE VAR.
 

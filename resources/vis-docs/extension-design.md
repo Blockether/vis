@@ -137,7 +137,7 @@ Greeter.hello = vis.method(
     )
 )(Greeter.hello)
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="vis-greeter",
         description="Typed greeting tools and an optional greeting procedure.",
@@ -339,7 +339,7 @@ def present_report(*, phase, result=None, error=None, **_):
     )
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="ci-report-example",
         description="Read local CI summaries with a human-readable Activity.",
@@ -566,7 +566,7 @@ def context(env):
     }
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="project-nesting",
         description="Report excessive Python control-flow nesting after edits.",
@@ -717,7 +717,7 @@ class Counter:
 
 symbols = (vis.Symbol(Counter(), name="counter"),)
 catalog = vis.Catalog(symbols)
-vis.register(vis.Extension(
+vis.register_extension(vis.Extension(
     name="counter-example", description="A counter with generated tool help.",
     alias="counter", symbols=(*symbols, vis.Symbol(catalog, name="doctor")),
 ))

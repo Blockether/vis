@@ -6,7 +6,7 @@ def greet(name: str) -> str:
     return f"Hello, {name}!"
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="vis-greeter",
         description="Small greeting tools for Vis.",

@@ -148,11 +148,15 @@ def test_local_recipe_uses_default_project_and_closes_its_engine(
     url, calls, _, _ = gateway
     monkeypatch.chdir(tmp_path)
 
-    def local_engine(*, executable, root, timeout, startup_timeout):
-        assert executable == "vis-agent"
-        assert root == tmp_path.resolve()
-        assert (timeout, startup_timeout) == (30, 120)
-        return engine.GatewayClient(url)
+    def local_engine(*, root):
+        assert root == "."
+        client = engine.GatewayClient(url)
+        monkeypatch.setattr(
+            client,
+            "session_options",
+            lambda project: {"root": str(Path(project).resolve(strict=True))},
+        )
+        return client
 
     monkeypatch.setattr("blockether.vis.engine._agent.LocalEngine", local_engine)
     recipe("local_task").main()
@@ -189,19 +193,14 @@ def test_recipes_complete_against_real_engine(
             connection_environment(monkeypatch, client, work)
             recipe("gateway_task").main()
         else:
-            local = recipe("local_task")
-            monkeypatch.setattr(
-                local,
-                "Agent",
-                lambda **opts: engine.Agent(executable=client._command, **opts),
-            )
-            local.main()
-        options = (
-            {"gateway_url": client._url, "token": client._token}
-            if transport == "http"
-            else {"executable": client._command}
-        )
-        with engine.Agent(work, **options) as agent:
+            local_engine = engine.LocalEngine
+            with monkeypatch.context() as local_patch:
+                local_patch.setattr(
+                    "blockether.vis.engine._agent.LocalEngine",
+                    lambda **opts: local_engine(executable=client._command, **opts),
+                )
+                recipe("local_task").main()
+        with engine.Agent(work, execution_layer=client) as agent:
             session_id = agent.session.id
             first = agent.run("Run the guide fixture.")
             assert first["status"] == "completed"
@@ -213,7 +212,7 @@ def test_recipes_complete_against_real_engine(
                 in agent.session.transcript(format="markdown").content.decode()
             )
             if transport == "stdio":
-                owned_process = agent._client._process
+                borrowed_process = agent.execution_layer._process
         if transport == "http":
             # Closing Agent must leave the existing gateway and saved session usable.
             with engine.GatewayClient(client._url, token=client._token) as resumed:
@@ -229,7 +228,7 @@ def test_recipes_complete_against_real_engine(
                     == "completed"
                 )
         else:
-            assert owned_process.poll() is not None
+            assert borrowed_process.poll() is None
         output = capsys.readouterr().out
         assert "Status: completed" in output
         assert "SDK flow completed" in output
@@ -240,14 +239,16 @@ def test_recipes_complete_against_real_engine(
         assert requests
 
 
-def test_capability_recipe_registers_function_and_activity(recipe, monkeypatch):
-    monkeypatch.setattr(vis, "_registration", {"spec": None})
+def test_capability_recipe_declares_local_function_and_activity(recipe, monkeypatch):
+    registration = vis._registration["spec"]
     updates = []
     monkeypatch.setattr(
         vis._host, "activity", lambda value: updates.append(value) or True
     )
-    module = recipe(".vis/extensions/delivery_tools")
-    declaration = vis._registration["spec"]
+    module = recipe("delivery_task")
+    weights = []
+    declaration = module.make_delivery_extension(weights)._spec()
+    assert vis._registration["spec"] is registration
     assert declaration["name"] == "delivery"
     (tool,) = declaration["symbols"]
     assert tool["contract"]["name"] == "delivery_quote"
@@ -259,19 +260,21 @@ def test_capability_recipe_registers_function_and_activity(recipe, monkeypatch):
     assert updates == [
         {"headline": "Quote delivery", "summary": "1200 cents", "content": []}
     ]
-    assert module.delivery_quote(1200) == 700
-    assert module.delivery_quote(1) == 600
-    assert module.delivery_quote(1000) == 600
-    assert module.delivery_quote(1001) == 700
+    assert tool["fn"](1200) == 700
+    assert tool["fn"](1) == 600
+    assert tool["fn"](1000) == 600
+    assert tool["fn"](1001) == 700
+    assert weights == [1200, 1200, 1, 1000, 1001]
     for weight in (0, -1):
         with pytest.raises(ValueError, match="positive"):
             tool["fn"](weight)
+    assert weights == [1200, 1200, 1, 1000, 1001]
     for phase in ("start", "failure"):
         assert module.quote_activity(phase=phase, result=None) is None
 
 
 @pytest.mark.parametrize("transport", ["http", "stdio"])
-def test_capability_recipe_runs_on_engine(
+def test_capability_recipe_runs_in_application(
     recipe, tmp_path, monkeypatch, capsys, transport
 ):
     code = """
@@ -283,23 +286,21 @@ try:
 except Exception as error:
     print("INVALID_WEIGHT", "positive" in str(error))
 """
-    with sdk_fixture(
-        tmp_path,
-        monkeypatch,
-        transport,
-        tool_code=code,
-        project_extensions={
-            "delivery_tools.py": _recipe_source(".vis/extensions/delivery_tools")
-        },
-    ) as (client, work, requests):
-        options = (
-            {"gateway_url": client._url, "token": client._token}
-            if transport == "http"
-            else {"executable": client._command}
-        )
-        with engine.Agent(work, **options) as agent:
-            result = recipe("delivery_task").quote_delivery(agent)
+    with sdk_fixture(tmp_path, monkeypatch, transport, tool_code=code) as (
+        client,
+        work,
+        requests,
+    ):
+        module = recipe("delivery_task")
+        weights = []
+        with engine.Agent(
+            work,
+            execution_layer=client,
+            extensions=[module.make_delivery_extension(weights)],
+        ) as agent:
+            result = module.quote_delivery(agent)
             assert result["status"] == "completed"
+            assert weights == [1200]
         output = capsys.readouterr().out
         assert "Status: completed" in output
         tool_results = [
@@ -538,9 +539,7 @@ def test_live_python_recipes(recipe, live_project, monkeypatch, capsys, transpor
         with real_client("http", command, state) as client:
             connection_environment(monkeypatch, client, work)
             recipe("gateway_task").main()
-            with engine.Agent(
-                work, gateway_url=client._url, token=client._token
-            ) as agent:
+            with engine.Agent(work, execution_layer=client) as agent:
                 turn = agent.send(
                     "Use Python to compute 7 * 6. Print the result, then reply SDK_GUIDE_OK 42. Do not read or change files."
                 )

@@ -146,7 +146,7 @@ def test_stop_during_host_wait_joins_readers_and_preserves_note(
         assert "watch_builds" in catalog.help("watch_builds").text
         assert not recipe.counts
         monkeypatch.setattr(vis, "_registration", {"spec": None})
-        vis.register(
+        vis.register_extension(
             vis.Extension(
                 name="catalog-monitor",
                 description="Monitor catalog test.",

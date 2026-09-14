@@ -36,7 +36,9 @@ import sys
 import blockether.vis
 assert 'blockether.vis.extension' not in sys.modules
 assert 'blockether.vis._outside' not in sys.modules
-from blockether.vis.engine import GatewayClient, LocalEngine
+from blockether.vis.engine import ExecutionLayer, GatewayClient, LocalEngine
+assert issubclass(GatewayClient, ExecutionLayer)
+assert issubclass(LocalEngine, ExecutionLayer)
 assert GatewayClient.__name__ == 'GatewayClient'
 assert LocalEngine.__name__ == 'LocalEngine'
 assert 'blockether.vis.extension' not in sys.modules
@@ -61,7 +63,7 @@ def test_extension_is_the_api_module_not_a_facade():
     extension = importlib.import_module("blockether.vis.extension")
     assert isinstance(extension, types.ModuleType)
     assert extension.Extension.__module__ == extension.__name__
-    assert extension.register.__module__ == extension.__name__
+    assert extension.register_extension.__module__ == extension.__name__
 
 
 @pytest.mark.parametrize(

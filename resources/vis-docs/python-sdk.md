@@ -1,13 +1,19 @@
 # Python SDK
 
-Use `Agent()` to run tasks in your current project without a gateway, or pass
-`gateway_url` to use a separately running gateway. Both modes provide `run()`,
-`send()` and one conversation for follow-up requests.
+Use `Agent()` to run tasks in your current project, or give it a `GatewayClient`
+to use a separately running gateway. Add your application's functions with
+`extensions=[...]`; they keep access to your Python objects in either mode.
+Both modes provide `run()`, `send()` and one conversation for follow-up requests.
 
 ## Install the SDK
 
-You need Python 3.11 or newer. The `Agent` API is available in PyPI version
-`0.2.3` and newer. Install the released SDK:
+**The execution-layer and application-extension API on this page is unreleased.**
+It requires an SDK and engine built from the same source revision. An older
+engine cannot execute application callbacks, even if you update only the Python
+package. Do not use these examples with an older published runtime.
+
+You need Python 3.11 or newer. Published SDKs are installed with the command
+below; version `0.2.3` introduced the earlier Agent API, not the new API shown here:
 
 ```bash
 python3 -m venv .venv
@@ -126,33 +132,40 @@ Save this independent example as `gateway_task.py` and run `python gateway_task.
 import json
 import os
 
-from blockether.vis.engine import Agent
+from blockether.vis.engine import Agent, GatewayClient
 
 
 def main():
-    with Agent(
-        project=os.environ["VIS_PROJECT_ROOT"],
-        gateway_url=os.environ["VIS_GATEWAY_URL"],
+    with GatewayClient(
+        os.environ["VIS_GATEWAY_URL"],
         token=os.environ["VIS_GATEWAY_TOKEN"],
-    ) as agent:
-        result = agent.run("Summarize this project without changing files.")
-        print(f"Session: {agent.session.id}")
-        print(f"Status: {result['status']}")
-        print(json.dumps(result["content"], indent=2))
+    ) as execution_layer:
+        with Agent(
+            project=os.environ["VIS_PROJECT_ROOT"],
+            execution_layer=execution_layer,
+        ) as agent:
+            result = agent.run("Summarize this project without changing files.")
+            print(f"Session: {agent.session.id}")
+            print(f"Status: {result['status']}")
+            print(json.dumps(result["content"], indent=2))
 
 
 if __name__ == "__main__":
     main()
 ```
 
-The script reads the environment variables; `Agent` does not discover a gateway
-or load a local token. Pass an HTTP(S) **origin** with no path prefix, query,
-fragment or URL credentials. TLS verification stays enabled and redirects are
-refused. Local-only `executable` and `startup_timeout` options cannot be combined
-with `gateway_url`.
+The script reads the environment variables; neither object discovers a gateway
+or loads a local token. `GatewayClient` accepts an HTTP(S) **origin** with no
+path prefix, query, fragment or URL credentials. TLS verification stays enabled
+and redirects are refused. Transport options belong to the execution layer,
+not to `Agent`.
 
-Closing a remote Agent closes its event streams and releases its client lease.
-It does **not** stop the gateway, cancel a turn or delete the saved conversation.
+An Agent borrows the execution layer you pass in. Closing it detaches its
+application extensions; closing the outer `GatewayClient` releases the client
+lease and closes its streams. Neither action stops the gateway or deletes the
+saved conversation. A running turn may continue, but it cannot call application
+functions after their Agent closes.
+
 The session uses the `app` channel, so it is visible in the app on that gateway.
 Keep the printed session ID: to resume it later, open a
 `GatewayClient(url, token=...)` context and use `client.session(session_id)`.
@@ -160,39 +173,31 @@ Each new Agent creates a new session; it does not implicitly resume an old one.
 
 ## Give the agent your functions
 
-Register your Python functions as a **project extension** to let the agent use
-business rules, query your data or call your services. `Agent` runs the
-conversation; the extension adds the capabilities. The SDK does not accept
-client-side callbacks or a `tools` argument on `Agent`.
+Pass an `Extension` to your Agent to let it use business rules, query your data
+or call your services. You do not need a `.vis/extensions/` file or a global
+registration call. The extension belongs to that Agent's conversation, not to
+other agents sharing its execution layer.
 
-The functions run in the **engine's extension worker**, not in your SDK process.
-Extensions are trusted Python code: they run with the engine user's permissions,
-outside the model's sandbox. Review the code and its dependencies before loading
-it, especially when a function can change data or contact a service.
+**Your functions run in your application process, on the SDK calling thread.**
+They can capture existing objects such as a database client or an in-memory
+list. This also works with a remote gateway: function code, closures and local
+objects are not uploaded. Install their dependencies in your application's
+Python environment.
+
+These functions run with **your application's permissions**, outside the model's
+sandbox. Review what they expose. Arguments and returned data cross to the
+engine and can become model context; do not return credentials or unrelated
+private data.
 
 ### Register a function
 
-Create this file under the project you pass to `Agent`. For a gateway-backed
-Agent, put it in that project **on the gateway machine**, not just on your laptop.
-This example returns a delivery price in cents without network calls or file
-changes:
+Save this complete application as `delivery_task.py`. Its closure records quoted
+weights in a list owned by the application. No code is installed on the gateway:
 
 ```python
-# .vis/extensions/delivery_tools.py
+# delivery_task.py
 import blockether.vis.extension as vis
-
-
-def delivery_quote(weight_grams: int, *, express: bool = False) -> int:
-    """Return a delivery price in cents for a positive weight in grams.
-
-    Charge 500 cents plus 100 per started kilogram. express defaults to False;
-    True adds 500 cents. Raise ValueError for zero or negative weight.
-    This function makes no network calls and changes no files or other data.
-    """
-    if weight_grams <= 0:
-        raise ValueError("weight_grams must be positive")
-    kilograms = (weight_grams + 999) // 1000
-    return 500 + 100 * kilograms + (500 if express else 0)
+from blockether.vis.engine import Agent
 
 
 def quote_activity(*, phase, result, **_):
@@ -201,10 +206,23 @@ def quote_activity(*, phase, result, **_):
     return vis.ActivityPresentation("Quote delivery", f"{result} cents")
 
 
-vis.register(
-    vis.Extension(
+def make_delivery_extension(quoted_weights: list[int]) -> vis.Extension:
+    def delivery_quote(weight_grams: int, *, express: bool = False) -> int:
+        """Return a delivery price in cents and remember the quoted weight.
+
+        Charge 500 cents plus 100 per started kilogram. express defaults to
+        False; True adds 500 cents. Raise ValueError for zero or negative weight.
+        Append valid weights to application memory; no network or file changes.
+        """
+        if weight_grams <= 0:
+            raise ValueError("weight_grams must be positive")
+        quoted_weights.append(weight_grams)
+        kilograms = (weight_grams + 999) // 1000
+        return 500 + 100 * kilograms + (500 if express else 0)
+
+    return vis.Extension(
         name="delivery",
-        description="Delivery prices for this project.",
+        description="Delivery prices from this application.",
         alias="delivery",
         prompt="Use delivery_quote for delivery prices.",
         symbols=[
@@ -218,33 +236,6 @@ vis.register(
             )
         ],
     )
-)
-```
-
-`vis.Symbol` exposes the function's name, annotations and docstring to the agent.
-Here the callable is `delivery_quote`, not `delivery.delivery_quote`: `alias`
-identifies the extension, not a function-name prefix. The `prompt` tells the
-agent when to use it; the `symbols` registration makes it callable. Every exported
-function needs an Activity presentation. This quick calculation shows its price
-on completion rather than adding a running indicator; failures retain their
-error details.
-
-To expose an existing function, import it into this entry file and pass it to
-`vis.Symbol` in the same way. For methods, packages and other extension features,
-see [the extension API](extension-api.md). Install third-party dependencies in the
-**engine's** Python environment, not only in your SDK application's environment;
-[develop an extension](extension-development.md) and
-[package an extension](extension-packages.md) cover that setup. Python extensions
-do not require a native-image rebuild.
-
-### Ask the agent to use it
-
-Create the extension before starting the Agent. Save this script in the project
-and run `python delivery_task.py`:
-
-```python
-# delivery_task.py
-from blockether.vis.engine import Agent
 
 
 def quote_delivery(agent: Agent) -> dict:
@@ -257,26 +248,66 @@ def quote_delivery(agent: Agent) -> dict:
     return result
 
 
-if __name__ == "__main__":
-    with Agent(project=".") as agent:
+def main():
+    quoted_weights = []
+    extension = make_delivery_extension(quoted_weights)
+    with Agent(extensions=[extension]) as agent:
         quote_delivery(agent)
+    print("Quoted weights:", quoted_weights)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
-The function returns **1200 cents**. The agent can discover its contract through
-`apropos` and `doc`, call it through `python_execution`, and use the returned value
-in its answer. The Activity reads **Quote delivery · 1200 cents**. This is a model
-request, so it uses your configured provider and may incur model charges.
+`vis.Symbol` exposes the function's name, annotations and docstring to the agent.
+Here the callable is `delivery_quote`, not `delivery.delivery_quote`: `alias`
+identifies the extension, not a function-name prefix. `prompt` explains when to
+use the function; `symbols` makes it callable. Every exported function needs an
+Activity presentation. This quick calculation shows its price on completion
+rather than adding a running indicator; failures retain their error details.
 
-For a remote agent, call the same `quote_delivery(agent)` inside the gateway-backed
-`Agent` context shown above. Both modes load capabilities from the selected engine
-project; neither uploads this file, your dependencies or local Python closures.
-Calling `vis.register()` in the SDK client process does not register a remote tool.
+### Ask the agent to use it
 
-After editing an extension, restart your private local Agent, or use `/reload` in
-Vis for an existing gateway conversation. Already-loaded extension code does not
-change just because you edited the file. See
-[add your first extension](extending.md#your-first-extension) for discovery and
-reload behavior.
+Run `python delivery_task.py` from your project. The function returns **1200
+cents**, the Activity reads **Quote delivery · 1200 cents**, and your application
+prints `Quoted weights: [1200]` after one call. The agent can discover the contract
+through `apropos` and `doc`, call the function through `python_execution`, and use
+its result in the answer. This is a model request and can incur provider charges.
+
+You can also add an extension after entering the Agent context, before its first
+request: call `agent.register_extension(extension)`. Both forms use the same
+`Extension` declaration. For a remote agent, pass the same extension object to
+`Agent(execution_layer=execution_layer, extensions=[extension], ...)` inside the
+gateway context above. It still executes in your application.
+
+### Understand callback lifetime and supported declarations
+
+Callbacks run while your program drives the SDK: `run()`, turn waiting, session
+or turn reads, and event iteration service pending calls. `send()` alone does not
+start a background thread that executes your application code. Keep driving the
+SDK and keep the application alive while the agent needs its functions.
+
+Closing the Agent detaches its extensions. Disconnecting or cancelling releases
+the engine's wait, but cannot forcibly interrupt a synchronous Python function
+already running in your process. A repeated delivery of the same pending call
+uses its retained result rather than executing the function again; this is not
+an exactly-once guarantee across application restarts or new agent requests.
+
+Client extensions support functions, bound methods and object namespaces declared
+with `Symbol`, an explicit Activity for every exported method, and a static
+`prompt`. For an object namespace, use `Symbol(object, name="inventory")` and
+annotate its methods with `@vis.method(activity=...)`; see the
+[extension API](extension-api.md). Host-only `activation`, `ctx`, `env`, providers,
+op hooks, network filters, slash commands and callable prompts are rejected, not
+silently ignored. Use an [engine-side extension](extending.md) for those features;
+its registration entry point is `vis.register_extension(...)`.
+
+Arguments must be JSON data. Results can be JSON values, tuples or dataclass
+instances; tuples become lists and dataclass fields become ordinary data, keeping
+`None` fields. Live object identity stays in your application, not in the returned
+value. Async functions are awaited on the SDK calling thread, which must not
+already be running an asyncio event loop.
 
 ## Continue a conversation
 
@@ -338,22 +369,28 @@ Do not automatically approve credential or permission requests.
 | `VisTimeout` from `run()` or `turn.wait()` | Waiting ended, not necessarily the turn; inspect it or call `turn.cancel()` |
 | A record whose `status` is not `completed` | The task did not complete normally; inspect its content and input requirements |
 
-A wait timeout is separate from the client's transport `timeout`. A local pipe
-timeout stops the owned engine; leaving a local Agent context also stops unfinished
-work. A remote turn can outlive the client. When retrying a submission, reuse the
-same explicit `idempotency_key`; a new key means a new request.
+A wait timeout is separate from the execution layer's transport `timeout`. A
+local pipe timeout stops its engine. Leaving a default local Agent context also
+stops unfinished work; an Agent with a borrowed layer leaves that layer running.
+A remote turn can outlive the client. When retrying a submission, reuse the same
+explicit `idempotency_key`; a new key means a new request.
 
 | API | Use it for | Closing it |
 | --- | --- | --- |
 | `Agent(project=".")` | One local conversation, no gateway or HTTP listener | Stops its engine and discards session history |
-| `Agent(project="/srv/project", gateway_url=..., token=...)` | The same task interface on an existing gateway | Releases its client lease; keeps remote work and history |
+| `Agent(project=..., execution_layer=layer)` | One conversation on a caller-owned local engine or gateway client | Detaches its application extensions; leaves the layer and saved conversation open |
 | `LocalEngine(executable=..., root=...)` | Several sessions in one owned stdio process | Stops that process and discards its session database |
 | `GatewayClient(url, token=...)` | Persistent or shared sessions on a separately running gateway | Closes streams and releases its client lease |
 
-For a launcher outside `PATH`, pass its absolute path as `Agent(executable=...)`.
-`Agent` and `LocalEngine` also accept an argv list and add `sdk-stdio` themselves.
-Use the complete installed wrapper, not a bare native binary without its Python
-sidecar. Each client and its session handles use one calling thread.
+For a launcher outside `PATH`, configure `LocalEngine(executable=..., root=...)`
+and pass that layer to `Agent`. `LocalEngine` accepts a launcher path or argv list
+and adds `sdk-stdio` itself. Use an outer `with LocalEngine(...) as layer:` context
+to own its lifetime, as the gateway example does with `GatewayClient`.
+
+Both implementations share the `ExecutionLayer` contract; `Agent` does not choose
+a transport from a mixture of gateway and process options. Use the complete
+installed wrapper, not a bare native binary without its Python sidecar. Each
+client and its session handles use one calling thread.
 `conversation.delete()` is a separate, destructive operation.
 
 ## See also

@@ -31,6 +31,50 @@
   },
   "routes": [
     {
+      "audience": "sdk",
+      "operations": {
+        "put": {
+          "request": "json",
+          "response": "json"
+        },
+        "delete": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/client-extensions"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/client-calls"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/client-calls/:call_id/result"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/client-calls/:call_id/activity"
+    },
+    {
       "audience": "public",
       "operations": {
         "get": {

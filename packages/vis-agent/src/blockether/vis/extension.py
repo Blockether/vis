@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
+from contextvars import ContextVar as _ContextVar
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from os import PathLike
 from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
@@ -477,6 +478,9 @@ def _activity_spec(activity):
     }
 
 
+_activity_publisher = _ContextVar("vis_application_activity_publisher", default=None)
+
+
 def publish_activity(presentation: ActivityPresentation) -> bool:
     """Replace headline, summary, content and sections without authoring lifecycle.
 
@@ -489,7 +493,8 @@ def publish_activity(presentation: ActivityPresentation) -> bool:
     try:
         if not isinstance(presentation, ActivityPresentation):
             return False
-        return bool(_host.activity(presentation.to_wire()))
+        publisher = _activity_publisher.get() or _host.activity
+        return bool(publisher(presentation.to_wire()))
     except Exception:
         return False
 
@@ -544,7 +549,7 @@ _registration = {"spec": None}
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Extension:
-    """A pure extension declaration. Only register() binds its environment and host.
+    """A pure declaration; register_extension() binds its environment and host.
 
     Collection inputs are copied into tuples. Symbols require an explicit alias;
     each child must be its corresponding SDK declaration, never a marker dict.
@@ -639,17 +644,17 @@ class Extension:
         }
 
 
-def register(extension: Extension) -> None:
+def register_extension(extension: Extension) -> None:
     """Register one typed declaration and resolve its declared environment in this context.
 
     Construction is pure; registration is the sole host boundary. A failure before
     completion leaves the context unregistered. No constructor registers itself.
     """
     if not isinstance(extension, Extension):
-        raise TypeError("vis.register requires an Extension declaration")
+        raise TypeError("vis.register_extension requires an Extension declaration")
     if _registration["spec"] is not None:
         raise ValueError(
-            "vis.register() may only be called once per file; "
+            "vis.register_extension() may only be called once per file; "
             f"extension {_registration['spec']['name']!r} is already registered. "
             "Keep a single registration in the entrypoint. "
             "If this happened during an import, the entrypoint may be shadowing "
@@ -1179,7 +1184,7 @@ class Symbol:
     def __post_init__(self):
         if type(self.is_hidden) is not bool:
             raise TypeError("vis.Symbol is_hidden must be a boolean")
-        self._spec()  # Pure validation; adapters are installed only by register().
+        self._spec()  # Pure validation; register_extension() installs adapters.
 
     @property
     def contract(self) -> dict[str, Any]:
@@ -1959,7 +1964,7 @@ def _provider_callback(name, fn):
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    """Pure provider declaration; register adapts typed callbacks to the host protocol.
+    """Pure provider declaration; register_extension adapts callbacks to the host.
 
     Credential reads are passive; only auth_fn may initiate login. Callbacks are
     synchronous and may run without a session. Refresh accepts zero arguments or

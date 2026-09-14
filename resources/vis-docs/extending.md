@@ -69,7 +69,7 @@ def greeting_activity(*, phase, result, **_):
     )
 
 
-vis.register(
+vis.register_extension(
     vis.Extension(
         name="greeting",
         description="Generate greetings without sending messages.",

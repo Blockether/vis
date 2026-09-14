@@ -157,6 +157,8 @@ def test_installed_checks_use_disposable_python_outside_checkout(
     )
     assert result.is_pass
     assert result.is_engine_checked == (engine is not None)
+    installation = next(call for call in calls if call[0] == "install wheel")
+    assert "pyright" in installation[1]
     installed = next(call for call in calls if call[0] == "installed tests")
     assert not installed[2].is_relative_to(checkout)
     assert installed[1][0] != "/python with spaces"

@@ -16,7 +16,7 @@
        "    'Inspect the editable extension context.'\n"
        "    return [VALUE, __file__, sys.modules[__name__] is original_context, "
        "callable(__vis_registration__), callable(__vis_host_live__)]\n"
-       "vis.register(vis.Extension(name="
+       "vis.register_extension(vis.Extension(name="
        (pr-str name)
        ", alias="
        (pr-str name)

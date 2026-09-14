@@ -1,8 +1,7 @@
-"""Explicit remote Vis client. No discovery, engine downloads or mutation retries.
+"""Shared engine session API and explicit HTTP gateway transport.
 
-Use GatewayClient as a context manager. Closing releases its client lease, not
-sessions or the gateway. Raw calls are restricted to canonical SDK routes.
-Events are bounded reconnecting SSE iterators; close them when abandoning a run.
+ExecutionLayer owns the canonical route/session surface without choosing a
+transport. GatewayClient adds authenticated HTTP, leases and bounded SSE.
 Timeouts never imply that a submitted mutation was rolled back.
 """
 
@@ -13,8 +12,10 @@ import math
 import threading
 import time
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
@@ -168,79 +169,56 @@ class Event:
         )
 
 
-class GatewayClient:
-    """Connect to an explicit HTTP(S) origin using an optional bearer token.
+class ExecutionLayer(ABC):
+    """Transport-neutral session API shared by local engines and gateway clients.
 
-    TLS certificate verification is enabled. Redirects are refused so credentials
-    cannot follow a redirect to another origin. No local credentials are read.
-    Instances and their session handles are intended for one calling thread.
+    Implement connect(), close(), session_options() and _open() for a transport.
+    _open() returns a context-managed binary response with status and headers.
+    Session paths and channel defaults belong to the layer, not to Agent.
+    Instances and their session handles use one calling thread.
     """
 
-    def __init__(self, url: str, *, token: str | None = None, timeout: float = 30):
-        parts = urlsplit(url)
-        if (
-            parts.scheme not in {"http", "https"}
-            or not parts.hostname
-            or parts.username is not None
-            or parts.password is not None
-            or parts.query
-            or parts.fragment
-            or parts.path not in {"", "/"}
-        ):
-            raise ValueError(
-                "provide an HTTP(S) origin without credentials, path or query"
-            )
-        self._url = url.rstrip("/")
-        self._token = token
+    def __init__(self, *, timeout: float = 30):
         self.timeout = _duration(timeout)
         self._lease: str | None = None
         self._closed = False
         self._streams: set[_EventStream] = set()
-        self._heartbeat_stop = threading.Event()
-        self._heartbeat = None
-        self._lease_error = False
-        self._lease_seen = 0.0
-        self._opener = build_opener(_NoRedirect())
+        self._client_extensions = {}
 
+    @abstractmethod
+    def connect(self) -> ExecutionLayer:
+        """Connect or start the layer; repeated calls keep the same connection."""
+
+    @abstractmethod
+    def close(self) -> None:
+        """Release this layer's resources without deleting remote sessions."""
+
+    @abstractmethod
+    def session_options(self, project=".") -> dict[str, JSONValue]:
+        """Validate a project and return its wire-ready session creation options."""
+
+    @abstractmethod
     def _open(
         self, method, route, *, query=None, body=None, content=None, timeout=None
     ):
+        """Perform one transport exchange; do not retry mutations."""
+
+    def _ensure_client_lease(self, *, pid: int | None = None) -> str:
         if self._closed:
             raise TransportError("client is closed")
-        if self._lease_error:
-            raise TransportError("client lease keepalive failed; reconnect explicitly")
-        headers = {
-            GATEWAY["headers"]["protocol"]: str(GATEWAY["protocol"]["version"]),
-            GATEWAY["headers"]["minimum_gateway_protocol"]: str(
-                GATEWAY["protocol"]["minimum_gateway"]
-            ),
-            GATEWAY["headers"]["client"]: "vis-python",
-            "Accept": "application/json",
-        }
-        if self._token:
-            headers["Authorization"] = "Bearer " + self._token
-        if self._lease:
-            headers[GATEWAY["headers"]["client_id"]] = self._lease
-        if body is not None:
-            if content is not None:
-                raise ValueError("body and content are mutually exclusive")
-            content = json.dumps(body, allow_nan=False).encode()
-            headers["Content-Type"] = "application/json"
-        url = self._url + route + ("?" + urlencode(query) if query else "")
-        try:
-            return self._opener.open(
-                Request(url, data=content, headers=headers, method=method),
-                timeout=_duration(self.timeout if timeout is None else timeout),
-            )
-        except HTTPError as exc:
-            with exc:
-                raise _gateway_error(exc.code, exc.read(65536), self._token) from None
-        except TimeoutError:
-            raise VisTimeout("gateway request timed out") from None
-        except (URLError, OSError) as exc:
-            if isinstance(getattr(exc, "reason", None), TimeoutError):
-                raise VisTimeout("gateway request timed out") from None
-            raise TransportError("gateway connection failed") from None
+        if self._lease is None:
+            body: dict[str, JSONValue] = {"kind": "python-sdk"}
+            if pid is not None:
+                body["pid"] = pid
+            lease = self._request("POST", "/v1/clients", body=body).json()
+            self._lease = _field(lease, "client_id", str)
+        return self._lease
+
+    def __enter__(self):
+        return self.connect()
+
+    def __exit__(self, *args):
+        self.close()
 
     def _request(
         self,
@@ -296,76 +274,6 @@ class GatewayClient:
         except OSError:
             raise TransportError("gateway response interrupted") from None
 
-    def connect(self) -> GatewayClient:
-        if self._lease_error:
-            raise TransportError("client lease keepalive failed; create a new client")
-        if self._lease:
-            return self
-        caps = self._request("GET", "/v1/capabilities").json()
-        peer = caps.get("protocol", {}) if isinstance(caps, dict) else {}
-        if not isinstance(peer, dict):
-            raise ProtocolError("malformed gateway handshake")
-        version, minimum = peer.get("protocol"), peer.get("min_client")
-        ours = GATEWAY["protocol"]
-        if (
-            type(version) is not int
-            or type(minimum) is not int
-            or version < ours["minimum_gateway"]
-            or minimum > ours["version"]
-        ):
-            raise ProtocolError("incompatible gateway protocol")
-        lease = self._request("POST", "/v1/clients", body={"kind": "python-sdk"}).json()
-        if not isinstance(lease, dict) or not isinstance(lease.get("client_id"), str):
-            raise ProtocolError("missing client lease")
-        self._lease = lease["client_id"]
-        self._lease_seen = time.monotonic()
-        self._heartbeat = threading.Thread(
-            target=self._keepalive, name="vis-sdk-lease", daemon=True
-        )
-        self._heartbeat.start()
-        return self
-
-    def _keepalive(self):
-        policy = GATEWAY["client_lease"]
-        interval = policy["keepalive_ms"] / 1000
-        while not self._heartbeat_stop.wait(interval):
-            try:
-                if time.monotonic() - self._lease_seen >= policy["ttl_ms"] / 1000:
-                    raise TransportError("client lease expired")
-                with self._open(
-                    "GET",
-                    policy["keepalive_route"],
-                    timeout=min(self.timeout, policy["keepalive_timeout_ms"] / 1000),
-                ) as raw:
-                    raw.read(65536)
-                self._lease_seen = time.monotonic()
-            except (TransportError, GatewayError, OSError):
-                self._lease_error = True
-                return
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._heartbeat_stop.set()
-        if self._heartbeat is not None:
-            self._heartbeat.join()
-        self._lease_error = False
-        try:
-            for stream in tuple(self._streams):
-                stream.close()
-            if self._lease:
-                self._request("DELETE", "/v1/clients/:cid", path={"cid": self._lease})
-        finally:
-            self._closed = True
-            self._lease = None
-            self._token = None
-
-    def __enter__(self) -> GatewayClient:
-        return self.connect()
-
-    def __exit__(self, *args):
-        self.close()
-
     def session(self, sid: str) -> Session:
         return Session(self, sid)
 
@@ -374,6 +282,74 @@ class GatewayClient:
             "POST", "/v1/sessions", body=options, timeout=timeout
         ).json()
         return self.session(_field(data, "id", str))
+
+    def _pump_client_extensions(self, session_id):
+        extensions = self._client_extensions.get(session_id)
+        if extensions is not None and extensions.manifest:
+            extensions.drain(self, session_id)
+
+    def _clear_client_extensions(self):
+        for extensions in self._client_extensions.values():
+            extensions.clear()
+        self._client_extensions.clear()
+
+    def put_session_client_extensions(
+        self, sid: str, *, body: JSONValue, timeout: float | None = None
+    ) -> JSONValue:
+        """PUT /v1/sessions/:sid/client-extensions — bind client-owned declarations."""
+        return self._request(
+            "PUT",
+            "/v1/sessions/:sid/client-extensions",
+            path={"sid": sid},
+            body=body,
+            timeout=timeout,
+        ).json()
+
+    def delete_session_client_extensions(
+        self, sid: str, *, timeout: float | None = None
+    ) -> JSONValue:
+        """DELETE /v1/sessions/:sid/client-extensions — detach owned callbacks."""
+        return self._request(
+            "DELETE",
+            "/v1/sessions/:sid/client-extensions",
+            path={"sid": sid},
+            timeout=timeout,
+        ).json()
+
+    def get_session_client_calls(
+        self, sid: str, *, timeout: float | None = None
+    ) -> JSONValue:
+        """GET /v1/sessions/:sid/client-calls — retrieve pending owned calls."""
+        return self._request(
+            "GET",
+            "/v1/sessions/:sid/client-calls",
+            path={"sid": sid},
+            timeout=timeout,
+        ).json()
+
+    def post_session_client_call_result(
+        self, sid: str, call_id: str, *, body: JSONValue, timeout: float | None = None
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/client-calls/:call_id/result — acknowledge one call."""
+        return self._request(
+            "POST",
+            "/v1/sessions/:sid/client-calls/:call_id/result",
+            path={"sid": sid, "call_id": call_id},
+            body=body,
+            timeout=timeout,
+        ).json()
+
+    def post_session_client_call_activity(
+        self, sid: str, call_id: str, *, body: JSONValue, timeout: float | None = None
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/client-calls/:call_id/activity — publish presentation."""
+        return self._request(
+            "POST",
+            "/v1/sessions/:sid/client-calls/:call_id/activity",
+            path={"sid": sid, "call_id": call_id},
+            body=body,
+            timeout=timeout,
+        ).json()
 
     def list_sessions(self, **query):
         """Return one page including next_cursor; no hidden full-fleet fetch."""
@@ -2112,9 +2088,150 @@ class GatewayClient:
         return f"{prefix}/{kind}/jobs/{_segment(job_id)}/events"
 
 
+class GatewayClient(ExecutionLayer):
+    """Connect to an explicit HTTP(S) origin using an optional bearer token.
+
+    TLS certificate verification is enabled. Redirects are refused so credentials
+    cannot follow a redirect to another origin. No local credentials are read.
+    Instances and their session handles are intended for one calling thread.
+    """
+
+    def __init__(self, url: str, *, token: str | None = None, timeout: float = 30):
+        parts = urlsplit(url)
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.query
+            or parts.fragment
+            or parts.path not in {"", "/"}
+        ):
+            raise ValueError(
+                "provide an HTTP(S) origin without credentials, path or query"
+            )
+        self._url = url.rstrip("/")
+        self._token = token
+        super().__init__(timeout=timeout)
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat = None
+        self._lease_error = False
+        self._lease_seen = 0.0
+        self._opener = build_opener(_NoRedirect())
+
+    def _open(
+        self, method, route, *, query=None, body=None, content=None, timeout=None
+    ):
+        if self._closed:
+            raise TransportError("client is closed")
+        if self._lease_error:
+            raise TransportError("client lease keepalive failed; reconnect explicitly")
+        headers = {
+            GATEWAY["headers"]["protocol"]: str(GATEWAY["protocol"]["version"]),
+            GATEWAY["headers"]["minimum_gateway_protocol"]: str(
+                GATEWAY["protocol"]["minimum_gateway"]
+            ),
+            GATEWAY["headers"]["client"]: "vis-python",
+            "Accept": "application/json",
+        }
+        if self._token:
+            headers["Authorization"] = "Bearer " + self._token
+        if self._lease:
+            headers[GATEWAY["headers"]["client_id"]] = self._lease
+        if body is not None:
+            if content is not None:
+                raise ValueError("body and content are mutually exclusive")
+            content = json.dumps(body, allow_nan=False).encode()
+            headers["Content-Type"] = "application/json"
+        url = self._url + route + ("?" + urlencode(query) if query else "")
+        try:
+            return self._opener.open(
+                Request(url, data=content, headers=headers, method=method),
+                timeout=_duration(self.timeout if timeout is None else timeout),
+            )
+        except HTTPError as exc:
+            with exc:
+                raise _gateway_error(exc.code, exc.read(65536), self._token) from None
+        except TimeoutError:
+            raise VisTimeout("gateway request timed out") from None
+        except (URLError, OSError) as exc:
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                raise VisTimeout("gateway request timed out") from None
+            raise TransportError("gateway connection failed") from None
+
+    def connect(self) -> GatewayClient:
+        if self._lease_error:
+            raise TransportError("client lease keepalive failed; create a new client")
+        if self._lease:
+            return self
+        caps = self._request("GET", "/v1/capabilities").json()
+        peer = caps.get("protocol", {}) if isinstance(caps, dict) else {}
+        if not isinstance(peer, dict):
+            raise ProtocolError("malformed gateway handshake")
+        version, minimum = peer.get("protocol"), peer.get("min_client")
+        ours = GATEWAY["protocol"]
+        if (
+            type(version) is not int
+            or type(minimum) is not int
+            or version < ours["minimum_gateway"]
+            or minimum > ours["version"]
+        ):
+            raise ProtocolError("incompatible gateway protocol")
+        self._ensure_client_lease()
+        self._lease_seen = time.monotonic()
+        self._heartbeat = threading.Thread(
+            target=self._keepalive, name="vis-sdk-lease", daemon=True
+        )
+        self._heartbeat.start()
+        return self
+
+    def _keepalive(self):
+        policy = GATEWAY["client_lease"]
+        interval = policy["keepalive_ms"] / 1000
+        while not self._heartbeat_stop.wait(interval):
+            try:
+                if time.monotonic() - self._lease_seen >= policy["ttl_ms"] / 1000:
+                    raise TransportError("client lease expired")
+                with self._open(
+                    "GET",
+                    policy["keepalive_route"],
+                    timeout=min(self.timeout, policy["keepalive_timeout_ms"] / 1000),
+                ) as raw:
+                    raw.read(65536)
+                self._lease_seen = time.monotonic()
+            except (TransportError, GatewayError, OSError):
+                self._lease_error = True
+                return
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._heartbeat_stop.set()
+        if self._heartbeat is not None:
+            self._heartbeat.join()
+        self._lease_error = False
+        try:
+            for stream in tuple(self._streams):
+                stream.close()
+            if self._lease:
+                self._request("DELETE", "/v1/clients/:cid", path={"cid": self._lease})
+        finally:
+            self._closed = True
+            self._clear_client_extensions()
+            self._lease = None
+            self._token = None
+
+    def session_options(self, project=".") -> dict[str, JSONValue]:
+        """Prepare an app-channel session using a path on the gateway machine."""
+        path = PurePosixPath(project)
+        if not path.is_absolute():
+            raise ValueError("project must be an absolute path on the gateway")
+        return {"root": str(path), "channel": "app"}
+
+
 @dataclass(frozen=True, slots=True)
 class Session:
-    client: GatewayClient
+    client: ExecutionLayer
     id: str
 
     def _call(self, method, suffix="", **kwargs):
@@ -2146,6 +2263,7 @@ class Session:
         return Council(self, binding["default_group_id"], binding["activation_id"])
 
     def read(self):
+        self.client._pump_client_extensions(self.id)
         return self._call("GET")
 
     def update(self, **fields):
@@ -2225,6 +2343,9 @@ class Session:
     def send(
         self, request: str, *, idempotency_key: str | None = None, **options
     ) -> Turn:
+        extensions = self.client._client_extensions.get(self.id)
+        if extensions is not None:
+            extensions.started = True
         cursor = _field(self._call("GET", "/seq"), "seq", int)
         data = self._call(
             "POST",
@@ -2265,6 +2386,9 @@ class Session:
         return self.view_action(view_id, "submit", values=values)
 
     def events(self, **options) -> Events:
+        extensions = self.client._client_extensions.get(self.id)
+        if extensions is not None and extensions.manifest:
+            return _SessionPollingEvents(self, **options)
         return Events(self, **options)
 
 
@@ -2275,6 +2399,7 @@ class Turn:
     cursor: int = 0
 
     def read(self, *, timeout=None):
+        self.session.client._pump_client_extensions(self.session.id)
         return self.session._call(
             "GET", "/turns/:tid", path={"tid": self.id}, timeout=timeout
         )
@@ -2396,6 +2521,31 @@ class _EventStream:
         return False
 
 
+class _PollingEvents:
+    """Poll finite event pages so callback code runs on the SDK calling thread."""
+
+    def _iterate(self):
+        deadline = time.monotonic() + self.client.timeout
+        try:
+            while not self._closed:
+                if time.monotonic() >= deadline:
+                    raise VisTimeout("event stream idle timeout")
+                self._pump()
+                for name, value in self._page():
+                    event = self._accept(name, value)
+                    if event is not None:
+                        yield event
+                        if self._terminal(event):
+                            return
+                        deadline = time.monotonic() + self.client.timeout
+                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+        finally:
+            self.client._streams.discard(self)
+
+    def _pump(self):
+        pass
+
+
 class Events(_EventStream):
     """Session SSE with cursor resume, duplicate suppression and bounded reconnects.
 
@@ -2423,6 +2573,21 @@ class Events(_EventStream):
             self.cursor = seq
             return event
         return None
+
+
+class _SessionPollingEvents(_PollingEvents, Events):
+    """Use the session journal for stdio and application-owned gateway callbacks."""
+
+    def _pump(self):
+        self.client._pump_client_extensions(self.session.id)
+
+    def _page(self):
+        data = self.client.get_session_events_since(
+            self.session.id, query={"cursor": self.cursor}
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("events"), list):
+            raise ProtocolError("malformed session event page")
+        return [(None, value) for value in data["events"]]
 
 
 @dataclass(frozen=True, slots=True)

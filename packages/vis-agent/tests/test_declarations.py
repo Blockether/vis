@@ -45,7 +45,7 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
         for field in fields(value):
             with pytest.raises(FrozenInstanceError):
                 setattr(value, field.name, getattr(value, field.name))
-    vis.register(extension)
+    vis.register_extension(extension)
     assert len(calls) == 1
     wire = vis._registration["spec"]
     assert wire["symbols"][0]["marker"] == "symbol"
@@ -59,7 +59,7 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
     assert wire["op_hooks"][0]["ops"] == ["shell"]
     assert wire["network_filters"][0]["marker"] == "network_filter"
     with pytest.raises(ValueError, match="once per file"):
-        vis.register(extension)
+        vis.register_extension(extension)
     assert len(calls) == 1
 
 
@@ -83,7 +83,7 @@ def test_declarations_refuse_untyped_children(field, monkeypatch):
 def test_register_refuses_raw_maps_and_failure_does_not_register(monkeypatch):
     monkeypatch.setattr(vis, "_registration", {"spec": None})
     with pytest.raises(TypeError):
-        vis.register({"name": "not-a-declaration"})
+        vis.register_extension({"name": "not-a-declaration"})
     extension = vis.Extension(name="typed", description="Typed")
 
     def fail(_):
@@ -91,7 +91,7 @@ def test_register_refuses_raw_maps_and_failure_does_not_register(monkeypatch):
 
     monkeypatch.setattr(vis._host, "declare_env", fail)
     with pytest.raises(RuntimeError, match="host unavailable"):
-        vis.register(extension)
+        vis.register_extension(extension)
     assert vis._registration["spec"] is None
 
 
@@ -228,7 +228,7 @@ def test_registration_snapshots_collections_and_provider_config(monkeypatch):
     body["models"][0]["flags"].append("changed")
     with pytest.raises(TypeError):
         provider.preset.extra_body["models"][0]["name"] = "changed"
-    vis.register(extension)
+    vis.register_extension(extension)
     wire = vis._registration["spec"]
     assert len(wire["symbols"]) == 1
     assert wire["providers"][0]["is_managed"] is True

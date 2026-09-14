@@ -380,3 +380,39 @@ Plan state: phase 17 complete. Prior phases remain complete.
 - The new registration test first failed because the capability recipe was absent. The literal example now passes registration, contract, pricing boundaries, invalid-input and Activity checks.
 - Actual native HTTP and stdio Agents load the documented extension, discover its contract, call the function and receive both the price and validation error. The same three cases pass on Linux with an installed candidate SDK; independently read logs and source hashes match the local inputs. No paid model calls or production service changes were made for this phase.
 - All 11 SDK gates pass: 660 source cases (25 opt-in skips) and 679 installed-wheel cases (six skips), including native execution. The 61 Clojure docs cases, 161 generated-site cases, formatting, lint and reflection checks pass. The SDK source-install caveat remains until public artifact verification.
+
+## 18. Bind capabilities directly to an Agent
+
+- Rationale: project extensions are not a substitute for application-owned Agent functions. The requested functions execute in the Python SDK process, including with a remote gateway.
+- Data: `engine/_agent.py`, `_client.py`, `_local.py`, shared pure Symbol/Activity declarations, and focused SDK tests. Reuse the existing callable contract; do not serialize code, write extension files or call global registration.
+- Acceptance criteria: per-Agent function and bound-method references retain local state; invocation is driven on the SDK calling thread while reading/waiting/streaming a turn. Invalid declarations fail before connection. Replay/retry never reexecutes completed calls, errors reach the model, and close removes ownership.
+- Unknowns: none in the implementation. Callbacks retain bounded replay receipts and execute only on the SDK calling thread.
+
+## 19. Connect the gateway to application-owned functions
+
+- Rationale: both transports need the same authenticated, session-owned callback contract and ordinary sandbox discovery/Activity behavior.
+- Data: gateway client-tool handling, server/state integration, sandbox bindings, canonical gateway contract and mirrored Lazytest coverage.
+- Acceptance criteria: only the owning live client can retrieve calls or deliver results; cross-session calls, name collisions and malformed contracts fail. Cancellation, disconnect, lease expiry and bounded pending calls cannot leave a tool blocked indefinitely. No application source, closures or credentials are uploaded.
+- Unknowns: none in the verified callback protocol. PID-owned local leases follow application liveness; remote, PID-less leases retain heartbeat expiry.
+
+## 20. Replace the extension recipe and verify the actual boundary
+
+- Rationale: the guide must teach direct Agent capabilities and release-based installation, not the superseded registration workflow or a source-install URL.
+- Data: Python SDK guide and literal executable tests, installed SDK HTTP/stdio integration, docs/site checks and the maintained plan.
+- Acceptance criteria: examples execute in the SDK application PID and mutate captured local state through both transports, including progress, failure and cleanup. Validate native execution separately from mocks; do not reuse phase 17 results as evidence. Installation describes the correct published release without claiming an unpublished API is already available.
+- Unknowns: none for the local candidate. The installed wheel passes against the rebuilt native engine. Publication remains outside this task; the guide labels this API unreleased.
+
+## 21. Separate execution layers and explicit extension registration
+
+- Rationale: Agent owns a conversation, not HTTP credentials or process-launch options. Application callbacks must retain closures and live Python objects without global registration or code uploads.
+- Data: the shared Python ExecutionLayer, LocalEngine and GatewayClient implementations, per-session client callback routes, canonical contracts, extension declarations and executable SDK guide.
+- Acceptance criteria: both transports use Agent(execution_layer=..., extensions=[...]) and Agent.register_extension; injected layers retain caller ownership. Application functions and bound methods execute in the calling Python process, with discovery, explicit Activity, deterministic failure and cleanup coverage. The host registration API is register_extension with all in-repository consumers updated and no legacy alias.
+- Unknowns: none in the supported surface. Installed/native boundary checks pass; host-only extension features are explicitly rejected.
+
+Plan state: phases 18–21 complete locally.
+
+- All 11 SDK gates pass: 764 source cases (38 opt-in skips) and 794 installed-wheel cases (eight skips), including native HTTP/stdio callbacks and the JVM guide recipes. Formatting, lint, direct/sdist wheel parity, exact canonical resources, strict metadata and documentation checks pass.
+- The final GraalVM CE 25.3.4.1 build succeeds. All four focused native extension cases pass after the PID-liveness change; the focused callback registry/gateway suite passes all 13 cases. Application state survives engine environment recreation.
+- The local idle-lease and outside-shell environment regressions fail before their fixes and pass afterward. The shell now overlays supplied variables without dropping inherited PATH; all 73 outside-host and SDK-check cases pass.
+- A broader Clojure run reports four failures in existing Council/draft documentation assertions and background self-wake session identity, outside the callback behavior verified here. This is not a claim that the entire JVM suite is green.
+- Existing unrelated changes, root PLAN.md and app/TUI work are preserved. No commit, release, shared-service restart or remote publication was performed for this implementation. The new API still requires matching unreleased SDK and engine artifacts.
