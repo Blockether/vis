@@ -826,6 +826,7 @@ describe('GatewayClient turn cancellation', () => {
           filename: 'tiny.png',
           media_type: 'image/png',
           base64: 'data:image/png;base64,YWJj',
+          reference: '[IMAGE #7]',
         },
       ],
     });
@@ -840,6 +841,7 @@ describe('GatewayClient turn cancellation', () => {
         filename: 'tiny.png',
         media_type: 'image/png',
         size: 3,
+        reference: '[IMAGE #7]',
       },
     ]);
     expect(JSON.stringify(submitBody)).not.toContain('YWJj');

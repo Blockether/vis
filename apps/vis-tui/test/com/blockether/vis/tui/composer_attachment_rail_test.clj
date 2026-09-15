@@ -8,6 +8,7 @@
 (def attachments
   [{:id "image-1"
     :filename "diagram.png"
+    :image-number 1
     :media-type "image/png"
     :size 153600
     :width 1280
@@ -19,7 +20,7 @@
   (.beginFrame interactions/hit-map)
   (let [capture (cap/capture!
                   {:cols cols
-                   :rows 5
+                   :rows 9
                    :paint! (fn [{:keys [g]}]
                              (rail/draw! g attachments 1 cols {:focused? focused? :focused-index 1})
                              (.commitFrame interactions/hit-map))})]
@@ -33,8 +34,8 @@
                        text
                        (cap/frame-text capture)]
 
-                   (expect (= 3 (rail/rail-height attachments)))
-                   (expect (str/includes? text "IMAGE  diagram.png  ·  1280×720  ·  150 KB"))
+                   (expect (= 6 (rail/rail-height attachments)))
+                   (expect (str/includes? text "IMAGE #1  diagram.png  ·  1280×720  ·  150 KB"))
                    (expect (str/includes? text "PDF  requirements.pdf  ·  2.0 KB"))
                    (expect (str/includes? text "AUDIO  notes.wav  ·  441 B"))))
              (it "preserves each remove target and a focused row on a narrow terminal"
@@ -44,7 +45,7 @@
                        text
                        (cap/frame-text capture)]
 
-                   (expect (str/includes? text "▶ PDF  requirements"))
+                   (expect (str/includes? text "▶ PDF  require"))
                    (expect (= ["image-1" "doc-1" "audio-1"]
                               (mapv :attachment-id
                                     (filter #(= :attachment-remove (:kind %)) regions))))

@@ -10,7 +10,10 @@ const meta = {
   parameters: { layout: 'centered' },
   args: {
     pastes: [STORY_COMPOSER_PASTE],
-    attachments: STORY_PENDING_ATTACHMENTS,
+    attachments: STORY_PENDING_ATTACHMENTS.map((attachment) => ({
+      ...attachment,
+      reference: attachment.media_type.startsWith('image/') ? '[IMAGE #1]' : undefined,
+    })),
     commands: {
       editPaste: fn(),
       removePaste: fn(),

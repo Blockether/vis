@@ -4003,6 +4003,7 @@ export class GatewayClient {
           filename: attachment.filename,
           media_type: attachment.media_type,
           size: uploaded.size,
+          reference: attachment.reference,
         };
       }),
     );

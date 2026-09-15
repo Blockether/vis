@@ -1,10 +1,9 @@
 (ns com.blockether.vis.tui.composer-attachment-rail
   "Paint contract for staged composer attachments.
 
-   Every attachment owns exactly one terminal row directly above the prompt. The row
-   remains useful without terminal image protocols: kind, filename, dimensions/size,
-   and a remove affordance are always text. `:attachment-focus?` highlights exactly
-   one row; C-x i enters that keyboard surface without moving the text cursor."
+   Staged attachments share one bordered, shadowed surface above the prompt.
+   Every row retains its identity, filename, dimensions/size and remove action.
+   C-x i focuses this keyboard surface without moving the text cursor."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.primitives :as p]
@@ -14,9 +13,9 @@
            [com.googlecode.lanterna.graphics TextGraphics]))
 
 (defn rail-height
-  "Rows reserved by `draw!`; one readable row per staged item."
+  "Rows reserved by `draw!`: one item row each, two borders and one shadow row."
   ^long [attachments]
-  (count attachments))
+  (if (seq attachments) (+ 3 (count attachments)) 0))
 
 (defn- kind-label
   [media-type]
@@ -45,7 +44,7 @@
    A recording also says what its transcript is doing, because the composer starts
    making the words the moment the file is staged and the human deserves to see that
    happening before the turn is sent."
-  [{:keys [filename media-type size width height transcription transcription-status]}]
+  [{:keys [filename media-type size width height transcription transcription-status image-number]}]
   (let [size-label
         (fmt/format-bytes (or size 0) " ")
 
@@ -53,7 +52,7 @@
         (or (get transcription-notes (str transcription-status))
             (when (not-empty (str transcription)) "transcript ready"))]
 
-    (str (kind-label media-type)
+    (str (if image-number (str "IMAGE #" image-number) (kind-label media-type))
          "  "
          (or (not-empty filename) "unnamed attachment")
          "  ·  "
@@ -61,47 +60,82 @@
          (when note (str "  ·  " note)))))
 
 (defn draw!
-  "Paint all staged attachments at `top` and register per-row inspect/remove targets.
+  "Paint a themed staging surface and bounded inspect/remove targets.
 
-   Focus is visual only unless `focused?` is true. Each row keeps its full metadata
-   in the click region; the fixed `[remove]` suffix never disappears on narrow
-   terminals, while the descriptive fallback truncates to the remaining columns."
+   Images keep the same number as their input reference. Focus never hides the
+   remove action, and all row content stays inside the border even at tiny widths."
   [^TextGraphics g attachments top cols {:keys [focused? focused-index]}]
-  (let [cols
-        (long cols)
+  (when (seq attachments)
+    (let [cols
+          (max 1 (long cols))
 
-        remove-label
-        " [remove] "
+          left
+          (if (> cols 4) 1 0)
 
-        remove-w
-        (long (p/display-width remove-label))]
+          width
+          (max 1 (- cols (* 2 left) 1))
 
-    (doseq [[idx attachment] (map-indexed vector (map with-live-transcription attachments))]
-      (let [row (+ (long top) (long idx))
-            focused-row? (and focused? (= (long (or focused-index 0)) (long idx)))
-            body-w (max 0 (- cols remove-w))
-            body (p/truncate-cols (str (if focused-row? "▶ " "  ") (attachment-label attachment))
-                                  body-w)
-            padded (str body (apply str (repeat (max 0 (- body-w (p/display-width body))) \space)))
-            id (:id attachment)]
+          bordered?
+          (>= width 4)
 
-        (.setForegroundColor g (if focused-row? t/header-active-tab-fg t/box-fg))
-        (.setBackgroundColor g (if focused-row? t/header-active-tab-bg t/terminal-bg))
-        (when focused-row? (.enableModifiers g (into-array SGR [SGR/BOLD])))
-        (p/put-str! g 0 row padded)
-        (when focused-row? (.disableModifiers g (into-array SGR [SGR/BOLD])))
-        (.setForegroundColor g t/dialog-hint)
-        (.setBackgroundColor g t/terminal-bg)
-        (p/put-str! g body-w row remove-label)
-        (.register interactions/hit-map
-                   {:bounds {:row row :col 0 :width body-w}
-                    :kind :attachment-inspect
-                    :attachment attachment
-                    :attachment-id id
-                    :enabled? true})
-        (.register interactions/hit-map
-                   {:bounds {:row row :col body-w :width remove-w}
-                    :kind :attachment-remove
-                    :attachment-id id
-                    :enabled? true})))
-    (rail-height attachments)))
+          inset
+          (if bordered? 1 0)
+
+          inner-w
+          (max 0 (- width (* 2 inset)))
+
+          content-left
+          (+ left inset)
+
+          remove-label
+          (if (>= inner-w 18) " [remove] " " × ")
+
+          remove-label
+          (p/truncate-cols remove-label inner-w)
+
+          remove-w
+          (long (p/display-width remove-label))
+
+          body-w
+          (max 0 (- inner-w remove-w))
+
+          height
+          (+ 2 (count attachments))]
+
+      (p/set-colors! g t/dialog-fg t/dialog-shadow)
+      (p/fill-rect! g (inc left) (inc (long top)) width height)
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/fill-rect! g left top width height)
+      (when bordered?
+        (p/draw-box! g left top width height)
+        (p/put-str! g (+ left 2) top (p/truncate-cols " Attachments " (max 0 (- width 4)))))
+      (doseq [[idx attachment] (map-indexed vector (map with-live-transcription attachments))]
+        (let [row (+ (long top) 1 (long idx))
+              focused-row? (and focused? (= (long (or focused-index 0)) (long idx)))
+              body (p/truncate-cols (str (if focused-row? "▶ " "  ") (attachment-label attachment))
+                                    body-w)
+              padded (str body
+                          (apply str (repeat (max 0 (- body-w (p/display-width body))) \space)))
+              id (:id attachment)
+              bg (if focused-row? t/header-active-tab-bg t/dialog-bg)]
+
+          (p/set-colors! g (if focused-row? t/header-active-tab-fg t/dialog-fg) bg)
+          (when focused-row? (.enableModifiers g (into-array SGR [SGR/BOLD])))
+          (p/put-str! g content-left row padded)
+          (when focused-row? (.disableModifiers g (into-array SGR [SGR/BOLD])))
+          (p/set-colors! g (if focused-row? t/header-active-tab-fg t/dialog-hint) bg)
+          (p/put-str! g (+ content-left body-w) row remove-label)
+          (when (pos? body-w)
+            (.register interactions/hit-map
+                       {:bounds {:row row :col content-left :width body-w}
+                        :kind :attachment-inspect
+                        :attachment attachment
+                        :attachment-id id
+                        :enabled? true}))
+          (when (pos? remove-w)
+            (.register interactions/hit-map
+                       {:bounds {:row row :col (+ content-left body-w) :width remove-w}
+                        :kind :attachment-remove
+                        :attachment-id id
+                        :enabled? true}))))))
+  (rail-height attachments))

@@ -3971,6 +3971,53 @@
       (expect (every? #(= b64 (:base64 %)) (concat user-atts tool-atts))))))
 
 (defdescribe
+  attachment-reference-round-trip-test
+  (it
+    "keeps stable composer references beside original filenames in every reader"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) (byte-array [1 2 3]))
+
+          tid
+          (vis/db-store-session-turn!
+            s
+            {:parent-session-id cid
+             :user-request "compare [IMAGE #7] with [IMAGE #3]"
+             :attachments
+             [{:media-type "image/png" :base64 b64 :filename "shot.png" :reference "[IMAGE #3]"}
+              {:media-type "image/png" :base64 b64 :filename "shot.png" :reference "[IMAGE #7]"}
+              {:media-type "audio/mp4" :base64 b64 :filename "memo.m4a"}]})
+
+          rows
+          (vis/db-list-turn-attachments s tid)
+
+          expected
+          ["[IMAGE #3]" "[IMAGE #7]" nil]]
+
+      (expect (= expected (mapv :reference rows)))
+      (expect (= ["shot.png" "shot.png" "memo.m4a"] (mapv :filename rows)))
+      (expect (= expected
+                 (mapv :reference (get (vis/db-list-turns-attachments s [tid]) (str tid)))))
+      (expect (= expected
+                 (mapv #(-> (vis/db-read-attachment s (:id %))
+                            :reference)
+                       rows)))
+      (let [by-id (into {} (map (juxt :id identity)) (vis/db-list-session-attachments-meta s cid))]
+        (expect (= expected (mapv #(get-in by-id [(:id %) :reference]) rows))))
+      (expect (= expected
+                 (mapv :reference
+                       (raw-query s
+                                  {:select [:reference]
+                                   :from [:session_attachment]
+                                   :where [:= :session_turn_soul_id (str tid)]
+                                   :order-by [[:position :asc]]})))))))
+
+(defdescribe
   attachment-transcription-round-trip-test
   (it "a recording's transcript is stored beside its bytes and comes back on every read"
       ;; No provider wire carries audio, so the WORDS are the only thing a later turn

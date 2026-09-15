@@ -126,11 +126,11 @@
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-index :input-history-draft :slash-command-index
    :slash-command-hidden? :submitted-input :pending-sends :retracted-sends :queue-paused :pastes
-   :paste-counter :attachments :attachment-feedback :attachment-focus? :attachment-index :loading?
-   :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id
-   :live-turn-client-id :progress :turn-start-ms :detail-expansions :mouse-selection
-   :session-model-pref :human-input :human-input-queue :live-views :live-viewer-id
-   :live-viewer-search
+   :paste-counter :image-counter :attachments :attachment-feedback :attachment-focus?
+   :attachment-index :loading? :cancel-token :cancelling? :cancelling-at-ms
+   :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress :turn-start-ms
+   :detail-expansions :mouse-selection :session-model-pref :human-input :human-input-queue
+   :live-views :live-viewer-id :live-viewer-search
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -157,6 +157,7 @@
    :queue-paused nil
    :pastes {}
    :paste-counter 0
+   :image-counter 0
    ;; Staged files and their latest admission feedback are composer state, not
    ;; transcript state. They travel with the draft when tabs switch.
    :attachments []
@@ -1156,6 +1157,7 @@
        ;; message reaches the agent. Cleared on send.
        :pastes {}
        :paste-counter 0
+       :image-counter 0
        :attachments []
        :attachment-feedback []
        :attachment-focus? false
@@ -2150,6 +2152,7 @@
                  :submitted-input nil
                  :pastes {}
                  :paste-counter 0
+                 :image-counter 0
                  :attachments []
                  :attachment-feedback []
                  :attachment-focus? false
@@ -2717,8 +2720,22 @@
                 ;; from the ↑ ring. Editing keeps it shut while the line is still
                 ;; a slash — the palette would only be in the way — and leaving
                 ;; slash-land (or `:reset-input`) arms it again.
-                (let [text (input/input->text new-input)]
-                  (cond-> (assoc db :input new-input)
+                (let [text
+                      (input/input->text new-input)
+
+                      attachments
+                      (filterv (fn [{:keys [image-number]}]
+                                 (or (nil? image-number)
+                                     (str/includes? text (input/image-reference image-number))))
+                        (:attachments db))]
+
+                  (cond-> (assoc db
+                            :input new-input
+                            :attachments attachments
+                            :attachment-index (min (long (or (:attachment-index db) 0))
+                                                   (max 0 (dec (count attachments))))
+                            :attachment-focus? (boolean (and (:attachment-focus? db)
+                                                             (seq attachments))))
                     (not (str/starts-with? (str/triml text) "/"))
                     (assoc :slash-command-hidden? false)))))
 
@@ -2726,19 +2743,37 @@
               (fn [db [_ capabilities]]
                 (assoc db :attachment-capabilities capabilities)))
 
-(reg-event-db :apply-attachment-intake
-              (fn [db [_ result]]
-                (let [attachments
-                      (vec (:attachments result))
+(reg-event-db
+  :apply-attachment-intake
+  (fn [db [_ result]]
+    (let [{:keys [attachments counter tokens]}
+          (reduce (fn [{:keys [counter] :as result} attachment]
+                    (if (and (str/starts-with? (or (:media-type attachment) "") "image/")
+                             (nil? (:image-number attachment)))
+                      (let [number (inc (long counter))]
+                        (-> result
+                            (assoc :counter number)
+                            (update :attachments conj (assoc attachment :image-number number))
+                            (update :tokens conj (input/image-reference number))))
+                      (update result :attachments conj attachment)))
+                  {:attachments []
+                   :counter (reduce max
+                                    (long (or (:image-counter db) 0))
+                                    (input/image-reference-numbers (input/input->text (:input db))))
+                   :tokens []}
+                  (:attachments result))
 
-                      last-index
-                      (max 0 (dec (count attachments)))]
+          last-index
+          (max 0 (dec (count attachments)))]
 
-                  (assoc db
-                    :attachments attachments
-                    :attachment-feedback (vec (:rejected result))
-                    :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
-                    :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments)))))))
+      (cond-> (assoc db
+                :attachments attachments
+                :image-counter counter
+                :attachment-feedback (vec (:rejected result))
+                :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
+                :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments))))
+        (seq tokens)
+        (update :input #(input/paste-text (or % (input/empty-input)) (str/join " " tokens)))))))
 
 ;; The Improve settings the gateway answered, ALREADY normalized by
 ;; `improve/settings` (the caller owns that shaping, so state keeps no opinion
@@ -2771,16 +2806,24 @@
 
 (reg-event-db :remove-attachment
               (fn [db [_ attachment-id]]
-                (let [attachments
+                (let [attachment
+                      (first (filter #(= attachment-id (:id %)) (:attachments db)))
+
+                      attachments
                       (composer-attachments/remove-attachment (:attachments db) attachment-id)
 
                       last-index
                       (max 0 (dec (count attachments)))]
 
-                  (assoc db
-                    :attachments attachments
-                    :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
-                    :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments)))))))
+                  (cond-> (assoc db
+                            :attachments attachments
+                            :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
+                            :attachment-focus? (boolean (and (:attachment-focus? db)
+                                                             (seq attachments))))
+                    (:image-number attachment)
+                    (update :input
+                            input/remove-input-token
+                            (input/image-reference (:image-number attachment)))))))
 
 (reg-event-db :hide-slash-command-suggestions
               (fn [db _]
@@ -3247,7 +3290,7 @@
   "Drop the pending turn pair and restore the submitted composer only when the
    editor is still pristine. Work entered while cancellation settles is newer
    and must never be overwritten by the cancellation ACK."
-  [db {:keys [text pastes paste-counter attachments]}]
+  [db {:keys [text pastes paste-counter image-counter attachments]}]
   (let [visible-text
         (input/expand-paste-placeholders text pastes)
 
@@ -3270,13 +3313,14 @@
         0 :slash-command-hidden?
         false :pastes
         (or pastes {}) :paste-counter
-        (or paste-counter 0) :attachments
+        (or paste-counter 0) :image-counter
+        (or image-counter 0) :attachments
         (vec (or attachments []))))))
 
 (defn- restore-editor-only
   "Restore a submitted composer after cancellation or failure unless the user
    already started newer work while the turn settled."
-  [db {:keys [text pastes paste-counter attachments]}]
+  [db {:keys [text pastes paste-counter image-counter attachments]}]
   (cond-> (dissoc db :submitted-input)
     (composer-pristine? db)
     (assoc :input
@@ -3286,7 +3330,8 @@
       0 :slash-command-hidden?
       false :pastes
       (or pastes {}) :paste-counter
-      (or paste-counter 0) :attachments
+      (or paste-counter 0) :image-counter
+      (or image-counter 0) :attachments
       (vec (or attachments [])))))
 
 (defn- settle-cancelled-turn
@@ -3358,6 +3403,7 @@
                  :pending-sends (pop pending)
                  :pastes (or (:pastes entry) {})
                  :paste-counter (or (:paste-counter entry) 0)
+                 :image-counter (or (:image-counter entry) 0)
                  :attachments (vec (or (:attachments entry) []))
                  :input-history-index nil
                  :input-history-draft nil
@@ -3429,7 +3475,8 @@
                   ;; bounded across long sessions - every send + every history
                   ;; reset drops orphans.
                   :pastes {}
-                  :paste-counter 0)))
+                  :paste-counter 0
+                  :image-counter 0)))
 
 (reg-event-db :add-paste
               ;; Stashes a clipboard payload in the registry, returns the new
@@ -3450,7 +3497,10 @@
               ;; the token from the input buffer AND drops the matching content
               ;; here so memory tracks what the user can still see.
               (fn [db [_ id]]
-                (update db :pastes dissoc id)))
+                (if (some #(= (str id) (second %))
+                          (re-seq input/placeholder-regex (input/input->text (:input db))))
+                  db
+                  (update db :pastes dissoc id))))
 
 ;; Message scrolling
 ;; `:scroll` is the sole tagged state; transitions replace it atomically. Debug logs
@@ -3997,6 +4047,7 @@
                      :mine? true
                      :pastes pastes
                      :paste-counter (:paste-counter source-db)
+                     :image-counter (:image-counter source-db)
                      :attachments attachments
                      :queued-at-ms (System/currentTimeMillis)}
               ;; Registered with the gateway but NOT acked yet. The row is on screen from
@@ -4131,6 +4182,7 @@
                                         :submitted-input {:text text
                                                           :pastes (:pastes source-db)
                                                           :paste-counter (:paste-counter source-db)
+                                                          :image-counter (:image-counter source-db)
                                                           :attachments attachments}
                                         :input-history-index nil
                                         :input-history-draft nil
@@ -4489,6 +4541,63 @@
   (boolean (or (and turn-id (= turn-id (:gateway-turn-id w)))
                (and client-id (= client-id (:live-turn-client-id w))))))
 
+(defn- merge-image-references
+  "Rebase only incoming colliding references when queued messages return to one editor."
+  [draft entries]
+  (reduce
+    (fn [{:keys [attachments counter reserved] :as merged} entry]
+      (let [result
+            (reduce (fn [{:keys [attachments counter] :as result} attachment]
+                      (let [existing
+                            (first (filter #(= (:id attachment) (:id %)) attachments))
+
+                            old-number
+                            (:image-number attachment)
+
+                            used
+                            (into reserved (keep :image-number attachments))
+
+                            number
+                            (when old-number
+                              (or
+                                (:image-number existing)
+                                (if (contains? used old-number) (inc (long counter)) old-number)))]
+
+                        (cond-> result
+                          (nil? existing)
+                          (update :attachments
+                                  conj
+                                  (cond-> attachment
+                                    number
+                                    (assoc :image-number number)))
+
+                          number
+                          (assoc :counter (max (long counter) (long number)))
+
+                          old-number
+                          (assoc-in [:renames (input/image-reference old-number)]
+                            (input/image-reference number)))))
+                    {:attachments attachments :counter counter :renames {}}
+                    (:attachments entry))
+
+            text
+            (str/replace (or (:text entry) "") #"\[IMAGE #\d+\]" #(get (:renames result) % %))]
+
+        (assoc merged
+          :attachments (:attachments result)
+          :counter (max (long (:counter result)) (long (or (:image-counter entry) 0)))
+          :texts (conj (:texts merged) text))))
+    (let [reserved (into (input/image-reference-numbers (input/input->text (:input draft)))
+                         (mapcat (fn [entry]
+                                   (remove (set (keep :image-number (:attachments entry)))
+                                     (input/image-reference-numbers (:text entry)))))
+                         entries)]
+      {:attachments (vec (:attachments draft))
+       :counter (reduce max (long (or (:image-counter draft) 0)) reserved)
+       :reserved reserved
+       :texts []})
+    entries))
+
 (defn- restore-entries-to-input
   "Append queued submissions `entries` (oldest first) to tab `w`'s composer.
 
@@ -4499,23 +4608,18 @@
     (if (empty? entries)
       w
       (let [cur-text (input/input->text (:input w))
-            texts (into (if (str/blank? cur-text) [] [cur-text]) (map :text entries))
+            images (merge-image-references w entries)
+            texts (into (if (str/blank? cur-text) [] [cur-text]) (:texts images))
             combined (str/join "\n\n" (remove str/blank? texts))
             merged-pastes (reduce merge (or (:pastes w) {}) (map :pastes entries))
             merged-counter (apply max 0 (:paste-counter w 0) (map #(:paste-counter % 0) entries))
-            attachments (->> (concat (:attachments w) (mapcat :attachments entries))
-                             (reduce (fn [{:keys [seen items]} attachment]
-                                       (let [id (:id attachment)]
-                                         (if (contains? seen id)
-                                           {:seen seen :items items}
-                                           {:seen (conj seen id) :items (conj items attachment)})))
-                                     {:seen #{} :items []})
-                             :items)]
+            attachments (:attachments images)]
 
         (assoc w
           :input (text->input-state combined)
           :pastes merged-pastes
           :paste-counter merged-counter
+          :image-counter (:counter images)
           :attachments attachments
           :input-history-index nil
           :input-history-draft nil)))))
@@ -4724,6 +4828,7 @@
                                                    :pending-sends (vec (rest q))
                                                    :pastes (or (:pastes head) {})
                                                    :paste-counter (or (:paste-counter head) 0)
+                                                   :image-counter (or (:image-counter head) 0)
                                                    :attachments (vec (or (:attachments head) [])))))
                                :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
 

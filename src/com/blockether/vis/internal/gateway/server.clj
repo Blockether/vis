@@ -679,7 +679,10 @@
   (mapv (fn [row]
           (if-let [upload-id (or (get row "upload_id") (get row :upload-id))]
             (when-let [{stored-sid :sid :as upload} (@pending-uploads upload-id)]
-              (when (= sid stored-sid) (refresh-upload-transcription upload)))
+              (when (= sid stored-sid)
+                (cond-> (refresh-upload-transcription upload)
+                  (attachments/image-reference row)
+                  (assoc :reference (attachments/image-reference row)))))
             row))
         (or rows [])))
 
