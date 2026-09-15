@@ -59,6 +59,18 @@ writable paths are refreshed.
 While in a draft, `session["workspace"]["draft"]` includes `label`, `backend`,
 `branch`, `target_branch`, `approved_ahead` and `pending_paths`.
 
+## Recover a session opened in the wrong draft
+
+Ask Vis to check the draft state and return the session to its original checkout.
+If the session inherited another draft's directory, `draft_status()` reports
+`recovery_required`. `draft_discard()` then returns the session to the source
+checkout without removing that draft or its files; the result names the
+`preserved_root`.
+
+If Vis cannot find the directory's ownership record, it will not guess what to
+delete. Use `/cd /path/to/original-checkout` to return the session to a checkout
+you recognize. The unrecognized directory and its contents stay untouched.
+
 ## Work in another repository
 
 You can isolate a change across added repositories without switching projects or

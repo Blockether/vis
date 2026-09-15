@@ -316,31 +316,49 @@
                          #(workspace/create! (:db-info env) opts))))
 
 (defn discard!
-  "Discard `workspace-id` through the `:draft/discard` boundary. With
-   `:session-state-id`, persistence and the optional env `:workspace-atom` are
-   repointed to the trunk inside the boundary — a veto leaves both in the draft —
-   before `workspace/abandon!` starts release. Returns `[abandon-result trunk]`."
+  "Discard through `:draft/discard`, repointing persistence and live confinement
+   before backend release. A trunk row incorrectly rooted in a managed draft is
+   detached without deleting that draft. Unrecognized draft-store paths require
+   an explicit `/cd` recovery. Returns `[discard-result trunk]`; hooks may veto."
   [env {:keys [workspace-id reason session-state-id]}]
-  (let [ws
-        (require-draft (:db-info env) workspace-id)
+  (let [db
+        (:db-info env)
+
+        current
+        (workspace/get db workspace-id)
+
+        recovery
+        (when-not (workspace/draft? current) (workspace/draft-location db (:root current)))
+
+        ws
+        (if recovery current (require-draft db workspace-id))
 
         parent
         (when-let [id (:parent-workspace-id ws)]
-          (workspace/get (:db-info env) id))
+          (workspace/get db id))
 
         return-root
-        (or (when-not (workspace/draft? parent) (:root parent)) (:repo-root ws))]
+        (if recovery
+          (workspace/source-root db (:root ws))
+          (or (when-not (workspace/draft? parent) (:root parent)) (:repo-root ws)))]
 
-    (through-hooks
-      :draft/discard
-      env
-      (hook-ctx ws {:reason reason})
-      (fn []
-        (let [trunk (when session-state-id
-                      (workspace/exit-to-trunk! (:db-info env) session-state-id return-root))]
-          (when (and trunk (:workspace-atom env)) (reset! (:workspace-atom env) trunk))
-          [(dissoc (workspace/abandon! (:db-info env) {:workspace-id workspace-id :reason reason})
-             :discard-future) trunk])))))
+    (when (and recovery (nil? session-state-id))
+      (throw (ex-info "Draft recovery needs a persisted session." {:type :draft/session-required})))
+    (through-hooks :draft/discard
+                   env
+                   (hook-ctx ws
+                             (cond-> {:reason reason}
+                               recovery
+                               (assoc :recovery true)))
+                   (fn []
+                     (let [trunk (when session-state-id
+                                   (workspace/exit-to-trunk! db session-state-id return-root))]
+                       (when (and trunk (:workspace-atom env)) (reset! (:workspace-atom env) trunk))
+                       [(if recovery
+                          {:status :recovered :preserved-root (:root ws)}
+                          (dissoc (workspace/abandon! db
+                                                      {:workspace-id workspace-id :reason reason})
+                            :discard-future)) trunk])))))
 
 (defn- ensure-draft-branch!
   "Keep the worktree branch; give a Rift clone its own vis/ branch."

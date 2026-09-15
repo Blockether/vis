@@ -125,16 +125,34 @@
 ;; Sandbox symbols
 
 (defn draft-status
-  "Status of the session's current draft."
+  "Status of the current draft, including recovery for a draft-rooted trunk row."
   [env]
-  (let [ws (current-workspace env)]
-    (extension/success {:op :draft-status
-                        :result (wire/canonical (if (workspace/draft? ws)
-                                                  (assoc (drafts/status ws) :in-draft true)
-                                                  {:in-draft false
-                                                   :root (:root ws)
-                                                   :backend-setting
-                                                   (name (workspace/draft-backend-setting))}))})))
+  (let [ws
+        (current-workspace env)
+
+        recovery
+        (when-not (workspace/draft? ws) (workspace/draft-location (db-of env) (:root ws)))]
+
+    (extension/success
+      {:op :draft-status
+       :result
+       (wire/canonical
+         (cond
+           (workspace/draft? ws) (assoc (drafts/status ws) :in-draft true)
+           recovery
+           {:in-draft true
+            :recovery-required true
+            :root (:root ws)
+            :label (:label recovery)
+            :repo-root (:source-root recovery)
+            :managed (boolean (:id recovery))
+            :recovery-hint
+            (if (:source-root recovery)
+              "Use draft_discard() to return to the source checkout; the existing draft will be preserved."
+              "Use /cd <original-checkout> to recover; ownership is unavailable and no draft files will be removed.")}
+           :else {:in-draft false
+                  :root (:root ws)
+                  :backend-setting (name (workspace/draft-backend-setting))}))})))
 
 (defn- diff-arguments
   "Normalize optional Python keywords without treating a checkpoint map as keywords."
@@ -361,8 +379,8 @@
            (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (defn draft-discard
-  "Leave the session's current draft and remove its working copy. Approved
-   commits stay on the `vis/<label>` branch."
+  "Leave an owned draft and remove its working copy, or recover an inherited
+   draft path without removing another workspace's files. Approved commits stay."
   [env]
   (let [db
         (db-of env)
@@ -371,26 +389,33 @@
         (state-id-of env)
 
         ws
-        (current-workspace env)]
+        (current-workspace env)
+
+        recovery
+        (when-not (workspace/draft? ws) (workspace/draft-location db (:root ws)))]
 
     (cond (or (nil? db) (nil? state-id)) (failure "Drafts need a persisted session.")
-          (not (workspace/draft? ws)) (not-in-draft "draft_discard()")
+          (not (or (workspace/draft? ws) recovery)) (not-in-draft "draft_discard()")
           :else (try (let [{:keys [branch ahead]}
-                           (drafts/status ws)
+                           (when-not recovery (drafts/status ws))
 
-                           [_discarded trunk]
+                           [discarded trunk]
                            (drafts/discard! (boundary-env env)
                                             {:workspace-id (:id ws)
                                              :reason "discarded with draft_discard()"
                                              :session-state-id state-id})]
 
                        (extension/success {:op :draft-discard
-                                           :result (wire/canonical {:status :discarded
-                                                                    :label (:label ws)
-                                                                    :root (:root trunk)
-                                                                    :branch branch
-                                                                    :approved-ahead (or ahead
-                                                                                        0)})}))
+                                           :result (wire/canonical (if recovery
+                                                                     (assoc discarded
+                                                                       :root (:root trunk)
+                                                                       :label (:label recovery))
+                                                                     {:status :discarded
+                                                                      :label (:label ws)
+                                                                      :root (:root trunk)
+                                                                      :branch branch
+                                                                      :approved-ahead (or ahead
+                                                                                          0)}))}))
                      (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (def draft-status-symbol
@@ -406,11 +431,13 @@
        "holds it, its `vis/<name>` branch and the default `target_branch`, how many draft commits "
        "the target lacks (`ahead`) and how many paths still differ from the draft branch (`pending`). "
        "It reports every participating repository and task-only review counts. Outside a "
-       "draft it reports the trunk root and the `draft_backend` setting.")
+       "draft it reports the trunk root and the `draft_backend` setting. A draft-rooted session "
+       "with missing ownership reports recovery_required and a safe recovery_hint instead.")
      :result
      (str
        "String-keyed `{in_draft, root, ...}`; in a draft also `{workspace_id, label, repo_root, "
-       "backend, mechanism, branch, target_branch, ahead, pending, repositories, draft_changes}`.")}))
+       "backend, mechanism, branch, target_branch, ahead, pending, repositories, draft_changes}`. "
+       "Recovery adds `{recovery_required, managed, recovery_hint}`; it never adopts another session's draft.")}))
 
 (def draft-diff-symbol
   (vis/symbol
@@ -515,11 +542,15 @@
      (str
        "Leave the session's current draft and remove its working copy; the session is back on the "
        "trunk at once. Approved work stays on the default branch; the merged draft branch may be "
-       "removed. Call `draft_approve()` first to keep the work. Unapproved changes are lost. Only meaningful "
-       "inside a draft. Extension hooks on `draft/discard` may refuse.")
-     :result (str
-               "String-keyed `{status: discarded, label, root, branch, approved_ahead}`; `root` is "
-               "the trunk the session works in again.")}))
+       "removed. Call `draft_approve()` first to keep the work. Unapproved changes are lost. "
+       "For an inherited draft path without ownership, return to the source checkout without deleting "
+       "the existing draft. Unknown ownership requires /cd <original-checkout> instead. "
+       "Extension hooks on `draft/discard` may refuse.")
+     :result
+     (str
+       "String-keyed `{status: discarded, label, root, branch, approved_ahead}`. Recovery returns "
+       "`{status: recovered, label, root, preserved_root}` without deleting files. "
+       "`root` is the checkout the session works in again.")}))
 
 (def symbols
   [draft-status-symbol draft-diff-symbol draft-create-symbol draft-sync-symbol draft-approve-symbol

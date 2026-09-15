@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.drafts :as drafts]
             [com.blockether.vis.internal.foundation.mpl-capture :as capture]
+            [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.workspace.core :as ws]
@@ -486,6 +487,212 @@
                     (expect (= "selected root round trip\n" (:stdout answer)))))
                 (expect (= base (ctx-root env))))
               (finally (delete-tree! sibling)))))))))
+
+;; #246: recover a session mislabeled as trunk without deleting another session's draft.
+(defdescribe
+  draft-root-recovery-test
+  (it
+    "reports an inherited draft path and detaches only the affected session when drafts are off"
+    (with-session
+      "vis-fdrafts-recovery"
+      (fn [base owner]
+        (let [opened
+              (:result (drafts/draft-create owner "owned"))
+
+              draft-root
+              (get opened "root")
+
+              store
+              (:db-info owner)
+
+              wrong
+              (ps/db-workspace-insert! store
+                                       {:repo-id "wrong"
+                                        :repo-root draft-root
+                                        :root draft-root
+                                        :workspace-kind :trunk
+                                        :workspace-backend :live
+                                        :state :active})
+
+              soul
+              (str (random-uuid))
+
+              state-id
+              (pin-session! store soul (:id wrong))
+
+              inherited
+              (assoc owner
+                :session-id soul
+                :session/state-id state-id
+                :workspace/id (:id wrong)
+                :workspace-atom (atom wrong))]
+
+          (spit (io/file draft-root "keep.txt") "owner work")
+          (binding [ws/*draft-backend* :off]
+            (let [status (:result (drafts/draft-status inherited))]
+              (expect (true? (get status "in_draft")))
+              (expect (true? (get status "recovery_required")))
+              (expect (= base (get status "repo_root")))
+              (expect (= "owned" (get status "label"))))
+            (let [result (drafts/draft-discard inherited)]
+              (expect (extension/envelope-success? result))
+              (expect (= "recovered" (get-in result [:result "status"])))
+              (expect (= base (get-in result [:result "root"])))
+              (expect (= draft-root (get-in result [:result "preserved_root"])))
+              (expect (= base (ctx-root inherited)))
+              (expect (= base (:root (ws/for-session store state-id))))
+              (expect (false? (get-in (drafts/draft-status inherited) [:result "in_draft"])))))
+          (expect (= draft-root (ctx-root owner)))
+          (expect (= "owner work" (slurp (io/file draft-root "keep.txt"))))))))
+  (it
+    "allows discard hooks to veto recovery without repointing confinement or persistence"
+    (with-session
+      "vis-fdrafts-recovery-veto"
+      (fn [_base env]
+        (let [opened
+              (:result (drafts/draft-create env "veto-recovery"))
+
+              draft-root
+              (get opened "root")
+
+              store
+              (:db-info env)
+
+              wrong
+              (ps/db-workspace-insert! store
+                                       {:repo-id "wrong"
+                                        :repo-root draft-root
+                                        :root draft-root
+                                        :workspace-kind :trunk
+                                        :workspace-backend :live
+                                        :state :active})]
+
+          (ps/db-session-state-set-workspace! store (:session/state-id env) (:id wrong))
+          (reset! (:workspace-atom env) wrong)
+          (try (extension/register-op-hook!
+                 {:op :draft/discard
+                  :phase :around
+                  :owner :ext/draft-recovery-veto-test
+                  :fn (fn [_env _op _args _next]
+                        (extension/failure {:error {:message "recovery vetoed for test"}}))})
+               (let [result (drafts/draft-discard env)]
+                 (expect (false? (extension/envelope-success? result)))
+                 (expect (str/includes? (get-in result [:error :message]) "recovery vetoed"))
+                 (expect (= draft-root (ctx-root env)))
+                 (expect (= (:id wrong) (:id (ws/for-session store (:session/state-id env))))))
+               (finally (extension/unregister-op-hooks-for-owner!
+                          :ext/draft-recovery-veto-test))))))))
+
+;; #246: unknown ownership must never authorize deleting an arbitrary directory.
+(defdescribe
+  unrecognized-draft-recovery-test
+  (it
+    "preserves unknown draft files and offers the existing session-scoped /cd recovery"
+    (with-session
+      "vis-fdrafts-orphan"
+      (fn [base env]
+        (let [directory
+              (io/file ws/*drafts-home* "source" "orphan")
+
+              _
+              (.mkdirs directory)
+
+              draft-root
+              (.getCanonicalPath directory)
+
+              store
+              (:db-info env)
+
+              wrong
+              (ps/db-workspace-insert! store
+                                       {:repo-id "orphan"
+                                        :repo-root draft-root
+                                        :root draft-root
+                                        :workspace-kind :trunk
+                                        :workspace-backend :live
+                                        :state :active})]
+
+          (spit (io/file directory "keep.txt") "unowned work")
+          (ps/db-session-state-set-workspace! store (:session/state-id env) (:id wrong))
+          (reset! (:workspace-atom env) wrong)
+          (let [status
+                (:result (drafts/draft-status env))
+
+                result
+                (drafts/draft-discard env)]
+
+            (expect (true? (get status "in_draft")))
+            (expect (true? (get status "recovery_required")))
+            (expect (false? (get status "managed")))
+            (expect (str/includes? (get-in result [:error :message]) "/cd <original-checkout>"))
+            (expect (= draft-root (ctx-root env))))
+          (expect (= :workspace/unrecognized-draft
+                     (try (ws/create-trunk-at! store draft-root)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (let [cd
+                (:slash/run-fn (first workspace-slashes/specs))
+
+                result
+                (cd (assoc env :command/argv [base]))]
+
+            (expect (= :ok (:slash/status result)))
+            (expect (= base (ctx-root env)))
+            (expect (= base (:root (ws/for-session store (:session/state-id env))))))
+          (expect (= "unowned work" (slurp (io/file directory "keep.txt")))))))))
+
+(defdescribe
+  draft-root-python-recovery-test
+  (it
+    "exposes recovery status and receipt through both local and worker Python"
+    (extension/sandbox-symbol-signatures)
+    (doseq [worker? [false true]]
+      (with-session
+        "vis-fdrafts-recovery-python"
+        (fn [base env]
+          (let [opened (:result (drafts/draft-create env "python-recovery"))
+                draft-root (get opened "root")
+                store (:db-info env)
+                wrong (ps/db-workspace-insert! store
+                                               {:repo-id "wrong"
+                                                :repo-root draft-root
+                                                :root draft-root
+                                                :workspace-kind :trunk
+                                                :workspace-backend :live
+                                                :state :active})
+                bindings (into {}
+                               (map (fn [entry]
+                                      [(:ext.symbol/symbol entry)
+                                       (fn [& args]
+                                         (extension/invoke-symbol-wrapper {:ext/name
+                                                                           "foundation-core"}
+                                                                          entry
+                                                                          args
+                                                                          env))]))
+                               drafts/symbols)]
+
+            (ps/db-session-state-set-workspace! store (:session/state-id env) (:id wrong))
+            (reset! (:workspace-atom env) wrong)
+            (tpc/with-own [ctx bindings nil {:worker? worker?}]
+                          (let [answer
+                                (ep/run-python-block
+                                  ctx
+                                  (str "status = draft_status()\n"
+                                       "assert status['in_draft'] and status['recovery_required']\n"
+                                       "receipt = draft_discard()\n"
+                                       "assert receipt['status'] == 'recovered'\n"
+                                       "assert receipt['root'] == "
+                                       (pr-str base)
+                                       "\n"
+                                       "assert receipt['preserved_root'] == "
+                                       (pr-str draft-root)
+                                       "\n"
+                                       "assert not draft_status()['in_draft']\n"
+                                       "print('recovered')\n"))]
+                            (expect (nil? (:error answer)) (pr-str answer))
+                            (expect (= "recovered\n" (:stdout answer)))))
+            (expect (= base (ctx-root env)))
+            (expect (.isDirectory (io/file draft-root)))))))))
 
 (defdescribe
   draft-discard-veto-test

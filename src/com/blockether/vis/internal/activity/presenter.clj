@@ -439,7 +439,9 @@
 
     (case op
       "draft_status"
-      (cond (false? (field value "in_draft")) "No active draft"
+      (cond (true? (field value "recovery_required")) (summary-line ["Draft recovery required"
+                                                                     (field value "recovery_hint")])
+            (false? (field value "in_draft")) "No active draft"
             (true? (field value "in_draft")) (summary-line
                                                [(str branch (when target (str " → " target)))
                                                 (when (number? pending)
@@ -508,7 +510,9 @@
       (if-let [target (field value "root")]
         (summary-line [(field value "label") (str "Returned to " target)
                        (when (and (number? kept) (pos? (long kept)))
-                         (str (counted-label kept "approved commit") " kept"))])
+                         (str (counted-label kept "approved commit") " kept"))
+                       (when-let [preserved (field value "preserved_root")]
+                         (str "Preserved " preserved))])
         "No draft result"))))
 
 (defn- repl-status-summary

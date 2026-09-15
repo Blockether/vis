@@ -344,6 +344,10 @@
              [:draft_status
               {"in_draft" true "branch" "vis/review" "target_branch" "main" "pending" 0 "ahead" 0}
               "vis/review → main · No pending changes"]
+             ;; #246: recovery must not look like a clean or deleted draft.
+             [:draft_status
+              {:in_draft true :recovery_required true :recovery_hint "Use draft_discard()."}
+              "Draft recovery required · Use draft_discard()."]
              [:draft_create {:branch "vis/review" :target_branch "main" :clean true}
               "vis/review → main · Clean snapshot"]
              [:draft_create {:branch "vis/review" :target_branch "main" :clean false}
@@ -367,6 +371,9 @@
               "Synchronization aborted · 1 repository"]
              [:draft_discard {:label "review" :root "~/vis" :approved_ahead 1}
               "review · Returned to ~/vis · 1 approved commit kept"]
+             [:draft_discard
+              {:status "recovered" :label "review" :root "~/vis" :preserved_root "~/draft"}
+              "review · Returned to ~/vis · Preserved ~/draft"]
              [:repl_status {:result "status" :status "down" :cwd "~/vis" :resources []}
               "Not running · ~/vis"]
              [:repl_status {"result" "status" "status" "up" "cwd" "~/vis"} "Running · ~/vis"]

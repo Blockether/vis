@@ -1856,24 +1856,39 @@
 
       (if (.exists (workspace-dir trunk n)) (recur (str base "-" i) (inc i)) n))))
 
+(defn draft-location
+  "Find the managed draft containing `root`, with `:source-root` mapped to its
+   original checkout. A path in the draft store with no ownership record returns
+   only `:root`; it must be left intact and recovered with an explicit `/cd`.
+   This lookup never transfers ownership or depends on the draft backend setting."
+  [db-info root]
+  (when-let [root (normalize-root root)]
+    (let [path (Path/of ^String root (make-array String 0))]
+      (or (some (fn [{draft-root :root repo-root :repo-root :as draft}]
+                  (let [draft-path (.toPath (io/file draft-root))]
+                    (when (.startsWith path draft-path)
+                      (assoc draft
+                        :source-root (str (.resolve (.toPath (io/file repo-root))
+                                                    (.relativize draft-path path)))))))
+                (sort-by (comp count :root)
+                         >
+                         (mapcat draft-roots (p/db-workspace-list-drafts db-info))))
+          (when (.startsWith path (Path/of (file-path (drafts-home)) (make-array String 0)))
+            {:root root})))))
+
 (defn source-root
   "Resolve a managed draft path to its original checkout, preserving subdirectories.
-   Ordinary paths are unchanged. Uses persisted ownership, not directory names or
-   the currently selected draft backend; it never enters or mutates the draft."
+   Ordinary paths are unchanged. Unrecognized draft-store paths refuse rather than
+   silently becoming a trunk. No draft is entered or mutated."
   [db-info root]
-  (let [root
-        (normalize-root root)
-
-        path
-        (Path/of ^String root (make-array String 0))]
-
-    (or (some
-          (fn [{draft-root :root repo-root :repo-root}]
-            (let [draft-path (.toPath (io/file draft-root))]
-              (when (.startsWith path draft-path)
-                (str (.resolve (.toPath (io/file repo-root)) (.relativize draft-path path))))))
-          (sort-by (comp count :root) > (mapcat draft-roots (p/db-workspace-list-drafts db-info))))
-        root)))
+  (if-let [location (draft-location db-info root)]
+    (or
+      (:source-root location)
+      (throw
+        (ex-info
+          "Draft ownership is unavailable. Use /cd <original-checkout> to recover; no draft files have been removed."
+          {:type :workspace/unrecognized-draft :root (:root location)})))
+    (normalize-root root)))
 
 (defn- insert-trunk!
   "Insert a fresh TRUNK workspace row (root = repo_root = `root`, defaulting
