@@ -38,12 +38,13 @@ export function metadataHead({
     meta('description', description) +
     meta('robots', noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large') +
     `<link data-discovery rel="canonical" href="${escape(url)}">` +
-    '<link data-discovery rel="icon" type="image/x-icon" sizes="32x32" href="/favicon.ico">' +
-    '<link data-discovery rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">' +
-    '<link data-discovery rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">' +
-    '<link data-discovery rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">' +
-    '<link data-discovery rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">' +
-    '<link data-discovery rel="manifest" href="/site.webmanifest">' +
+    // New filenames avoid cached white-backed icons, including Safari's touch-icon cache.
+    '<link data-discovery rel="icon" type="image/x-icon" sizes="32x32" href="/vis-icon.ico">' +
+    '<link data-discovery rel="icon" type="image/png" sizes="48x48" href="/vis-icon-48.png">' +
+    '<link data-discovery rel="icon" type="image/png" sizes="32x32" href="/vis-icon-32.png">' +
+    '<link data-discovery rel="icon" type="image/png" sizes="16x16" href="/vis-icon-16.png">' +
+    '<link data-discovery rel="apple-touch-icon" sizes="180x180" href="/vis-icon-180.png">' +
+    '<link data-discovery rel="manifest" href="/vis.webmanifest">' +
     '<link data-discovery rel="sitemap" type="application/xml" href="/sitemap.xml">' +
     '<link data-discovery rel="alternate" type="text/plain" title="LLM documentation index" href="/llms.txt">' +
     (markdown

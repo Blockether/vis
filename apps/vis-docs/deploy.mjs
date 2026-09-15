@@ -61,7 +61,7 @@ export async function verifyDeployment(hostname) {
         ['/llms-full.txt', '# Vis documentation'],
         ['/extensions/llms.txt', '# Vis Extension Center'],
         ['/extending.md', '# Extending Vis'],
-        ['/site.webmanifest', '"icons"'],
+        ['/vis.webmanifest', '"icons"'],
       ]) {
         const response = await fetch(new URL(path, origin), {
           signal: AbortSignal.timeout(20000),
@@ -77,9 +77,13 @@ export async function verifyDeployment(hostname) {
       }
       for (const path of [
         '/favicon.ico',
-        '/favicon-32.png',
-        '/favicon-48.png',
-        '/apple-touch-icon.png',
+        '/vis-icon.ico',
+        '/vis-icon-16.png',
+        '/vis-icon-32.png',
+        '/vis-icon-48.png',
+        '/vis-icon-180.png',
+        '/vis-icon-192.png',
+        '/vis-icon-512.png',
         '/assets/social-preview.png',
       ]) {
         const response = await fetch(new URL(path, origin), {

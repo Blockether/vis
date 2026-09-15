@@ -33,10 +33,10 @@ test('every generated document has canonical metadata, an accessible icon and a 
       descriptions.add(description);
       expect(d.title).toMatch(/ · Vis · Blockether$/);
       expect(d.querySelector('link[rel="icon"][sizes="48x48"]').getAttribute('href')).toBe(
-        '/favicon-48.png',
+        '/vis-icon-48.png',
       );
       expect(d.querySelector('link[rel="icon"][type="image/x-icon"]').getAttribute('href')).toBe(
-        '/favicon.ico',
+        '/vis-icon.ico',
       );
       expect(d.querySelector('a[href="https://blockether.com"]')).not.toBeNull();
       expect(d.querySelector('meta[property="og:url"]').content).toBe(canonical);
@@ -75,38 +75,42 @@ test('every generated document has canonical metadata, an accessible icon and a 
   expect(readdirSync('dist')).not.toContain('source.json');
 });
 
-test.each([16, 32, 48])('favicon %i reuses the transparent Companion artwork', async (size) => {
-  const companion = new JSDOM(readFileSync('../vis-companion/index.html', 'utf8'));
-  try {
-    const href = companion.window.document.querySelector('link[rel="icon"]').getAttribute('href');
-    const source = readFileSync('../vis-companion/public' + href);
-    const name = `favicon-${size}.png`;
-    const actual = readFileSync('dist/' + name);
-    expect(await sharp(actual).metadata()).toMatchObject({
-      width: size,
-      height: size,
-      hasAlpha: true,
-    });
-    // Browser tabs must show the app's artwork, without a white box or extra cropping.
-    expect((await sharp(actual).stats()).isOpaque).toBe(false);
-    const corner = await sharp(actual)
-      .extract({ left: 0, top: 0, width: 1, height: 1 })
-      .ensureAlpha()
-      .raw()
-      .toBuffer();
-    expect(corner[3]).toBe(0);
-    const expected = await sharp(source)
-      .resize(size, size, { fit: 'contain', background: '#00000000' })
-      .png()
-      .toBuffer();
-    expect(actual).toEqual(expected);
-  } finally {
-    companion.window.close();
-  }
-});
+test.each([16, 32, 48, 180, 192, 512])(
+  'site icon %i reuses the transparent Companion artwork',
+  async (size) => {
+    const companion = new JSDOM(readFileSync('../vis-companion/index.html', 'utf8'));
+    try {
+      const href = companion.window.document.querySelector('link[rel="icon"]').getAttribute('href');
+      const source = readFileSync('../vis-companion/public' + href);
+      const name = `vis-icon-${size}.png`;
+      const actual = readFileSync('dist/' + name);
+      expect(await sharp(actual).metadata()).toMatchObject({
+        width: size,
+        height: size,
+        hasAlpha: true,
+      });
+      // Safari can select the touch icon: every size must keep the app's transparency and framing.
+      expect((await sharp(actual).stats()).isOpaque).toBe(false);
+      const corner = await sharp(actual)
+        .extract({ left: 0, top: 0, width: 1, height: 1 })
+        .ensureAlpha()
+        .raw()
+        .toBuffer();
+      expect(corner[3]).toBe(0);
+      const expected = await sharp(source)
+        .resize(size, size, { fit: 'contain', background: '#00000000' })
+        .png()
+        .toBuffer();
+      expect(actual).toEqual(expected);
+    } finally {
+      companion.window.close();
+    }
+  },
+);
 
 test('the ICO embeds the transparent 32-bit favicon with a matching directory', async () => {
-  const ico = readFileSync('dist/favicon.ico');
+  const ico = readFileSync('dist/vis-icon.ico');
+  expect(readFileSync('dist/favicon.ico')).toEqual(ico);
   expect(ico.readUInt16LE(2)).toBe(1);
   expect(ico.readUInt16LE(4)).toBe(1);
   expect(ico[6]).toBe(32);
@@ -114,31 +118,48 @@ test('the ICO embeds the transparent 32-bit favicon with a matching directory', 
   expect(ico.readUInt16LE(12)).toBe(32);
   expect(ico.readUInt32LE(14)).toBe(ico.length - 22);
   expect(ico.readUInt32LE(18)).toBe(22);
-  expect(ico.subarray(22)).toEqual(readFileSync('dist/favicon-32.png'));
+  expect(ico.subarray(22)).toEqual(readFileSync('dist/vis-icon-32.png'));
   expect(await sharp(ico.subarray(22)).metadata()).toMatchObject({ channels: 4, hasAlpha: true });
 });
 
-test('touch and manifest icons keep their opaque background and declared dimensions', async () => {
-  for (const [name, size] of [
-    ['apple-touch-icon.png', 180],
-    ['icon-192.png', 192],
-    ['icon-512.png', 512],
+test('the manifest points to the transparent app icons with matching sizes', () => {
+  const manifest = JSON.parse(read('vis.webmanifest'));
+  expect(manifest.icons).toEqual(
+    [192, 512].map((size) => ({
+      src: `/vis-icon-${size}.png`,
+      sizes: `${size}x${size}`,
+      type: 'image/png',
+    })),
+  );
+});
+
+test('docs, SDK and catalog pages replace every cached icon URL, including the touch icon', () => {
+  for (const html of [
+    read('motivation.html'),
+    read('python-sdk-api/blockether/vis/engine.html'),
+    renderPage({ items }),
+    renderPage({ items, item: items[0] }),
   ]) {
-    const meta = await sharp('dist/' + name).metadata();
-    expect(meta.width).toBe(size);
-    expect(meta.height).toBe(size);
-    expect((await sharp('dist/' + name).stats()).isOpaque, name).toBe(true);
-    const corner = await sharp('dist/' + name)
-      .extract({ left: 0, top: 0, width: 1, height: 1 })
-      .removeAlpha()
-      .raw()
-      .toBuffer();
-    expect([...corner], name).toEqual([255, 255, 255]);
+    const dom = new JSDOM(html);
+    try {
+      expect(
+        [
+          ...dom.window.document.querySelectorAll(
+            'link[rel="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]',
+          ),
+        ].map((node) => node.getAttribute('href')),
+      ).toEqual([
+        '/vis-icon.ico',
+        '/vis-icon-48.png',
+        '/vis-icon-32.png',
+        '/vis-icon-16.png',
+        '/vis-icon-180.png',
+        '/vis.webmanifest',
+      ]);
+    } finally {
+      dom.window.close();
+    }
   }
-  const manifest = JSON.parse(read('site.webmanifest'));
-  expect(manifest.icons).toHaveLength(2);
-  for (const icon of manifest.icons)
-    expect(readFileSync('dist' + icon.src).length).toBeGreaterThan(0);
 });
 
 test('docs and catalog previews use a separate opaque social image with room around the logo', async () => {
@@ -208,7 +229,7 @@ test('catalog SSR supplies item-specific metadata and never turns metadata into 
     expect(d.title).toBe(item.repository.toLowerCase() + ' · Vis · Blockether');
     expect(d.querySelectorAll('head script')).toHaveLength(1);
     expect(d.querySelector('link[rel="icon"][sizes="48x48"]').getAttribute('href')).toBe(
-      '/favicon-48.png',
+      '/vis-icon-48.png',
     );
   } finally {
     dom.window.close();

@@ -80,33 +80,22 @@ await writeFile(
     `\n\nGenerated Python SDK API reference: ${origin}/python-sdk-api/\n` +
     `\nLive extension catalog: ${origin}/extensions/llms.txt\n`,
 );
-// Browser tabs reuse Companion's transparent artwork without trimming or a background.
+// Every site icon uses Companion's transparent artwork, including Safari's touch icon.
 const companionIcon = await readFile(
   new URL('../vis-companion/public/vis-logo.png', import.meta.url),
 );
-for (const size of [16, 32, 48]) {
+for (const size of [16, 32, 48, 180, 192, 512]) {
   await sharp(companionIcon)
     .resize(size, size, { fit: 'contain', background: '#00000000' })
     .png()
-    .toFile(fileURLToPath(new URL(`favicon-${size}.png`, dist)));
+    .toFile(fileURLToPath(new URL(`vis-icon-${size}.png`, dist)));
 }
 
-// Home-screen icons and link previews keep their opaque, full-resolution artwork.
+// Only link previews use opaque, full-resolution artwork.
 const logo = await sharp(fileURLToPath(new URL('../../logo.png', import.meta.url)))
   .trim()
   .png()
   .toBuffer();
-for (const [name, size] of [
-  ['apple-touch-icon.png', 180],
-  ['icon-192.png', 192],
-  ['icon-512.png', 512],
-]) {
-  await sharp(logo)
-    .resize(size, size, { fit: 'contain', background: '#ffffff' })
-    .flatten({ background: '#ffffff' })
-    .png()
-    .toFile(fileURLToPath(new URL(name, dist)));
-}
 // Opaque pixels and explicit margins keep link previews legible on client-selected backgrounds.
 await sharp(logo)
   .resize(480, 480, { fit: 'contain', background: '#ffffff' })
@@ -114,7 +103,7 @@ await sharp(logo)
   .extend({ left: 360, right: 360, top: 75, bottom: 75, background: '#ffffff' })
   .png()
   .toFile(fileURLToPath(new URL('assets/social-preview.png', dist)));
-const favicon = await readFile(new URL('favicon-32.png', dist));
+const favicon = await readFile(new URL('vis-icon-32.png', dist));
 const ico = Buffer.alloc(22);
 ico.writeUInt16LE(1, 2);
 ico.writeUInt16LE(1, 4);
@@ -124,16 +113,18 @@ ico.writeUInt16LE(1, 10);
 ico.writeUInt16LE(32, 12);
 ico.writeUInt32LE(favicon.length, 14);
 ico.writeUInt32LE(22, 18);
-await writeFile(new URL('favicon.ico', dist), Buffer.concat([ico, favicon]));
+await writeFile(new URL('vis-icon.ico', dist), Buffer.concat([ico, favicon]));
+// Keep the standard fallback for browsers that request it without a link declaration.
+await cp(new URL('vis-icon.ico', dist), new URL('favicon.ico', dist));
 await writeFile(
-  new URL('site.webmanifest', dist),
+  new URL('vis.webmanifest', dist),
   JSON.stringify({
     name: 'Vis documentation and extensions',
     short_name: 'Vis',
     start_url: '/',
     display: 'browser',
     icons: [192, 512].map((size) => ({
-      src: `/icon-${size}.png`,
+      src: `/vis-icon-${size}.png`,
       sizes: `${size}x${size}`,
       type: 'image/png',
     })),
