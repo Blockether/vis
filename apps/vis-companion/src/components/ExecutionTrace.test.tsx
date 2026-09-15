@@ -516,8 +516,8 @@ it('opens the complete program below its own CODE header', () => {
   expect(view.container.textContent).toContain('Files listed');
   expect(band.textContent).not.toContain('print(paths)');
   fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
-  // The enclosing band owns spacing; source must not add a second top inset.
-  expect(band.querySelector('[data-code-body]')).toHaveClass('pb-2');
+  // The headers own vertical spacing; source adds no extra top or bottom inset.
+  expect(band.querySelector('[data-code-body]')).not.toHaveClass('pb-2');
   expect(band.querySelector('[data-code-body]')).not.toHaveClass('py-2');
   expect(band.querySelector('pre')).not.toHaveClass('py-2');
   expect(band.querySelector('pre')?.textContent).toContain('paths = await ls(root)');

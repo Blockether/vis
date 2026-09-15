@@ -881,7 +881,15 @@ export const CodeWithResult: Story = {
     const headerBottom = (name: string) =>
       canvas.getByRole('button', { name }).getBoundingClientRect().bottom;
     const firstCodeLine = codeBody.querySelector('pre code > div')!;
-    await expect(firstCodeLine.getBoundingClientRect().top - headerBottom('Collapse code')).toBe(0);
+    const codeTopGap = firstCodeLine.getBoundingClientRect().top - headerBottom('Collapse code');
+    await expect(codeTopGap).toBe(0);
+    // Regression: stacked code/result padding made the bottom gap larger than the top.
+    const lastCodeLine = codeBody.querySelector('pre code > div:last-child')!;
+    const resultHeader = canvas
+      .getByRole('button', { name: 'Expand result' })
+      .getBoundingClientRect();
+    const codeBottomGap = resultHeader.top - lastCodeLine.getBoundingClientRect().bottom;
+    await expect(codeBottomGap).toBe(codeTopGap);
     for (const surface of [code, result, activity]) {
       await expect(getComputedStyle(surface).borderLeftWidth).toBe('0px');
     }
@@ -931,6 +939,22 @@ export const CodeWithResult: Story = {
     await expect(canvas.getByRole('button', { name: 'Expand result' })).toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
     await expect(canvas.getByRole('button', { name: 'Expand code' })).toBeVisible();
+  },
+};
+
+export const CodeWithResultPointer: Story = {
+  ...CodeWithResult,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(matchMedia('(min-width: 40rem) and (pointer: fine)').matches).toBe(true);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    const header = canvas.getByRole('button', { name: 'Collapse code' }).getBoundingClientRect();
+    const result = canvas.getByRole('button', { name: 'Expand result' }).getBoundingClientRect();
+    const lines = canvasElement.querySelectorAll('[data-code-body] pre code > div');
+    const firstLine = lines[0].getBoundingClientRect();
+    const lastLine = lines[lines.length - 1].getBoundingClientRect();
+    await expect(result.top - lastLine.bottom).toBe(firstLine.top - header.bottom);
   },
 };
 

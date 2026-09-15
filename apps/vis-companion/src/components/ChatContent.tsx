@@ -1136,7 +1136,7 @@ const ToolCard = memo(function ToolCard({
   const resultShown = interrupted || resultOpen;
   if (embedded)
     return (
-      <div data-code-result className="min-w-0 bg-result py-1 text-meta text-code-result">
+      <div data-code-result className="min-w-0 bg-result pb-1 text-meta text-code-result">
         {interrupted ? (
           <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
         ) : (
@@ -1304,7 +1304,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
         {showCode && <CopyChip value={value} label="Copy code" density="compact" edge />}
       </div>
       {expanded && showCode && (
-        <div className="pb-2" data-code-body>
+        <div data-code-body>
           <SyntaxCodeBlock
             value={value}
             language={language}
