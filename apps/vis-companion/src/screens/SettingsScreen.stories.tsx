@@ -1,11 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
-import { STORY_GATEWAYS, storySettingsFetch } from '../dev/story-data';
+import { STORY_COMPACT_EXECUTIONS, STORY_GATEWAYS, storySettingsFetch } from '../dev/story-data';
 import { getThemePref, setThemePref } from '../lib/storage';
 import { resolveTheme } from '../lib/theme';
 import { THEMES } from '../lib/themes.generated';
 import { SettingsDialog } from './SettingsScreen';
+import { IterationTrace } from '../components/ChatContent';
 
 /** The real dialog over a fixture transport; preferences remain local to this preview. */
 function StorySettings({
@@ -162,6 +163,12 @@ export const ExperimentalFeatures: Story = {
 /** Settings names and explanatory copy follow the desktop hierarchy without shrinking touch. */
 export const ReadingLayout: Story = {
   args: { gateways: STORY_GATEWAYS.slice(0, 1) },
+  render: (args) => (
+    <>
+      <IterationTrace whole iterations={STORY_COMPACT_EXECUTIONS} />
+      <SettingsDialog {...args} />
+    </>
+  ),
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await page.findByText('MCP servers');
@@ -170,7 +177,7 @@ export const ReadingLayout: Story = {
     const dialog = page.getByRole('dialog', { name: 'Settings' });
     await dialog.ownerDocument.fonts.ready;
     const pointer = matchMedia('(min-width: 640px) and (pointer: fine)').matches;
-    const label = page.getByText('Show Python code', { exact: true });
+    const label = page.getByText('Show Python code and results', { exact: true });
     const title = page.getByRole('heading', { name: 'Settings', level: 2 });
     // Regression: the dialog title, sections and values all rendered at 13px bold.
     const columns = ['Machines', 'Application'].map((name) => page.getByRole('heading', { name }));
@@ -195,7 +202,7 @@ export const ReadingLayout: Story = {
     await expect(size(choice)).toBe(size(label));
     await expect(getComputedStyle(choice).fontWeight).toBe('400');
     const description = page.getByText(
-      'One expandable source line before Activity. Hiding code keeps every activity and result.',
+      'Show source code and raw results before Activity. Turn off to show only Activity.',
     );
     await expect(getComputedStyle(description).fontSize).toBe('12px');
     await expect(getComputedStyle(description).lineHeight).toBe('18px');
@@ -204,12 +211,19 @@ export const ReadingLayout: Story = {
       Math.min(pointer ? 1152 : 896, available),
     );
     await expect(dialog.scrollWidth).toBe(dialog.clientWidth);
-    const toggle = page.getByRole('switch', { name: /^Show Python code:/ });
+    const toggle = page.getByRole('switch', { name: /^Show Python code and results:/ });
     const checked = toggle.getAttribute('aria-checked');
-    await userEvent.click(toggle);
-    await expect(toggle).toHaveAttribute('aria-checked', checked === 'true' ? 'false' : 'true');
-    await userEvent.click(toggle);
-    await expect(toggle).toHaveAttribute('aria-checked', checked);
+    for (const shown of [checked !== 'true', checked === 'true']) {
+      await userEvent.click(toggle);
+      await expect(toggle).toHaveAttribute('aria-checked', String(shown));
+      await waitFor(() =>
+        expect(Boolean(canvasElement.querySelector('[data-execution-code]'))).toBe(shown),
+      );
+      if (!shown) {
+        await expect(canvasElement.querySelector('[data-code-result]')).toBeNull();
+        await expect(canvasElement.querySelector('[data-execution-activity]')).not.toBeNull();
+      }
+    }
     const emptyServers = page.getByText('No MCP servers on this gateway.');
     await expect(getComputedStyle(emptyServers).fontSize).toBe(
       getComputedStyle(description).fontSize,

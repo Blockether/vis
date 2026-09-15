@@ -59,34 +59,49 @@ it('preserves the explicit interrupt action inside an opened live screen', () =>
 });
 
 // Regression #222: explicit ownership survives bounded Activity windows.
-it('moves a live view beside its exact Activity when the owner arrives', () => {
-  const activity = activityHistoryPage();
-  const liveView = {
-    ...STORY_LIVE_VIEW,
-    owner: { invocation_id: 'paged-out', activity_id: activity.history!.id },
-  };
-  const client = {} as GatewayClient;
-  const mounted = render(
-    <IterationTrace iterations={[]} liveViews={[liveView]} client={client} sid="session" whole />,
-  );
-  expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeNull();
-  expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border');
-  mounted.rerender(
-    <IterationTrace
-      iterations={[{ forms: [{ source: 'monitor()', activity }] }]}
-      liveViews={[liveView]}
-      client={client}
-      sid="session"
-      whole
-    />,
-  );
-  expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
-  const title = mounted.getByText(liveView.title);
-  const group = title.closest('[data-execution-group]');
-  expect(group).toHaveClass('bg-code');
-  expect(group).not.toHaveClass('border');
-  expect(title.closest('.border')).toBe(title.closest('section'));
-});
+it.each([
+  { showCode: true, source: 'monitor()' },
+  { showCode: false, source: 'monitor()' },
+  { showCode: false, source: undefined },
+])(
+  'moves an owned live view once (Python shown: $showCode, source: $source)',
+  ({ showCode, source }) => {
+    const activity = activityHistoryPage();
+    const liveView = {
+      ...STORY_LIVE_VIEW,
+      owner: { invocation_id: 'paged-out', activity_id: activity.history!.id },
+    };
+    const client = {} as GatewayClient;
+    const mounted = render(
+      <IterationTrace
+        iterations={[]}
+        liveViews={[liveView]}
+        client={client}
+        sid="session"
+        showCode={showCode}
+        whole
+      />,
+    );
+    expect(mounted.getByText(liveView.title).closest('[data-execution-group]')).toBeNull();
+    expect(mounted.getByText(liveView.title).closest('section')).toHaveClass('border');
+    mounted.rerender(
+      <IterationTrace
+        iterations={[{ forms: [{ source, activity }] }]}
+        liveViews={[liveView]}
+        client={client}
+        sid="session"
+        showCode={showCode}
+        whole
+      />,
+    );
+    expect(mounted.getAllByText(liveView.title)).toHaveLength(1);
+    const title = mounted.getByText(liveView.title);
+    const group = title.closest('[data-execution-group]');
+    expect(group).toHaveClass('bg-code');
+    expect(group).not.toHaveClass('border');
+    expect(title.closest('.border')).toBe(title.closest('section'));
+  },
+);
 
 it('keeps concurrent owned views and unmatched views separate, including streamed updates', () => {
   const first = activityHistoryPage();

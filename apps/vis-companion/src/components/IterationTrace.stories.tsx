@@ -50,7 +50,7 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-/** Regression #216: completed tool-only work remains visible when Python source is hidden. */
+/** Hidden Python without Activity leaves no empty CODE receipt. */
 export const HiddenSourceWithoutOutput: Story = {
   args: {
     live: false,
@@ -61,8 +61,8 @@ export const HiddenSourceWithoutOutput: Story = {
     })),
   },
   play: async ({ canvas }) => {
-    await expect(canvas.getByText('CODE')).toBeVisible();
-    await expect(canvas.getByText('30ms')).toBeVisible();
+    await expect(canvas.queryByText('CODE')).toBeNull();
+    await expect(canvas.queryByText('30ms')).toBeNull();
     await expect(canvas.queryByRole('button', { name: 'Expand code' })).toBeNull();
     await expect(canvas.queryByText('value = 42')).toBeNull();
   },
@@ -797,6 +797,8 @@ export const HiddenCode: Story = {
   args: { live: true, showCode: false, iterations: STORY_COMPACT_EXECUTIONS },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await expect(canvasElement.querySelector('[data-execution-code]')).toBeNull();
+    await expect(canvasElement.querySelector('[data-code-result]')).toBeNull();
     await expect(canvas.queryByRole('list', { name: 'Operation groups' })).toBeNull();
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     await expect(canvas.queryByRole('button', { name: 'Copy code' })).toBeNull();

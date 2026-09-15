@@ -1250,10 +1250,12 @@ function formCodeLanguage(form: TranscriptForm): string {
   return language || 'python';
 }
 
-// The program the model wrote is the evidence on screen in every state — while
-// it runs, when it lands, and when it fails. The only sources a block hides are
-// one it never had and one no trace paints at all: a command turn's `src` is the
-// command itself, so painting it turned `/reload` into a program.
+function isPythonForm(form: TranscriptForm): boolean {
+  return formCodeLanguage(form) === 'python' && form.tag !== 'user-shell';
+}
+
+// Source is eligible for display unless the form belongs to hidden engine chrome
+// or a slash command. The device preference controls the entire Python detail band.
 function showFormCode(form: TranscriptForm, code: string): boolean {
   return Boolean(code) && !hiddenForm(form);
 }
@@ -1522,7 +1524,7 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
-      {((code && (showCode || !detectedActivity)) || cards.length > 0) && (
+      {showCode && (code || cards.length > 0) && (
         <CollapsibleFormCode
           value={code}
           language={formCodeLanguage(form)}
@@ -2376,9 +2378,9 @@ const TraceSegment = memo(function TraceSegment({
       entry.forms.forEach((form, formIndex) => {
         if (hiddenForm(form)) return;
         const key = `${entry.index}-${formIndex}-${form.scope ?? 'form'}`;
-        if (showFormCode(form, formCode(form))) {
+        const isPython = isPythonForm(form);
+        if (showFormCode(form, formCode(form)) || (!showCode && isPython)) {
           const pool = built.at(-1);
-          const isPython = formCodeLanguage(form) === 'python' && form.tag !== 'user-shell';
           if (isPython && !form.comment?.trim() && pool?.kind === 'code' && pool.isPython)
             pool.forms.push(form);
           else built.push({ kind: 'code', key, forms: [form], isPython });
@@ -2392,7 +2394,7 @@ const TraceSegment = memo(function TraceSegment({
       });
     });
     return built;
-  }, [segment]);
+  }, [segment, showCode]);
   const attachments = useMemo(() => segment.items.flatMap((entry) => entry.attachments), [segment]);
 
   return (
@@ -2571,7 +2573,7 @@ export const IterationTrace = memo(function IterationTrace({
           entry.forms.some(
             (form) =>
               !hiddenForm(form) &&
-              showFormCode(form, formCode(form)) &&
+              (showFormCode(form, formCode(form)) || (!showCode && isPythonForm(form))) &&
               liveOwnerMatches(view.owner, form.activity),
           ),
         ),

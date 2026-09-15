@@ -132,10 +132,10 @@ export const Typography: Story = {
       </Text>
       <div className="space-y-1">
         <Text as="p" variant="label">
-          Show Python code
+          Show Python code and results
         </Text>
         <Text as="p" variant="description">
-          One expandable source line before Activity. Hiding code keeps every activity and result.
+          Show source code and raw results before Activity. Turn off to show only Activity.
         </Text>
         <Text as="p" variant="meta">
           Signed-in session · expires in 6 days
@@ -149,8 +149,8 @@ export const Typography: Story = {
     const title = canvas.getByRole('heading', { name: 'Settings' });
     const heading = canvas.getByRole('heading', { name: 'Application' });
     const section = canvas.getByRole('heading', { name: 'Transcript' });
-    const label = canvas.getByText('Show Python code');
-    const description = canvas.getByText(/^One expandable/);
+    const label = canvas.getByText('Show Python code and results');
+    const description = canvas.getByText(/^Show source code/);
     const metadata = canvas.getByText(/^Signed-in session/);
     const size = (element: Element) => parseFloat(getComputedStyle(element).fontSize);
     await expect(size(title)).toBeGreaterThan(size(heading));

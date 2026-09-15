@@ -242,15 +242,15 @@ export function SettingsDialog({
               <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
                 <div className="min-w-0 space-y-1">
                   <Text as="p" variant="label">
-                    Show Python code
+                    Show Python code and results
                   </Text>
                   <Text as="p" variant="description">
-                    One expandable source line before Activity. Hiding code keeps every activity and
-                    result.
+                    Show source code and raw results before Activity. Turn off to show only
+                    Activity.
                   </Text>
                 </div>
                 <Switch
-                  label="Show Python code"
+                  label="Show Python code and results"
                   isOn={showPythonCode}
                   onClick={() => setPythonCodeShown(!showPythonCode)}
                 />

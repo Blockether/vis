@@ -973,9 +973,6 @@
     (doseq [width
             [40 80 160]
 
-            show-code?
-            [true false]
-
             grouped?
             [true false]]
 
@@ -1001,13 +998,11 @@
 
             paint
             (fn [expansions]
-              (format-iteration-entry-entries entry
-                                              width
-                                              1
-                                              {:session-id "s"
-                                               :session-turn-id "t"
-                                               :show-python-code? show-code?
-                                               :detail-expansions expansions}))
+              (format-iteration-entry-entries
+                entry
+                width
+                1
+                {:session-id "s" :session-turn-id "t" :detail-expansions expansions}))
 
             text-of
             (fn [entries]
@@ -1039,10 +1034,9 @@
         (expect (str/includes? (text-of opened) "DIAGNOSTIC_MARKER"))
         (expect (= grouped? (str/includes? (text-of opened) "SECOND_FAILURE")))
         (expect (not (str/includes? (text-of opened) "PRIVATE_SOURCE")))
-        (when show-code?
-          (let [code-only (text-of (paint {["s" code-id] true}))]
-            (expect (str/includes? code-only "PRIVATE_SOURCE"))
-            (expect (not (str/includes? code-only "DIAGNOSTIC_MARKER")))))
+        (let [code-only (text-of (paint {["s" code-id] true}))]
+          (expect (str/includes? code-only "PRIVATE_SOURCE"))
+          (expect (not (str/includes? code-only "DIAGNOSTIC_MARKER"))))
         (expect (= (text-of closed) (text-of (paint {["s" error-id] false}))))
         (expect (str/includes? (text-of closed) "29ms"))
         (expect (= original (pr-str entry))))))
@@ -1095,9 +1089,6 @@
     (doseq [width
             [40 80 160]
 
-            show-code?
-            [true false]
-
             expanded?
             [false true]]
 
@@ -1110,7 +1101,7 @@
                        {:code "next_call()" :error {:message "SECOND_FAILURE"}}]})
 
             options
-            {:session-id "s" :session-turn-id "t" :show-python-code? show-code?}
+            {:session-id "s" :session-turn-id "t"}
 
             closed
             (format-iteration-entry-entries entry (- width 8) 1 options)
@@ -1265,8 +1256,8 @@
 
 (defdescribe
   tool-only-hidden-source-test
-  ;; Regression #216: a duration alone does not identify completed tool work.
-  (it "keeps a named receipt when Python source and empty output are hidden"
+  ;; Hiding Python also hides the duration-only CODE receipt from #216.
+  (it "hides an output-free Python execution without leaving a CODE receipt"
       (doseq [width [40 80 120]]
         (let [entry (iteration/canonicalize
                       {:position 0
@@ -1288,8 +1279,8 @@
               visible (cap/frame-text captured)]
 
           (expect (nil? (:error captured)))
-          (expect (str/includes? visible "CODE"))
-          (expect (str/includes? visible "30ms"))
+          (expect (not (str/includes? visible "CODE")))
+          (expect (not (str/includes? visible "30ms")))
           (expect (not (str/includes? visible "value = 42")))))))
 
 (defdescribe
@@ -7465,7 +7456,7 @@ h = 8"
         (if (every? some? durations)
           (expect (str/includes? code-row (vis/format-duration (reduce + durations))))
           (expect (not (re-find #"(?:<1ms|[0-9]+ms|[0-9]+\.[0-9]+s)" code-row)))))))
-  (it "hides source without hiding execution or result"
+  (it "hides both source and result"
       (let [entry
             (iteration/canonicalize
               {:forms [{:code "private_code()" :stdout "result remains" :success? true}]})
@@ -7484,7 +7475,8 @@ h = 8"
 
         (expect (not (str/includes? text "private_code()")))
         (expect (not (str/includes? text "Execution")))
-        (expect (str/includes? text "RESULT")))))
+        (expect (not (str/includes? text "RESULT")))
+        (expect (not (str/includes? text "result remains"))))))
 
 (defn- grouped-activity-forms
   "The app's 2 + 2 + 3 grouping case, with a two-row retained-history window."
@@ -7515,6 +7507,102 @@ h = 8"
                             :next-after (when (> total 2) 2)}))}))
         (range 3)
         [2 2 3]))
+
+(defdescribe
+  python-visibility-test
+  (it
+    "hides Python source, stdout and diagnostics while preserving Activity live and restored"
+    (doseq [live?
+            [false true]
+
+            outcome
+            [:running :succeeded :failed]]
+
+      (let [form
+            (cond-> (assoc (first (grouped-activity-forms #{}))
+                      :code "PRIVATE_SOURCE()"
+                      :stdout "PRIVATE_RESULT"
+                      :duration-ms 29)
+              (= :running outcome)
+              (dissoc :success?)
+
+              (= :failed outcome)
+              (assoc :success?
+                false :error
+                {:message "PRIVATE_DIAGNOSTIC"}))
+
+            form
+            (-> form
+                (assoc-in [:activity :state] (name outcome))
+                (update-in [:activity :rows]
+                           (fn [rows]
+                             (mapv #(assoc % :state (name outcome)) rows)))
+                (assoc-in [:activity :counts]
+                          (assoc {:running 0 :succeeded 0 :failed 0 :cancelled 0} outcome 2)))
+
+            render-entries
+            (fn [shown?]
+              (#'render/trace-render-entries
+               {:iterations [{:forms [form]}]
+                :live? live?
+                :content-w 76
+                :session-id "visibility"
+                :session-turn-id "turn"
+                :settings {:show-python-code shown?}
+                :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
+
+            shown
+            (render-entries true)
+
+            hidden
+            (render-entries false)
+
+            text-of
+            #(str/join "\n" (map :line %))
+
+            activity-entries
+            #(filter (fn [entry]
+                       (str/starts-with? (:line entry) p/MARKER_ACTIVITY))
+                     %)]
+
+        (expect (str/includes? (text-of shown) "PRIVATE_SOURCE"))
+        (expect (str/includes? (text-of shown) "PRIVATE_RESULT"))
+        (when (= :failed outcome) (expect (str/includes? (text-of shown) "PRIVATE_DIAGNOSTIC")))
+        (expect (not (re-find #"PRIVATE_SOURCE|PRIVATE_RESULT|PRIVATE_DIAGNOSTIC|CODE|RESULT|Failed"
+                              (text-of hidden))))
+        (expect (seq (activity-entries hidden)))
+        (expect (= (activity-entries shown) (activity-entries hidden))))))
+  (it "hides raw output and diagnostics even when the form has no source"
+      (let [entry
+            (iteration/canonicalize {:forms [{:stdout "ORPHAN_RESULT"
+                                              :error {:message "ORPHAN_DIAGNOSTIC"}
+                                              :success? false}]})
+
+            text-of
+            (fn [shown?]
+              (str/join "\n" (format-iteration-entry entry 80 1 {:show-python-code? shown?})))]
+
+        (expect (str/includes? (text-of true) "ORPHAN_RESULT"))
+        (expect (str/includes? (text-of true) "ORPHAN_DIAGNOSTIC"))
+        (expect (not (re-find #"ORPHAN_RESULT|ORPHAN_DIAGNOSTIC|RESULT|Failed" (text-of false))))))
+  (it "keeps independent iteration and empty provider errors visible"
+      (doseq [entry [{:error {:message "INDEPENDENT_ERROR"}}
+                     (iteration/canonicalize {:forms [{:error {:message "INDEPENDENT_ERROR"}}]})]]
+        (expect (str/includes?
+                  (str/join "\n" (format-iteration-entry entry 80 1 {:show-python-code? false}))
+                  "INDEPENDENT_ERROR"))))
+  (it "keeps non-Python source and results visible"
+      (let [entry
+            (iteration/canonicalize {:forms [{:code "echo SHELL_SOURCE"
+                                              :display-language "bash"
+                                              :stdout "SHELL_RESULT"
+                                              :success? true}]})
+
+            text
+            (str/join "\n" (format-iteration-entry entry 80 1 {:show-python-code? false}))]
+
+        (expect (str/includes? text "SHELL_SOURCE"))
+        (expect (str/includes? text "SHELL_RESULT")))))
 
 (defdescribe
   grouped-activity-parity-test
@@ -7716,7 +7804,9 @@ h = 8"
             [{:forms [{:code "visible_code()" :success? true :stdout "kept result"}]}]
 
             opts
-            {:session-id "s" :session-turn-id "t"}
+            {:session-id "s"
+             :session-turn-id "t"
+             :detail-expansions {:vis.channel-tui/expand-all-details? true}}
 
             render-text
             (fn [shown?]
@@ -7730,9 +7820,12 @@ h = 8"
                                                               opts)))]
 
         (render/invalidate-cache!)
-        (expect (str/includes? (render-text true) "CODE"))
-        (expect (not (str/includes? (render-text false) "CODE")))
-        (expect (str/includes? (render-text true) "CODE")))))
+        (doseq [shown? [true false true]]
+          (let [text (render-text shown?)]
+            (expect (= shown? (str/includes? text "CODE")))
+            (expect (= shown? (str/includes? text "RESULT")))
+            (expect (= shown? (str/includes? text "visible_code()")))
+            (expect (= shown? (str/includes? text "kept result"))))))))
 
 (defdescribe
   activity-row-spacing-test

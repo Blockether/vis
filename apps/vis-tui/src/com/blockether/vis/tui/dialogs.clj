@@ -3035,9 +3035,9 @@
     "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}
    {:key :show-python-code
     :type :toggle
-    :label "Show Python code"
+    :label "Show Python code and results"
     :description
-    "One expandable source line before Activity; hiding code keeps activities and results."}])
+    "Show source code and raw results before Activity. Turn off to show only Activity."}])
 
 (declare titleize-label)
 

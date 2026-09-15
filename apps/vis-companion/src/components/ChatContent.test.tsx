@@ -1091,8 +1091,8 @@ describe('Activity follows the combined Python source', () => {
     expect(painted.container.textContent).not.toContain('Loading Activity');
   });
 
-  // Regression #181: diagnostics stay available independently of source and stdout.
-  it.each([true, false])('folds verbose grouped errors with showCode=%s', (showCode) => {
+  // Regression #181: visible Python diagnostics open independently of source and stdout.
+  it.each([true, false])('hides or folds grouped errors with showCode=%s', (showCode) => {
     const message = 'ToolError: ' + 'Diagnostic details for the agent. '.repeat(40);
     const trace = 'Traceback: diagnostic evidence';
     const turn = turnOf([
@@ -1111,6 +1111,16 @@ describe('Activity follows the combined Python source', () => {
     const painted = render(
       <IterationTrace iterations={turn.iterations ?? []} showCode={showCode} whole />,
     );
+    if (!showCode) {
+      expect(painted.container.querySelector('[data-execution-code]')).toBeNull();
+      expect(painted.container.querySelector('[data-code-result]')).toBeNull();
+      expect(painted.container.textContent).not.toContain(message);
+      expect(painted.container.textContent).not.toContain(trace);
+      expect(painted.container.textContent).not.toContain('SECOND_FAILURE');
+      expect(painted.container.textContent).not.toContain('print(private_result)');
+      expect(JSON.stringify(turn)).toBe(original);
+      return;
+    }
     const toggles = painted.getAllByRole('button', {
       name: 'Expand error details',
     });
@@ -1122,11 +1132,9 @@ describe('Activity follows the combined Python source', () => {
     expect(painted.container.textContent).not.toContain(trace);
     expect(painted.container.textContent).not.toContain('SECOND_FAILURE');
     expect(painted.container.textContent).not.toContain('print(private_result)');
-    if (showCode) {
-      fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
-      expect(painted.container.textContent).not.toContain(message);
-      fireEvent.click(painted.getByRole('button', { name: 'Collapse code' }));
-    }
+    fireEvent.click(painted.getByRole('button', { name: 'Expand code' }));
+    expect(painted.container.textContent).not.toContain(message);
+    fireEvent.click(painted.getByRole('button', { name: 'Collapse code' }));
     fireEvent.click(toggles[0]);
     expect(toggles[0]).toHaveAttribute('aria-expanded', 'true');
     expect(painted.container.textContent).toContain(message);
@@ -1764,8 +1772,7 @@ describe('a turn drawn as one thread', () => {
 });
 
 describe('compact execution groups', () => {
-  // Regression #216: hiding source must not erase a successful, output-free tool run.
-  it('keeps one compact receipt for tool-only iterations with hidden source and no output', () => {
+  it('does not leave a CODE receipt when Python is hidden and no Activity was emitted', () => {
     const painted = render(
       <IterationTrace
         whole
@@ -1776,9 +1783,9 @@ describe('compact execution groups', () => {
         }))}
       />,
     );
-    expect(painted.container.querySelectorAll('[data-execution-code]')).toHaveLength(1);
-    expect(painted.container.textContent).toContain('CODE');
-    expect(painted.container.textContent).toContain('30ms');
+    expect(painted.container.querySelector('[data-execution-code]')).toBeNull();
+    expect(painted.container.textContent).not.toContain('CODE');
+    expect(painted.container.textContent).not.toContain('30ms');
     expect(painted.container.textContent).not.toContain('value = 42');
     expect(painted.queryByRole('button', { name: 'Expand code' })).toBeNull();
     expect(painted.container.querySelector('[data-execution-activity]')).toBeNull();

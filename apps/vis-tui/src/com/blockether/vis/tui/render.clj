@@ -3579,8 +3579,12 @@
 (defn- inline-form-error-signatures
   [forms]
   (->> forms
-       (keep (fn [{:keys [code error]}]
-               (when (and (map? error) (not (str/blank? (str code)))) (error-map-signature error))))
+       (keep (fn [{:keys [code stdout error]}]
+               ;; Output-bearing forms own their diagnostics even before source arrives.
+               ;; Empty provider-error placeholders still use the iteration error surface.
+               (when (and (map? error)
+                          (or (not (str/blank? (str code))) (not (str/blank? (str stdout)))))
+                 (error-map-signature error))))
        set))
 
 (defn- inline-rendered-form-error?
@@ -7088,6 +7092,9 @@
                 code-language
                 (or (not-empty (str display-language)) "python")
 
+                show-execution-details?
+                (or show-python-code? (not= "python" code-language))
+
                 ;; Tree-sitter recovers from syntax errors, so colorize failed programs too.
                 ;; The diagnostic caret remains plain and column-aligned below.
                 colored-lines
@@ -7127,8 +7134,7 @@
                     (detail-expanded? detail-expansions session-id code-node-id false))
 
                 c-lines
-                (when (and (or show-python-code? (not= "python" code-language))
-                           (not (str/blank? code-text)))
+                (when (and show-execution-details? (not (str/blank? code-text)))
                   (let [header-width
                         (max 1 (long fill-w))
 
@@ -7193,7 +7199,7 @@
                   (update :stdout strip-produced-artifact-transport))
 
                 card
-                (vis/result-card display-form)
+                (when show-execution-details? (vis/result-card display-form))
 
                 result-text
                 (some-> (:body card)
@@ -7213,7 +7219,8 @@
                 ;; A code/card head or FAILED headline already carries the same figure;
                 ;; never paint it twice.
                 duration-stamp
-                (when-let [d (and (not (str/blank? code))
+                (when-let [d (and show-execution-details?
+                                  (not (str/blank? code))
                                   (not (and code-node-id (seq c-lines)))
                                   (nil? card)
                                   (nil? error)
@@ -7315,13 +7322,12 @@
                           :else (cond-> entries
                                   duration-stamp
                                   (conj duration-stamp))))
-                      ;; An output-free call retains its measured duration; with source hidden,
-                      ;; the named receipt still identifies the work without inventing output.
+                      ;; An output-free visible call retains its measured duration.
                       duration-stamp [duration-stamp])
 
-                ;; Failure status stays visible; diagnostics have an independent disclosure.
+                ;; Visible failures have an independent diagnostic disclosure.
                 inline-error-message-lines
-                (when error
+                (when (and show-execution-details? error)
                   (let [node-id
                         (when session-id
                           (detail-node-id {:session-turn-id session-turn-id

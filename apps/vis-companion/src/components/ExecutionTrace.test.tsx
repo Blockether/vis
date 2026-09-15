@@ -141,18 +141,16 @@ describe('execution grouping', () => {
     },
   );
 
-  it('keeps one result open as more stdout arrives, including with source hidden', () => {
+  it('keeps one result open as more stdout arrives', () => {
     const first = { source: 'first()', stdout: 'first output\n', duration_ms: 10 };
     const second = { source: 'second()' };
-    const view = render(
-      <IterationTrace whole live showCode={false} iterations={iterations([first, second])} />,
-    );
+    const view = render(<IterationTrace whole live iterations={iterations([first, second])} />);
+    fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
     fireEvent.click(view.getByRole('button', { name: 'Expand result' }));
     view.rerender(
       <IterationTrace
         whole
         live
-        showCode={false}
         iterations={iterations([first, { ...second, stdout: 'last output\n', duration_ms: 20 }])}
       />,
     );
@@ -240,7 +238,8 @@ describe('execution grouping', () => {
     fireEvent.click(view.getByRole('button', { name: 'Collapse code' }));
     expect(view.queryByText(/RESULT/)).toBeNull();
     act(() => setPythonCodeShown(false));
-    expect(view.getByRole('button', { name: 'Expand result' })).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Expand result' })).toBeNull();
+    expect(view.container.querySelector('[data-execution-code]')).toBeNull();
     expect(view.container.textContent).not.toContain('print(42)');
     expect(view.container.textContent).toContain('first stage');
   });
@@ -413,29 +412,95 @@ describe('execution grouping', () => {
   });
 });
 
-describe('device-local source visibility', () => {
-  it('updates mounted traces, persists across remounts, and keeps Activity available', () => {
-    const data = iterations([
-      {
-        source: 'secret_source()',
-        activity: activity('succeeded', 'retained stage'),
-      },
-    ]);
-    const view = render(<IterationTrace whole iterations={data} />);
-    expect(view.queryByRole('button', { name: 'Copy code' })).not.toBeNull();
-    act(() => setPythonCodeShown(false));
-    expect(readPythonCodeShown()).toBe(false);
-    expect(localStorage.getItem('vis.show_python_code')).toBe('hidden');
+describe('device-local Python visibility', () => {
+  it.each([false, true])(
+    'hides open source and results, persists across remounts, and retains Activity (live: %s)',
+    (live) => {
+      const data = iterations([
+        {
+          source: 'secret_source()',
+          stdout: 'raw Python output',
+          duration_ms: live ? undefined : 10,
+          activity: activity(live ? 'running' : 'succeeded', 'retained stage'),
+        },
+      ]);
+      const view = render(<IterationTrace whole live={live} iterations={data} />);
+      fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
+      fireEvent.click(view.getByRole('button', { name: 'Expand result' }));
+      expect(view.container.textContent).toContain('secret_source()');
+      expect(view.container.textContent).toContain('raw Python output');
+      act(() => setPythonCodeShown(false));
+      expect(readPythonCodeShown()).toBe(false);
+      expect(localStorage.getItem('vis.show_python_code')).toBe('hidden');
+      expect(view.container.textContent).not.toContain('secret_source()');
+      expect(view.container.textContent).not.toContain('raw Python output');
+      expect(view.container.querySelector('[data-execution-code]')).toBeNull();
+      expect(view.container.querySelector('[data-code-result]')).toBeNull();
+      expect(view.queryByRole('button', { name: 'Copy code' })).toBeNull();
+      expect(view.queryByRole('button', { name: 'Copy result' })).toBeNull();
+      expect(view.container.textContent).toContain('retained stage');
+      view.unmount();
+      const restored = render(<IterationTrace whole live={live} iterations={data} />);
+      expect(restored.container.querySelector('[data-execution-code]')).toBeNull();
+      expect(restored.container.querySelector('[data-code-result]')).toBeNull();
+      expect(restored.container.textContent).toContain('retained stage');
+      act(() => setPythonCodeShown(true));
+      fireEvent.click(restored.getByRole('button', { name: 'Expand code' }));
+      fireEvent.click(restored.getByRole('button', { name: 'Expand result' }));
+      expect(restored.container.textContent).toContain('secret_source()');
+      expect(restored.container.textContent).toContain('raw Python output');
+    },
+  );
+
+  it.each(
+    (['running', 'succeeded', 'failed', 'cancelled'] as const).flatMap((state) =>
+      [undefined, 'secret_source()'].map((source) => ({ state, source })),
+    ),
+  )('shows only Activity for $state Python with source $source', ({ state, source }) => {
+    setPythonCodeShown(false);
+    const view = render(
+      <IterationTrace
+        whole
+        live={state === 'running'}
+        iterations={iterations([
+          {
+            source,
+            stdout: 'raw Python output',
+            error: state === 'failed' ? { message: 'raw failure details' } : undefined,
+            duration_ms: state === 'running' ? undefined : 10,
+            activity: activity(state, 'retained stage'),
+          },
+        ])}
+      />,
+    );
+    expect(view.container.querySelector('[data-execution-code]')).toBeNull();
+    expect(view.container.querySelector('.bg-result')).toBeNull();
+    expect(view.queryByRole('button', { name: /(?:code|result|error details)$/ })).toBeNull();
     expect(view.container.textContent).not.toContain('secret_source()');
-    expect(view.queryByRole('button', { name: 'Copy code' })).toBeNull();
+    expect(view.container.textContent).not.toContain('raw Python output');
+    expect(view.container.textContent).not.toContain('raw failure details');
+    expect(view.container.querySelector('[data-execution-activity]')).not.toBeNull();
     expect(view.container.textContent).toContain('retained stage');
-    view.unmount();
-    const restored = render(<IterationTrace whole iterations={data} />);
-    expect(restored.container.textContent).not.toContain('secret_source()');
-    act(() => setPythonCodeShown(true));
-    fireEvent.click(restored.getByRole('button', { name: 'Expand code' }));
-    expect(restored.container.textContent).toContain('secret_source()');
   });
+
+  it.each([{ display_language: 'bash' }, { tag: 'user-shell' }])(
+    'does not hide non-Python code or results: %j',
+    (metadata) => {
+      setPythonCodeShown(false);
+      const view = render(
+        <IterationTrace
+          whole
+          iterations={iterations([
+            { source: 'printf shell', stdout: 'shell output', duration_ms: 10, ...metadata },
+          ])}
+        />,
+      );
+      fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
+      fireEvent.click(view.getByRole('button', { name: 'Expand result' }));
+      expect(view.container.textContent).toContain('printf shell');
+      expect(view.container.textContent).toContain('shell output');
+    },
+  );
 });
 
 it('opens the complete program below its own CODE header', () => {
