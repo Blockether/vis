@@ -1,0 +1,24 @@
+{
+  "lang": "python",
+  "prompt": "Report this bug to blockether/vis: the session list displays the same session twice after refresh. Search for duplicates first and create one issue only if none exists. Confirm it is recorded, then give me its URL. Use the installed issue tools. This is a local tracker simulation: do not use network or shell, read source files, import or recreate the extension, or write files yourself. Only the registered tools may change their ledger. If the tools are unavailable, report that and stop.",
+  "want": {
+    "issue-events.jsonl": [
+      "{\"op\": \"find\", \"repo\": \"blockether/vis\"}",
+      "{\"number\": 239, \"op\": \"create\", \"url\": \"https://github.com/Blockether/vis/issues/239\"}"
+    ]
+  },
+  "wantnot": {
+    "issue-events.jsonl": [
+      "\"number\": 240"
+    ]
+  },
+  "want_answer": [
+    "https://github.com/Blockether/vis/issues/239"
+  ],
+  "want_tools": [
+    "vis.issue_find",
+    "vis.issue_create"
+  ],
+  "max_form_output_chars": 6000,
+  "want_requested_route": true
+}

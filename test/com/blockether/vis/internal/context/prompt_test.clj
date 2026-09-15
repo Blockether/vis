@@ -528,7 +528,7 @@
         (doseq [rule ["Traverse available `fn.contract` in memory"
                       "`fields` is a list of `{name, type}`"
                       "Print only matching leaves, never whole `parameters`/`returns` branches"
-                      "Inspect shape before indexing or accessing attributes"]]
+                      "Inspect unknown shapes"]]
           (expect (str/includes? text rule) rule)))))
 
 (defdescribe
@@ -540,15 +540,34 @@
                       "Reuse results" "print needed fields or keys/types, not whole-value fallbacks"
                       "END the block, then decide in the NEXT block"]]
           (expect (str/includes? text rule) rule))))
-  (it "preserves output, shape recovery, and watched shell handles"
+  (it "preserves output and watched shell handles"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (doseq [rule ["keep results in variables" "`print()` is the ONE channel back"
                       "an unprinted value is DISCARDED" "a bare trailing expression is never echoed"
-                      "Inspect shape before indexing or accessing attributes"
-                      "use keys/types or `dir(value)`, not assumed `__dict__`"
-                      "On error inspect, then adapt" "answers a HANDLE" "`sh.logs(-50)`"
-                      "`sh.wait(s)`" "`sh.stop()`" "each carrying status"]]
-          (expect (str/includes? text rule) rule)))))
+                      "answers a HANDLE" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.stop()`"
+                      "each carrying status"]]
+          (expect (str/includes? text rule) rule))))
+  ;; #239: pin type-directed access and recovery without adding another discovery preflight.
+  (it "distinguishes mapping keys from record attributes and inspects only unknown shapes"
+      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+        (doseq [rule ["mappings `r['key']`, records `r.field`"
+                      "Inspect unknown shapes via keys/types or `dir(value)`, not `__dict__`"
+                      "Use error-provided keys, never guessed wrappers"]]
+          (expect (str/includes? text rule) rule))))
+  (it
+    "recovers a successful mutation's saved result rather than issuing it again"
+    (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+      (expect
+        (str/includes?
+          text
+          "After a successful write, recover its saved result after print/access errors; do not repeat the write"))))
+  (it "honors the requested issue tracker without assuming a project-specific extension exists"
+      (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
+        (expect (str/includes?
+                  text
+                  "Route issues to the named repository/tracker via installed tools or its CLI"))
+        (expect (str/includes? text "GitHub slugs are not Jira project keys"))
+        (expect (not (str/includes? text "vis.issue_create"))))))
 
 (defdescribe
   prompt-core-test
@@ -651,7 +670,8 @@
       ;; the prompt keeps helper policy and how the saved definitions follow the namespace.
       ;; 8.5k → 9.1k for #231: one demand-driven discovery policy, including recovery and reuse.
       ;; 9.1k → 9.7k for #232: registered call shape, semantic prose and withheld defaults.
-      (expect (< (count text) 9700))
+      ;; 9.7k → 10k for #239: type-directed recovery and explicit issue-tracker routing.
+      (expect (< (count text) 10000))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -716,7 +736,7 @@
                ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
                ;; "print only what the answer needs" a contract instead of cost advice.
                "`print()` is the ONE channel back" "unprinted value is DISCARDED"
-               "bare trailing expression is never echoed" "Inspect shape before indexing"
+               "bare trailing expression is never echoed" "Inspect unknown shapes"
                "nothing lists one for you" "tests-only work starts with `run_tests`"
                "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
                "rerun after the fix" "Cover changed behavior with tests"
