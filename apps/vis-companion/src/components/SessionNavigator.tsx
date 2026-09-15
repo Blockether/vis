@@ -269,18 +269,20 @@ export function HeaderTitle({
 }
 
 /**
- * Project header disclosure occupies the naming half; an empty project has no toggle,
- * while trailing project actions remain independently pressable.
+ * A project's name, counts and optional pages share one band. Narrow lists give
+ * counts the full second line; the disclosure never encloses another control.
  */
 export function ProjectCrumb({
   name,
   qualifier,
   qualifierTitle,
   disclosure,
+  navigation,
 }: {
   name: ReactNode;
   qualifier?: ReactNode;
   qualifierTitle?: string;
+  navigation?: ReactNode;
   /** The fold to expose, or null when this project has no session list. */
   disclosure: {
     isOpen: boolean;
@@ -289,30 +291,43 @@ export function ProjectCrumb({
     label: string;
   } | null;
 }) {
-  const title = (
-    <HeaderTitle
-      mark={
-        disclosure ? (
-          <ChevronIcon open={disclosure.isOpen} className="size-3.5 text-dialog-hint" />
-        ) : undefined
-      }
-      name={name}
-      qualifier={qualifier}
-      qualifierTitle={qualifierTitle}
-    />
-  );
-  if (!disclosure) return title;
-
   return (
-    <button
-      type="button"
-      aria-expanded={disclosure.isOpen}
-      aria-label={disclosure.label}
-      onClick={disclosure.onToggle}
-      className="flex min-w-0 flex-1 items-center text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
+    <span
+      className={`grid min-w-0 flex-1 items-center gap-x-2 pl-4 ${navigation ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-[auto_minmax(0,1fr)]'}`}
     >
-      {title}
-    </button>
+      {disclosure && (
+        <button
+          type="button"
+          aria-expanded={disclosure.isOpen}
+          aria-label={disclosure.label}
+          onClick={disclosure.onToggle}
+          className="col-span-2 col-start-1 row-span-2 row-start-1 -ml-4 self-stretch focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-white"
+        />
+      )}
+      <span className={`pointer-events-none col-start-1 row-span-2 row-start-1 ${LIST_MARK}`}>
+        {disclosure && (
+          <ChevronIcon open={disclosure.isOpen} className="size-3.5 text-dialog-hint" />
+        )}
+      </span>
+      <span
+        className={`pointer-events-none col-start-2 row-start-1 min-w-0 truncate self-end font-bold text-white ${HEADER_TYPE} ${navigation ? '@max-md:self-center' : ''}`}
+      >
+        {name}
+      </span>
+      {qualifier && (
+        <span
+          className={`pointer-events-none col-start-2 row-start-2 min-w-0 truncate self-start font-mono text-ui text-dialog-hint mouse:text-meta ${navigation ? '@max-md:col-span-2' : ''}`}
+          title={qualifierTitle}
+        >
+          {qualifier}
+        </span>
+      )}
+      {navigation && (
+        <span className="col-start-3 row-span-2 row-start-1 ml-1.5 flex items-center pr-5 @max-md:row-span-1 mouse:ml-0 mouse:pr-4">
+          {navigation}
+        </span>
+      )}
+    </span>
   );
 }
 

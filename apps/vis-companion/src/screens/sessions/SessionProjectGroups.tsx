@@ -16,7 +16,7 @@ import {
   ProjectStatusCounts,
   SectionHeader,
 } from '../../components/SessionNavigator';
-import { Button } from '../../components/ui';
+import { TextButton } from '../../components/ui';
 import {
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
@@ -424,6 +424,22 @@ export const ProjectGroup = memo(function ProjectGroup({
       )}
       <span className="min-w-0 truncate">
         <HeaderTally count={tally.count} unit="session" />
+        {hasPending && (
+          <>
+            <span aria-hidden> | </span>
+            <TextButton
+              className="pointer-events-auto relative whitespace-nowrap"
+              aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
+              onClick={() => {
+                acceptUpdates(pendingIds);
+                setFirst(0);
+                fold(true);
+              }}
+            >
+              {pendingIds.length} new
+            </TextButton>
+          </>
+        )}
         <ProjectStatusCounts live={tally.live} awaiting={tally.awaiting} unread={tally.unread} />
       </span>
     </span>
@@ -441,44 +457,22 @@ export const ProjectGroup = memo(function ProjectGroup({
         className="[&+&]:pt-2"
       >
         <SectionHeader>
-          <div className="flex min-w-0 flex-1 gap-3.5 sm:min-h-13 mouse:min-h-12 mouse:gap-2">
-            {/* The naming half keeps the same two-line rhythm with or without arrivals. */}
-            <ProjectCrumb
-              name={project}
-              qualifier={qualifier}
-              qualifierTitle={root}
-              disclosure={
-                hasSessions
-                  ? {
-                      isOpen: isShowing,
-                      onToggle: () => fold(!isShowing),
-                      label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
-                    }
-                  : null
-              }
-            />
-            {pager && <div className="flex shrink-0 items-center pr-5 mouse:pr-4">{pager}</div>}
-          </div>
+          <ProjectCrumb
+            name={project}
+            qualifier={qualifier}
+            qualifierTitle={root}
+            navigation={pager}
+            disclosure={
+              hasSessions
+                ? {
+                    isOpen: isShowing,
+                    onToggle: () => fold(!isShowing),
+                    label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
+                  }
+                : null
+            }
+          />
           <HeaderActions align="center">
-            {hasPending && (
-              <Button
-                variant="quiet"
-                density="compact"
-                pressEffect="none"
-                className="shrink-0"
-                aria-label={`Show ${pendingIds.length} newer ${pendingIds.length === 1 ? 'session' : 'sessions'}`}
-                onClick={() => {
-                  acceptUpdates(pendingIds);
-                  setFirst(0);
-                  fold(true);
-                }}
-              >
-                <span className="@lg:hidden">{pendingIds.length} new</span>
-                <span className="hidden @lg:inline">
-                  {pendingIds.length} newer {pendingIds.length === 1 ? 'session' : 'sessions'}
-                </span>
-              </Button>
-            )}
             <NewSessionButton
               machine={machineLabel(conn)}
               where={project}

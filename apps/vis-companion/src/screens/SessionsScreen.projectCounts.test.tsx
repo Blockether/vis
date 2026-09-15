@@ -109,8 +109,9 @@ describe('what a project header names', () => {
       });
       restore = view.restore;
       const heading = await screen.findByRole('button', { name: `Collapse ${name}` });
-      expect(within(heading).getAllByText(name)).toHaveLength(1);
-      const detail = heading.querySelector('[title]');
+      const header = heading.closest('header')!;
+      expect(within(header).getAllByText(name)).toHaveLength(1);
+      const detail = header.querySelector('[title]');
       expect(detail).toHaveAttribute('title', root);
       expect(detail?.textContent).toBe(`${qualifier ? `${qualifier} ·` : ''}1 session`);
     },
