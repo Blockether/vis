@@ -1529,8 +1529,8 @@ describe('running prose has one justified rule', () => {
     expect(uiSource).not.toContain('PROSE_RAGGED');
   });
 
-  it('is what answers and the user bubble wear', () => {
-    expect(chatSource).toContain('const runningText = PROSE;');
+  it('justifies messages while keeping nested tool results compact and left-aligned', () => {
+    expect(chatSource).toContain("const runningText = nested ? 'text-meta text-left' : PROSE;");
     expect(chatSource).toContain('text-you-message-foreground ${PROSE}');
   });
 });
@@ -3742,6 +3742,36 @@ describe('every control is drawn in the gallery', () => {
       );
     }
   });
+  // Interaction tests may wait for a fixed grace period, but the callback may
+  // only resolve that awaited promise: it must not generate or mutate fixtures.
+  const withoutInteractionDelays = (source: string) =>
+    source.replace(
+      /\bawait\s+new\s+Promise\(\s*\(([A-Za-z_$][\w$]*)\)\s*=>\s*setTimeout\(\s*\1\s*,\s*\d+\s*\)\s*\)/g,
+      '',
+    );
+
+  it('allows only side-effect-free awaited literal interaction delays', () => {
+    expect(
+      withoutInteractionDelays('await new Promise((resolve) => setTimeout(resolve, 350));'),
+    ).not.toContain('setTimeout');
+    for (const source of [
+      'setTimeout(updateFixture, 350);',
+      'new Promise((resolve) => setTimeout(resolve, 350));',
+      'await new Promise((resolve) => setTimeout(resolve, delay));',
+      'await new Promise((resolve) => setTimeout(updateFixture, 350));',
+      'await new Promise((resolve) => setTimeout(() => { updateFixture(); resolve(); }, 350));',
+      'await new Promise((resolve) => { setTimeout(resolve, 350); updateFixture(); });',
+      'await new Promise((resolve) => setTimeout(resolve, 350, updateFixture()));',
+      'setInterval(updateFixture, 350);',
+      'fetch("/fixture");',
+      'Math.random();',
+      'new Date();',
+      'new GatewayClient();',
+    ]) {
+      expect(withoutInteractionDelays(source)).toBe(source);
+    }
+  });
+
   // A story is a FIXTURE. Anything that fetches, ticks or rolls a die draws a
   // different picture every time it is opened, and two frames of it stop comparing.
   it('draws from fixtures, never from a clock, a die or a gateway', () => {
@@ -3754,7 +3784,7 @@ describe('every control is drawn in the gallery', () => {
         'new Date(',
         'GatewayClient',
       ]) {
-        expect(source, `${path} ${forbidden}`).not.toContain(forbidden);
+        expect(withoutInteractionDelays(source), `${path} ${forbidden}`).not.toContain(forbidden);
       }
     }
   });

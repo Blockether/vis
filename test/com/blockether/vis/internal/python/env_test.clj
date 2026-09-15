@@ -592,42 +592,31 @@
 
 (defdescribe
   gather-exception-contract-test
-  (it
-    "returns ordered values and exceptions through the documented async helpers"
-    (let
-      [{:keys [result seen]}
-       (gather-outcome
-         (str
-           "answers = await gather(call_slot(1), call_slot(None), call_slot(2), return_exceptions=True)\n"
-           "assert answers[0] == 1 and answers[2] == 2\n"
-           "assert isinstance(answers[1], Exception)\n"
-           "assert 'expected fixture failure' in str(answers[1])\n" "print('ordered')"))]
-      (expect (nil? (:error result)) (pr-str result))
-      (expect (= "ordered\n" (:stdout result)))
-      (expect (= [1 :failed 2] seen))))
-  (it
-    "settles successful helper siblings before surfacing the default-mode failure"
-    (let
-      [{:keys [result seen]}
-       (gather-outcome
-         "answers = await gather(call_slot(1), call_slot(None), call_slot(2))\nprint('not reached')")]
-      (expect (some? (:error result)))
-      (expect (str/includes? (pr-str (:error result)) "[1] expected fixture failure"))
-      (expect (not (str/includes? (str (:stdout result)) "not reached")))
-      (expect (= #{1 :failed 2} (set seen)))
-      (expect (= 3 (count seen)))))
-  ;; Council report 896: the pinned runtime probes direct calls before gather dispatch.
-  ;; Keep the documented limitation reproducible until its runtime fix is pinned.
-  (it "reproduces the direct-await limitation behind the documented helper workaround"
-      (doseq [mode ["False" "True"]]
+  ;; Council report 896: classifying a deferred call must not invoke it before
+  ;; gather dispatch. Direct calls and async helpers have the same recovery contract.
+  (it "returns ordered results and exceptions for direct calls and async helpers"
+      (doseq [calls ["succeed(1), fail(), succeed(2)"
+                     "call_slot(1), call_slot(None), call_slot(2)"]]
+        (let [{:keys [result seen]} (gather-outcome
+                                      (str "answers = await gather("
+                                           calls
+                                           ", return_exceptions=True)\n"
+                                           "assert answers[0] == 1 and answers[2] == 2\n"
+                                           "assert isinstance(answers[1], Exception)\n"
+                                           "assert 'expected fixture failure' in str(answers[1])\n"
+                                           "print('ordered')"))]
+          (expect (nil? (:error result)) (pr-str result))
+          (expect (= "ordered\n" (:stdout result)))
+          (expect (= [1 :failed 2] seen)))))
+  (it "settles every direct or wrapped sibling before surfacing the default-mode failure"
+      (doseq [calls ["succeed(1), fail(), succeed(2)"
+                     "call_slot(1), call_slot(None), call_slot(2)"]]
         (let [{:keys [result seen]}
-              (gather-outcome
-                (str "answers = await gather(succeed(1), fail(), succeed(2), return_exceptions="
-                     mode
-                     ")\nprint('not reached')"))]
-          (expect (str/includes? (pr-str (:error result)) "expected fixture failure"))
+              (gather-outcome (str "answers = await gather(" calls ")\nprint('not reached')"))]
+          (expect (some? (:error result)))
+          (expect (str/includes? (pr-str (:error result)) "[1] expected fixture failure"))
           (expect (not (str/includes? (str (:stdout result)) "not reached")))
-          (expect (= [1 :failed] seen))))))
+          (expect (= {1 1 :failed 1 2 1} (frequencies seen)))))))
 
 (defdescribe
   doc-authoritative-lookup-test
@@ -851,9 +840,11 @@
                         "independent deferred tool calls" "results preserve input order"
                         "keep dependent calls sequential" "every failing slot index"
                         "return_exceptions=True" "exception objects" "host slots run serially"
-                        "side effects" "Current limitation" "probes them before dispatch"
-                        "async def read_one(p): return await cat(p)"]]
-            (expect (str/includes? out text) text))))
+                        "side effects"
+                        "await gather(cat(path_a), cat(path_b), return_exceptions=True)"]]
+            (expect (str/includes? out text) text))
+          (expect (not (str/includes? out "Current limitation")))
+          (expect (not (str/includes? out "probes them before dispatch")))))
     ;; The fold receipt promises nothing it cannot keep: with the native-result
     ;; store gone there is no coordinate to hand back, so the doc says the gist is
     ;; what survives and `read_session()` is the only door to the rest.

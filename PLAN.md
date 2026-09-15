@@ -1019,6 +1019,13 @@ new binary into the running gateway.
    binary cases pass, including real packages in JVM/native workers. Recent main
    CI still has an unassigned macOS job despite an online, idle matching runner;
    local diagnosis needs read-only access. No runner or gateway was restarted.
+7. Candidate `18ad4fe2f` is on `main`; Linux and macOS real SDK CI jobs pass.
+   New documentation and Companion regressions are repaired: all 62 documentation
+   tests and 3230 Companion tests pass (two platform skips). Story fixtures still
+   reject mutation timers, clocks, random data and live gateway clients.
+8. Full Linux CI ran 6070 cases. Its remaining gather failure asserted a runtime
+   limitation already fixed in the published runtime. The old assertion reproduces
+   locally; updated direct-call/helper contracts and all 74 environment cases pass.
    No Vis release tag exists; green source CI and full publication remain pending.
 
 # Shared FFF lifecycle and retention experiments

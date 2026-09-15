@@ -166,7 +166,6 @@ export const ResultFirst: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('[data-activity-row]'));
-    await expect(rows).toHaveLength(6);
     const expected = [
       'greeting',
       '"Hi "',
@@ -174,7 +173,9 @@ export const ResultFirst: Story = {
       'captured lines',
       'one disclosure',
       '12 tests passed.',
+      'one disclosure',
     ];
+    await expect(rows).toHaveLength(expected.length);
     for (const [index, row] of rows.entries()) {
       const step = within(row).getByRole('button');
       await expect(step.getBoundingClientRect().height).toBe(24);
@@ -187,10 +188,12 @@ export const ResultFirst: Story = {
     const tests = within(rows[5]);
     await expect(tests.queryByRole('table')).not.toBeInTheDocument();
     await expect(rows[5].textContent).toContain('12 tests · 0 failed');
-    const message = rows[4].querySelector('p')!;
-    await expect(getComputedStyle(message).textAlign).toBe('left');
-    await expect(within(rows[4]).queryByRole('table')).not.toBeInTheDocument();
-    await expect(rows[4].textContent).not.toMatch(/Thread id|Title|42|Kind|Content|Ping|reviewer/);
+    for (const row of [rows[4], rows[6]]) {
+      const message = row.querySelector('p')!;
+      await expect(getComputedStyle(message).textAlign).toBe('left');
+      await expect(within(row).queryByRole('table')).not.toBeInTheDocument();
+      await expect(row.textContent).not.toMatch(/Thread id|Title|42|Kind|Content|Ping|reviewer/);
+    }
     await expect(rows[5].textContent).not.toContain('Is pass');
     await expect(canvas.queryByRole('columnheader', { name: 'Field' })).not.toBeInTheDocument();
     await expect(canvas.queryByRole('columnheader', { name: 'Value' })).not.toBeInTheDocument();

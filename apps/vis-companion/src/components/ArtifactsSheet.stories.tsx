@@ -3,7 +3,6 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_ARTIFACT_HISTORY, STORY_ARTIFACTS, STORY_INERT_CLIENT } from '../dev/story-data';
 import type { SessionArtifact } from '../lib/artifacts';
-import type { GatewayClient } from '../lib/gateway';
 import { ArtifactsSheet } from './ArtifactsSheet';
 
 /** The session's produced files, indexed without eagerly fetching their bytes. */
@@ -80,7 +79,7 @@ export const OpenedDocument: Story = {
       attachmentBlob: async () =>
         new Blob(['# Plan\n\nRead without a margin.'], { type: 'text/markdown' }),
       retainAttachment: () => () => {},
-    } as unknown as GatewayClient,
+    } as unknown as typeof STORY_INERT_CLIENT,
     artifacts: [note],
     initialArtifact: note,
   },
