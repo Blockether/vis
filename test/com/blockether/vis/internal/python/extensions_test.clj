@@ -5102,6 +5102,70 @@ vis.register_extension(vis.Extension(
             (finally (ep/dispose-python-context! ctx))))))))
 
 (defdescribe
+  bounded-symbol-contract-doc-test
+  ;; Issue #234: compact docs and the complete schema must survive the real host boundary.
+  (it
+    "deduplicates and bounds discovery without truncating callable metadata or results"
+    (with-fresh-loaded
+      {"schema_probe.py"
+       (slurp "e2e/scenarios/extension-schema-discovery/files/.vis/extensions/schema_probe.py")}
+      (fn [result _]
+        (expect (= 1 (:loaded result)))
+        (let [ext
+              (registered "schema-probe")
+
+              made
+              (ep/create-python-context {} nil {:worker? true} nil)
+
+              ctx
+              (:python-context made)
+
+              env
+              {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+          (try
+            (lp/sync-active-extension-symbols! env [ext])
+            (let
+              [answer
+               (ep/run-python-block
+                 ctx
+                 (str
+                   "cards_doc = doc('schema_probe.cards')\n"
+                   "assert 'Returns: ToolCard | tuple[ToolCard, ...]' in cards_doc\n"
+                   "assert 'Sandbox sequences are list-like, not Python tuples' in cards_doc\n"
+                   "assert cards_doc.count('- key: str\\n') == 1, cards_doc\n"
+                   "assert 'key: str | None (positional_or_keyword; default None)' in cards_doc\n"
+                   "before = schema_probe.monitor.contract\n"
+                   "monitor_doc = doc('schema_probe.monitor')\n"
+                   "assert 'Effect: observation' in monitor_doc\n"
+                   "assert 'Read a fixed local monitor snapshot without changing it.' in monitor_doc\n"
+                   "assert monitor_doc.count('- address: str') == 1\n"
+                   "assert 'Microseconds' not in monitor_doc\n"
+                   "assert 'schema_probe.monitor.contract' in monitor_doc\n"
+                   "assert len('Model schemas:' + monitor_doc.split('Model schemas:', 1)[1]) <= 2048\n"
+                   "assert monitor_doc == doc('schema_probe.monitor')\n"
+                   "assert before == schema_probe.monitor.contract\n"
+                   "assert schema_probe.cards.contract['parameters'][0]['default_is_none'] is True\n"
+                   "card = await schema_probe.cards('atlas')\n"
+                   "cards = await schema_probe.cards()\n"
+                   "value = await schema_probe.monitor()\n"
+                   "assert card.name == 'Atlas' and len(cards) == 2\n"
+                   "assert value.active_jobs == 7\n"
+                   "assert value.failures[0].target.address == '10.0.0.5'\n"
+                   "typ = next(f['type'] for f in before['returns']['fields'] if f['name'] == 'diagnostics')\n"
+                   "sample = value.diagnostics\n"
+                   "for _ in range(40):\n"
+                   "    typ = next(f['type'] for f in typ['fields'] if f['name'] == 'sample')\n"
+                   "    sample = sample.sample\n"
+                   "assert typ['fields'][0]['type']['description'] == 'Microseconds since the last successful heartbeat.'\n"
+                   "assert sample.elapsed == 750\n"
+                   "print('compact docs, complete contract and results')"))]
+              (expect (nil? (:error answer)) (pr-str answer))
+              (expect (str/includes? (or (:stdout answer) "")
+                                     "compact docs, complete contract and results")))
+            (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe
   typed-catalog-recipe-test
   ;; Issue #203: registration-only tests missed the typed catalog/host boundary.
   (it

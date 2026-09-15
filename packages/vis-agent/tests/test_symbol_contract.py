@@ -299,3 +299,197 @@ def test_postponed_pathlike_contract(annotation, bound):
         else pathlike
     )
     assert actual == expected
+
+
+@dataclass(frozen=True)
+class DocCommand:
+    """One supported command; no command is executed by discovery."""
+
+    verb: str
+    retries: Annotated[int, "Retries after the first attempt."]
+
+
+@dataclass(frozen=True)
+class DocTool:
+    """A callable's command summary."""
+
+    name: str
+    commands: tuple[DocCommand, ...]
+
+
+@dataclass(frozen=True)
+class DocSnapshot:
+    entries: tuple[DocTool, ...]
+
+
+@dataclass(frozen=True)
+class DocWait:
+    snapshot: DocSnapshot
+    failures: tuple[DocTool, ...]
+
+
+@dataclass(frozen=True)
+class DocLeft:
+    right: DocRight | None
+
+
+@dataclass(frozen=True)
+class DocRight:
+    left: DocLeft | None
+
+
+def schema_symbol(annotation):
+    """Inspect a typed result without executing its function."""
+
+    def values(*, limit: int | None = None):
+        """Read local results; never retries or changes state."""
+        pytest.fail("discovery executed the tool")
+
+    values.__annotations__["return"] = annotation
+    return vis.Symbol(values)
+
+
+def test_doc_deduplicates_scalar_or_sequence_union_without_changing_the_contract():
+    # #234: the same element schema formerly appeared once per union branch.
+    symbol = schema_symbol(DocTool | tuple[DocTool, ...])
+    before = symbol.contract
+    document = symbol._spec()["doc"]
+    assert "Returns: DocTool | tuple[DocTool, ...]" in document
+    assert "Sandbox sequences are list-like, not Python tuples" in document
+    assert "Sandbox sequences" not in schema_symbol(int)._spec()["doc"]
+    assert document.count("- name: str") == 1
+    assert document.count("- verb: str") == 1
+    assert "One supported command" in document
+    assert symbol.contract == before
+    assert before["returns"]["arguments"][1]["arguments"][0]["fields"]
+
+
+def test_doc_shares_model_definitions_between_result_paths_and_parameters():
+    # #234: snapshot entries and failures must reference the same model definition.
+    symbol = schema_symbol(DocWait)
+    spec = symbol._spec()
+    document = spec["doc"]
+    assert "- snapshot: DocSnapshot" in document
+    assert "- failures: tuple[DocTool, ...]" in document
+    assert document.count("- name: str") == 1
+    assert document.count("- verb: str") == 1
+    assert "Retries after the first attempt." in document
+    contract = spec["contract"]
+    contract["parameters"][0]["type"] = contract["returns"]
+    document = vis._contract_doc(contract)
+    assert document.count("- name: str") == 1
+    assert "Effect: observation" in document
+    assert "keyword_only; default None" in document
+    assert "Read local results; never retries or changes state." in document
+
+
+def test_doc_recursive_models_are_defined_once_across_union_branches():
+    # #234: a reference and a fuller occurrence describe the same recursive model.
+    document = schema_symbol(DocLeft | DocRight)._spec()["doc"]
+    assert document.count("- right: DocRight | None") == 1
+    assert document.count("- left: DocLeft | None") == 1
+
+
+def test_doc_bounds_deep_schema_but_retains_full_nested_contract():
+    # #234: the budget limits generated fields, not the semantic call envelope.
+    from dataclasses import make_dataclass
+
+    model = make_dataclass(
+        "Detail", [("units", Annotated[int, "Microseconds at source."])]
+    )
+    for level in range(40):
+        model = make_dataclass(
+            f"Layer{level}", [("child", model), ("sample_count", int), ("source", str)]
+        )
+    symbol = schema_symbol(model)
+    contract = symbol.contract
+    document = symbol._spec()["doc"]
+    assert "Microseconds at source." not in document
+    assert "values.contract" in document
+    assert "2048" in document
+    assert len(document.split("Model schemas:\n", 1)[1]) <= 2048
+    assert document == symbol._spec()["doc"]
+    assert contract == symbol.contract
+    deepest = contract["returns"]
+    for _ in range(40):
+        deepest = deepest["fields"][0]["type"]
+    assert deepest["fields"][0]["type"]["description"] == "Microseconds at source."
+    catalog = vis.Catalog([symbol])
+    assert document in catalog.help("values").text
+    deepest_spec = catalog.spec("values").returns
+    for _ in range(40):
+        deepest_spec = deepest_spec.fields[0].type
+    assert deepest_spec.fields[0].type.description == "Microseconds at source."
+
+
+def test_doc_preserves_usage_notes_and_distinguishes_same_named_models():
+    # #234: names alone are not enough to identify a portable model shape.
+    from dataclasses import make_dataclass
+
+    left = make_dataclass("Item", [("count", int)])
+    right = make_dataclass("Item", [("label", str)])
+    pair = make_dataclass(
+        "Pair",
+        [
+            ("left", Annotated[left, "Current count."]),
+            ("again", Annotated[left, "Previous count."]),
+            ("right", right),
+        ],
+    )
+    document = schema_symbol(pair)._spec()["doc"]
+    assert document.count("- count: int") == 1
+    assert document.count("- label: str") == 1
+    assert "Current count." in document and "Previous count." in document
+    assert "- right: Item [2]" in document
+
+
+def test_doc_schema_budget_does_not_truncate_the_callable_semantics():
+    # #234: schema abbreviation cannot conceal preconditions or split field lines.
+    from dataclasses import make_dataclass
+
+    model = make_dataclass(
+        "Large", [("value", Annotated[str, "Large field note. " * 300])]
+    )
+    contract = schema_symbol(model).contract
+    contract["description"] = "Required safety condition. " * 150
+    document = vis._contract_doc(contract)
+    assert document.startswith(contract["description"])
+    assert "Effect: observation" in document
+    assert "Returns: Large" in document
+    assert "- limit: int | None (keyword_only; default None)" in document
+    assert "Large field note." not in document
+    assert len(document.split("Model schemas:\n", 1)[1]) <= 2048
+    assert "values.contract" in document
+
+
+def test_abbreviation_points_to_the_full_nested_callable_attribute():
+    # #234: rendering before namespace qualification produced an unusable pointer.
+    from dataclasses import make_dataclass
+
+    model = make_dataclass("Large", [("value", Annotated[str, "Detail. " * 300])])
+
+    class Inner:
+        values = staticmethod(schema_symbol(model).fn)
+
+    class Outer:
+        tools = Inner()
+
+    symbol = vis.Symbol(Outer(), name="nested")
+    method = symbol._spec()["methods"][0]
+    assert method["contract"]["name"] == "nested.tools.values"
+    assert "nested.tools.values.contract (dictionary, not a doc topic)" in method["doc"]
+    assert "Traverse/filter ['parameters'] or ['returns'] in Python" in method["doc"]
+    assert "print only matching leaf fields, never whole branches" in method["doc"]
+    assert method["doc"] in vis.Catalog([symbol]).help("nested.tools.values").text
+
+
+def test_schema_budget_includes_an_abbreviation_with_a_long_callable_name():
+    # #234: even a valid unusually long identifier must not overflow the notice.
+    from dataclasses import make_dataclass
+
+    model = make_dataclass("Large", [("value", Annotated[str, "Detail. " * 300])])
+    contract = schema_symbol(model).contract
+    contract["name"] = "v" * 2048
+    document = vis._contract_doc(contract)
+    assert len("Model schemas:" + document.split("Model schemas:", 1)[1]) <= 2048
+    assert ".contract" in document

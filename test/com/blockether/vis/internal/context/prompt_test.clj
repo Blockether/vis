@@ -471,32 +471,30 @@
         (str/includes?
           text
           "For operational failures, apply known recovery; read the indicated contract only if unknown or changed"))))
-  (it
-    "consolidates discovery policy with the authoritative lookup contract in the base prompt"
-    (let [text
-          (prompt/build-system-prompt {})
+  (it "consolidates discovery policy with the authoritative lookup contract in the base prompt"
+      (let [text
+            (prompt/build-system-prompt {})
 
-          section
-          (second (str/split text #"## 1\. Identity \+ Epistemic stance" 2))
+            section
+            (second (str/split text #"## 1\. Identity \+ Epistemic stance" 2))
 
-          discovery
-          (some-> section
-                  (str/split #"## 2\. Execution surfaces" 2)
-                  first)]
+            discovery
+            (some-> section
+                    (str/split #"## 2\. Execution surfaces" 2)
+                    first)]
 
-      (expect (some? discovery))
-      (when discovery
-        (doseq
-          [rule
-           ["Discovery is demand-driven"
-            "identify the unresolved question affecting the next step; if none, stop reading"
-            "Use the narrowest exact contract; avoid broad indexes or full docs when a known signature suffices"
-            "`apropos(pattern)` filters SYMBOL names" "`doc(name)` returns"
-            "obey its stated preconditions"]]
-          (expect (str/includes? discovery rule) rule)))
-      (expect (= 1 (count (re-seq #"Discovery is demand-driven" text))))
-      (expect
-        (= 1 (count (re-seq #"identify the unresolved question affecting the next step" text)))))))
+        (expect (some? discovery))
+        (when discovery
+          (doseq [rule
+                  ["Discovery is demand-driven"
+                   "identify the unresolved question affecting the next step; if none, stop reading"
+                   "use narrow `doc(name)`" "`apropos(pattern)` filters SYMBOL names"
+                   "`doc(name)` returns" "obey its stated preconditions"]]
+            (expect (str/includes? discovery rule) rule)))
+        (expect (= 1 (count (re-seq #"Discovery is demand-driven" text))))
+        (expect (= 1
+                   (count (re-seq #"identify the unresolved question affecting the next step"
+                                  text)))))))
 
 (defdescribe
   core-prompt-registered-python-contract-test
@@ -505,8 +503,7 @@
       (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
         (doseq [rule ["registered signature and resolved types are authoritative for call shape"
                       "parameter kinds, required/default status, return type and mutation tag"
-                      "inspect `doc(name)` or the callable's `.contract` (SDK `ToolSpec`)"
-                      "not handwritten signatures"]]
+                      "Unknown call shape: use narrow `doc(name)`" "not handwritten signatures"]]
           (expect (str/includes? text rule) rule))))
   (it "keeps semantic documentation and discovery useful without duplicating structure"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
@@ -516,6 +513,14 @@
             "Keep discovery summaries concise"
             "do not duplicate signatures, default declarations or return schemas in docstrings"
             "omit optional arguments to use their defaults; never pass the display marker `...`"]]
+          (expect (str/includes? text rule) rule))))
+  (it "filters full metadata before printing omitted schema details"
+      ;; #234: a full contract dump erased compact-doc savings in real-model E2E.
+      (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
+        (doseq [rule
+                ["For omitted details, traverse the callable's `.contract` dictionary"
+                 "from `['parameters']` or `['returns']`"
+                 "print only matching leaf fields, never whole schema branches or large results"]]
           (expect (str/includes? text rule) rule)))))
 
 (defdescribe
@@ -524,7 +529,8 @@
   (it "keeps independent batching separate from dependent observations"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (doseq [rule ["plural arguments first" "`await gather(...)` for" "independent calls"
-                      "Print it and END the block; continue in the NEXT block"]]
+                      "Print only needed fields or keys/types"
+                      "END the block, then decide in the NEXT block"]]
           (expect (str/includes? text rule) rule))))
   (it "preserves output, shape recovery, and watched shell handles"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
@@ -1339,7 +1345,7 @@
   core-prompt-grounds-patch-retries-test
   (it "waits for observed anchors before generating a dependent patch"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule ["Print it and END the block; continue in the NEXT block"
+        (doseq [rule ["END the block, then decide in the NEXT block"
                       "Copy observed anchors verbatim"
                       "checking each endpoint's line number and full three-character hash"
                       "Never guess hashes, use placeholders or probe with an invalid patch"

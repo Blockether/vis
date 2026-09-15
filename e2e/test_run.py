@@ -303,6 +303,69 @@ class ActivityToolEvidenceTest(unittest.TestCase):
                     self.assertIn("tools=ls×1", result["detail"])
 
 
+class FormOutputBudgetTest(unittest.TestCase):
+    def test_budget_checks_every_output_without_truncating_it(self):
+        # #234: a correct answer can still waste context by dumping full metadata.
+        cases = [
+            (None, 24757, None, True),
+            (6000, 5999, None, True),
+            (6000, 6000, None, True),
+            (6000, 24757, None, False),
+            (0, 0, None, True),
+            (0, 1, None, False),
+            (6000, 6001, {"message": "recorded failure"}, False),
+            (-1, 0, None, False),
+            ("6000", 0, None, False),
+            (True, 0, None, False),
+        ]
+        for limit, size, error, expected in cases:
+            scenario = run.load_scenarios(["ls-source-root-discovery"])[0].copy()
+            scenario.update(
+                want={}, wantnot={}, want_answer=[], want_forms=[], want_tools=[]
+            )
+            if limit is not None:
+                scenario["max_form_output_chars"] = limit
+            output = "x" * size
+            events = [
+                {
+                    "event": "trace-chunk",
+                    "payload": {
+                        "phase": "form-result",
+                        "stdout": output,
+                        "error": error,
+                    },
+                },
+                {
+                    "event": "trace-chunk",
+                    "payload": {"phase": "form-result", "stdout": ""},
+                },
+                {"event": "result", "payload": {"answer": "Ready"}},
+            ]
+            with (
+                self.subTest(limit=limit, size=size, error=error),
+                tempfile.TemporaryDirectory() as traces,
+                patch.object(run, "TRACES", traces),
+                patch.object(run, "source_classpath", return_value="/checkout/src"),
+                patch.object(run.subprocess, "run") as invoke,
+            ):
+                invoke.return_value.returncode = 0
+                invoke.return_value.stdout = "\n".join(
+                    json.dumps(event) for event in events
+                )
+                result = run.run_one((scenario, "test-model", {}, 12344))
+                self.assertEqual(expected, result["correct"])
+                if not expected:
+                    self.assertIn("max_form_output_chars", " ".join(result["detail"]))
+                if type(limit) is int and limit >= 0:
+                    self.assertIn(
+                        f"max-form-output={size}/{limit} chars", result["evidence"]
+                    )
+                if error:
+                    self.assertIn("recorded failure", result["err_msgs"])
+                trace = (Path(traces) / f"{scenario['id']}.jsonl").read_text()
+                self.assertIn(output, trace)
+
+
 class ReasoningEffortTest(unittest.TestCase):
     def run_scenario(
         self,

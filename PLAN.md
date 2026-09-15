@@ -650,3 +650,75 @@ space and restraint from ChatGPT/Codex, not chrome.
 2. Not started; measure both densities before changing widths.
 3. Not started; the largest behaviour change, confirm before implementing.
 4. Not started; follows 1–3 so counts measure the settled layout.
+
+# Bounded generated tool schemas (#234)
+
+Describe each model once; retain full type metadata for focused inspection.
+
+## Context
+
+`packages/vis-agent/src/blockether/vis/extension.py` owns `_contract_doc`. Its
+previous `_contract_field_docs` recursively repeated every field path, including
+equivalent union branches and reused nested records. #232 corrected authoring
+guidance but did not change this rendering. The portable `.contract` and SDK
+`Catalog.spec()` already expose complete metadata; do not add a second schema,
+weaken annotations, or truncate callable semantics to shorten generated output.
+Existing unrelated worker, companion and native-test changes remain outside scope.
+
+## 1. Reproduce and define the compact representation
+
+- Rationale: short author docstrings cannot remove generated repetition.
+- Data: SDK symbol/catalog tests and typed union, shared-record, recursive, deep
+  and same-name fixtures; current generated output and token counts.
+- Acceptance criteria: failing regressions demonstrate duplication and unbounded
+  field expansion, while metadata and omission semantics remain unchanged.
+- Unknowns: exact savings for the representative E2E fixture before the fix.
+
+## 2. Render bounded, reusable model definitions
+
+- Rationale: the same schema should cost context once, not once per path.
+- Data: registered signature/type metadata; model definitions shared across
+  parameter and result schemas, with a 2048-character generated-schema budget.
+- Acceptance criteria: deterministic deduplication and abbreviation, useful type
+  descriptions, distinct same-named shapes, complete call envelope and an explicit
+  path to full nested `.contract`/`Catalog.spec()` details. Document the boundary.
+- Unknowns: recursive reference equivalence and per-use annotation descriptions
+  must not merge different schemas or discard semantic notes.
+
+## 3. Verify the real host and model workflow
+
+- Rationale: smaller local strings do not prove sandbox discovery or real calls.
+- Data: real extension-host registration/doc/invocation tests, existing #232 E2E,
+  a new complex-schema E2E and before/after token measurements. Real-model traces
+  exposed full-contract dumps after compact discovery, so the consolidated rule in
+  `src/com/blockether/vis/internal/context/prompt.clj` requires filtering before
+  printing. `e2e/run.py` now checks an optional per-form stdout budget, with tests
+  in `e2e/test_run.py`; the schema scenario allows at most 6,000 characters.
+- Acceptance criteria: compact and full inspection both work across the worker
+  boundary; two available model routes pass without fallback, source reads or
+  copied call-shape hints; focused tests, formatting/lint and scoped diff pass.
+- Unknowns: availability of a second provider/model route; report failures and
+  measurement method rather than infer a universal model-quality gain.
+
+## Plan state
+
+1. Baseline SDK checks passed (49 tests); five new regressions reproduced the bug.
+   Fixture baseline: 21,389 characters / 3,473 estimated o200k_base tokens for monitor.
+2. Named models, the 2,048-character schema budget and qualified attribute notices
+   are implemented. SDK: 820 passed, 38 skipped; complete metadata is unchanged.
+   Monitor doc: 2,145 characters / 621 estimated o200k_base tokens, about 82% fewer
+   tokens than the fixture baseline. This measures doc text, not total provider cost.
+3. Complete: host-boundary, docs and prompt tests pass (137 latest Clojure tests),
+   plus 34 E2E-runner/fixture tests and 29 subtests. Python formatting/lint passes;
+   Clojure lint has no errors and only four unchanged reflection warnings.
+   Final schema E2E passes on OpenAI GPT-6 Astra and GLM-5.3 Flash, both on the
+   requested routes, without errors or fallback. Traces confirm the atlas-only
+   call precedes the all-cards call, followed by one monitor call and focused leaf
+   metadata inspection. Maximum form stdout is 2,408 / 2,635 characters respectively,
+   below the 6,000-character gate. The #232 OpenAI regression also passes.
+   Earlier runs exposed full-contract dumps, dictionary/attribute confusion and
+   sandbox tuple-identity assumptions. Qualified notices, an explicit dictionary
+   and sequence boundary, and one consistent filtered-output rule address them;
+   the core prompt remains within its unchanged 9,700-character ceiling.
+   Scoped diff review is complete. No live-service restart, release, worktree or
+   unrelated change is included.

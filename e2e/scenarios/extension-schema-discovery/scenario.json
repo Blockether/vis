@@ -1,0 +1,24 @@
+{
+  "lang": "python",
+  "prompt": "Use the preinstalled schema_probe extension to read only the atlas tool card first, then read all available tool cards and inspect the current monitor snapshot. Report the atlas display name, the number of available cards, active jobs, the failed target address, and the deepest diagnostic elapsed measurement with its declared unit. Do not read source files, import or recreate the extension, use shell, or write files. If the extension is unavailable, report that and stop.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "Atlas",
+    "2",
+    "7",
+    "10.0.0.5",
+    "750",
+    "microseconds"
+  ],
+  "want_tools": [
+    "schema_probe.cards",
+    "schema_probe.monitor"
+  ],
+  "want_forms": [
+    "doc(",
+    ".contract"
+  ],
+  "max_form_output_chars": 6000,
+  "want_requested_route": true
+}

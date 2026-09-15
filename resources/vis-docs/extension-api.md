@@ -297,6 +297,25 @@ binds arguments; the implementation validates domain constraints. There is no ma
 schema/signature override. The exact portable shape is the
 [symbol schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/symbol.json).
 
+### Compact model schemas
+
+When parameter or return types contain records, `doc()` defines each shared model
+once and refers to it by name. A type such as `ToolSpec | tuple[ToolSpec, ...]`
+therefore has one `ToolSpec` field definition, not one per union branch. Distinct
+model shapes with the same name get numbered display labels.
+
+The generated **Model schemas** section has a 2,048-character budget, including
+its heading and any abbreviation notice. Definitions are visited breadth-first;
+field lines are never cut in the middle. This limit does not shorten the callable's
+semantic description, signature, parameter kinds and default markers, return type,
+or effect tag.
+
+If the section is abbreviated, its notice points to the callable's `.contract`.
+Traverse its `parameters` or `returns` branch in Python and print only the leaf
+fields you need, rather than entire schema branches. The complete type metadata
+remains available there and through `Catalog.spec(name)`; the display budget does
+not change the contract or the returned values.
+
 ### Defaults and introspection
 
 Non-`None` runtime default values are withheld, and their `repr()` is never called.
@@ -324,7 +343,10 @@ also described without exporting values or running factories.
 | `tool.__signature__` | Not supplied |
 
 The original host classes and their identity do not cross the sandbox boundary.
-Use `.contract` for type discovery instead of trying to reconstruct host annotations.
+Type names describe host annotations. Sandbox sequences are list-like: use `len()`,
+indexing or iteration, not `isinstance(value, tuple)`. The callable's `.contract`
+is a dictionary; select `['parameters']` or `['returns']` for type discovery instead
+of trying to reconstruct host annotations.
 
 ### Supported types and unresolved annotations
 

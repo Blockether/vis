@@ -14,7 +14,7 @@ editing set beside the per-language ones (`clj-*`, `py-*`) that exercise a surfa
 
     e2e/scenarios/<id>/
       scenario.json   {lang, prompt, want, wantnot, want_answer?,
-                       want_tools?, want_forms?, want_requested_route?,
+                       want_tools?, want_forms?, max_form_output_chars?, want_requested_route?,
                        want_folded_prefix?, want_cache_read?, want_cache_metrics?,
                        workspace_filesystem?}
       files/          real files seeded into a fresh git repo before the run
@@ -25,8 +25,10 @@ scenarios); `want_tools` are extension tools that MUST have fired (e.g.
 repl_eval); `want_forms` are source substrings that MUST occur in a top-level
 sandbox form. The four boolean benchmark guards pin the requested route, the
 canonical oldest-prefix fold, real provider cache reads, and the persisted
-cache-metric arithmetic. `workspace_filesystem` maps catalog ids to fixture-relative
-directories; seeding generates vis.yml with absolute paths and explicit admission.
+cache-metric arithmetic. `max_form_output_chars` is an optional nonnegative integer:
+it fails the run when any form's stdout exceeds that size, without truncating traces.
+`workspace_filesystem` maps catalog ids to fixture-relative directories; seeding
+generates vis.yml with absolute paths and explicit admission.
 
 Each scenario runs in its own throwaway git repo through a source-owned gateway on an
 isolated temporary DB, so an installed gateway cannot mask working-tree edits. Fixtures
@@ -406,6 +408,7 @@ def run_one(job):
         form_events = []
         provider_calls = []
         tools = []
+        largest_form_output = 0
         activity_ids = set()
         errs = []
         unparsed = []
@@ -479,6 +482,9 @@ def run_one(job):
                         activity_ids.add(row_id)
                         tools.append(operation)
             elif ph == "form-result":
+                largest_form_output = max(
+                    largest_form_output, len(pl.get("stdout") or "")
+                )
                 if pl.get("error"):
                     e = pl.get("error")
                     errs.append(
@@ -520,6 +526,17 @@ def run_one(job):
             if not any(needle in form for form in forms):
                 correct = False
                 detail.append(f"form containing {needle!r} not used")
+        output_limit = sc.get("max_form_output_chars")
+        if output_limit is not None:
+            if type(output_limit) is not int or output_limit < 0:
+                correct = False
+                detail.append("max_form_output_chars must be a nonnegative integer")
+            elif largest_form_output > output_limit:
+                correct = False
+                detail.append(
+                    f"form output {largest_form_output} chars exceeds "
+                    f"max_form_output_chars={output_limit}"
+                )
 
         if REASONING_EFFORT:
             effort_evidence = result_eval.get("reasoning_effort") or {}
@@ -650,6 +667,10 @@ def run_one(job):
                 "tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset))
             )
         evidence = []
+        if type(output_limit) is int and output_limit >= 0:
+            evidence.append(
+                f"max-form-output={largest_form_output}/{output_limit} chars"
+            )
         if REASONING_EFFORT:
             evidence.append(f"reasoning-effort={REASONING_EFFORT}")
         if sc.get("want_requested_route") or REASONING_EFFORT:

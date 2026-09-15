@@ -965,34 +965,102 @@ def _callable_contract(fn, name, tag, doc):
     }
 
 
-def _contract_type_text(spec):
+def _contract_type_text(spec, record_name=None):
     arguments = spec.get("arguments", [])
     if spec["kind"] in ("unresolved", "opaque"):
         return f"{spec['name']} ({spec['kind']})"
     if spec["kind"] == "literal":
         return "Literal[" + ", ".join(repr(value) for value in spec["values"]) + "]"
     if spec["kind"] == "union":
-        return " | ".join(_contract_type_text(a) for a in arguments)
+        return " | ".join(_contract_type_text(a, record_name) for a in arguments)
     if arguments:
         return (
             spec["name"]
             + "["
-            + ", ".join(_contract_type_text(a) for a in arguments)
+            + ", ".join(_contract_type_text(a, record_name) for a in arguments)
             + (", ..." if spec.get("variadic") else "")
             + "]"
         )
+    if spec["kind"] == "record" and record_name:
+        return record_name(spec)
     return spec["name"]
 
 
-def _contract_field_docs(spec, prefix=""):
-    for item in spec.get("fields", []):
-        typ = item["type"]
-        name = prefix + item["name"]
-        note = typ.get("description", "")
-        yield f"- {name}: {_contract_type_text(typ)}" + (f" — {note}" if note else "")
-        yield from _contract_field_docs(typ, name + ".")
-    for argument in spec.get("arguments", []):
-        yield from _contract_field_docs(argument, prefix)
+def _contract_models_match(left, right):
+    """Compare portable model shapes across recursive expansion and use-site notes."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        kinds = {left.get("kind"), right.get("kind")}
+        if kinds <= {"record", "reference"}:
+            return left["name"] == right["name"] and (
+                "reference" in kinds
+                or _contract_models_match(left["fields"], right["fields"])
+            )
+        return left.keys() == right.keys() and all(
+            _contract_models_match(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _contract_models_match(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def _contract_model_docs(contract):
+    """Render shared models breadth-first within a fixed generated-schema budget."""
+    models = []
+
+    def record_name(spec):
+        for name, model in models:
+            if _contract_models_match(spec, model):
+                return name
+        name = spec["name"]
+        count = sum(model["name"] == name for _, model in models)
+        label = f"{name} [{count + 1}]" if count else name
+        models.append((label, spec))
+        return label
+
+    for item in contract["parameters"]:
+        _contract_type_text(item["type"], record_name)
+    _contract_type_text(contract["returns"], record_name)
+    if not models:
+        return []
+
+    def model_lines():
+        # Resolving a field queues its models, rather than expanding them in place.
+        for index, (name, model) in enumerate(models):
+            if index:
+                yield ""
+            yield name + ":"
+            if model.get("description"):
+                yield model["description"]
+            for item in model["fields"]:
+                typ = item["type"]
+                note = typ.get("description", "")
+                yield f"- {item['name']}: {_contract_type_text(typ, record_name)}" + (
+                    f" — {note}" if note else ""
+                )
+
+    budget = 2048
+    lines = ["Model schemas:"]
+    size = len(lines[0])
+    notice = f"Schema abbreviated ({budget}-character budget). Full metadata: "
+    target = f"{contract['name']}.contract"
+    suffix = (
+        " (dictionary, not a doc topic). Traverse/filter ['parameters'] or ['returns'] "
+        "in Python; print only matching leaf fields, never whole branches."
+    )
+    if size + len(notice) + len(target) + len(suffix) + 1 > budget:
+        target = "the callable's .contract"
+    notice += target + suffix
+    for line in model_lines():
+        if size + len(line) + 1 > budget:
+            while size + len(notice) + 1 > budget:
+                size -= len(lines.pop()) + 1
+            lines.append(notice)
+            break
+        lines.append(line)
+        size += len(line) + 1
+    return ["", *lines]
 
 
 def _contract_doc(contract):
@@ -1017,16 +1085,24 @@ def _contract_doc(contract):
             )
             + ")"
         )
-        lines.extend(_contract_field_docs(typ, item["name"] + "."))
     result = contract["returns"]
     lines.extend(["", "Returns: " + _contract_type_text(result)])
     if result.get("description"):
         lines.append(result["description"])
-    lines.extend(_contract_field_docs(result))
+    returned_types = [result]
+    for typ in returned_types:
+        returned_types.extend(typ.get("arguments", []))
+    if any(
+        typ["kind"] == "generic" and typ["name"] == "tuple" for typ in returned_types
+    ):
+        lines.append(
+            "Sandbox sequences are list-like, not Python tuples; use len(), indexing or iteration."
+        )
+    lines.extend(_contract_model_docs(contract))
     return "\n".join(lines)
 
 
-def _symbol_spec(fn, name, tag, is_hidden, activity=None):
+def _symbol_spec(fn, name, tag, is_hidden, activity=None, *, qualified_name=None):
     if not callable(fn):
         raise ValueError("vis.Symbol(fn, ...) requires a callable")
     public_name = name or fn.__name__
@@ -1047,7 +1123,7 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None):
                 getattr(fn, "__name__", "?")
             )
         )
-    contract = _callable_contract(fn, public_name, tag, doc)
+    contract = _callable_contract(fn, qualified_name or public_name, tag, doc)
     params = [
         p["name"]
         for p in contract["parameters"]
@@ -1224,9 +1300,9 @@ def _object_symbol_specs(obj, path, tag, is_hidden, seen):
                 method_tag,
                 method_hidden,
                 getattr(raw, "__vis_symbol_activity__", None),
+                qualified_name=member_path,
             )
             spec["name"] = member_path.split(".", 1)[1]
-            spec["contract"]["name"] = member_path
             specs.append(spec)
         elif _is_namespace_object(value):
             specs.extend(_object_symbol_specs(value, member_path, tag, is_hidden, seen))
