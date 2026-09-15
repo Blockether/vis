@@ -21,8 +21,8 @@
     (.delete file)))
 
 (defn- run-cli
-  ([dir environment args] (run-cli dir environment args false))
-  ([^File dir environment args tty?]
+  ([dir environment args] (run-cli dir environment args {}))
+  ([^File dir environment args {:keys [tty? invocation-dir]}]
    (let [classpath
          (str/join File/pathSeparator
                    (map (fn [entry]
@@ -33,9 +33,13 @@
                                                  File/pathSeparator)))))
 
          command
-         (into [(str (io/file (System/getProperty "java.home") "bin/java"))
-                "--enable-native-access=ALL-UNNAMED" "--enable-preview" "-cp" classpath
-                "clojure.main" "-m" "com.blockether.vis.core" "python"]
+         (into (cond-> [(str (io/file (System/getProperty "java.home") "bin/java"))
+                        "--enable-native-access=ALL-UNNAMED" "--enable-preview"]
+                 invocation-dir
+                 (conj (str "-Duser.dir=" (.getCanonicalPath ^File invocation-dir)))
+
+                 true
+                 (into ["-cp" classpath "clojure.main" "-m" "com.blockether.vis.core" "python"]))
                args)
 
          command
@@ -71,6 +75,70 @@
                          (.destroyForcibly child))
                        (.destroyForcibly process)
                        (.waitFor process 10 TimeUnit/SECONDS))))))))
+
+(defdescribe
+  python-cli-invocation-directory-test
+  ;; Regression #237: the source launcher runs in its install directory and
+  ;; carries the caller's directory in user.dir, not the process cwd.
+  (it
+    "preserves cwd and relative paths in code, module and file modes, including --shared"
+    (let [dir
+          (.getCanonicalFile (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target")
+                                                                            .mkdirs))
+                                                                 "vis-cli-cwd-"
+                                                                 (make-array FileAttribute 0))))
+
+          install
+          (doto (io/file dir "install") .mkdirs)
+
+          project
+          (doto (io/file dir "project with spaces") .mkdirs)
+
+          shared
+          (doto (io/file dir "shared") .mkdirs)
+
+          environment
+          {"VIS_PYTHON_PACKAGES" (.getCanonicalPath shared)
+           "PYTHONPATH" "."
+           "PYTEST_DISABLE_PLUGIN_AUTOLOAD" "1"}
+
+          source
+          (str "from pathlib import Path\n" "print('CLI_CWD', Path.cwd())\n"
+               "assert str(Path.cwd()) == Path('expected-cwd.txt').read_text()\n"
+               "print('RELATIVE_CWD_OK')\n")]
+
+      (try (spit (io/file project "pyproject.toml")
+                 (str "[project]\nname = 'cli-cwd-project'\nversion = '0.1.0'\n"
+                      "dependencies = ['pytest']\n[tool.uv]\npackage = false\n"))
+           (spit (io/file project "expected-cwd.txt") (.getCanonicalPath project))
+           (spit (io/file project "cwd_probe.py") source)
+           (io/make-parents (io/file project "tests/test_cwd.py"))
+           (spit (io/file project "tests/test_cwd.py") "def test_cwd():\n    import cwd_probe\n")
+           (python-runtime/ensure-library!)
+           (doseq [flags [[] ["--shared"]]]
+             (let [synced (run-cli project
+                                   environment
+                                   (into flags
+                                         (cond-> ["uv" "sync"]
+                                           (empty? flags)
+                                           (into ["--python" (Interpreter/pythonExecutable)]))))]
+               (expect (= 0 (:exit synced)) (:output synced))))
+           (doseq [flags
+                   [[] ["--shared"]]
+
+                   [args expected]
+                   [[["-c" source] "RELATIVE_CWD_OK"] [["-m" "cwd_probe"] "RELATIVE_CWD_OK"]
+                    [["./cwd_probe.py"] "RELATIVE_CWD_OK"]
+                    [[(.getCanonicalPath (io/file project "cwd_probe.py"))] "RELATIVE_CWD_OK"]
+                    [["-m" "pytest" "./tests" "-q"] "1 passed"]]]
+
+             (let [result (run-cli install
+                                   environment
+                                   (into flags (into ["--no-network"] args))
+                                   {:invocation-dir project})]
+               (expect (= 0 (:exit result)) (str flags " " args "\n" (:output result)))
+               (expect (str/includes? (:output result) expected) (:output result))))
+           (finally (delete-tree! dir))))))
 
 ;; Regression #226: a project must not borrow shared wheels, editable roots,
 ;; startup hooks or modules imported by those hooks before its environment loads.
@@ -444,7 +512,7 @@
       (let [dir (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target") .mkdirs))
                                                     "vis-cli-tty-"
                                                     (make-array FileAttribute 0)))]
-        (try (let [result (run-cli dir {} [] true)]
+        (try (let [result (run-cli dir {} [] {:tty? true})]
                (expect (= 0 (:exit result)) (:output result))
                (expect (str/includes? (:output result) "file: interactive input and EOF passed")
                        (:output result))

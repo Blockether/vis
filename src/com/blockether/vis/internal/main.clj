@@ -3166,7 +3166,7 @@
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
   [{:keys [network? argv env shared?]}]
   (let [cwd
-        (.getCanonicalPath (io/file "."))
+        (.getCanonicalPath (io/file (System/getProperty "user.dir")))
 
         project-environment
         (python-cli-project-environment cwd env shared?)
@@ -3189,7 +3189,10 @@
     ;; Forward script argv + (by default) the caller's env — real-python CLI
     ;; semantics, distinct from the scrubbed agent sandbox.
     (env/seed-cli-runtime! python-context {:argv argv :env env})
-    (try (when project-environment
+    ;; The source launcher changes OS cwd to resolve deps, preserving the caller
+    ;; in user.dir. Python and relative script reads must use that caller too.
+    (try (pyrt/exec! python-context (str "import os\nos.chdir(" (env/py-json-literal cwd) ")\n"))
+         (when project-environment
            (activate-python-cli-environment! python-context
                                              cwd
                                              {"UV_PROJECT_ENVIRONMENT" project-environment}))

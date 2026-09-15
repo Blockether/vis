@@ -688,15 +688,23 @@
                    (not (re-find #"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]" text)))
           (:markdown document-media-types))))))
 
+(defn image-reference
+  "The optional composer token naming an image, or nil for an invalid label."
+  [attachment]
+  (let [reference (or (:reference attachment) (get attachment "reference"))]
+    (when (and (string? reference) (re-matches #"\[IMAGE #[1-9][0-9]*\]" reference)) reference)))
+
 (defn prepare-inline-attachments
   "Validate already-encoded attachments delivered INLINE (web/API upload) rather
-   than as filesystem paths. Each entry is `{:base64 :filename :media-type?}`; the
-   base64 may be a bare payload or a `data:...;base64,` URL. Decodes each, sniffs
+   than as filesystem paths. Each entry is `{:base64 :filename :media-type? :reference?}`;
+   the base64 may be a bare payload or a `data:...;base64,` URL. Decodes each, sniffs
    the MIME from magic bytes, then checks Markdown hints against valid UTF-8 text.
    A declared `:media-type` alone never accepts binary bytes. Enforces the same caps
    as [[collect-user-images]], returning its `{:attached [...] :skipped [...]}` shape.
    Never throws.
 
+   A still image's optional `:reference` is an exact `[IMAGE #N]` composer token.
+   It names the corresponding image block without changing the original filename.
    The ORIGINAL payload is stored under its validated type and never converted.
    Image adaptation remains a SEND-time question (see [[wire-image]]); human-only
    files stay available through `read_attachment`."
@@ -719,41 +727,45 @@
                (or (detect-media-mime raw)
                    (detect-markdown-mime raw label (or (:media-type att) (get att "media_type"))))
 
+               reference
+               (when (and mime (str/starts-with? mime "image/")) (image-reference att))
+
+               row
+               (cond-> {:path label}
+                 reference
+                 (assoc :reference reference))
+
                size
                (alength raw)]
 
-           (cond (nil? mime) (update acc
-                                     :skipped
-                                     conj
-                                     {:path label :reason "not a supported attachment format"})
+           (cond (nil? mime)
+                 (update acc :skipped conj (assoc row :reason "not a supported attachment format"))
                  (> size (storable-limit mime (long max-bytes)))
                  (update acc
                          :skipped
                          conj
-                         {:path label
-                          ;; The EFFECTIVE ceiling, not the per-image cap: a clip
-                          ;; answers to `max-video-bytes`, so quoting `max-bytes`
-                          ;; here would tell the user 5 MB when 32 MB was allowed.
-                          :reason (str (fmt/format-bytes size)
-                                       " exceeds the "
-                                       (fmt/format-bytes (storable-limit mime (long max-bytes)))
-                                       " attachment limit")})
+                         (assoc row
+                           ;; Quote the effective ceiling: clips have a larger limit than images.
+                           :reason (str (fmt/format-bytes size)
+                                        " exceeds the "
+                                        (fmt/format-bytes (storable-limit mime (long max-bytes)))
+                                        " attachment limit")))
                  (>= (count (:attached acc)) (long max-images))
                  (update acc
                          :skipped
                          conj
-                         {:path label
-                          :reason
-                          (str "attachment limit of " max-images " images per message reached")})
+                         (assoc row
+                           :reason
+                           (str "attachment limit of " max-images " images per message reached")))
                  :else (update acc
                                :attached
                                conj
-                               {:path label
-                                :filename label
-                                :media-type mime
-                                :base64 payload
-                                :size size
-                                :size-label (fmt/format-bytes size)})))
+                               (assoc row
+                                 :filename label
+                                 :media-type mime
+                                 :base64 payload
+                                 :size size
+                                 :size-label (fmt/format-bytes size)))))
          (catch Throwable _ acc)))
      {:attached [] :skipped []}
      (or attachments []))))
@@ -1131,7 +1143,7 @@
                    (wire-verdict payload declared (long max-bytes) (long max-dimension))))]
 
          (if (:reason verdict)
-           (assoc (select-keys attachment [:path :filename]) :reason (:reason verdict))
+           (assoc (select-keys attachment [:path :filename :reference]) :reason (:reason verdict))
            (let [size (long (:size verdict))]
              (assoc attachment
                :media-type (:media-type verdict)
@@ -1140,12 +1152,14 @@
                :size-label (fmt/format-bytes size)))))))))
 
 (defn image-label
-  "How ONE image attachment is NAMED to the model: its path when it has one, else
-   the filename it was given. The manifest, the skip reason and the vision-fallback
+  "How ONE image attachment is NAMED to the model: its optional composer reference,
+   followed by its path or filename. The manifest, skip reason and vision-fallback
    description all key off this, so a description and the row it describes cannot
    drift apart."
-  [{:keys [path filename]}]
-  (or (not-empty (str path)) (not-empty (str filename)) "image"))
+  [{:keys [path filename] :as attachment}]
+  (str (when-let [reference (image-reference attachment)]
+         (str reference " — "))
+       (or (not-empty (str path)) (not-empty (str filename)) "image")))
 
 (defn wire-images
   "[[wire-image]] over a whole user message's attachments, keeping the

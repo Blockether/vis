@@ -183,6 +183,20 @@ describe('draft message bytes', () => {
     expect(native.writes.some((write) => write.value.includes(photo.base64))).toBe(false);
   });
 
+  it('persists image labels, counters and same-size edited bytes without renumbering', async () => {
+    const image = { ...photo, reference: '[IMAGE #7]' };
+    writeDraftMessage(key, { text: image.reference, attachments: [image], imageCounter: 9 });
+    await flushDraftMessages();
+    const edited = { ...image, base64: image.base64.replaceAll('A', 'B') };
+    writeDraftMessage(key, { text: image.reference, attachments: [edited], imageCounter: 9 });
+    await flushDraftMessages();
+    expect(JSON.parse(native.store.get('vis.draftAttachments')!)[image.id]).toBe(edited.base64);
+    const saved = JSON.parse(native.store.get('vis.draftMessages')!)[key];
+    expect(saved.imageCounter).toBe(9);
+    expect(saved.attachments[0].reference).toBe('[IMAGE #7]');
+    expect(peekDraftMessage(key).attachments[0].base64).toBe(edited.base64);
+  });
+
   it('writes them again the moment the staged set itself changes', async () => {
     writeDraftMessage(key, { text: 'look at this', attachments: [photo] });
     await flushDraftMessages();

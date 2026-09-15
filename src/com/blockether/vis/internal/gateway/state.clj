@@ -1820,6 +1820,25 @@
   [answer]
   (content/answer-content answer))
 
+(defn- distinct-attachments
+  "Keep explicitly referenced images distinct, even when filenames match. An
+   unreferenced path also named by an upload is still just one attachment."
+  [rows]
+  (reduce (fn [acc row]
+            (let [filename
+                  (or (:filename row) (get row "filename"))
+
+                  reference
+                  (attachments/image-reference row)]
+
+              (if (some #(and (= filename (or (:filename %) (get % "filename")))
+                              (or (nil? reference) (= reference (attachments/image-reference %))))
+                        acc)
+                acc
+                (conj acc row))))
+          []
+          rows))
+
 (defn- inline-attachment-preview
   "Byte-free chip payload for ONE inline (already base64-encoded) upload."
   [a]
@@ -1837,10 +1856,12 @@
         (long (* 3 (quot (count b64) 4)))]
 
     (when-let [filename (pick "filename" "name")]
-      {:filename filename
-       :media_type (or (pick "media_type" "media-type") "image")
-       :size size
-       :size_label (fmt/format-bytes size)})))
+      (cond-> {:filename filename
+               :media_type (or (pick "media_type" "media-type") "image")
+               :size size
+               :size_label (fmt/format-bytes size)}
+        (attachments/image-reference a)
+        (assoc :reference (attachments/image-reference a))))))
 
 (defn- attachment-previews
   "What a channel needs to PAINT one user message's images - filename, media
@@ -1851,7 +1872,7 @@
    clipboard paste). Both resolve HERE, once, at submit time, so a queued row
    renders identically in every channel instead of each one re-deriving it (or,
    as before, showing a raw `/var/folders/.../clipboard-....png`).
-   De-duped by filename; never throws."
+   Explicit image references stay distinct; repeated unreferenced paths are deduped."
   [request inline workspace]
   (let [root
         (or (:root workspace) (get workspace "root"))
@@ -1869,11 +1890,7 @@
                   (attachments/scan-image-descriptors request {:workspace-root root}))
              (catch Throwable _ nil))]
 
-    (->> (concat from-inline from-text)
-         (reduce (fn [acc p]
-                   (if (some #(= (:filename %) (:filename p)) acc) acc (conj acc p)))
-                 [])
-         vec)))
+    (distinct-attachments (concat from-inline from-text))))
 
 (defn- request-preview-text
   "The prose a QUEUE ROW should show for `request`.
@@ -1955,17 +1972,6 @@
                                                            {:workspace-root root}))))
        (catch Throwable _ nil)))
 
-(defn- dedupe-attachments-by-filename
-  "First row wins per filename: an inline upload and the same file named in the
-   request text are ONE attachment, never two."
-  [rows]
-  (->> rows
-       (reduce (fn [acc row]
-                 (let [filename (get row "filename")]
-                   (if (some #(= filename (get % "filename")) acc) acc (conj acc row))))
-               [])
-       vec))
-
 (defn turn-attachments
   "The FULL attachments (filename / media_type / base64) of ONE turn.
 
@@ -1985,8 +1991,8 @@
   [sid tid]
   (when (and sid tid)
     (let [turn (read-turn-record (turn-record sid tid))]
-      (or (seq (dedupe-attachments-by-filename
-                 (wire/canonical (into (vec (:attachments turn)) (request-text-attachments turn)))))
+      (or (seq (distinct-attachments (wire/canonical (into (vec (:attachments turn))
+                                                           (request-text-attachments turn)))))
           (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
                                                                                      [tid])
                                               (str tid)))))

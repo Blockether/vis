@@ -530,6 +530,8 @@ export interface GatewayAttachment {
   filename: string;
   media_type: string;
   base64: string;
+  /** Exact composer marker associated with these image bytes. */
+  reference?: string;
   /**
    * What a RECORDING says, in words — transcribed once by the gateway's own speech
    * engine on the turn that carried it, and stored beside the bytes. Absent for

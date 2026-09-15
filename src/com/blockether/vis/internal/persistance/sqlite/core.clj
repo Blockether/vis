@@ -2972,6 +2972,7 @@
                                               "image")
                                     :media_type (str (:media-type att))
                                     :filename (:filename att)
+                                    :reference (:reference att)
                                     :version (next-version (:filename att))
                                     :audience (attachments/normalize-audience (:audience att))
                                     ;; The recording's own words, transcribed once on
@@ -3065,6 +3066,7 @@
              :kind (:kind row)
              :media-type (:media_type row)
              :filename (:filename row)
+             :reference (:reference row)
              ;; VERSION: same `:filename` inside a session = ONE artifact, iterated. 1 is
              ;; the first cut and the floor for anonymous rows, so a caller never has to
              ;; branch on nil to compare two versions of the same name.
@@ -3186,8 +3188,9 @@
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :view_id :live_invocation_id :live_activity_id :version :audience :commentable
-   :storage_uri :size_bytes :transcription [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
+   :filename :reference :view_id :live_invocation_id :live_activity_id :version :audience
+   :commentable :storage_uri :size_bytes :transcription
+   [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
   "[[row->attachment]] for a bytes-free row: the same envelope minus `:base64`,
@@ -3310,7 +3313,7 @@
   (into [[:a.id :id] [:a.session_turn_soul_id :session_turn_soul_id]
          [:a.session_turn_iteration_id :session_turn_iteration_id] [:a.tool_call_id :tool_call_id]
          [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
-         [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
+         [:a.reference :reference] [:a.view_id :view_id] [:a.live_invocation_id :live_invocation_id]
          [:a.live_activity_id :live_activity_id] [:a.version :version] [:a.audience :audience]
          [:a.commentable :commentable] [:a.storage_uri :storage_uri]
          [:a.transcription :transcription] [:a.size_bytes :size_bytes]
