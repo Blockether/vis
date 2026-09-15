@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [com.blockether.svar.internal.llm :as svar-llm]
             [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.python.env :as env-python]
@@ -1139,6 +1140,35 @@
           (expect (str/includes? text "/tmp/shot.png (image/png,"))
           (expect (str/includes? text "NOT attached"))
           (expect (str/includes? text "/tmp/huge.png")))))
+  (it "maps stable composer references to image block order, including skipped images"
+      (let [prepared
+            (attachments/prepare-inline-attachments
+              [{:base64 tiny-png-b64 :filename "same.png" :reference "[IMAGE #7]"}
+               {:base64 tiny-png-b64 :filename "same.png" :reference "[IMAGE #2]"}])
+
+            messages
+            (prompt/assemble-initial-messages
+              {:initial-user-content "Compare [IMAGE #2] with [IMAGE #7]"
+               :user-images (:attached prepared)
+               :skipped-images
+               [{:path "missing.png" :reference "[IMAGE #5]" :reason "attachment limit reached"}]})
+
+            blocks
+            (:content (last messages))
+
+            text
+            (:text (last blocks))]
+
+        (expect (= 2 (count (filter #(= "image_url" (:type %)) blocks))))
+        (expect (str/includes? text "- image 1: [IMAGE #7] — same.png"))
+        (expect (str/includes? text "- image 2: [IMAGE #2] — same.png"))
+        (expect (str/includes? text "- [IMAGE #5] — missing.png — NOT attached"))
+        (let [blind (:content (last (prompt/assemble-initial-messages
+                                      {:initial-user-content "Compare [IMAGE #2] with [IMAGE #7]"
+                                       :user-images (:attached prepared)
+                                       :vision? false})))]
+          (expect (str/includes? blind "[IMAGE #7] — same.png — NOT attached"))
+          (expect (str/includes? blind "[IMAGE #2] — same.png — NOT attached")))))
   (it "drops an image no decoder can read and NAMES it instead of sending a 400"
       ;; A perfect PNG signature + IHDR over an unreadable stream: wire-legal to
       ;; any sniff, and a `Could not process image` 400 that would replay on

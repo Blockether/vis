@@ -47,10 +47,7 @@ describe('composer payload shelf', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove release-map.png' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove release-note.m4a' }));
 
-    expect(screen.getByText('release-map.png').parentElement?.querySelector('img')).toHaveAttribute(
-      'alt',
-      '',
-    );
+    expect(screen.getByRole('img', { name: 'release-map.png' })).toBeInTheDocument();
     expect(commands.editPaste).toHaveBeenCalledWith(4);
     expect(commands.removePaste).toHaveBeenCalledWith(4);
     expect(commands.removeAttachment).toHaveBeenNthCalledWith(1, 'diagram');

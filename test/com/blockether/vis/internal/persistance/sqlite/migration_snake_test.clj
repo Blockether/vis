@@ -251,6 +251,32 @@
 
     (when (.next rs) (.getString rs 1))))
 
+(defdescribe
+  attachment-reference-reopen-test
+  (it "adds the composer reference column to an existing store without losing attachments"
+      (let [[^java.io.File file ds] (temp-ds)]
+        (try (migration/migrate! ds [migration-dir])
+             ;; Reproduce the schema shipped before composer references were stored.
+             (exec! ds "ALTER TABLE session_attachment DROP COLUMN reference")
+             (exec! ds
+                    (str "INSERT INTO session_attachment"
+                         " (id, session_turn_soul_id, position, media_type, filename,"
+                         " size_bytes, bytes, created_at)"
+                         " VALUES ('a1', 't1', 0, 'image/png', 'shot.png', 3, X'010203', 1)"))
+             (migration/migrate! ds [migration-dir])
+             (expect (contains? (columns-of ds "session_attachment") "reference"))
+             (expect (= 1 (row-count ds "session_attachment")))
+             (expect (nil? (scalar ds "SELECT reference FROM session_attachment WHERE id = 'a1'")))
+             (exec! ds "UPDATE session_attachment SET reference = '[IMAGE #7]' WHERE id = 'a1'")
+             (migration/migrate! ds [migration-dir])
+             (expect (= "[IMAGE #7]"
+                        (scalar ds "SELECT reference FROM session_attachment WHERE id = 'a1'")))
+             (expect (= "shot.png"
+                        (scalar ds "SELECT filename FROM session_attachment WHERE id = 'a1'")))
+             (expect (= "010203"
+                        (scalar ds "SELECT hex(bytes) FROM session_attachment WHERE id = 'a1'")))
+             (finally (.delete file))))))
+
 (defn- refused
   "The exception `sql` raised, or nil when the store accepted it."
   [^javax.sql.DataSource ds ^String sql]

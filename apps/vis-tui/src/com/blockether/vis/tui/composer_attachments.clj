@@ -7,7 +7,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.terminal-image :as terminal-image]
             [com.blockether.vis.tui.attachments :as attachments]
-            [com.blockether.vis.tui.format :as fmt])
+            [com.blockether.vis.tui.format :as fmt]
+            [com.blockether.vis.tui.input :as input])
   (:import [java.io File FileInputStream]
            [java.security MessageDigest]
            [java.util Base64]))
@@ -163,7 +164,7 @@
    A caller may attach an existing transcript to the staged row; when present it
    crosses with the bytes as explicit metadata."
   [staged]
-  (mapv (fn [{:keys [path filename media-type] :as attachment}]
+  (mapv (fn [{:keys [path filename media-type image-number] :as attachment}]
           (let [^File file
                 (File. ^String path)
 
@@ -174,6 +175,9 @@
                      :media-type media-type
                      :base64 (.encodeToString (Base64/getEncoder)
                                               (java.nio.file.Files/readAllBytes (.toPath file)))}
+              image-number
+              (assoc :reference (input/image-reference image-number))
+
               (not-empty (str words))
               (assoc :transcription (str words)))))
         (or staged [])))
