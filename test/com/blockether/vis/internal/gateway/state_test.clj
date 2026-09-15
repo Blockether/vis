@@ -23,6 +23,41 @@
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]))
 
+;; #245: enforce draft isolation at the session-creation boundary, not only in the UI.
+(defdescribe
+  create-session-from-draft-root-test
+  (it "creates a fresh trunk workspace when a client sends another session's draft path"
+      (let [store
+            (assoc (sqlite/db-open! :memory) :backend :sqlite)
+
+            session-id
+            (random-uuid)]
+
+        (try (let [draft (persistance/db-workspace-insert! store
+                                                           {:repo-id "source"
+                                                            :repo-root "/source"
+                                                            :root "/draft"
+                                                            :workspace-kind :draft
+                                                            :workspace-backend :worktree
+                                                            :state :active
+                                                            :fork-ms 1})]
+               (with-redefs-fn {#'lp/db-info (constantly store)
+                                #'lp/create! (fn [channel opts]
+                                               {:id session-id
+                                                :channel channel
+                                                :workspace-id (:workspace-id opts)})
+                                #'state/put-session! (fn [_ _]
+                                                       nil)}
+                 (fn []
+                   (let [created (state/create-session! {:channel :tui :root "/draft"})
+                         fresh (persistance/db-workspace-get store (get created "workspace_id"))]
+
+                     (expect (= "/source" (:root fresh)))
+                     (expect (not (workspace/draft? fresh)))
+                     (expect (not= (:id draft) (:id fresh)))
+                     (expect (= draft (persistance/db-workspace-get store (:id draft))))))))
+             (finally (sqlite/db-close! store))))))
+
 (defn- with-draft-workspace
   [ws f]
   (expect (await-for 5000 @#'state/draft-status-reader))

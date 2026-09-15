@@ -514,6 +514,71 @@
                                  (expect (= (ws/normalize-root "~") (:root workspace)))
                                  (expect (= (:root workspace) (:repo-root workspace))))))))
 
+;; #245: a new session must not adopt another session's draft as its trunk.
+(defdescribe
+  new-session-from-draft-root-test
+  (it
+    "returns new sessions to source roots even with drafts disabled, without moving the owner"
+    (let [directory
+          (temp-dir "vis-draft-inheritance")
+
+          source
+          (io/file directory "source")
+
+          sibling
+          (io/file directory "sibling")]
+
+      (try (doseq [repo [source sibling]]
+             (.mkdirs repo)
+             (init-repo! repo))
+           (with-store
+             (fn [store]
+               (let [trunk
+                     (ws/create-trunk-at! store source)
+
+                     state-id
+                     (pin-session! store (str (random-uuid)) (:id trunk))
+
+                     draft
+                     (binding [ws/*draft-backend*
+                               :worktree
+
+                               ws/*drafts-home*
+                               (str (io/file directory "drafts"))]
+
+                       (ws/create! store
+                                   {:from trunk
+                                    :session-state-id state-id
+                                    :label "owned"
+                                    :clean? true
+                                    :filesystem-roots [{:trunk (str sibling)
+                                                        :policy :copy-and-apply}]}))]
+
+                 (try (binding [ws/*draft-backend* :off]
+                        (doseq [{:keys [root repo-root]} (ws/draft-roots draft)
+                                suffix ["" "subdir"]]
+
+                          (let [requested (io/file root suffix)
+                                expected (ws/normalize-root (io/file repo-root suffix))
+                                fresh (ws/create-trunk-at! store requested)]
+
+                            (expect (= expected (:root fresh)))
+                            (expect (= expected (:repo-root fresh)))
+                            (expect (not (ws/draft? fresh)))
+                            (expect (not= (:id draft) (:id fresh))))))
+                      (with-redefs [ws/trunk-root (constantly (:root draft))]
+                        (expect (= (str source) (:root (ws/ensure-workspace! store {})))))
+                      (expect (= (:id draft)
+                                 (:id (ws/ensure-workspace! store {:session-state-id state-id}))))
+                      (expect (.isDirectory (io/file (:root draft))))
+                      (let [neighbor (str (:root draft) "-other")]
+                        (expect (= neighbor (:root (ws/create-trunk-at! store neighbor)))))
+                      (finally (when-let [released (:discard-future (ws/abandon! store
+                                                                                 {:workspace-id
+                                                                                  (:id draft)}))]
+                                 (deref released 30000 nil)))))))
+           (finally (delete-tree! directory))))))
+
 (defdescribe
   change-root-test
   (it "repoints the session to a trunk at the new path"

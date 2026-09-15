@@ -1856,6 +1856,25 @@
 
       (if (.exists (workspace-dir trunk n)) (recur (str base "-" i) (inc i)) n))))
 
+(defn source-root
+  "Resolve a managed draft path to its original checkout, preserving subdirectories.
+   Ordinary paths are unchanged. Uses persisted ownership, not directory names or
+   the currently selected draft backend; it never enters or mutates the draft."
+  [db-info root]
+  (let [root
+        (normalize-root root)
+
+        path
+        (Path/of ^String root (make-array String 0))]
+
+    (or (some
+          (fn [{draft-root :root repo-root :repo-root}]
+            (let [draft-path (.toPath (io/file draft-root))]
+              (when (.startsWith path draft-path)
+                (str (.resolve (.toPath (io/file repo-root)) (.relativize draft-path path))))))
+          (sort-by (comp count :root) > (mapcat draft-roots (p/db-workspace-list-drafts db-info))))
+        root)))
+
 (defn- insert-trunk!
   "Insert a fresh TRUNK workspace row (root = repo_root = `root`, defaulting
    to the real cwd; no clone, no fork_ms) and pin it to `session-state-id`
@@ -1863,7 +1882,7 @@
   ([db-info session-state-id] (insert-trunk! db-info session-state-id (trunk-root)))
   ([db-info session-state-id root]
    (let [trunk
-         (normalize-root root)
+         (source-root db-info root)
 
          ws
          (p/db-workspace-insert! db-info
@@ -1885,11 +1904,10 @@
   (or (for-session db-info session-state-id) (insert-trunk! db-info session-state-id)))
 
 (defn create-trunk-at!
-  "Mint a TRUNK workspace rooted at `root` (an arbitrary directory), not
-   pinned to any session. Lets a channel open a session under a directory
-   OTHER than the one vis was launched from — a tab in another project.
-   Returns the workspace row (with `:id`) to pass as `:workspace-id` when
-   creating the session."
+  "Mint an unpinned TRUNK workspace at `root`. Managed draft paths resolve to
+   their source checkout so a new session never inherits another session's draft.
+   Channels may pass a directory other than the launch directory; returns the
+   workspace row whose `:id` is passed as `:workspace-id` at session creation."
   [db-info root]
   (insert-trunk! db-info nil root))
 
