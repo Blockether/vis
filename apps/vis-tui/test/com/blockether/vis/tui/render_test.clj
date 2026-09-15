@@ -1431,48 +1431,50 @@
 
 (defdescribe
   input-full-width-test
-  (it "paints both rules edge to edge for prompts and shell commands"
-      (doseq [cols
-              [20 80 220]
-
-              line
-              ["" "!pwd" "!&tail -f log"]]
-
-        (let [captured
-              (cap/capture!
-                {:cols cols
-                 :rows 3
-                 :paint!
-                 (fn [{:keys [g]}]
-                   (render/draw-input-box! g {:lines [line] :crow 0 :ccol 0} 0 1 cols nil))})
-
-              grid
-              (last (:frames captured))
-
-              top
-              (apply str (map :ch (nth grid 0)))
-
-              bottom
-              (apply str (map :ch (nth grid 2)))
-
-              rule
-              (apply str (repeat cols "─"))]
-
-          (expect (nil? (:error captured)))
-          (expect (= rule bottom))
-          (expect (= "─" (:ch (first (nth grid 0))) (:ch (last (nth grid 0)))))
-          (expect (if (str/blank? line)
-                    (= rule top)
-                    (str/includes? top (if (str/starts-with? line "!&") " shell & " " shell ")))))))
   (it
-    "uses every text cell and keeps the cursor visible at wrap boundaries"
+    "paints both rules edge to edge for prompts and shell commands"
     (doseq [cols
-            [1 2 4 20 80 220]
+            [20 80 220]
+
+            line
+            ["" "!pwd" "!&tail -f log"]]
+
+      (let [captured
+            (cap/capture!
+              {:cols cols
+               :rows 3
+               :paint! (fn [{:keys [g]}]
+                         (render/draw-input-box! g {:lines [line] :crow 0 :ccol 0} 0 1 cols nil))})
+
+            grid
+            (last (:frames captured))
+
+            top
+            (apply str (map :ch (nth grid 0)))
+
+            bottom
+            (apply str (map :ch (nth grid 2)))
+
+            rule
+            (apply str (repeat cols "─"))]
+
+        (expect (nil? (:error captured)))
+        (expect (= [2 1] (:ret captured)))
+        (expect (str/starts-with? (apply str (map :ch (nth grid 1))) (str "  " line)))
+        (expect (= rule bottom))
+        (expect (= "─" (:ch (first (nth grid 0))) (:ch (last (nth grid 0)))))
+        (expect (if (str/blank? line)
+                  (= rule top)
+                  (str/includes? top (if (str/starts-with? line "!&") " shell & " " shell ")))))))
+  (it
+    "insets text by two columns and keeps the cursor visible at wrap boundaries"
+    (doseq [[cols left text-w]
+            [[1 0 1] [2 0 1] [3 1 1] [4 1 1] [5 2 1] [20 2 16] [80 2 76] [220 2 216]]
 
             [line cursor]
-            [["" [0 1]] [(apply str (repeat (dec cols) "x")) [(dec cols) 1]]
-             [(apply str (repeat cols "x")) [(dec cols) 1]]
-             [(str (apply str (repeat cols "x")) "y") [(min 1 (dec cols)) 2]]]]
+            [["" [left 1]] [(apply str (repeat (dec text-w) "x")) [(+ left (dec text-w)) 1]]
+             [(apply str (repeat text-w "x")) [(+ left (dec text-w)) 1]]
+             [(str (apply str (repeat text-w "x")) "y") [(+ left (min 1 (dec text-w))) 2]]]]
 
       (let [captured
             (cap/capture! {:cols cols
@@ -1490,18 +1492,22 @@
             (last (:frames captured))
 
             first-line
-            (subs line 0 (min cols (count line)))
+            (subs line 0 (min text-w (count line)))
 
             second-line
-            (if (> (count line) cols) (subs line cols) "")]
+            (if (> (count line) text-w) (subs line text-w) "")
+
+            padded-line
+            (fn [text]
+              (str (apply str (repeat left " "))
+                   text
+                   (apply str (repeat (- cols left (count text)) " "))))]
 
         (expect (nil? (:error captured)))
-        (expect (= cols (render/input-text-w cols)))
+        (expect (= text-w (render/input-text-w cols)))
         (expect (= cursor (:ret captured)))
-        (expect (= (str first-line (apply str (repeat (- cols (count first-line)) " ")))
-                   (apply str (map :ch (nth grid 1)))))
-        (expect (= (str second-line (apply str (repeat (- cols (count second-line)) " ")))
-                   (apply str (map :ch (nth grid 2))))))))
+        (expect (= (padded-line first-line) (apply str (map :ch (nth grid 1)))))
+        (expect (= (padded-line second-line) (apply str (map :ch (nth grid 2))))))))
   (it "clears stale text and paints the input background through both edge cells"
       (doseq [cols [1 2 20 80]]
         (let [captured (cap/capture!

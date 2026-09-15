@@ -27,6 +27,41 @@
     (or (<= 0x2061 n 0x206F) (<= 0xE000 n 0xE0FF) (p/inline-sentinel? (str c)))))
 
 (defdescribe
+  footer-edge-alignment-test
+  (it "aligns limits with the left gutter and Git with the usage row's right edge"
+      (with-redefs-fn {#'footer/model-segments (fn [_ _ ^long _row]
+                                                 [])
+                       #'footer/session-model-info (constantly {:reasoning-effort? false})}
+        (fn []
+          (doseq [cols
+                  [80 120 220]
+
+                  provider
+                  [nil :corp]]
+
+            (with-redefs-fn {#'footer/session-effective-provider (constantly provider)}
+              (fn []
+                (let [db
+                      {:messages [{:tokens {"input" 100 "output" 20} :cost {"total_cost" 0.0042}}]
+                       :workspace
+                       {"git"
+                        {"is_workspace" true "repo" "vis" "branch" "main" "is_upstream" true}}}
+
+                      frame
+                      (cap/capture! {:cols cols
+                                     :rows 2
+                                     :paint! (fn [{:keys [g]}]
+                                               (footer/draw-footer! g db 0 cols 0))})
+
+                      [git-row limits-row]
+                      (mapv #(apply str (map :ch %)) (last (:frames frame)))]
+
+                  (expect (nil? (:error frame)))
+                  (expect (str/starts-with? limits-row "  Limits"))
+                  (expect (str/ends-with? git-row "git ~/vis (main)  "))
+                  (expect (str/ends-with? limits-row "~$0.0042  "))))))))))
+
+(defdescribe
   inline-goal-iterations-test
   (it "shows used iterations and the budget inline, including unlimited goals"
       (doseq [[used budget label] [[0 20 "0/20"] [7 20 "7/20"] [20 20 "20/20"] [21 20 "21/20"]
@@ -93,7 +128,7 @@
                   row (nth (str/split-lines (cap/frame-text frame)) 1)]
 
               (expect (nil? (:error frame)))
-              (expect (str/includes? row "Limits:"))
+              (expect (str/starts-with? row "  Limits:"))
               (when goal (expect (str/includes? row "Goal:")))
               (when (>= cols 80)
                 (expect (str/includes? row "51730/100000"))
@@ -489,7 +524,7 @@
                                          "is_upstream" true
                                          "ahead" 4
                                          "behind" 0}}}]
-              (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) "]
+              (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4)"]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
@@ -530,7 +565,7 @@
                                          "is_upstream" true
                                          "ahead" 0
                                          "behind" 0}}}]
-              (expect (= [" git ~/demo (main) "]
+              (expect (= [" git ~/demo (main)"]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
@@ -556,7 +591,7 @@
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
             (expect
-              (= [" git ~/vis (main) "]
+              (= [" git ~/vis (main)"]
                  (->> (build-segments {:messages []
                                        :settings {}
                                        :workspace {"root" "/tmp/vis"
@@ -579,7 +614,7 @@
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
             (expect
-              (= [" git ~/vis (main ∅) "]
+              (= [" git ~/vis (main ∅)"]
                  (->> (build-segments {:messages []
                                        :settings {}
                                        :workspace {"root" "/tmp/vis"

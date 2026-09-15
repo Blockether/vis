@@ -1722,9 +1722,11 @@ therapy line 2"
                                           true
                                           (selection/point 7 6)
                                           {:viewport-top 2 :eff-scroll 38}))))
-  (it "marks the full width of input text rows as selectable"
-      (expect (= [{:row 11 :col 0 :width 20} {:row 12 :col 0 :width 20}]
-                 (input-selectable-ranges 10 2 20)))))
+  (it "keeps input selection inside the padded text area"
+      (doseq [[cols left width] [[1 0 1] [2 0 1] [3 1 1] [4 1 1] [5 2 1] [20 2 16] [80 2 76]
+                                 [220 2 216]]]
+        (expect (= [{:row 11 :col left :width width} {:row 12 :col left :width width}]
+                   (input-selectable-ranges 10 2 cols))))))
 
 (defdescribe
   clipboard-copy-actions-test
@@ -2979,13 +2981,13 @@ therapy line 2"
                   "receipt and expanded surface move by the same terminal rows"))
         (finally (reset! state/app-db old-db))))))
 
-(defdescribe input-full-width-geometry-test
-             (it "grows the composer only after text exceeds the terminal width"
+(defdescribe input-padded-geometry-test
+             (it "grows the composer only after text exceeds the padded width"
                  (doseq [cols
                          [20 80 220]
 
                          [length expected-rows]
-                         [[(dec cols) 1] [cols 1] [(inc cols) 2]]]
+                         [[(- cols 5) 1] [(- cols 4) 1] [(- cols 3) 2]]]
 
                    (let [geometry (#'screen/composer-geometry
                                    {:input

@@ -200,7 +200,7 @@
 (defn- git-footer-spans
   [{:strs [is_workspace] :as status}]
   (cond
-    is_workspace [{:text (str " " git-label " " (git-repo-label status) " ")
+    is_workspace [{:text (str " " git-label " " (git-repo-label status))
                    :fg t/footer-fg-strong
                    :bold? true
                    :region :right
@@ -652,7 +652,7 @@
         (when provider (generic-limits-footer-text db provider now-ms))]
 
     (into (cond-> [{:text
-                    (if text (str " Limits: " (str/replace text #"^limits: " "") " ") " Limits ")
+                    (if text (str "Limits: " (str/replace text #"^limits: " "") " ") "Limits ")
                     :fg t/footer-fg
                     :region :left
                     :priority 1}]

@@ -529,7 +529,7 @@
    (rule + pad + line + pad + rule) when three is the right minimum."
   0)
 
-(def ^:private input-pad-x "Horizontal padding (cols left/right of text inside the input box)." 0)
+(def ^:private input-pad-x "Horizontal padding (cols left/right of text inside the input box)." 2)
 
 (defn input-text-w
   "Visible text width (in columns) inside the input box for a given
@@ -537,8 +537,8 @@
    wrapped row counts and `draw-input-box!` can render with the same
    wrap point.
 
-   The input box has no side rails or horizontal padding, so its text
-   spans the full terminal width (clamped to >=1)."
+   The text has a two-column inset on each side, aligned with the transcript
+   and footer. Tiny terminals retain at least one editable column."
   ^long [^long cols]
   (max 1 (- cols (* 2 (long input-pad-x)))))
 
@@ -663,8 +663,8 @@
    keybinding helpers live in the echo area (`footer/draw-echo-area!`), not here,
    so input/editor paint stays isolated from footer chrome.
 
-   The rules, background, and typing area span the terminal from the first
-   column to the last, with no left/right rails or horizontal padding."
+   The rules and background span the terminal with no side rails. Text and
+   cursor use a two-column inset, reduced only for terminals under five columns."
   [^TextGraphics g input box-top text-rows cols hint]
   (let [box-top
         (long box-top)
@@ -678,9 +678,6 @@
         input-pad-y
         (long input-pad-y)
 
-        input-pad-x
-        (long input-pad-x)
-
         box-bottom
         (+ box-top (* 2 input-pad-y) text-rows 1)
 
@@ -689,6 +686,9 @@
 
         text-w
         (input-text-w cols)
+
+        input-pad-x
+        (max 0 (quot (- cols text-w) 2))
 
         {:keys [visual-lines cursor-vrow cursor-vcol]}
         (soft-wrap-input input text-w)
