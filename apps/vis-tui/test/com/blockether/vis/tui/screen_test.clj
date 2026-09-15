@@ -807,7 +807,7 @@
                    (expect (nil? (authenticated-provider-config))))))
 
 (defn- assert-first-frame-before-startup-session!
-  [opts overflowing? row-delta]
+  [opts overflowing? row-delta & [check-input!]]
   (let [old-db
         @state/app-db
 
@@ -1013,6 +1013,7 @@
         (if (zero? row-delta)
           (expect (= "Copy" copied))
           (expect (and (string? copied) (not (str/blank? copied)) (not= "Copy" copied)))))
+      (when check-input! (check-input! terminal))
       ;; Enter before the session exists is durable intent: it leaves the editor,
       ;; appears in the local queue, and cannot reach the model yet.
       (.addInput terminal (KeyStroke. KeyType/Enter))
@@ -1038,6 +1039,130 @@
                  (assert-first-frame-before-startup-session! {} true 0))
              (it "keeps vertical drag auto-scroll working for an overflowing transcript"
                  (assert-first-frame-before-startup-session! {} true -1)))
+
+(defdescribe
+  result-activity-disclosure-click-test
+  (it
+    "keeps Result clicks independent of Activity across redraws and rapid clicks"
+    (let [db {:session {:id "click-session"}
+              :messages
+              [{:id "click-context" :role :user :text (str/join " " (repeat 200 "context"))}
+               {:id "click-answer"
+                :role :assistant
+                :text "Done."
+                :traces [{:forms [{:code "inspect_files()"
+                                   :stdout "RESULT_BODY"
+                                   :success? true
+                                   :activity {:state "succeeded"
+                                              :counts {:succeeded 1}
+                                              :rows [{:id "read-1"
+                                                      :operation "Read files"
+                                                      :summary "ACTIVITY_BODY"
+                                                      :state "succeeded"}]}}]}]}]
+              :scroll scroll/follow
+              :detail-expansions {}
+              :loading? false
+              :progress nil}]
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (assert-first-frame-before-startup-session!
+        {}
+        false
+        0
+        (fn [^DefaultVirtualTerminal terminal]
+          (let [saved @state/app-db
+                read-input! @#'screen/read-chat-input!
+                release-pending? (atom false)
+                release-count (atom 0)
+                before-release! (atom nil)
+                region (fn [suffix]
+                         (first (filter #(and (= :toggle-details (:kind %))
+                                              (str/ends-with? (str (:node-id %)) suffix))
+                                        (.current interactions/hit-map))))
+                click!
+                (fn [label suffix & [actions]]
+                  (let [hit (region suffix)
+                        {:keys [row col]} (:bounds hit)
+                        node-key [(:session-id hit) (:node-id hit)]
+                        expanded? (:collapsed? hit)
+                        before (:detail-expansions @state/app-db)
+                        released @release-count]
+
+                    (expect (some? hit))
+                    (expect (str/includes? (nth (term/grid terminal) row) label))
+                    (doseq [action (or actions
+                                       [MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE])]
+                      (.addInput
+                        terminal
+                        (MouseAction. action 1 (TerminalPosition. (int (+ col 2)) (int row)))))
+                    (expect (true? (await-pred #(< released @release-count) 2000))
+                            (pr-str {:label label
+                                     :pending? @release-pending?
+                                     :released @release-count
+                                     :folds (:detail-expansions @state/app-db)}))
+                    (expect (= (assoc before node-key expanded?) (:detail-expansions @state/app-db))
+                            (pr-str {:target node-key :folds (:detail-expansions @state/app-db)}))
+                    (expect (true? (await-pred #(= (not expanded?) (:collapsed? (region suffix)))
+                                               2000)))))]
+
+            (with-redefs-fn {#'screen/read-chat-input!
+                             (fn [screen coalescer]
+                               ;; The next poll begins only after the previous input was handled.
+                               (when (compare-and-set! release-pending? true false)
+                                 (swap! release-count inc))
+                               (let [key (read-input! screen coalescer)]
+                                 (when (and (instance? MouseAction key)
+                                            (= MouseActionType/CLICK_RELEASE
+                                               (.getActionType ^MouseAction key)))
+                                   (when-let [reflow! @before-release!]
+                                     (reset! before-release! nil)
+                                     (reflow!))
+                                   (reset! release-pending? true))
+                                 key))}
+              (fn []
+                (try
+                  (doseq [selection-copy? [false true]]
+                    (.setTerminalSize terminal (TerminalSize. 80 30))
+                    (swap! state/app-db merge db)
+                    (swap! state/app-db assoc-in [:settings :mouse-selection-copy] selection-copy?)
+                    (state/dispatch [:bump-render-version])
+                    (expect (true? (await-pred #(true? (:collapsed? (region ":code"))) 2000)))
+                    (click! "CODE" ":code")
+                    (dotimes [_ 2]
+                      (click! "RESULT" ":result"))
+                    ;; Release-only terminals still toggle once; a drag starting on a
+                    ;; disclosure must remain selection rather than another toggle.
+                    (dotimes [_ 2]
+                      (click! "RESULT" ":result" [MouseActionType/CLICK_RELEASE]))
+                    (let [before (:detail-expansions @state/app-db)
+                          released @release-count
+                          {:keys [row col]} (:bounds (region ":result"))]
+
+                      (doseq [[action dx] [[MouseActionType/CLICK_DOWN 2] [MouseActionType/DRAG 12]
+                                           [MouseActionType/CLICK_RELEASE 12]]]
+                        (.addInput
+                          terminal
+                          (MouseAction. action 1 (TerminalPosition. (int (+ col dx)) (int row)))))
+                      (expect (true? (await-pred #(< released @release-count) 2000)))
+                      (expect (= before (:detail-expansions @state/app-db))))
+                    (swap! state/app-db assoc :scroll scroll/follow)
+                    (state/dispatch [:bump-render-version])
+                    (expect (true? (await-pred #(= 17 (get-in (region ":#band") [:bounds :row]))
+                                               2000)))
+                    (let [result-row (get-in (region ":result") [:bounds :row])]
+                      ;; A resize can put Activity under a held Result click.
+                      (reset! before-release! (fn []
+                                                (.setTerminalSize terminal (TerminalSize. 80 28))
+                                                (state/dispatch [:bump-render-version])
+                                                (expect (true? (await-pred #(= result-row
+                                                                               (get-in
+                                                                                 (region ":#band")
+                                                                                 [:bounds :row]))
+                                                                           2000)))))
+                      (click! "RESULT" ":result")))
+                  (finally (.setTerminalSize terminal (TerminalSize. 80 30))
+                           (reset! state/app-db saved)
+                           (state/dispatch [:bump-render-version])))))))))))
 
 (defdescribe startup-resume-test
              (it "--session-id reconciles orphaned running turns before rebuilding history"

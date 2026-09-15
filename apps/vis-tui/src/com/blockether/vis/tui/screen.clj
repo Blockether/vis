@@ -6130,6 +6130,8 @@
                  ;; setups). Without this guard a normal
                  ;; DOWN+RELEASE pair would double-fire (open the link twice, copy twice).
                  click-action-fired? (volatile! false)
+                 ;; Keep deferred controls attached to the press across transcript reflow.
+                 mouse-control-press (volatile! nil)
                  ;; App-side drag selection. Native terminal selection is
                  ;; unavailable while mouse reporting is enabled, so Vis tracks
                  ;; drag coordinates, highlights the range during render, then
@@ -6839,6 +6841,7 @@
                          ;; delta, so what is wanted here is only the verdict.
                          live-wheel? (some? (live-view-wheel-event db my wheel-delta))]
 
+                     (when (= atype MouseActionType/CLICK_DOWN) (vreset! mouse-control-press nil))
                      (cond
                        ;; F1 help / F2 task overlay is open: it LOCKS the
                        ;; screen. Route the wheel to the F2 panel's own
@@ -7119,6 +7122,13 @@
                              anchor @mouse-selection-anchor
                              line-selection? @mouse-selection-line?
                              screen-point (selection/point mx my)
+                             control-press @mouse-control-press
+                             release-hit (if control-press
+                                           (when (and (= screen-point (:point control-press))
+                                                      (or (nil? @mouse-selection-focus)
+                                                          (= anchor @mouse-selection-focus)))
+                                             (:hit control-press))
+                                           (.lookup interactions/hit-map mx my))
                              focus (release-selection-focus anchor
                                                             @mouse-selection-focus
                                                             line-selection?
@@ -7128,13 +7138,15 @@
 
                          (vreset! scrollbar-drag-offset nil)
                          (vreset! click-action-fired? false)
+                         (vreset! mouse-control-press nil)
                          (vreset! mouse-selection-anchor nil)
                          (vreset! mouse-selection-focus nil)
                          (vreset! mouse-selection-source nil)
                          (vreset! mouse-selection-line? false)
                          (if (and selection-copy? anchor)
                            (let [sel {:anchor anchor :focus focus :source source}
-                                 simple-click? (= anchor (:focus sel))
+                                 simple-click?
+                                 (if control-press (some? release-hit) (= anchor (:focus sel)))
                                  ;; A simple click on a disclosure toggle control
                                  ;; must TOGGLE, never copy — the toggle row also
                                  ;; sits inside the whole-bubble copy rectangle, so
@@ -7142,15 +7154,17 @@
                                  ;; The rule under an Activity band is the same
                                  ;; gesture: it PAGES the record, it never copies.
                                  control-hit (when (and simple-click? (not= source :input))
-                                               (let [h (.lookup interactions/hit-map mx my)]
+                                               (let [h release-hit]
                                                  (when (contains? #{:toggle-details :activity-page
                                                                     :activity-search}
                                                                   (:kind h))
                                                    h)))
                                  disclosure-hit
                                  (when (and simple-click? (not= source :input) (not control-hit))
-                                   (bubble-copy-hit screen-point
-                                                    transcript-disclosure-copy-regions))
+                                   (if control-press
+                                     (when (= :copy-disclosure (:kind release-hit)) release-hit)
+                                     (bubble-copy-hit screen-point
+                                                      transcript-disclosure-copy-regions)))
                                  bubble-hit (when (and simple-click?
                                                        (not= source :input)
                                                        (not control-hit)
@@ -7203,7 +7217,7 @@
                                    (and (not simple-click?) (not (str/blank? payload)))
                                    (copy-selection! payload source)))
                            (when (and (not was-dragging?) (not already-handled?))
-                             (if-let [hit (.lookup interactions/hit-map mx my)]
+                             (if-let [hit release-hit]
                                (case (:kind hit)
                                  :table
                                  (open-table-viewer! screen hit)
@@ -7362,11 +7376,15 @@
                        ;; freeze the input loop's redraw cadence.
                        (= atype MouseActionType/CLICK_DOWN)
                        (do
-                         (let [hit (.lookup interactions/hit-map mx my)]
-                           (if (and hit
-                                    (not (contains? #{:toggle-details :activity-page
-                                                      :activity-search :copy-disclosure}
-                                                    (:kind hit))))
+                         (let [hit (.lookup interactions/hit-map mx my)
+                               control? (contains? #{:toggle-details :activity-page :activity-search
+                                                     :copy-disclosure}
+                                                   (:kind hit))]
+
+                           (when control?
+                             (vreset! mouse-control-press
+                                      {:hit hit :point (selection/point mx my)}))
+                           (if (and hit (not control?))
                              (do
                                ;; Tell the matching CLICK_RELEASE in
                                ;; the same gesture pair to skip the
@@ -7537,11 +7555,12 @@
                                                          transcript-selectable-ranges
                                                          input-selectable-ranges)
                                          line-sel
-                                         (when (selection/double-click? @last-selection-click
-                                                                        now-ms
-                                                                        source
-                                                                        screen-anchor
-                                                                        mouse-double-click-ms)
+                                         (when (and (not control?)
+                                                    (selection/double-click? @last-selection-click
+                                                                             now-ms
+                                                                             source
+                                                                             screen-anchor
+                                                                             mouse-double-click-ms))
                                            (selection/line-selection-at-point screen-anchor
                                                                               source-ranges
                                                                               selection-viewport))
@@ -7553,7 +7572,7 @@
 
                                      (vreset!
                                        last-selection-click
-                                       (when-not line-sel
+                                       (when-not (or control? line-sel)
                                          {:source source :point screen-anchor :time-ms now-ms}))
                                      (vreset! mouse-selection-anchor doc-anchor)
                                      (vreset! mouse-selection-focus (:focus line-sel))
