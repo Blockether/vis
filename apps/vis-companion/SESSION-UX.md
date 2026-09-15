@@ -39,8 +39,7 @@ identified by their selection.
    (board K). When disabled, do not ask whether to use the project or a copy.
    The gateway still validates whether a draft is supported.
 10. Review proposals at phone and desktop sizes, in light and dark themes,
-    including a state that could invalidate the design. Follow the
-    [design skill](../../.vis/skills/design/SKILL.md) for current artifact rules.
+    including a state that could invalidate the design.
 11. Use production components in proposals. On phones, menus use bottom sheets
     with a scrim, not floating popovers. Use `Button`, `MachineMark` and
     `PencilIcon` rather than custom copies or font characters. Keep labels in

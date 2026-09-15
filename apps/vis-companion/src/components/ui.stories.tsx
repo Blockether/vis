@@ -77,10 +77,8 @@ import {
 /**
  * THE VOCABULARY, DRAWN ONCE EACH, BY THE CODE THAT SHIPS IT.
  *
- * The design skill asks a design artifact to open with a component sheet: every
- * control drawn once, at the size the code paints it. This IS that sheet, and it
- * cannot drift — it imports `ui.tsx` rather than describing it, so a story is
- * wrong only when the app is wrong.
+ * This component sheet draws each control once using `ui.tsx`, at the size
+ * the app renders it.
  *
  * Read it at two frames. The phone frame is the 32px touch face; the desktop
  * frame is the 24-28px pointer face, because `mouse:` is a media query and the

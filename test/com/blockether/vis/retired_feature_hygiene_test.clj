@@ -10,10 +10,8 @@
   (re-pattern (str "(?i)(^|[^a-z0-9])" "sp" "el" "([^a-z0-9]|$)")))
 
 (def ^:private engine-roots
-  "What ships, plus what declares what ships. Outside these roots the same word is
-   an unrelated external CLI of that name — the workspace root in `vis.yml`, the
-   design skill that drives it to render a frame — and a sentence about someone
-   else's tool is not this feature coming back."
+  "What ships, plus what declares what ships. Outside these roots, the workspace
+   entry in `vis.yml` names an unrelated external CLI, not the retired feature."
   ["src/" "extensions/" "packages/" "resources/" "apps/" "test/" "test-native/" "e2e/" "dev/" "bin/"
    "scripts/" "build.clj" "deps.edn"])
 

@@ -38,8 +38,7 @@ const withTheme: Decorator = (Story, { globals }) => (
  * is what decides a control's box. Measured in this gallery: a default `Button`
  * paints 28px under a 10px label in the phone frame and 32px under an 11px label in
  * the desktop one, while a `density="compact"` Button goes the other way, 32px on
- * the phone and 24px under the pointer. The four sizes are the design skill's
- * canonical viewports.
+ * the phone and 24px under the pointer.
  */
 const preview: Preview = {
   decorators: [withTheme],

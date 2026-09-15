@@ -1605,9 +1605,8 @@ export function SettingsDisclosure({
  * POSITION — knob left, knob right — and the colour only agrees with it, which is
  * also how it keeps its meaning without hue.
  *
- * 46x28 on touch and 40x24 under a pointer, the design skill's own settings figures,
- * with the 44px finger target arriving as invisible reach above and below (32px on a
- * pointer, the floor) rather than as paint.
+ * 46x28 on touch and 40x24 under a pointer, with an invisible hit area providing
+ * a 44px touch target and a 32px pointer target.
  *
  * Both states keep the theme foreground outline, so the accent fill never
  * hides the track boundary. The off knob uses the quieter hint foreground.
