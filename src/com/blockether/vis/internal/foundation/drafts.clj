@@ -16,17 +16,17 @@
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.drafts :as drafts]))
 
-(vis/register-toggle! {:id workspace/draft-backend-toggle-id
-                       :label "Draft backend"
-                       ;; One line for the Settings row (100 chars max); `doc("drafts")` has the rest.
-                       :description
-                       "Require drafts for changes: auto-select, git worktree, Rift clone, or off."
-                       :type :enum
-                       :choices ["auto" "worktree" "rift" "off"]
-                       :default "auto"
-                       :owner :vis
-                       :persist? true
-                       :group :sandbox})
+(vis/register-toggle!
+  {:id workspace/draft-backend-toggle-id
+   :label "Draft backend"
+   ;; One line for the Settings row (100 chars max); `doc("drafts")` has the rest.
+   :description "Off by default. Enable drafts for changes with auto, git worktree or Rift clone."
+   :type :enum
+   :choices ["auto" "worktree" "rift" "off"]
+   :default "off"
+   :owner :vis
+   :persist? true
+   :group :sandbox})
 
 (def ^:private DRAFT_WORKFLOW_PROMPT
   (str

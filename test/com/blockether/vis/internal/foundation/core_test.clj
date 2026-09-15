@@ -59,9 +59,9 @@
 (defdescribe
   draft-workflow-prompt-test
   (it
-    "requires the draft workflow for every enabled backend and the default"
+    "requires the draft workflow only for explicitly enabled backends"
     (let [value-of toggles/value-of]
-      (doseq [backend [nil "auto" "worktree" "rift"]]
+      (doseq [backend ["auto" "worktree" "rift"]]
         (with-redefs [toggles/value-of (fn [id]
                                          (if (= "draft_backend" id) backend (value-of id)))]
           (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
@@ -85,14 +85,15 @@
                 "If drafts are unavailable or blocked, report the blocker"
                 "never silently fall back to shared-checkout edits"]]
               (expect (str/includes? prompt required) (str backend ": " required))))))))
-  (it "removes the workflow when switched off and restores it when re-enabled"
+  (it "omits the workflow by default, removes it when switched off and restores it on opt-in"
       (let [value-of toggles/value-of]
-        (doseq [backend ["auto" "off" "rift"]]
+        (doseq [backend [nil "" "unknown" "auto" "off" "rift"]]
           (with-redefs [toggles/value-of (fn [id]
                                            (if (= "draft_backend" id) backend (value-of id)))]
             (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-              (expect (= (not= "off" backend) (str/includes? prompt "## Draft workflow")))
-              (when (= "off" backend)
+              (expect (= (contains? #{"auto" "rift"} backend)
+                         (str/includes? prompt "## Draft workflow")))
+              (when-not (contains? #{"auto" "rift"} backend)
                 (doseq [absent ["draft_create(" "draft_approve(" "draft_discard("]]
                   (expect (not (str/includes? prompt absent)))))))))))
 

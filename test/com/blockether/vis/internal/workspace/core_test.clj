@@ -9,8 +9,13 @@
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.workspace.core :as ws]
             [com.blockether.vis.internal.util :as util]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
             [next.jdbc :as jdbc]))
+
+;; These primitive tests explicitly opt in so capability guards still exercise cloning.
+(set-ns-context! [(around-each [f]
+                               (binding [ws/*draft-backend* :auto]
+                                 (f)))])
 
 ;; Regression, reported issue: a configured `~/vis` root was canonicalized as a
 ;; child of the process directory, so new sessions opened in the wrong worktree.

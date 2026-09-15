@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.activity.presenter :as presenter]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.drafts :as drafts]
@@ -119,6 +120,30 @@
   "The root the foundation ctx block reports for `env` right now."
   [env]
   (get-in ((:ext/ctx-fn foundation/vis-extension) env) ["session_workspace" "root"]))
+
+;; Draft recovery reports #242 and #243: isolation must be an explicit opt-in.
+(defdescribe draft-backend-setting-test
+             (it "defaults to off and exposes the same persistent choice in both clients"
+                 (let [spec (toggles/toggle-spec ws/draft-backend-toggle-id)]
+                   (expect (= "off" (:default spec)))
+                   (expect (= :enum (:type spec)))
+                   (expect (= ["auto" "worktree" "rift" "off"] (:choices spec)))
+                   (expect (true? (:persist? spec)))
+                   (doseq [channel [:tui :web]]
+                     (expect (some #(= ws/draft-backend-toggle-id (:id %))
+                                   (toggles/toggles-for-channel channel))))))
+             (it "keeps missing or invalid settings off while honoring explicit backend choices"
+                 (binding [ws/*draft-backend* nil]
+                   (doseq [configured [nil "" "unknown" false "off" "auto" "worktree" "rift"]]
+                     (with-redefs [toggles/value-of (constantly configured)]
+                       (expect (= (if (contains? #{"auto" "worktree" "rift"} configured)
+                                    (keyword configured)
+                                    :off)
+                                  (ws/draft-backend-setting)))))))
+             (it "honors an explicit backend override even when the saved setting is off"
+                 (with-redefs [toggles/value-of (constantly "off")]
+                   (binding [ws/*draft-backend* :worktree]
+                     (expect (= :worktree (ws/draft-backend-setting)))))))
 
 (defdescribe
   draft-symbol-roundtrip-test

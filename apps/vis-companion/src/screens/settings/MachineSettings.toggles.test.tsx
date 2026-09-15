@@ -56,6 +56,26 @@ async function openSettings() {
 }
 
 describe('draft backend dropdown', () => {
+  // #242 and #243: opening Settings must not opt the user into draft isolation.
+  it('shows off without saving and lets the user enable and disable drafts', async () => {
+    vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
+      groups: [{ id: 'sandbox', title: 'Sandbox', toggles: [{ ...backend, value: 'off' }] }],
+    });
+    const save = vi.spyOn(GatewayClient.prototype, 'setSetting').mockImplementation(
+      async (_id, _action, value) => ({ ...backend, value }),
+    );
+    const select = await openSettings();
+    expect(select).toHaveTextContent('off');
+    expect(select).toBeEnabled();
+    expect(save).not.toHaveBeenCalled();
+    for (const value of ['auto', 'off']) {
+      await userEvent.click(select);
+      await userEvent.click(screen.getByRole('option', { name: value }));
+      await waitFor(() => expect(select).toHaveTextContent(value));
+      expect(save).toHaveBeenLastCalledWith('draft_backend', 'value', value);
+    }
+  });
+
   it('lists the configured choices and saves the chosen value, not a cycle', async () => {
     const save = vi
       .spyOn(GatewayClient.prototype, 'setSetting')

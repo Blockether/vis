@@ -785,9 +785,9 @@
   nil)
 
 (defn draft-backend-setting
-  "The configured draft backend selection: `:auto` (default), `:worktree`,
-   `:rift` or `:off`. `*draft-backend*` wins over the `draft_backend` toggle; an
-   unregistered toggle or an unknown value means `:auto`."
+  "The configured draft backend selection: `:off` (default), `:auto`,
+   `:worktree` or `:rift`. `*draft-backend*` wins over the `draft_backend` toggle;
+   an unregistered toggle or an unknown value means `:off`."
   []
   (let [raw
         (or *draft-backend* (toggles/value-of draft-backend-toggle-id))
@@ -797,7 +797,7 @@
               (string? raw) (keyword (str/trim raw))
               :else nil)]
 
-    (if (contains? #{:auto :worktree :rift :off} k) k :auto)))
+    (if (contains? #{:auto :worktree :rift :off} k) k :off)))
 
 (defn- git-worktree-availability
   "Whether `source-root` can seed a linked Git worktree: the top of a Git working

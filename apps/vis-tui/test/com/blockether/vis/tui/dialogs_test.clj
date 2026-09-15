@@ -685,7 +685,7 @@
 
 (defn- exercise-backend-picker
   "Run the production Settings picker on a virtual terminal with a fixture gateway."
-  [keys {:keys [width fail? experimental?] :or {width 80}}]
+  [keys {:keys [width fail? experimental? value] :or {width 80 value "worktree"}}]
   (let [id
         "dialogs_draft_backend"
 
@@ -711,7 +711,7 @@
                                :label "Draft backend"
                                :type :enum
                                :choices ["auto" "worktree" "rift" "off"]
-                               :default "worktree"
+                               :default value
                                :experimental? (boolean experimental?)
                                :settings? false})
     (try (.startScreen screen)
@@ -723,6 +723,9 @@
 
                         :down
                         (KeyStroke. KeyType/ArrowDown)
+
+                        :up
+                        (KeyStroke. KeyType/ArrowUp)
 
                         (term/keystroke key))))
          (with-redefs-fn
@@ -772,6 +775,19 @@
         (expect (= [["/v1/settings" {:id "dialogs_draft_backend" :action "value" :value "rift"}]]
                    requests))
         (expect (= "rift" value))))
+  ;; #242 and #243: drafts remain available in Settings without enabling them on open.
+  (it "shows off and lets the user explicitly enable and disable drafts"
+      (doseq [[initial keys expected] [["off" [:esc] "off"]
+                                       ["off" [:enter :up :up :up :enter :esc] "auto"]
+                                       ["auto" [:enter :down :down :down :enter :esc] "off"]]]
+        (let [{:keys [requests frames value]} (exercise-backend-picker keys {:value initial})]
+          (expect (= expected value))
+          (expect (some #(str/includes? % initial) frames))
+          (expect (= (if (= initial expected)
+                       []
+                       [["/v1/settings"
+                         {:id "dialogs_draft_backend" :action "value" :value expected}]])
+                     requests)))))
   (it "confirming the current backend is a no-op"
       (let [{:keys [requests value]} (exercise-backend-picker [:enter :enter :esc] {})]
         (expect (empty? requests))
