@@ -4941,41 +4941,21 @@
 (def ^:private workspace-refresh-ms 4000)
 
 (defn- start-workspace-refresh-thread!
-  "Keep the gateway workspace fact (root + git status) fresh between turns.
-   Git status is a SERVER-SIDE session fact — `git/workspace-status`, a
-   stale-while-revalidate cache in the daemon that OWNS the repo — and the footer
-   reads ONLY that fact (no client-side git walk, no fallback). Refetch it on a
-   slow cadence so the footer's changed-file count tracks reality instead of
-   freezing at the last turn-end `:set-workspace` snapshot.
-   Dispatches only when the workspace fact changes, including draft identity and
-   review counts, so an idle session never churns the render loop."
+  "Keep gateway workspace identity, Git and draft landing facts fresh between
+   turns. The shared refresh path pins each response to its requesting tab and
+   rejects obsolete snapshots; unchanged facts never churn the render loop."
   ^Thread []
   (let [t (Thread. ^Runnable
                    (fn []
-                     (loop [last-key ::init]
-                       (when-not (:shutdown? @state/app-db)
-                         (let [sid (get-in @state/app-db [:session :id])
-                               ws (try (when sid
-                                         (when-let [ws (vis/gateway-session-workspace sid)]
-                                           (when (get ws "root") ws)))
-                                       (catch Throwable t
-                                         (tel/log! {:level :warn
-                                                    :id ::workspace-refresh-failed
-                                                    :data {:error (or (ex-message t) (str t))}
-                                                    :msg "Workspace refresh failed"})
-                                         nil))
-                               ;; Include the session and whole workspace fact: draft identity,
-                               ;; review counts and transitions can change with identical Git status.
-                               next-key (if ws
-                                          (let [k [sid ws]]
-                                            (when (not= k last-key)
-                                              (state/dispatch [:set-workspace ws]))
-                                            k)
-                                          last-key)]
-
-                           (try (Thread/sleep (long workspace-refresh-ms))
-                                (catch InterruptedException _ nil))
-                           (recur next-key)))))
+                     (while (not (:shutdown? @state/app-db))
+                       (try (state/refresh-workspace!)
+                            (catch Throwable t
+                              (tel/log! {:level :warn
+                                         :id ::workspace-refresh-failed
+                                         :data {:error (or (ex-message t) (str t))}
+                                         :msg "Workspace refresh failed"})))
+                       (try (Thread/sleep (long workspace-refresh-ms))
+                            (catch InterruptedException _ nil))))
                    "vis-tui-workspace-refresh")]
     (.setDaemon t true)
     (.start t)

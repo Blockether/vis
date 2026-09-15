@@ -59,6 +59,13 @@ writable paths are refreshed.
 While in a draft, `session["workspace"]["draft"]` includes `label`, `backend`,
 `branch`, `target_branch`, `approved_ahead` and `pending_paths`.
 
+The TUI footer shows the draft name and task-review `CHANGES`, plus `PENDING`
+paths and `UNMERGED` commits for repositories included in approval. Approval
+reduces the latter counts to zero once the changes land locally; it does not
+reset the review baseline or close the draft. These counts do not confirm a
+successful push. Discarding switches the footer back to the original checkout.
+The footer refreshes in the background and at the end of a turn.
+
 ## Recover a session opened in the wrong draft
 
 Ask Vis to check the draft state and return the session to its original checkout.

@@ -978,3 +978,57 @@
                        (->> (#'footer/build-segments {:workspace workspace :settings {}} 0)
                             (filter #(= :right (:region %)))
                             (mapv :text)))))))))
+
+(defdescribe
+  draft-landing-status-test
+  ;; #247: approval changes landing facts, not the immutable task-review baseline.
+  (it "changes after approval even though the immutable task review counts do not"
+      (let [draft {"label" "feature" "draft_changes" {"modified" 1 "created" 0 "deleted" 0}}]
+        (doseq [[facts expected]
+                [[{"pending" 1 "ahead" 0} "CHANGES ~1 +0 -0 · PENDING 1 · UNMERGED 0"]
+                 [{"pending" 0 "ahead" 1} "CHANGES ~1 +0 -0 · PENDING 0 · UNMERGED 1"]
+                 [{"pending" 0 "ahead" 0} "CHANGES ~1 +0 -0 · PENDING 0 · UNMERGED 0"]]]
+          (expect (= expected (:text (last (#'footer/draft-footer-spans (merge draft facts)))))))))
+  (it "does not call copied source work clean merely because task review is empty"
+      (expect (= "CHANGES ~0 +0 -0 · PENDING 2 · UNMERGED 0"
+                 (:text (last (#'footer/draft-footer-spans
+                               {"label" "copied"
+                                "pending" 2
+                                "ahead" 0
+                                "draft_changes" {"modified" 0 "created" 0 "deleted" 0}})))))))
+
+(defdescribe
+  draft-landing-width-test
+  (it "keeps live pending and unmerged counts readable at ordinary terminal widths"
+      (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
+                                                                :provider :openai-codex
+                                                                :reasoning-effort? true
+                                                                :verbosity-style :openai-text})}
+        (fn []
+          (doseq [cols
+                  [80 120]
+
+                  [pending ahead]
+                  [[2 1] [0 0]]]
+
+            (let [db
+                  {:messages []
+                   :settings {:reasoning-level "deep" :verbosity "low"}
+                   :workspace {"is_draft" true
+                               "label" "finish-dev-env-live-view"
+                               "pending" pending
+                               "ahead" ahead
+                               "draft_changes" {"modified" 2 "created" 3 "deleted" 1}}}
+
+                  capture
+                  (cap/capture! {:cols cols
+                                 :rows 4
+                                 :paint! (fn [{:keys [g]}]
+                                           (footer/draw-footer! g db 1 cols 0))})
+
+                  text
+                  (cap/frame-text capture)]
+
+              (expect (nil? (:error capture)))
+              (expect (str/includes? text "DRAFT ("))
+              (expect (str/includes? text (str "PENDING " pending " · UNMERGED " ahead)))))))))

@@ -363,6 +363,41 @@
       (state/dispatch [:set-workspace {"id" "ws-1" "root" "/tmp/new"}])
       (expect (= "/tmp/new" (:workspace/root @state/app-db)))
       (expect (= "/tmp/new" (get-in @state/app-db [:tab-locals :main :workspace/root]))))
+  ;; #247: outstanding reads cannot restore a closed or reassigned session's draft.
+  (it "ignores pending workspace responses when their tab was closed or reused"
+      (doseq [current [{:session {:id "other"} :active-tab-id :other :tab-locals {}}
+                       {:session {:id "replacement"}
+                        :active-tab-id :main
+                        :workspace {"id" "replacement" "root" "/replacement"}}]]
+        (let [current (#'state/finalize-db current)
+              db (atom current)]
+
+          (with-redefs [state/app-db db]
+            (state/dispatch [:set-workspace {"id" "draft" "root" "/draft"} :main
+                             {:session-id "original" :workspace nil}])
+            (expect (= current @db))))))
+  (it "does not fetch a workspace for an old turn after its tab changes sessions"
+      (let [db (atom {:session {:id "replacement"} :active-tab-id :main})]
+        (with-redefs [state/app-db db
+                      vis/gateway-session-workspace (fn [_]
+                                                      (throw (AssertionError.
+                                                               "unexpected workspace read")))]
+
+          (state/refresh-workspace! :main "original"))))
+  (it "keeps workspace data and the render counter unchanged for missing or unchanged reads"
+      (let [ws
+            {"id" "draft" "root" "/draft"}
+
+            current
+            {:session {:id "a"} :active-tab-id :main :workspace ws :render-version 1}]
+
+        (doseq [response [nil {} ws]]
+          (let [db (atom current)]
+            (with-redefs [state/app-db db
+                          vis/gateway-session-workspace (constantly response)]
+
+              (state/refresh-workspace!)
+              (expect (= current @db)))))))
   (it "caps workspaces at eight total entries"
       (reset! state/app-db {:title "Main" :render-version 0})
       (dotimes [_ 10]

@@ -2035,18 +2035,55 @@
               (fn [db _]
                 (assoc db :shutdown? true)))
 
-(reg-event-db :set-workspace
-              ;; Route workspace updates to the owning tab, preserve the denormalized root,
-              ;; and ignore blank replacements so transient misses cannot corrupt the footer.
-              (fn [db [_ ws workspace-id]]
-                (if-not (get ws "root")
-                  db
-                  (update-tab db
-                              workspace-id
-                              (fn [d]
-                                (assoc d
-                                  :workspace ws
-                                  :workspace/root (get ws "root")))))))
+(reg-event-db
+  :set-workspace
+  ;; Async reads belong to the requesting session and cannot replace a newer
+  ;; workspace snapshot. Direct workspace changes omit the request guard.
+  (fn [db [_ ws workspace-id request]]
+    (let [workspace-id
+          (or workspace-id (current-tab-id db))
+
+          current
+          (if (= workspace-id (current-tab-id db)) db (get-in db [:tab-locals workspace-id]))]
+
+      (if (or (not (get ws "root"))
+              (and request
+                   (not= request
+                         {:session-id (get-in current [:session :id])
+                          :workspace (:workspace current)})))
+        db
+        (update-tab db
+                    workspace-id
+                    (fn [d]
+                      (assoc d
+                        :workspace ws
+                        :workspace/root (get ws "root"))))))))
+
+(defn refresh-workspace!
+  "Refresh the requesting tab from the gateway without overwriting a newer fact.
+   Compare against the displayed snapshot, not the poller's previous response, so
+   stale hydration can be repaired. Gateway IO runs on the calling worker."
+  ([]
+   (let [db @app-db]
+     (refresh-workspace! (current-tab-id db) (get-in db [:session :id]))))
+  ([workspace-id session-id]
+   (let [db
+         @app-db
+
+         workspace-id
+         (or workspace-id (current-tab-id db))
+
+         current
+         (if (= workspace-id (current-tab-id db)) db (get-in db [:tab-locals workspace-id]))
+
+         before
+         (:workspace current)]
+
+     (when (and session-id (= session-id (get-in current [:session :id])))
+       (when-let [ws (vis/gateway-session-workspace session-id)]
+         (when (and (get ws "root") (not= ws before))
+           (dispatch [:set-workspace ws workspace-id
+                      {:session-id session-id :workspace before}])))))))
 
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token :gateway-turn-id
@@ -5934,11 +5971,7 @@
                         ;; Re-sync so header/footer reflect it. The gateway ws
                         ;; fact already carries the server-resolved :git status,
                         ;; so re-dispatch it — no client-side git walk here.
-                        (try (let [sid (some-> session
-                                               :id)
-                                   ws (when sid (vis/gateway-session-workspace sid))]
-
-                               (dispatch [:set-workspace ws workspace-id]))
+                        (try (refresh-workspace! workspace-id (:id session))
                              (catch Throwable _ nil))
                         ;; W3: refresh the F2 context panel's snapshot from the
                         ;; just-completed turn's ctx (tasks + facts). One DB read
@@ -6050,11 +6083,7 @@
                             :utilization (get result "utilization")
                             :slash (get result "slash")
                             :client-turn-id client-turn-id}])
-                        (try (let [sid (some-> session
-                                               :id)
-                                   ws (when sid (vis/gateway-session-workspace sid))]
-
-                               (dispatch [:set-workspace ws workspace-id]))
+                        (try (refresh-workspace! workspace-id (:id session))
                              (catch Throwable _ nil))
                         (try (when-let [sid (:id session)]
                                (dispatch [:set-ctx-panel sid {}]))

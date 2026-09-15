@@ -212,7 +212,7 @@
     [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
 
 (defn- draft-footer-spans
-  [{:strs [id label draft_changes draft_error recovery_required]}]
+  [{:strs [id label draft_changes draft_error recovery_required pending ahead]}]
   (let [identity
         (or (not-empty label)
             (some-> id
@@ -223,12 +223,24 @@
         counts
         (map #(get draft_changes %) ["modified" "created" "deleted"])
 
+        ;; Review counts compare with the immutable creation snapshot, so they
+        ;; remain after approval. Pending paths and unmerged commits are live
+        ;; landing facts; show them separately rather than pretending approval
+        ;; erased the task's diff or closed the draft.
+        landing
+        (when-not recovery_required
+          (str (when (number? pending) (str " · PENDING " pending))
+               (when (number? ahead) (str " · UNMERGED " ahead))))
+
         summary
-        (cond recovery_required "RECOVERY REQUIRED"
-              (or draft_error (not-every? number? counts)) "CHANGES UNAVAILABLE"
-              (every? zero? counts) "CLEAN"
-              :else (let [[modified created deleted] counts]
-                      (str "CHANGES ~" modified " +" created " -" deleted)))]
+        (str (cond recovery_required "RECOVERY REQUIRED"
+                   (or draft_error (not-every? number? counts)) "CHANGES UNAVAILABLE"
+                   (and (every? zero? counts)
+                        (not-any? #(and (number? %) (pos? %)) [pending ahead]))
+                   "CLEAN"
+                   :else (let [[modified created deleted] counts]
+                           (str "CHANGES ~" modified " +" created " -" deleted)))
+             landing)]
 
     [{:text (str " DRAFT (" identity ")")
       :fg t/footer-fg-strong
