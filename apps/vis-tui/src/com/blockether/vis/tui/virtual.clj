@@ -220,8 +220,8 @@
 ;; frame. That churn dominated layout allocation (~1 MB / call -> ~10-14 MB/s
 ;; of garbage while streaming -> Serial-GC pauses in the log's slow frames).
 ;; Memoize the projection under the SAME content key the height cache uses.
-;; The live / last bubble and windowed (`:tail-lines`) slices are NEVER routed
-;; here, so a hit only ever returns a projection identical to a fresh render.
+;; Live bubbles and windowed slices are never routed here, so a hit always
+;; returns the complete stable projection used for measurement and painting.
 ;; Smaller cap than the height cache: each entry pins a wrapped-line vector.
 (defonce ^:private ^LinkedHashMap projection-cache
   (proxy [LinkedHashMap] [128 0.75 true]
@@ -231,30 +231,13 @@
 
 (defonce ^:private ^AtomicLong projection-cache-gen (AtomicLong.))
 
-;; Sticky TAIL-PROJECTION cache. The bottom-locked last bubble (auto-scroll or
-;; scroll clamped to max) is rendered with `:tail-lines` so only the visible tail
-;; is styled - but `project-message` still parses the WHOLE message Markdown each
-;; frame to find that tail, so a long completed answer pinned at the bottom re-
-;; parses + re-wraps its full body on every relayout (~0.85 ms / ~4.4 MB for a
-;; 640-row bubble here). The tail projection is a pure function of the message +
-;; `tail-n`, and the LIVE streaming bubble never reaches this path (it is peeled
-;; off as the loading bubble), so a completed last bubble's tail is byte-identical
-;; frame to frame - memoize it under the height key plus `tail-n`. Tiny cap: only
-;; the last bubble (plus a couple during a resize) ever tail-walks.
-(defonce ^:private ^LinkedHashMap tail-projection-cache
-  (proxy [LinkedHashMap] [16 0.75 true]
-    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) 32))))
-
-(defonce ^:private ^AtomicLong tail-projection-cache-gen (AtomicLong.))
-
 (defn invalidate-heights!
   "Drop the sticky height cache AND the estimate memo. Tests + whole-cache
    busts (registry-toggle resync) call this."
   []
   (locking height-cache (.clear ^LinkedHashMap height-cache))
   (render/clear-cache! estimate-cache estimate-cache-gen)
-  (render/clear-cache! projection-cache projection-cache-gen)
-  (render/clear-cache! tail-projection-cache tail-projection-cache-gen))
+  (render/clear-cache! projection-cache projection-cache-gen))
 
 (defn height-cache-size
   "Current sticky-height entry count (handy for tests / diagnostics)."
@@ -773,17 +756,10 @@
 (defn project-message
   "Apply the same `:text` projection `screen/apply-settings` used to
    apply, but for ONE message at a time so the virtual layer can call
-   it lazily per-bubble. Hits the same caches `apply-settings` did.
-
-   `:tail-lines` opt (when present, positive long) routes the IR
-   walker through `layout/ast->lines-tail` so only the LAST tail-lines
-   styled lines are produced - O(visible-tail) instead of O(body).
-   Used by `layout` for the auto-scrolled tail-pinned bubble where
-   the user only sees the bottom of the message. See A3 in
-   autoresearch."
+   it lazily per-bubble. Hits the same caches `apply-settings` did."
   ([message ^long bubble-w settings] (project-message message bubble-w settings nil))
   ([message ^long bubble-w settings
-    {:keys [session-id detail-expansions tail-lines window-start window-num window-total-h]}]
+    {:keys [session-id detail-expansions window-start window-num window-total-h]}]
    (let [message
          (assoc message :session-id session-id)
 
@@ -876,43 +852,37 @@
                                                   settings
                                                   (:confidence message)
                                                   cancelled?
-                                                  (cond-> {:session-id session-id
-                                                           :session-turn-id (turn-identity message)
-                                                           :detail-expansions detail-expansions
-                                                           :runs (:runs message)}
-                                                    tail-lines
-                                                    (assoc :tail-lines tail-lines)))]
+                                                  {:session-id session-id
+                                                   :session-turn-id (turn-identity message)
+                                                   :detail-expansions detail-expansions
+                                                   :runs (:runs message)})]
              (-> message
                  (assoc :text text
                         :prewrapped-lines lines
                         :line-meta line-meta)
                  strip-ts))
-           (#{:assistant :user} (:role message))
-           (let [ast
-                 (ast/markdown->ast (or (:text message) ""))
+           (#{:assistant :user} (:role message)) (let [ast
+                                                       (ast/markdown->ast (or (:text message) ""))
 
-                 {:keys [text lines line-meta]}
-                 (render/format-answer-markdown-data ast
-                                                     bubble-w
-                                                     (cond-> {:session-id session-id
-                                                              :session-turn-id (turn-identity
-                                                                                 message)
-                                                              :detail-expansions detail-expansions
-                                                              :section (:role message)}
-                                                       tail-lines
-                                                       (assoc :tail-lines tail-lines)))]
+                                                       {:keys [text lines line-meta]}
+                                                       (render/format-answer-markdown-data
+                                                         ast
+                                                         bubble-w
+                                                         {:session-id session-id
+                                                          :session-turn-id (turn-identity message)
+                                                          :detail-expansions detail-expansions
+                                                          :section (:role message)})]
 
-             (-> message
-                 (assoc :text text
-                        :prewrapped-lines lines
-                        :line-meta line-meta)
-                 strip-ts))
+                                                   (-> message
+                                                       (assoc :text text
+                                                              :prewrapped-lines lines
+                                                              :line-meta line-meta)
+                                                       strip-ts))
            :else (strip-ts message)))))
 
 (defn- project-message-cached
-  "Memoized `project-message` for STABLE (non-live) bubbles, keyed exactly
-   like `height-cache-get`. Callers MUST NOT route the live / last bubble or
-   a windowed (`:tail-lines`) slice through here - those change every tick."
+  "Memoized complete `project-message` for stable (non-live) bubbles, keyed
+   exactly like `height-cache-get`. Live bubbles and windowed slices bypass it."
   [message bubble-w settings detail-expansions session-id]
   (render/with-cache projection-cache
                      projection-cache-gen
@@ -922,23 +892,6 @@
                                       settings
                                       {:session-id session-id
                                        :detail-expansions detail-expansions})))
-
-(defn- project-message-tail-cached
-  "Memoized tail-walker projection for the bottom-locked LAST bubble. Keyed like
-   `project-message-cached` plus `tail-n` (the tail height, which shifts with the
-   viewport), so the full-body and tail projections never collide. Callers MUST
-   route only a STABLE (non-live) last bubble here - the live streaming bubble is
-   the loading bubble and never tail-walks."
-  [message bubble-w settings detail-expansions session-id tail-n]
-  (render/with-cache
-    tail-projection-cache
-    tail-projection-cache-gen
-    (conj (height-key message bubble-w settings detail-expansions session-id) (long tail-n))
-    (project-message
-      message
-      bubble-w
-      settings
-      {:session-id session-id :detail-expansions detail-expansions :tail-lines (long tail-n)})))
 
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;
@@ -1250,12 +1203,9 @@
         loading-last-idx
         (when (and loading? (pos? n) (= :assistant (:role (peek messages)))) (long (dec n)))
 
-        ;; Per-message projection extracted so pass-2 AND the recovery
-        ;; pass-3 (below) can reuse the same logic. `eff` is the
-        ;; effective scroll currently in play; it only matters for the
-        ;; bottom-locked tail-walker shortcut on the live bubble.
+        ;; Share complete projection and measurement across all layout passes.
         project-idx!
-        (fn [^long i ^long eff]
+        (fn [^long i]
           (let [m
                 (nth messages i)
 
@@ -1298,36 +1248,10 @@
                       :text text
                       :prewrapped-lines lines
                       :line-meta line-meta))
-                  ;; Two projection paths for the LAST bubble:
-                  ;;   1. Bottom-locked (auto-scroll OR scroll clamped to
-                  ;;      max): tail-walker (A4/A6) — renders only the
-                  ;;      visible tail, cheap even for a huge body.
-                  ;;   2. Genuine mid-scroll into a tall body: the message is
-                  ;;      STABLE (the LIVE streaming bubble is peeled off
-                  ;;      above via `loading-bubble?`), so route it through
-                  ;;      the same projection cache every other stable bubble
-                  ;;      uses — otherwise each scroll frame re-parses the
-                  ;;      Markdown and re-wraps the whole body from scratch.
-                  (let [last?
-                        (= i (long (dec n)))
-
-                        max-scroll
-                        (max 0 (- est-tot inner-h))
-
-                        bottom-locked?
-                        (and last? (= eff max-scroll))
-
-                        tail-n
-                        (when bottom-locked? (long (* 2 inner-h)))]
-
-                    (if (and last? bottom-locked?)
-                      (project-message-tail-cached m
-                                                   bubble-w
-                                                   settings
-                                                   detail-expansions
-                                                   session-id
-                                                   tail-n)
-                      (project-message-cached m bubble-w settings detail-expansions session-id))))
+                  ;; The bottom and scrollback must use the same complete projection.
+                  ;; A tail slice has no full-height metadata and would poison the
+                  ;; sticky height cache with only the visible tail's height (#244).
+                  (project-message-cached m bubble-w settings detail-expansions session-id))
 
                 pm
                 (with-turn-separator pm messages settings i)
@@ -1376,7 +1300,7 @@
                   (if (neg? i)
                     acc
                     (let [pj
-                          (project-idx! i eff-1)
+                          (project-idx! i)
 
                           acc'
                           (cons pj acc)
@@ -1449,7 +1373,7 @@
                       messages)
 
                 projected
-                (mapv #(project-idx! % eff-1) cand-idxs)
+                (mapv project-idx! cand-idxs)
 
                 ;; Refine heights vec with real measurements.
                 heights'
@@ -1546,7 +1470,7 @@
                   [])
 
                 extra-projected
-                (mapv #(project-idx! % eff-2) missing-idxs)
+                (mapv project-idx! missing-idxs)
 
                 projected-all
                 (into projected extra-projected)

@@ -1078,6 +1078,106 @@
           (expect (zero? (virtual/height-cache-size)))))))
 
 (defdescribe
+  long-transcript-scroll-test
+  ;; Regression #244: a tail-only projection was cached as the complete height.
+  ;; The first upward scroll then replaced that slice with the full message,
+  ;; moving the scrollbar and the visible content by hundreds of rows.
+  (let [long-answer
+        (str/join "\n\n"
+                  (map #(str "Paragraph " % " " (apply str (repeat 100 "word "))) (range 100)))
+
+        answer
+        (assoc (plain-assistant-msg long-answer) :session-turn-id "long-answer")
+
+        opts
+        {:session-id "long-transcript" :detail-expansions {}}
+
+        inner-h
+        24]
+
+    (it "keeps the complete last-message height at the bottom and in scrollback"
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [expected
+              (render/bubble-height (project-message answer bubble-w settings opts) bubble-w)
+
+              bottom
+              (virtual/layout [answer] bubble-w settings nil inner-h {} opts)
+
+              up
+              (virtual/layout [answer]
+                              bubble-w
+                              settings
+                              (- (long (:eff-scroll bottom)) 3)
+                              inner-h
+                              {}
+                              (assoc opts
+                                :prev-offsets (:offsets bottom)
+                                :prev-row-anchors (:row-anchors bottom)))
+
+              bottom-again
+              (virtual/layout [answer] bubble-w settings nil inner-h {} opts)]
+
+          (expect (> expected (* 10 inner-h)))
+          (expect (= expected (:total-h bottom) (:total-h up) (:total-h bottom-again)))
+          (expect (= (- expected inner-h 3) (:eff-scroll up)))
+          (expect (= (:projected (first (:visible bottom))) (:projected (first (:visible up)))))))
+    (it "preserves measured rows through repeated small upward scrolls in a large history"
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [messages
+              (conj (mapv (fn [i]
+                            (-> (trace-assistant-msg 1 1 (str "Answer " i))
+                                (assoc :session-turn-id (str "history-" i))
+                                (assoc-in
+                                  [:traces 0 :forms 0 :stdout]
+                                  (if (#{40 80} i) (apply str (repeat 40000 "x")) "Small output"))))
+                          (range 200))
+                    answer)
+
+              total
+              (virtual/warm-heights! messages bubble-w settings opts)
+
+              bottom
+              (virtual/layout messages bubble-w settings nil inner-h {} opts)
+
+              frames
+              (loop [previous
+                     bottom
+
+                     out
+                     [bottom]
+
+                     remaining
+                     total]
+
+                (if (or (zero? remaining) (zero? (long (:eff-scroll previous))))
+                  out
+                  (let [requested
+                        (max 0 (- (long (:eff-scroll previous)) 3))
+
+                        frame
+                        (virtual/layout messages
+                                        bubble-w
+                                        settings
+                                        requested
+                                        inner-h
+                                        {}
+                                        (assoc opts
+                                          :prev-offsets (:offsets previous)
+                                          :prev-row-anchors (:row-anchors previous)))]
+
+                    (recur frame (conj out frame) (dec remaining)))))
+
+              scrolls
+              (mapv :eff-scroll frames)]
+
+          (expect (= total (:total-h bottom)))
+          (expect (every? #(= total (:total-h %)) frames))
+          (expect (= (vec (range (- total inner-h) 0 -3)) (vec (butlast scrolls))))
+          (expect (zero? (long (peek scrolls))))))))
+
+(defdescribe
   scroll-anchoring-test
   ;; Regression: long reopened session, fast scroll up. Trace-bubble
   ;; estimates OVER-shoot real heights (~2.5x), so before the

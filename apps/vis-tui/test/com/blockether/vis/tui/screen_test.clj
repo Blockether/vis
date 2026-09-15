@@ -2972,6 +2972,99 @@ therapy line 2"
                         nil
                         {:input recalled :slash-command-index 0 :slash-command-hidden? true}))))))
 
+(defdescribe
+  long-answer-scroll-geometry-test
+  ;; Regression #244: exercise the real event/easing/paint loop, not just layout.
+  (it
+    "keeps the viewport near the same lines when leaving the bottom of a long answer"
+    (let [message
+          (fn [id text]
+            {:role :assistant
+             :session-turn-id id
+             :text text
+             :content [{"id" id "type" "prose" "markdown" text}]})
+
+          messages
+          (conj (mapv (fn [i]
+                        (assoc (message (str "scroll-history-" i) (str "Answer " i))
+                          :traces [{:position 0
+                                    :forms [{:position 0
+                                             :code "print(output)"
+                                             :stdout (if (#{4 8} i)
+                                                       (apply str (repeat 40000 "x"))
+                                                       "Small output")
+                                             :success? true}]}]))
+                      (range 12))
+                (message "scroll-long-answer"
+                         (str/join "\n\n"
+                                   (map #(str "Paragraph " % " " (apply str (repeat 100 "word ")))
+                                        (range 100)))))
+
+          db
+          {:session {:id "scroll-geometry"}
+           :workspace {}
+           :messages messages
+           :scroll scroll/follow
+           :input (input/empty-input)
+           :settings {}
+           :pending-sends []
+           :detail-expansions {}
+           :live-views []
+           :loading? false
+           :cancelling? false
+           :progress nil
+           :channel-status {}
+           :tabs []
+           :tab-locals {}
+           :slash-command-index 0
+           :render-version 0}
+
+          width
+          (- 80 render/MESSAGE_SIDE_PAD)]
+
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (with-open [^TerminalScreen terminal-screen (:screen (term/virtual-screen))]
+        (with-redefs [state/app-db (atom db)
+                      timg/images-protocol (constantly nil)]
+
+          (let [bottom (#'screen/render-frame! terminal-screen 80 30 @state/app-db 1000)
+                last-height (render/bubble-height (virtual/project-message (peek messages)
+                                                                           width
+                                                                           {}
+                                                                           {:session-id
+                                                                            "scroll-geometry"
+                                                                            :detail-expansions {}})
+                                                  width)
+                expected-total (+ (long (nth (:offsets bottom) (dec (count messages))))
+                                  (long last-height))]
+
+            (state/dispatch [:set-layout bottom])
+            (let [frames
+                  (loop [previous bottom
+                         out [bottom]
+                         i 0]
+
+                    (if (= i 24)
+                      out
+                      (do (state/dispatch [:scroll-up 3 (:total-h previous) (:inner-h previous)])
+                          (state/dispatch [:ease-scroll (:total-h previous) (:inner-h previous)])
+                          (let [[layout _] (#'screen/paint-frame!
+                                            terminal-screen
+                                            (if (even? i) :full :scroll)
+                                            80
+                                            30
+                                            @state/app-db
+                                            (+ 1000 (* 20 i))
+                                            previous)]
+                            (state/dispatch [:set-layout layout])
+                            (recur layout (conj out layout) (inc i))))))]
+              (expect (= expected-total (:total-h bottom)))
+              (expect (every? #(= expected-total (:total-h %)) frames))
+              (expect (every? (fn [[before after]]
+                                (<= 1 (- (long (:eff-scroll before)) (long (:eff-scroll after))) 3))
+                              (partition 2 1 frames))))))))))
+
 ;; Regression, td-2d89a0, td-20b238, and td-794deb: the expanded execution surface
 ;; detached during history scroll and lost its outer margin or tinted top padding.
 (defdescribe
