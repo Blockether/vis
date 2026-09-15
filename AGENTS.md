@@ -170,7 +170,9 @@ across that boundary; do not drop required keys or validation just because one c
 
 ### Skills and plans
 
-The skills under `.vis/skills/` are upstream installs, kept verbatim rather than silently forked.
+Ponytail is consolidated locally in `.vis/skills/ponytail/SKILL.md`. Other skills under
+`.vis/skills/` are upstream installs, kept verbatim rather than silently forked.
+
 Load them only when the user explicitly requests that skill or its specific workflow: ordinary
 coding does not activate Ponytail. Their style, persistence, test shortcuts and publishing recipes
 do not override repository contracts or the user's scope. Never infer authorization for remote
