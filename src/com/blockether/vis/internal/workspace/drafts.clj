@@ -317,9 +317,9 @@
 
 (defn discard!
   "Discard `workspace-id` through the `:draft/discard` boundary. With
-   `:session-state-id`, the session is repointed to the trunk inside the
-   boundary — a veto leaves it pinned to its draft — and `workspace/abandon!`
-   then removes the draft. Returns `[abandon-result trunk]`."
+   `:session-state-id`, persistence and the optional env `:workspace-atom` are
+   repointed to the trunk inside the boundary — a veto leaves both in the draft —
+   before `workspace/abandon!` starts release. Returns `[abandon-result trunk]`."
   [env {:keys [workspace-id reason session-state-id]}]
   (let [ws
         (require-draft (:db-info env) workspace-id)
@@ -338,6 +338,7 @@
       (fn []
         (let [trunk (when session-state-id
                       (workspace/exit-to-trunk! (:db-info env) session-state-id return-root))]
+          (when (and trunk (:workspace-atom env)) (reset! (:workspace-atom env) trunk))
           [(dissoc (workspace/abandon! (:db-info env) {:workspace-id workspace-id :reason reason})
              :discard-future) trunk])))))
 

@@ -50,7 +50,7 @@
 (defn- boundary-env
   [env]
   (assoc (select-keys env
-                      [:session-id :security-policy :security/filesystem-roots
+                      [:session-id :workspace-atom :security-policy :security/filesystem-roots
                        :workspace/drafts-home :workspace/draft-protected-roots])
     :db-info (db-of env)))
 
@@ -384,7 +384,6 @@
                                              :reason "discarded with draft_discard()"
                                              :session-state-id state-id})]
 
-                       (sync-confinement! env trunk)
                        (extension/success {:op :draft-discard
                                            :result (wire/canonical {:status :discarded
                                                                     :label (:label ws)

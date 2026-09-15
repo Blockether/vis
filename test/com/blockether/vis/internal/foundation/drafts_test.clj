@@ -524,6 +524,38 @@
                (finally (extension/unregister-op-hooks-for-owner!
                           :ext/draft-discard-veto-test))))))))
 
+(defdescribe draft-discard-confinement-order-test
+             (it "repoints persistence and live confinement before backend release starts"
+                 (with-session
+                   "vis-fdrafts-discard-order"
+                   (fn [base env]
+                     (let [opened
+                           (drafts/draft-create env "ordered-discard")
+
+                           observed
+                           (atom nil)
+
+                           release
+                           (atom nil)
+
+                           abandon!
+                           ws/abandon!]
+
+                       (expect (extension/envelope-success? opened))
+                       (with-redefs [ws/abandon! (fn [db opts]
+                                                   (reset! observed
+                                                     {:persisted (:root (ws/for-session
+                                                                          db
+                                                                          (:session/state-id env)))
+                                                      :confined (:root @(:workspace-atom env))})
+                                                   (let [result (abandon! db opts)]
+                                                     (reset! release (:discard-future result))
+                                                     result))]
+                         (expect (extension/envelope-success? (drafts/draft-discard env))))
+                       (when-let [pending @release]
+                         (deref pending 30000 nil))
+                       (expect (= {:persisted base :confined base} @observed)))))))
+
 (defdescribe draft-symbols-test
              (it "the sandbox names its six draft tools, without a draft slash command"
                  (expect (= ["draft-status" "draft-diff" "draft-create" "draft-sync" "draft-approve"

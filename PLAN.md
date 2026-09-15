@@ -1004,12 +1004,18 @@ optimize native builds, or restart the live gateway.
    seven-root/six-slot capacity thrashing. Real confined workers share one host index.
 2. Lifecycle instrumentation, active-entry pinning, scoped invalidation and failed-rescan
    handling are implemented. The six-slot budget and separate root/policy identities stay.
-3. GC and loader experiments are recorded in `TODOS.md`; neither justifies a production
-   tuning change. Runtime retention planning is read-only. Draft cleanup remains a TODO
-   with verified lifecycle/safety requirements, not a claim that approval is terminal.
-4. Initial local verification passed 306 affected tests. Follow-up independent review
-   confirms the shared-host design; scan failures now retain timing and pool identity.
-   Compiler reflection checks remain clean in changed FFF/editor code.
-5. Delivery is in progress: verify and push FFF first, then examine GC and class loaders,
-   implement safe draft/runtime retention, and validate each resulting change. Concurrent
-   release and editor-refusal work stays separate. No live gateway restart or native build.
+3. GC and loader experiments are recorded in `TODOS.md`. Ordinary memory pressure
+   reclaimed most accumulated loaders; no tuning change is justified. The current live
+   host is native, so the historical JVM report remains unverified.
+4. FFF commit `eaa460a7c` is pushed with 309 passing affected cases against its runtime
+   pin. Independent review confirmed the shared-host design and regression coverage.
+5. Draft safety fixes pass 98 cases: canonical backend retries, extra-root ownership
+   after primary removal, and confinement synchronization before release. Formatting,
+   lint and fresh compiler checks found no new warnings. Scoped delivery is in progress.
+6. Automatic terminal-draft and newest-runtime deletion remain unimplemented: there is
+   no authoritative root-user/spawn exclusion or cross-process runtime lease, and no
+   quiescent window. Review and the runtime owner confirmed those gaps. Do not infer
+   disposal from cancellation, age or an empty worker snapshot. Runtime policy is still
+   age-based; no user data was deleted. Concurrent release work remains separate.
+7. No live gateway restart or native build is authorized. Those constraints also prevent
+   representative deployment verification and testing a new native lifecycle boundary.

@@ -10,6 +10,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
@@ -115,6 +116,34 @@
 
           (expect (zero? (:count (housekeeping/scan {:days 14}))))))))
 
+(defdescribe scan-private-root-ownership-test
+             (it "keeps extra-root ownership after the primary clone has been removed"
+                 (doseq [state [:active :discarded]]
+                   (let [drafts (tmp-dir "vis-hk-extra-roots")
+                         first-copy (draft-dir! drafts "repo-a" "extra" 40)
+                         second-copy (draft-dir! drafts "repo-b" "extra" 40)
+                         row {:id "ws"
+                              :root (.getPath (io/file drafts "repo" "removed-primary"))
+                              :fork-ms 1
+                              :state state
+                              :last-focused-at-ms (System/currentTimeMillis)
+                              :filesystem-roots [{:trunk (.getPath (io/file drafts "trunk-a"))
+                                                  :clone (.getPath first-copy)
+                                                  :policy :copy-and-apply}
+                                                 {:trunk (.getPath (io/file drafts "trunk-b"))
+                                                  :clone (.getPath second-copy)
+                                                  :policy :copy-only}]}]
+
+                     (binding [workspace/*drafts-home* (.getPath drafts)
+                               housekeeping/*events-home* (.getPath (tmp-dir "vis-hk-extra-ev"))]
+
+                       (with-redefs [p/db-workspace-list-drafts (constantly [row])]
+                         (let [items (get-in (housekeeping/scan {:db-info :fixture})
+                                             [:drafts :reclaimable])]
+                           (expect (= (if (= :discarded state) 2 0) (count items)))
+                           (expect (every? #(= :discarded (:kind %)) items))
+                           (expect (every? #(= "ws" (:workspace-id %)) items)))))))))
+
 ;; scan — gateway journals
 
 (defdescribe scan-journals-test
@@ -212,6 +241,79 @@
 
           (housekeeping/purge! {:days 14}))
         (expect (.exists victim)))))
+
+(defdescribe
+  purge-backend-retry-test
+  (it "routes stale and discarded retries through the backend and waits for removal"
+      (doseq [kind [:stale :discarded]]
+        (let [drafts (tmp-dir "vis-hk-backend")
+              dir (draft-dir! drafts "repo" "retry" 40)
+              calls (atom [])
+              item {:kind kind :root (.getPath dir) :workspace-id "ws" :bytes 1}
+              report {:drafts {:root (.getPath drafts) :reclaimable [item]}}
+              completion (reify
+                           clojure.lang.IBlockingDeref
+                             (deref [_ timeout-ms _]
+                               (expect (= 30000 timeout-ms))
+                               (.delete (io/file dir "file.txt"))
+                               (.delete dir)
+                               true))]
+
+          (with-redefs [housekeeping/scan (constantly report)
+                        workspace/abandon! (fn [db opts]
+                                             (swap! calls conj [db opts])
+                                             {:discard-future completion})]
+
+            (let [result (housekeeping/purge! {:db-info :fixture})]
+              (expect (= [[:fixture {:workspace-id "ws" :reason :housekeeping}]] @calls))
+              (expect (true? (:is-purged (first (:purged result)))))
+              (expect (= 1 (:reclaimed-bytes result)))
+              (expect (not (.exists dir))))))))
+  (it
+    "never bypasses stalled, refused or failed backend cleanup with raw deletion"
+    (doseq [kind
+            [:stale :discarded]
+
+            outcome
+            [:timeout :refused :failed :incomplete]]
+
+      (let [drafts
+            (tmp-dir "vis-hk-retain")
+
+            dir
+            (draft-dir! drafts "repo" "retry" 40)
+
+            item
+            {:kind kind :root (.getPath dir) :workspace-id "ws" :bytes 1}
+
+            report
+            {:drafts {:root (.getPath drafts) :reclaimable [item]}}
+
+            completion
+            (reify
+              clojure.lang.IBlockingDeref
+                (deref [_ timeout-ms timeout-value]
+                  (expect (= 30000 timeout-ms))
+                  (case outcome
+                    :timeout
+                    timeout-value
+
+                    :failed
+                    (throw (ex-info "Backend failed" {}))
+
+                    true)))]
+
+        (with-redefs [housekeeping/scan
+                      (constantly report)
+
+                      workspace/abandon!
+                      (fn [_ _]
+                        (if (= :refused outcome) {:status :refused} {:discard-future completion}))]
+
+          (let [result (housekeeping/purge! {})]
+            (expect (.exists (io/file dir "file.txt")))
+            (expect (false? (:is-purged (first (:purged result)))))
+            (expect (zero? (:reclaimed-bytes result)))))))))
 
 ;; sweep-stale! — the self-deleting surface
 

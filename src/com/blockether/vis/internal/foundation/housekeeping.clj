@@ -24,11 +24,10 @@
    single idle day, but that is a LIVENESS rule and it only runs while a daemon
    does — journals from crashed or never-restarted daemons used to stay forever.
 
-   `purge!` routes deletions through `workspace/abandon!` for live draft rows so
-   the DB transition, hooks, and backend root release all use the canonical engine
-   path. Only rows already `:discarded`, directories with
-   no row at all, and journal files are removed directly — and every direct
-   delete is confined to a path under the drafts store or the events dir."
+   `purge!` routes draft rows, including discarded-root retries, through
+   `workspace/abandon!` so backend bookkeeping owns primary and extra-root release.
+   A failed release never falls back to raw deletion. Only directories with no row
+   and journal files are removed directly, confined to the drafts or events store."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.persistance.core :as p]
@@ -588,10 +587,17 @@
 
         by-root
         (into {}
-              (keep (fn [ws]
-                      (when-let [r (:root ws)]
-                        [(canonical (io/file r)) ws]))
-                    rows))
+              (mapcat (fn [ws]
+                        (for [path
+                              (cons (:root ws)
+                                    (keep (fn [{:keys [trunk clone]}]
+                                            (when (not= trunk clone) clone))
+                                          (workspace/extra-root-entries ws)))
+
+                              :when path]
+
+                          [(canonical (io/file path)) ws])))
+              rows)
 
         entry
         (fn [ws ^String path kind]
@@ -605,20 +611,16 @@
               :last-activity-ms (when (pos? activity) activity)
               :age-days (when (pos? activity) (ms->days (- now-ms activity))))))
 
-        ;; Rows whose clone is still on disk and whose last sign of life is
-        ;; older than the cutoff. A :discarded row with a surviving directory is
-        ;; always reclaimable — the async root release did not finish.
+        ;; Every owned clone keeps its row, even after the primary was removed.
+        ;; Discarded leftovers retry backend release rather than becoming orphans.
         from-rows
         (into []
-              (keep (fn [ws]
-                      (let [path (some-> (:root ws)
-                                         io/file
-                                         canonical)]
-                        (when (and path (under? drafts-root path) (exists? (io/file path)))
-                          (cond (= :discarded (:state ws)) (entry ws path :discarded)
-                                (< (draft-activity-ms ws) cutoff-ms) (entry ws path :stale)
-                                :else nil)))))
-              rows)
+              (keep (fn [[path ws]]
+                      (when (and (under? drafts-root path) (exists? (io/file path)))
+                        (cond (= :discarded (:state ws)) (entry ws path :discarded)
+                              (< (draft-activity-ms ws) cutoff-ms) (entry ws path :stale)
+                              :else nil))))
+              by-root)
 
         ;; A directory with no row is either debris from a crashed clone or a
         ;; store written by a different DB. Either way it is only reclaimable once
@@ -715,19 +717,17 @@
 (defn- purge-one!
   [db-info drafts-root events-root {:keys [kind root workspace-id] :as item}]
   (let [ok (case kind
-             ;; A live draft row uses the canonical state transition, hooks, and
-             ;; backend-owned root release.
-             :stale
+             ;; Retry discarded rows through the same backend as live drafts;
+             ;; raw deletion bypasses backend bookkeeping and cleanup refusals.
+             (:stale :discarded)
              (try (let [{:keys [discard-future]} (workspace/abandon! db-info
                                                                      {:workspace-id workspace-id
                                                                       :reason :housekeeping})]
                     (when discard-future (deref discard-future 30000 nil))
-                    (when (exists? (io/file root))
-                      (when (under? drafts-root root) (delete-tree! (io/file root))))
-                    true)
+                    (Files/notExists (.toPath (io/file root)) (make-array LinkOption 0)))
                   (catch Throwable _ false))
 
-             (:discarded :orphan)
+             :orphan
              (boolean (and (under? drafts-root root) (pos? (delete-tree! (io/file root)))))
 
              :journal

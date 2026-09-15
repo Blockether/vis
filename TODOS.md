@@ -93,7 +93,7 @@ commit only this task, and push to `main`. Record results below as work complete
   cyclic roots thrash six slots, not that the historical gateway followed that pattern.
   Do not merge divergent worktree contents or increase the pool blindly.
 
-## GC and class loaders: experiments complete, production changes pending
+## GC and class loaders: no tuning justified by the measured workloads
 
 - [x] Compare current 10/25 heap-free ratios with defaults in clean Java 25.0.3 JVMs,
   retaining the other flags and 5 GiB ceiling. Each ran 10 warmups, 500 reflection
@@ -112,25 +112,37 @@ commit only this task, and push to `main`. Record results below as work complete
   A diagnostic JVM with immediate soft-reference aging reduced live loaders to 692
   after GC; Clojure's class cache uses soft references. This is not proof of an
   unreclaimable gateway leak, nor a recommendation to change soft-reference policy.
-- [ ] Correlate actual gateway loader growth with cold dependency/macro/type compilation,
-  inspect retaining roots, and verify unloading under memory pressure. Distinguish
-  live loaders from cumulative loaded-class counts.
+- [x] Verify unloading under ordinary memory pressure, without a soft-reference-policy
+  override. With a 128 MiB ceiling, the same 10,500 cases passed; bounded retained
+  and transient allocations reduced live loaders from 6,821 to 1,735 and unloaded
+  4,616 classes. Metaspace fell from 75.7 to 60.9 MB; 21 post-pressure cases passed.
+  No OOM occurred. This supports collectible retention, not a gateway leak verdict.
+- [ ] Correlate actual gateway loader growth and retaining roots with real turn activity.
+  The current observed Vis host is a native executable; `jps -l` found no target
+  JVM. The historical JVM GC report cannot be validated against that process.
+  No GC flags or soft-reference policy were changed.
 
 ## Draft cleanup: requested policy, not yet automatic
 
 - [ ] Remove genuinely abandoned/cancelled/approved drafts through the canonical
   workspace backend after preserving recoverable work and releasing every user.
   Current approval is repeatable and is not a terminal workspace state; cancelling
-  a turn or subagent does not prove its draft is disposable. Existing draft suites
-  passed 46 workspace and 20 foundation tests and confirm these lifecycle boundaries.
-- [ ] For approval cleanup, verify every root is safely published/merged, including
-  copy-only roots; preserve dirty/unpushed/unique work. Check other live session
-  references, exit the draft and synchronize confinement before asynchronous release.
-  Preserve the approval result/history when cleanup is vetoed or retried.
-- [ ] Retry discarded-root cleanup through backend release rather than directly deleting
-  leftovers and bypassing Git worktree/branch bookkeeping. Age alone is not approval
-  to delete. No trustworthy live terminal-draft candidate list was established, and
-  no user draft was removed in these experiments.
+  a turn or subagent does not prove its draft is disposable. The workspace and
+  foundation draft suites confirm these lifecycle boundaries.
+- [ ] Automatic approval cleanup needs a path-use lifecycle guard, not a snapshot:
+  other workspace roots, pending process starts and active handles must veto release.
+  Independent review found no such authoritative guard. The workspace-ID uniqueness
+  constraint does not cover shared-root references. Copy-only and unpublished work
+  must survive; no user services may be stopped merely to force cleanup.
+- [x] Synchronize live confinement before backend release. The ordering regression
+  failed with persistence already on trunk but the live pointer still in the draft;
+  both now move before asynchronous deletion starts. Discard hooks still veto both.
+- [x] Retry stale and discarded rows through the canonical backend, including private
+  extra roots whose primary clone is already gone. Extra roots no longer become
+  orphan/raw-delete candidates while their owning draft is active. Regressions failed
+  before the fixes. Timeout, refusal and failure never trigger raw-delete fallback;
+  success requires the root to be demonstrably absent.
+- No user draft was removed. Explicit orphan/journal purge policy is unchanged.
 
 ## Runtime retention: newest version plus live users
 
@@ -167,6 +179,14 @@ commit only this task, and push to `main`. Record results below as work complete
   measured reduction in the old gateway's CPU/RSS. Owned experiment workers and REPLs
   are stopped; existing concurrent checkout work remains separate. Follow-up delivery
   now validates and pushes each scoped item rather than ending at the experiment plan.
-- The concurrent, uncommitted runtime `0.5.19` bump fails one confined-worker startup:
-  bundled sources cannot be extracted inside the jail. That separate release failure
-  is reported to its owner; it is not part of the FFF commit or its runtime pin.
+- Draft cleanup safety checks pass 98 cases: 31 housekeeping and 67 workspace/foundation
+  lifecycle cases, including the real Python argument boundary. The latter used the
+  committed runtime pin `be7ccea`, separate from concurrent release work. Formatting
+  and clj-kondo passed; general reflection findings match the existing baseline.
+  Clean compiler reload emitted only existing housekeeping Thread-constructor and
+  draft case-performance warnings outside the diff.
+- The concurrent runtime `0.5.19` bump failed confined-worker startup because bundled
+  sources were extracted inside the jail. Its release owner reports a verified fix
+  being prepared for `0.5.20`; that separate runtime change is not part of this work.
+  The owner also confirmed there is no verified lifetime lease or quiescent window
+  that could authorize deleting older runtime/source caches.
