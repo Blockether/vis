@@ -31,7 +31,7 @@
  * on the app bar's logo. Pake's `--app-version` is what the OS shows as the app version.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appDir, syncPackageVersion } from './version.mjs';
@@ -86,6 +86,45 @@ export function pakeArgs({ distDir, version, target, icon = ICON, dev = false })
   ];
 }
 
+/** Install a private Pake template: Pake regenerates .pake from this file on every build. */
+export function prepareWindowsSigning({ npmCli, toolsDir, env }) {
+  for (const name of ['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER']) {
+    if (!env[`WINDOWS_SIGNING_${name}`]?.trim()) {
+      throw new Error(`Missing required signing configuration: WINDOWS_SIGNING_${name}`);
+    }
+  }
+  const install = spawnSync(
+    process.execPath,
+    [
+      npmCli,
+      'install',
+      '--prefix',
+      toolsDir,
+      '--no-save',
+      '--package-lock=false',
+      `pake-cli@${PAKE_VERSION}`,
+    ],
+    { stdio: 'inherit', env },
+  );
+  if (install.error) throw install.error;
+  if (install.status !== 0) throw new Error('Failed to install Windows signing build tools');
+  const pakeDir = join(toolsDir, 'node_modules', 'pake-cli');
+  const configPath = join(pakeDir, 'src-tauri', 'tauri.windows.conf.json');
+  const config = JSON.parse(readFileSync(configPath, 'utf8'));
+  config.bundle.windows.signCommand = {
+    cmd: 'pwsh',
+    args: [
+      '-NoProfile',
+      '-NonInteractive',
+      '-File',
+      join(appDir, 'scripts', 'windows-sign.ps1'),
+      '%1',
+    ],
+  };
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  return join(pakeDir, 'dist', 'cli.js');
+}
+
 /** Package release installers or the local dev app; return the asset paths written. */
 export function packageDesktop({
   platform = process.platform,
@@ -122,6 +161,10 @@ export function packageDesktop({
       delete env[name];
     }
   }
+  const windowsPake =
+    platform === 'win32' && !dev
+      ? prepareWindowsSigning({ npmCli, toolsDir: join(appDir, 'build', 'desktop-tools'), env })
+      : null;
   mkdirSync(outDir, { recursive: true });
   const written = [];
   for (const target of targets) {
@@ -132,8 +175,9 @@ export function packageDesktop({
     rmSync(produced, { force: true });
     log(`▸ pake ${args.join(' ')}`);
     const command = platform === 'win32' ? process.execPath : 'npx';
-    const commandArgs =
-      platform === 'win32'
+    const commandArgs = windowsPake
+      ? [windowsPake, ...args]
+      : platform === 'win32'
         ? [npmCli, 'exec', '--yes', `--package=pake-cli@${PAKE_VERSION}`, '--', 'pake', ...args]
         : ['-y', `pake-cli@${PAKE_VERSION}`, ...args];
     const run = spawnSync(command, commandArgs, {

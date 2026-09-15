@@ -1,21 +1,44 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { desktopTargets, assetName, pakeArgs, packageDesktop } from './desktop-package.mjs';
+import {
+  desktopTargets,
+  assetName,
+  pakeArgs,
+  packageDesktop,
+  prepareWindowsSigning,
+} from './desktop-package.mjs';
 import { syncPackageVersion } from './version.mjs';
 
 vi.mock('node:child_process', () => ({ spawnSync: vi.fn(() => ({ status: 0 })) }));
-vi.mock('node:fs', async (importOriginal) => ({
-  ...(await importOriginal()),
-  existsSync: vi.fn(() => true),
-  mkdirSync: vi.fn(),
-  renameSync: vi.fn(),
-  rmSync: vi.fn(),
-}));
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal();
+  return {
+    ...original,
+    existsSync: vi.fn(() => true),
+    mkdirSync: vi.fn(),
+    renameSync: vi.fn(),
+    rmSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    readFileSync: vi.fn((...args) => {
+      if (String(args[0]).endsWith('tauri.windows.conf.json')) {
+        return JSON.stringify({
+          bundle: { targets: ['msi'], windows: { wix: { language: ['en-US'] } } },
+        });
+      }
+      return original.readFileSync(...args);
+    }),
+  };
+});
 vi.mock('./version.mjs', () => ({ appDir: '/app', syncPackageVersion: vi.fn(() => '1.0.0') }));
 
-beforeEach(() => vi.stubEnv('npm_execpath', String.raw`C:\Program Files\Node & Tools\npm-cli.js`));
+beforeEach(() => {
+  vi.stubEnv('npm_execpath', String.raw`C:\Program Files\Node & Tools\npm-cli.js`);
+  for (const name of ['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER']) {
+    vi.stubEnv(`WINDOWS_SIGNING_${name}`, `test-${name.toLowerCase()}`);
+  }
+});
 afterEach(() => vi.unstubAllEnvs());
 
 // The installers are release assets: a name must say which OS and arch it is for,
@@ -124,8 +147,71 @@ describe('desktop release signing', () => {
         workflow.indexOf('uses: actions/upload-artifact'),
       );
     }
-    expect(workflow).toContain('name: Package Linux and Windows with Pake');
+    expect(workflow).toContain('name: Package Linux with Pake');
     expect(workflow).toContain("if: runner.os == 'Linux'");
+  });
+
+  it('grants release caller permissions for nested OIDC signing and asset upload', () => {
+    const release = readFileSync(
+      new URL('../../../.github/workflows/release.yml', import.meta.url),
+      'utf8',
+    );
+    const desktop = release.match(
+      /^  desktop:\r?\n([\s\S]*?)(?=^  [a-zA-Z_-]+:|$(?![\s\S]))/m,
+    )?.[1];
+    expect(desktop).toBeDefined();
+    expect(desktop).toContain('uses: ./.github/workflows/desktop-companion.yml');
+    expect(desktop).toMatch(/    permissions:\r?\n      contents: write\r?\n      id-token: write/);
+  });
+
+  it('signs with OIDC and verifies the MSI and extracted EXE before smoke and upload', () => {
+    for (const name of [
+      'CLIENT_ID',
+      'TENANT_ID',
+      'SUBSCRIPTION_ID',
+      'ENDPOINT',
+      'ACCOUNT',
+      'PROFILE',
+      'PUBLISHER',
+    ]) {
+      expect(workflow).toContain(`vars.WINDOWS_SIGNING_${name}`);
+    }
+    expect(workflow).toContain(
+      "environment: ${{ matrix.asset == 'windows-x64' && 'windows-signing' || 'desktop-build' }}",
+    );
+    const login = workflow.indexOf('uses: azure/login@v3');
+    const packaging = workflow.indexOf('name: Sign and package Windows with Pake');
+    const installerCheck = workflow.indexOf('-FilePath $installers[0].FullName -VerifyOnly');
+    const exeCheck = workflow.indexOf('-FilePath $executables[0].FullName -VerifyOnly');
+    const launch = workflow.indexOf('$app = Start-Process');
+    const upload = workflow.indexOf('uses: actions/upload-artifact');
+    expect(login).toBeGreaterThan(0);
+    expect(packaging).toBeGreaterThan(login);
+    expect(installerCheck).toBeGreaterThan(packaging);
+    expect(exeCheck).toBeGreaterThan(installerCheck);
+    expect(launch).toBeGreaterThan(exeCheck);
+    expect(upload).toBeGreaterThan(launch);
+    const signing = readFileSync(new URL('windows-sign.ps1', import.meta.url), 'utf8');
+    expect(signing).toContain("FileDigest = 'SHA256'");
+    expect(signing).toContain("TimestampDigest = 'SHA256'");
+    expect(signing).toContain("TimestampRfc3161 = 'http://timestamp.acs.microsoft.com'");
+    expect(signing).toContain('ExcludeAzureCliCredential = $false');
+    for (const credential of [
+      'Environment',
+      'WorkloadIdentity',
+      'ManagedIdentity',
+      'SharedTokenCache',
+      'VisualStudio',
+      'VisualStudioCode',
+      'AzurePowerShell',
+      'AzureDeveloperCli',
+      'InteractiveBrowser',
+    ]) {
+      expect(signing).toContain(`Exclude${credential}Credential = $true`);
+    }
+    expect(signing.indexOf('Invoke-ArtifactSigning @parameters')).toBeLessThan(
+      signing.indexOf('Assert-VisSignature -Path $Path -Publisher'),
+    );
   });
 });
 
@@ -166,26 +252,54 @@ describe('desktop release platforms', () => {
     expect(spawnSync.mock.calls[0][1]).toContain('--multi-arch');
   });
 
-  it('packages Windows x64 as an MSI without invoking a command shell', () => {
-    existsSync.mockImplementation((path) => ['index.html', 'Vis.msi'].includes(basename(path)));
+  it('installs isolated signing tools and packages Windows without invoking a command shell', () => {
     const assets = packageDesktop({ platform: 'win32', arch: 'x64', log: vi.fn() });
     expect(assets.map((asset) => basename(asset))).toEqual(['vis-companion-1.0.0-windows-x64.msi']);
-    expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual(['Vis.msi']);
-    expect(spawnSync).toHaveBeenCalledTimes(1);
-    const [command, args, options] = spawnSync.mock.calls[0];
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+    const [installCommand, installArgs] = spawnSync.mock.calls[0];
+    expect(installCommand).toBe(process.execPath);
+    expect(installArgs).toContain('pake-cli@3.15.7');
+    expect(installArgs).toContain(join('/app', 'build', 'desktop-tools'));
+    const [command, args, options] = spawnSync.mock.calls[1];
     expect(command).toBe(process.execPath);
-    expect(args.slice(0, 6)).toEqual([
-      process.env.npm_execpath,
-      'exec',
-      '--yes',
-      '--package=pake-cli@3.15.7',
-      '--',
-      'pake',
-    ]);
-    expect(args[6]).toBe(join('/app', 'dist'));
+    expect(args[0]).toBe(
+      join('/app', 'build', 'desktop-tools', 'node_modules', 'pake-cli', 'dist', 'cli.js'),
+    );
+    expect(args[1]).toBe(join('/app', 'dist'));
     expect(args[args.indexOf('--targets') + 1]).toBe('x64');
-    expect(args).not.toContain('--multi-arch');
     expect(options.shell).toBeUndefined();
+    const [configPath, content] = writeFileSync.mock.calls[0];
+    expect(configPath).toMatch(/tauri.windows.conf.json$/);
+    const config = JSON.parse(content);
+    expect(config.bundle.targets).toEqual(['msi']);
+    expect(config.bundle.windows.wix.language).toEqual(['en-US']);
+    expect(config.bundle.windows.signCommand).toEqual({
+      cmd: 'pwsh',
+      args: [
+        '-NoProfile',
+        '-NonInteractive',
+        '-File',
+        join('/app', 'scripts', 'windows-sign.ps1'),
+        '%1',
+      ],
+    });
+  });
+
+  it.each(['ENDPOINT', 'ACCOUNT', 'PROFILE', 'PUBLISHER'])('refuses missing Windows %s', (name) => {
+    vi.stubEnv(`WINDOWS_SIGNING_${name}`, '');
+    expect(() => packageDesktop({ platform: 'win32', arch: 'x64' })).toThrow(
+      `WINDOWS_SIGNING_${name}`,
+    );
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(renameSync).not.toHaveBeenCalled();
+  });
+
+  it('stops before packaging when signing tool installation fails', () => {
+    spawnSync.mockReturnValueOnce({ status: 1 });
+    expect(() =>
+      prepareWindowsSigning({ npmCli: 'npm', toolsDir: '/tools', env: process.env }),
+    ).toThrow(/install Windows/);
+    expect(writeFileSync).not.toHaveBeenCalled();
   });
 
   it('explains how to invoke npm on Windows before touching the build', () => {
@@ -230,9 +344,11 @@ describe('desktop release platforms', () => {
     expect(workflow).toContain('runner: ubuntu-24.04');
     expect(workflow).toContain('runner: ubuntu-24.04-arm');
     expect(workflow).toContain('asset: windows-x64');
-    expect(workflow).toContain("if: runner.os != 'macOS'");
+    expect(workflow).toContain('uses: azure/login@v3');
+    expect(workflow).toContain('id-token: write');
+    expect(workflow).not.toContain('azure-client-secret');
     const smoke = workflow.indexOf('name: Smoke-test Windows installer');
-    expect(smoke).toBeGreaterThan(workflow.indexOf('name: Package Linux and Windows with Pake'));
+    expect(smoke).toBeGreaterThan(workflow.indexOf('name: Sign and package Windows with Pake'));
     expect(smoke).toBeLessThan(workflow.indexOf('uses: actions/upload-artifact'));
     expect(workflow).toContain('shell: pwsh');
     expect(workflow).toContain('msiexec.exe');
