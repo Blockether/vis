@@ -201,7 +201,7 @@
         (expect (true? (:bold (get-in grid [1 12]))))
         (expect (true? (:bold (get-in grid [2 2]))))
         (expect (false? (:bold (get-in grid [2 6]))))))
-  (it "renders a bounded staging surface, consistent labels, focus and a shadow"
+  (it "renders a bounded staging surface with consistent labels and focus, without a shadow"
       (doseq [cols [8 20 40 80]]
         (let [captured (cap/capture! {:cols cols
                                       :rows 14
@@ -211,7 +211,10 @@
               regions (.current interactions/hit-map)]
 
           (expect (nil? (:error captured)))
-          (expect (not= (:bg (get-in grid [4 3])) (:bg (get-in grid [5 3]))))
+          ;; #249: the prompt follows the bottom border, not an extra yellow shadow row.
+          (expect (= 4 (rail/rail-height (:attachments review-draft))))
+          (expect (= (:bg (get-in grid [4 3])) (:bg (get-in grid [5 3]))))
+          (expect (not= (:bg (get-in grid [1 3])) (:bg (get-in grid [2 3]))))
           (doseq [{:keys [bounds]} regions]
             (expect (<= 0 (:col bounds) (+ (:col bounds) (:width bounds)) cols)))
           (when (>= cols 40)

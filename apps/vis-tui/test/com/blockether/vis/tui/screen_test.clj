@@ -3267,19 +3267,21 @@ therapy line 2"
         (expect (str/ends-with? limits-row "~$0.0042  "))))))
 
 (defdescribe composer-attachment-geometry-test
-             (it "reserves every attachment row above the prompt on every render path"
-                 (let [geometry (#'screen/composer-geometry
-                                 {:input (input/empty-input) :attachments [{:id "a"} {:id "b"}]}
-                                 80
-                                 30)]
-                   (expect (= {:text-rows 1
-                               :input-box-h 3
-                               :composer-h 5
-                               :input-top 25
-                               :rail-top 23
-                               :rail-h 2
-                               :echo-row 22}
-                              geometry)))))
+             ;; #249: only item rows and the two borders belong above the prompt.
+             (it "reserves compact attachment panels above the prompt on every render path"
+                 (doseq [[attachments rail-h] [[[] 0] [[{:id "a"}] 3] [[{:id "a"} {:id "b"}] 4]]]
+                   (let [geometry (#'screen/composer-geometry
+                                   {:input (input/empty-input) :attachments attachments}
+                                   80
+                                   30)]
+                     (expect (= {:text-rows 1
+                                 :input-box-h 3
+                                 :composer-h (+ 3 rail-h)
+                                 :input-top 25
+                                 :rail-top (- 25 rail-h)
+                                 :rail-h rail-h
+                                 :echo-row (- 24 rail-h)}
+                                geometry))))))
 
 (defdescribe
   compact-activity-copy-test

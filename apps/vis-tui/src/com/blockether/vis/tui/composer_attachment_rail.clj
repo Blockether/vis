@@ -1,7 +1,7 @@
 (ns com.blockether.vis.tui.composer-attachment-rail
   "Paint contract for staged composer attachments.
 
-   Staged attachments share one bordered, shadowed surface above the prompt.
+   Staged attachments share one compact bordered surface above the prompt.
    Every row retains its identity, filename, dimensions/size and remove action.
    C-x i focuses this keyboard surface without moving the text cursor."
   (:require [clojure.string :as str]
@@ -13,9 +13,9 @@
            [com.googlecode.lanterna.graphics TextGraphics]))
 
 (defn rail-height
-  "Rows reserved by `draw!`: one item row each, two borders and one shadow row."
+  "Rows reserved by `draw!`: one item row each and two borders, without a shadow."
   ^long [attachments]
-  (if (seq attachments) (+ 3 (count attachments)) 0))
+  (if (seq attachments) (+ 2 (count attachments)) 0))
 
 (defn- kind-label
   [media-type]
@@ -62,8 +62,9 @@
 (defn draw!
   "Paint a themed staging surface and bounded inspect/remove targets.
 
-   Images keep the same number as their input reference. Focus never hides the
-   remove action, and all row content stays inside the border even at tiny widths."
+   Images keep the same number as their input reference. The panel fits its widest
+   label and remove action, bounded by the terminal. Focus never hides the remove
+   action, and all row content stays inside the border even at tiny widths."
   [^TextGraphics g attachments top cols {:keys [focused? focused-index]}]
   (when (seq attachments)
     (let [cols
@@ -72,8 +73,15 @@
           left
           (if (> cols 4) 1 0)
 
+          remove-label
+          " [remove] "
+
+          label-w
+          (reduce max 0 (map #(p/display-width (attachment-label %)) attachments))
+
           width
-          (max 1 (- cols (* 2 left) 1))
+          ;; Two border cells and two cells for the focus marker.
+          (max 1 (min (- cols (* 2 left)) (+ 4 label-w (p/display-width remove-label))))
 
           bordered?
           (>= width 4)
@@ -88,7 +96,7 @@
           (+ left inset)
 
           remove-label
-          (if (>= inner-w 18) " [remove] " " × ")
+          (if (>= inner-w 18) remove-label " × ")
 
           remove-label
           (p/truncate-cols remove-label inner-w)
@@ -100,10 +108,8 @@
           (max 0 (- inner-w remove-w))
 
           height
-          (+ 2 (count attachments))]
+          (rail-height attachments)]
 
-      (p/set-colors! g t/dialog-fg t/dialog-shadow)
-      (p/fill-rect! g (inc left) (inc (long top)) width height)
       (p/set-colors! g t/dialog-border t/dialog-bg)
       (p/fill-rect! g left top width height)
       (when bordered?
