@@ -15,7 +15,12 @@ const credits = { status: 'ok' as const, account_id: 'account-1', available_coun
 
 it('requires explicit confirmation, focuses Cancel, and never submits on Escape', () => {
   const consume = vi.fn();
-  render(<ProviderLimitReset credits={credits} onConsume={consume} />);
+  const closeSettings = vi.fn();
+  render(
+    <div onKeyDown={closeSettings}>
+      <ProviderLimitReset credits={credits} onConsume={consume} />
+    </div>,
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
   expect(consume).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
@@ -24,6 +29,9 @@ it('requires explicit confirmation, focuses Cancel, and never submits on Escape'
   fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
   expect(screen.queryByRole('button', { name: 'Use 1 reset' })).toBeNull();
   expect(consume).not.toHaveBeenCalled();
+  expect(closeSettings).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog', { name: 'Reset limits' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Reset limits…' })).toHaveFocus();
 });
 
 it('distinguishes zero, missing, unsupported and loading without offering a new spend', () => {
@@ -63,9 +71,39 @@ it.each<ProviderResetOutcome>(['reset', 'nothing_to_reset', 'no_credit', 'alread
     fireEvent.click(screen.getByRole('button', { name: 'Checking result…' }));
     expect(consume).toHaveBeenCalledExactlyOnceWith('account-1');
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: 'Reset limits' })).toBeTruthy();
     await act(async () => finish(outcome));
     expect(screen.queryByRole('button', { name: 'Use 1 reset' })).toBeNull();
     expect(screen.getAllByRole('status')).toHaveLength(2);
+    expect(screen.getByRole('dialog', { name: 'Reset limits' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Done' })).toHaveFocus();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Reset limits' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Reset limits…' })).toHaveFocus();
+  },
+);
+
+it.each(['empty', 'unavailable'] as const)(
+  'returns focus to the reset group when the refreshed trigger is %s',
+  async (availability) => {
+    const view = render(
+      <ProviderLimitReset credits={credits} onConsume={vi.fn(async () => 'reset' as const)} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use 1 reset' }));
+    await screen.findByText('Limits reset. Your task has not been resent.');
+    view.rerender(
+      <ProviderLimitReset
+        credits={
+          availability === 'empty' ? { ...credits, available_count: 0 } : { status: 'error' }
+        }
+        onConsume={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.queryByRole('dialog', { name: 'Reset limits' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Codex limit resets' })).toHaveFocus();
   },
 );
 
@@ -254,6 +292,7 @@ it.runIf(!!process.env.VIS_CODEX_RESET_E2E_URL)(
     await submit('Check reset result…', 'Retry same request');
     await screen.findByText(/already processed/);
     expect(screen.getByText('1 reset available')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     await submit('Reset limits…', 'Use 1 reset');
     await screen.findByText('Limits reset. Your task has not been resent.');
     expect(screen.getByText('0 resets available')).toBeTruthy();
