@@ -1,24 +1,69 @@
 {
   "lang": "python",
-  "prompt": "Use the preinstalled schema_probe extension to read only the atlas tool card first, then read all available tool cards and inspect the current monitor snapshot. Report the atlas display name, the number of available cards, active jobs, the failed target address, and the deepest diagnostic elapsed measurement with its declared unit. Do not read source files, import or recreate the extension, use shell, or write files. If the extension is unavailable, report that and stop.",
+  "prompt": "Use the preinstalled schema_probe extension to read only the atlas tool card first, then read all available tool cards and inspect the current monitor snapshot. Report the atlas display name, the number of available cards, active jobs, the failed target address, and the deepest diagnostic elapsed measurement with its declared unit. Do not read source files, import or recreate the extension, use shell, or write files. If the extension is unavailable, report that and stop. Return only a JSON object with keys atlas_name, card_count, active_jobs, failed_target, elapsed and elapsed_unit. Use numbers for the counts and elapsed measurement. Do not add prose or other keys.",
   "want": {},
   "wantnot": {},
-  "want_answer": [
-    "Atlas",
-    "2",
-    "7",
-    "10.0.0.5",
-    "750",
-    "microseconds"
-  ],
   "want_tools": [
     "schema_probe.cards",
     "schema_probe.monitor"
   ],
-  "want_forms": [
-    "signature(",
-    ".contract"
-  ],
   "max_form_output_chars": 6000,
-  "want_requested_route": true
+  "want_requested_route": true,
+  "want_json_files": {
+    "schema-calls.jsonl": [
+      {
+        "operation": "schema_probe.cards",
+        "arguments": {
+          "key": "atlas"
+        }
+      },
+      {
+        "operation": "schema_probe.cards",
+        "arguments": {
+          "key": null
+        }
+      },
+      {
+        "operation": "schema_probe.monitor",
+        "arguments": {}
+      }
+    ]
+  },
+  "want_answer_json": {
+    "atlas_name": "Atlas",
+    "card_count": 2,
+    "active_jobs": 7,
+    "failed_target": "10.0.0.5",
+    "elapsed": 750,
+    "elapsed_unit": "microseconds"
+  },
+  "want_activity_sequence": [
+    "schema_probe.cards",
+    "schema_probe.cards",
+    "schema_probe.monitor"
+  ],
+  "discovery": {
+    "signatures": [
+      "schema_probe.cards",
+      "schema_probe.monitor"
+    ],
+    "contracts": [
+      "schema_probe.monitor"
+    ],
+    "known": false
+  },
+  "want_cache_metrics": true,
+  "max_total_output_chars": 10000,
+  "forbid_tools": [
+    "cat",
+    "grep",
+    "ls",
+    "shell",
+    "repl_eval",
+    "repl_start",
+    "patch",
+    "format_code",
+    "lint_code",
+    "run_tests"
+  ]
 }

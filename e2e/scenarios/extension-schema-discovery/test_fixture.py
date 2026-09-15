@@ -61,7 +61,7 @@ def test_compact_discovery_preserves_envelope_and_defers_deep_schema(probe):
     assert ".contract" in monitor
 
 
-def test_registered_calls_supply_the_scenario_answers(probe):
+def test_registered_calls_supply_the_scenario_answers(probe, tmp_path):
     module, methods = probe
     atlas = methods["cards"]["fn"]("atlas")
     cards = methods["cards"]["fn"]()
@@ -72,18 +72,55 @@ def test_registered_calls_supply_the_scenario_answers(probe):
     sample = monitor.diagnostics
     for _ in range(40):
         sample = sample.sample
-    actual = [
-        atlas.name,
-        str(len(cards)),
-        str(monitor.active_jobs),
-        monitor.failures[0].target.address,
-        str(sample.elapsed),
-        "microseconds",
-    ]
+    actual = {
+        "atlas_name": atlas.name,
+        "card_count": len(cards),
+        "active_jobs": monitor.active_jobs,
+        "failed_target": monitor.failures[0].target.address,
+        "elapsed": sample.elapsed,
+        "elapsed_unit": "microseconds",
+    }
     scenario = json.loads((Path(__file__).parent / "scenario.json").read_text())
-    assert actual == scenario["want_answer"]
+    assert actual == scenario["want_answer_json"]
+    for name, expected in scenario["want_json_files"].items():
+        assert [
+            json.loads(line) for line in (tmp_path / name).read_text().splitlines()
+        ] == expected
+    assert scenario["want_activity_sequence"] == [
+        "schema_probe.cards",
+        "schema_probe.cards",
+        "schema_probe.monitor",
+    ]
+    assert scenario["discovery"] == {
+        "known": False,
+        "signatures": ["schema_probe.cards", "schema_probe.monitor"],
+        "contracts": ["schema_probe.monitor"],
+    }
+    assert scenario["max_form_output_chars"] == 6000
+    assert scenario["max_total_output_chars"] == 10000
+    assert scenario["want_requested_route"] is True
+    assert scenario["want_cache_metrics"] is True
     with pytest.raises(ValueError, match="Unknown tool key"):
         methods["cards"]["fn"]("missing")
+
+
+def test_invocation_journal_distinguishes_filtered_all_and_rejected_calls(
+    probe, tmp_path
+):
+    _, methods = probe
+    journal = tmp_path / "schema-calls.jsonl"
+    assert not journal.exists()
+    methods["cards"]["fn"]("atlas")
+    methods["cards"]["fn"]()
+    methods["monitor"]["fn"]()
+    with pytest.raises(ValueError, match="Unknown tool key"):
+        methods["cards"]["fn"]("missing")
+    assert [json.loads(line) for line in journal.read_text().splitlines()] == [
+        {"operation": "schema_probe.cards", "arguments": {"key": "atlas"}},
+        {"operation": "schema_probe.cards", "arguments": {"key": None}},
+        {"operation": "schema_probe.monitor", "arguments": {}},
+        {"operation": "schema_probe.cards", "arguments": {"key": "missing"}},
+    ]
 
 
 def test_activity_registration_and_empty_success_running_failure(probe):

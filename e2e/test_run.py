@@ -504,5 +504,431 @@ class ReasoningEffortTest(unittest.TestCase):
         self.assertEqual(["Provider model unavailable"], result["err_msgs"])
 
 
+class DiscoveryEvaluationTest(unittest.TestCase):
+    # #232/#234: syntactic markers and tool presence hid incorrect workflows.
+    def run_events(self, events, **checks):
+        scenario = {"id": "evaluation", "lang": "python", "prompt": "test", **checks}
+        with (
+            tempfile.TemporaryDirectory() as traces,
+            patch.object(run, "TRACES", traces),
+            patch.object(run, "seed_files"),
+            patch.object(run, "source_classpath", return_value="/checkout/src"),
+            patch.object(run.subprocess, "run") as invoke,
+        ):
+            invoke.return_value.returncode = 0
+            invoke.return_value.stdout = "\n".join(
+                json.dumps(event) for event in events
+            )
+            return run.run_one((scenario, "test-model", {}, 12344))
+
+    def activity(self, state, operation="probe.read", row_id="call-1"):
+        return {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "form-activity",
+                "scope": "t1/i1/f1",
+                "activity": {
+                    "rows": [{"id": row_id, "operation": operation, "state": state}]
+                },
+            },
+        }
+
+    def test_caught_activity_failure_cannot_pass(self):
+        result = self.run_events(
+            [
+                self.activity("running"),
+                self.activity("failed"),
+                self.activity("failed"),
+                {"event": "result", "payload": {"answer": "ready"}},
+            ],
+            want_tools=["probe.read"],
+        )
+        self.assertEqual(1, result["errors"])
+        self.assertEqual(1, result["activity_failures"])
+        self.assertEqual(1, result["caught_activity_failures"])
+        self.assertEqual(0, result["surfaced_errors"])
+        self.assertFalse(result["correct"])
+
+    def test_running_or_cancelled_activity_is_not_success(self):
+        for state in ("running", "cancelled"):
+            with self.subTest(state=state):
+                result = self.run_events(
+                    [
+                        self.activity(state),
+                        {"event": "result", "payload": {"answer": "ready"}},
+                    ],
+                    want_tools=["probe.read"],
+                )
+                self.assertFalse(result["correct"])
+                self.assertGreater(result["errors"], 0)
+
+    def test_success_updates_running_once_and_duplicate_snapshots_are_ignored(self):
+        result = self.run_events(
+            [
+                self.activity("running"),
+                self.activity("succeeded"),
+                self.activity("succeeded"),
+                {"event": "result", "payload": {"answer": "ready"}},
+            ],
+            want_tools=["probe.read"],
+            want_activity_sequence=["probe.read"],
+        )
+        self.assertTrue(result["correct"], result["detail"])
+        self.assertEqual(0, result["errors"])
+        self.assertEqual(1, result["activity_successes"])
+
+    def test_surfaced_failure_is_not_labelled_caught(self):
+        result = self.run_events(
+            [
+                self.activity("failed"),
+                {
+                    "event": "trace-chunk",
+                    "payload": {
+                        "phase": "form-result",
+                        "scope": "t1/i1/f1",
+                        "error": {"message": "failed"},
+                    },
+                },
+                {"event": "result", "payload": {"answer": "recovered"}},
+            ]
+        )
+        self.assertEqual(1, result["activity_failures"])
+        self.assertEqual(0, result["caught_activity_failures"])
+        self.assertEqual(1, result["surfaced_errors"])
+
+    def test_exact_answer_rejects_mislabelled_numbers_extra_prose_and_booleans(self):
+        expected = {"cards": 2, "active_jobs": 7, "elapsed": 750}
+        for answer in (
+            '{"cards":7,"active_jobs":2,"elapsed":750}',
+            "2 7 750",
+            '{"cards":true,"active_jobs":7,"elapsed":750}',
+            '{"cards":2,"active_jobs":7,"elapsed":750,"collector":"collector-40"}',
+        ):
+            with self.subTest(answer=answer):
+                result = self.run_events(
+                    [{"event": "result", "payload": {"answer": answer}}],
+                    want_answer_json=expected,
+                )
+                self.assertFalse(result["correct"])
+        result = self.run_events(
+            [{"event": "result", "payload": {"answer": json.dumps(expected)}}],
+            want_answer_json=expected,
+        )
+        self.assertTrue(result["correct"], result["detail"])
+
+    def test_operation_sequence_rejects_missing_extra_or_reordered_calls(self):
+        expected = ["probe.cards", "probe.cards", "probe.monitor"]
+        for operations in (expected[:2], expected[::-1], expected + ["probe.monitor"]):
+            with self.subTest(operations=operations):
+                events = [
+                    self.activity("succeeded", op, str(i))
+                    for i, op in enumerate(operations)
+                ]
+                result = self.run_events(
+                    [*events, {"event": "result", "payload": {"answer": "done"}}],
+                    want_activity_sequence=expected,
+                )
+                self.assertFalse(result["correct"])
+
+    def test_total_output_is_separate_from_peak_and_tokens_are_reported(self):
+        events = [
+            {
+                "event": "trace-chunk",
+                "payload": {"phase": "form-result", "stdout": "x" * 6},
+            },
+            {
+                "event": "trace-chunk",
+                "payload": {"phase": "form-result", "stdout": "y" * 5},
+            },
+            {
+                "event": "result",
+                "payload": {
+                    "answer": "done",
+                    "tokens": {"input": 100, "cached": 75, "output": 20, "total": 120},
+                },
+            },
+        ]
+        result = self.run_events(
+            events, max_form_output_chars=6, max_total_output_chars=10
+        )
+        self.assertFalse(result["correct"])
+        self.assertEqual(6, result["max_form_output_chars"])
+        self.assertEqual(11, result["total_output_chars"])
+        self.assertEqual(25, result["tokens"]["uncached"])
+        self.assertEqual(75.0, result["tokens"]["cached_input_percent"])
+
+    def test_exact_jsonl_rejects_extra_rows_wrong_values_or_missing_files(self):
+        with tempfile.TemporaryDirectory() as work:
+            path = Path(work) / "calls.jsonl"
+            scenario = {
+                "want_json_files": {"calls.jsonl": [{"key": "atlas"}, {"key": None}]}
+            }
+            self.assertTrue(run.structured_failures(scenario, work, "", []))
+            for records in (
+                [{"key": "wrong"}, {"key": None}],
+                [{"key": "atlas"}],
+                [{"key": "atlas"}, {"key": None}, {"key": None}],
+            ):
+                path.write_text("\n".join(json.dumps(row) for row in records))
+                self.assertTrue(run.structured_failures(scenario, work, "", []))
+            path.write_text('{"key":"atlas"}\n{"key":null}\n')
+            self.assertEqual([], run.structured_failures(scenario, work, "", []))
+
+    def test_aliases_count_but_comments_strings_and_uninvoked_functions_do_not(self):
+        rules = {"signatures": ["probe.read"]}
+        for code in (
+            "# inspect.signature(probe.read)",
+            'print("inspect.signature(probe.read)")',
+            "def unused():\n    return inspect.signature(probe.read)",
+        ):
+            with self.subTest(code=code):
+                _, failures = run.discovery_evidence([code], [], rules)
+                self.assertTrue(failures)
+        metrics, failures = run.discovery_evidence(
+            ["from inspect import signature as sig\nf = probe.read\nprint(sig(f))"],
+            [],
+            rules,
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(1, metrics["signature_calls"])
+
+    def test_duplicate_and_known_contract_discovery_are_rejected(self):
+        code = "import inspect\nprint(inspect.signature(probe.read))"
+        metrics, failures = run.discovery_evidence(
+            [code, code], [], {"signatures": ["probe.read"]}
+        )
+        self.assertEqual(1, metrics["redundant_discovery"])
+        self.assertTrue(failures)
+        _, failures = run.discovery_evidence([code], [], {"known": True})
+        self.assertTrue(failures)
+        _, failures = run.discovery_evidence(
+            ["print(probe.read())"], [], {"known": True}
+        )
+        self.assertEqual([], failures)
+
+    def test_forbidden_source_access_cannot_pass(self):
+        for code in (
+            'from pathlib import Path\nprint(Path(".vis/extensions/probe.py").read_text())',
+            "import probe",
+            'open("source.py").read()',
+            'exec("print(1)")',
+        ):
+            with self.subTest(code=code):
+                _, failures = run.discovery_evidence([code], [], {"known": True})
+                self.assertTrue(failures)
+
+    def test_missing_impossible_and_noninteger_token_counts_fail(self):
+        for tokens in (
+            {},
+            {"input": 8, "cached": 9, "output": 1},
+            {"input": True, "cached": 0, "output": 1},
+            {"input": 8, "cached": float("inf"), "output": 1},
+            {"input": 8, "cached": 0, "output": -1},
+            {"input": 8, "cached": 0, "output": 1, "total": 100},
+        ):
+            with self.subTest(tokens=tokens):
+                _, failures = run.token_summary(tokens)
+                self.assertTrue(failures)
+        summary, failures = run.token_summary({"input": 8, "cached": 0, "output": 1})
+        self.assertEqual([], failures)
+        self.assertEqual(8, summary["uncached"])
+        self.assertIsNone(summary["reasoning"])
+
+    def test_impossible_cache_totals_are_not_clamped_into_a_pass(self):
+        usage = CacheMetricValidationTest().usage()
+        usage.update(
+            input_tokens=8,
+            input_cache_read_tokens=9,
+            prompt_cache_reused_tokens=0,
+            cache_read_share_percent=100,
+            reusable_prefix_coverage_percent=0,
+        )
+        self.assertTrue(
+            cache_metric_failures(usage, {"input": 8, "cached": 9}, 4, False)
+        )
+
+
+class EvaluationSummaryTest(unittest.TestCase):
+    def test_discovery_looks_through_literal_loop_aliases(self):
+        code = 'import inspect as i\nfor name in ("cards", "monitor"):\n    fn = getattr(probe, name)\n    print(i.signature(fn))'
+        metrics, failures = run.discovery_evidence(
+            [code], [], {"signatures": ["probe.cards", "probe.monitor"]}
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(2, metrics["signature_calls"])
+
+    def test_known_and_duplicate_docs_fail_even_without_read_activity(self):
+        for code in (
+            'print(doc("probe.read"))',
+            'print(apropos(pattern="probe"))',
+            'print(getattr(probe.read, "contract"))',
+        ):
+            with self.subTest(code=code):
+                _, failures = run.discovery_evidence([code], [], {"known": True})
+                self.assertTrue(failures)
+        metrics, failures = run.discovery_evidence(
+            ['print(doc("probe.read"))', 'print(doc("probe.read"))'], [], {}
+        )
+        self.assertEqual(2, metrics["doc_calls"])
+        self.assertEqual(1, metrics["redundant_discovery"])
+        self.assertTrue(failures)
+
+    def test_read_activity_does_not_double_count_syntax(self):
+        metrics, failures = run.discovery_evidence(
+            ['doc("probe.read")'],
+            [{"id": "1", "operation": "doc", "argument-key": "a"}],
+            {},
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(1, metrics["doc_calls"])
+
+    def test_nonobject_token_payload_fails_without_crashing(self):
+        for payload in (None, [], "100"):
+            with self.subTest(payload=payload):
+                _, failures = run.token_summary(payload)
+                self.assertTrue(failures)
+
+    def test_json_duplicate_keys_are_not_silently_overwritten(self):
+        failures = run.structured_failures(
+            {"want_answer_json": {"count": 2}}, ".", '{"count":7,"count":2}', []
+        )
+        self.assertTrue(failures)
+
+    def test_repeats_report_all_runs_and_weighted_cache_share(self):
+        rows = []
+        for index, (input_tokens, cached, output) in enumerate(
+            ((100, 75, 20), (300, 125, 40)), 1
+        ):
+            tokens, _ = run.token_summary(
+                {"input": input_tokens, "cached": cached, "output": output}
+            )
+            rows.append(
+                {
+                    "id": "probe",
+                    "provider": "test",
+                    "model": "model",
+                    "repeat": index,
+                    "converged": True,
+                    "correct": index == 1,
+                    "errors": 0,
+                    "tokens": tokens,
+                    "token_errors": [],
+                    "wall": index * 10,
+                    "forms": index * 2,
+                    "provider_calls": index * 3,
+                    "max_form_output_chars": index * 4,
+                    "total_output_chars": index * 5,
+                }
+            )
+        summary = run.summarize_results(rows)[0]
+        self.assertEqual(2, summary["runs"])
+        self.assertEqual(1, summary["passed"])
+        self.assertEqual(400, summary["token_totals"]["input"])
+        self.assertEqual(200, summary["token_totals"]["cached"])
+        self.assertEqual(200, summary["token_totals"]["uncached"])
+        self.assertEqual(50.0, summary["cached_input_percent"])
+        self.assertEqual({"min": 100, "median": 200.0, "max": 300}, summary["input"])
+        self.assertEqual({"min": 10, "median": 15.0, "max": 20}, summary["wall"])
+
+    def test_reuse_seeds_one_canonical_fixture_and_rejects_path_escape(self):
+        scenario = run.load_scenarios(["extension-known-contract"])[0]
+        with tempfile.TemporaryDirectory() as work:
+            run.seed_files(scenario, work)
+            self.assertTrue(
+                (Path(work) / ".vis/extensions/contract_probe.py").is_file()
+            )
+            for name in ("../extension-contract-discovery", "not-a-scenario"):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    run.seed_files({**scenario, "files_from": name}, work)
+
+
+class DiscoveryEvidenceEdgeTest(unittest.TestCase):
+    def test_invoked_helpers_cannot_hide_discovery_or_source_access(self):
+        for code in (
+            'def refresh():\n    return doc("probe.read")\nrefresh()',
+            'refresh = lambda: open("source.py").read()\nrefresh()',
+            'class Refresh:\n    def __init__(self):\n        doc("probe.read")\nRefresh()',
+        ):
+            with self.subTest(code=code):
+                _, failures = run.discovery_evidence([code], [], {"known": True})
+                self.assertTrue(failures)
+        _, failures = run.discovery_evidence(
+            ["def count(rows):\n    return len(rows)\nprint(count([]))"],
+            [],
+            {"known": True},
+        )
+        self.assertEqual([], failures)
+
+    def test_literal_comprehension_matches_direct_inspection(self):
+        metrics, failures = run.discovery_evidence(
+            [
+                "import inspect\nprint([inspect.signature(fn) for fn in (probe.cards, probe.monitor)])"
+            ],
+            [],
+            {"signatures": ["probe.cards", "probe.monitor"]},
+        )
+        self.assertEqual([], failures)
+        self.assertEqual(2, metrics["signature_calls"])
+
+    def test_missing_scope_is_unknown_not_misclassified_as_caught(self):
+        helper = DiscoveryEvaluationTest()
+        activity = helper.activity("failed")
+        activity["payload"].pop("scope")
+        result = helper.run_events(
+            [
+                activity,
+                {
+                    "event": "trace-chunk",
+                    "payload": {"phase": "form-result", "error": "failure"},
+                },
+                {"event": "result", "payload": {"answer": "done"}},
+            ]
+        )
+        self.assertFalse(result["correct"])
+        self.assertEqual(0, result["caught_activity_failures"])
+        self.assertEqual(1, result["unscoped_activity_failures"])
+
+
+class EvaluationIntegrationEdgeTest(unittest.TestCase):
+    def test_forbidden_fast_read_does_not_need_an_activity_row(self):
+        helper = DiscoveryEvaluationTest()
+        result = helper.run_events(
+            [
+                {
+                    "event": "trace-chunk",
+                    "payload": {"phase": "form-start", "code": 'cat("source.py")'},
+                },
+                {"event": "result", "payload": {"answer": "done"}},
+            ],
+            discovery={"known": True},
+            forbid_tools=["cat"],
+        )
+        self.assertFalse(result["correct"])
+
+    def test_malformed_provider_tokens_are_a_failure_not_a_crash(self):
+        helper = DiscoveryEvaluationTest()
+        for tokens in ([1], "tokens", {"input": "bad", "cached": 1, "output": 2}):
+            with self.subTest(tokens=tokens):
+                result = helper.run_events(
+                    [
+                        {
+                            "event": "result",
+                            "payload": {"answer": "done", "tokens": tokens},
+                        }
+                    ],
+                    want_cache_read=True,
+                )
+                self.assertFalse(result["correct"])
+
+    def test_partial_read_activities_do_not_hide_duplicate_syntax(self):
+        metrics, failures = run.discovery_evidence(
+            ['doc("probe.read")', 'doc("probe.read")'],
+            [{"id": "1", "operation": "doc", "argument-key": "a"}],
+            {},
+        )
+        self.assertEqual(2, metrics["doc_calls"])
+        self.assertTrue(failures)
+
+
 if __name__ == "__main__":
     unittest.main()

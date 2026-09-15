@@ -1,6 +1,6 @@
 {
   "lang": "python",
-  "prompt": "Use the preinstalled contract_probe extension to check the initial totals, then record Ada in inbox using the normal copy count and no note, then record Lin in archive with three copies and the note urgent. Finally read the totals and report the two receipts and final totals. Do not read source files, import the extension, recreate it, use shell, or write files yourself. Only the registered extension may change its local ledger. If the extension is unavailable, report that and stop. Return only a JSON object with keys receipts (the two complete receipt objects, each with sequence, person, bucket, copies, note and total) and final_totals (an object with records and total). Do not add prose or other keys.",
+  "prompt": "The following contracts are known from previous work and unchanged; reuse them without apropos, doc, signature inspection or contract metadata reads. The preinstalled contract_probe.status() takes no arguments and returns records and total without changing the local ledger. contract_probe.record(person, /, *, bucket, copies=2, note=None) appends a local receipt, never sends a message, requires nonblank person and bucket and positive copies, and returns sequence, person, bucket, copies, note and total. Person is positional-only; bucket, copies and note are keyword-only. Use the preinstalled contract_probe extension to check the initial totals, then record Ada in inbox using the normal copy count and no note, then record Lin in archive with three copies and the note urgent. Finally read the totals and report the two receipts and final totals. Do not read source files, import the extension, recreate it, use shell, or write files yourself. Only the registered extension may change its local ledger. If the extension is unavailable, report that and stop. Return only a JSON object with keys receipts (the two complete receipt objects, each with sequence, person, bucket, copies, note and total) and final_totals (an object with records and total). Do not add prose or other keys.",
   "want": {},
   "wantnot": {},
   "want_tools": [
@@ -88,12 +88,9 @@
     "contract_probe.status"
   ],
   "discovery": {
-    "signatures": [
-      "contract_probe.status",
-      "contract_probe.record"
-    ],
+    "signatures": [],
     "contracts": [],
-    "known": false
+    "known": true
   },
   "want_cache_metrics": true,
   "max_total_output_chars": 10000,
@@ -108,5 +105,6 @@
     "format_code",
     "lint_code",
     "run_tests"
-  ]
+  ],
+  "files_from": "extension-contract-discovery"
 }

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, make_dataclass
+from pathlib import Path
 from typing import Annotated
 
 import blockether.vis.extension as vis
@@ -79,6 +81,15 @@ def monitor_activity(*, phase, result, **_):
     return None
 
 
+def journal_call(operation, arguments):
+    """Record fixture invocations independently of model output."""
+    journal = Path(__file__).resolve().parents[2] / "schema-calls.jsonl"
+    with journal.open("a") as stream:
+        stream.write(
+            json.dumps({"operation": operation, "arguments": arguments}) + "\n"
+        )
+
+
 class SchemaProbe:
     @vis.method(
         activity=vis.Activity(
@@ -87,6 +98,7 @@ class SchemaProbe:
     )
     def cards(self, key: str | None = None) -> ToolCard | tuple[ToolCard, ...]:
         """Read available tool cards; an unknown key raises an error."""
+        journal_call("schema_probe.cards", {"key": key})
         cards = (ATLAS, BEACON)
         if key is None:
             return cards
@@ -102,6 +114,7 @@ class SchemaProbe:
     )
     def monitor(self) -> MonitorResult:
         """Read a fixed local monitor snapshot without changing it."""
+        journal_call("schema_probe.monitor", {})
         return MonitorResult(
             7,
             (Entry(TARGET, 7, "running"),),

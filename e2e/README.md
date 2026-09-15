@@ -19,17 +19,30 @@ e2e/
   scenarios/<id>/                                     foundation editing, clj-* (repair/format hook), py-* (managed REPL)
 
   <id>/
-    scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?, want_forms?,
-                       want_requested_route?, want_folded_prefix?, want_cache_read?,
-                       want_cache_metrics?, workspace_filesystem?, timeout_s?}
+    scenario.json   task, fixture expectations and optional benchmark guards
     files/          input files copied to a new git repository per run
 ```
 
 - **want** / **wantnot** — `{path: [substring, ...]}` checks on the resulting files.
 - **want_answer** — substrings the final answer must contain (REPL / non-file tasks).
-- **want_tools** — extension tools that must run, such as `repl_eval` for a
-  Python REPL test.
-- **want_forms** — substrings required in a top-level sandbox form.
+- **want_tools** — extension tools that must finish successfully, such as `repl_eval`.
+- **want_forms** — legacy substring checks on sandbox source; not execution evidence.
+- **want_answer_json** — the exact final JSON value, with no extra facts or keys.
+  A single JSON code fence is accepted. Duplicate object keys are rejected.
+- **want_json_files** — `{path: [row, ...]}` exact JSONL evidence, including row order.
+  Discovery fixtures write private invocation journals inside registered methods;
+  the model cannot satisfy these checks just by printing a receipt.
+- **want_activity_sequence** — exact operation order and count within the named
+  namespaces, independently checked against terminal Activity snapshots.
+- **forbid_tools** — operations that must not occur, including failed attempts.
+- **max_form_output_chars** / **max_total_output_chars** — nonnegative peak and
+  cumulative stdout limits. These measure characters, not tokens; traces stay intact.
+- **discovery** — required `signatures` and `contracts` names, or `known: true` to
+  require reuse without discovery. Duplicate unchanged lookups fail. Syntax checks
+  resolve ordinary aliases and literal loops/comprehensions, not comments or quoted
+  examples. Runtime Activities supply doc/apropos evidence when available; otherwise
+  syntax is used. Local helpers hiding discovery are rejected. This bounded audit
+  is not a Python execution tracer or a security boundary.
 - **want_requested_route** — all provider markers and billed results must use
   the requested provider and model. Fallbacks fail the test.
 - **want_folded_prefix** — exactly one direct `fold_session("-tN/iK", ...)` must target
@@ -38,6 +51,11 @@ e2e/
 - **want_cache_metrics** — persist the run, read `/v1/sessions/:sid/usage` through the
   canonical gateway client, and independently reconcile provider totals, both percentages,
   sample counts, and (with `want_folded_prefix`) the one estimated rebuild.
+  Invalid, missing or impossible token counts fail; a cold cache does not. This
+  does not require a particular cache rate or report a request-level hit percentage.
+- **files_from** — reuse a sibling scenario's input files without copying its source.
+  The known-contract case reuses the original fixture with a supplied unchanged
+  contract. It tests recovered-contract reuse, not cross-turn memory retention.
 
 - **workspace_filesystem** — `{id: fixture-relative directory}` registrations.
   Setup writes absolute paths and allowed ids to `vis.yml`; omit a fixture copy
@@ -60,9 +78,11 @@ VIS_PROVIDER=github-copilot-individual VIS_MODEL=gpt-6-astra VIS_REASONING_EFFOR
 
 Environment variables: `VIS_MODELS` (comma-separated models, default
 `VIS_MODEL`), `VIS_E2E_TIMEOUT` (explicit whole-scenario budget in seconds),
-`VIS_E2E_WORKERS` (parallel runs, default 5), `VIS_E2E_TRACES` (JSON trace
-directory; multiple-model runs use `<id>__<model>.jsonl`), and
-`VIS_E2E_KEEP=1` (retain temporary working directories).
+`VIS_E2E_WORKERS` (parallel runs, default 5), `VIS_E2E_REPEATS` (positive repetitions
+per scenario/model, default 1), `VIS_E2E_TRACES` (trace and measurement directory),
+and `VIS_E2E_KEEP=1` (retain temporary working directories). Multiple-model trace
+names include `__<model>`; repeated runs add `__run<N>`. Use a fresh trace directory
+for each comparison; a later invocation replaces its `results.json`.
 
 `VIS_REASONING_EFFORT` optionally forwards an exact provider-native effort to
 `--reasoning-effort`. With it set, every run must report valid evaluation evidence
@@ -74,6 +94,32 @@ Without `VIS_E2E_TIMEOUT`, each scenario uses its `timeout_s` or the 300-second
 default. These budgets include model requests and all tool calls; they do not
 change the Python execution watchdog. `extension-watchdog` uses 900 seconds to
 allow for its real 310-second extension call and model response time.
+
+## Interpret measurements
+
+`results.json` contains every run, including failures, plus per-scenario/model
+summaries. Compare pass counts before efficiency: each run must converge, satisfy
+all correctness guards, and have no surfaced errors, failed/cancelled Activities
+or unfinished Activities. Repeated snapshots count once, after terminal state updates.
+
+The report separates surfaced errors from Activity failures without a same-form
+error (possible caught failures). Missing scopes remain unclassified; a shared form
+error does not prove whether a particular exception was caught.
+
+Provider input already includes cached input: `uncached = input - cached`. The
+cached-input share uses summed counts, not an average of percentages. Input,
+cached, uncached and output tokens, model calls, forms, wall time, peak/total stdout
+and discovery counts are separate measurements. Reasoning is `unavailable` unless
+the provider's result supplies it; persisted usage counters are reported separately.
+
+Repeats report minimum, median and maximum, plus the number of valid token samples.
+There is no fixed token/cache target: changing model, route, prompt or cache state
+changes these costs. One passing run is not proof of optimal discovery or universal
+cache savings. For a small repeated GLM comparison:
+
+```sh
+VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash VIS_E2E_REPEATS=2 VIS_E2E_WORKERS=1 python3 e2e/run.py extension-contract-discovery extension-schema-discovery extension-known-contract
+```
 
 ## Add a scenario
 

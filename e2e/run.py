@@ -3,9 +3,8 @@
 scenarios and checks, per scenario:
 
   - CONVERGED   the loop reached a final answer (no hang / crash)
-  - CORRECT     resulting files satisfy want / wantnot, the answer contains
-                want_answer, and want_tools were actually used
-  - NO-ERROR    no form raised inside the loop
+  - CORRECT     resulting files, answers and observed operations satisfy the scenario
+  - NO-ERROR    no surfaced errors or failed/cancelled/unfinished Activities
   - FAST PATH   the anchored `patch` wrote the edit, rather than the model
                 wandering through the file with `cat` alone
 
@@ -13,10 +12,7 @@ Scenarios are SELF-CONTAINED FOLDERS under `e2e/scenarios/` — the language-neu
 editing set beside the per-language ones (`clj-*`, `py-*`) that exercise a surface:
 
     e2e/scenarios/<id>/
-      scenario.json   {lang, prompt, want, wantnot, want_answer?,
-                       want_tools?, want_forms?, max_form_output_chars?, want_requested_route?,
-                       want_folded_prefix?, want_cache_read?, want_cache_metrics?,
-                       workspace_filesystem?}
+      scenario.json   task, fixture expectations and optional benchmark guards
       files/          real files seeded into a fresh git repo before the run
 
 `want`/`wantnot` are {path: [substring, ...]} checks on the resulting files;
@@ -25,10 +21,11 @@ scenarios); `want_tools` are extension tools that MUST have fired (e.g.
 repl_eval); `want_forms` are source substrings that MUST occur in a top-level
 sandbox form. The four boolean benchmark guards pin the requested route, the
 canonical oldest-prefix fold, real provider cache reads, and the persisted
-cache-metric arithmetic. `max_form_output_chars` is an optional nonnegative integer:
-it fails the run when any form's stdout exceeds that size, without truncating traces.
-`workspace_filesystem` maps catalog ids to fixture-relative directories; seeding
-generates vis.yml with absolute paths and explicit admission.
+cache-metric arithmetic. Peak/cumulative stdout guards count characters, not tokens.
+Exact JSON answers, JSONL fixture journals, operation sequences and discovery audits
+are described in README.md. Every run reports provider token totals separately from
+output size; VIS_E2E_REPEATS adds repeated-run measurements to results.json.
+`workspace_filesystem` registers fixture directories; `files_from` reuses sibling input.
 
 Each scenario runs in its own throwaway git repo through a source-owned gateway on an
 isolated temporary DB, so an installed gateway cannot mask working-tree edits. Fixtures
@@ -39,12 +36,14 @@ Runs are parallel. Usage:
 """
 
 import ast
+import collections
 import concurrent.futures
 import json
 import os
 import re
 import shutil
 import socket
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -137,6 +136,416 @@ def fold_count_failures(usage):
     return []
 
 
+def token_summary(tokens):
+    """Keep provider totals separate from cache shares and character counts."""
+    if not isinstance(tokens, dict):
+        return {}, ["provider tokens are not an object"]
+    failures = []
+    values = {}
+    for key in ("input", "cached", "output", "reasoning", "cache_created", "total"):
+        value = tokens.get(key)
+        if value is None and key not in {"input", "cached", "output"}:
+            values[key] = None
+        elif type(value) is not int or value < 0:
+            failures.append(
+                f"provider tokens {key} is not a nonnegative integer: {value!r}"
+            )
+        else:
+            values[key] = value
+    if failures:
+        return {}, failures
+    if values["cached"] > values["input"]:
+        failures.append("provider cached tokens exceed input tokens")
+    if (
+        values["total"] is not None
+        and values["total"] != values["input"] + values["output"]
+    ):
+        failures.append("provider total tokens != input + output")
+    values["uncached"] = values["input"] - values["cached"]
+    values["cached_input_percent"] = (
+        round(100 * values["cached"] / values["input"], 2) if values["input"] else 0.0
+    )
+    return values, failures
+
+
+def summarize_results(results):
+    """Summarize all repetitions, including failures, without averaging cache ratios."""
+    groups = collections.defaultdict(list)
+    for result in results:
+        groups[(result["id"], result["provider"], result["model"])].append(result)
+    summaries = []
+    for (scenario, provider, model), rows in sorted(groups.items()):
+        valid = [row for row in rows if row["tokens"] and not row["token_errors"]]
+        summary = {
+            "id": scenario,
+            "provider": provider,
+            "model": model,
+            "runs": len(rows),
+            "passed": sum(
+                row["converged"] and row["correct"] and row["errors"] == 0
+                for row in rows
+            ),
+            "token_samples": len(valid),
+        }
+        totals = {
+            key: sum(row["tokens"][key] for row in valid)
+            for key in ("input", "cached", "uncached", "output")
+        }
+        summary["token_totals"] = totals
+        summary["cached_input_percent"] = (
+            round(100 * totals["cached"] / totals["input"], 2)
+            if totals["input"]
+            else 0.0
+        )
+        for key in (
+            "wall",
+            "forms",
+            "provider_calls",
+            "max_form_output_chars",
+            "total_output_chars",
+            "input",
+            "cached",
+            "uncached",
+            "output",
+        ):
+            values = (
+                [row["tokens"][key] for row in valid]
+                if key in totals
+                else [row[key] for row in rows]
+            )
+            summary[key] = (
+                {
+                    "min": min(values),
+                    "median": statistics.median(values),
+                    "max": max(values),
+                }
+                if values
+                else None
+            )
+        summaries.append(summary)
+    return summaries
+
+
+def exact_json(text):
+    """Reject ambiguous duplicate keys in answer and fixture evidence."""
+
+    def object_pairs(pairs):
+        result = dict(pairs)
+        if len(result) != len(pairs):
+            raise ValueError("duplicate JSON keys")
+        return result
+
+    return json.loads(text, object_pairs_hook=object_pairs)
+
+
+def structured_failures(sc, work, answer, activities):
+    """Check exact fixture truth, not numbers or JSON fragments embedded in prose."""
+    failures = []
+    if "want_answer_json" in sc:
+        text = answer.strip()
+        if text.startswith("```json\n") and text.endswith("\n```"):
+            text = text[8:-4]
+        try:
+            actual = exact_json(text)
+        except ValueError:
+            failures.append("answer is not a single JSON value")
+        else:
+            if json.dumps(actual, sort_keys=True) != json.dumps(
+                sc["want_answer_json"], sort_keys=True
+            ):
+                failures.append(
+                    "answer JSON does not match the requested facts exactly"
+                )
+    for name, expected in (sc.get("want_json_files") or {}).items():
+        try:
+            with open(os.path.join(work, name)) as stream:
+                actual = [exact_json(line) for line in stream if line.strip()]
+        except (OSError, ValueError) as exc:
+            failures.append(f"invalid JSONL evidence {name}: {exc}")
+        else:
+            if json.dumps(actual, sort_keys=True) != json.dumps(
+                expected, sort_keys=True
+            ):
+                failures.append(
+                    f"JSONL evidence {name} does not match exact rows/order/arguments"
+                )
+    if "want_activity_sequence" in sc:
+        expected = sc["want_activity_sequence"]
+        namespaces = {op.split(".")[0] for op in expected}
+        actual = [
+            row["operation"]
+            for row in activities
+            if row["operation"].split(".")[0] in namespaces
+        ]
+        if actual != expected:
+            failures.append(f"activity sequence {actual!r} != expected {expected!r}")
+    forbidden = set(sc.get("forbid_tools") or [])
+    for operation in sorted({row["operation"] for row in activities} & forbidden):
+        failures.append(f"forbidden tool {operation!r} was used")
+    return failures
+
+
+def discovery_evidence(forms, activities, rules):
+    """Audit simple Python syntax; runtime Activities independently prove host calls.
+
+    This is not execution tracing for stdlib inspection. Resolve ordinary aliases
+    and literal loops, ignore comments/strings/uninvoked definitions, and reject
+    opaque dynamic execution rather than claiming it proves inspection.
+    """
+    aliases = {}
+    signatures = []
+    contracts = []
+    failures = []
+    other_inspection = []
+    syntax_lookups = []
+    allowed_imports = {
+        "inspect",
+        "json",
+        "re",
+        "dataclasses",
+        "collections",
+        "typing",
+        "asyncio",
+        "builtins",
+    }
+
+    def resolve(node):
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            return f"{resolve(node.value)}.{node.attr}"
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return [resolve(item) for item in node.elts]
+        if (
+            isinstance(node, ast.Call)
+            and resolve(node.func) == "getattr"
+            and len(node.args) >= 2
+        ):
+            return f"{resolve(node.args[0])}.{resolve(node.args[1])}"
+        return "?"
+
+    local_bodies = {}
+    sensitive_calls = {
+        "doc",
+        "apropos",
+        "open",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "read_text",
+        "read_bytes",
+        "write_text",
+        "write_bytes",
+        "system",
+        "popen",
+        "shell",
+        "cat",
+        "grep",
+        "ls",
+    }
+
+    def hidden_discovery(body, seen):
+        for statement in body:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Attribute) and node.attr == "contract":
+                    return True
+                if isinstance(node, ast.Call):
+                    name = resolve(node.func)
+                    if (
+                        name.startswith("inspect.")
+                        or name.rsplit(".", 1)[-1] in sensitive_calls
+                    ):
+                        return True
+                    if (
+                        name in local_bodies
+                        and name not in seen
+                        and hidden_discovery(local_bodies[name], seen | {name})
+                    ):
+                        return True
+        return False
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Import(self, node):
+            for item in node.names:
+                if item.name.split(".")[0] not in allowed_imports:
+                    failures.append(f"forbidden import {item.name!r}")
+                aliases[item.asname or item.name] = item.name
+
+        def visit_ImportFrom(self, node):
+            if (node.module or "").split(".")[0] not in allowed_imports:
+                failures.append(f"forbidden import {node.module!r}")
+            for item in node.names:
+                aliases[item.asname or item.name] = f"{node.module}.{item.name}"
+
+        def visit_Assign(self, node):
+            self.visit(node.value)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    if isinstance(node.value, ast.Lambda):
+                        aliases[target.id] = target.id
+                        local_bodies[target.id] = [node.value.body]
+                    else:
+                        aliases[target.id] = resolve(node.value)
+
+        def visit_For(self, node):
+            items = resolve(node.iter)
+            if isinstance(node.target, ast.Name) and isinstance(items, list):
+                for item in items:
+                    aliases[node.target.id] = item
+                    for statement in node.body:
+                        self.visit(statement)
+            else:
+                self.generic_visit(node)
+
+        def visit_ListComp(self, node):
+            generator = node.generators[0]
+            items = resolve(generator.iter)
+            if (
+                len(node.generators) == 1
+                and isinstance(generator.target, ast.Name)
+                and isinstance(items, list)
+                and not generator.ifs
+            ):
+                previous = aliases.copy()
+                for item in items:
+                    aliases[generator.target.id] = item
+                    self.visit(node.elt)
+                aliases.clear()
+                aliases.update(previous)
+            else:
+                self.generic_visit(node)
+
+        visit_SetComp = visit_ListComp
+        visit_GeneratorExp = visit_ListComp
+
+        def visit_FunctionDef(self, node):
+            local_bodies[node.name] = node.body
+            for item in node.decorator_list:
+                self.visit(item)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+        visit_ClassDef = visit_FunctionDef
+
+        def visit_Lambda(self, node):
+            pass
+
+        def visit_If(self, node):
+            if isinstance(node.test, ast.Constant):
+                for statement in node.body if node.test.value else node.orelse:
+                    self.visit(statement)
+            else:
+                self.generic_visit(node)
+
+        def visit_Attribute(self, node):
+            if node.attr == "contract":
+                contracts.append(resolve(node.value))
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            name = resolve(node.func)
+            body = (
+                [node.func.body]
+                if isinstance(node.func, ast.Lambda)
+                else local_bodies.get(name, [])
+            )
+            if body and hidden_discovery(body, {name}):
+                failures.append(
+                    f"cannot verify discovery/source access hidden in local helper {name!r}"
+                )
+            if name == "inspect.signature":
+                signatures.append(resolve(node.args[0]) if node.args else "?")
+            elif name in {"doc", "apropos"}:
+                argument = (
+                    node.args[0]
+                    if node.args
+                    else next(
+                        (
+                            item.value
+                            for item in node.keywords
+                            if item.arg in {"name", "pattern"}
+                        ),
+                        None,
+                    )
+                )
+                syntax_lookups.append((name, resolve(argument)))
+            elif name.startswith("inspect.") or name in {"dir", "vars", "help"}:
+                other_inspection.append(name)
+            if name in rules.get("forbid_tools", []):
+                failures.append(f"forbidden tool call {name!r}")
+            if name in {
+                "open",
+                "builtins.open",
+                "exec",
+                "eval",
+                "compile",
+                "__import__",
+            } or name.rsplit(".", 1)[-1] in {
+                "read_text",
+                "read_bytes",
+                "write_text",
+                "write_bytes",
+                "open",
+                "system",
+                "popen",
+            }:
+                failures.append(f"forbidden source/file/dynamic call {name!r}")
+            if (
+                name == "getattr"
+                and len(node.args) > 1
+                and resolve(node.args[1]) == "contract"
+            ):
+                contracts.append(resolve(node.args[0]))
+            self.generic_visit(node)
+
+    visitor = Visitor()
+    for code in forms:
+        try:
+            visitor.visit(ast.parse(code))
+        except SyntaxError:
+            failures.append("cannot audit discovery in an invalid Python form")
+    lookups = [
+        (row["operation"], row.get("argument-key", row["id"]))
+        for row in activities
+        if row["operation"] in {"doc", "apropos"}
+    ]
+    # Fast local reads may have no Activity rows. Prefer runtime evidence for
+    # each operation when available, never count it twice with syntax evidence.
+    for operation in ("doc", "apropos"):
+        runtime = [item for item in lookups if item[0] == operation]
+        syntax = [item for item in syntax_lookups if item[0] == operation]
+        if len(syntax) > len(runtime):
+            lookups = [item for item in lookups if item[0] != operation] + syntax
+    counts = collections.Counter(
+        [
+            *(("signature", name) for name in signatures),
+            *(("contract", name) for name in contracts),
+            *lookups,
+        ]
+    )
+    redundant = sum(count - 1 for count in counts.values())
+    if redundant:
+        failures.append(f"redundant discovery: {redundant} repeated unchanged lookups")
+    if rules.get("known") and (signatures or contracts or lookups or other_inspection):
+        failures.append("known contracts were unnecessarily rediscovered")
+    for name in rules.get("signatures", []):
+        if name not in signatures:
+            failures.append(f"no signature call found for {name}")
+    for name in rules.get("contracts", []):
+        if name not in contracts:
+            failures.append(f"no focused contract access found for {name}")
+    return {
+        "signature_calls": len(signatures),
+        "contract_reads": len(contracts),
+        "doc_calls": sum(operation == "doc" for operation, _ in lookups),
+        "apropos_calls": sum(operation == "apropos" for operation, _ in lookups),
+        "other_inspection_calls": len(other_inspection),
+        "redundant_discovery": redundant,
+    }, failures
+
+
 def cache_metric_failures(usage, result_tokens, provider_call_count, folded_prefix):
     """Independently reconcile one real run's provider, DB, and wire cache totals."""
     failures = []
@@ -158,8 +567,18 @@ def cache_metric_failures(usage, result_tokens, provider_call_count, folded_pref
     estimated_samples = values["prompt_cache_estimated_sample_count"]
     rebuilds = values["prompt_cache_rebuild_count"]
     expired = values["prompt_cache_expired_count"]
-    result_input = int(result_tokens.get("input") or 0)
-    result_cached = int(result_tokens.get("cached") or 0)
+    for key in ("input", "cached"):
+        value = result_tokens.get(key)
+        if type(value) is not int or value < 0:
+            failures.append(
+                f"provider tokens {key} is not a nonnegative integer: {value!r}"
+            )
+    if failures:
+        return failures
+    result_input = result_tokens["input"]
+    result_cached = result_tokens["cached"]
+    if cached_tokens > input_tokens or result_cached > result_input:
+        failures.append("cached tokens exceed input tokens")
 
     if input_tokens != result_input:
         failures.append(f"usage input {input_tokens} != provider result {result_input}")
@@ -319,7 +738,14 @@ def load_scenarios(pick):
 
 
 def seed_files(sc, work):
-    fdir = os.path.join(sc["_dir"], "files")
+    fixture_dir = sc["_dir"]
+    if source := sc.get("files_from"):
+        if not re.fullmatch(r"[a-z0-9-]+", source):
+            raise ValueError("files_from must name a sibling scenario")
+        fixture_dir = os.path.join(os.path.dirname(fixture_dir), source)
+        if not os.path.isfile(os.path.join(fixture_dir, "scenario.json")):
+            raise ValueError(f"files_from scenario does not exist: {source}")
+    fdir = os.path.join(fixture_dir, "files")
     for root, _, names in os.walk(fdir):
         for n in names:
             src = os.path.join(root, n)
@@ -401,6 +827,8 @@ def run_one(job):
 
         os.makedirs(TRACES, exist_ok=True)
         tag = sc["id"] + ("__" + model if len(MODELS) > 1 else "")
+        if "_repeat" in sc:
+            tag += f"__run{sc['_repeat']}"
         with open(os.path.join(TRACES, tag + ".jsonl"), "w") as fh:
             fh.write(out)
 
@@ -409,7 +837,9 @@ def run_one(job):
         provider_calls = []
         tools = []
         largest_form_output = 0
-        activity_ids = set()
+        total_form_output = 0
+        activities = {}
+        surfaced_scopes = set()
         errs = []
         unparsed = []
         done = False
@@ -431,6 +861,9 @@ def run_one(job):
             pl = o.get("payload", {})
             if ev == "result":
                 result_tokens = pl.get("tokens") or {}
+                if not isinstance(result_tokens, dict):
+                    errs.append("provider tokens are not an object")
+                    result_tokens = {}
                 result_cost = pl.get("cost") or {}
                 result_session_id = pl.get("session-id")
                 result_eval = pl.get("eval") or {}
@@ -478,14 +911,23 @@ def run_one(job):
                 for row in (pl.get("activity") or {}).get("rows", []):
                     row_id = row.get("id")
                     operation = row.get("operation")
-                    if row_id and operation and row_id not in activity_ids:
-                        activity_ids.add(row_id)
-                        tools.append(operation)
+                    if row_id and operation:
+                        previous = activities.get(row_id, {})
+                        if previous.get("state") not in {
+                            "succeeded",
+                            "failed",
+                            "cancelled",
+                        }:
+                            activities[row_id] = {**row, "scope": pl.get("scope", "")}
+                        elif row.get("state") in {"failed", "cancelled"}:
+                            activities[row_id] = {**row, "scope": pl.get("scope", "")}
             elif ph == "form-result":
                 largest_form_output = max(
                     largest_form_output, len(pl.get("stdout") or "")
                 )
+                total_form_output += len(pl.get("stdout") or "")
                 if pl.get("error"):
+                    surfaced_scopes.add(pl.get("scope", ""))
                     e = pl.get("error")
                     errs.append(
                         e.get("message", "?") if isinstance(e, dict) else str(e)
@@ -498,7 +940,30 @@ def run_one(job):
         elif exit_code:
             suffix = f": {unparsed[0][:120]}" if unparsed else ""
             errs.append(f"vis-agent exited {exit_code}{suffix}")
-        correct = True
+        activity_rows = list(activities.values())
+        failed_activities = [
+            row for row in activity_rows if row.get("state") in {"failed", "cancelled"}
+        ]
+        incomplete_activities = [
+            row
+            for row in activity_rows
+            if row.get("state") not in {"succeeded", "failed", "cancelled"}
+        ]
+        caught_failures = [
+            row
+            for row in failed_activities
+            if row["scope"] and row["scope"] not in surfaced_scopes
+        ]
+        unscoped_failures = [row for row in failed_activities if not row["scope"]]
+        surfaced_errors = len(errs)
+        errs.extend(
+            f"activity {row['operation']} {row.get('state')}"
+            for row in [*caught_failures, *unscoped_failures, *incomplete_activities]
+        )
+        tools = [
+            row["operation"] for row in activity_rows if row.get("state") == "succeeded"
+        ]
+        correct = not (failed_activities or incomplete_activities)
         detail = []
         for name, subs in (sc.get("want") or {}).items():
             try:
@@ -526,6 +991,27 @@ def run_one(job):
             if not any(needle in form for form in forms):
                 correct = False
                 detail.append(f"form containing {needle!r} not used")
+        detail.extend(structured_failures(sc, work, answer, activity_rows))
+        discovery = {}
+        if "discovery" in sc:
+            discovery, discovery_failures = discovery_evidence(
+                forms,
+                activity_rows,
+                {**sc["discovery"], "forbid_tools": sc.get("forbid_tools", [])},
+            )
+            detail.extend(discovery_failures)
+        if detail:
+            correct = False
+        total_limit = sc.get("max_total_output_chars")
+        if total_limit is not None:
+            if type(total_limit) is not int or total_limit < 0:
+                correct = False
+                detail.append("max_total_output_chars must be a nonnegative integer")
+            elif total_form_output > total_limit:
+                correct = False
+                detail.append(
+                    f"total output {total_form_output} chars exceeds max_total_output_chars={total_limit}"
+                )
         output_limit = sc.get("max_form_output_chars")
         if output_limit is not None:
             if type(output_limit) is not int or output_limit < 0:
@@ -612,7 +1098,11 @@ def run_one(job):
                             "no provider continuation followed the prefix fold"
                         )
 
-        cached_tokens = int(result_tokens.get("cached") or 0)
+        tokens, token_failures = token_summary(result_tokens)
+        if token_failures and (result_tokens or sc.get("want_cache_metrics")):
+            correct = False
+            detail.extend(token_failures)
+        cached_tokens = tokens.get("cached", 0)
         if sc.get("want_cache_read") and cached_tokens <= 0:
             correct = False
             detail.append("provider reported zero prompt-cache read tokens")
@@ -644,6 +1134,15 @@ def run_one(job):
                                 len(provider_calls),
                                 bool(sc.get("want_folded_prefix")),
                             )
+                            output_tokens = cache_usage.get("output_tokens")
+                            if (
+                                type(output_tokens) is not int
+                                or output_tokens < 0
+                                or output_tokens != result_tokens.get("output")
+                            ):
+                                metric_failures.append(
+                                    "usage output_tokens != provider output tokens"
+                                )
                         else:
                             metric_failures = fold_count_failures(cache_usage)
                         if metric_failures:
@@ -671,6 +1170,18 @@ def run_one(job):
             evidence.append(
                 f"max-form-output={largest_form_output}/{output_limit} chars"
             )
+        evidence.append(
+            f"stdout={total_form_output} total chars; surfaced-errors={surfaced_errors}; activity-failures={len(failed_activities)} ({len(caught_failures)} without a form error)"
+        )
+        if tokens and not token_failures:
+            evidence.append(
+                f"tokens=input {tokens['input']} (cached {tokens['cached']}, uncached {tokens['uncached']}, share {tokens['cached_input_percent']}%), output {tokens['output']}, reasoning {tokens['reasoning'] if tokens['reasoning'] is not None else 'unavailable'}"
+            )
+        if discovery:
+            evidence.append(
+                "discovery="
+                + ", ".join(f"{key}:{value}" for key, value in discovery.items())
+            )
         if REASONING_EFFORT:
             evidence.append(f"reasoning-effort={REASONING_EFFORT}")
         if sc.get("want_requested_route") or REASONING_EFFORT:
@@ -681,32 +1192,56 @@ def run_one(job):
             evidence.append(f"fold={fold_forms[0]['scope']}→prior-prefix")
         if sc.get("want_cache_read"):
             evidence.append(
-                f"cache-read={cached_tokens}/{int(result_tokens.get('input') or 0)} input tokens"
+                f"cache-read={cached_tokens}/{tokens.get('input', 'unavailable')} input tokens"
             )
         if isinstance(cache_usage, dict):
-            samples = int(cache_usage.get("prompt_cache_sample_count") or 0)
-            estimated = int(cache_usage.get("prompt_cache_estimated_sample_count") or 0)
+            samples = cache_usage.get("prompt_cache_sample_count")
+            estimated = cache_usage.get("prompt_cache_estimated_sample_count")
             evidence.append(
                 "cache-metrics="
-                f"cost {cache_usage.get('cache_read_share_percent')}% "
+                f"cached-input share {cache_usage.get('cache_read_share_percent')}% "
                 f"({cache_usage.get('input_cache_read_tokens')}/{cache_usage.get('input_tokens')}), "
                 f"reuse {cache_usage.get('reusable_prefix_coverage_percent')}% "
                 f"({cache_usage.get('prompt_cache_reused_tokens')}/"
                 f"{cache_usage.get('prompt_cache_reusable_tokens')}), "
-                f"samples {samples} ({samples - estimated} exact/{estimated} estimated), "
+                f"samples {samples} (estimated {estimated}), "
                 f"rebuilds {cache_usage.get('prompt_cache_rebuild_count')}, "
                 f"expired {cache_usage.get('prompt_cache_expired_count')}"
             )
         return {
             "id": sc["id"],
             "lang": sc["lang"],
+            "provider": PROVIDER,
             "model": model,
+            "repeat": sc.get("_repeat", 1),
             "converged": done,
             "correct": correct,
             "errors": len(errs),
             "err_msgs": errs[:2],
             "wall": round(wall, 1),
             "forms": len(forms),
+            "provider_calls": len(provider_calls),
+            "tokens": tokens,
+            "token_errors": token_failures,
+            "cache_usage": {
+                key: cache_usage.get(key)
+                for key in (
+                    *CACHE_USAGE_FIELDS,
+                    "output_tokens",
+                    "output_reasoning_tokens",
+                )
+            }
+            if isinstance(cache_usage, dict)
+            else None,
+            "max_form_output_chars": largest_form_output,
+            "total_output_chars": total_form_output,
+            "surfaced_errors": surfaced_errors,
+            "activity_successes": len(tools),
+            "activity_failures": len(failed_activities),
+            "caught_activity_failures": len(caught_failures),
+            "unscoped_activity_failures": len(unscoped_failures),
+            "incomplete_activities": len(incomplete_activities),
+            "discovery": discovery,
             "used_patch": used_patch,
             "edit_path": path,
             "detail": detail,
@@ -722,6 +1257,13 @@ def run_one(job):
 def main():
     pick = set(sys.argv[1:])
     scs = load_scenarios(pick)
+    try:
+        repeats = int(os.environ.get("VIS_E2E_REPEATS", "1"))
+        if repeats < 1:
+            raise ValueError
+    except ValueError:
+        print("VIS_E2E_REPEATS must be a positive integer", file=sys.stderr)
+        sys.exit(2)
     if not scs:
         print(
             "no scenarios found under "
@@ -735,13 +1277,21 @@ def main():
         print(f"could not start source gateway: {exc}", file=sys.stderr)
         sys.exit(2)
     jobs = [
-        (sc, model, gateway["env"], gateway["port"]) for sc in scs for model in MODELS
+        (
+            {**sc, **({"_repeat": repeat} if repeats > 1 else {})},
+            model,
+            gateway["env"],
+            gateway["port"],
+        )
+        for sc in scs
+        for model in MODELS
+        for repeat in range(1, repeats + 1)
     ]
     print(
         f"running {len(scs)} scenarios × {len(MODELS)} model(s) {MODELS} on {PROVIDER} "
         f"through source gateway 127.0.0.1:{gateway['port']} "
         f"(reasoning-effort={REASONING_EFFORT or 'default'}) "
-        f"(workers={WORKERS}, default timeout={TIMEOUT}s)\n"
+        f"(repeats={repeats}, workers={WORKERS}, default timeout={TIMEOUT}s)\n"
     )
     results = []
     try:
@@ -754,7 +1304,12 @@ def main():
             print(
                 f"warning: source gateway cleanup exited {stop_code}", file=sys.stderr
             )
-    results.sort(key=lambda r: (r["id"], r["model"]))
+    results.sort(key=lambda r: (r["id"], r["model"], r["repeat"]))
+    summaries = summarize_results(results)
+    os.makedirs(TRACES, exist_ok=True)
+    with open(os.path.join(TRACES, "results.json"), "w") as stream:
+        json.dump({"runs": results, "summaries": summaries}, stream, indent=2)
+        stream.write("\n")
 
     mw = max(8, max((len(m) for m in MODELS), default=8))
     hdr = f"{'scenario':<18}{'model':<{mw}} {'lang':<11}{'conv':<5}{'ok':<4}{'err':<4}{'path':<14}{'forms':<6}{'sec':<6}"
@@ -797,6 +1352,22 @@ def main():
     print(
         f"GATE (scenario passes iff ALL {len(MODELS)} model(s) pass cleanly): {gated}/{len(by_scn)}"
     )
+    for summary in summaries:
+        print(
+            f"SUMMARY {summary['id']} {summary['provider']}/{summary['model']}: {summary['passed']}/{summary['runs']} passed; token samples={summary['token_samples']}"
+        )
+        if summary["token_samples"]:
+            print(
+                "    token medians="
+                + ", ".join(
+                    f"{key}:{summary[key]['median']} [{summary[key]['min']}..{summary[key]['max']}]"
+                    for key in ("input", "cached", "uncached", "output")
+                )
+            )
+            print(
+                f"    aggregate cached-input share={summary['cached_input_percent']}%; wall median={summary['wall']['median']}s"
+            )
+    print(f"Full measurements: {os.path.join(TRACES, 'results.json')}")
     sys.exit(0 if gated == len(by_scn) else 1)
 
 

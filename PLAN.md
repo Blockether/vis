@@ -801,3 +801,75 @@ canonical named call, preserve existing overloads, and document that boundary.
    reporting work stays excluded. No gates were bypassed. Issue #232 remains closed
    from its earlier fix. Temporary test processes and REPLs have stopped; no live
    service restart or release was performed.
+
+# Discovery evaluation hardening
+
+Measure real workflow correctness and distinguish token use from output size.
+
+## Context
+
+The GLM audit found false passes in `e2e/run.py`: failed Activity snapshots were
+ignored, answer/form substrings were insufficient, and token/cache totals were not
+reported for discovery. Keep the two complementary fixtures and add one known-
+contract reuse case; do not change the production prompt to train to the tests.
+
+## Phases
+
+1. **Rationale:** reproduce evaluator gaps cheaply before paid runs.
+   **Data:** existing runner and fixture tests; saved OpenAI/GLM traces.
+   **Acceptance criteria:** negative tests reject caught failures, wrong arguments/
+   order/answers, redundant discovery and invalid accounting.
+   **Unknowns:** absent versus provider-reported optional reasoning tokens.
+2. **Rationale:** make hard correctness gates independent of efficiency metrics.
+   **Data:** terminal Activities, private fixture journals, exact JSON answers,
+   persisted usage and provider totals.
+   **Acceptance criteria:** exact workflows, known-contract reuse, token/cache and
+   stdout summaries, bounded discovery; no fixed cache-hit-rate requirement.
+   **Unknowns:** model adherence under the stronger checks.
+3. **Rationale:** verify the evaluator and the real behavior before publishing.
+   **Data:** affected Python tests, Ruff, source-gateway runs on OpenAI and GLM.
+   **Acceptance criteria:** evaluator regressions and code checks pass; benchmark
+   runs retain their real correctness/error verdicts. Review, commit and push only
+   task-owned files, preserving concurrent changes. A model failure must not be
+   hidden by weakening the evaluator or changing the production prompt.
+   **Unknowns:** model error rate under the stronger checks.
+
+## Plan state
+
+1. Baseline: 34 tests and 29 subtests passed. New negative tests reproduced ignored
+   failed Activities, misleading JSON/substrings, wrong/missing/extra calls,
+   duplicate discovery, invalid cache totals and malformed token payloads.
+2. Terminal Activity updates now distinguish successes, failed/cancelled calls,
+   unfinished calls, surfaced errors and failures without same-form errors. Missing
+   scopes stay unclassified. Exact JSON answers and fixture invocation journals
+   independently check facts, arguments, defaults, counts and order.
+3. The bounded syntax audit recognizes aliases and literal loops/comprehensions,
+   rejects comments/string-only evidence and hidden helper discovery, and detects
+   repeated lookups. It is not a general execution tracer or security boundary.
+   The added supplied-contract fixture verifies reuse without copying its source;
+   it does not claim to test multi-turn memory retention.
+4. Provider input/cached/uncached/output totals, optional reasoning, persisted cache
+   reconciliation, model calls, forms, wall time and peak/cumulative stdout are
+   reported separately. Repetitions retain all outcomes and report min/median/max;
+   cache shares use summed counts, not averaged percentages. No fixed cache rate.
+5. All 63 affected Python tests and 65 subtests pass. Ruff formatting/lint and scoped
+   diff checks pass. The sandbox runner cannot import the repository namespace;
+   CLI pytest with `PYTHONPATH=.:packages/vis-agent/src` is the verified path.
+   Disk exhaustion briefly refused one patch without changing the file; work
+   resumed after space returned, without deleting other sessions' artifacts.
+6. Completed source-gateway benchmarks: OpenAI Codex/gpt-6-astra passes 3/3;
+   GLM-5.3-flash passes 2/6 across two repetitions of each scenario. Both GLM
+   known-contract runs pass without rediscovery. The other runs retain two surfaced
+   serialization errors, skipped signatures, one repeated lookup and schema output
+   over the peak/cumulative limits. Exact final facts alone no longer imply a pass.
+   GLM totals: 233,779 input tokens, including 155,712 cached and 78,067 uncached;
+   13,463 output tokens. All six persisted input/cache/output totals and sample
+   counts reconcile. Raw traces and every verdict remain in the benchmark output;
+   these measurements do not establish universal model compliance or minimal cost.
+7. The interrupted implementation was copied exactly into the session-owned
+   `discovery-evaluator-hardening` draft; unrelated checkout changes were excluded.
+   All 63 tests and 65 subtests were rerun successfully there, with Ruff and diff
+   checks clean. The completed paid runs are retained rather than repeated to
+   seek a passing score. Publishing is pending draft approval; the original
+   checkout still holds the earlier task edits. No production prompt/runtime/SDK
+   changes, native builds or live restarts.

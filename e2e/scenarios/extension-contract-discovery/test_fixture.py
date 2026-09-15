@@ -2,6 +2,7 @@
 
 import json
 import runpy
+from dataclasses import asdict
 from pathlib import Path
 
 import blockether.vis.extension as vis
@@ -42,26 +43,95 @@ def test_short_descriptions_preserve_registered_shape(probe):
         assert method["activity"]["label"][0].isupper()
 
 
-def test_registered_calls_create_the_exact_e2e_receipts(probe):
+@pytest.mark.parametrize(
+    "scenario_id", ["extension-contract-discovery", "extension-known-contract"]
+)
+def test_registered_calls_create_the_exact_e2e_receipts(probe, scenario_id):
     _, methods, ledger = probe
     assert methods["status"]["fn"]().total == 0
     first = methods["record"]["fn"]("Ada", bucket="inbox")
     second = methods["record"]["fn"]("Lin", bucket="archive", copies=3, note="urgent")
     assert (first.copies, first.note, first.total) == (2, None, 2)
     assert (second.copies, second.note, second.total) == (3, "urgent", 5)
-    assert methods["status"]["fn"]().records == 2
-    scenario = json.loads((Path(__file__).parent / "scenario.json").read_text())
-    assert ledger.read_text().splitlines() == scenario["want"][ledger.name]
-    # The search result already supplies the complete semantic description.
-    # Require signature inspection, not a redundant doc() call (#232).
-    assert scenario["want_forms"] == ["signature("]
+    final = methods["status"]["fn"]()
+    assert final.records == 2
+    scenario_dir = Path(__file__).parent.parent / scenario_id
+    scenario = json.loads((scenario_dir / "scenario.json").read_text())
+    assert {
+        "receipts": [asdict(first), asdict(second)],
+        "final_totals": asdict(final),
+    } == scenario["want_answer_json"]
+    for name, expected in scenario["want_json_files"].items():
+        assert [
+            json.loads(line) for line in (ledger.parent / name).read_text().splitlines()
+        ] == expected
+    assert scenario["want_activity_sequence"] == [
+        "contract_probe.status",
+        "contract_probe.record",
+        "contract_probe.record",
+        "contract_probe.status",
+    ]
+    # The search already gives the semantics; #232 does not require redundant doc().
+    if scenario_id == "extension-known-contract":
+        assert scenario["files_from"] == "extension-contract-discovery"
+        assert not (scenario_dir / "files").exists()
+        assert scenario["discovery"] == {
+            "known": True,
+            "signatures": [],
+            "contracts": [],
+        }
+        assert (
+            "contract_probe.record(person, /, *, bucket, copies=2, note=None)"
+            in scenario["prompt"]
+        )
+    else:
+        assert scenario["discovery"]["signatures"] == [
+            "contract_probe.status",
+            "contract_probe.record",
+        ]
+        assert scenario["discovery"]["known"] is False
     assert scenario["max_form_output_chars"] == 6000
+    assert scenario["max_total_output_chars"] == 10000
     assert scenario["want_requested_route"] is True
+    assert scenario["want_cache_metrics"] is True
     with pytest.raises(TypeError):
         methods["record"]["fn"]("Ada", "inbox")
     with pytest.raises(ValueError, match="positive"):
         methods["record"]["fn"]("Ada", bucket="inbox", copies=0)
     assert methods["status"]["fn"]().total == 5
+
+
+def test_invocation_journal_keeps_order_defaults_and_rejected_attempts(probe):
+    _, methods, ledger = probe
+    journal = ledger.with_name("contract-calls.jsonl")
+    assert not journal.exists()
+    methods["status"]["fn"]()
+    methods["record"]["fn"]("Ada", bucket="inbox")
+    with pytest.raises(ValueError, match="positive"):
+        methods["record"]["fn"]("Lin", bucket="archive", copies=0, note="urgent")
+    assert [json.loads(line) for line in journal.read_text().splitlines()] == [
+        {"operation": "contract_probe.status", "arguments": {}},
+        {
+            "operation": "contract_probe.record",
+            "arguments": {
+                "person": "Ada",
+                "bucket": "inbox",
+                "copies": 2,
+                "note": None,
+            },
+        },
+        {
+            "operation": "contract_probe.record",
+            "arguments": {
+                "person": "Lin",
+                "bucket": "archive",
+                "copies": 0,
+                "note": "urgent",
+            },
+        },
+    ]
+    assert methods["status"]["fn"]().total == 2
+    assert len(ledger.read_text().splitlines()) == 1
 
 
 def test_activity_presentations_cover_empty_success_running_and_failure(probe):

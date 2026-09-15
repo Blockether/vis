@@ -44,6 +44,15 @@ def status_activity(*, phase, result, **_):
     return None
 
 
+def journal_call(operation, arguments):
+    """Record fixture invocations independently of model output."""
+    journal = Path(__file__).resolve().parents[2] / "contract-calls.jsonl"
+    with journal.open("a") as stream:
+        stream.write(
+            json.dumps({"operation": operation, "arguments": arguments}) + "\n"
+        )
+
+
 class ContractProbe:
     def __init__(self) -> None:
         self._records = 0
@@ -66,6 +75,15 @@ class ContractProbe:
         note: str | None = None,
     ) -> Receipt:
         """Append to the local ledger; never sends a message. Names must be nonblank."""
+        journal_call(
+            "contract_probe.record",
+            {
+                "person": person,
+                "bucket": bucket,
+                "copies": copies,
+                "note": note,
+            },
+        )
         if not person.strip() or not bucket.strip() or copies < 1:
             raise ValueError("Names must be nonblank and copies must be positive")
         self._records += 1
@@ -82,6 +100,7 @@ class ContractProbe:
     )
     def status(self) -> Status:
         """Read local ledger totals without changing them."""
+        journal_call("contract_probe.status", {})
         return Status(self._records, self._total)
 
 
