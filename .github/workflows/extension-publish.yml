@@ -49,6 +49,11 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: apps/vis-docs/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install './packages/vis-agent[docs]'
+        working-directory: .
       - run: npm ci
       - run: npm run lint
       - run: npm test

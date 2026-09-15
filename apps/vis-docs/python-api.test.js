@@ -11,6 +11,20 @@ const files = readdirSync('dist' + prefix, { recursive: true }).filter((name) =>
 );
 const read = (path) => readFileSync('dist' + path, 'utf8');
 
+test('extension publication installs SDK docs dependencies before building', () => {
+  const workflow = readFileSync(
+    new URL('../../.github/workflows/extension-publish.yml', import.meta.url),
+    'utf8',
+  );
+  const setup = workflow.indexOf('uses: actions/setup-python@');
+  const install = workflow.indexOf("run: python -m pip install './packages/vis-agent[docs]'");
+  const verify = workflow.indexOf('run: npm test');
+  expect(setup).toBeGreaterThanOrEqual(0);
+  expect(install).toBeGreaterThan(setup);
+  expect(verify).toBeGreaterThan(install);
+  expect(workflow.slice(install, verify)).toMatch(/working-directory:\s+\.(?:\r?\n|$)/);
+});
+
 test('pdoc documents public modules, re-exports and typed methods from the SDK checkout', () => {
   expect(files).toContain('index.html');
   expect(files).toContain('blockether/vis/extension.html');
