@@ -3203,7 +3203,7 @@
                          ;; corrections (which move `total-h`) don't lurch the
                          ;; viewport / scrollbar thumb mid-scroll.
                          :prev-offsets (get-in db [:layout :offsets])
-                         :prev-activity-anchors (get-in db [:layout :activity-anchors])})
+                         :prev-row-anchors (get-in db [:layout :row-anchors])})
 
         layout-end-ns
         (System/nanoTime)
@@ -3529,7 +3529,7 @@
        :eff-scroll (:eff-scroll layout)
        :heights (:heights layout)
        :offsets (:offsets layout)
-       :activity-anchors (:activity-anchors layout)
+       :row-anchors (:row-anchors layout)
        :inline-live-ids (render/owned-live-view-ids (:iterations progress)
                                                     (:live-runs progress-extra))
        ;; Did this frame place any inline terminal images? Carried for downstream
@@ -3939,7 +3939,7 @@
                          ;; estimate→real height fixes must keep the scrolled
                          ;; content visually put instead of lurching.
                          :prev-offsets (get-in db [:layout :offsets])
-                         :prev-activity-anchors (get-in db [:layout :activity-anchors])})
+                         :prev-row-anchors (get-in db [:layout :row-anchors])})
 
         layout-end-ns
         (System/nanoTime)
@@ -4193,7 +4193,7 @@
             :eff-scroll (:eff-scroll layout)
             :heights (:heights layout)
             :offsets (:offsets layout)
-            :activity-anchors (:activity-anchors layout)
+            :row-anchors (:row-anchors layout)
             :visible (:visible layout)})))
 
 (defn- render-scroll-frame!
@@ -4278,7 +4278,7 @@
                         {:session-id (get-in db [:session :id])
                          :detail-expansions (:detail-expansions db)
                          :prev-offsets (get-in db [:layout :offsets])
-                         :prev-activity-anchors (get-in db [:layout :activity-anchors])})
+                         :prev-row-anchors (get-in db [:layout :row-anchors])})
 
         layout-end-ns
         (System/nanoTime)
@@ -4346,7 +4346,7 @@
             :eff-scroll (:eff-scroll layout)
             :heights (:heights layout)
             :offsets (:offsets layout)
-            :activity-anchors (:activity-anchors layout)
+            :row-anchors (:row-anchors layout)
             :has-images? (boolean (seq @image-sink))
             :visible (:visible layout)})))
 

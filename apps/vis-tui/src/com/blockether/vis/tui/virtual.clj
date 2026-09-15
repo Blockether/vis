@@ -388,6 +388,11 @@
                                                :else false))
                                        k))))))))
 
+(defn- message-trace
+  "Keep the watched trace visible between terminal acknowledgement and the final message."
+  [message]
+  (or (:traces message) (get-in message [:terminal-pending :trace])))
+
 (defn- image-rows-est
   "Rows the RESERVED picture boxes inside `message` add on top of its prose
    estimate, at `content-w` columns.
@@ -420,7 +425,7 @@
     (long (reduce (fn [^long acc s]
                     (+ acc (long (render/image-fence-rows s content-w))))
                   0
-                  (cons (:text message) (mapcat trace-strings (:traces message)))))))
+                  (cons (:text message) (mapcat trace-strings (message-trace message)))))))
 
 (defn estimated-height
   "Cheap estimate of how many rows a message will paint at width
@@ -467,7 +472,7 @@
          (:role message)
 
          trace
-         (:traces message)
+         (message-trace message)
 
          text
          (:text message)
@@ -782,6 +787,12 @@
    (let [message
          (assoc message :session-id session-id)
 
+         trace
+         (message-trace message)
+
+         cancelled?
+         (= :cancelled (or (:status message) (get-in message [:terminal-pending :status])))
+
          show-timestamps?
          (boolean (get settings :show-timestamps false))
 
@@ -800,7 +811,7 @@
          windowed?
          (and window-start
               window-num
-              (not (:traces message))
+              (not trace)
               (not (str/includes? (str (:text message)) "````vis-table"))
               (not (str/includes? (str (:text message)) "````vis-doc"))
               (#{:assistant :user} (:role message))
@@ -857,14 +868,14 @@
                                                           (+ (count prewrapped)
                                                              (long window-start))))})
                  strip-ts))
-           (and (= :assistant (:role message)) (:traces message))
+           (and (= :assistant (:role message)) trace)
            (let [{:keys [text lines line-meta]} (render/format-answer-with-thinking-data
                                                   (:text message)
-                                                  (:traces message)
+                                                  trace
                                                   bubble-w
                                                   settings
                                                   (:confidence message)
-                                                  (= :cancelled (:status message))
+                                                  cancelled?
                                                   (cond-> {:session-id session-id
                                                            :session-turn-id (turn-identity message)
                                                            :detail-expansions detail-expansions
@@ -1005,8 +1016,8 @@
 
     (when (<= (long lo) (long hi)) [lo hi])))
 
-(defn- activity-row-anchors
-  "Stable Activity lines in projected messages, in document row coordinates."
+(defn- row-anchors
+  "Stable transcript lines in projected messages, in document row coordinates."
   [{:keys [visible offsets]}]
   (vec
     (mapcat
@@ -1017,27 +1028,30 @@
               start
               (+ (long (nth offsets idx)) (long (get-in projected [:lines-window :start] 0)))]
 
-          (:anchors (reduce-kv (fn [{:keys [seen] :as acc} i meta]
-                                 (if-let [item (:item-id meta)]
-                                   (let [key [turn item (:kind meta)]
-                                         occurrence (get seen key 0)]
+          (:anchors
+            (reduce-kv
+              (fn [{:keys [seen] :as acc} i meta]
+                (if-let [identity (cond (and (:run-header? meta) (:view-id meta)) [:view
+                                                                                   (:view-id meta)]
+                                        (:item-id meta) [:activity (:item-id meta) (:kind meta)]
+                                        (:node-id meta) [:node (:node-id meta) (:kind meta)])]
+                  (let [key (into [turn] identity)
+                        occurrence (get seen key 0)]
 
-                                     (-> acc
-                                         (assoc-in [:seen key] (inc (long occurrence)))
-                                         (update :anchors
-                                                 conj
-                                                 {:key (conj key occurrence)
-                                                  :row (+ start (long i))})))
-                                   acc))
-                               {:seen {} :anchors []}
-                               (or (:line-meta projected) [])))))
+                    (->
+                      acc
+                      (assoc-in [:seen key] (inc (long occurrence)))
+                      (update :anchors conj {:key (conj key occurrence) :row (+ start (long i))})))
+                  acc))
+              {:seen {} :anchors []}
+              (or (:line-meta projected) [])))))
       visible)))
 
-(defn- anchor-activity
-  "Keep a visible Activity line fixed when live regrouping moves it inside a message."
+(defn- anchor-rows
+  "Keep a visible transcript line fixed through regrouping and live-to-retained transitions."
   [result previous scroll inner-h]
   (let [anchors
-        (activity-row-anchors result)
+        (row-anchors result)
 
         rows-by-key
         (into {} (map (juxt :key :row)) anchors)
@@ -1063,9 +1077,9 @@
     (assoc result
       :eff-scroll corrected
       :visible (mapv #(update % :top + shift) (:visible result))
-      :activity-anchors (filterv #(and (<= (long corrected) (long (:row %)))
-                                       (< (long (:row %)) (+ (long corrected) (long inner-h))))
-                          anchors))))
+      :row-anchors (filterv #(and (<= (long corrected) (long (:row %)))
+                                  (< (long (:row %)) (+ (long corrected) (long inner-h))))
+                     anchors))))
 
 (defn layout
   "Plan a paint of `messages` into a vertical viewport of `inner-h`
@@ -1076,12 +1090,12 @@
       :heights    <vec long> ;; one per message; real for visible, est for off-screen
       :offsets    <vec long> ;; cumulative running sum, one entry longer than messages
       :visible    [{:idx N :top R :height H :projected M} ...]
-      :activity-anchors [{:key K :row R} ...]} ;; visible Activity line identities
+      :row-anchors [{:key K :row R} ...]} ;; visible transcript line identities
 
    `scroll` is `nil` for auto-bottom (jump to the latest message) or
    a non-negative long for a specific row offset. Pass the previous result's
-   `:activity-anchors` as `:prev-activity-anchors` alongside `:prev-offsets`
-   to preserve visible Activity lines when operation groups grow or shrink.
+   `:row-anchors` as `:prev-row-anchors` alongside `:prev-offsets`
+   to preserve visible lines when Activity regroups or a Live View becomes a receipt.
 
    `loading?` swaps the LAST assistant message's `:text` to the live
    spinner-led progress block (`render/progress->text`) only when that
@@ -1108,7 +1122,7 @@
    plain Object args here - we cast with `long` inside the body."
   [messages bubble-w settings scroll inner-h
    {:keys [progress loading? progress-extra] :or {progress nil loading? false}} &
-   [{:keys [session-id detail-expansions prev-offsets prev-activity-anchors]}]]
+   [{:keys [session-id detail-expansions prev-offsets prev-row-anchors]}]]
   (let [bubble-w
         (long bubble-w)
 
@@ -1417,14 +1431,14 @@
                   (vec (range lo (inc hi)))
                   [])
 
-                ;; A changed Activity message can underestimate to entirely above
+                ;; A changed message can underestimate to entirely above
                 ;; the old viewport. Still measure its previously visible anchor.
                 anchor-turns
                 (into #{}
                       (comp (filter #(and (<= (long requested-scroll) (long (:row %)))
                                           (< (long (:row %)) (+ (long requested-scroll) inner-h))))
                             (map #(first (:key %))))
-                      prev-activity-anchors)
+                      prev-row-anchors)
 
                 cand-idxs
                 (into cand-idxs
@@ -1573,7 +1587,7 @@
              :visible visible-set}))
 
         anchored-result
-        (anchor-activity result prev-activity-anchors requested-scroll inner-h)
+        (anchor-rows result prev-row-anchors requested-scroll inner-h)
 
         ;; A semantic anchor may move by more than a viewport. Re-plan at the
         ;; corrected position so newly visible neighbours and tail slices paint.
@@ -1594,7 +1608,7 @@
      :heights (:heights result)
      :offsets (:offsets result)
      :visible (:visible result)
-     :activity-anchors (:activity-anchors result)
+     :row-anchors (:row-anchors result)
      ;; Clamped, anchor-corrected absolute scroll the caller should
      ;; write back into app-db (`:set-scroll`) so the input thread and
      ;; the next layout agree. nil for auto-bottom — never persist that,

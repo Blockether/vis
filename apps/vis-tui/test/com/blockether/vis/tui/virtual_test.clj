@@ -1376,7 +1376,7 @@
                                    (environment after)
                                    (assoc opts
                                      :prev-offsets (:offsets frame1)
-                                     :prev-activity-anchors (:activity-anchors frame1)))]
+                                     :prev-row-anchors (:row-anchors frame1)))]
 
         (expect (number? old-row))
         (expect (> new-row old-row))
@@ -1389,7 +1389,7 @@
                                     (environment after)
                                     (assoc opts
                                       :prev-offsets (:offsets frame2)
-                                      :prev-activity-anchors (:activity-anchors frame2)))
+                                      :prev-row-anchors (:row-anchors frame2)))
               followed (virtual/layout [after]
                                        bubble-w
                                        settings
@@ -1398,7 +1398,7 @@
                                        (environment after)
                                        (assoc opts
                                          :prev-offsets (:offsets frame1)
-                                         :prev-activity-anchors (:activity-anchors frame1)))
+                                         :prev-row-anchors (:row-anchors frame1)))
               wheeled (virtual/layout [after]
                                       bubble-w
                                       settings
@@ -1407,10 +1407,10 @@
                                       (environment after)
                                       (assoc opts
                                         :prev-offsets (:offsets frame1)
-                                        :prev-activity-anchors (:activity-anchors frame1)))]
+                                        :prev-row-anchors (:row-anchors frame1)))]
 
           (expect (= (:eff-scroll frame2) (:eff-scroll again)))
-          (expect (<= (count (:activity-anchors frame2)) 8))
+          (expect (<= (count (:row-anchors frame2)) 8))
           (expect (nil? (:anchored-scroll followed)))
           (expect (= (:eff-scroll followed) (- (:total-h followed) 8)))
           (expect (= (+ 1 (:eff-scroll frame2)) (:eff-scroll wheeled)))))))
@@ -1472,7 +1472,7 @@
                             {}
                             (assoc opts
                               :prev-offsets (:offsets first-frame)
-                              :prev-activity-anchors (:activity-anchors first-frame)))
+                              :prev-row-anchors (:row-anchors first-frame)))
 
             expected
             (virtual/layout after bubble-w settings (:eff-scroll next-frame) 20 {} opts)
@@ -1490,6 +1490,87 @@
         (expect (> (- (:eff-scroll next-frame) (:eff-scroll first-frame)) 20))
         (expect (contains? (painted expected) 1))
         (expect (= (painted expected) (painted next-frame))))))
+
+(defdescribe
+  terminal-pending-scroll-test
+  (it
+    "keeps the watched trace visible while the terminal result is pending"
+    ;; #233: cancellation clears progress before the final message replaces the placeholder.
+    (doseq [width
+            [50 100]
+
+            status
+            [:completed :cancelled]
+
+            following?
+            [false true]]
+
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [traced
+            (assoc (trace-assistant-msg 8 1 "") :client-turn-id "terminal")
+
+            trace
+            (:traces traced)
+
+            placeholder
+            (dissoc (assoc traced :pending? true) :traces)
+
+            pending
+            (assoc placeholder :terminal-pending {:trace trace :status status})
+
+            opts
+            {:session-id "terminal-session"}
+
+            environment
+            {:loading? true :progress {:iterations trace}}
+
+            whole
+            (virtual/layout [placeholder] width settings nil 500 environment opts)
+
+            target
+            (->> (get-in whole [:visible 0 :projected :line-meta])
+                 (filter #(= :toggle-details (:kind %)))
+                 (drop 2)
+                 first
+                 :node-id)
+
+            row-of
+            (fn [frame]
+              (first (keep-indexed #(when (= target (:node-id %2)) %1)
+                                   (get-in frame [:visible 0 :projected :line-meta]))))
+
+            before
+            (virtual/layout [placeholder]
+                            width
+                            settings
+                            (when-not following? (row-of whole))
+                            10
+                            environment
+                            opts)
+
+            after
+            (virtual/layout [pending]
+                            width
+                            settings
+                            (:anchored-scroll before)
+                            10
+                            {}
+                            (assoc opts
+                              :prev-offsets (:offsets before)
+                              :prev-row-anchors (:row-anchors before)))]
+
+        (expect (some? target))
+        (expect (= (estimated-height traced width) (estimated-height pending width)))
+        (expect (some #(str/includes? % "thinking line")
+                      (get-in after [:visible 0 :projected :prewrapped-lines])))
+        (expect (number? (row-of after)))
+        (when (number? (row-of after))
+          (if following?
+            (do (expect (nil? (:anchored-scroll after)))
+                (expect (= (:eff-scroll after) (- (:total-h after) 10))))
+            (expect (= (- (row-of before) (:eff-scroll before))
+                       (- (row-of after) (:eff-scroll after))))))))))
 
 (defdescribe
   turn-separator-test
@@ -1662,9 +1743,11 @@
 ;; accumulator boxed on a path that runs for every message of every frame, in a
 ;; namespace that declares `(set! *unchecked-math* :warn-on-boxed)`.
 (defdescribe image-rows-est-unboxed-test
-             (describe "the picture-box row estimate"
-                       (it "compiles without a single boxed add or reflective call"
-                           (let [warnings (compile-warnings (source-form "(defn- image-rows-est"))]
-                             (expect (not (str/includes? warnings "Boxed math")) warnings)
-                             (expect (not (str/includes? warnings "Reflection warning"))
-                                     warnings)))))
+             (describe
+               "the picture-box row estimate"
+               (it "compiles without a single boxed add or reflective call"
+                   (let [warnings (compile-warnings (list 'do
+                                                          (source-form "(defn- message-trace")
+                                                          (source-form "(defn- image-rows-est")))]
+                     (expect (not (str/includes? warnings "Boxed math")) warnings)
+                     (expect (not (str/includes? warnings "Reflection warning")) warnings)))))
