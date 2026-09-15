@@ -870,6 +870,17 @@ contract reuse case; do not change the production prompt to train to the tests.
    `discovery-evaluator-hardening` draft; unrelated checkout changes were excluded.
    All 63 tests and 65 subtests were rerun successfully there, with Ruff and diff
    checks clean. The completed paid runs are retained rather than repeated to
-   seek a passing score. Publishing is pending draft approval; the original
-   checkout still holds the earlier task edits. No production prompt/runtime/SDK
-   changes, native builds or live restarts.
+   seek a passing score. No production prompt/runtime/SDK changes, native builds
+   or live restarts were needed for this evaluation work.
+8. Approval created implementation commit `72583ebfe`, then correctly refused to
+   overwrite the original checkout's overlapping paths. Copying earlier edits into
+   a clean draft did not remove their originals; retrying alone could not resolve
+   that collision. The 11 original task files are now preserved byte-for-byte in
+   the task-only `vis-recovery-c5511b96-discovery-evaluator-originals` Git stash.
+   Ten matched the committed draft exactly; only this plan had newer results in
+   the draft. Unrelated files, modes, index state and existing stashes were retained.
+   The draft was synchronized with current `main` without rewriting history.
+   All five existing approval-safety tests pass, including overlap refusal,
+   committed-draft retry, unrelated-work restoration and commit-hook vetoes.
+   Recovery leaves the overlap guard intact and uses normal draft approval for
+   the fast-forward, restoration and non-force push; the original-file backup stays.
