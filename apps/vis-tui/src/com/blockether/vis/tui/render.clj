@@ -6245,6 +6245,7 @@
                                                                {:kind :activity-row
                                                                 :headline-prefix prefix
                                                                 :right-suffix suffix
+                                                                :right-inset 2
                                                                 :inline-disclosure mark
                                                                 :item-id id
                                                                 :node-id (when openable?

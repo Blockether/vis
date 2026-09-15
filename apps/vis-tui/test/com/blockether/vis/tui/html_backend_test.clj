@@ -411,6 +411,46 @@
                         (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))))))
     (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
+(deftest activity-row-tail-aligns-with-copy-button-test
+  ;; #236: the live ellipsis and settled duration end at COPY's padded button edge.
+  (doseq [cols
+          [40 80 160]
+
+          [row-state suffix]
+          [[{:state "running"} "…"] [{:state "succeeded" :duration-ms 1420} "1.4s"]]]
+
+    (with-open [terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 50))
+
+                ts
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (paint-activity-review! ts
+                              [(merge {:id "run-tests"
+                                       :sequence 0
+                                       :operation "run_tests"
+                                       :presentation {:headline "Run tests"}}
+                                      row-state)]
+                              {:vis.channel-tui/baseline :expand})
+      (let [lines
+            (mapv (fn [row]
+                    (apply str
+                      (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
+                  (cell-grid terminal cols 50))
+
+            activity-row
+            (first (filter #(str/includes? % "Run tests") lines))
+
+            copy-regions
+            (filter #(= :copy-disclosure (:kind %)) (.current interactions/hit-map))]
+
+        (is (= 2 (count copy-regions)))
+        (is (str/ends-with? (str/trimr activity-row) suffix))
+        (doseq [{:keys [bounds]} copy-regions]
+          (is (= (+ (:col bounds) (:width bounds)) (count (str/trimr activity-row)))
+              (str "Activity tail must align with COPY at " cols
+                   " columns: " (pr-str activity-row))))))))
+
 (deftest execution-header-copy-hover-test
   ;; #223: live and persisted COPY caps react independently and reset on leave.
   (try
