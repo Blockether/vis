@@ -42,6 +42,7 @@
             [clojure.string :as str]
             [com.blockether.vis.tui.view-model :as view-model]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.dialogs :as dialogs]
@@ -2193,23 +2194,34 @@
     (case (:kind live-entry)
       :inline-title
       (let [status
-            (if (settled? live-pane) "Recorded" "LIVE")
+            (p/ellipsize (if (settled? live-pane) " Recorded " " LIVE ") (max 0 (dec (long width))))
 
             status-w
             (p/display-width status)
 
+            ;; Match COPY's two-cell inset; the inline body already reserves one cell.
+            status-col
+            (+ (long left) (max 0 (- (long width) status-w 1)))
+
             title-w
-            (max 1 (- (long width) status-w 1))]
+            (max 0 (- (long width) status-w 2))]
 
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/styled g [p/BOLD] (p/put-str! g left row (p/ellipsize (:text live-entry) title-w)))
-        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-        (p/styled g [p/BOLD] (p/put-str! g (+ (long left) (long width) (- status-w)) row status))
         (.register interactions/hit-map
                    {:bounds {:row (+ (long row) (long viewport-top)) :col left :width width}
                     :kind :live-reopen
                     :view-id (view-id live-pane)
-                    :enabled? true}))
+                    :enabled? true})
+        (components/button! g
+                            status-col
+                            row
+                            status
+                            :live-reopen
+                            {:extra {:view-id (view-id live-pane)
+                                     :bounds {:row (+ (long row) (long viewport-top))
+                                              :col status-col
+                                              :width status-w}}}))
 
       :inline-stop
       (paint-segments! g

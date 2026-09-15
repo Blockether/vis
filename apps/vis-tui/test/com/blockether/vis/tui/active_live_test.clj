@@ -9,13 +9,14 @@
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.dialogs :as dialogs]
             [com.blockether.vis.tui.theme :as theme]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.terminal-image :as timg]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -143,6 +144,107 @@
   (mapv (fn [row]
           (mapv #(.getCharacter terminal (TerminalPosition. (int %) (int row))) (range cols)))
         (range rows)))
+
+(deftest inline-live-button-aligns-with-copy
+  ;; The clickable LIVE cap shares COPY's inset, button styling and pointer geometry.
+  (try
+    (doseq [theme-id
+            (map keyword (shared-theme/available-theme-ids))
+
+            cols
+            [40 80 120]
+
+            scroll
+            [0 5]
+
+            pane
+            [(review-pane) (lv/minimized (review-pane))
+             (lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))]]
+
+      (theme/apply-theme! theme-id)
+      (with-open [terminal
+                  (DefaultVirtualTerminal. (TerminalSize. cols 44))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (binding [interactions/hit-map (interactions/create-hit-map)]
+          (let [pane (assoc-in pane [:view :title] (apply str (repeat 12 "Build verification ")))
+                paint! #(paint-review! ts pane scroll)
+                _ (paint!)
+                baseline (grid terminal cols 44)
+                regions (.current interactions/hit-map)
+                copies (filter #(= :copy-disclosure (:kind %)) regions)
+                row (get-in (first (filter #(= :live-reopen (:kind %)) regions)) [:bounds :row])
+                label (if (lv/settled? pane) " Recorded " " LIVE ")
+                button-w (count label)
+                right (let [{:keys [col width]} (:bounds (first copies))]
+                        (+ col width))
+                col (- right button-w)
+                cells (subvec (nth baseline row) col right)
+                hit (.lookup interactions/hit-map (int col) (int row))]
+
+            (is (seq copies))
+            (doseq [copy copies]
+              (is (= right (+ (get-in copy [:bounds :col]) (get-in copy [:bounds :width])))))
+            (is (= label (apply str (map #(.getCharacterString ^TextCharacter %) cells))))
+            (is (= {:row row :col col :width button-w} (:bounds hit)))
+            (doseq [^TextCharacter cell cells]
+              (is (= theme/button-fg (.getForegroundColor cell)))
+              (is (= theme/button-bg (.getBackgroundColor cell)))
+              (is (not (.isBold cell))))
+            (doseq [x (range col right)]
+              (let [target (.lookup interactions/hit-map (int x) (int row))]
+                (is (= :live-reopen (:kind target)))
+                (is (= (lv/view-id pane) (:view-id target)))
+                (is (= (:bounds hit) (:bounds target)))))
+            (.setHovered interactions/hit-map hit)
+            (paint!)
+            (let [hovered (grid terminal cols 44)]
+              (doseq [^TextCharacter cell (subvec (nth hovered row) col right)]
+                (is (= theme/header-active-tab-fg (.getForegroundColor cell)))
+                (is (= theme/header-active-tab-accent (.getBackgroundColor cell)))
+                (is (.isBold cell)))
+              (is (= (subvec (nth baseline row) 0 col) (subvec (nth hovered row) 0 col)))
+              (is (= (assoc baseline row nil) (assoc hovered row nil))))
+            (.setHovered interactions/hit-map nil)
+            (paint!)
+            (is (= baseline (grid terminal cols 44)))))))
+    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
+
+(deftest inline-live-view-has-an-extra-bottom-padding-row
+  ;; The hint is painted content, not a duplicate blank to merge with the bottom pad.
+  (doseq [cols
+          [40 80 120]
+
+          pane
+          [(review-pane) (lv/minimized (review-pane)) (lv/armed (review-pane))
+           (lv/reopened (lv/settled (review-pane) {:reason :completed} 2000))]]
+
+    (with-open [terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 44))
+
+                ts
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (binding [interactions/hit-map (interactions/create-hit-map)]
+        (let [payload (paint-review! ts pane)
+              lines (:lines payload)
+              index-of (fn [kind]
+                         (first (keep-indexed #(when (= kind (get-in %2 [:live-entry :kind])) %1)
+                                              (:line-meta payload))))
+              hint-index (index-of :inline-hint)
+              padding (nth lines (inc hint-index))
+              header (first (filter #(= :live-reopen (:kind %)) (.current interactions/hit-map)))
+              {:keys [row col width]} (:bounds header)
+              padding-row (+ row (- hint-index (index-of :inline-title)) 1)]
+
+          (is (= (subs (nth lines hint-index) 0 1) padding))
+          (is (not= padding (nth lines (+ hint-index 2))))
+          (doseq [^TextCharacter cell
+                  (subvec (nth (grid terminal cols 44) padding-row) col (+ col width))]
+            (is (= " " (.getCharacterString cell)))
+            (is (= theme/code-block-bg (.getBackgroundColor cell)))))))))
 
 (deftest running-grid-and-clipped-clicks
   ;; #222: actual node pixels and hit rows share the Activity inset and viewport origin.

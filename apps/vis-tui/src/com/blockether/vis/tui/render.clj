@@ -7926,7 +7926,9 @@
                 ;; so the paint layer crops to the top 1/40th — the sliver.
                 ;; Emit verbatim; reset family so the row after the box is
                 ;; still treated as a fresh blank.
-            (#{:image :image-pad} (:kind (:meta e))) (recur (conj! out e) nil (next xs))
+            ;; Live rows likewise paint their own content, including the controls footer.
+            (#{:image :image-pad :activity-live-entry} (:kind (:meta e)))
+            (recur (conj! out e) nil (next xs))
             (and (blank? e) (= :thinking (family e)))
             ;; Thinking band: emit verbatim, reset family so a
             ;; following gap row still counts as a fresh blank.
