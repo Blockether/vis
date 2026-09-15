@@ -260,10 +260,7 @@
 (defdescribe
   result-table-headings-test
   (it "names scalar-table columns for the operation, with a readable fallback"
-      (doseq [[operation heading] [[:run_tests "Metric"] [:lint_code "Metric"]
-                                   [:council.publish "Message"] [:council.get "Message"]
-                                   [:council.read "Thread"] [:council.threads "Thread"]
-                                   [:council.members "Member"]]]
+      (doseq [[operation heading] [[:run_tests "Metric"] [:lint_code "Metric"]]]
         (let [content (get (presenter/result-presentation {:operation operation}
                                                           {:total 12 :title "Activity review"})
                            "content")]
@@ -276,10 +273,10 @@
         (expect (= ["Metric" "Result"] (get-in content [0 "columns"])))
         (expect (= ["Detail" "Result"] (get-in content [2 "columns"])))))
   (it "uses the operation's columns for each item in a result list"
-      (let [content (get (presenter/result-presentation {:operation "council.members"}
-                                                        [{:name "Reviewer"} {:name "Author"}])
+      (let [content (get (presenter/result-presentation {:operation :run_tests}
+                                                        [{:total 1} {:total 2}])
                          "content")]
-        (expect (= [["Member" "Result"] ["Member" "Result"]] (mapv #(get % "columns") content))))))
+        (expect (= [["Metric" "Result"] ["Metric" "Result"]] (mapv #(get % "columns") content))))))
 
 (defdescribe
   semantic-results-test
@@ -448,7 +445,125 @@
                                                   "vis-contract/fixtures/activity-repl.json"))))))))
 
 (defdescribe
+  council-activity-test
+  (it "shows the message and reply counts without the publication envelope"
+      (doseq [operation [:council.publish :council.get]]
+        (let [view (presenter/result-presentation
+                     {:operation operation}
+                     {:title "Review"
+                      :content "Tests **passed**."
+                      :entry_id 42
+                      :thread_id 42
+                      :group_id "internal-group"
+                      :created_at 1789470180407
+                      :kind "coordination"
+                      :source "host"
+                      :source_ref {:session_id "internal-author"}
+                      :ping ["internal-recipient"]
+                      :reply_required true
+                      :replies
+                      [{:session_id "internal-recipient" :state "pending"}
+                       {:session_id "internal-other" :state "replied" :reply_entry_id 43}]})]
+          (expect (= "Review · Replies: 1 pending · 1 received" (get view "summary")))
+          (expect (= [{"type" "markdown" "text" "Tests **passed**."}] (get view "content")))
+          (expect (not (re-find #"internal-|Created at|Reply required|Source|coordination"
+                                (pr-str view)))))))
+  (it "summarizes pages and keeps each read message behind its own disclosure"
+      (let [value
+            {:entries [{:title "Review"
+                        :content "Full **message**."
+                        :created_at 1
+                        :entry_id 42
+                        :kind "coordination"}]
+             :after 42
+             :has_more true}
+
+            view
+            (presenter/result-presentation {:operation :council.read} value)]
+
+        (expect (= "1 message · more available" (get view "summary")))
+        (expect (empty? (get view "content")))
+        (expect (= [{"headline" "Review"
+                     "summary" ""
+                     "content" [{"type" "markdown" "text" "Full **message**."}]}]
+                   (get view "sections")))))
+  (it "uses one compact table for member and thread lists"
+      (doseq [[operation value summary columns rows]
+              [[:council.members
+                [{:session_id "internal-member" :title "Reviewer" :state "running"}] "1 member"
+                ["Member" "State"] [["Reviewer" "Running"]]]
+               [:council.threads
+                {:entries [{:thread_id 42 :title "Review" :created_at 1 :kind "coordination"}]
+                 :after 42
+                 :has_more false} "1 thread" ["Thread"] [["Review"]]]]]
+        (let [view (presenter/result-presentation {:operation operation} value)]
+          (expect (= summary (get view "summary")))
+          (expect (= [{"type" "table" "columns" columns "rows" rows}] (get view "content"))))))
+  (it "names empty Council results instead of exposing empty envelopes"
+      (doseq [[operation value summary]
+              [[:council.members [] "No active members"]
+               [:council.threads {:entries [] :after 0 :has_more false} "No threads"]
+               [:council.read {:entries [] :after 0 :has_more false} "No messages"]]]
+        (let [view (presenter/result-presentation {:operation operation} value)]
+          (expect (= summary (get view "summary")))
+          (expect (empty? (get view "content")))
+          (expect (empty? (get view "sections"))))))
+  (it "retains full message bodies and distinct reply outcomes with wire keys"
+      (let [body
+            (apply str (repeat 200 "Full **message**.\n"))
+
+            value
+            {"content" body
+             "reply_to" 42
+             "replies" [{"state" "delivered"} {"state" "interrupted"} {"state" "unavailable"}]}
+
+            view
+            (presenter/result-presentation {:operation :council.get} value)]
+
+        (expect (= "Reply · Replies: 1 delivered · 1 interrupted · 1 unavailable"
+                   (get view "summary")))
+        (expect (= [{"type" "markdown" "text" body}] (get view "content")))
+        (expect (contract/valid-projection?
+                  (result-fixture [[:council.read "" {"entries" [value] "has_more" true} nil]])))))
+  (it "keeps local messages and lookups end-only"
+      (doseq [operation [:council.publish :council.get :council.read :council.threads
+                         :council.members]]
+        (expect (false? (:show-start (presenter/for-tool operation)))))))
+
+(defdescribe
   managed-agent-presentation-test
+  (it "keeps cancellation counts without exposing recipient identifiers"
+      (let [view (presenter/result-presentation {:operation :council.cancel}
+                                                {:session_id "internal-child"
+                                                 :status "cancelled"
+                                                 :cancelled ["internal-child"
+                                                             "internal-grandchild"]})]
+        (expect (= "Cancelled · 2 subagents" (get view "summary")))
+        (expect (empty? (get view "content")))
+        (expect (not (re-find #"internal-" (pr-str view))))))
+  (it "bounds Unicode summaries without dropping the delegated task"
+      (let [task
+            (apply str (repeat 160 "😀"))
+
+            agent
+            {:task task
+             :status "running"
+             :model "fixture-model-with-a-long-name"
+             :iteration_budget 12
+             :iterations_used 2
+             :pending_input true}
+
+            projection
+            (result-fixture [[:council.publish_spawn "" agent nil]
+                             [:council.subagents "" [agent] nil]])
+
+            views
+            (mapv #(get % "presentation") (get projection "rows"))]
+
+        (expect (contract/valid-projection? projection))
+        (expect (= task (get-in views [0 "content" 0 "text"])))
+        (expect (= task (get-in views [1 "sections" 0 "content" 0 "text"])))
+        (expect (re-find #"Input pending" (get-in views [1 "sections" 0 "summary"])))))
   (it "shows meaningful empty and populated team counts"
       (doseq [[value expected] [[[] "No subagents"]
                                 [[{:session_id "child" :status "queued"}] "1 subagent"]]]
@@ -471,15 +586,24 @@
                 {:session_id "child" :provider "fixture" :model "small" :effective "next_request"}
                 nil]])]
         (expect (contract/valid-projection? projection))
-        (expect (.contains (pr-str projection) "next_request"))))
+        (let [views (mapv #(get % "presentation") (get projection "rows"))]
+          (expect (= ["Verify · Queued · Up to 2 iterations" "1 subagent" "Cancelled"
+                      "fixture/small · next request"]
+                     (mapv #(get % "summary") views)))
+          (expect (= "Running · Iterations: 1/2" (get-in views [1 "sections" 0 "summary"])))
+          (expect (= [{"type" "markdown" "text" "Verify"}]
+                     (get-in views [1 "sections" 0 "content"])))
+          (expect (every? empty? (map #(get-in views [% "content"]) [2 3])))
+          (expect (not (re-find #"child|next_request|Session|Parent" (pr-str views)))))))
   (it "shows only spawn as running work"
       (doseq [[operation visible?] [[:council.publish_spawn true] [:council.subagents false]
                                     [:council.cancel false] [:council.route false]]]
         (expect (= visible? (:show-start (presenter/for-tool operation))))))
   (it
-    "preserves agent failure and cancellation evidence"
+    "preserves failures and cancellation across every Council binding"
     (doseq [operation
-            [:council.publish_spawn :council.subagents :council.cancel :council.route]
+            [:council.publish :council.get :council.read :council.threads :council.members
+             :council.publish_spawn :council.subagents :council.cancel :council.route]
 
             outcome
             [:failed :cancelled]]

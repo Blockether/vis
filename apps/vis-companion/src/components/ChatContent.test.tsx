@@ -396,6 +396,26 @@ describe('Markdown attachment links', () => {
 });
 
 describe('Markdown tool card body', () => {
+  it('keeps nested message paragraphs and lists on the activity text scale', () => {
+    const content = 'Review **complete**.\n\n- Tests passed\n\n> Ready to merge';
+    const view = render(
+      <Markdown compact nested>
+        {content}
+      </Markdown>,
+    );
+    const prose = view.container.querySelectorAll('p, li');
+    expect(prose.length).toBeGreaterThan(0);
+    for (const element of prose) {
+      expect(element).toHaveClass('text-meta', 'text-left');
+      expect(element).not.toHaveClass('text-justify');
+    }
+    view.rerender(<Markdown compact>{content}</Markdown>);
+    for (const element of view.container.querySelectorAll('p, li')) {
+      expect(element).toHaveClass('text-justify');
+      expect(element).not.toHaveClass('text-meta');
+    }
+  });
+
   it('keeps blank lines and indentation inside a COMMAND block', () => {
     const html = renderToStaticMarkup(
       <Markdown compact>

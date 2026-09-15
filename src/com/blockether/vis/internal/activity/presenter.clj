@@ -277,7 +277,7 @@
    "_shell-wait" ["Wait for command" "Command finished" true]
    "_shell-type" ["Send command input" "Sent command input" false]
    "_shell-stop" ["Stop command" "Stopped command" true]
-   "council.publish" ["Publish message" "Published message" true]
+   "council.publish" ["Publish message" "Published message" false]
    "council.read" ["Read thread" "Read thread" false]
    "council.get" ["Read message" "Read message" false]
    "council.threads" ["List threads" "Listed threads" false]
@@ -315,11 +315,6 @@
    "draft_approve" ["status" "published" "branch" "target_branch" "files"]
    "draft_discard" ["status" "label" "root" "approved_ahead"]
    "update_goal" ["goal" "status"]
-   "council.publish_spawn" ["session_id" "task" "status" "model" "iteration_budget"]
-   "council.subagents" ["session_id" "parent_id" "task" "status" "model" "iterations_used"
-                        "iteration_budget" "pending_input"]
-   "council.cancel" ["session_id" "status" "cancelled"]
-   "council.route" ["session_id" "provider" "model" "effective"]
    "mcp__call" ["server" "tool" "content" "is_error" "tools"]})
 
 (defn- select-result
@@ -401,8 +396,11 @@
       "No lint result")))
 
 (defn- session-preview
-  [value ^long limit]
-  (let [lines
+  [value limit]
+  (let [limit
+        (long limit)
+
+        lines
         (str/split (str/trim (str value)) #"\R" 2)
 
         ^String text
@@ -413,6 +411,112 @@
 
     (str (subs text 0 (.offsetByCodePoints text 0 (int (min characters limit))))
          (when (or (> characters limit) (next lines)) "…"))))
+
+(defn- council-body
+  [value key]
+  (if-let [text (not-empty (field value key))]
+    [{"type" "markdown" "text" text}]
+    []))
+
+(defn- council-replies
+  [value]
+  (when-let [states (seq (frequencies (keep #(field % "state") (field value "replies"))))]
+    (str "Replies: "
+         (str/join " · "
+                   (map (fn [[state n]]
+                          (str n
+                               " "
+                               (if (= "replied" (scalar state))
+                                 "received"
+                                 (str/replace (scalar state) "_" " "))))
+                        (sort-by (comp scalar key) states))))))
+
+(defn- council-message
+  [value]
+  {"headline" (session-preview (or (not-empty (field value "title"))
+                                   (when (field value "reply_to") "Reply")
+                                   "Message")
+                               96)
+   "summary" (or (council-replies value) "")
+   "content" (council-body value "content")})
+
+(defn- council-agent
+  [value]
+  {"headline" (session-preview (or (not-empty (field value "task")) "Subagent") 96)
+   "summary" (str/join " · "
+                       (remove str/blank?
+                         [(label (field value "status")) (field value "model")
+                          (when-let [budget (field value "iteration_budget")]
+                            (if-let [used (field value "iterations_used")]
+                              (str "Iterations: " used "/" budget)
+                              (str "Up to " (counted-label budget "iteration"))))
+                          (when (field value "pending_input") "Input pending")]))
+   "content" (council-body value "task")})
+
+(defn- council-presentation
+  "Show messages and outcomes, not Council's storage and delivery envelopes."
+  [op value]
+  (let [headline (second (get tool-headlines op))]
+    (case op
+      ("council.publish" "council.get")
+      (let [message (council-message value)]
+        (assoc message
+          "headline" headline
+          "summary" (str/join " · "
+                              (remove str/blank?
+                                [(when (map? value) (get message "headline"))
+                                 (get message "summary")]))))
+
+      ("council.read" "council.threads" "council.members" "council.subagents")
+      (let [items
+            (if (contains? #{"council.read" "council.threads"} op) (field value "entries") value)
+            noun ({"council.read" "message"
+                   "council.threads" "thread"
+                   "council.members" "member"
+                   "council.subagents" "subagent"}
+                  op)
+            sections? (contains? #{"council.read" "council.subagents"} op)]
+
+        (cond-> {"headline" headline
+                 "summary" (str (if (seq items)
+                                  (counted-label (count items) noun)
+                                  (str "No " (when (= op "council.members") "active ") noun "s"))
+                                (when (field value "has_more") " · more available"))
+                 "content" (if (and (seq items) (not sections?))
+                             [{"type" "table"
+                               "columns" (if (= op "council.members") ["Member" "State"] ["Thread"])
+                               "rows" (mapv (fn [item]
+                                              (cond-> [(or (not-empty (field item "title"))
+                                                           (label noun))]
+                                                (= op "council.members")
+                                                (conj (label (field item "state")))))
+                                            items)}]
+                             [])}
+          sections?
+          (assoc "sections" (mapv (if (= op "council.read") council-message council-agent) items))))
+
+      "council.publish_spawn"
+      (let [agent (council-agent value)]
+        (assoc agent
+          "headline" headline
+          "summary" (str/join " · "
+                              (remove str/blank? [(get agent "headline") (get agent "summary")]))))
+
+      "council.cancel"
+      {"headline" headline
+       "summary" (str (label (field value "status"))
+                      (when-let [cancelled (field value "cancelled")]
+                        (str " · " (counted-label (count cancelled) "subagent"))))
+       "content" []}
+
+      "council.route"
+      {"headline" headline
+       "summary" (str (field value "provider")
+                      "/"
+                      (field value "model")
+                      (when-let [effective (field value "effective")]
+                        (str " · " (str/replace (scalar effective) "_" " "))))
+       "content" []})))
 
 (defn- read-session-presentation
   "A compact overview with complete requests and unique failures behind section disclosure."
@@ -636,18 +740,6 @@
                                           (when-let [target (field value "path")]
                                             (str " · " target)))
                 (= op "lint_code") (lint-summary (or result value))
-                (= op "council.subagents")
-                (let [n (count (or result value))]
-                  (if (zero? n) "No subagents" (counted-label n "subagent")))
-                (contains? #{"council.publish_spawn" "council.cancel"} op)
-                (str (or (field value "status") "")
-                     (when-let [sid (field value "session_id")]
-                       (str " · " sid)))
-                (= op "council.route") (str (field value "provider")
-                                            "/"
-                                            (field value "model")
-                                            (when-let [effective (field value "effective")]
-                                              (str " · " effective)))
                 (and (= op "run_tests") (number? (field value "total")))
                 (str (or (field value "total") 0) " tests · " (or (field value "fail") 0) " failed")
                 :else (str (or (field value "summary") (field value "title") "")))
@@ -656,7 +748,7 @@
           (cond (contains? #{"patch" "read_session"} op) []
                 (= op "format_code") (result-blocks (dissoc (format-result value) "summary" "path")
                                                     "Detail")
-                (and (= op "council.publish") (number? value)) []
+                (str/starts-with? op "council.") []
                 (and (= op "cat") text)
                 [{"type" "code" "language" (code-language path) "text" (read-content text)}]
                 (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
@@ -676,18 +768,6 @@
                     ("run_tests" "lint_code")
                     "Metric"
 
-                    ("council.publish" "council.get")
-                    "Message"
-
-                    ("council.read" "council.threads")
-                    "Thread"
-
-                    ("council.publish_spawn" "council.subagents" "council.cancel" "council.route")
-                    "Subagent"
-
-                    "council.members"
-                    "Member"
-
                     (cond (contains? #{"read_session" "get_session" "list_sessions"} op) "Session"
                           (contains? #{"repl_start" "repl_status" "repl_connect" "repl_stop"} op)
                           "REPL"
@@ -700,6 +780,7 @@
                           :else "Detail"))))]
 
       (cond (= op "read_session") (read-session-presentation value)
+            (str/starts-with? op "council.") (council-presentation op value)
             (= op "repl_eval") (repl-presentation value)
             (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
             :else {"headline" headline "summary" summary "content" content}))))

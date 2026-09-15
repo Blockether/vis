@@ -188,11 +188,28 @@ export const ResultFirst: Story = {
       await expect(table.getByRole('columnheader', { name: heading })).toBeVisible();
       await expect(table.getByRole('columnheader', { name: 'Result' })).toBeVisible();
     }
-    await expect(rows[4].textContent).not.toMatch(/Thread id|Title|42/);
+    const message = rows[4].querySelector('p')!;
+    const metric = rows[5].querySelector('td')!;
+    await expect(getComputedStyle(message).fontSize).toBe(getComputedStyle(metric).fontSize);
+    await expect(getComputedStyle(message).lineHeight).toBe(getComputedStyle(metric).lineHeight);
+    await expect(getComputedStyle(message).textAlign).toBe('left');
+    await expect(within(rows[4]).queryByRole('table')).not.toBeInTheDocument();
+    await expect(rows[4].textContent).not.toMatch(/Thread id|Title|42|Kind|Content|Ping|reviewer/);
     await expect(rows[5].textContent).not.toContain('Is pass');
     await expect(canvas.queryByRole('columnheader', { name: 'Field' })).not.toBeInTheDocument();
     await expect(canvas.queryByRole('columnheader', { name: 'Value' })).not.toBeInTheDocument();
   },
+};
+
+export const ResultFirstNarrow: Story = {
+  ...ResultFirst,
+  decorators: [
+    (Story) => (
+      <div className="max-w-xs">
+        <Story />
+      </div>
+    ),
+  ],
 };
 
 /** The Storybook clipboard is a boundary stub, as for the shared Code copy control. */

@@ -170,33 +170,8 @@
         "summary": "Activity review",
         "content": [
           {
-            "type": "table",
-            "columns": [
-              "Message",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Kind",
-                "informational"
-              ]
-            ]
-          },
-          {
-            "type": "heading",
-            "text": "Content"
-          },
-          {
             "type": "markdown",
             "text": "Read and Patch now show their **results** after one disclosure."
-          },
-          {
-            "type": "heading",
-            "text": "Ping"
-          },
-          {
-            "type": "text",
-            "text": "reviewer"
           }
         ]
       },

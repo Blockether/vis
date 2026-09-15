@@ -529,9 +529,9 @@ export const Markdown = memo(function Markdown({
   /** Embedded result dividers share the level below their enclosing step. */
   headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
 }) {
-  // Transcript prose shares one fully justified reading column. Inline code and
-  // links remain breakable so a long atom cannot force that column to overflow.
-  const runningText = PROSE;
+  // Tool and activity prose stays on the same compact scale as its tables and code.
+  // Only transcript messages use the fully justified reading column.
+  const runningText = nested ? 'text-meta text-left' : PROSE;
   // A heading inside a tool result card is a STRUCTURAL divider — one file in a
   // multi-file `cat`, one occurrence in an index, one step in a batch — not a
   // document hierarchy. The card body is `text-meta` (10px), so `### path · L12-30`
