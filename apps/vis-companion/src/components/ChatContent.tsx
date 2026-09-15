@@ -1265,6 +1265,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value,
   language = 'python',
   showCode,
+  hasActivity,
   duration,
   failure,
   children,
@@ -1272,6 +1273,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value: string;
   language?: string;
   showCode: boolean;
+  hasActivity: boolean;
   duration: string | null;
   failure?: ReactNode;
   children: ReactNode;
@@ -1304,7 +1306,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
         {showCode && <CopyChip value={value} label="Copy code" density="compact" edge />}
       </div>
       {expanded && showCode && (
-        <div data-code-body>
+        <div data-code-body className={hasActivity ? undefined : 'last:pb-2'}>
           <SyntaxCodeBlock
             value={value}
             language={language}
@@ -1529,6 +1531,7 @@ const FormTrace = memo(function FormTrace({
           value={code}
           language={formCodeLanguage(form)}
           showCode={showCode && Boolean(code)}
+          hasActivity={hasActivity}
           duration={formatDuration(form.duration_ms)}
           failure={
             cards.some((card) => card.error != null)

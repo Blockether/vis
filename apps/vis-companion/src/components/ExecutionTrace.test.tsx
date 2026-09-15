@@ -524,6 +524,34 @@ it('opens the complete program below its own CODE header', () => {
   expect(band.querySelector('pre')?.textContent).toContain('print(paths)');
 });
 
+it.each([true, false])('pads standalone source until Activity arrives (live=%s)', (live) => {
+  const form = { source: 'value = 42\nprint(value)' };
+  const view = render(<IterationTrace whole live={live} iterations={iterations([form])} />);
+  fireEvent.click(view.getByRole('button', { name: 'Expand code' }));
+  const band = view.container.querySelector('[data-execution-code]')!;
+  const body = band.querySelector('[data-code-body]')!;
+  expect(body).toHaveClass('last:pb-2');
+  expect(body).toBe(band.lastElementChild);
+
+  view.rerender(
+    <IterationTrace
+      whole
+      live={live}
+      iterations={iterations([{ ...form, activity: activity('running', 'Checking files') }])}
+    />,
+  );
+  expect(band.querySelector('[data-code-body]')).toBe(body);
+  expect(body).not.toHaveClass('last:pb-2');
+  expect(view.getByRole('button', { name: 'Expand Activity' })).toBeTruthy();
+
+  view.rerender(
+    <IterationTrace whole live={live} iterations={iterations([{ ...form, stdout: '42' }])} />,
+  );
+  // RESULT owns the next header's spacing; the source is no longer the last child.
+  expect(body).not.toBe(band.lastElementChild);
+  expect(view.getByRole('button', { name: 'Expand result' })).toBeTruthy();
+});
+
 it('folds even a one-line program under the CODE header', () => {
   const view = render(<IterationTrace whole iterations={iterations([{ source: 'print(42)' }])} />);
   fireEvent.click(view.getByRole('button', { name: 'Expand code' }));

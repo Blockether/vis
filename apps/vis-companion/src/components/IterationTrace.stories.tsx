@@ -810,6 +810,37 @@ export const Listing: Story = {
   args: { live: false, showCode: true, iterations: STORY_LISTING },
 };
 
+/** Before Activity or output arrives, the expanded source owns its bottom inset. */
+export const CodeWithoutActivity: Story = {
+  args: {
+    live: true,
+    showCode: true,
+    iterations: [{ position: 1, forms: [{ source: 'value = 42\nprint(value)' }] }],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const code = canvasElement.querySelector('[data-execution-code]')!;
+    const collapsedHeight = code.getBoundingClientRect().height;
+    await expect(canvas.queryByRole('button', { name: 'Expand Activity' })).toBeNull();
+    await expect(canvas.queryByRole('button', { name: 'Expand result' })).toBeNull();
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand code' }));
+    const header = canvas.getByRole('button', { name: 'Collapse code' }).getBoundingClientRect();
+    const lines = code.querySelectorAll('[data-code-body] pre code > div');
+    const firstLine = lines[0].getBoundingClientRect();
+    const lastLine = lines[lines.length - 1].getBoundingClientRect();
+    await expect(firstLine.top - header.bottom).toBe(0);
+    // Regression: without a following header, the last source line touched the band edge.
+    await expect(code.getBoundingClientRect().bottom - lastLine.bottom).toBe(8);
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse code' }));
+    await expect(code.getBoundingClientRect().height).toBe(collapsedHeight);
+  },
+};
+
+export const CodeWithoutActivityPointer: Story = {
+  ...CodeWithoutActivity,
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
 export const CodeWithResult: Story = {
   args: {
     live: false,
