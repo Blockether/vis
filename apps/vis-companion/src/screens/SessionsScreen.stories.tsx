@@ -137,7 +137,18 @@ export const Fleet: Story = {
     await expect(centerY(fold)).toBe(centerY(create));
     const pointer = win.matchMedia('(min-width: 640px) and (pointer: fine)').matches;
     await expect(fold.getBoundingClientRect().height).toBeGreaterThanOrEqual(pointer ? 28 : 44);
-    await expect(centerY(pager)).toBe(centerY(create));
+    const qualifier = header.querySelector('[title]')!;
+    if (
+      qualifier.getBoundingClientRect().left < pager.getBoundingClientRect().right &&
+      qualifier.getBoundingClientRect().right > pager.getBoundingClientRect().left
+    ) {
+      // Narrow bands reserve the second line for counts instead of clipping them at the pager.
+      await expect(qualifier.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        pager.getBoundingClientRect().bottom,
+      );
+    } else {
+      await expect(centerY(pager)).toBe(centerY(create));
+    }
     const previous = within(pager).getByRole('button', { name: 'Previous page' });
     const next = within(pager).getByRole('button', { name: 'Next page' });
     expect(within(pager).getAllByRole('button')).toHaveLength(2);
@@ -287,9 +298,6 @@ export const NarrowRail: Story = {
       name: 'uberworkspace sessions',
     });
     const pager = within(project).getByRole('navigation');
-    const fold = within(project).getByRole('button', {
-      name: 'Collapse uberworkspace',
-    });
     const pageCount = Number(
       within(pager)
         .getByText(/^Page 1 of /)
@@ -333,6 +341,7 @@ export const NarrowRail: Story = {
     const forward = Array.from({ length: pageCount - 1 }, (_, index) => index + 2);
     const backward = Array.from({ length: pageCount - 1 }, (_, index) => pageCount - index - 1);
     let current = 1;
+    const pagerCenter = centerY(pager);
     for (const target of [...forward, ...backward]) {
       await userEvent.click(
         within(pager).getByRole('button', {
@@ -343,9 +352,9 @@ export const NarrowRail: Story = {
       await expect(
         await within(pager).findByText(`Page ${target} of ${pageCount}`),
       ).toBeInTheDocument();
-      await expect(centerY(pager)).toBe(centerY(fold));
+      await expect(centerY(pager)).toBe(pagerCenter);
       for (const control of within(pager).getAllByRole('button')) {
-        await expect(centerY(control)).toBe(centerY(fold));
+        await expect(centerY(control)).toBe(pagerCenter);
       }
       await checkEdges();
     }
