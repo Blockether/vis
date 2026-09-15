@@ -208,8 +208,9 @@ serialized result or a duplicate output preview. Choose typed `ActivityText`,
 `ActivityTable`, `ActivityProgress`, `ActivityImage`, `ActivityVideo`,
 `ActivityAudio` and `ActivityFile` blocks. Media references existing attachments.
 `ActivitySection(headline, summary, content=())` groups related results without
-nesting sections. `vis.publish_activity(presentation)` replaces the current
-snapshot while a tool runs; empty content clears the body.
+nesting sections. Each section has its own disclosure: you can scan its headline
+and summary before opening the complete details. `vis.publish_activity(presentation)`
+replaces the current snapshot while a tool runs; empty content clears the body.
 
 Each headline and summary is one line of at most 512 UTF-8 bytes. Put the complete
 result in content blocks and non-nested sections: Vis does not cut their text,

@@ -140,13 +140,32 @@
       (update (field-key presentation "sections")
               #(mapv (partial compact-presentation workspace-root) %)))))
 
+(defn- metric-key
+  [k]
+  (when (or (string? k) (and (ident? k) (nil? (namespace k)))) (str/replace (name k) "-" "_")))
+
+(defn- secret-entry?
+  [k v]
+  (and (util/secret-key? k)
+       (not (or (and (number? v)
+                     (contains? #{"input_tokens" "input_cache_read_tokens"
+                                  "input_cache_write_tokens" "input_regular_tokens"
+                                  "output_reasoning_tokens" "output_tokens" "total_tokens"}
+                                (metric-key k)))
+                (and (= "tokens" (metric-key k))
+                     (map? v)
+                     (= 6 (count v))
+                     (= #{"input" "cached" "uncached" "cache_created" "output" "reasoning"}
+                        (into #{} (map metric-key) (keys v)))
+                     (every? number? (vals v)))))))
+
 (defn redact
   "Remove credential-bearing values recursively before summaries or sizes exist."
   [value]
   (cond (callback-envelope? value) "[CALLBACK]"
         (map? value) (into (empty value)
                            (map (fn [[k v]]
-                                  [k (if (util/secret-key? k) "[REDACTED]" (redact v))]))
+                                  [k (if (secret-entry? k v) "[REDACTED]" (redact v))]))
                            value)
         (vector? value) (mapv redact value)
         (set? value) (into #{} (map redact) value)
@@ -160,7 +179,7 @@
   (cond (callback-envelope? value) "[CALLBACK]"
         (map? value) (into {}
                            (map (fn [[k v]]
-                                  [k (if (util/secret-key? k) "[REDACTED]" (redact-result v))]))
+                                  [k (if (secret-entry? k v) "[REDACTED]" (redact-result v))]))
                            (if (and (string? (get value "__vis_object__"))
                                     (map? (get value "__vis_attrs__")))
                              (get value "__vis_attrs__")
@@ -206,7 +225,7 @@
                                              (recur (next entries)
                                                     (assoc! result
                                                             k
-                                                            (if (util/secret-key? k)
+                                                            (if (secret-entry? k v)
                                                               "[REDACTED]"
                                                               (visit v)))))))
                     (or (vector? x) (set? x) (sequential? x))

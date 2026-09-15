@@ -22,6 +22,7 @@ import { ActivityHistoryContext, ActivityPanel } from './ActivityPanel';
 import { activityHistoryPage } from '../dev/activity-history';
 import { activityProjectionFromWire } from '../lib/activity';
 import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
+import readSessionFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-read-session.json';
 
 /**
  * WHAT THE MODEL IS DOING, WHILE IT IS DOING IT.
@@ -456,14 +457,18 @@ export const ListingBatch: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     await expect(canvas.getByText('0 directories · 2 files')).toBeVisible();
-    const step = canvas.getByRole('button', { name: /Listed 2 directories/ });
+    const step = canvas.getByRole('button', {
+      name: ACTIVITY_LISTING_BATCH.rows[0].presentation!.sections![0].headline,
+    });
     await userEvent.click(step);
-    await expect(canvas.getAllByRole('table')).toHaveLength(2);
+    await expect(canvas.getAllByRole('table')).toHaveLength(1);
     // The first result follows its header closely; separate results keep one line.
     const sections = [...canvasElement.querySelectorAll('[data-activity-section]')];
     const bodies = [...canvasElement.querySelectorAll('[data-activity-content]')];
     await expect(
-      sections[0].getBoundingClientRect().top - step.getBoundingClientRect().bottom,
+      sections[0].getBoundingClientRect().top -
+        canvas.getByRole('heading', { name: /Listed 2 directories/ }).getBoundingClientRect()
+          .bottom,
     ).toBe(4);
     await expect(
       sections[1].getBoundingClientRect().top - sections[0].getBoundingClientRect().bottom,
@@ -662,4 +667,45 @@ export const RetainedHistoryUnavailable: Story = {
     await expect(canvas.getByText('Operation 1')).toBeVisible();
     await expect(canvas.getByRole('button', { name: 'Reload operations' })).toBeVisible();
   },
+};
+
+/** Regression #230: long session evidence opens independently with mouse or keyboard. */
+export const ReadSession: Story = {
+  args: { activity: activityProjectionFromWire(readSessionFixture)! },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
+    await userEvent.click(canvas.getByRole('button', { name: /Read session/ }));
+    await expect(canvas.getByRole('heading', { name: 'Current turn' })).toBeVisible();
+    await expect(canvas.getByRole('heading', { name: 'Usage' })).toBeVisible();
+    const main = canvasElement.querySelector<HTMLElement>('[data-activity-content]')!;
+    await expect(main.textContent).toContain('12345');
+    await expect(main.textContent).toContain('$0.125');
+    await expect(main.textContent!.length).toBeLessThan(2000);
+    await expect(canvasElement.textContent).not.toContain('Final request requirement.');
+    await expect(canvasElement.textContent).not.toContain('Final failure detail.');
+    const turns = canvas.getByRole('button', { name: 'Turn details' });
+    const failures = canvas.getByRole('button', { name: 'Failure details' });
+    await expect(turns).toHaveAttribute('aria-expanded', 'false');
+    await expect(failures).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(turns);
+    await expect(canvasElement.textContent).toContain('Final request requirement.');
+    await expect(canvasElement.textContent).not.toContain('Final failure detail.');
+    failures.focus();
+    await userEvent.keyboard('{Enter}');
+    await expect(failures).toHaveAttribute('aria-expanded', 'true');
+    await expect(canvasElement.textContent!.split('Final failure detail.')).toHaveLength(2);
+    await expect(canvasElement.textContent).not.toContain('fixture-secret');
+    await userEvent.keyboard(' ');
+    await expect(failures).toHaveAttribute('aria-expanded', 'false');
+    await expect(canvasElement.textContent).not.toContain('Final failure detail.');
+    for (const toggle of [turns, failures]) {
+      await expect(toggle.scrollWidth).toBeLessThanOrEqual(toggle.clientWidth);
+    }
+  },
+};
+
+export const ReadSessionNarrow: Story = {
+  ...ReadSession,
+  decorators: [(Story) => <div className="w-80 max-w-full"><Story /></div>],
 };

@@ -46,9 +46,11 @@
             entries
             (#'render/activity-content-entries blocks 80 2 nil {} false)]
 
-        (doseq [heading ["Stdout" "Result"]]
+        ;; Regression #230: the first heading needs the same margin as later sections.
+        (doseq [heading ["Program" "Stdout" "Result"]]
           (let [idx (first (keep-indexed #(when (str/includes? (:line %2) heading) %1) entries))]
-            (expect (str/blank? (:line (nth entries (dec idx))))))))))
+            (expect (pos? idx))
+            (expect (str/blank? (:line (get entries (dec idx))))))))))
 
 (defdescribe activity-table-alignment-test
              (it "shares column widths across adjacent matching tables at every terminal size"
@@ -8496,39 +8498,66 @@ print(paths)"
 
 (defdescribe
   activity-presentation-disclosure-test
-  (it "keeps root and section summaries visible while disclosing only content"
-      (let [presentation
-            {"headline" "Listed 2 directories"
-             "summary" "3 entries"
-             "content" []
-             "sections" [{"headline" "src"
-                          "summary" "2 files"
-                          "content" [{"type" "text" "text" "Source details"}]}
-                         {"headline" "test" "summary" "1 file" "content" []}]}
+  (it
+    "discloses each section independently while keeping summaries visible"
+    ;; Regression #230: opening the overview must not expand every long body.
+    (let [presentation
+          {"headline" "Read session"
+           "summary" "3 turns"
+           "content" [{"type" "text" "text" "Overview metrics"}]
+           "sections" [{"headline" "Turn details"
+                        "summary" "Full requests"
+                        "content" [{"type" "text" "text" "Complete request"}]}
+                       {"headline" "Failure details"
+                        "summary" "One failure"
+                        "content" [{"type" "text" "text" "Complete failure"}]}
+                       {"headline" "Empty details" "summary" "No retries" "content" []}]}
 
-            row
-            {:id "listing" :state "succeeded" :operation "ls" :presentation presentation}]
+          row
+          {:id "session" :state "succeeded" :operation "read_session" :presentation presentation}]
 
-        (doseq [open? [false true]]
-          (let [entries (#'render/activity-detail-entries
-                         {:node-id "sections"
-                          :activity-rows [row]
-                          :activity-expanded? (step-expansions open?)}
-                         90
-                         "sections")
-                lines (mapv :line entries)
-                text (str/join "\n" lines)
-                second-section (first (keep-indexed (fn [idx line]
-                                                      (when (str/ends-with? line "test") idx))
-                                                    lines))]
+      (doseq [root-open?
+              [false true]
 
-            (expect (str/includes? text "Listed 2 directories · 3 entries"))
-            (expect (some #(str/ends-with? % "src") lines))
-            (expect (some #(str/ends-with? % "2 files") lines))
-            (expect (some #(str/ends-with? % "1 file") lines))
-            (expect (some? second-section))
-            (expect (= open? (str/includes? text "Source details")))
-            (expect (= p/MARKER_ACTIVITY (get lines (dec second-section))))))))
+              request-open?
+              [false true]
+
+              failure-open?
+              [false true]]
+
+        (let [entries
+              (#'render/activity-detail-entries
+               {:node-id "sections"
+                :activity-rows [row]
+                :activity-expanded? (fn [key default]
+                                      (get {"#band" true
+                                            "session" root-open?
+                                            "session:section:0" request-open?
+                                            "session:section:1" failure-open?}
+                                           key
+                                           default))}
+               90
+               "sections")
+
+              text
+              (str/join "\n" (map :line entries))
+
+              section-heads
+              (filter #(some-> (get-in % [:meta :node-id])
+                               (str/includes? ":section:"))
+                      entries)]
+
+          (doseq [summary ["3 turns" "Full requests" "One failure" "No retries"]]
+            (expect (str/includes? text summary)))
+          (expect (= root-open? (str/includes? text "Overview metrics")))
+          (expect (= request-open? (str/includes? text "Complete request")))
+          (expect (= failure-open? (str/includes? text "Complete failure")))
+          (expect (= ["sections:session:section:0" "sections:session:section:1"]
+                     (mapv #(get-in % [:meta :node-id]) section-heads)))
+          (doseq [heading ["Turn details" "Failure details" "Empty details"]]
+            (let [index (first (keep-indexed #(when (str/includes? (:line %2) heading) %1)
+                                             entries))]
+              (expect (= p/MARKER_ACTIVITY (:line (get entries (dec index)))))))))))
   (it "does not offer an inert chevron for a summary-only presentation"
       (let [entry (nth (#'render/activity-detail-entries
                         {:node-id "summary"
@@ -8544,6 +8573,80 @@ print(paths)"
                        2)]
         (expect (str/includes? (:line entry) "Listed src · Empty directory"))
         (expect (nil? (get-in entry [:meta :node-id]))))))
+
+(defdescribe
+  read-session-activity-grid-test
+  (it
+    "keeps a multi-turn overview compact and opens retained evidence independently"
+    ;; Regression #230: use the engine-generated projection, not hand-authored tables.
+    (let [rows
+          (-> (io/resource "vis-contract/fixtures/activity-read-session.json")
+              slurp
+              json/read-str
+              activity-contract/from-wire
+              :rows)
+
+          render-view
+          (fn [width expanded?]
+            (#'render/activity-detail-entries
+             {:node-id "read-session"
+              :activity-rows rows
+              :activity-expanded? (fn [key default]
+                                    (cond (= key "#band") true
+                                          (and expanded? (str/includes? key ":section:")) true
+                                          :else default))}
+             (- width 4)
+             "session-review"))]
+
+      (doseq [width [40 100]]
+        (let [compact (render-view width false)
+              complete (render-view width true)
+              compact-text (str/join "\n" (map :line compact))
+              complete-text (str/join "\n" (map :line complete))]
+
+          (expect (<= (count compact) (if (= width 40) 40 34)))
+          (expect (> (count complete) (+ (count compact) 40)))
+          (doseq [metric ["12345" "6700" "100" "5545" "890" "120"]]
+            (expect (str/includes? compact-text metric)))
+          (doseq [tail ["Final request requirement." "Final failure detail."]]
+            (expect (not (str/includes? compact-text tail)))
+            (expect (= 1
+                       (count (re-seq (re-pattern (java.util.regex.Pattern/quote tail))
+                                      (str/replace complete-text #"\s+" " "))))
+                    tail))
+          (expect (not (str/includes? complete-text "fixture-credential")))
+          (doseq [entries [compact complete]]
+            (.reset interactions/hit-map)
+            (.beginFrame interactions/hit-map)
+            (let [height (+ 6 (count entries))
+                  captured (cap/capture! {:cols width
+                                          :rows height
+                                          :paint! (fn [{:keys [g]}]
+                                                    (render/draw-chat-bubble!
+                                                      g
+                                                      {:role :assistant
+                                                       :text ""
+                                                       :prewrapped-lines (mapv :line entries)
+                                                       :line-meta (mapv :meta entries)}
+                                                      0
+                                                      0
+                                                      (- width 4)
+                                                      {:viewport-top 0 :viewport-h height}))})
+                  text (cap/frame-text captured)]
+
+              (.commitFrame interactions/hit-map)
+              (expect (nil? (:error captured)))
+              (expect (str/includes? text "Current turn"))
+              (expect (not (str/includes? text "fixture-credential")))
+              (doseq [heading ["Turn details" "Failure details"]]
+                (let [lines (str/split-lines text)
+                      row (first (keep-indexed #(when (str/includes? %2 heading) %1) lines))
+                      col (when row (str/index-of (nth lines row) heading))
+                      hit (when col (.lookup interactions/hit-map col row))]
+
+                  (expect (some? row))
+                  (expect (= :toggle-details (:kind hit)))
+                  (expect (str/includes? (str (:node-id hit)) ":section:")))))))))))
 
 (defdescribe
   activity-presentation-width-test

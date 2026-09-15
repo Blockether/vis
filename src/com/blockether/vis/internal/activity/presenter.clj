@@ -303,8 +303,7 @@
    "mcp__call" ["Call MCP tool" "Called MCP tool" true]})
 
 (def ^:private result-fields
-  {"read_session" ["session" "current_turn" "failures" "diagnosis"]
-   "get_session" ["title" "goal" "turn_count" "model" "last_turn"]
+  {"get_session" ["title" "goal" "turn_count" "model" "last_turn"]
    "list_sessions" ["title" "goal" "turn_count" "request_snippet" "reply_snippet"]
    "repl_start" ["result" "status" "cwd" "message" "log_tail"]
    "repl_status" ["result" "status" "cwd" "resources"]
@@ -401,6 +400,209 @@
                (when (number? files) (str " · " (counted-label files "file") " checked")))))
       "No lint result")))
 
+(defn- session-preview
+  [value ^long limit]
+  (let [lines
+        (str/split (str/trim (str value)) #"\R" 2)
+
+        ^String text
+        (str/replace (or (first lines) "") #"\s+" " ")
+
+        characters
+        (.codePointCount text 0 (.length text))]
+
+    (str (subs text 0 (.offsetByCodePoints text 0 (int (min characters limit))))
+         (when (or (> characters limit) (next lines)) "…"))))
+
+(defn- read-session-presentation
+  "A compact overview with complete requests and unique failures behind section disclosure."
+  [value]
+  (let [session
+        (field value "session")
+
+        current
+        (field value "current_turn")
+
+        diagnosis
+        (field value "diagnosis")
+
+        totals
+        (field (field value "usage") "totals")
+
+        tokens
+        (field totals "tokens")
+
+        cost
+        (field current "cost")
+
+        turns
+        (vec (field session "turns"))
+
+        turns
+        (cond-> turns
+          (and (field current "user_request")
+               (not-any? #(= (field current "id") (field % "id")) turns))
+          (conj (assoc current "outcome" (field current "status"))))
+
+        numbered
+        (mapv vector (range 1 (inc (count turns))) turns)
+
+        turn-numbers
+        (into {}
+              (map (fn [[n turn]]
+                     [(field turn "id") n])
+                   numbered))
+
+        failures
+        (vec (distinct (or (field value "failures")
+                           (field diagnosis "failures")
+                           (field current "failures"))))
+
+        display
+        (fn [v]
+          (if (number? v) (str v) "Unavailable"))
+
+        metric
+        (fn [k]
+          (display (if (= k "regular")
+                     (let [uncached
+                           (field tokens "uncached")
+
+                           writes
+                           (field tokens "cache_created")]
+
+                       (when (and (number? uncached) (number? writes))
+                         (max 0 (- (long uncached) (long writes)))))
+                     (field tokens k))))
+
+        metrics
+        [["Input tokens" "input" "input_tokens"]
+         ["Cache read tokens" "cached" "input_cache_read_tokens"]
+         ["Cache write tokens" "cache_created" "input_cache_write_tokens"]
+         ["Regular input tokens" "regular" "input_regular_tokens"]
+         ["Output tokens" "output" "output_tokens"]
+         ["Reasoning tokens" "reasoning" "output_reasoning_tokens"]]
+
+        heading
+        (fn [text]
+          {"type" "heading" "text" text})
+
+        text
+        (fn [body]
+          {"type" "text" "text" body})
+
+        status
+        (fn [turn]
+          (label (or (field turn "outcome") (field turn "status") "unknown")))
+
+        diagnosis-summary
+        (str (counted-label (count failures) "failure")
+             (when (field diagnosis "repetition_loop") " · repeated failures detected"))
+
+        present?
+        (or session current totals (seq failures))]
+
+    {"headline" "Read session"
+     "summary" (if present?
+                 (str (session-preview (or (field session "title") "Session") 80)
+                      " · " (counted-label (count turns) "turn")
+                      " · " diagnosis-summary)
+                 "No session data")
+     "content" (vec
+                 (concat (when current
+                           [(heading "Current turn")
+                            (text (str (status current)
+                                       (when-let [n (get turn-numbers (field current "id"))]
+                                         (str " · Turn " n))
+                                       (when-let [n (field (field current "iteration") "current")]
+                                         (str " · iteration " n))
+                                       (when-some [elapsed (field current "elapsed_ms")]
+                                         (str " · " elapsed " ms"))))])
+                         (when (or totals cost)
+                           [(heading "Usage")
+                            (text (if (map? tokens)
+                                    (str "Session · input " (metric "input")
+                                         " · output " (metric "output")
+                                         " · cost $" (display (field totals "cost_usd")))
+                                    "Session usage unavailable"))
+                            (text (if (map? tokens)
+                                    (str "Cache read " (metric "cached")
+                                         " · cache write " (metric "cache_created")
+                                         " · uncached input " (metric "uncached")
+                                         " · reasoning " (metric "reasoning"))
+                                    "Open Session details for current-turn usage."))])
+                         (when present? [(heading "Diagnosis") (text diagnosis-summary)])
+                         (when (seq turns)
+                           (concat [(heading "Turns")]
+                                   (when (> (count turns) 6)
+                                     [(text (str "Showing the latest 6 of "
+                                                 (count turns)
+                                                 " turns. Open Turn details for all turns."))])
+                                   [{"type" "table"
+                                     "columns" ["Turn" "Outcome" "Request"]
+                                     "rows" (mapv (fn [[n turn]]
+                                                    [(str "Turn " n) (status turn)
+                                                     (session-preview (field turn "user_request")
+                                                                      48)])
+                                                  (take-last 6 numbered))}]))))
+     "sections"
+     (vec
+       (concat
+         (when present?
+           [{"headline" "Session details"
+             "summary" "Metadata and complete usage"
+             "content" (vec
+                         (concat (result-blocks (visible-result (select-result ["title" "goal"
+                                                                                "model" "provider"
+                                                                                "created_at"]
+                                                                               session))
+                                                "Session")
+                                 (when (or totals cost)
+                                   [(heading "Usage breakdown")
+                                    {"type" "table"
+                                     "columns" ["Metric" "Session" "Current turn"]
+                                     "rows" (conj (mapv (fn [[title total-key current-key]]
+                                                          [title (metric total-key)
+                                                           (display (field cost current-key))])
+                                                        metrics)
+                                                  ["Cost (USD)" (display (field totals "cost_usd"))
+                                                   (display (field cost "total_cost"))])}])
+                                 (when (seq (field diagnosis "next_actions"))
+                                   [(heading "Next actions")
+                                    (text (str/join "\n" (field diagnosis "next_actions")))])))}])
+         (when (seq turns)
+           [{"headline" "Turn details"
+             "summary" (str (counted-label (count turns) "turn") " · full requests and answers")
+             "content" (vec (mapcat (fn [[n turn]]
+                                      (concat [(heading (str "Turn " n " · " (status turn)))]
+                                              (when-let [request (field turn "user_request")]
+                                                [(text request)])
+                                              (when-let [answer (field turn "answer")]
+                                                [(heading "Answer")
+                                                 {"type" "markdown" "text" answer}])))
+                                    numbered))}])
+         (when (seq failures)
+           [{"headline" "Failure details"
+             "summary" (str diagnosis-summary " · message and code")
+             "content"
+             (vec (mapcat (fn [n failure]
+                            (let [turn
+                                  (get turn-numbers (field failure "turn_id"))
+
+                                  shared-request?
+                                  (and turn
+                                       (= (field failure "user_request")
+                                          (field (get turns (dec (long turn))) "user_request")))]
+
+                              (cons (heading (str "Failure " n (when turn (str " · Turn " turn))))
+                                    (result-blocks (visible-result (cond-> failure
+                                                                     shared-request?
+                                                                     (dissoc "user_request"
+                                                                       :user_request)))
+                                                   "Detail"))))
+                          (range 1 (inc (count failures)))
+                          failures))}])))}))
+
 (defn result-presentation
   "Result view selected explicitly by a built-in binding. Unknown tools have no
    default view. Evidence is public, redacted and bounded by the event owner.
@@ -451,7 +653,7 @@
                 :else (str (or (field value "summary") (field value "title") "")))
 
           content
-          (cond (= op "patch") []
+          (cond (contains? #{"patch" "read_session"} op) []
                 (= op "format_code") (result-blocks (dissoc (format-result value) "summary" "path")
                                                     "Detail")
                 (and (= op "council.publish") (number? value)) []
@@ -497,7 +699,8 @@
                           (= "mcp__call" op) "Tool"
                           :else "Detail"))))]
 
-      (cond (= op "repl_eval") (repl-presentation value)
+      (cond (= op "read_session") (read-session-presentation value)
+            (= op "repl_eval") (repl-presentation value)
             (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
             :else {"headline" headline "summary" summary "content" content}))))
 

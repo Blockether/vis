@@ -515,3 +515,234 @@
         (expect (= (name outcome) (:state row)))
         (expect (= "Agent request refused" (:error-summary row)))
         (expect (contract/valid-projection? projection))))))
+
+(defn read-session-result
+  "Representative multi-turn read with complete, repeated diagnostic evidence."
+  []
+  (let [request
+        (str "Review the long request.\n"
+             (apply str (repeat 30 "Keep every requirement.\n"))
+             "Final request requirement.")
+
+        failure
+        {"turn_id" "turn-2"
+         "iteration_id" "iteration-2"
+         "iteration" 1
+         "source" "code"
+         "tool" "repl_eval"
+         "classification" "python-error"
+         "user_request" request
+         "code" "raise ValueError(\"Fixture failure\")"
+         "message" (str "Fixture failure\n"
+                        (apply str (repeat 20 "Traceback detail\n"))
+                        "Final failure detail.")
+         "advice" "Check the failing input before retrying."
+         "auth_token" "fixture-credential"}]
+
+    {"session"
+     {"title" "Session review"
+      "model" "example-model"
+      "turn_count" 3
+      "goal" "Verify a complete session read."
+      "turns"
+      [{"id" "turn-1"
+        "outcome" "completed"
+        "iteration_count" 2
+        "user_request" "Inspect the session."
+        "answer" "Inspection complete."}
+       {"id" "turn-2" "outcome" "failed" "iteration_count" 1 "user_request" request}
+       {"id" "turn-3" "outcome" "running" "iteration_count" 1 "user_request" "Check the fix."}]}
+     "current_turn" {"id" "turn-3"
+                     "user_request" "Check the fix."
+                     "status" "running"
+                     "elapsed_ms" 2300
+                     "iteration" {"current" 2}
+                     "failures" []
+                     "cost" {"input_tokens" 1200
+                             "input_cache_read_tokens" 700
+                             "input_cache_write_tokens" 100
+                             "input_regular_tokens" 400
+                             "output_tokens" 90
+                             "output_reasoning_tokens" 12
+                             "total_cost" 0.025}}
+     "usage" {"totals" {"tokens" {"input" 12345
+                                  "cached" 6700
+                                  "cache_created" 100
+                                  "uncached" 5545
+                                  "output" 890
+                                  "reasoning" 120}
+                        "cost_usd" 0.125
+                        "turns" 3
+                        "iterations" 4}}
+     "failures" [failure]
+     "diagnosis" {"failure_count" 1
+                  "by_classification" {"python-error" 1}
+                  "repetition_loop" false
+                  "failures" [failure]
+                  "next_actions" ["Check the failing input before retrying."]}
+     "transcript" {"turns" [{"complete" "Raw transcript remains available."}]}}))
+
+(defn read-session-fixture
+  "Production-generated Read session presentation for both clients."
+  []
+  (result-fixture [[:read_session "" (read-session-result) nil]]))
+
+(defdescribe
+  read-session-presentation-test
+  ;; Regression #230: keep the overview compact without discarding full evidence.
+  (it
+    "groups turns and discloses complete requests and each failure only once"
+    (let [value
+          (read-session-result)
+
+          view
+          (presenter/result-presentation {:operation :read_session} value)
+
+          content
+          (get view "content")
+
+          sections
+          (get view "sections")
+
+          turn-table
+          (first (filter #(= ["Turn" "Outcome" "Request"] (get % "columns")) content))
+
+          all-text
+          (pr-str view)]
+
+      (expect (= "Read session" (get view "headline")))
+      (expect (= ["Current turn" "Usage" "Diagnosis" "Turns"]
+                 (mapv #(get % "text") (filter #(= "heading" (get % "type")) content))))
+      (expect (= ["Turn 1" "Turn 2" "Turn 3"] (mapv first (get turn-table "rows"))))
+      (expect (every? #(<= (count (last %)) 49) (get turn-table "rows")))
+      (expect (= "Review the long request.…" (get-in turn-table ["rows" 1 2])))
+      (expect (= ["Session details" "Turn details" "Failure details"]
+                 (mapv #(get % "headline") sections)))
+      (expect (not (.contains (pr-str content) "Final request requirement.")))
+      (expect (not (.contains (pr-str content) "Final failure detail.")))
+      (expect (= 1 (count (re-seq #"Final request requirement\." all-text))))
+      (expect (= 1 (count (re-seq #"Final failure detail\." all-text))))
+      (expect (.contains all-text "12345"))
+      (expect (.contains all-text "6700"))
+      (expect (.contains all-text "1200"))
+      (expect (contract/valid-presentation? view))))
+  (it "bounds the recent-turn list while retaining every complete request"
+      (let [turns
+            (mapv (fn [n]
+                    {"id" (str n)
+                     "outcome" "completed"
+                     "user_request" (str "Request " n " ends here.")})
+                  (range 1 21))
+
+            value
+            (assoc (read-session-result)
+              "session" {"title" "Many turns" "turns" turns}
+              "current_turn" nil
+              "failures" []
+              "diagnosis" {})
+
+            view
+            (presenter/result-presentation {:operation :read_session} value)
+
+            rows
+            (mapcat #(get % "rows") (get view "content"))]
+
+        (expect (= ["Turn 15" "Turn 16" "Turn 17" "Turn 18" "Turn 19" "Turn 20"] (mapv first rows)))
+        (expect (.contains (pr-str (get view "content")) "6 of 20"))
+        (expect (.contains (pr-str (get view "sections")) "Request 1 ends here."))
+        (expect (not-any? #(= "Failure details" (get % "headline")) (get view "sections")))))
+  (it "states empty and unavailable data without inventing zero usage"
+      (let [view (presenter/result-presentation {:operation :read_session} {})]
+        (expect (= "No session data" (get view "summary")))
+        (expect (empty? (get view "sections")))
+        (expect (contract/valid-presentation? view))))
+  (it "matches the shared wire fixture with numeric usage and redacted credentials"
+      (let [actual
+            (read-session-fixture)
+
+            expected
+            (json/read-json (slurp (io/resource
+                                     "vis-contract/fixtures/activity-read-session.json")))
+
+            view
+            (get-in actual ["rows" 0 "presentation"])]
+
+        (expect (= expected actual))
+        (expect (contract/valid-projection? actual))
+        (expect (not (.contains (pr-str actual) "fixture-credential")))
+        (expect (.contains (pr-str actual) "[REDACTED]"))
+        (expect (.contains (pr-str (get view "content")) "12345"))
+        (expect (.contains (pr-str (get view "sections")) "1200"))))
+  (it "bounds Unicode previews without splitting characters or discarding their complete request"
+      (let [request
+            (apply str (repeat 100 "😀"))
+
+            view
+            (presenter/result-presentation
+              {:operation :read_session}
+              {"session" {"title" request "turns" [{"id" "unicode" "user_request" request}]}})
+
+            rows
+            (mapcat #(get % "rows") (get view "content"))]
+
+        (expect (= (str (apply str (repeat 48 "😀")) "…") (last (first rows))))
+        (expect (.contains (pr-str (get view "sections")) request))
+        (expect (contract/valid-presentation? view))))
+  (it "uses canonical failure records rather than copies nested in diagnosis or current turn"
+      (let [value
+            (read-session-result)
+
+            failure
+            (first (get value "failures"))
+
+            view
+            (presenter/result-presentation {:operation :read_session}
+                                           (-> value
+                                               (assoc "failures" [failure failure])
+                                               (assoc-in ["current_turn" "failures"] [failure])))]
+
+        (expect (= 1 (count (re-seq #"Final failure detail\." (pr-str view)))))
+        (expect (.contains (get view "summary") "1 failure"))))
+  (it "retains the failure request when the corresponding turn snapshot is unavailable"
+      (let [failure
+            (first (get (read-session-result) "failures"))
+
+            view
+            (presenter/result-presentation {:operation :read_session} {"failures" [failure]})]
+
+        (expect (= 1 (count (re-seq #"Final request requirement\." (pr-str view)))))
+        (expect (= 1 (count (re-seq #"Final failure detail\." (pr-str view)))))))
+  (it "keeps the declared running state and genuine failure or cancellation evidence"
+      (doseq [outcome [:failed :cancelled]]
+        (let [ctx (event/context)
+              invocation (event/invocation ctx nil)
+              details {:operation :read_session
+                       :presenter :generic
+                       :activity (presenter/for-tool :read_session)
+                       :started-at-ms (System/currentTimeMillis)}
+              start (event/start-event ctx invocation details)
+              running (activity/presentation (activity/replay [start]))
+              terminal (event/terminal-event ctx
+                                             invocation
+                                             (assoc details
+                                               :outcome outcome
+                                               :error (ex-info "Unable to read session" {})))
+              settled (activity/presentation (activity/replay [start terminal]))]
+
+          (expect (= "Read session" (get-in running [:rows 0 :presentation "headline"])))
+          (expect (= "running" (get-in running [:rows 0 :state])))
+          (expect (= (name outcome) (get-in settled [:rows 0 :state])))
+          (expect (= "Unable to read session" (get-in settled [:rows 0 :error-summary])))
+          (expect (contract/valid-projection? settled)))))
+  (it "distinguishes uncached input from regular input excluding cache writes"
+      (let [view
+            (presenter/result-presentation {:operation :read_session} (read-session-result))
+
+            rows
+            (mapcat #(get % "rows") (get (first (get view "sections")) "content"))
+
+            regular
+            (first (filter #(= "Regular input tokens" (first %)) rows))]
+
+        (expect (.contains (pr-str (get view "content")) "uncached input 5545"))
+        (expect (= ["Regular input tokens" "5445" "400"] regular)))))

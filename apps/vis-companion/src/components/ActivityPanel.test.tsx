@@ -493,7 +493,11 @@ describe("one form's Activity on the phone", () => {
     const activity = storyData.ACTIVITY_LISTING_BATCH;
     const { rerender } = render(<ActivityPanel activity={activity} />);
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    const toggle = screen.getByRole('button', { name: /Listed 2 directories/ });
+    // Regression #230: opening one result must not expand every long section.
+    expect(screen.queryByRole('button', { name: /Listed 2 directories/ })).toBeNull();
+    const toggle = screen.getByRole('button', {
+      name: activity.rows[0].presentation!.sections![0].headline,
+    });
     expect(screen.getByText('3 directories · 2 files')).toBeTruthy();
     expect(screen.getByText('0 directories · 2 files')).toBeTruthy();
     expect(screen.queryByRole('table')).toBeNull();
@@ -501,8 +505,8 @@ describe("one form's Activity on the phone", () => {
     expect(sections[0].classList.contains('mt-1')).toBe(true);
     expect(sections[1].classList.contains('mt-[var(--text-ui--line-height)]')).toBe(true);
     fireEvent.click(toggle);
-    expect(screen.getAllByRole('table')).toHaveLength(2);
-    expect(screen.getAllByRole('group', { name: 'Activity table' })).toHaveLength(2);
+    expect(screen.getAllByRole('table')).toHaveLength(1);
+    expect(screen.getAllByRole('group', { name: 'Activity table' })).toHaveLength(1);
     const row = activity.rows[0];
     rerender(
       <ActivityPanel
@@ -522,7 +526,7 @@ describe("one form's Activity on the phone", () => {
     );
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('8 entries')).toBeTruthy();
-    expect(screen.getAllByRole('table')).toHaveLength(2);
+    expect(screen.getAllByRole('table')).toHaveLength(1);
     fireEvent.click(toggle);
     expect(screen.queryByRole('table')).toBeNull();
     expect(screen.getByText('0 directories · 2 files')).toBeTruthy();
@@ -1353,3 +1357,59 @@ it('renders symbol content and replaces progress without changing lifecycle', ()
   expect(screen.queryByRole('progressbar')).toBeNull();
   expect(screen.getByText('Finished stage')).toBeTruthy();
 });
+
+// Regression #230: long evidence is independent of the primary result disclosure.
+it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)(
+  'keeps section bodies independently collapsed for a %s activity',
+  (state) => {
+    const activity = activityProjection();
+    activity.rows = [
+      {
+        ...activity.rows[0],
+        state,
+        resources: [],
+        evidence: [],
+        error_summary: undefined,
+        presentation: {
+          headline: 'Read session',
+          summary: 'Three turns',
+          content: [{ type: 'text', text: 'Primary overview' }],
+          sections: [
+            {
+              headline: 'Turn details',
+              summary: 'Three requests',
+              content: [{ type: 'text', text: 'Full request body' }],
+            },
+            {
+              headline: 'Failure details',
+              summary: 'One failure',
+              content: [{ type: 'code', text: 'Unique failure body' }],
+            },
+            { headline: 'No further diagnostics', summary: '', content: [] },
+          ],
+        },
+      },
+    ];
+    paintActivity({ activity });
+    const root = screen.getByRole('button', { name: /Read session/ });
+    const turns = screen.getByRole('button', { name: 'Turn details' });
+    const failures = screen.getByRole('button', { name: 'Failure details' });
+    expect(turns.getAttribute('aria-expanded')).toBe('false');
+    expect(failures.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'No further diagnostics' })).toBeNull();
+    expect(screen.queryByText('Full request body')).toBeNull();
+    expect(screen.queryByText('Unique failure body')).toBeNull();
+    fireEvent.click(root);
+    expect(screen.queryByText('Full request body')).toBeNull();
+    fireEvent.click(turns);
+    expect(screen.getByText('Full request body')).toBeTruthy();
+    expect(screen.queryByText('Unique failure body')).toBeNull();
+    fireEvent.click(root);
+    expect(screen.getByText('Full request body')).toBeTruthy();
+    fireEvent.click(failures);
+    expect(screen.getAllByText('Unique failure body')).toHaveLength(1);
+    fireEvent.click(turns);
+    expect(screen.queryByText('Full request body')).toBeNull();
+    expect(screen.getByText('Unique failure body')).toBeTruthy();
+  },
+);

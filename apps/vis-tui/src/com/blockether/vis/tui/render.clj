@@ -5605,7 +5605,6 @@
   [{:keys [summary children resources evidence presentation] :as row}]
   (boolean (or (:is-truncated row)
                (seq (activity-field presentation :content))
-               (some #(seq (activity-field % :content)) (activity-field presentation :sections))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
                (and (empty? children)
@@ -5712,7 +5711,7 @@
   (vec
     (mapcat
       (fn [group]
-        (let [[index block]
+        (let [[_ block]
               (first group)
 
               field
@@ -5780,7 +5779,7 @@
                       (max 1 (- (long width) (long col)))
                       {:mode :channel :code-spacing? false :session-id session-id}))]
 
-          (concat (when (and (pos? index) (= kind "heading"))
+          (concat (when (= kind "heading")
                     [{:line "" :meta {:activity-content? true :activity-content-col col}}])
                   (if (and media? artifact)
                     (mapv #(update % :meta merge {:artifact artifact :session-id session-id})
@@ -5791,6 +5790,60 @@
                         (activity-content-field block :columns)
                         index))
                     (map-indexed vector blocks)))))
+
+(defn- activity-section-entries
+  "Keep section summaries visible and disclose each body independently."
+  [sections row-id node-id width col session-id artifacts running? expanded?]
+  (vec
+    (mapcat
+      (fn [[index section]]
+        (let [headline
+              (activity-field section :headline)
+
+              summary
+              (activity-field section :summary)
+
+              content
+              (activity-field section :content)
+
+              section-key
+              (str row-id ":section:" index)
+
+              openable?
+              (boolean (seq content))
+
+              open?
+              (and openable? (expanded? section-key false))
+
+              mark
+              (when openable? (if open? " ▾" " ▸"))
+
+              prefix
+              (str (activity-lead col) headline)
+
+              meta-base
+              {:session-id (str session-id) :item-id row-id}
+
+              head
+              {:line (str activity-marker (inline-disclosure-prefix prefix mark width))
+               :meta (merge meta-base
+                            {:kind :activity-row
+                             :headline-prefix prefix
+                             :right-suffix ""
+                             :inline-disclosure mark
+                             :node-id (when openable? (str node-id ":" section-key))
+                             :collapsed? (not open?)
+                             :operation-col col
+                             :operation-label headline})}]
+
+          (concat [{:line activity-marker :meta nil} head]
+                  (when (not-empty summary)
+                    [{:line (str activity-marker
+                                 (ellipsize-cols (str (activity-lead col) summary) width))
+                      :meta (assoc meta-base :kind :activity-evidence)}])
+                  (when open?
+                    (activity-content-entries content width col session-id artifacts running?)))))
+      (map-indexed vector sections))))
 
 (defn- activity-group-row
   [id label rows children]
@@ -6239,46 +6292,16 @@
                                                      (conj detail-row)
 
                                                      (seq sections)
-                                                     (into
-                                                       (mapcat
-                                                         (fn [section]
-                                                           (let [headline
-                                                                 (activity-field section :headline)
-
-                                                                 summary
-                                                                 (activity-field section :summary)
-
-                                                                 line-entry
-                                                                 (fn [text]
-                                                                   {:line (str activity-marker
-                                                                               (ellipsize-cols
-                                                                                 (str (activity-lead
-                                                                                        col)
-                                                                                      text)
-                                                                                 width))
-                                                                    :meta (merge meta-base
-                                                                                 {:kind
-                                                                                  :activity-evidence
-                                                                                  :item-id id})})]
-
-                                                             (concat (cond-> []
-                                                                       (= "ls" (:operation row))
-                                                                       (conj blank)
-
-                                                                       true
-                                                                       (conj (line-entry headline)))
-                                                                     (when (not-empty summary)
-                                                                       [(line-entry summary)])
-                                                                     (when open?
-                                                                       (activity-content-entries
-                                                                         (activity-field section
-                                                                                         :content)
-                                                                         width
-                                                                         col
-                                                                         session-id
-                                                                         activity-artifacts
-                                                                         (= :running state))))))
-                                                         sections))
+                                                     (into (activity-section-entries
+                                                             sections
+                                                             id
+                                                             node-id
+                                                             width
+                                                             col
+                                                             session-id
+                                                             activity-artifacts
+                                                             (= :running state)
+                                                             expanded?))
 
                                                      (and open? (or (seq touched) (seq diffs)))
                                                      (into (change-entries id touched diffs col))

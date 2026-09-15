@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.foundation.introspection-test
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -327,6 +329,101 @@
                     (finally (resources/stop-all! (str sid))
                              (env-python/dispose-python-context! python-context))))
              (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe
+  read-session-activity-boundary-test
+  ;; Regression #230: the real observed read must preserve numeric usage and
+  ;; complete evidence without expanding or duplicating it in the overview.
+  (it
+    "projects a stored multi-turn Python read into compact Activity sections"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [sid (h/store-session! s {:channel :tui :title "Read session integration"})
+              request (str "Review requirements.\n"
+                           (apply str (repeat 30 "Retain this requirement.\n"))
+                           "Complete request marker.")
+              message (str "Fixture exception\n"
+                           (apply str (repeat 20 "Traceback evidence\n"))
+                           "Complete failure marker.")
+              code "raise ValueError('fixture')"
+              turns (mapv (fn [prompt]
+                            (vis/db-store-session-turn!
+                              s
+                              {:parent-session-id sid :user-request prompt :status :running}))
+                          ["Inspect the session." request "Verify the result."])
+              _ (doseq [[n turn] (map-indexed vector turns)]
+                  (h/store-iteration!
+                    s
+                    {:session-turn-id turn
+                     :code (if (= n 1) code "print('raw transcript marker')")
+                     :forms [(cond-> {:src (if (= n 1) code "print('raw transcript marker')")
+                                      :vis/tool-name "python_execution"}
+                               (= n 1)
+                               (assoc :error {:message message})
+
+                               (not= n 1)
+                               (assoc :stdout "raw transcript marker\n"))]
+                     :tokens {"input" 1200 "cached" 700 "output" 90 "reasoning" 12}
+                     :cache-created-tokens 100
+                     :cost-usd 0.025})
+                  (vis/db-update-session-turn!
+                    s
+                    turn
+                    {:status (if (= n 1) :error :done)
+                     :tokens
+                     {"input" 1200 "cached" 700 "cache_created" 100 "output" 90 "reasoning" 12}
+                     :cost {"total_cost" 0.025}}))
+              env {:session-id sid :db-info s}
+              bindings (extension/builtin-sandbox-bindings (constantly env))
+              {:keys [python-context]} (tpc/new-context bindings)
+              events (atom [])]
+
+          (try
+            (let [result (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                           (env-python/run-python-block
+                             python-context
+                             (str
+                               "s = await read_session()\n"
+                               "assert s['current_turn']['cost'] == {'input_tokens': 1200, "
+                               "'input_cache_read_tokens': 700, 'input_cache_write_tokens': 100, "
+                               "'input_regular_tokens': 400, 'output_tokens': 90, "
+                               "'output_reasoning_tokens': 12, 'total_cost': 0.025}\n"
+                               "assert s['usage']['totals']['tokens'] == {'input': 3600, "
+                               "'cached': 2100, 'uncached': 1500, 'cache_created': 300, "
+                               "'output': 270, 'reasoning': 36}\n"
+                               "assert len(s['transcript']['turns']) == 3\n"
+                               "assert 'raw transcript marker' in str(s['transcript'])\n"
+                               "assert 'Complete request marker.' in str(s['transcript'])\n"
+                               "assert 'Complete failure marker.' in str(s['transcript'])\n"
+                               "print('complete raw read verified')")))
+                  projection (activity/presentation (activity/replay @events))
+                  view (:presentation (first (:rows projection)))
+                  content (get view "content")
+                  sections (into {} (map (juxt #(get % "headline") identity) (get view "sections")))
+                  overview (pr-str content)
+                  usage (pr-str (get sections "Session details"))
+                  requests (pr-str (get sections "Turn details"))
+                  failures (pr-str (get sections "Failure details"))]
+
+              (expect (nil? (:error result)))
+              (expect (= "complete raw read verified\n" (:stdout result)))
+              (expect (= [:start :terminal] (mapv :phase @events)))
+              (expect (activity-contract/valid-projection? projection))
+              (expect (= "Read session" (get view "headline")))
+              (expect (= ["Current turn" "Usage" "Diagnosis" "Turns"]
+                         (mapv #(get % "text") (filter #(= "heading" (get % "type")) content))))
+              (expect (str/includes? overview "3600"))
+              (expect (str/includes? overview "2100"))
+              (expect (str/includes? usage "1200"))
+              (expect (not (str/includes? usage "[REDACTED]")))
+              (expect (not (str/includes? overview "Complete request marker.")))
+              (expect (not (str/includes? overview "Complete failure marker.")))
+              (expect (str/includes? requests "Complete request marker."))
+              (expect (str/includes? failures code))
+              (expect (= 1 (count (re-seq #"Complete failure marker\." (pr-str view))))))
+            (finally (resources/stop-all! (str sid))
+                     (env-python/dispose-python-context! python-context))))
+        (finally (vis/db-dispose-connection! s))))))
 
 (defdescribe
   read-session-strings-only-test

@@ -7,6 +7,7 @@ import type {
   ActivityResource,
   ActivityRow,
   ActivityContent,
+  ActivitySection,
   ActivityTextEvidence,
   ActivityTextFormat,
 } from '../lib/activity';
@@ -628,6 +629,54 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
   );
 }
 
+function ActivitySectionView({
+  section,
+  running,
+  className,
+}: {
+  section: ActivitySection;
+  running: boolean;
+  className: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasContent = section.content.length > 0;
+  const label = (
+    <span className="min-w-0 truncate" title={section.headline}>
+      {section.headline}
+    </span>
+  );
+
+  return (
+    <section data-activity-section className={`min-w-0 pl-4.5 ${className}`}>
+      <h5 className="min-w-0 text-meta font-bold text-code-result">
+        {hasContent ? (
+          <Disclosure
+            isOpen={open}
+            tone="execution"
+            density="compact"
+            className="min-w-0 max-w-full"
+            onClick={() => setOpen(!open)}
+          >
+            {label}
+          </Disclosure>
+        ) : (
+          label
+        )}
+      </h5>
+      {section.summary && (
+        <p
+          data-activity-summary
+          className="truncate text-meta text-dialog-hint"
+          title={section.summary}
+        >
+          {section.summary}
+        </p>
+      )}
+      {open && hasContent && <ActivityBody content={section.content} running={running} />}
+    </section>
+  );
+}
+
 function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) {
   const nested = depth > 0;
   const failed = row.state === 'failed';
@@ -672,7 +721,6 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
   const openable =
     Boolean(row.is_truncated) ||
     Boolean(content?.length) ||
-    sections.some((section) => section.content.length > 0) ||
     showsOutcome ||
     showsFiles ||
     diffs.length > 0 ||
@@ -773,27 +821,14 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
         <ActivityBody content={content} running={running} />
       )}
       {sections.map((section, index) => (
-        <section
+        <ActivitySectionView
           key={index}
-          data-activity-section
-          className={`min-w-0 pl-4.5 ${row.operation === 'ls' ? (index === 0 && !(open && content?.length) ? 'mt-1' : 'mt-[var(--text-ui--line-height)]') : ''}`}
-        >
-          <h5 className="truncate text-meta font-bold text-code-result" title={section.headline}>
-            {section.headline}
-          </h5>
-          {section.summary && (
-            <p
-              data-activity-summary
-              className="truncate text-meta text-dialog-hint"
-              title={section.summary}
-            >
-              {section.summary}
-            </p>
-          )}
-          {open && section.content.length > 0 && (
-            <ActivityBody content={section.content} running={running} />
-          )}
-        </section>
+          section={section}
+          running={running}
+          className={
+            index === 0 && !(open && content?.length) ? 'mt-1' : 'mt-[var(--text-ui--line-height)]'
+          }
+        />
       ))}
       {open && showsOutcome && (
         <p className="whitespace-pre-wrap break-words text-meta text-err-ink">{outcome}</p>

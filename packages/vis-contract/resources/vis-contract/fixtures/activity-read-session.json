@@ -1,0 +1,209 @@
+{
+  "state": "succeeded",
+  "counts": {
+    "running": 0,
+    "succeeded": 1,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "rows": [
+    {
+      "result_summary": "{\"session\" {\"title\" \"Session review\", \"model\" \"example-model\", \"turn_count\" 3, \"goal\" \"Verify a complete session read.\", \"turns\" [{\"id\" \"turn-1\", \"outcome\" \"completed\", \"iteration_count\" 2, \"user_request\" \"Inspect the session.\", \"answer\" \"Inspection complete.\"} {\"id\" \"turn-2\", \"outcome\" \"failed\", \"iteration_count\" 1, \"user_request\" \"Review the long request.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nFinal request requirement.\"} {\"id\" \"turn-3\", \"outcome\" \"running\", \"iteration_count\" 1, \"user_request\" \"Check the fix.\"}]}, \"current_turn\" {\"id\" \"turn-3\", \"user_request\" \"Check the fix.\", \"status\" \"running\", \"elapsed_ms\" 2300, \"iteration\" {\"current\" 2}, \"failures\" [], \"cost\" {\"input_tokens\" 1200, \"input_cache_read_tokens\" 700, \"input_cache_write_tokens\" 100, \"input_regular_tokens\" 400, \"output_tokens\" 90, \"output_reasoning_tokens\" 12, \"total_cost\" 0.025}}, \"usage\" {\"totals\" {\"tokens\" {\"input\" 12345, \"cached\" 6700, \"cache_created\" 100, \"uncached\" 5545, \"output\" 890, \"reasoning\" 120}, \"cost_usd\" 0.125, \"turns\" 3, \"iterations\" 4}}, \"failures\" [{\"message\" \"Fixture failure\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTrace…",
+      "id": "result-0",
+      "summary": "",
+      "signal": "observation",
+      "sequence": 1,
+      "operation": "read_session",
+      "presentation": {
+        "headline": "Read session",
+        "summary": "Session review · 3 turns · 1 failure",
+        "content": [
+          {
+            "type": "heading",
+            "text": "Current turn"
+          },
+          {
+            "type": "text",
+            "text": "Running · Turn 3 · iteration 2 · 2300 ms"
+          },
+          {
+            "type": "heading",
+            "text": "Usage"
+          },
+          {
+            "type": "text",
+            "text": "Session · input 12345 · output 890 · cost $0.125"
+          },
+          {
+            "type": "text",
+            "text": "Cache read 6700 · cache write 100 · uncached input 5545 · reasoning 120"
+          },
+          {
+            "type": "heading",
+            "text": "Diagnosis"
+          },
+          {
+            "type": "text",
+            "text": "1 failure"
+          },
+          {
+            "type": "heading",
+            "text": "Turns"
+          },
+          {
+            "type": "table",
+            "columns": ["Turn", "Outcome", "Request"],
+            "rows": [
+              ["Turn 1", "Completed", "Inspect the session."],
+              ["Turn 2", "Failed", "Review the long request.…"],
+              ["Turn 3", "Running", "Check the fix."]
+            ]
+          }
+        ],
+        "sections": [
+          {
+            "headline": "Session details",
+            "summary": "Metadata and complete usage",
+            "content": [
+              {
+                "type": "table",
+                "columns": ["Session", "Result"],
+                "rows": [
+                  ["Goal", "Verify a complete session read."],
+                  ["Model", "example-model"],
+                  ["Title", "Session review"]
+                ]
+              },
+              {
+                "type": "heading",
+                "text": "Usage breakdown"
+              },
+              {
+                "type": "table",
+                "columns": ["Metric", "Session", "Current turn"],
+                "rows": [
+                  ["Input tokens", "12345", "1200"],
+                  ["Cache read tokens", "6700", "700"],
+                  ["Cache write tokens", "100", "100"],
+                  ["Regular input tokens", "5445", "400"],
+                  ["Output tokens", "890", "90"],
+                  ["Reasoning tokens", "120", "12"],
+                  ["Cost (USD)", "0.125", "0.025"]
+                ]
+              },
+              {
+                "type": "heading",
+                "text": "Next actions"
+              },
+              {
+                "type": "text",
+                "text": "Check the failing input before retrying."
+              }
+            ]
+          },
+          {
+            "headline": "Turn details",
+            "summary": "3 turns · full requests and answers",
+            "content": [
+              {
+                "type": "heading",
+                "text": "Turn 1 · Completed"
+              },
+              {
+                "type": "text",
+                "text": "Inspect the session."
+              },
+              {
+                "type": "heading",
+                "text": "Answer"
+              },
+              {
+                "type": "markdown",
+                "text": "Inspection complete."
+              },
+              {
+                "type": "heading",
+                "text": "Turn 2 · Failed"
+              },
+              {
+                "type": "text",
+                "text": "Review the long request.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nKeep every requirement.\nFinal request requirement."
+              },
+              {
+                "type": "heading",
+                "text": "Turn 3 · Running"
+              },
+              {
+                "type": "text",
+                "text": "Check the fix."
+              }
+            ]
+          },
+          {
+            "headline": "Failure details",
+            "summary": "1 failure · message and code",
+            "content": [
+              {
+                "type": "heading",
+                "text": "Failure 1 · Turn 2"
+              },
+              {
+                "type": "table",
+                "columns": ["Detail", "Result"],
+                "rows": [
+                  ["Advice", "Check the failing input before retrying."],
+                  ["Auth token", "[REDACTED]"],
+                  ["Classification", "python-error"],
+                  ["Iteration", "1"],
+                  ["Tool", "repl_eval"]
+                ]
+              },
+              {
+                "type": "heading",
+                "text": "Code"
+              },
+              {
+                "type": "code",
+                "text": "raise ValueError(\"Fixture failure\")"
+              },
+              {
+                "type": "heading",
+                "text": "Message"
+              },
+              {
+                "type": "markdown",
+                "text": "Fixture failure\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nTraceback detail\nFinal failure detail."
+              },
+              {
+                "type": "heading",
+                "text": "Source"
+              },
+              {
+                "type": "code",
+                "text": "code"
+              }
+            ]
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{\"session\" {\"title\" \"Session review\", \"model\" \"example-model\", \"turn_count\" 3, \"goal\" \"Verify a complete session read.\", \"turns\" [{\"id\" \"turn-1\", \"outcome\" \"completed\", \"iteration_count\" 2, \"user_request\" \"Inspect the session.\", \"answer\" \"Inspection complete.\"} {\"id\" \"turn-2\", \"outcome\" \"failed\", \"iteration_count\" 1, \"user_request\" \"Review the long request.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nKeep every requirement.\\nFinal request requirement.\"} {\"id\" \"turn-3\", \"outcome\" \"running\", \"iteration_count\" 1, \"user_request\" \"Check the fix.\"}]}, \"current_turn\" {\"id\" \"turn-3\", \"user_request\" \"Check the fix.\", \"status\" \"running\", \"elapsed_ms\" 2300, \"iteration\" {\"current\" 2}, \"failures\" [], \"cost\" {\"input_tokens\" 1200, \"input_cache_read_tokens\" 700, \"input_cache_write_tokens\" 100, \"input_regular_tokens\" 400, \"output_tokens\" 90, \"output_reasoning_tokens\" 12, \"total_cost\" 0.025}}, \"usage\" {\"totals\" {\"tokens\" {\"input\" 12345, \"cached\" 6700, \"cache_created\" 100, \"uncached\" 5545, \"output\" 890, \"reasoning\" 120}, \"cost_usd\" 0.125, \"turns\" 3, \"iterations\" 4}}, \"failures\" [{\"message\" \"Fixture failure\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTraceback detail\\nTrace…"
+        }
+      ],
+      "resources": []
+    }
+  ],
+  "omitted": {
+    "rows": 0,
+    "by_classification": {}
+  }
+}

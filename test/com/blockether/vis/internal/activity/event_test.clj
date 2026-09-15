@@ -223,6 +223,136 @@
           (expect (nil? (event/event-error result)))))))
 
 (defdescribe
+  token-usage-redaction-test
+  ;; #230: telemetry names contain "token", but their numeric counts are public.
+  (let [usage
+        {"input_tokens" 1201
+         "input_cache_read_tokens" 1002
+         "input_cache_write_tokens" 103
+         "input_regular_tokens" 96
+         "output_reasoning_tokens" 45
+         "output_tokens" 67
+         "total_tokens" 1268}
+
+        credentials
+        {"access_token" 123456
+         "custom_tokens" 654321
+         :auth/input_tokens 789012
+         "input_tokens_secret" 890123
+         "api_key" "fixture-credential"
+         "input_tokens" "fixture-credential"}]
+
+    (it "preserves exact numeric usage keys while keeping other credentials private"
+        (doseq [key-fn [identity keyword symbol #(keyword (string/replace % "_" "-"))]]
+          (let [metrics (into {}
+                              (map (fn [[k v]]
+                                     [(key-fn k) v]))
+                              usage)]
+            (expect (= {"usage" [metrics]} (event/redact {"usage" [metrics]})))))
+        (expect (= (zipmap (keys credentials) (repeat "[REDACTED]")) (event/redact credentials)))
+        (expect (= "access_token=[REDACTED]" (event/redact "access_token=fixture-credential"))))
+    (it
+      "preserves usage in bounded summaries and the result-to-presentation boundary"
+      (let [ctx
+            (event/context)
+
+            captured
+            (atom nil)
+
+            raw
+            {"cost" usage "nested" credentials}
+
+            details
+            {:operation :read_session
+             :presenter :generic
+             :started-at-ms 0
+             :outcome :succeeded
+             :args [usage]
+             :result raw
+             :activity {:headline "Read session"
+                        :render (fn [_ public]
+                                  (reset! captured public)
+                                  {"headline" "Read session"
+                                   "summary" "Usage"
+                                   "content" [{"type" "table"
+                                               "columns" ["Metric" "Count"]
+                                               "rows" (mapv (fn [[k v]]
+                                                              [k (str v)])
+                                                            (get public "cost"))}]})}}
+
+            start
+            (event/start-event ctx (event/invocation ctx nil) details)
+
+            terminal
+            (event/terminal-event ctx (event/invocation ctx nil) details)]
+
+        (expect (= usage (get @captured "cost")))
+        (expect (= (event/redact credentials) (get @captured "nested")))
+        (doseq [text
+                [(:argument-summary start) (:result-summary terminal)
+                 (wire/json-str (:presentation terminal))]
+
+                [_ value]
+                usage]
+
+          (expect (string/includes? text (str value))))
+        (expect (not (string/includes? (pr-str terminal) "fixture-credential")))
+        (expect (nil? (event/event-error terminal)))))))
+
+(defdescribe
+  aggregate-token-redaction-test
+  ;; #230: read_session usage totals have a fixed numeric token-counter shape.
+  (let [tokens
+        {"input" 1201 "cached" 1002 "uncached" 96 "cache_created" 103 "output" 67 "reasoning" 45}]
+    (it
+      "preserves only the complete numeric aggregate shape through every event view"
+      (doseq [key-fn [identity keyword #(keyword (string/replace % "_" "-"))]]
+        (let [counts (into {}
+                           (map (fn [[k v]]
+                                  [(key-fn k) v]))
+                           tokens)
+              value {(key-fn "tokens") counts}
+              captured (atom nil)
+              ctx (event/context)
+              details {:operation :read_session
+                       :presenter :generic
+                       :started-at-ms 0
+                       :outcome :succeeded
+                       :args [value]
+                       :result value
+                       :activity {:headline "Read session"
+                                  :render (fn [_ public]
+                                            (reset! captured public)
+                                            {"headline" "Read session"
+                                             "summary" "Usage"
+                                             "content" [{"type" "table"
+                                                         "columns" ["Count"]
+                                                         "rows"
+                                                         (mapv #(vector (str %))
+                                                               (vals (get public
+                                                                          (key-fn "tokens"))))}]})}}
+              start (event/start-event ctx (event/invocation ctx nil) details)
+              terminal (event/terminal-event ctx (event/invocation ctx nil) details)]
+
+          (expect (= value (event/redact value)))
+          (expect (= value @captured))
+          (doseq [text [(:argument-summary start) (:result-summary terminal)
+                        (wire/json-str (:presentation terminal))]
+                  n (vals tokens)]
+
+            (expect (string/includes? text (str n))))
+          (expect (nil? (event/event-error terminal))))))
+    (it "rejects credential containers, extra fields, missing fields and nonnumeric counters"
+        (doseq [value ["fixture-credential" 123456 {} {"access" 123456}
+                       (assoc tokens "access_token" 123456)
+                       (assoc tokens "input" "fixture-credential") (dissoc tokens "reasoning")
+                       (-> tokens
+                           (dissoc "input")
+                           (assoc :auth/input 1201))]]
+          (expect (= {"tokens" "[REDACTED]"} (event/redact {"tokens" value}))))
+        (expect (= {:auth/tokens "[REDACTED]"} (event/redact {:auth/tokens tokens}))))))
+
+(defdescribe
   complete-result-presentation-test
   (it "passes every nested Python build field to the renderer and retains large content"
       ;; #218: even nine nested records exceeded the old 128-node public-view budget.
