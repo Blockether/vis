@@ -591,33 +591,50 @@
                                "vis-gateway-client-shutdown"))))
 
 (defn- await-extension-startup!
-  "Report a cold gateway's package preparation while retaining its client lease."
+  "Report preparation and load failures, including when the gateway is already ready."
   [entry initial]
-  (when (= "initializing" (get-in initial ["extensions" "stage"]))
-    (let [deadline (+ (util/now-ms) 600000)]
-      (binding [*out* *err*]
-        (println "[vis extensions] preparing gateway extensions…")
-        (loop [status initial
-               seen #{}]
+  (let [initial-stage (get-in initial ["extensions" "stage"])]
+    (when (or (contains? #{"initializing" "failed"} initial-stage)
+              (pos? (get-in initial ["extensions" "failed"] 0)))
+      (let [deadline (+ (util/now-ms) 600000)]
+        (binding [*out* *err*]
+          (when (= "initializing" initial-stage)
+            (println "[vis extensions] preparing gateway extensions…"))
+          (loop [status initial
+                 seen #{}]
 
-          (let [{:strs [stage packages loaded failed]} (get status "extensions")
-                fresh (remove seen packages)]
+            (let [{:strs [stage packages loaded failed failures error]} (get status "extensions")
+                  fresh (remove seen packages)]
 
-            (doseq [{:strs [name stage]} fresh]
-              (println (str "[vis extensions] " name ": " stage)))
-            (flush)
-            (if (= "initializing" stage)
-              (if (< (util/now-ms) deadline)
-                (do (Thread/sleep 200)
-                    (recur (send-json-with-entry! entry "GET" "/v1/admin/status" nil)
-                           (into seen fresh)))
-                (throw (ex-info
-                         "Extension preparation is still running; inspect gateway status and retry."
-                         {:type :gateway/extension-preparation-timeout})))
-              (do (println (if (= "ready" stage)
-                             (str "[vis extensions] " loaded " loaded, " failed " failed")
-                             "[vis extensions] preparation failed; run vis-agent doctor"))
-                  (flush)))))))))
+              (doseq [{:strs [name stage]} fresh]
+                (println (str "[vis extensions] " name ": " stage)))
+              (flush)
+              (if (= "initializing" stage)
+                (if (< (util/now-ms) deadline)
+                  (do (Thread/sleep 200)
+                      (recur (send-json-with-entry! entry "GET" "/v1/admin/status" nil)
+                             (into seen fresh)))
+                  (throw
+                    (ex-info
+                      "Extension preparation is still running; inspect gateway status and retry."
+                      {:type :gateway/extension-preparation-timeout})))
+                (do (println (if (= "ready" stage)
+                               (str "[vis extensions] " loaded " loaded, " failed " failed")
+                               "[vis extensions] preparation failed; run vis-agent doctor"))
+                    (when error
+                      (doseq [line (str/split-lines error)]
+                        (println (str "  " line))))
+                    (doseq [{:strs [file extension error stale]} failures]
+                      (println (str "[vis extensions] "
+                                    (or file extension "Unknown extension")
+                                    (when (and file extension) (str " (" extension ")"))
+                                    ": "
+                                    (if stale
+                                      "reload failed; using last-known-good version"
+                                      "not loaded")))
+                      (doseq [line (str/split-lines error)]
+                        (println (str "  " line))))
+                    (flush))))))))))
 
 (defn- ensure-client!
   "Register this JVM as a daemon client exactly once. This is the refcount lease

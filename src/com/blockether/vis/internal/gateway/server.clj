@@ -284,18 +284,43 @@
 
 (defonce ^:private extension-startup (atom {:stage "idle"}))
 
+(defn- extension-diagnostic-text
+  [text]
+  (-> (str text)
+      (str/replace #"\u001b\[[0-?]*[ -/]*[@-~]" "")
+      (str/replace #"[\p{Cntrl}&&[^\n\t]]" "")
+      (util/redact-secret-text (keep (fn [[key value]]
+                                       (when (util/secret-key? key) value))
+                                     (System/getenv)))))
+
 (defn- extension-startup-status
+  "Current extension counts and safe diagnostics for client registration and admin status."
   []
-  (assoc @extension-startup :packages (vec (python-runtime/preparation-status))))
+  (let [status (assoc @extension-startup :packages (vec (python-runtime/preparation-status)))]
+    (if (= "ready" (:stage status))
+      (let [failures (python-extensions/load-failures)]
+        (assoc status
+          :loaded (count (python-extensions/loaded-python-extensions))
+          :failed (count failures)
+          :failures (mapv (fn [{:keys [file extension error stale?]}]
+                            {:file (some-> file
+                                           extension-diagnostic-text)
+                             :extension (some-> extension
+                                                extension-diagnostic-text)
+                             :error (extension-diagnostic-text error)
+                             :stale (boolean stale?)})
+                          failures)))
+      status)))
 
 (defn- prepare-startup-extensions!
   "Load after HTTP starts so clients can report preparation without a health timeout."
   []
-  (try (reset! extension-startup (assoc (select-keys
-                                          (python-extensions/ensure-python-extensions-loaded!)
-                                          [:loaded :failed])
-                                   :stage "ready"))
-       (catch Throwable _ (reset! extension-startup {:stage "failed"}))))
+  (try (python-extensions/ensure-python-extensions-loaded!)
+       (reset! extension-startup {:stage "ready"})
+       (catch Throwable t
+         (reset! extension-startup {:stage "failed"
+                                    :error (extension-diagnostic-text (or (ex-message t)
+                                                                          (str t)))}))))
 
 (defn- status-map
   []
