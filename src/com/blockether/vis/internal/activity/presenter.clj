@@ -47,10 +47,10 @@
 
 (defn- text-block
   [key text]
-  {"type" (cond (contains? #{"content" "body" "description" "documentation" "message"} key)
-                "markdown"
-                (contains? #{"out" "err" "stdout" "stderr" "output" "code" "source"} key) "code"
-                :else "text")
+  {"type"
+   (cond (contains? #{"content" "body" "description" "documentation" "message"} key) "markdown"
+         (contains? #{"out" "err" "stdout" "stderr" "output" "code" "source" "log_tail"} key) "code"
+         :else "text")
    "text" text})
 
 (defn- visible-result
@@ -106,45 +106,43 @@
                                            :else "Exit code unavailable")}]))}))
 
 (defn- result-blocks
-  "Render bounded public data with contextual scalar-table headings. Nested maps
-   use generic detail headings rather than inheriting top-level metric labels."
-  [value table-label]
-  (cond (nil? value) []
-        (map? value) (let [entries
-                           (sort-by (comp str key) (dissoc value :op "op"))
+  "Keep metadata in readable text; tables are reserved for comparable records."
+  [value]
+  (cond (or (nil? value) (and (coll? value) (empty? value))) []
+        (map? value)
+        (let [entries
+              (sort-by (comp str key) (dissoc value :op "op"))
 
-                           short?
-                           (fn [[k v]]
-                             (and (not (contains? #{"content" "body" "description" "documentation"
-                                                    "message" "out" "err" "stdout" "stderr" "output"
-                                                    "code" "source"}
-                                                  (scalar k)))
-                                  (not (coll? v))
-                                  (<= (count (scalar v)) 256)
-                                  (not (str/includes? (scalar v) "\n"))))
+              short?
+              (fn [[k v]]
+                (and (not (contains? #{"content" "body" "description" "documentation" "message"
+                                       "out" "err" "stdout" "stderr" "output" "code" "source"
+                                       "log_tail"}
+                                     (scalar k)))
+                     (not (coll? v))
+                     (<= (count (scalar v)) 256)
+                     (not (str/includes? (scalar v) "\n"))))
 
-                           fields
-                           (filter short? entries)
+              fields
+              (filter short? entries)
 
-                           bodies
-                           (remove short? entries)]
+              bodies
+              (remove short? entries)]
 
-                       (into (if (seq fields)
-                               [{"type" "table"
-                                 "columns" [table-label "Result"]
-                                 "rows" (mapv (fn [[k v]]
-                                                [(label k) (scalar v)])
-                                              fields)}]
-                               [])
-                             (mapcat (fn [[k v]]
-                                       (cons {"type" "heading" "text" (label k)}
-                                             (if (string? v)
-                                               [(text-block (scalar k) v)]
-                                               (result-blocks v "Detail"))))
-                                     bodies)))
+          (into (if (seq fields)
+                  [{"type" "text"
+                    "text" (str/join " · "
+                                     (map (fn [[k v]]
+                                            (str (label k) ": " (scalar v)))
+                                          fields))}]
+                  [])
+                (mapcat (fn [[k v]]
+                          (cons {"type" "heading" "text" (label k)}
+                                (if (string? v) [(text-block (scalar k) v)] (result-blocks v))))
+                        bodies)))
         (sequential? value) (if (every? #(not (coll? %)) value)
                               [{"type" "text" "text" (str/join "\n" (map scalar value))}]
-                              (vec (mapcat #(result-blocks % table-label) value)))
+                              (vec (mapcat result-blocks value)))
         (string? value) [{"type" "text" "text" value}]
         :else [{"type" "text" "text" (scalar value)}]))
 
@@ -305,17 +303,13 @@
 (def ^:private result-fields
   {"get_session" ["title" "goal" "turn_count" "model" "last_turn"]
    "list_sessions" ["title" "goal" "turn_count" "request_snippet" "reply_snippet"]
-   "repl_start" ["result" "status" "cwd" "message" "log_tail"]
-   "repl_status" ["result" "status" "cwd" "resources"]
-   "repl_connect" ["result" "status" "cwd" "host" "port" "external" "message"]
-   "repl_stop" ["result" "status" "cwd"]
-   "draft_status" ["in_draft" "label" "branch" "target_branch" "ahead" "pending"]
-   "draft_diff" ["filename" "version" "size" "checkpoint" "empty"]
-   "draft_create" ["label" "root" "branch" "target_branch" "clean"]
-   "draft_approve" ["status" "published" "branch" "target_branch" "files"]
-   "draft_discard" ["status" "label" "root" "approved_ahead"]
-   "update_goal" ["goal" "status"]
-   "mcp__call" ["server" "tool" "content" "is_error" "tools"]})
+   "repl_start" ["message" "log_tail" "exit"]
+   "repl_status" ["resources" "message" "log_tail" "exit"]
+   "repl_connect" ["message"]
+   "repl_stop" ["message"]
+   "draft_approve" ["files"]
+   "update_goal" ["objective" "reason"]
+   "mcp__call" ["content" "tools"]})
 
 (defn- select-result
   [fields value]
@@ -339,7 +333,9 @@
         (field value "changed")
 
         incomplete?
-        (or (field value "unbalanced") (some #(field % "unbalanced") files))]
+        (or (field value "unbalanced")
+            (field value "error")
+            (some #(or (field % "unbalanced") (field % "error")) files))]
 
     (cond incomplete? "Formatting incomplete"
           (and (sequential? files) (empty? files)) "No files to format"
@@ -397,7 +393,8 @@
 
 (defn- clean-lint-result?
   [value]
-  (and (every? #(and (number? %) (zero? %)) (map #(field value %) ["error" "warning" "info"]))
+  (and (every? #(and (number? %) (zero? (double %)))
+               (map #(field value %) ["error" "warning" "info"]))
        (empty? (field value "findings"))))
 
 (defn- session-preview
@@ -416,6 +413,128 @@
 
     (str (subs text 0 (.offsetByCodePoints text 0 (int (min characters limit))))
          (when (or (> characters limit) (next lines)) "…"))))
+
+(defn- summary-line [parts] (str/join " · " (remove str/blank? parts)))
+
+(defn- draft-summary
+  [op value]
+  (let [branch
+        (field value "branch")
+
+        target
+        (field value "target_branch")
+
+        pending
+        (field value "pending")
+
+        ahead
+        (field value "ahead")
+
+        kept
+        (field value "approved_ahead")
+
+        files
+        (field value "files")]
+
+    (case op
+      "draft_status"
+      (cond (false? (field value "in_draft")) "No active draft"
+            (true? (field value "in_draft")) (summary-line
+                                               [(str branch (when target (str " → " target)))
+                                                (when (number? pending)
+                                                  (if (zero? (long pending))
+                                                    "No pending changes"
+                                                    (counted-label pending "pending file")))
+                                                (when (and (number? ahead) (pos? (long ahead)))
+                                                  (str (counted-label ahead "commit") " ahead"))])
+            :else "No draft status")
+
+      "draft_create"
+      (if branch
+        (summary-line [(str branch (when target (str " → " target)))
+                       (case (field value "clean")
+                         true
+                         "Clean snapshot"
+
+                         false
+                         "Includes pending changes"
+
+                         nil)])
+        "No draft result")
+
+      "draft_approve"
+      (if target
+        (summary-line
+          [(when (= "nothing-to-approve" (scalar (field value "status"))) "Nothing to approve")
+           (str (if (true? (field value "published")) "Published to " "Approved locally on ")
+                target) (when (seq files) (counted-label (count files) "file"))])
+        "No draft result")
+
+      "draft_diff"
+      (if-let [filename (field value "filename")]
+        (summary-line [filename (if (true? (field value "empty")) "No changes" "Diff attached")])
+        "No draft result")
+
+      "draft_discard"
+      (if-let [target (field value "root")]
+        (summary-line [(field value "label") (str "Returned to " target)
+                       (when (and (number? kept) (pos? (long kept)))
+                         (str (counted-label kept "approved commit") " kept"))])
+        "No draft result"))))
+
+(defn- repl-status-summary
+  [value]
+  (let [result
+        (field value "result")
+
+        status
+        (if (and result (not= "status" result)) result (field value "status"))
+
+        host
+        (field value "host")
+
+        port
+        (field value "port")
+
+        resources
+        (field value "resources")]
+
+    (summary-line [(case status
+                     "up"
+                     "Running"
+
+                     "down"
+                     "Not running"
+
+                     "already-running"
+                     "Already running"
+
+                     (if status (label status) "No REPL status")) (field value "cwd")
+                   (when (or host port) (str (or host "127.0.0.1") (when port (str ":" port))))
+                   (when-let [build (field value "build")]
+                     (str "Build " build)) (when (true? (field value "external")) "External REPL")
+                   (when (seq resources) (counted-label (count resources) "live REPL"))])))
+
+(defn- test-summary
+  [value]
+  (let [total
+        (field value "total")
+
+        failed
+        (field value "fail")
+
+        errored
+        (field value "errored")]
+
+    (cond (field value "timed_out") "Test run timed out"
+          (field value "error") "Test run failed"
+          (and (number? total) (zero? (long total))) "No tests ran"
+          (number? total)
+          (summary-line [(counted-label total "test")
+                         (if (number? failed) (str failed " failed") "Failure count unavailable")
+                         (when (and (number? errored) (pos? (long errored)))
+                           (str errored " errored"))])
+          :else "No test result")))
 
 (defn- council-body
   [value key]
@@ -660,25 +779,23 @@
          (when present?
            [{"headline" "Session details"
              "summary" "Metadata and complete usage"
-             "content" (vec
-                         (concat (result-blocks (visible-result (select-result ["title" "goal"
-                                                                                "model" "provider"
-                                                                                "created_at"]
-                                                                               session))
-                                                "Session")
-                                 (when (or totals cost)
-                                   [(heading "Usage breakdown")
-                                    {"type" "table"
-                                     "columns" ["Metric" "Session" "Current turn"]
-                                     "rows" (conj (mapv (fn [[title total-key current-key]]
-                                                          [title (metric total-key)
-                                                           (display (field cost current-key))])
-                                                        metrics)
-                                                  ["Cost (USD)" (display (field totals "cost_usd"))
-                                                   (display (field cost "total_cost"))])}])
-                                 (when (seq (field diagnosis "next_actions"))
-                                   [(heading "Next actions")
-                                    (text (str/join "\n" (field diagnosis "next_actions")))])))}])
+             "content"
+             (vec (concat (result-blocks (visible-result (select-result ["title" "goal" "model"
+                                                                         "provider" "created_at"]
+                                                                        session)))
+                          (when (or totals cost)
+                            [(heading "Usage breakdown")
+                             {"type" "table"
+                              "columns" ["Metric" "Session" "Current turn"]
+                              "rows" (conj (mapv (fn [[title total-key current-key]]
+                                                   [title (metric total-key)
+                                                    (display (field cost current-key))])
+                                                 metrics)
+                                           ["Cost (USD)" (display (field totals "cost_usd"))
+                                            (display (field cost "total_cost"))])}])
+                          (when (seq (field diagnosis "next_actions"))
+                            [(heading "Next actions")
+                             (text (str/join "\n" (field diagnosis "next_actions")))])))}])
          (when (seq turns)
            [{"headline" "Turn details"
              "summary" (str (counted-label (count turns) "turn") " · full requests and answers")
@@ -707,8 +824,7 @@
                                     (result-blocks (visible-result (cond-> failure
                                                                      shared-request?
                                                                      (dissoc "user_request"
-                                                                       :user_request)))
-                                                   "Detail"))))
+                                                                       :user_request)))))))
                           (range 1 (inc (count failures)))
                           failures))}])))}))
 
@@ -717,7 +833,7 @@
    default view. Evidence is public, redacted and bounded by the event owner.
    Only numeric counts and outcome flags use the complete result in details;
    displayed paths and all body text always come from the bounded public value."
-  [{:keys [operation label result]} value]
+  [{:keys [operation result] :as details} value]
   (when (contains? tool-headlines (name operation))
     (let [op
           (name operation)
@@ -726,13 +842,17 @@
           (when (string? value) value)
 
           path
-          (or label "")
+          (or (:label details) "")
 
           read-lines
           (when (and (= op "cat") text) (map second (re-seq #"(?m)^(\d+):[0-9a-f]+│" text)))
 
           headline
-          (second (get tool-headlines op))
+          (if (and (str/starts-with? op "repl_")
+                   (or (= "failed" (field value "status"))
+                       (contains? #{"failed" "no-launcher"} (field value "result"))))
+            "REPL unavailable"
+            (second (get tool-headlines op)))
 
           summary
           (cond (= op "cat") (str path
@@ -740,49 +860,57 @@
                                     (str " · lines " (first read-lines) "–" (last read-lines))))
                 (contains? #{"doc" "defs" "patch" "shell"} op) path
                 (= op "grep") (or (first (str/split-lines (or text ""))) "")
-                (= op "format_code") (str (or (field value "summary")
-                                              (format-summary (or result value)))
-                                          (when-let [target (field value "path")]
-                                            (str " · " target)))
+                (= op "format_code")
+                (str (or (field value "summary") (format-summary (or result value)))
+                     (when (true? (field value "repaired")) " · Syntax repaired")
+                     (when-let [target (field value "path")]
+                       (str " · " target)))
                 (= op "lint_code") (lint-summary (or result value))
-                (and (= op "run_tests") (number? (field value "total")))
-                (str (or (field value "total") 0) " tests · " (or (field value "fail") 0) " failed")
+                (= op "run_tests") (test-summary (or result value))
+                (str/starts-with? op "draft_") (draft-summary op value)
+                (contains? #{"repl_start" "repl_status" "repl_connect" "repl_stop"} op)
+                (repl-status-summary value)
+                (= op "update_goal")
+                (summary-line [(if-let [status (field value "status")]
+                                 (label status)
+                                 "No goal result") (session-preview (field value "objective") 120)])
+                (= op "list_sessions")
+                (if (seq value) (counted-label (count value) "session") "No sessions found")
+                (= op "mcp__call") (summary-line [(field value "server") (field value "tool")
+                                                  (when (true? (field value "is_error"))
+                                                    "Tool reported an error")])
                 :else (str (or (field value "summary") (field value "title") "")))
 
           content
-          (cond (contains? #{"patch" "read_session"} op) []
-                (= op "format_code") (result-blocks (dissoc (format-result value) "summary" "path")
-                                                    "Detail")
-                (str/starts-with? op "council.") []
-                (and (= op "cat") text)
-                [{"type" "code" "language" (code-language path) "text" (read-content text)}]
-                (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
-                                                                               "text" text}]
-                (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
-                (and (= op "grep") text)
-                [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
-                :else
-                (result-blocks
-                  (visible-result (let [public (if (map? value)
-                                                 (dissoc value :title "title" :summary "summary")
-                                                 value)]
-                                    (if-let [fields (get result-fields op)]
-                                      (select-result fields public)
-                                      public)))
-                  (case op
-                    ("run_tests" "lint_code")
-                    "Metric"
-
-                    (cond (contains? #{"read_session" "get_session" "list_sessions"} op) "Session"
-                          (contains? #{"repl_start" "repl_status" "repl_connect" "repl_stop"} op)
-                          "REPL"
-                          (contains? #{"draft_status" "draft_create" "draft_approve" "draft_discard"
-                                       "draft_diff"}
-                                     op)
-                          "Draft"
-                          (= "update_goal" op) "Goal"
-                          (= "mcp__call" op) "Tool"
-                          :else "Detail"))))]
+          (cond
+            (contains? #{"patch" "read_session"} op) []
+            (= op "format_code") (result-blocks (visible-result (into {}
+                                                                      (remove (comp false? val))
+                                                                      (select-result
+                                                                        ["repairs" "unbalanced"
+                                                                         "error" "diagnostics"]
+                                                                        (format-result value)))))
+            (str/starts-with? op "council.") []
+            (and (= op "cat") text)
+            [{"type" "code" "language" (code-language path) "text" (read-content text)}]
+            (and (contains? #{"doc" "main_agent_instructions"} op) text) [{"type" "markdown"
+                                                                           "text" text}]
+            (and (= op "defs") text) [{"type" "code" "language" "python" "text" text}]
+            (and (= op "grep") text)
+            [{"type" "code" "text" (str/replace text #"(?m)^(\s*\d+):[0-9a-f]+│ ?" "$1 │ ")}]
+            (contains? #{"draft_status" "draft_create" "draft_discard" "draft_diff"} op) []
+            :else
+            (result-blocks
+              (visible-result
+                (let [public
+                      (if (map? value) (dissoc value :title "title" :summary "summary") value)]
+                  (cond
+                    (= op "run_tests")
+                    (if (map? public)
+                      (dissoc public :total "total" :pass "pass" :fail "fail" :errored "errored")
+                      public)
+                    (get result-fields op) (select-result (get result-fields op) public)
+                    :else public)))))]
 
       (cond (= op "read_session") (read-session-presentation value)
             (str/starts-with? op "council.") (council-presentation op value)

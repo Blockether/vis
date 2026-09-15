@@ -202,27 +202,6 @@
         "summary": "12 tests · 0 failed",
         "content": [
           {
-            "type": "table",
-            "columns": [
-              "Metric",
-              "Result"
-            ],
-            "rows": [
-              [
-                "Fail",
-                "0"
-              ],
-              [
-                "Pass",
-                "12"
-              ],
-              [
-                "Total",
-                "12"
-              ]
-            ]
-          },
-          {
             "type": "heading",
             "text": "Output"
           },

@@ -184,15 +184,10 @@ export const ResultFirst: Story = {
       await expect(row.textContent).not.toMatch(/12:abc|13:def|\["src\/com/);
       await expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth);
     }
-    for (const [index, heading] of [[5, 'Metric']] as const) {
-      const table = within(rows[index]);
-      await expect(table.getByRole('columnheader', { name: heading })).toBeVisible();
-      await expect(table.getByRole('columnheader', { name: 'Result' })).toBeVisible();
-    }
+    const tests = within(rows[5]);
+    await expect(tests.queryByRole('table')).not.toBeInTheDocument();
+    await expect(rows[5].textContent).toContain('12 tests · 0 failed');
     const message = rows[4].querySelector('p')!;
-    const metric = rows[5].querySelector('td')!;
-    await expect(getComputedStyle(message).fontSize).toBe(getComputedStyle(metric).fontSize);
-    await expect(getComputedStyle(message).lineHeight).toBe(getComputedStyle(metric).lineHeight);
     await expect(getComputedStyle(message).textAlign).toBe('left');
     await expect(within(rows[4]).queryByRole('table')).not.toBeInTheDocument();
     await expect(rows[4].textContent).not.toMatch(/Thread id|Title|42|Kind|Content|Ping|reviewer/);

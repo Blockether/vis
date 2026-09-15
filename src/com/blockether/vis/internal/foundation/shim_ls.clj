@@ -39,25 +39,27 @@
                     " directories · " (- (count entries) dirs)
                     " files" (when (> (count all) 12)
                                (str " · showing 12 of " (count all) " entries")))
-     "content" [{"type" "table"
-                 "columns" ["Name" "Kind" "Bytes"]
-                 "rows" (mapv (fn [entry]
-                                (let [entry-path
-                                      (str (get entry "path" (get entry "name")))
+     "content" (if (seq rows)
+                 [{"type" "table"
+                   "columns" ["Name" "Kind" "Bytes"]
+                   "rows" (mapv (fn [entry]
+                                  (let [entry-path
+                                        (str (get entry "path" (get entry "name")))
 
-                                      name
-                                      (if (.startsWith ^String entry-path (str path "/"))
-                                        (subs entry-path (inc (count path)))
-                                        entry-path)
+                                        name
+                                        (if (.startsWith ^String entry-path (str path "/"))
+                                          (subs entry-path (inc (count path)))
+                                          entry-path)
 
-                                      dir?
-                                      (= "dir" (get entry "type"))]
+                                        dir?
+                                        (= "dir" (get entry "type"))]
 
-                                  [(str (subs name 0 (min 64 (count name)))
-                                        (when (> (count name) 64) "…")
-                                        (when dir? "/")) (if dir? "Directory" "File")
-                                   (if dir? "—" (str (get entry "size" 0)))]))
-                              rows)}]}))
+                                    [(str (subs name 0 (min 64 (count name)))
+                                          (when (> (count name) 64) "…")
+                                          (when dir? "/")) (if dir? "Directory" "File")
+                                     (if dir? "—" (str (get entry "size" 0)))]))
+                                rows)}]
+                 [])}))
 
 (defn- listing-presentation
   "One directory supplies the step header; batches keep distinct, spaced sections."
