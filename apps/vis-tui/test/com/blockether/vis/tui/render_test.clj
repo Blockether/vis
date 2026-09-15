@@ -803,7 +803,7 @@
                 (filter #(= :activity-row (get-in % [:meta :kind])) result)))]
 
     (it "groups complete identical arguments while retaining different and unknown calls"
-        (let [result (entries rows opened 72)]
+        (let [result (entries rows (assoc opened "search-1#arguments" true) 72)]
           (expect (= ["search-1#group" "search-1#arguments" "search-1" "search-3" "search-4"
                       "search-2" "unknown-1" "unknown-2" "read-1"]
                      (row-ids result)))

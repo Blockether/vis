@@ -570,11 +570,56 @@
       (expect (= ""
                  (extension/symbol-signature
                    #:ext.symbol{:fn sample-channel-fn :inject-env? true :arglists '([env])}))))
-  (it "signs the live registry's positional tools"
+  (it "exposes declared option keys, requiredness and masked defaults"
+      ;; #232 follow-up: generic **kwargs hid the host's registered call contract.
+      (doseq [[entry expected]
+              [[#:ext.symbol{:call {:pos ["content"] :rest :always}
+                             :params [{:name "kind" :required? true} {:name "title"}]}
+                "content, *, kind, title=..., **kwargs"]
+               [#:ext.symbol{:call {:lead-opt "language" :rest :always}
+                             :params [{:name "language"} {:name "code" :required? true}
+                                      {:name "cwd"}]} "language=None, *, code, cwd=..., **kwargs"]
+               [#:ext.symbol{:call {:pos [] :rest :always} :params [{:name "group_id"}]}
+                "*, group_id=..., **kwargs"]
+               [#:ext.symbol{:call {:pos ["options"] :rest :always}
+                             :params [{:name "query"} {:name "paths"}]}
+                "*, query=..., paths=..., **kwargs"]
+               [#:ext.symbol{:arglists '([command] [command opts])
+                             :params [{:name "cwd"} {:name "env"}]}
+                "command, opts=None, *, cwd=..., env=..., **kwargs"]
+               [#:ext.symbol{:arglists '([id] [id opts])
+                             :params [{:name "id" :required? true} {:name "lines"}]}
+                "id, opts=None, *, lines=..., **kwargs"]]]
+        (expect (= expected
+                   (extension/symbol-signature (assoc entry :ext.symbol/fn sample-channel-fn))))))
+  (it "does not add options to closed shapes or replace Python extension signatures"
+      (expect (= "message=None"
+                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                          :call {:lead-opt "message" :rest :never}
+                                                          :params [{:name "message"}]})))
+      (expect (= "name, /, *, loud=..., note=None"
+                 (extension/symbol-signature
+                   #:ext.symbol{:fn sample-channel-fn
+                                :contract {"signature" "name, /, *, loud=..., note=None"}
+                                :call {:pos ["options"] :rest :always}
+                                :params [{:name "ignored"}]}))))
+  (it "signs the live registry's named options without duplicating leading arguments"
       (let [sigs (extension/sandbox-symbol-signatures)]
-        (expect (= "language=None, **kwargs" (get sigs 'run_tests)))
-        (expect (= "command, opts=None, **kwargs" (get sigs 'shell)))
-        (expect (= "options, **kwargs" (get sigs 'grep)))))
+        (expect (str/starts-with? (get sigs 'run_tests) "language=None, *, path=..."))
+        (expect (str/includes? (get sigs 'shell) "cwd=..."))
+        (expect (str/starts-with? (get sigs 'grep) "*, query=..., paths=..."))
+        (expect (str/starts-with? (get sigs 'council.publish) "content, *, kind, "))))
+  (it "describes closed session and agent calls without imaginary keyword options"
+      (let [sigs (extension/sandbox-symbol-signatures)]
+        (doseq [[sym expected] {'read-session "target=None"
+                                'get-session "target=None"
+                                'list-sessions "search=None"
+                                'council.subagents ""
+                                'council.cancel "session_id"
+                                '_shell-stop "id"}]
+          (expect (= expected (get sigs sym)) (str sym)))
+        (expect (str/includes? (get sigs '_shell-wait) "offset=..."))
+        (expect (str/includes? (get sigs '_shell-type) "is_enter=..."))))
   ;; THE INVARIANT: prose can describe a verb, but only its parameter list says
   ;; what it takes, which of it is required and in what order. A tool that
   ;; declares neither a `:call` shape nor named arglists ships a documented

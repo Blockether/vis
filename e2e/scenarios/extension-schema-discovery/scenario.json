@@ -16,7 +16,7 @@
     "schema_probe.monitor"
   ],
   "want_forms": [
-    "doc(",
+    "signature(",
     ".contract"
   ],
   "max_form_output_chars": 6000,

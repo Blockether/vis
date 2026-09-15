@@ -23,8 +23,8 @@
 (defn- combined-prompt
   "Render the dynamic language matrix and toggle-gated core guidance."
   [env]
-  (->> [(language-surface/prompt env) (introspection/prompt env) (agents/prompt env)
-        (council/prompt env)]
+  (->> [(language-surface/prompt env) (drafts/prompt env) (introspection/prompt env)
+        (agents/prompt env) (council/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 

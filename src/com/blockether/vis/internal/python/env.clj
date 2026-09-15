@@ -612,8 +612,8 @@
 
 (defn- set-python-binding-meta!
   "Record one piece of model-facing metadata for `sym` in the guest table
-   `dict-name`, then re-stamp the canonical callable. A tool deferred before its
-   metadata arrived only gets it here."
+   `dict-name`, then re-stamp the canonical callable. Signature updates invalidate
+   its current inspection prototype so reload cannot retain stale parameters."
   [session sym dict-name text]
   (when (and session (string? text))
     (let [names [(sym->py-name sym)]]
@@ -623,11 +623,21 @@
                           (map (fn [n]
                                  [n text]))
                           names))
-      (exec! session
-             (str "if '__vis_stamp_tools__' in globals():\n"
-                  "    __vis_stamp_tools__("
-                  (py-json-literal (vec names))
-                  ")")))))
+      (exec!
+        session
+        (str
+          "if '__vis_stamp_tools__' in globals():\n"
+          (when (= dict-name "__vis_sigs__")
+            (str
+              "    for __vis_n__ in "
+              (py-json-literal (vec names))
+              ":\n"
+              "        __vis_fn__ = __vis_resolve_tool__(__vis_n__)\n"
+              "        if getattr(__vis_fn__, '__vis_is_tool__', False) and hasattr(__vis_fn__, '__wrapped__'):\n"
+              "            del __vis_fn__.__wrapped__\n" "    del __vis_n__, __vis_fn__\n"))
+          "    __vis_stamp_tools__("
+          (py-json-literal (vec names))
+          ")")))))
 
 (defn set-python-binding-doc!
   "The model-facing description of `sym`, what in-sandbox `doc(name)` prints."

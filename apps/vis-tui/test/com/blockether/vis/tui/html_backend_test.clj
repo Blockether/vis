@@ -150,6 +150,84 @@
                                  [:toggle-detail (:session-id region) (:node-id region)
                                   (:collapsed? region)]))))
 
+(deftest activity-group-disclosure-isolation-test
+  (doseq [cols
+          [40 80 120]
+
+          repeated?
+          [false true]]
+
+    (with-open [terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 80))
+
+                screen
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [rows
+            (mapv (fn [i]
+                    (cond-> {:id (str "read-" i)
+                             :sequence i
+                             :operation "cat"
+                             :state "succeeded"
+                             :presentation {:headline "Read"
+                                            :summary (str "file-" i ".clj")
+                                            :content [{:type "text" :text (str "BODY_" i)}]}}
+                      repeated?
+                      (assoc :argument-key "same-arguments")))
+                  (range 2))
+
+            expansions
+            (atom {})
+
+            paint!
+            #(paint-activity-review! screen rows @expansions)
+
+            region
+            (fn [suffix]
+              (first (filter #(and (= :toggle-details (:kind %))
+                                   (str/ends-with? (str (:node-id %)) suffix))
+                             (.current interactions/hit-map))))
+
+            click!
+            (fn [suffix]
+              (let [hit
+                    (region suffix)
+
+                    {:keys [row col]}
+                    (:bounds hit)]
+
+                (is (some? hit))
+                (when hit (is (= hit (.lookup interactions/hit-map (int (+ col 2)) (int row)))))
+                (swap! expansions toggle-review-region hit)
+                (paint!)))
+
+            bodies
+            (fn []
+              (set (re-seq #"BODY_\d" (:text (paint!)))))]
+
+        (paint!)
+        (click! ":#band")
+        ;; A group click must not recursively open every invocation body.
+        (click! "#group")
+        (click! "#group")
+        (is (empty? (bodies)))
+        (when repeated?
+          (is (true? (:collapsed? (region "#arguments"))))
+          (click! "#arguments")
+          (is (empty? (bodies))))
+        (is (true? (:collapsed? (region ":read-0"))))
+        (is (true? (:collapsed? (region ":read-1"))))
+        (click! ":read-0")
+        (is (= #{"BODY_0"} (bodies)))
+        (is (true? (:collapsed? (region ":read-1"))))
+        ;; Reopening a parent preserves the one child the reader chose.
+        (click! "#group")
+        (is (empty? (bodies)))
+        (click! "#group")
+        (is (= #{"BODY_0"} (bodies)))
+        (reset! expansions {:vis.channel-tui/baseline :expand})
+        (is (= #{"BODY_0" "BODY_1"} (bodies)))))))
+
 (deftest result-first-html-native-parity-test
   (doseq [cols [40 80 120]]
     (with-open [html (activity-review-terminal cols 80)

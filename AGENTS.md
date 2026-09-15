@@ -10,17 +10,6 @@ Continue in-scope local edits, verification and fixes without asking at each ste
 requested behavior, not just a first implementation. If blocked, report the concrete blocker and
 what remains; do not substitute an adjacent fix or claim an unverified result.
 
-Always isolate each change-making task in its own session-owned draft, including documentation,
-configuration and tests. Use `draft_create` before editing, or continue this session's draft for
-the same task. This is standing authorization to create drafts without asking again. Never edit
-the shared checkout directly or use another session's draft. Read-only questions and analysis
-do not require a draft. If drafts are unavailable or blocked, report that rather than silently
-falling back to the shared checkout.
-
-Keep edits and verification in the draft. Use `draft_approve` to land verified changes only
-when commit and push are authorized under the rules below; review-first, local-only and
-no-commit/push requests leave the draft unapproved.
-
 Choose verification for the changed files and behavior. Code changes need affected tests, formatting and lint
 (including reflection for Clojure); documentation-only changes need content, link and diff checks,
 not a full application build. Reproduce reported bugs before fixing them; reference the issue in

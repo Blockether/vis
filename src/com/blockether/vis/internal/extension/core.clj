@@ -829,9 +829,10 @@
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
      :params      - options-dict key vocabulary `[{:name \"paths\" :required? true}
-                    {:name \"ranges\"}]`, rendered by `doc(name)`. REQUIRED of every
-                    tool whose call ends in an options dict — a `**kwargs`
-                    signature states nothing a caller can act on.
+                    {:name \"ranges\"}]`, exposed as keyword-only parameters by
+                    inspect.signature and as a Keys line by doc. REQUIRED of every
+                    tool whose call ends in an options dict. Optional defaults are
+                    withheld as ...; required keys have no default.
      :before-fn :after-fn :on-error-fn :ticker-fn
 
    Observed tool functions return canonical internal envelope maps. The
@@ -2905,12 +2906,12 @@
         lead-n
         (if lead 1 0)]
 
-    (when (and (seq named) (every? some? named))
+    (when (every? some? named)
       (str/join ", "
                 (concat (map #(str % "=None") (take lead-n named))
                         (take (count pos) (drop lead-n named))
                         (map #(str % "=None") (drop (+ lead-n (count pos)) named))
-                        (when rest-mode ["**kwargs"]))))))
+                        (when (and rest-mode (not= :never rest-mode)) ["**kwargs"]))))))
 
 (defn- arglists-signature
   "Python parameter list from the implementation's `:ext.symbol/arglists`, for an
@@ -2963,31 +2964,69 @@
                         (when variadic? ["*args"])
                         ["**kwargs"])))))
 
-(defn symbol-signature
-  "Python parameter list for ONE symbol entry — what stands between the
-   parentheses of the signature the sandbox reports for it, e.g.
-   `\"language=None, **kwargs\"`. A portable symbol contract wins, then the `:call`
-   shape (the declared keyword->positional contract); implementation arglists are
-   the fallback. nil when the entry declares nothing a caller could act on.
+(defn- option-keys-signature
+  "Add registered options to a host signature's canonical keyword form. Keep the
+   dispatcher permissive: required keys may still arrive inside an options dict."
+  [signature params]
+  (if (and (seq params) signature (str/ends-with? signature "**kwargs"))
+    (let [positional
+          (butlast (str/split signature #", "))
 
-   `env-python` ships these to the sandbox as `__vis_sigs__`, where a deferred
-   tool hangs its parameters off `__wrapped__` so `inspect.signature(tool)` and
-   `help(tool)` answer with them instead of with the async trampoline's own
-   `(*a, **k)`."
+          names
+          (into #{} (map #(first (str/split % #"="))) positional)
+
+          options
+          (remove #(contains? names (:name %)) params)]
+
+      (str/join ", "
+                (concat positional
+                        (when (and (seq options) (not-any? #(str/starts-with? % "*") positional))
+                          ["*"])
+                        (map (fn [{:keys [name required?]}]
+                               (str name (when-not required? "=...")))
+                             options)
+                        ["**kwargs"])))
+    signature))
+
+(defn symbol-signature
+  "Python parameter list for ONE symbol entry. A portable Python contract wins;
+   otherwise :call or implementation arglists supply positionals and :params
+   supplies keyword-only options. Required options have no default; unknown
+   defaults use ... without inspecting host values.
+
+   This describes the canonical named call, not every options-dictionary overload
+   the dispatcher accepts. It is inspection metadata, never argument validation.
+   env-python ships it as __vis_sigs__; the deferred wrapper's __wrapped__ lets
+   inspect.signature and help show it instead of the trampoline's (*a, **k)."
   [entry]
   (when (:ext.symbol/fn entry)
-    (let [shape (:ext.symbol/call entry)]
-      (or (get-in entry [:ext.symbol/contract "signature"])
-          (when (map? shape) (call-shape-signature shape))
-          (arglists-signature (:ext.symbol/arglists entry)
-                              (boolean (:ext.symbol/inject-env? entry)))))))
+    (or (get-in entry [:ext.symbol/contract "signature"])
+        (let [params
+              (:ext.symbol/params entry)
+
+              shape
+              (:ext.symbol/call entry)
+
+              ;; A pure options-map tool also accepts its keys as keywords.
+              shape
+              (if (and (seq params)
+                       (= ["options"] (:pos shape))
+                       (:rest shape)
+                       (not= :never (:rest shape)))
+                (assoc shape :pos [])
+                shape)]
+
+          (option-keys-signature (or (when (map? shape) (call-shape-signature shape))
+                                     (arglists-signature (:ext.symbol/arglists entry)
+                                                         (boolean (:ext.symbol/inject-env? entry))))
+                                 params)))))
 
 (defn symbol-keys-line
   "`Keys: language · code (REQUIRED) · id` — the options-dict vocabulary from
    `:ext.symbol/params`, in DECLARED order (authors lead with what a caller cannot
-   omit). The signature of a dict-shaped tool ends in `**kwargs`, which names
-   nothing; this line is where its required keys are stated. nil when the entry
-   declares no params.
+   omit). It repeats the canonical signature's option names with their short notes,
+   including required keys supplied inside a dictionary overload. nil when the
+   entry declares no params.
 
    STRUCTURE, never prose: `env-python` ships it to the sandbox as `__vis_keys__`
    and `doc-corpus/entry-text` prints it under the call line. `apropos` filters
