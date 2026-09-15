@@ -38,7 +38,7 @@ open. Work already merged stays on the target branch.
 
 | Tool | Effect |
 |---|---|
-| `draft_create("name")` | Open a draft from committed `HEAD` and move the session into it. `clean=False` explicitly copies pending trunk changes; those may overlap on approval. One draft at a time. |
+| `draft_create("name", root=None)` | Open a draft from committed `HEAD` of the current project or a selected read/write root. `clean=False` explicitly copies pending source changes; those may overlap on approval. One draft at a time. |
 | `draft_status()` | Report the draft branch, `target_branch`, draft commits the target lacks (`ahead`) and pending paths (`pending`). |
 | `draft_diff(...)` | Attach a reviewable diff of the draft's changes and return a checkpoint for the next task. No commit, approval or push. |
 | `draft_approve()` | Commit pending work, fast-forward the default branch and publish to origin if configured. `draft_approve("subject")` sets the subject. The draft stays open. |
@@ -48,6 +48,34 @@ Inside the turn that opens or discards a draft, sandbox confinement changes at
 once. `session["workspace"]` and `project_root_path` follow from the next block.
 While in a draft, `session["workspace"]["draft"]` includes `label`, `backend`,
 `branch`, `target_branch`, `approved_ahead` and `pending_paths`.
+
+## Work in another repository
+
+You can isolate a change in an added repository without switching projects or
+changing its configured draft policy:
+
+> Fix the parser in the sibling repository in its own draft. Leave this project's
+> checkout unchanged, and show me the diff before approval.
+
+Vis selects that repository with the `root` argument. For example, when your
+configuration exposes `sibling_path`:
+
+```python
+print(draft_create("parser-fix", root=sibling_path))
+```
+
+From the next block, `project_root_path` points to the selected repository's draft.
+Use it for edits and checks. `draft_diff()` reviews that draft, `draft_approve()`
+lands in that repository's default branch, and `draft_discard()` returns the session
+to its original project. The original project's commits and pending files stay
+unchanged. Approval still needs authorization for the selected repository.
+
+The source must be an existing read/write root available to your session. A
+`shared` root can be selected without changing your configuration. Read-only,
+`copy-only` and `not-allowed` roots cannot be selected, nor can roots that overlap
+filesystem deny rules: making a writable copy must not bypass those restrictions.
+Other roots keep their configured policies. Finish the current draft before
+selecting another source; a session has one active draft at a time.
 
 ## Review changes before approval
 

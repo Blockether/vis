@@ -11,6 +11,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.git :as git])
   (:import [java.io File]))
@@ -118,17 +119,78 @@
 
 ;; Lifecycle
 
+(defn- selected-root
+  "Resolve an explicitly selected root without expanding the session's access."
+  [env from requested]
+  (let [base
+        (or (:root from) (workspace/trunk-root))
+
+        path
+        (when-not (str/blank? (str requested)) (io/file (paths/expand-home (str requested))))
+
+        root
+        (when path
+          (workspace/normalize-root (if (.isAbsolute ^File path) path (io/file base path))))
+
+        writable
+        (into #{(workspace/normalize-root base)}
+              (keep workspace/normalize-root)
+              (:security/filesystem-roots env))
+
+        allowed
+        (into writable
+              (comp (keep workspace/normalize-root)
+                    (filter (fn [path]
+                              (let [^java.nio.file.Path candidate (.toPath (io/file path))]
+                                (some #(.startsWith candidate (.toPath (io/file %))) writable)))))
+              (vals (get-in env [:security-policy :project-paths])))]
+
+    (when-not (and root (contains? allowed root) (.isDirectory (io/file root)))
+      (throw
+        (ex-info
+          "Choose an existing read/write root from session[\"workspace\"][\"filesystem_roots\"]."
+          {:type :draft/root-unavailable :root root})))
+    (let [^java.nio.file.Path selected
+          (.toPath (io/file root))
+
+          policy
+          (:security-policy env)
+
+          restricted
+          (concat (get-in policy [:process-jail :deny-read])
+                  (get-in policy [:process-jail :deny-write])
+                  (get-in policy [:process-jail :deny-exec])
+                  (keep (fn [[path policy]]
+                          (when (contains? #{:copy-only :not-allowed}
+                                           (workspace/draft-policy-id policy))
+                            path))
+                        (:draft-policies policy)))]
+
+      (when (some (fn [path]
+                    (let [^java.nio.file.Path denied (.toPath (io/file (workspace/normalize-root
+                                                                         path)))]
+                      (or (.startsWith selected denied) (.startsWith denied selected))))
+                  restricted)
+        (throw
+          (ex-info
+            "This root overlaps a filesystem restriction or a copy-only/not-allowed draft policy."
+            {:type :draft/root-denied :root root}))))
+    root))
+
 (defn create!
-  "Create a draft through the `:draft/create` boundary; `opts` are
-   `workspace/create!`'s. `env` carries `:db-info` and `:session-id`."
+  "Create a draft through the `:draft/create` boundary. An explicit source root
+   must be one of the session's writable roots and retain its access restrictions."
   [env opts]
-  (through-hooks :draft/create
-                 env
-                 {:label (:label opts)
-                  :clean (boolean (:clean? opts))
-                  :repo-root (some-> (or (:repo-root (:from opts)) (workspace/trunk-root))
-                                     str)}
-                 #(workspace/create! (:db-info env) opts)))
+  (let [opts (cond-> opts
+               (some? (:root opts))
+               (assoc :root (selected-root env (:from opts) (:root opts))))]
+    (through-hooks :draft/create
+                   env
+                   {:label (:label opts)
+                    :clean (boolean (:clean? opts))
+                    :repo-root
+                    (str (or (:root opts) (:repo-root (:from opts)) (workspace/trunk-root)))}
+                   #(workspace/create! (:db-info env) opts))))
 
 (defn discard!
   "Discard `workspace-id` through the `:draft/discard` boundary. With
@@ -136,14 +198,23 @@
    boundary — a veto leaves it pinned to its draft — and `workspace/abandon!`
    then removes the draft. Returns `[abandon-result trunk]`."
   [env {:keys [workspace-id reason session-state-id]}]
-  (let [ws (require-draft (:db-info env) workspace-id)]
+  (let [ws
+        (require-draft (:db-info env) workspace-id)
+
+        parent
+        (when-let [id (:parent-workspace-id ws)]
+          (workspace/get (:db-info env) id))
+
+        return-root
+        (or (when-not (workspace/draft? parent) (:root parent)) (:repo-root ws))]
+
     (through-hooks
       :draft/discard
       env
       (hook-ctx ws {:reason reason})
       (fn []
         (let [trunk (when session-state-id
-                      (workspace/exit-to-trunk! (:db-info env) session-state-id (:repo-root ws)))]
+                      (workspace/exit-to-trunk! (:db-info env) session-state-id return-root))]
           [(dissoc (workspace/abandon! (:db-info env) {:workspace-id workspace-id :reason reason})
              :discard-future) trunk])))))
 
