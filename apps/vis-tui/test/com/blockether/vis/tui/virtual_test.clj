@@ -1301,6 +1301,197 @@
       (expect (= (row-of fA) (row-of f1))))))
 
 (defdescribe
+  live-activity-scroll-test
+  ;; Regression #233: an appended read joins an earlier open operation group,
+  ;; moving the patch rows inside the same message without moving its top.
+  (it "keeps receipt identities when another form joins Activity"
+      ;; #233: the first receipt must use the same row and disclosure IDs throughout.
+      (let [form
+            {:code "run()"
+             :success? true
+             :activity
+             {:rows
+              [{:id "first" :sequence 0 :operation "cat" :children [{:id "child" :sequence 0}]}]}}
+
+            single
+            (#'render/execution-group [form])
+
+            joined
+            (#'render/execution-group [form (assoc form :code "next()")])]
+
+        (expect (= (:activity form) (first (get-in single [:activity :sources]))))
+        (expect (= (get-in single [:activity :rows 0 :id]) (get-in joined [:activity :rows 0 :id])))
+        (expect (= (get-in single [:activity :rows 0 :children 0 :id])
+                   (get-in joined [:activity :rows 0 :children 0 :id])))))
+  (it
+    "keeps a parked Activity row in place while groups grow above it"
+    (doseq [live? [false true]]
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [row (fn [i op]
+                  {:id (str "row-" i)
+                   :sequence i
+                   :operation op
+                   :summary (str "file-" i)
+                   :state "succeeded"
+                   :resources []
+                   :evidence []})
+            rows (into [(row 0 "cat")] (map #(row % "patch") (range 1 16)))
+            message (fn [rs]
+                      (assoc (trace-assistant-msg 1 1 (str/join "\n" (repeat 30 "Answer")))
+                        :session-turn-id "activity-turn"
+                        :traces [{:forms [{:code "run()"
+                                           :stdout ""
+                                           :success? true
+                                           :activity {:rows rs :omitted {:rows 0}}}]}]))
+            opts {:session-id "activity-session"
+                  :detail-expansions {:vis.channel-tui/expand-all-details? true}}
+            environment (fn [m]
+                          (if live?
+                            {:loading? true
+                             :progress {:iterations (:traces m)}
+                             :progress-extra {:now-ms 1000 :turn-start-ms 0}}
+                            {}))
+            line-of
+            (fn [m]
+              (first
+                (keep-indexed
+                  (fn [i meta]
+                    (when (and (= :activity-row (:kind meta)) (= "0:row-8" (:item-id meta))) i))
+                  (:line-meta
+                    (:projected
+                      (first
+                        (:visible
+                          (virtual/layout [m] bubble-w settings nil 500 (environment m) opts))))))))
+            before (message rows)
+            after (message (conj rows (row 16 "cat")))
+            old-row (line-of before)
+            new-row (line-of after)
+            frame1 (virtual/layout [before] bubble-w settings old-row 8 (environment before) opts)
+            frame2 (virtual/layout [after]
+                                   bubble-w
+                                   settings
+                                   (:eff-scroll frame1)
+                                   8
+                                   (environment after)
+                                   (assoc opts
+                                     :prev-offsets (:offsets frame1)
+                                     :prev-activity-anchors (:activity-anchors frame1)))]
+
+        (expect (number? old-row))
+        (expect (> new-row old-row))
+        (expect (= (- old-row (:eff-scroll frame1)) (- new-row (:eff-scroll frame2))))
+        (let [again (virtual/layout [after]
+                                    bubble-w
+                                    settings
+                                    (:eff-scroll frame2)
+                                    8
+                                    (environment after)
+                                    (assoc opts
+                                      :prev-offsets (:offsets frame2)
+                                      :prev-activity-anchors (:activity-anchors frame2)))
+              followed (virtual/layout [after]
+                                       bubble-w
+                                       settings
+                                       nil
+                                       8
+                                       (environment after)
+                                       (assoc opts
+                                         :prev-offsets (:offsets frame1)
+                                         :prev-activity-anchors (:activity-anchors frame1)))
+              wheeled (virtual/layout [after]
+                                      bubble-w
+                                      settings
+                                      (+ old-row 1)
+                                      8
+                                      (environment after)
+                                      (assoc opts
+                                        :prev-offsets (:offsets frame1)
+                                        :prev-activity-anchors (:activity-anchors frame1)))]
+
+          (expect (= (:eff-scroll frame2) (:eff-scroll again)))
+          (expect (<= (count (:activity-anchors frame2)) 8))
+          (expect (nil? (:anchored-scroll followed)))
+          (expect (= (:eff-scroll followed) (- (:total-h followed) 8)))
+          (expect (= (+ 1 (:eff-scroll frame2)) (:eff-scroll wheeled)))))))
+  (it "projects adjacent messages after Activity growth larger than the viewport"
+      ;; Regression #233: semantic correction must happen before selecting paint rows.
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [row
+            (fn [i op]
+              {:id (str "boundary-" i)
+               :sequence i
+               :operation op
+               :summary (str "file-" i)
+               :state "succeeded"
+               :resources []
+               :evidence []})
+
+            rows
+            [(row 0 "cat") (row 1 "patch") (row 2 "patch")]
+
+            message
+            (fn [rs]
+              (assoc (trace-assistant-msg 1 1 "")
+                :session-turn-id "boundary-turn"
+                :traces [{:forms [{:code "run()"
+                                   :stdout ""
+                                   :success? true
+                                   :activity {:rows rs :omitted {:rows 0}}}]}]))
+
+            before
+            (into [(message rows)] (map #(user-msg (str "Neighbour " %)) (range 8)))
+
+            after
+            (assoc before 0 (message (into rows (map #(row % "cat") (range 3 43)))))
+
+            opts
+            {:session-id "boundary-session"
+             :detail-expansions {:vis.channel-tui/expand-all-details? true}}
+
+            whole
+            (virtual/layout before bubble-w settings nil 500 {} opts)
+
+            anchor-row
+            (first (keep-indexed (fn [i meta]
+                                   (when (and (= :activity-row (:kind meta))
+                                              (= "0:boundary-2" (:item-id meta)))
+                                     i))
+                                 (get-in whole [:visible 0 :projected :line-meta])))
+
+            first-frame
+            (virtual/layout before bubble-w settings anchor-row 20 {} opts)
+
+            next-frame
+            (virtual/layout after
+                            bubble-w
+                            settings
+                            (:eff-scroll first-frame)
+                            20
+                            {}
+                            (assoc opts
+                              :prev-offsets (:offsets first-frame)
+                              :prev-activity-anchors (:activity-anchors first-frame)))
+
+            expected
+            (virtual/layout after bubble-w settings (:eff-scroll next-frame) 20 {} opts)
+
+            painted
+            (fn [frame]
+              (set (for [{:keys [idx top height]}
+                         (:visible frame)
+
+                         :when (and (< top 20) (> (+ top height) 0))]
+
+                     idx)))]
+
+        (expect (number? anchor-row))
+        (expect (> (- (:eff-scroll next-frame) (:eff-scroll first-frame)) 20))
+        (expect (contains? (painted expected) 1))
+        (expect (= (painted expected) (painted next-frame))))))
+
+(defdescribe
   turn-separator-test
   (it "ignores legacy turn-separator settings and reserves no blank row"
       (let [msgs

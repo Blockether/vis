@@ -249,13 +249,13 @@ export const RepeatedArguments: Story = {
     repeated.focus();
     await userEvent.keyboard('{Enter}');
     const first = within(
-      canvasElement.querySelector<HTMLElement>('[data-activity-row="search-1"]')!,
+      canvasElement.querySelector<HTMLElement>('[data-activity-row="0:search-1"]')!,
     );
     await userEvent.click(first.getByRole('button'));
     await expect(canvas.getByText('First search: 2 matches')).toBeVisible();
     await userEvent.click(repeated);
     await expect(canvas.queryByText('First search: 2 matches')).not.toBeInTheDocument();
-    await expect(canvasElement.querySelector('[data-activity-row="search-2"]')).toBeVisible();
+    await expect(canvasElement.querySelector('[data-activity-row="0:search-2"]')).toBeVisible();
   },
 };
 
@@ -357,9 +357,11 @@ export const InterleavedOperations: Story = {
     await userEvent.keyboard('{Enter}');
     const members = canvas.getByRole('list', { name: 'Read ×10 operations' });
     await expect(members.children).toHaveLength(10);
-    await expect([...members.children].map((row) => row.getAttribute('data-activity-row'))).toEqual(
-      Array.from({ length: 10 }, (_, index) => `cat-${index + 1}`),
-    );
+    await expect(
+      [...members.querySelectorAll('[data-activity-row]')].map((row) =>
+        row.getAttribute('data-activity-row'),
+      ),
+    ).toEqual(Array.from({ length: 10 }, (_, index) => `0:cat-${index + 1}`));
     await userEvent.click(reads);
     await expect(reads).toHaveAttribute('aria-expanded', 'false');
   },
@@ -518,7 +520,7 @@ export const CompactMiddle: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     const rows = ['before', 'middle', 'after'].map((id) =>
-      canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
+      canvasElement.querySelector<HTMLElement>(`[data-activity-row="0:${id}"]`)!,
     );
     const middle = within(rows[1]).getByRole('button');
     // Adjacent boxes alone miss the blank space inside an oversized toggle.

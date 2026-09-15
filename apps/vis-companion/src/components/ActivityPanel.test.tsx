@@ -230,20 +230,20 @@ describe('joined Activity operation groups', () => {
     expect(repeat.textContent).toContain('1 running');
     expect(repeat.textContent).toContain('1 failed');
     expect(repeat.getAttribute('aria-expanded')).toBe('false');
-    expect(document.querySelector('[data-activity-row="search-1"]')).toBeNull();
+    expect(document.querySelector('[data-activity-row="0:search-1"]')).toBeNull();
     for (const id of ['search-2', 'unknown-1', 'unknown-2', 'read-1']) {
-      expect(document.querySelector(`[data-activity-row="${id}"]`)).toBeTruthy();
+      expect(document.querySelector(`[data-activity-row="0:${id}"]`)).toBeTruthy();
     }
     expect(screen.getByText(/Search directory unavailable/)).toBeTruthy();
     fireEvent.click(repeat);
     fireEvent.click(
       document.querySelector<HTMLElement>(
-        '[data-activity-row="search-1"] [data-disclosure-toggle]',
+        '[data-activity-row="0:search-1"] [data-disclosure-toggle]',
       )!,
     );
     expect(screen.getByText('First search: 2 matches')).toBeTruthy();
-    expect(document.querySelector('[data-activity-row="search-3"]')).toBeTruthy();
-    expect(document.querySelector('[data-activity-row="search-4"]')).toBeTruthy();
+    expect(document.querySelector('[data-activity-row="0:search-3"]')).toBeTruthy();
+    expect(document.querySelector('[data-activity-row="0:search-4"]')).toBeTruthy();
     rerender(
       <ActivityPanel
         activity={{
@@ -272,7 +272,7 @@ describe('joined Activity operation groups', () => {
     expect(screen.getByText('First search: 2 matches')).toBeTruthy();
     fireEvent.click(
       document.querySelector<HTMLElement>(
-        '[data-activity-row="search-4"] [data-disclosure-toggle]',
+        '[data-activity-row="0:search-4"] [data-disclosure-toggle]',
       )!,
     );
     expect(screen.getByText('Last search: 5 matches')).toBeTruthy();
@@ -292,7 +292,7 @@ describe('joined Activity operation groups', () => {
     expect(group.textContent).toContain('1 file');
     expect(group.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(group);
-    expect(document.querySelector('[data-activity-row="b"]')).toBeTruthy();
+    expect(document.querySelector('[data-activity-row="0:b"]')).toBeTruthy();
     rerender(
       <ActivityPanel
         activity={{
@@ -329,7 +329,7 @@ describe('joined Activity operation groups', () => {
       [...document.querySelectorAll('[data-activity-row]')].map((row) =>
         row.getAttribute('data-activity-row'),
       ),
-    ).toEqual(rows.filter((row) => row.operation === 'cat').map((row) => row.id));
+    ).toEqual(rows.filter((row) => row.operation === 'cat').map((row) => `0:${row.id}`));
     rerender(
       <ActivityPanel
         activity={{
@@ -365,7 +365,7 @@ describe('joined Activity operation groups', () => {
         [...document.querySelectorAll('[data-activity-row]')].map((row) =>
           row.getAttribute('data-activity-row'),
         ),
-      ).toEqual(rows.map((row) => row.id));
+      ).toEqual(rows.map((row) => `0:${row.id}`));
       expect(
         screen.queryByRole('button', {
           name: /(?:show|hide).*(?:more|fewer).*groups?/i,
@@ -448,11 +448,12 @@ describe('joined Activity operation groups', () => {
 });
 
 describe("one form's Activity on the phone", () => {
-  it('keeps root operations as siblings on one flat list', () => {
+  it('keeps root operations at one visual depth', () => {
     paintActivity();
     const rows = [...document.querySelectorAll('[data-activity-row]')];
     expect(rows.length).toBeGreaterThan(1);
-    expect(rows.every((row) => row.parentElement === rows[0].parentElement)).toBe(true);
+    expect(rows.every((row) => row.getAttribute('data-activity-depth') === '0')).toBe(true);
+    expect(rows.every((row) => !row.parentElement?.closest('[data-activity-row]'))).toBe(true);
   });
   it('keeps the headline and one-line summary visible; the chevron opens only content', () => {
     const projection = activityProjection();
@@ -927,7 +928,7 @@ describe('a step that ended badly', () => {
 
     // The machine's own text IS the reason. The row stamps no word on top of it:
     // the filled mark is the whole of the colour a failure gets.
-    expect(document.querySelector('[data-activity-row="call-1"]')?.textContent).not.toContain(
+    expect(document.querySelector('[data-activity-row="0:call-1"]')?.textContent).not.toContain(
       'NO MATCH',
     );
     expect(screen.getByText('patch refused: no anchor matched')).toBeTruthy();
@@ -1050,7 +1051,7 @@ describe('what the axis does while the work is still moving', () => {
     const rows = activity.rows;
     const { rerender } = render(<ActivityPanel activity={activity} />);
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
+    expect(document.querySelector('[data-activity-row="0:live-4"]')).toBeNull();
     expect(screen.getByText(/search-6 · running/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Search ×7/ }));
     const step = screen.getByRole('button', { name: /Searched.*search-4/ });
@@ -1066,7 +1067,7 @@ describe('what the axis does while the work is still moving', () => {
     );
     expect(screen.getByText('result-4')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Search ×7/ }));
-    expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
+    expect(document.querySelector('[data-activity-row="0:live-4"]')).toBeNull();
     expect(screen.getByRole('button', { name: /Search ×7/ }).getAttribute('aria-expanded')).toBe(
       'false',
     );
@@ -1121,7 +1122,7 @@ describe('what the axis does while the work is still moving', () => {
     };
     render(<ActivityPanel activity={{ ...base, rows: [row] }} />);
     expect(screen.queryByText('Details truncated')).toBeNull();
-    fireEvent.click(document.querySelector(`[data-activity-row="${row.id}"] button`)!);
+    fireEvent.click(document.querySelector(`[data-activity-row="0:${row.id}"] button`)!);
     expect(screen.getByText('Details truncated')).toBeTruthy();
   });
 
@@ -1147,7 +1148,7 @@ describe('what a code block changed with its own hands', () => {
     openEverySettledStep();
 
     const chronology = screen.getByLabelText('Operation groups');
-    const heads = chronology.querySelectorAll(':scope > [data-activity-depth="0"]');
+    const heads = chronology.querySelectorAll('[data-activity-depth="0"]');
     const children = chronology.querySelectorAll('[data-activity-depth="1"]');
 
     expect(heads).toHaveLength(1);

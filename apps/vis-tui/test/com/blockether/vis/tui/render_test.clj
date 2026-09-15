@@ -7390,7 +7390,7 @@ h = 8"
             settled
             (paint (assoc-in activity [:rows 6 :state] "succeeded") {})]
 
-        (expect (= (mapv :id rows) (row-ids live)))
+        (expect (= (mapv #(str "0:" (:id %)) rows) (row-ids live)))
         (expect (= (row-ids live) (row-ids settled)))
         (doseq [payload [live settled]]
           (expect (not-any? #(= "#steps" (:item-id %)) (:line-meta payload))))

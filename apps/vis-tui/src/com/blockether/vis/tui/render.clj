@@ -6663,11 +6663,24 @@
         (map :view-id)
         (mapcat :runs (mapcat :forms (:iterations (place-run-rows iterations runs))))))
 
+(defn- scoped-activity-row
+  [scope row]
+  (cond-> (update row :id #(str scope ":" %))
+    (seq (:children row))
+    (update :children #(mapv (partial scoped-activity-row scope) %))))
+
 (defn- execution-group
   "Display-only aggregation. Wire forms, invocation ids and their lifecycles remain unchanged."
   [forms]
   (if (= 1 (count forms))
-    (first forms)
+    ;; #233: a second form must not rename already visible rows or disclosures.
+    (let [form (first forms)]
+      (cond-> form
+        (:activity form)
+        (update :activity
+                #(assoc %
+                   :rows (mapv (partial scoped-activity-row 0) (:rows %))
+                   :sources [%]))))
     (let [states
           (map (fn [form]
                  (or (some-> (get-in form [:activity :state])
@@ -6688,16 +6701,10 @@
           activities
           (keep :activity forms)
 
-          scoped-row
-          (fn scoped-row [scope row]
-            (cond-> (update row :id #(str scope ":" %))
-              (seq (:children row))
-              (update :children #(mapv (partial scoped-row scope) %))))
-
           rows
           (->> forms
                (map-indexed (fn [idx form]
-                              (map #(scoped-row idx %)
+                              (map #(scoped-activity-row idx %)
                                    (sort-by :sequence (get-in form [:activity :rows])))))
                (mapcat identity)
                (map-indexed #(assoc %2 :sequence %1))

@@ -322,7 +322,7 @@ export interface ActivityProjection {
 
 /** Merge display receipts without replacing their source histories or mutating wire data. */
 export function mergeActivity(activities: readonly ActivityProjection[]): ActivityProjection {
-  if (activities.length === 1) return activities[0];
+  // Scope even the first receipt: appending another form must not change its row IDs.
   const counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0 };
   const omitted: ActivityProjection['omitted'] = { rows: 0, by_classification: {} };
   const rows: ActivityRow[] = [];

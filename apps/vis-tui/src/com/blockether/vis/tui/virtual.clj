@@ -1005,6 +1005,68 @@
 
     (when (<= (long lo) (long hi)) [lo hi])))
 
+(defn- activity-row-anchors
+  "Stable Activity lines in projected messages, in document row coordinates."
+  [{:keys [visible offsets]}]
+  (vec
+    (mapcat
+      (fn [{:keys [idx projected]}]
+        (let [turn
+              (turn-identity projected)
+
+              start
+              (+ (long (nth offsets idx)) (long (get-in projected [:lines-window :start] 0)))]
+
+          (:anchors (reduce-kv (fn [{:keys [seen] :as acc} i meta]
+                                 (if-let [item (:item-id meta)]
+                                   (let [key [turn item (:kind meta)]
+                                         occurrence (get seen key 0)]
+
+                                     (-> acc
+                                         (assoc-in [:seen key] (inc (long occurrence)))
+                                         (update :anchors
+                                                 conj
+                                                 {:key (conj key occurrence)
+                                                  :row (+ start (long i))})))
+                                   acc))
+                               {:seen {} :anchors []}
+                               (or (:line-meta projected) [])))))
+      visible)))
+
+(defn- anchor-activity
+  "Keep a visible Activity line fixed when live regrouping moves it inside a message."
+  [result previous scroll inner-h]
+  (let [anchors
+        (activity-row-anchors result)
+
+        rows-by-key
+        (into {} (map (juxt :key :row)) anchors)
+
+        old
+        (when (some? scroll)
+          (some #(when (and (<= (long scroll) (long (:row %)))
+                            (< (long (:row %)) (+ (long scroll) (long inner-h)))
+                            (contains? rows-by-key (:key %)))
+                   %)
+                previous))
+
+        corrected
+        (if old
+          (max 0
+               (min (+ (long scroll) (- (long (get rows-by-key (:key old))) (long (:row old))))
+                    (max 0 (- (long (:total-h result)) (long inner-h)))))
+          (:eff-scroll result))
+
+        shift
+        (- (long (:eff-scroll result)) (long corrected))]
+
+    (assoc result
+      :eff-scroll corrected
+      :visible (mapv #(update % :top + shift) (:visible result))
+      :activity-anchors (filterv #(and (<= (long corrected) (long (:row %)))
+                                       (< (long (:row %)) (+ (long corrected) (long inner-h))))
+                          anchors))))
+
 (defn layout
   "Plan a paint of `messages` into a vertical viewport of `inner-h`
    rows at width `bubble-w`. Returns:
@@ -1013,10 +1075,13 @@
       :eff-scroll <long>     ;; clamped scroll offset
       :heights    <vec long> ;; one per message; real for visible, est for off-screen
       :offsets    <vec long> ;; cumulative running sum, one entry longer than messages
-      :visible    [{:idx N :top R :height H :projected M} ...]}
+      :visible    [{:idx N :top R :height H :projected M} ...]
+      :activity-anchors [{:key K :row R} ...]} ;; visible Activity line identities
 
    `scroll` is `nil` for auto-bottom (jump to the latest message) or
-   a non-negative long for a specific row offset.
+   a non-negative long for a specific row offset. Pass the previous result's
+   `:activity-anchors` as `:prev-activity-anchors` alongside `:prev-offsets`
+   to preserve visible Activity lines when operation groups grow or shrink.
 
    `loading?` swaps the LAST assistant message's `:text` to the live
    spinner-led progress block (`render/progress->text`) only when that
@@ -1043,7 +1108,7 @@
    plain Object args here - we cast with `long` inside the body."
   [messages bubble-w settings scroll inner-h
    {:keys [progress loading? progress-extra] :or {progress nil loading? false}} &
-   [{:keys [session-id detail-expansions prev-offsets]}]]
+   [{:keys [session-id detail-expansions prev-offsets prev-activity-anchors]}]]
   (let [bubble-w
         (long bubble-w)
 
@@ -1056,6 +1121,9 @@
         ;; thread's next wheel math runs against the anchored value).
         scroll-given?
         (some? scroll)
+
+        requested-scroll
+        scroll
 
         detail-expansions
         detail-expansions
@@ -1349,6 +1417,23 @@
                   (vec (range lo (inc hi)))
                   [])
 
+                ;; A changed Activity message can underestimate to entirely above
+                ;; the old viewport. Still measure its previously visible anchor.
+                anchor-turns
+                (into #{}
+                      (comp (filter #(and (<= (long requested-scroll) (long (:row %)))
+                                          (< (long (:row %)) (+ (long requested-scroll) inner-h))))
+                            (map #(first (:key %))))
+                      prev-activity-anchors)
+
+                cand-idxs
+                (into cand-idxs
+                      (keep-indexed (fn [i m]
+                                      (when (and (contains? anchor-turns (turn-identity m))
+                                                 (not (some #{i} cand-idxs)))
+                                        i)))
+                      messages)
+
                 projected
                 (mapv #(project-idx! % eff-1) cand-idxs)
 
@@ -1485,13 +1570,31 @@
              :eff-scroll eff-3
              :heights heights''
              :offsets offsets''
-             :visible visible-set}))]
+             :visible visible-set}))
+
+        anchored-result
+        (anchor-activity result prev-activity-anchors requested-scroll inner-h)
+
+        ;; A semantic anchor may move by more than a viewport. Re-plan at the
+        ;; corrected position so newly visible neighbours and tail slices paint.
+        ;; Omit previous anchors on this bounded recovery pass.
+        result
+        (if (= (:eff-scroll result) (:eff-scroll anchored-result))
+          anchored-result
+          (layout messages
+                  bubble-w
+                  settings
+                  (:eff-scroll anchored-result)
+                  inner-h
+                  {:progress progress :loading? loading? :progress-extra progress-extra}
+                  {:session-id session-id :detail-expansions detail-expansions}))]
 
     {:total-h (:total-h result)
      :eff-scroll (:eff-scroll result)
      :heights (:heights result)
      :offsets (:offsets result)
      :visible (:visible result)
+     :activity-anchors (:activity-anchors result)
      ;; Clamped, anchor-corrected absolute scroll the caller should
      ;; write back into app-db (`:set-scroll`) so the input thread and
      ;; the next layout agree. nil for auto-bottom — never persist that,

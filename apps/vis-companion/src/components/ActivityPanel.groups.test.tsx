@@ -19,7 +19,7 @@ it('labels extension groups and preserves disclosures, arguments and live failur
     [...document.querySelectorAll('[data-activity-group]')].map((group) =>
       group.getAttribute('data-activity-group'),
     ),
-  ).toEqual(['search-1', 'status-1', 'lookup-1']);
+  ).toEqual(['0:search-1', '0:status-1', '0:lookup-1']);
   expect(screen.getByRole('button', { name: /Search reviews ×3/ })).toBeTruthy();
   expect(screen.getByRole('button', { name: /Search reviews ×2/ })).toBeTruthy();
   expect(screen.getByRole('button', { name: /Check review deployment ×2/ })).toBeTruthy();
@@ -34,13 +34,13 @@ it('labels extension groups and preserves disclosures, arguments and live failur
   });
   expect(
     group.querySelector('[data-activity-arguments]')?.getAttribute('data-activity-arguments'),
-  ).toBe('search-1');
+  ).toBe('0:search-1');
   fireEvent.click(within(group).getByRole('button', { name: /Changes: 0 ×2/ }));
   expect(
     [...group.querySelectorAll('[data-activity-row]')].map((row) =>
       row.getAttribute('data-activity-row'),
     ),
-  ).toEqual(['search-1', 'search-3', 'search-2']);
+  ).toEqual(['0:search-1', '0:search-3', '0:search-2']);
 
   const settled = structuredClone(activity);
   settled.rows.find((row) => row.id === 'status-1')!.state = 'succeeded';

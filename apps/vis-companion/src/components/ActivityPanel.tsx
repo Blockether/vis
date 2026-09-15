@@ -885,8 +885,11 @@ function groupFacts(rows: readonly ActivityRow[]): string {
 }
 
 function ActivityGroup({ group, repeated = false }: { group: OperationGroup; repeated?: boolean }) {
-  const [open, setOpen] = useState(false);
-  if (group.rows.length === 1) return <ActivityStep row={group.rows[0]} />;
+  const singleton = group.rows.length === 1;
+  // A visible singleton stays visible when it becomes a group. Keep the same
+  // list/row tree so its disclosure state and the transcript anchor survive.
+  const [open, setOpen] = useState(singleton);
+  const expanded = singleton || open;
   const title = `${group.label} ×${group.rows.length}`;
   const facts = groupFacts(group.rows);
   const previewRows = group.rows.filter((row) =>
@@ -898,21 +901,23 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
   return (
     <li
       className="min-w-0"
-      data-activity-group={repeated ? undefined : group.id}
-      data-activity-arguments={repeated ? group.id : undefined}
+      data-activity-group={!singleton && !repeated ? group.id : undefined}
+      data-activity-arguments={!singleton && repeated ? group.id : undefined}
     >
-      <Disclosure
-        tone="execution"
-        density="compact"
-        isOpen={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <span className="min-w-0 break-words font-semibold">{title}</span>
-          {facts && <span className="text-meta text-dialog-hint">{facts}</span>}
-        </span>
-      </Disclosure>
-      {!open &&
+      {!singleton && (
+        <Disclosure
+          tone="execution"
+          density="compact"
+          isOpen={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <span className="min-w-0 break-words font-semibold">{title}</span>
+            {facts && <span className="text-meta text-dialog-hint">{facts}</span>}
+          </span>
+        </Disclosure>
+      )}
+      {!expanded &&
         previews.map((row) => (
           <p
             key={row.id}
@@ -922,8 +927,11 @@ function ActivityGroup({ group, repeated = false }: { group: OperationGroup; rep
             {row.error_summary || row.state}
           </p>
         ))}
-      {open && (
-        <ol className="min-w-0 pl-3" aria-label={`${title} operations`}>
+      {expanded && (
+        <ol
+          className={singleton ? 'min-w-0' : 'min-w-0 pl-3'}
+          aria-label={singleton ? undefined : `${title} operations`}
+        >
           {repeated
             ? group.rows.map((row) => <ActivityStep key={row.id} row={row} />)
             : argumentGroups(group.rows).map((argumentsGroup) => (
@@ -981,14 +989,29 @@ function operationCount(activity: ActivityProjection): number {
 }
 
 /** One bounded page per source; continuation belongs at the list's edges, not in a toolbar. */
-function ActivityHistoryWindow({ activities }: { activities: ActivityProjection[] }) {
+function ActivityHistoryWindow({
+  activities,
+  historyKey,
+}: {
+  activities: ActivityProjection[];
+  historyKey: string;
+}) {
   const source = useContext(ActivityHistoryContext);
   const [loaded, setLoaded] = useState<Array<ActivityProjection | undefined>>([]);
   const [later, setLater] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef<AbortController | null>(null);
-  useEffect(() => () => pending.current?.abort(), []);
+  // Invalidate stale pages and requests, not the mounted operation tree (#233).
+  const [seenHistoryKey, setSeenHistoryKey] = useState(historyKey);
+  if (seenHistoryKey !== historyKey) {
+    setSeenHistoryKey(historyKey);
+    setLoaded([]);
+    setLater(false);
+    setBusy(false);
+    setError('');
+  }
+  useEffect(() => () => pending.current?.abort(), [historyKey]);
   const pages = activities.map((activity, index) => {
     if (activity.history) return loaded[index] ?? activity;
     return later ? { ...activity, rows: [], omitted: { rows: 0, by_classification: {} } } : activity;
@@ -1041,10 +1064,7 @@ function ActivityHistoryWindow({ activities }: { activities: ActivityProjection[
           Show earlier operations
         </LoadMore>
       )}
-      <ActivityThread
-        key={pages.map((page) => page.history?.after ?? 0).join(':')}
-        activity={page}
-      />
+      <ActivityThread activity={page} />
       {page.rows.length === 0 && (
         <p className="pb-2 text-ui text-dialog-hint">No operations available.</p>
       )}
@@ -1155,7 +1175,7 @@ export function ActivityPanel({
       )}
       <div hidden={!open}>
         {hasHistory ? (
-          <ActivityHistoryWindow key={historyKey} activities={activities} />
+          <ActivityHistoryWindow historyKey={historyKey} activities={activities} />
         ) : (
           <ActivityThread activity={activity} />
         )}
