@@ -147,8 +147,8 @@
                       (is (= code-row-before (painted-row ts "CODE")))))))))))))
 
 (deftest retained-live-view-keeps-the-reading-position
-  ;; #233: a receipt replaces the inline body above the reader. Code/reasoning
-  ;; rows, not only Activity items, must retain their screen coordinates.
+  ;; #233, #248: Live keeps a compact sibling receipt through settlement. Closing
+  ;; it must preserve transcript height and the screen coordinates of code/reasoning.
   (doseq [reason
           [:cancelled :completed]
 
@@ -181,7 +181,7 @@
                   again (paint! ts)]
 
               (is (number? (painted-row ts "CODE")))
-              (is (< (:total-h after) (:total-h before)))
+              (is (= (:total-h after) (:total-h before)))
               (is (= (:eff-scroll after) (:eff-scroll again)))
               (if follow?
                 (do (assert-following after) (assert-following again))

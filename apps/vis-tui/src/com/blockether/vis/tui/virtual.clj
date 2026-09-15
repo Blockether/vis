@@ -978,6 +978,11 @@
         (let [turn
               (turn-identity projected)
 
+              ;; Plain transcript lines may have no disclosure metadata. They still
+              ;; need an identity when an append invalidates positional offsets (#248).
+              text-lines
+              (str/split (or (:text projected) "") #"\n" -1)
+
               start
               (+ (long (nth offsets idx)) (long (get-in projected [:lines-window :start] 0)))]
 
@@ -987,7 +992,10 @@
                 (if-let [identity (cond (and (:run-header? meta) (:view-id meta)) [:view
                                                                                    (:view-id meta)]
                                         (:item-id meta) [:activity (:item-id meta) (:kind meta)]
-                                        (:node-id meta) [:node (:node-id meta) (:kind meta)])]
+                                        (:node-id meta) [:node (:node-id meta) (:kind meta)]
+                                        :else (let [text (get text-lines i)]
+                                                (when-not (str/blank? text)
+                                                  [:text (:role projected) text])))]
                   (let [key (into [turn] identity)
                         occurrence (get seen key 0)]
 

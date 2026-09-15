@@ -3037,6 +3037,14 @@
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/put-str! g 0 row (p/center-text label (long cols)))))
 
+(defn- progress-live-runs
+  "Project active views only when their receipt has not landed on an earlier turn."
+  [db]
+  (let [earlier-view-ids (into #{} (mapcat #(map :view-id (:runs %))) (butlast (:messages db)))]
+    (mapv lv/transcript-run
+          (remove #(or (lv/dormant? %) (contains? earlier-view-ids (lv/view-id %)))
+            (:live-views db)))))
+
 (defn- render-frame-content!
   "Draw one frame: background, messages area (bubbles), input box,
    echo-area row, and two unboxed footer rows.
@@ -3156,7 +3164,7 @@
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
          :live-title (lv/watching-title (:live-views db))
-         :live-runs (mapv lv/transcript-run (remove lv/dormant? (:live-views db)))}
+         :live-runs (progress-live-runs db)}
 
         ;; Single virtualized layout pass: cheap height estimate for
         ;; every message, full projection + real height ONLY for
@@ -3886,7 +3894,7 @@
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
          :live-title (lv/watching-title (:live-views db))
-         :live-runs (mapv lv/transcript-run (remove lv/dormant? (:live-views db)))}
+         :live-runs (progress-live-runs db)}
 
         layout-start-ns
         (System/nanoTime)
@@ -4228,7 +4236,7 @@
          :pending-sends (:pending-sends db)
          :queue-paused (:queue-paused db)
          :live-title (lv/watching-title (:live-views db))
-         :live-runs (mapv lv/transcript-run (remove lv/dormant? (:live-views db)))}
+         :live-runs (progress-live-runs db)}
 
         layout-start-ns
         (System/nanoTime)

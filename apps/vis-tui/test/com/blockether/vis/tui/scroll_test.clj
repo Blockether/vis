@@ -113,3 +113,45 @@
   (testing "parked AT (or past) the live bottom ⇒ no chip"
     (is (false? (scroll/jump-chip-visible? (scroll/parked 100) 100)))
     (is (false? (scroll/jump-chip-visible? (scroll/parked 999) 100)))))
+
+;; #248: proximity to a changing live bottom must not replace parked intent.
+(deftest down-keeps-a-near-bottom-reader-parked
+  (doseq [max-s [1203 1205]]
+    (let [sc (scroll/down (scroll/parked 1197) 3 max-s)]
+      (is (= :at (:mode sc)))
+      (is (= 1200 (scroll/desired sc max-s)))
+      (is (= 1200 (scroll/desired sc 3099)))
+      (is (scroll/jump-chip-visible? sc max-s)))))
+
+(deftest parked-intent-survives-live-height-changes
+  (let [sc (scroll/down (scroll/parked 1197) 3 1203)]
+    (doseq [max-s [1203 3099 1200 3099]]
+      (let [eased (nth (iterate #(scroll/ease % max-s) sc) 20)]
+        (is (= :at (:mode eased)))
+        (is (= 1200 (scroll/desired eased max-s)))
+        (is (= 1200 (scroll/displayed eased max-s)))
+        (is (= eased (scroll/settle eased)))))
+    (testing "an anchor correction preserves parked intent even at the new bottom"
+      (let [anchored (scroll/reanchor sc 3096 1899)]
+        (is (= :at (:mode anchored)))
+        (is (= 3099 (scroll/desired anchored 3099)))
+        (is (= 3099 (scroll/desired anchored 3200)))))))
+
+(deftest down-rearms-follow-only-on-reaching-the-bottom
+  (doseq [amount [6 7 1000]]
+    (let [sc (scroll/down (scroll/parked 1197) amount 1203)]
+      (is (= :follow (:mode sc)))
+      (is (= 1203 (scroll/desired sc 1203)))
+      (is (= 3099 (scroll/desired sc 3099))))))
+
+(deftest lazy-prepend-preserves-parked-scroll-and-animation
+  (let [sc
+        (scroll/down (scroll/parked 1197) 3 1203)
+
+        shifted
+        (scroll/shift-prepended sc 1896)]
+
+    (is (= :at (:mode shifted)))
+    (is (= 3096 (scroll/desired shifted 3099)))
+    (is (= 3093 (scroll/displayed shifted 3099)))
+    (is (= scroll/follow (scroll/shift-prepended scroll/follow 1896)))))

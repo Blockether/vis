@@ -3083,19 +3083,22 @@
 (defn- upsert-run-row
   "Place one transcript receipt on the assistant message that owns its form.
 
-   A running Activity replaces the same row after every patch; an ordinary run
-   reaches this helper only once when it settles."
+   File the row when a view opens so it survives turn completion. A later close
+   updates that same message even when another turn has started."
   [workspace pane]
   (let [messages
         (vec (:messages workspace))
 
-        idx
-        (last (keep-indexed (fn [i message]
-                              (when (= :assistant (:role message)) i))
-                            messages))
-
         row
-        (lv/run-row pane)]
+        (lv/run-row pane)
+
+        idx
+        (or (first (keep-indexed (fn [i message]
+                                   (when (some #(= (:view-id row) (:view-id %)) (:runs message)) i))
+                                 messages))
+            (last (keep-indexed (fn [i message]
+                                  (when (= :assistant (:role message)) i))
+                                messages)))]
 
     (if-not idx
       workspace
@@ -3113,7 +3116,9 @@
   (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
     workspace
     (let [pane (lv/opened view)]
-      (update workspace :live-views (fnil conj []) pane))))
+      (-> workspace
+          (update :live-views (fnil conj []) pane)
+          (upsert-run-row pane)))))
 
 (reg-event-db :live-view-open
               ;; Owner matching happens during rendering, after Activity rows can arrive.
@@ -3626,16 +3631,21 @@
               ;; An OLDER page of the transcript landed (the session opened on its
               ;; newest turns only). Splice it in ABOVE the current messages and shift
               ;; the scroll by the page's MEASURED height so the bubble the user is
-              ;; reading stays exactly where it is — `virtual/layout`'s own anchoring
-              ;; can't help here, it deliberately skips a frame where the message
-              ;; count changed.
+              ;; reading stays exactly where it is. Shift retained semantic anchors
+              ;; into the same document coordinates so layout does not apply the
+              ;; prepend correction a second time.
               ;;
               ;; Dropped when the tab has moved on to another session: the fetch is
               ;; async and its result is only ever valid for the session it was for.
               (fn [db [_ session-id page shift]]
                 (if-not (= (str session-id) (str (get-in db [:session :id])))
                   db
-                  (let [older (vec (:messages page))]
+                  (let [older
+                        (vec (:messages page))
+
+                        shift
+                        (long (or shift 0))]
+
                     (-> db
                         (update :messages #(into older (or % [])))
                         ;; Older prompts belong at the FRONT of the up-arrow ring:
@@ -3647,7 +3657,12 @@
                                 :history-cursor {:offset (:offset page)
                                                  :total (:total page)
                                                  :has-more (boolean (:has-more page))})
-                        (update :scroll scroll/shift-prepended (long (or shift 0))))))))
+                        (update :scroll scroll/shift-prepended shift)
+                        (cond->
+                          (seq (get-in db [:layout :row-anchors]))
+                          (update-in [:layout :row-anchors]
+                                     (fn [anchors]
+                                       (mapv #(update % :row + shift) anchors)))))))))
 
 (reg-event-db :ease-scroll
               ;; Render-loop pulse: advance the on-screen position one ease-out step
@@ -3865,8 +3880,8 @@
       (if load {:db (assoc-in db' [:session :history-loading?] true) :fx [load]} {:db db'}))))
 
 (reg-event-db :scroll-down
-              ;; Wheel / arrow / PageDown: ease `amount` rows down; landing within the
-              ;; slack band of the bottom re-arms FOLLOW.
+              ;; Wheel / arrow / PageDown: ease `amount` rows down; reaching the
+              ;; bottom re-arms FOLLOW.
               (fn [db [_ amount total-h inner-h]]
                 (let [max-s
                       (max 0 (- (long total-h) (long inner-h)))

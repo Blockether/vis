@@ -1114,3 +1114,58 @@
       (is (lv/settled? (first (:live-views @db))))
       (is (= empty-page (get-in @db [:live-viewer-search :page])))
       (is (= (lv/view-id pane) (:live-viewer-id @db))))))
+
+(deftest running-live-receipt-survives-owning-turn-completion
+  ;; #248: an open background view stays below its Activity while later turns run.
+  (with-open [terminal
+              (DefaultVirtualTerminal. (TerminalSize. 100 44))
+
+              ts
+              (doto (TerminalScreen. terminal) (.startScreen))]
+
+    (let [pane
+          (review-pane)
+
+          view-id
+          (lv/view-id pane)
+
+          db
+          (atom (-> (viewer-review-db pane)
+                    (dissoc :live-viewer-id)
+                    (assoc :live-views [])))
+
+          receipt?
+          #(some (fn [hit]
+                   (and (= :live-reopen (:kind hit)) (= view-id (:view-id hit))))
+                 (.current interactions/hit-map))]
+
+      (binding [interactions/hit-map (interactions/create-hit-map)]
+        (with-redefs [state/app-db db]
+          (state/dispatch [:live-view-open (assoc (:view pane) :session-id "viewer-review")])
+          (paint-viewer-review! ts 100 @db)
+          (is (receipt?) "The running turn exposes a Live receipt")
+          (swap! db update
+            :messages
+            #'state/replace-pending-assistant
+            {:role :assistant
+             :text "Background verification continues."
+             :traces (:iterations review-progress)})
+          (swap! db assoc :loading? false :progress nil)
+          (paint-viewer-review! ts 100 @db)
+          (is (receipt?) "Completing the owning turn must not hide a running Live receipt")
+          (is (= [view-id] (mapv :view-id (get-in @db [:messages 0 :runs]))))
+          (swap! db update
+            :messages
+            conj
+            {:role :user :text "Continue"}
+            {:role :assistant :text "Next turn"})
+          (swap! db assoc :loading? true :progress {:iterations [{:thinking "Next thought"}]})
+          (paint-viewer-review! ts 100 @db)
+          (is (= 1
+                 (count (filter #(and (= :live-reopen (:kind %)) (= view-id (:view-id %)))
+                                (.current interactions/hit-map))))
+              "A new turn must not duplicate an earlier turn's still-running receipt")
+          (state/dispatch [:live-view-close view-id {:reason :completed}])
+          (is (= [:completed] (mapv :reason (get-in @db [:messages 0 :runs])))
+              "A later close updates the original receipt, not the newest turn")
+          (is (empty? (:runs (last (:messages @db))))))))))

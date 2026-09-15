@@ -1592,6 +1592,153 @@
         (expect (= (painted expected) (painted next-frame))))))
 
 (defdescribe
+  growing-transcript-anchor-test
+  ;; #248: a 32-row parked viewport must survive height warm-up and live appends.
+  (it "keeps the watched message fixed when off-screen heights change during append"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [width
+            180
+
+            inner-h
+            32
+
+            prefix
+            (assoc (trace-assistant-msg 20 5 "Earlier result") :session-turn-id "earlier-turn")
+
+            watched
+            (assoc (plain-assistant-msg (str/join "\n\n"
+                                                  (map #(str "Watched paragraph " %) (range 100))))
+              :session-turn-id "watched-turn")
+
+            messages
+            (into [prefix watched]
+                  (map #(assoc (user-msg (str "Later message " %))
+                          :session-turn-id (str "later-" %))
+                       (range 14)))
+
+            opts
+            {:session-id "growing-transcript" :detail-expansions {}}
+
+            requested
+            (+ (estimated-height prefix width) 20)
+
+            before
+            (virtual/layout messages width settings requested inner-h {} opts)
+
+            _
+            (virtual/warm-heights! [prefix] width settings opts)
+
+            appended
+            (into messages
+                  (map #(assoc (user-msg (str "New message " %)) :session-turn-id (str "new-" %))
+                       (range 6)))
+
+            after
+            (virtual/layout appended
+                            width
+                            settings
+                            (:eff-scroll before)
+                            inner-h
+                            {}
+                            (assoc opts
+                              :prev-offsets (:offsets before)
+                              :prev-row-anchors (:row-anchors before)))
+
+            screen-row
+            (fn [frame]
+              (- (nth (:offsets frame) 1) (:eff-scroll frame)))]
+
+        (expect (= 16 (count messages)))
+        (expect (= 22 (count appended)))
+        (expect (not= (first (:heights before)) (first (:heights after))))
+        (expect (neg? (screen-row before)))
+        (expect (= (screen-row before) (screen-row after)))))
+  (it
+    "preserves tool-output and Activity rows through tall live growth and settlement"
+    (virtual/invalidate-heights!)
+    (render/invalidate-cache!)
+    (let [width
+          180
+
+          inner-h
+          32
+
+          row
+          (fn [i op]
+            {:id (str "growth-" i)
+             :sequence i
+             :operation op
+             :summary (str "file-" i)
+             :state "succeeded"
+             :resources []
+             :evidence []})
+
+          rows
+          (into [(row 0 "cat")] (map #(row % "patch") (range 1 65)))
+
+          message
+          (fn [rs]
+            (assoc (trace-assistant-msg 1 1 "Done")
+              :session-turn-id "tall-output"
+              :traces [{:forms [{:code "run()"
+                                 :stdout (str/join "\n" (map #(str "Output line " %) (range 2200)))
+                                 :success? true
+                                 :activity {:rows rs :omitted {:rows 0}}}]}]))
+
+          before
+          (message rows)
+
+          after
+          (message (into rows (map #(row % "cat") (range 65 1965))))
+
+          opts
+          {:session-id "tall-output-session"
+           :detail-expansions {:vis.channel-tui/expand-all-details? true}}
+
+          environment
+          (fn [m]
+            {:loading? true
+             :progress {:iterations (:traces m)}
+             :progress-extra {:now-ms 1000 :turn-start-ms 0}})
+
+          whole
+          (virtual/layout [before] width settings nil 10000 (environment before) opts)
+
+          output-row
+          (first (keep-indexed #(when (str/includes? %2 "Output line 1900") %1)
+                               (get-in whole [:visible 0 :projected :prewrapped-lines])))
+
+          targets
+          (filter #(or (= "0:growth-8" (nth (:key %) 2 nil)) (= output-row (:row %)))
+                  (:row-anchors whole))
+
+          next-frame
+          (fn [previous env]
+            (virtual/layout [after]
+                            width
+                            settings
+                            (:eff-scroll previous)
+                            inner-h
+                            env
+                            (assoc opts
+                              :prev-offsets (:offsets previous)
+                              :prev-row-anchors (:row-anchors previous))))]
+
+      (expect (= 2 (count targets)))
+      (doseq [{:keys [key row]} targets]
+        (let [parked (virtual/layout [before] width settings row inner-h (environment before) opts)
+              grown (next-frame parked (environment after))
+              retained (next-frame grown {})
+              screen-row (fn [frame]
+                           (when-let [anchor (some #(when (= key (:key %)) %) (:row-anchors frame))]
+                             (- (:row anchor) (:eff-scroll frame))))]
+
+          (expect (> (- (:total-h grown) (:total-h parked)) 1900))
+          (expect (= 0 (screen-row parked) (screen-row grown) (screen-row retained)))
+          (expect (= (:eff-scroll retained) (:eff-scroll (next-frame retained {})))))))))
+
+(defdescribe
   terminal-pending-scroll-test
   (it
     "keeps the watched trace visible while the terminal result is pending"

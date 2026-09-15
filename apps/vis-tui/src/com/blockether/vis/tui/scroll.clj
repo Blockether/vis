@@ -35,14 +35,6 @@
    `screen.clj` reads `layout-offset` / `animating?` to drive the loop."
   (:import [java.lang Math]))
 
-(def ^:const slack-rows
-  "How close (in rows) to the bottom still counts as the bottom for the
-   purpose of re-arming `:follow`. Scrolling DOWN to within this band
-   sticks to the bottom again, so freshly streamed content keeps the
-   latest message in view. Kept small so a deliberate read-up even a
-   few rows above the live edge stays parked."
-  4)
-
 (def ^:const step-frac
   "Ease-out fraction per animation step: bigger steps when far, smaller
    as we close in. The render loop ticks `ease` a few times a second."
@@ -242,9 +234,10 @@
     {:mode :at :offset t :pos (or (:pos sc) cur)}))
 
 (defn down
-  "Wheel/key scroll DOWN by `amount`. Landing within `slack-rows` of the
-   bottom re-arms FOLLOW (and eases the rest of the way); otherwise parks
-   `amount` rows below the COMMITTED offset.
+  "Wheel/key scroll DOWN by `amount`. Reaching the bottom re-arms FOLLOW
+   (and eases the rest of the way); otherwise parks `amount` rows below
+   the COMMITTED offset. A near-bottom reader remains parked so a live
+   height correction cannot turn a small gesture into automatic following.
 
    As with `up`, the target anchors to the committed `:offset` (or the live
    bottom while FOLLOWING) so an alternating momentum stream can't walk the
@@ -262,7 +255,7 @@
         t
         (+ base amount)]
 
-    (if (>= t (- max-s (long slack-rows)))
+    (if (>= t max-s)
       (assoc follow :pos (or (:pos sc) cur))
       {:mode :at :offset t :pos (or (:pos sc) cur)})))
 

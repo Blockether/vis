@@ -1159,11 +1159,47 @@
           (expect (false? (get-in r [:session :history-loading?])))
           ;; a page for a session this tab no longer shows is dropped whole
           (expect (= db ((ev :prepend-history) db [:prepend-history "other" page 120])))))
-    (it "scroll-down landing in the bottom slack band re-arms FOLLOW"
+    (it "prepend-history shifts semantic anchors exactly once for a short page"
+        ;; #248: a page shorter than the viewport leaves stale anchors visible,
+        ;; so the next layout used to apply the measured prepend shift twice.
+        (virtual/invalidate-heights!)
+        (render/invalidate-cache!)
+        (let [messages [{:role :assistant
+                         :text (str/join "\n\n" (map #(str "Watched paragraph " %) (range 100)))
+                         :session-turn-id "watched"}]
+              opts {:session-id "s1" :detail-expansions {}}
+              before (virtual/layout messages 180 {} 20 32 {} opts)
+              older [{:role :user :text "Older prompt" :session-turn-id "older"}]
+              shift (virtual/warm-heights! older 180 {} opts)
+              db {:scroll (scroll/parked (:eff-scroll before))
+                  :messages messages
+                  :layout before
+                  :session {:id "s1"}}
+              page {:messages older :offset 0 :total 2 :has-more false}
+              prepended ((ev :prepend-history) db [:prepend-history "s1" page shift])
+              after (virtual/layout (:messages prepended)
+                                    180
+                                    {}
+                                    (get-in prepended [:scroll :offset])
+                                    32
+                                    {}
+                                    (assoc opts
+                                      :prev-offsets (get-in prepended [:layout :offsets])
+                                      :prev-row-anchors (get-in prepended [:layout :row-anchors])))
+              anchor (first (:row-anchors before))
+              matching (first (filter #(= (:key anchor) (:key %)) (:row-anchors after)))]
+
+          (expect (< 0 shift 32))
+          (expect (some? anchor))
+          (expect (= (+ (:eff-scroll before) shift) (:eff-scroll after)))
+          (expect (= (- (:row anchor) (:eff-scroll before))
+                     (- (:row matching) (:eff-scroll after))))
+          (expect (= db ((ev :prepend-history) db [:prepend-history "stale" page shift])))))
+    (it "scroll-down reaching the bottom re-arms FOLLOW"
         (let [r ((ev :scroll-down) {:scroll (scroll/parked 90)} [:scroll-down 30 200 100])]
-          ;; max-s 100; 90+30 within slack of 100 -> follow (eases the rest).
+          ;; max-s 100; 90+30 reaches past 100 -> follow (eases the rest).
           (expect (= :follow (:mode (:scroll r))))))
-    (it "scroll-down above the slack band stays parked"
+    (it "scroll-down above the bottom stays parked"
         (let [r ((ev :scroll-down) {:scroll (scroll/parked 10)} [:scroll-down 30 200 100])]
           (expect (= :at (:mode (:scroll r))))
           (expect (= 40 (:offset (:scroll r))))))
@@ -1181,7 +1217,7 @@
           (expect (= scroll/follow (:scroll r)))
           (expect (identical? r db))))
     (it "ease-scroll still FINISHES a deliberate move back to the bottom"
-        ;; `scroll/down` landing inside the slack band re-arms FOLLOW carrying the
+        ;; `scroll/down` reaching the bottom re-arms FOLLOW carrying the
         ;; row it started from; that ease runs out and then snaps clean.
         (let [stepped
               ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)} [:ease-scroll 300 100])]
