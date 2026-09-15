@@ -417,7 +417,7 @@
       (let [view (#'shim-ls/listing-presentation [{"path" "empty" "entries" []}])]
         (expect (= "Listed directory" (get view "headline")))
         (expect (= "empty · 0 directories · 0 files" (get view "summary")))
-        (expect (= [] (get-in view ["content" 0 "rows"])))))
+        (expect (= [] (get view "content")))))
   (it "keeps failure truthful and catchable when Activity is enabled"
       (let [ctx
             (sandbox)

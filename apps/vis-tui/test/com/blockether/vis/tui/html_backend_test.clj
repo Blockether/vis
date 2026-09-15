@@ -266,15 +266,10 @@
             (is (= (cell-grid html cols 80) grid))
             (is (str/includes? text expected))
             (is (not (re-find #"Thread id|Is pass" text)))
-            (when-let [heading (case (name (:operation row))
-                                 "run_tests"
-                                 "Metric"
-
-                                 nil)]
-              (is (str/includes? text heading))
-              (is (str/includes? text "Result"))
-              (is (not (str/includes? text "Field")))
-              (is (not (str/includes? text "Value"))))
+            (when (= "run_tests" (name (:operation row)))
+              (is (str/includes? text
+                                 (if (= cols 40) "Ran tests · 12 tests" "12 tests · 0 failed")))
+              (is (not (re-find #"Metric|Result|Field|Value" text))))
             (is (not (re-find #"12:abc|13:def|\[\"src/com" text)))))))))
 
 (defn activity-table-rows

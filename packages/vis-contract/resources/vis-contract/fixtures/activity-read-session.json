@@ -66,13 +66,8 @@
             "summary": "Metadata and complete usage",
             "content": [
               {
-                "type": "table",
-                "columns": ["Session", "Result"],
-                "rows": [
-                  ["Goal", "Verify a complete session read."],
-                  ["Model", "example-model"],
-                  ["Title", "Session review"]
-                ]
+                "type": "text",
+                "text": "Goal: Verify a complete session read. · Model: example-model · Title: Session review"
               },
               {
                 "type": "heading",
@@ -148,15 +143,8 @@
                 "text": "Failure 1 · Turn 2"
               },
               {
-                "type": "table",
-                "columns": ["Detail", "Result"],
-                "rows": [
-                  ["Advice", "Check the failing input before retrying."],
-                  ["Auth token", "[REDACTED]"],
-                  ["Classification", "python-error"],
-                  ["Iteration", "1"],
-                  ["Tool", "repl_eval"]
-                ]
+                "type": "text",
+                "text": "Advice: Check the failing input before retrying. · Auth token: [REDACTED] · Classification: python-error · Iteration: 1 · Tool: repl_eval"
               },
               {
                 "type": "heading",

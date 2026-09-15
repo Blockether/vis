@@ -196,7 +196,7 @@
         (expect (contract/valid-projection? projection))
         (expect (= ["No formatting changes · src/example.clj" "No lint findings · 1 file checked"]
                    (mapv #(get-in % ["presentation" "summary"]) rows)))
-        (expect (seq (get-in (first rows) ["presentation" "content"])))
+        (expect (empty? (get-in (first rows) ["presentation" "content"])))
         (expect (seq (get-in (second rows) ["presentation" "sections" 0 "content"])))
         (expect (not-any? #(get % "is_truncated") rows))))
   ;; #218: all findings remain visible, not just complete aggregate counts.
@@ -326,25 +326,178 @@
         (expect (contract/valid-projection? projection))))))
 
 (defdescribe
-  result-table-headings-test
-  (it "names scalar-table columns for the operation, with a readable fallback"
-      (doseq [[operation heading] [[:run_tests "Metric"] [:lint_code "Metric"]]]
-        (let [content (get (presenter/result-presentation {:operation operation}
-                                                          {:total 12 :title "Activity review"})
-                           "content")]
-          (expect (= [heading "Result"] (get-in content [0 "columns"]))))))
-  (it "keeps nested detail tables distinct from top-level test metrics"
-      (let [content (get (presenter/result-presentation {:operation :run_tests}
-                                                        {:total 12
-                                                         :environment {:language "clojure"}})
-                         "content")]
-        (expect (= ["Metric" "Result"] (get-in content [0 "columns"])))
-        (expect (= ["Detail" "Result"] (get-in content [2 "columns"])))))
-  (it "uses the operation's columns for each item in a result list"
-      (let [content (get (presenter/result-presentation {:operation :run_tests}
-                                                        [{:total 1} {:total 2}])
-                         "content")]
-        (expect (= [["Metric" "Result"] ["Metric" "Result"]] (mapv #(get % "columns") content))))))
+  compact-built-in-results-test
+  (it
+    "keeps routine draft and REPL outcomes on the summary line"
+    (doseq [[operation result summary]
+            [[:draft_status {:in_draft false} "No active draft"]
+             [:draft_status
+              {:in_draft true :branch "vis/review" :target_branch "main" :pending 2 :ahead 1}
+              "vis/review → main · 2 pending files · 1 commit ahead"]
+             [:draft_status
+              {"in_draft" true "branch" "vis/review" "target_branch" "main" "pending" 0 "ahead" 0}
+              "vis/review → main · No pending changes"]
+             [:draft_create {:branch "vis/review" :target_branch "main" :clean true}
+              "vis/review → main · Clean snapshot"]
+             [:draft_create {:branch "vis/review" :target_branch "main" :clean false}
+              "vis/review → main · Includes pending changes"]
+             [:draft_approve {:status "approved" :published false :target_branch "main" :files []}
+              "Approved locally on main"]
+             [:draft_approve
+              {:status "nothing-to-approve" :published true :target_branch "main" :files []}
+              "Nothing to approve · Published to main"]
+             [:draft_diff {:filename "DIFF-review.json" :empty true :checkpoint "internal"}
+              "DIFF-review.json · No changes"]
+             [:draft_diff {:filename "DIFF-review.json" :empty false :checkpoint "internal"}
+              "DIFF-review.json · Diff attached"]
+             [:draft_discard {:label "review" :root "~/vis" :approved_ahead 1}
+              "review · Returned to ~/vis · 1 approved commit kept"]
+             [:repl_status {:result "status" :status "down" :cwd "~/vis" :resources []}
+              "Not running · ~/vis"]
+             [:repl_status {"result" "status" "status" "up" "cwd" "~/vis"} "Running · ~/vis"]
+             [:repl_start {:result "already-running" :status "up" :cwd "~/vis"}
+              "Already running · ~/vis"]
+             [:repl_start {:result "starting" :cwd "~/vis"} "Starting · ~/vis"]
+             [:repl_connect
+              {:result "connected"
+               :status "up"
+               :cwd "~/vis"
+               :host "127.0.0.1"
+               :port 5000
+               :external true} "Connected · ~/vis · 127.0.0.1:5000 · External REPL"]
+             [:repl_stop {:result "detached" :status "down" :cwd "~/vis"} "Detached · ~/vis"]
+             [:repl_stop {:result "stopped" :status "down" :cwd "~/vis"} "Stopped · ~/vis"]
+             [:update_goal {:status "complete" :objective "Verify Activity" :reason "Checks pass"}
+              "Complete · Verify Activity"]]]
+      (let [view (get-in (result-fixture [[operation "" result nil]]) ["rows" 0 "presentation"])]
+        (expect (contract/valid-presentation? view))
+        (expect (= summary (get view "summary")))
+        (expect (not (re-find #"\"type\" \"table\"" (pr-str view))))
+        (when-not (= operation :update_goal) (expect (empty? (get view "content")))))))
+  (it "names absent results instead of showing empty summaries or tables"
+      (doseq [[operation summary]
+              [[:draft_status "No draft status"] [:draft_create "No draft result"]
+               [:draft_approve "No draft result"] [:draft_discard "No draft result"]
+               [:draft_diff "No draft result"] [:repl_status "No REPL status"]
+               [:repl_start "No REPL status"] [:repl_stop "No REPL status"]
+               [:repl_connect "No REPL status"] [:run_tests "No test result"]
+               [:list_sessions "No sessions found"]]
+
+              result
+              [nil {} []]]
+
+        (let [view (presenter/result-presentation {:operation operation} result)]
+          (expect (= summary (get view "summary")))
+          (expect (empty? (get view "content"))))))
+  (it
+    "retains actionable evidence without metadata tables"
+    (doseq [[operation result summary evidence]
+            [[:repl_start
+              {:result "failed"
+               :status "failed"
+               :cwd "~/vis"
+               :exit 1
+               :message "Cannot launch REPL"
+               :log_tail "Launcher error"} "Failed · ~/vis"
+              ["Cannot launch REPL" "Launcher error" "Exit: 1"]]
+             [:repl_start {:result "no-launcher" :cwd "~/vis" :message "Install Clojure"}
+              "No launcher · ~/vis" ["Install Clojure"]]
+             [:repl_status
+              {:status "down"
+               :cwd "~/vis"
+               :resources [{:language "python" :status "up" :label "Analysis REPL"}]}
+              "Not running · ~/vis · 1 live REPL" ["Analysis REPL" "python"]]
+             [:draft_approve
+              {:status "approved" :published true :target_branch "main" :files ["src/example.clj"]}
+              "Published to main · 1 file" ["src/example.clj"]]
+             [:update_goal
+              {:status "blocked" :objective "Verify Activity" :reason "Missing test dependency"}
+              "Blocked · Verify Activity" ["Missing test dependency"]]]]
+      (let [view (presenter/result-presentation {:operation operation} result)
+            content (pr-str (get view "content"))]
+
+        (expect (contract/valid-presentation? view))
+        (expect (= summary (get view "summary")))
+        (doseq [text evidence]
+          (expect (str/includes? content text)))
+        (when (= operation :repl_start) (expect (= "REPL unavailable" (get view "headline"))))
+        (expect (not (str/includes? content "\"table\""))))))
+  (it "does not put successful formatting metadata in the body"
+      (doseq [result [{:path "src/example.clj"
+                       :changed false
+                       :formatter "zprint"
+                       :repaired false
+                       :unbalanced false
+                       :error false} {:changed true :formatter "ruff"} {:files [] :changed 0}]]
+        (expect (empty? (get (presenter/result-presentation {:operation :format_code} result)
+                             "content")))))
+  (it "keeps test counts inline, retaining failures and output below"
+      (doseq [[result summary]
+              [[{:total 12 :pass 12 :fail 0 :output "12 tests passed."} "12 tests · 0 failed"]
+               [{:total 12 :pass 10 :fail 2 :errored 1 :output "Assertion failed"}
+                "12 tests · 2 failed · 1 errored"] [{:total 0 :fail 0} "No tests ran"]
+               [{:error "Cannot launch tests" :total 0 :fail 0} "Test run failed"]
+               [{:timed_out true :error "Timeout"} "Test run timed out"]]]
+        (let [view (presenter/result-presentation {:operation :run_tests} result)
+              content (pr-str (get view "content"))]
+
+          (expect (= summary (get view "summary")))
+          (expect (not (str/includes? content "\"table\"")))
+          (expect (not (re-find #"Total:|Pass:|Fail:|Errored:" content)))
+          (doseq [text (keep result [:output :error])]
+            (expect (str/includes? content text))))))
+  (it "renders nested metadata as text rather than key/value grids"
+      (let [view (presenter/result-presentation {:operation :run_tests}
+                                                {:environment {:language "clojure"
+                                                               :runner "lazytest"}})]
+        (expect (= [{"type" "heading" "text" "Environment"}
+                    {"type" "text" "text" "Language: clojure · Runner: lazytest"}]
+                   (get view "content")))))
+  (it
+    "keeps binding registration, start policy, failure and cancellation intact"
+    (doseq [[operation show-start?]
+            [[:draft_status false] [:draft_create true] [:draft_diff true] [:draft_approve true]
+             [:draft_discard true] [:repl_status false] [:repl_start true] [:repl_connect true]
+             [:repl_stop true] [:update_goal false] [:run_tests true]]
+
+            outcome
+            [:failed :cancelled]]
+
+      (let [ctx
+            (event/context)
+
+            invocation
+            (event/invocation ctx nil)
+
+            declared
+            (presenter/for-tool operation)
+
+            details
+            {:operation operation
+             :presenter :generic
+             :activity declared
+             :started-at-ms (System/currentTimeMillis)}
+
+            start
+            (event/start-event ctx invocation details)
+
+            terminal
+            (event/terminal-event ctx
+                                  invocation
+                                  (assoc details
+                                    :outcome outcome
+                                    :error (ex-info "Operation unavailable" {})))
+
+            projection
+            (activity/presentation (activity/replay [start terminal]))
+
+            row
+            (first (:rows projection))]
+
+        (expect (= show-start? (:show-start declared)))
+        (expect (= (name outcome) (:state row)))
+        (expect (= "Operation unavailable" (:error-summary row)))
+        (expect (contract/valid-projection? projection))))))
 
 (defdescribe
   semantic-results-test
