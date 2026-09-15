@@ -148,20 +148,46 @@ def test_quickstart_runs_as_one_project_extension(monkeypatch):
     (tool,) = declaration["symbols"]
     assert tool["contract"]["name"] == "hello"
     assert _contracts.validate("symbol", "callable", tool["contract"])
-    assert "uppercase" in tool["doc"] and "False" in tool["doc"]
+    # #232: prose explains behavior; the generated contract supplies call structure.
+    assert "Preserves capitalization unless uppercase is requested." in tool["doc"]
+    assert "uppercase: bool (keyword_only; default omitted)" in tool["doc"]
     assert module.hello(" Ada ") == "Hello, Ada!"
     assert module.hello("Ada", uppercase=True) == "HELLO, ADA!"
     with pytest.raises(ValueError, match="blank"):
         module.hello(" ")
 
 
-def test_greeter_documents_the_behavior_of_omitted_arguments(monkeypatch):
+def test_greeter_derives_call_shape_with_a_semantic_only_docstring(monkeypatch):
+    # #232: a short method docstring must preserve discovery, types and omission.
     monkeypatch.syspath_prepend(str(EXAMPLE / "src"))
     from vis_greeter import Greeter
 
-    contract = vis.Symbol(Greeter(), name="greet").contract["members"][0]
-    assert "uppercase" in contract["description"] and "False" in contract["description"]
-    assert Greeter().hello("Ada").text == "Hello, Ada!"
+    greeter = Greeter()
+    symbol = vis.Symbol(greeter, name="greet")
+    catalog = vis.Catalog([symbol])
+    contract = symbol.contract["members"][0]
+    spec = catalog.spec("greet.hello")
+    document = catalog.help("greet.hello").text
+    assert "Preserves capitalization unless uppercase is requested." in spec.description
+    assert "False" not in spec.description
+    assert spec.signature == contract["signature"] == "name, *, uppercase=..."
+    name, uppercase = spec.parameters
+    assert name.required and name.type.name == "str"
+    assert uppercase.kind == "keyword_only" and uppercase.type.name == "bool"
+    assert uppercase.has_default and not uppercase.required
+    assert not uppercase.default_is_none
+    assert spec.returns.name == "Greeting"
+    assert [field.name for field in spec.returns.fields] == ["text", "characters"]
+    assert "greet.hello(name, *, uppercase=...)" in document
+    assert "Effect: observation" in document
+    assert "uppercase: bool (keyword_only; default omitted)" in document
+    assert "Returns: Greeting" in document
+    assert "Unicode code points" in document
+    vis.testing.assert_catalog(catalog, names=["greet.hello"])
+    assert greeter.hello("Ada").text == "Hello, Ada!"
+    assert greeter.hello("Ada", uppercase=True).text == "HELLO, ADA!"
+    with pytest.raises(TypeError):
+        greeter.hello("Ada", True)
 
 
 def test_documented_provider_loads_without_network_or_login(monkeypatch):

@@ -306,8 +306,8 @@
 
 (def ^:private CORE_SYSTEM_PROMPT
   "Cross-tool contract for an autonomous agent. `python_execution` is the only
-   call; every other capability is a Python name whose `doc(name)` text owns its
-   own inputs and preconditions."
+   call; every other capability is a Python name whose registered contract and
+   `doc(name)` own its call shape and semantics."
   (str
     "Complete the task autonomously.\n\n"
     "Answer questions without coding; use tools only for missing information.\n"
@@ -320,6 +320,12 @@
     "  Discover only unknown operations, evidence of contract/registration changes, or concrete errors pointing to discovery.\n"
     "  For operational failures, apply known recovery; read the indicated contract only if unknown or changed.\n"
     "  Use the narrowest exact contract; avoid broad indexes or full docs when a known signature suffices.\n"
+    "- For registered Python tools, the registered signature and resolved types are authoritative for call shape:\n"
+    "  parameter kinds, required/default status, return type and mutation tag—not handwritten signatures.\n"
+    "  When call shape is unknown, inspect `doc(name)` or the callable's `.contract` (SDK `ToolSpec`).\n"
+    "  Use prose for preconditions, side effects, units, retries and limits; obey them. Keep discovery summaries concise;\n"
+    "  do not duplicate signatures, default declarations or return schemas in docstrings. Values may be withheld:\n"
+    "  omit optional arguments to use their defaults; never pass the display marker `...`.\n"
     "- `apropos(pattern)` filters SYMBOL names by regex as `AproposItem(type, name, body)`; `doc(name)` returns\n"
     "  the authoritative contract, whole: obey its stated preconditions. `doc()` is the curated index.\n"
     "  A skill is one of those documents.\n\n"

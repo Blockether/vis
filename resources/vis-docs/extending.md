@@ -51,7 +51,7 @@ def hello(name: str, *, uppercase: bool = False) -> str:
     """Greet one person without sending a message.
 
     name must be nonblank; surrounding whitespace is removed.
-    uppercase defaults to False, preserving the recipient's capitalization.
+    Preserves capitalization unless uppercase is requested.
     Raises ValueError for a blank name. Does not modify stored state.
     """
     if not name.strip():
@@ -117,12 +117,14 @@ print(await hello("Ada", uppercase=True))
 ```
 
 The two calls print `Hello, Ada!` and `HELLO, ADA!`. `apropos()` filters public
-names, not descriptions. `doc()` gives the complete tool documentation.
-`hello.contract` exposes the same description as structured data when needed.
+names, not descriptions. `doc()` combines the registered signature and resolved
+types with the short semantic docstring. It shows parameter kinds, default presence,
+return type and effect tag without requiring that information to be copied into
+prose. `hello.contract` exposes the same contract as structured data when needed.
 
 A displayed default of `...` means an optional argument's value was withheld,
 not that you should pass `Ellipsis`. Omit the argument to use its real default.
-The docstring explicitly explains the public `False` default in this example.
+The docstring explains the resulting behavior: capitalization is preserved.
 See [documenting defaults](extension-design.md#document-default-behavior).
 
 ### 4. Check an edit
@@ -150,7 +152,8 @@ When implementing a requested extension:
 1. Check whether an existing tool or skill already covers the task.
 2. Choose one file for a small integration, an existing Python package for reusable
    logic, or a distributable package when sharing it is part of the request.
-3. Register once; annotate tools and document inputs, defaults, results and failures.
+3. Register once; annotate inputs and results. Keep docstrings focused on meaning,
+   preconditions, side effects and failures rather than copied signatures or schemas.
 4. Test ordinary Python behavior, then discovery and a real tool call in Vis.
 5. Report any untested boundary or required reload. Do not substitute registration
    success for execution or add publishing steps the user did not request.

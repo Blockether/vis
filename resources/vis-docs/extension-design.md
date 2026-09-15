@@ -28,18 +28,24 @@ when they fail. Type annotations describe the API; they do not validate calls.
 
 ## Describe structure once
 
-Use the signature for parameter names and kinds, annotations for types, and prose
-for meaning. A callable's nonblank docstring becomes its `doc()` page. Its first
-line supplies the short `apropos()` preview, so begin with what the tool does.
-Search matches tool names, not that preview: choose names the agent can predict.
+Treat the registered callable signature and resolved types as the source of truth
+for call shape: parameter names and kinds, required/default status, and result
+structure. When you need those details, inspect the narrow `doc("tool.name")` page,
+its `.contract`, or a `ToolSpec` from `Catalog.spec()` rather than a handwritten
+signature in prose.
 
-A useful tool description answers:
+Keep docstrings short and semantic. Vis combines them with the registered metadata
+to build `doc()`; you do not need to repeat signatures, default declarations or
+complete return schemas. Every public callable still needs a nonblank docstring.
+Its first line supplies the short `apropos()` preview, so begin with what the tool
+does. Search matches tool names, not that preview: choose predictable names.
 
-- When should I call this, and what must already be true?
-- What does each input mean, including units, limits and omitted values?
-- What does the result contain, and what do empty or missing values mean?
-- Does the call change anything, request user input or access an external service?
-- What failures should the caller handle?
+Document what the signature and types cannot explain:
+
+- When to call the tool and what must already be true.
+- Units, limits, contextual defaults and the meaning of empty or missing results.
+- Side effects, safety constraints and external services the call uses.
+- Failure conditions and whether retrying is safe.
 
 Use `Annotated[T, "meaning"]` for parameter and result-field descriptions. Keep
 preconditions, side effects and failure conditions in the docstring. Do not copy
@@ -75,7 +81,7 @@ class Greeter:
     ) -> Greeting:
         """Greet one person. Requires a nonblank name; raises ValueError otherwise.
 
-        uppercase defaults to False, preserving the recipient's capitalization.
+        Preserves capitalization unless uppercase is requested.
         Does not send a message or modify stored state.
         """
         if not name.strip():
@@ -88,20 +94,21 @@ class Greeter:
 
 ## Document default behavior
 
-**Explain what happens when an argument is omitted.** A caller needs that behavior,
-not merely a statement that the parameter is optional. Public constants belong
-in the documentation: `uppercase` defaults to `False` in the example. Test the
-omitted-argument call as well as an explicit override so the prose stays accurate.
+Explain omitted-argument behavior when it matters to the caller, without maintaining
+a second list of default declarations. The greeter says that it preserves
+capitalization unless uppercase is requested; its signature already declares the
+optional flag. Test omission and an explicit override so this meaning stays accurate.
 
 For contextual defaults, name the resolution rule: for example, “Omitting `repo`
 uses the current project's repository.” For `None`, say whether it means automatic
 selection, no limit, or absence. Avoid vague phrases such as “uses the default.”
 
-Vis does not automatically export non-`None` default values or call their `repr()`:
-a host default can be a credential, client or other private object. Document known
-public defaults in the docstring or `Annotated` description; never copy a resolved
-credential or environment value there. The [contract reference](extension-api.md#defaults-and-introspection)
-explains `...`, `has_default` and sandbox introspection.
+Vis withholds non-`None` default values and never calls their `repr()`: a host default
+can be a credential, client or other private object. `...` means you can omit the
+argument, not that you should pass `Ellipsis`. If a public value is essential to
+safe use, such as a timeout in seconds, document it in prose or `Annotated` metadata;
+never copy a resolved credential or environment value. See the
+[contract reference](extension-api.md#defaults-and-introspection).
 
 ## Keep the entrypoint small
 
@@ -183,7 +190,8 @@ execution state and errors, but no generic result view. Follow the canonical
 
 | Information | Owner |
 | --- | --- |
-| A tool's inputs, defaults, result and failure conditions | Its annotations and docstring |
+| Parameter names, kinds, required/default status and result structure | The registered signature and resolved types |
+| Preconditions, units, meaningful default behavior, side effects and failures | `Annotated` descriptions and a short docstring |
 | When to use this extension and where to discover its tools | A short extension `prompt` |
 | A multi-step procedure spanning tools | A skill with a clear trigger in its description |
 | Project-wide rules | Project instructions, not every tool's prompt |

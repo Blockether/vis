@@ -259,10 +259,12 @@ start background work or repeat the entire API. `description` supplies the exten
 summary even when `prompt` is omitted.
 
 `apropos(pattern)` filters public symbol names by regular expression. `doc(name)`
-or `doc(hit)` reads the complete matching document. Put parameter details in the
-tool's docstring and annotations, not the prompt. Put an optional multi-step
-procedure in a [skill](skills.md). Neither prompt text nor reading a skill enforces
-permissions; use explicit policy mechanisms for guards.
+or `doc(hit)` reads the complete matching document. Signatures and resolved
+annotations supply call structure; short docstrings and `Annotated` descriptions
+supply semantics, not duplicate signatures or schemas. Keep a useful first-line
+summary for discovery. Put an optional multi-step procedure in a [skill](skills.md).
+Neither prompt text nor reading a skill enforces permissions; use explicit policy
+mechanisms for guards.
 
 ## Tool contracts
 
@@ -277,18 +279,30 @@ tool or its permissions.
 | Namespace | `version`, `name`, `members` with full public member names |
 | Parameter | Name, parameter kind, `required`, `has_default`, `default_is_none`, and type description |
 
-`doc()` renders this same contract as the signature, prose, argument types and
-result fields. This is a documentation contract, not JSON invocation or runtime
-validation. Python binds arguments; the implementation validates domain constraints.
-There is no manual schema/signature override. The exact portable shape is the
+The registered signature and resolved type metadata are authoritative for invocation
+shape. `doc()` renders that same contract: signature, parameter kinds, required/default
+status, return type and fields, mutation tag, and semantic description. A method with
+no arguments has an empty `signature` string and is rendered as `name()`; that does
+not mean metadata is missing. A short semantic docstring is sufficient—do not repeat
+the signature, defaults or full return schema in it.
+
+Use the narrow callable's `doc()` or `.contract` when call shape is unknown;
+`Catalog.spec(name)` exposes the same metadata as an SDK `ToolSpec`. Prose remains
+authoritative for preconditions, side effects, safety constraints, units, retry
+behavior and non-obvious limits. A mutation tag describes an effect; it does not
+authorize it.
+
+This is a documentation contract, not JSON invocation or runtime validation. Python
+binds arguments; the implementation validates domain constraints. There is no manual
+schema/signature override. The exact portable shape is the
 [symbol schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/symbol.json).
 
 ### Defaults and introspection
 
 Non-`None` runtime default values are withheld, and their `repr()` is never called.
 This avoids exposing private host objects or credentials, including values whose
-Python type looks ordinary. **Public default behavior still belongs in the tool's
-documentation**; see [documenting defaults](extension-design.md#document-default-behavior).
+Python type looks ordinary. Document meaningful omitted-argument behavior, not a
+copied defaults table; see [documenting defaults](extension-design.md#document-default-behavior).
 
 | Python declaration | `has_default` | `default_is_none` | Rendered default |
 | --- | --- | --- | --- |

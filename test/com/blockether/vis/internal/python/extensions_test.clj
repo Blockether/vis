@@ -5230,33 +5230,40 @@ vis.register_extension(vis.Extension(
 (defdescribe
   authoring-example-test
   ;; #176: load the documented package itself, not a second copy of its snippets.
-  (it "loads the one-file tutorial and calls its documented defaults in the sandbox"
-      (let [source (second (re-find
-                             #"(?s)```python\n# \.vis/extensions/greeting_tools\.py\n(.*?)\n```"
-                             (slurp (io/resource "vis-docs/extending.md"))))]
-        (expect (some? source))
-        (with-fresh-loaded
-          {"greeting_tools.py" source}
-          (fn [result _]
-            (expect (= 1 (:loaded result)) (pr-str result))
-            (let [ext (registered "greeting")
-                  ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
-                  env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+  ;; #232: short semantic docstrings retain generated call shape across the real host boundary.
+  (it
+    "loads the one-file tutorial and calls its documented defaults in the sandbox"
+    (let [source (second (re-find
+                           #"(?s)```python\n# \.vis/extensions/greeting_tools\.py\n(.*?)\n```"
+                           (slurp (io/resource "vis-docs/extending.md"))))]
+      (expect (some? source))
+      (with-fresh-loaded
+        {"greeting_tools.py" source}
+        (fn [result _]
+          (expect (= 1 (:loaded result)) (pr-str result))
+          (let [ext (registered "greeting")
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
 
-              (try (lp/sync-active-extension-symbols! env [ext])
-                   (let [answer (ep/run-python-block
-                                  ctx
-                                  (str
-                                    "hits = apropos(r'^hello$')\n"
-                                    "assert len(hits) == 1, repr(hits)\n"
-                                    "assert 'uppercase defaults to False' in doc(hits[0])\n"
-                                    "assert hello.contract['parameters'][1]['has_default']\n"
-                                    "assert await hello('Ada') == 'Hello, Ada!'\n"
-                                    "assert await hello('Ada', uppercase=True) == 'HELLO, ADA!'\n"
-                                    "print('tutorial verified')"))]
-                     (expect (nil? (:error answer)) (pr-str answer))
-                     (expect (str/includes? (or (:stdout answer) "") "tutorial verified")))
-                   (finally (ep/dispose-python-context! ctx))))))))
+            (try
+              (lp/sync-active-extension-symbols! env [ext])
+              (let
+                [answer
+                 (ep/run-python-block
+                   ctx
+                   (str
+                     "hits = apropos(r'^hello$')\n" "assert len(hits) == 1, repr(hits)\n"
+                     "assert 'Preserves capitalization unless uppercase is requested.' in doc(hits[0])\n"
+                     "assert 'hello(name, *, uppercase=...)' in doc(hits[0])\n"
+                     "assert 'uppercase: bool (keyword_only; default omitted)' in doc(hits[0])\n"
+                     "assert 'Returns: str' in doc(hits[0])\n"
+                     "assert hello.contract['parameters'][1]['has_default']\n"
+                     "assert await hello('Ada') == 'Hello, Ada!'\n"
+                     "assert await hello('Ada', uppercase=True) == 'HELLO, ADA!'\n"
+                     "print('tutorial verified')"))]
+                (expect (nil? (:error answer)) (pr-str answer))
+                (expect (str/includes? (or (:stdout answer) "") "tutorial verified")))
+              (finally (ep/dispose-python-context! ctx))))))))
   (it
     "exposes its contract, result, documentation and packaged skill in a real session"
     (let [example
@@ -5298,7 +5305,10 @@ vis.register_extension(vis.Extension(
                        "assert 'Parameters:' not in tool_hit.body\n"
                        "assert 'Unicode code points' in doc(tool_hit)\n"
                        "assert 'uppercase: bool' in doc(tool_hit)\n"
-                       "assert 'uppercase defaults to False' in doc(tool_hit)\n"
+                       "assert 'Preserves capitalization unless uppercase is requested.' in doc(tool_hit)\n"
+                       "assert 'greet.hello(name, *, uppercase=...)' in doc(tool_hit)\n"
+                       "assert 'uppercase: bool (keyword_only; default omitted)' in doc(tool_hit)\n"
+                       "assert 'Returns: Greeting' in doc(tool_hit)\n"
                        "assert doc(tool_hit) == doc('greet.hello')\n"
                        "assert all(0 < len(hit.body) <= 100 and '\\n' not in hit.body for hit in hits)\n"
                        "for name in ('extension-design', 'extension-packages', 'extension-development', 'extension-api', 'extension-troubleshooting'):\n"

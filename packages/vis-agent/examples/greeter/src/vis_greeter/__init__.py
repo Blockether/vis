@@ -23,7 +23,7 @@ class Greeter:
     ) -> Greeting:
         """Greet one person. Requires a nonblank name; raises ValueError otherwise.
 
-        uppercase defaults to False, preserving the recipient's capitalization.
+        Preserves capitalization unless uppercase is requested.
         Does not send a message or modify stored state.
         """
         if not name.strip():

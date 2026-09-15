@@ -499,6 +499,26 @@
         (= 1 (count (re-seq #"identify the unresolved question affecting the next step" text)))))))
 
 (defdescribe
+  core-prompt-registered-python-contract-test
+  ;; #232: pin invocation authority without encouraging repeated discovery or copied schemas.
+  (it "uses registered metadata when Python call shape is unknown"
+      (let [text (str/replace (prompt/build-system-prompt {}) #"\s+" " ")]
+        (doseq [rule ["registered signature and resolved types are authoritative for call shape"
+                      "parameter kinds, required/default status, return type and mutation tag"
+                      "inspect `doc(name)` or the callable's `.contract` (SDK `ToolSpec`)"
+                      "not handwritten signatures"]]
+          (expect (str/includes? text rule) rule))))
+  (it "keeps semantic documentation and discovery useful without duplicating structure"
+      (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (doseq
+          [rule
+           ["Use prose for preconditions, side effects, units, retries and limits"
+            "Keep discovery summaries concise"
+            "do not duplicate signatures, default declarations or return schemas in docstrings"
+            "omit optional arguments to use their defaults; never pass the display marker `...`"]]
+          (expect (str/includes? text rule) rule)))))
+
+(defdescribe
   core-prompt-execution-invariants-test
   ;; Compression must retain executable contracts, not just capability names.
   (it "keeps independent batching separate from dependent observations"
@@ -517,9 +537,8 @@
 
 (defdescribe
   prompt-core-test
-  ;; With one tool there is no schema to be authoritative: a capability's OWN
-  ;; document is the contract, and the core prompt has to say where it lives or
-  ;; the model invents a call shape instead of pulling one.
+  ;; Each capability owns its contract; doc() renders Python metadata and semantics.
+  ;; The core prompt must point there instead of encouraging invented call shapes.
   (it "points authority at the document a capability carries"
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "`doc(name)` returns"))
@@ -616,7 +635,8 @@
       ;; 8.7k → 8.5k: fingerprints and Improve proposals moved to the `doc("defs")` page;
       ;; the prompt keeps helper policy and how the saved definitions follow the namespace.
       ;; 8.5k → 9.1k for #231: one demand-driven discovery policy, including recovery and reuse.
-      (expect (< (count text) 9100))
+      ;; 9.1k → 9.7k for #232: registered call shape, semantic prose and withheld defaults.
+      (expect (< (count text) 9700))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]

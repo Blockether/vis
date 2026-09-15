@@ -1,0 +1,23 @@
+{
+  "lang": "python",
+  "prompt": "Use the preinstalled contract_probe extension to check the initial totals, then record Ada in inbox using the normal copy count and no note, then record Lin in archive with three copies and the note urgent. Finally read the totals and report the two receipts and final totals. Do not read source files, import the extension, recreate it, use shell, or write files yourself. Only the registered extension may change its local ledger. If the extension is unavailable, report that and stop.",
+  "want": {
+    "contract-receipts.jsonl": [
+      "{\"bucket\": \"inbox\", \"copies\": 2, \"note\": null, \"person\": \"Ada\", \"sequence\": 1, \"total\": 2}",
+      "{\"bucket\": \"archive\", \"copies\": 3, \"note\": \"urgent\", \"person\": \"Lin\", \"sequence\": 2, \"total\": 5}"
+    ]
+  },
+  "wantnot": {
+    "contract-receipts.jsonl": [
+      "\"sequence\": 3"
+    ]
+  },
+  "want_tools": [
+    "contract_probe.record",
+    "contract_probe.status"
+  ],
+  "want_forms": [
+    "doc("
+  ],
+  "want_requested_route": true
+}
