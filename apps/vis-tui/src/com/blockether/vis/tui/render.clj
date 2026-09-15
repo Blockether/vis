@@ -6242,12 +6242,13 @@
 
                                                        ;; Only child rows are indented, never a top-level operation.
                                                        ;; The header stays visible; only content follows the disclosure.
-                                                       ;; Every operation starts open until the reader chooses.
+                                                       ;; Opening a group reveals child summaries, not every nested body.
                                                        openable?
                                                        (activity-row-openable? row)
 
                                                        open?
-                                                       (and openable? (expanded? id true))
+                                                       (and openable?
+                                                            (expanded? id (zero? (long depth))))
 
                                                        suffix
                                                        (activity-row-tail row)
