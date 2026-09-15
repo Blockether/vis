@@ -15,31 +15,27 @@
 
 (h/use-mem-store!)
 
-(deftest publication-uses-semantic-result-test
+(deftest message-operations-use-semantic-results-test
   (foundation/register!)
-  (let [published
-        (atom nil)
+  (doseq [[operation headline] [[:council.publish "Published Council message"]
+                                [:council.get "Read Council message"]]]
+    (let [published (atom nil)
+          entry {:entry_id 279
+                 :kind "informational"
+                 :thread_id 258
+                 :title "Review"
+                 :content "Useful result"
+                 :created_at 1789503371213
+                 :source "host"
+                 :reply_required true
+                 :replies [{:session_id "internal-recipient" :state "pending"}]}
+          result (with-redefs [extension/publish-activity! #(reset! published %)]
+                   (#'host/result {} operation {:group_id "internal-group"} entry))]
 
-        entry
-        {:entry_id 279
-         :kind "informational"
-         :thread_id 258
-         :title "Review"
-         :content "Useful result"
-         :created_at 1789503371213
-         :source "host"
-         :reply_required true
-         :replies [{:session_id "internal-recipient" :state "pending"}]}
-
-        result
-        (with-redefs [extension/publish-activity! #(reset! published %)]
-          (#'host/result {} :council.publish {:group_id "internal-group"} entry))]
-
-    (is (= {"headline" "Published Council message"
-            "summary" ""
-            "content" [{"type" "markdown" "text" "Useful result"}]}
+      (is
+        (= {"headline" headline "summary" "" "content" [{"type" "markdown" "text" "Useful result"}]}
            @published))
-    (is (= (wire/->wire entry) (:result result)))))
+      (is (= (wire/->wire entry) (:result result))))))
 
 (deftest publication-survives-presentation-failure-test
   ;; C24/C25: provenance is trusted, canonical and independent of stdout or Activity IO.

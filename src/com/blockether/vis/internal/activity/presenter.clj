@@ -277,7 +277,7 @@
    "_shell-stop" ["Stop command" "Stopped command" true]
    "council.publish" ["Publish Council message" "Published Council message" false]
    "council.read" ["Read thread" "Read thread" false]
-   "council.get" ["Read message" "Read message" false]
+   "council.get" ["Read Council message" "Read Council message" false]
    "council.threads" ["List threads" "Listed threads" false]
    "council.members" ["List members" "Listed members" false]
    "council.publish_spawn" ["Spawn subagent" "Spawned subagent" true]
@@ -611,19 +611,10 @@
   [op value]
   (let [headline (second (get tool-headlines op))]
     (case op
-      "council.publish"
+      ("council.publish" "council.get")
       {"headline" headline
        "summary" (if (not-empty (field value "content")) "" "No message content")
        "content" (council-body value "content")}
-
-      "council.get"
-      (let [message (council-message value)]
-        (assoc message
-          "headline" headline
-          "summary" (str/join " · "
-                              (remove str/blank?
-                                [(when (map? value) (get message "headline"))
-                                 (get message "summary")]))))
 
       ("council.read" "council.threads" "council.members" "council.subagents")
       (let [items

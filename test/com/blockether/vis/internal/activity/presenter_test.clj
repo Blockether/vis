@@ -38,7 +38,14 @@
         :ping ["reviewer"]
         :content "Read and Patch now show their **results** after one disclosure."} nil]
       [:run_tests "Activity tests"
-       {:is_pass true :total 12 :pass 12 :fail 0 :output "12 tests passed."} nil]]
+       {:is_pass true :total 12 :pass 12 :fail 0 :output "12 tests passed."} nil]
+      [:council.get "Activity review"
+       {:title "Activity review"
+        :entry_id 42
+        :kind "informational"
+        :thread_id 42
+        :ping ["reviewer"]
+        :content "Read and Patch now show their **results** after one disclosure."} nil]]
 
      ctx
      (event/context)
@@ -703,12 +710,16 @@
                        view))
             (expect (contract/valid-projection? (result-fixture [[:council.publish "" value
                                                                   nil]])))))))
-  (it "names an absent published message body without exposing receipt metadata"
-      (doseq [value [nil {} {:content ""} {"content" ""} 279]]
-        (expect
-          (= {"headline" "Published Council message" "summary" "No message content" "content" []}
-             (presenter/result-presentation {:operation :council.publish} value)))))
-  (it "shows the message and reply counts when reading a message"
+  (it "names an absent message body without exposing receipt metadata"
+      (doseq [[operation headline]
+              [[:council.publish "Published Council message"] [:council.get "Read Council message"]]
+
+              value
+              [nil {} {:content ""} {"content" ""} 279]]
+
+        (expect (= {"headline" headline "summary" "No message content" "content" []}
+                   (presenter/result-presentation {:operation operation} value)))))
+  (it "shows only the Council read label and message body"
       (let [view (presenter/result-presentation
                    {:operation :council.get}
                    {:title "Review"
@@ -724,10 +735,10 @@
                     :reply_required true
                     :replies [{:session_id "internal-recipient" :state "pending"}
                               {:session_id "internal-other" :state "replied" :reply_entry_id 43}]})]
-        (expect (= "Review · Replies: 1 pending · 1 received" (get view "summary")))
-        (expect (= [{"type" "markdown" "text" "Tests **passed**."}] (get view "content")))
-        (expect (not (re-find #"internal-|Created at|Reply required|Source|coordination"
-                              (pr-str view))))))
+        (expect (= {"headline" "Read Council message"
+                    "summary" ""
+                    "content" [{"type" "markdown" "text" "Tests **passed**."}]}
+                   view))))
   (it "summarizes pages and keeps each read message behind its own disclosure"
       (let [value
             {:entries [{:title "Review"
@@ -768,7 +779,7 @@
           (expect (= summary (get view "summary")))
           (expect (empty? (get view "content")))
           (expect (empty? (get view "sections"))))))
-  (it "retains full message bodies and distinct reply outcomes with wire keys"
+  (it "retains full message bodies without reply metadata with wire keys"
       (let [body
             (apply str (repeat 200 "Full **message**.\n"))
 
@@ -780,13 +791,12 @@
             view
             (presenter/result-presentation {:operation :council.get} value)]
 
-        (expect (= "Reply · Replies: 1 delivered · 1 interrupted · 1 unavailable"
-                   (get view "summary")))
+        (expect (= "" (get view "summary")))
         (expect (= [{"type" "markdown" "text" body}] (get view "content")))
-        (expect (contract/valid-projection?
-                  (result-fixture [[:council.read "" {"entries" [value] "has_more" true} nil]])))))
+        (expect (contract/valid-projection? (result-fixture [[:council.get "" value nil]])))))
   (it "keeps local messages and lookups end-only"
       (expect (= "Publish Council message" (:headline (presenter/for-tool :council.publish))))
+      (expect (= "Read Council message" (:headline (presenter/for-tool :council.get))))
       (doseq [operation [:council.publish :council.get :council.read :council.threads
                          :council.members]]
         (expect (false? (:show-start (presenter/for-tool operation)))))))

@@ -30,11 +30,15 @@ it('does not render technical resource IDs as expandable files', () => {
   expect(screen.queryByRole('button', { name: /Published Council message/ })).toBeNull();
 });
 
-it('shows only the Council publish label and message body', () => {
+it.each([
+  ['council.publish', 'Published Council message'],
+  ['council.get', 'Read Council message'],
+])('shows only the %s label and message body', (operation, headline) => {
   const activity = structuredClone(storyData.ACTIVITY_RESULTS);
-  activity.rows = [activity.rows[4]];
+  activity.rows = activity.rows.filter((row) => row.operation === operation);
+  expect(activity.rows).toHaveLength(1);
   paintActivity({ activity });
-  expect(screen.getByRole('button', { name: /Published Council message/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: new RegExp(headline) })).toBeTruthy();
   expect(document.querySelector('[data-activity-summary]')).toBeNull();
   openEverySettledStep();
   expect(document.body.textContent).toContain(

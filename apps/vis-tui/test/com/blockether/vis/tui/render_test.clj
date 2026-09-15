@@ -526,32 +526,31 @@
                      "fixture")]
         (expect (= 2 (count (filter #(= :activity-diff (get-in % [:meta :kind])) entries))))
         (expect (not-any? #(= "Diff" (get-in % [:meta :label])) entries))))
-  (it "shows only the Council publish label and message body"
-      (let [rows
-            (->> (io/resource "vis-contract/fixtures/activity-results.json")
-                 slurp
-                 json/read-str
-                 activity-contract/from-wire
-                 :rows
-                 (filterv #(= "council.publish" (:operation %))))
+  (it "shows only the Council action label and message body"
+      (doseq [[operation headline] [["council.publish" "Published Council message"]
+                                    ["council.get" "Read Council message"]]]
+        (let [rows (->> (io/resource "vis-contract/fixtures/activity-results.json")
+                        slurp
+                        json/read-str
+                        activity-contract/from-wire
+                        :rows
+                        (filterv #(= operation (:operation %))))
+              entries (#'render/activity-detail-entries
+                       {:node-id "activity"
+                        :activity-rows rows
+                        :activity-expanded? (fn [_ _]
+                                              true)}
+                       120
+                       "fixture")
+              text (str/join "\n" (map (comp #'render/strip-paint-markers-line :line) entries))]
 
-            entries
-            (#'render/activity-detail-entries
-             {:node-id "activity"
-              :activity-rows rows
-              :activity-expanded? (fn [_ _]
-                                    true)}
-             120
-             "fixture")
-
-            text
-            (str/join "\n" (map (comp #'render/strip-paint-markers-line :line) entries))]
-
-        (expect (str/includes? text "Published Council message"))
-        (expect (str/includes? text "Read and Patch now show their results after one disclosure."))
-        (doseq [metadata ["Activity review" "informational" "Created at" "Source" "Replies"
-                          "Details truncated"]]
-          (expect (not (str/includes? text metadata))))))
+          (expect (= 1 (count rows)))
+          (expect (str/includes? text headline))
+          (expect (str/includes? text
+                                 "Read and Patch now show their results after one disclosure."))
+          (doseq [metadata ["Activity review" "informational" "Created at" "Source" "Replies"
+                            "Details truncated"]]
+            (expect (not (str/includes? text metadata)))))))
   (it "keeps the result filename in a narrow read or patch header"
       (let [rows
             (-> (io/resource "vis-contract/fixtures/activity-results.json")

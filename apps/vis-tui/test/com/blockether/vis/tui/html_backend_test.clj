@@ -241,13 +241,13 @@
                                 (.current interactions/hit-map)))
             opened (toggle-review-region {:vis.channel-tui/baseline :collapse} band)]
 
-        (is (= 6 (count rows)))
+        (is (= 7 (count rows)))
         (let [painted (paint-activity-review! hs rows opened)]
           (is (= 2 (count (re-seq #"presenter\.clj" (str/join "\n" (:lines painted)))))))
         (doseq [[row expected] (map vector
                                     rows
                                     ["greeting" "Hi" "greeting_test.clj" "captured" "disclosure"
-                                     "12 tests passed."])]
+                                     "12 tests passed." "disclosure"])]
           (paint-activity-review! hs rows opened)
           (let [step (first (filter #(str/ends-with? (str (:node-id %)) (str ":" (:id row)))
                                     (.current interactions/hit-map)))

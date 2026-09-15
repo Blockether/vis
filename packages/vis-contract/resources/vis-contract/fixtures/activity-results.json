@@ -2,7 +2,7 @@
   "state": "succeeded",
   "counts": {
     "running": 0,
-    "succeeded": 6,
+    "succeeded": 7,
     "failed": 0,
     "cancelled": 0
   },
@@ -222,6 +222,38 @@
         {
           "kind": "result",
           "text": "{:is_pass true, :total 12, :pass 12, :fail 0, :output \"12 tests passed.\"}"
+        }
+      ],
+      "resources": []
+    },
+    {
+      "result_summary": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}",
+      "id": "result-6",
+      "summary": "Activity review",
+      "signal": "observation",
+      "sequence": 7,
+      "operation": "council.get",
+      "presentation": {
+        "headline": "Read Council message",
+        "summary": "",
+        "content": [
+          {
+            "type": "markdown",
+            "text": "Read and Patch now show their **results** after one disclosure."
+          }
+        ]
+      },
+      "presenter": "generic",
+      "duration_ms": 0,
+      "state": "succeeded",
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[\"Activity review\"]"
+        },
+        {
+          "kind": "result",
+          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read and Patch now show their **results** after one disclosure.\"}"
         }
       ],
       "resources": []
