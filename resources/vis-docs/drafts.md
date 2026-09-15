@@ -1,21 +1,28 @@
 # Drafts
 
 A draft gives a session its own working copy of your repository, separate from
-your current checkout. Ask Vis to use one when you want to review a change before
-bringing it back to the default branch.
+your current checkout. With `draft_backend` set to `auto` (the default),
+`worktree` or `rift`, Vis starts each change-making task in a session-owned draft
+without a separate request. This includes code, tests, documentation and
+configuration; read-only questions and analysis do not need a draft.
+
+Vis keeps edits and checks in the draft. If no backend can create one, Vis reports
+the blocker instead of editing your current checkout. Set the toggle to `off` to
+disable this workflow and draft creation.
 
 ## Ask Vis to work in a draft
 
-> Create a draft for the parser fix. Make the change and run the tests, then show
-> me the diff before approving it.
+> Fix the parser and run the tests, then show me the draft's diff.
+> Do not commit or push until I approve.
 
 Only the agent manages drafts; there is no draft menu or slash command in the
 TUI or Companion app. You control the workflow through the conversation.
 
 **Approval commits and may push.** `draft_approve()` commits the draft's changes,
 fast-forwards the default branch, restores unrelated local work and pushes to
-`origin` when configured. Ask to review first if you do not want those actions yet.
-Approval leaves the draft open for further work.
+`origin` when configured. Enabling drafts does not authorize commits or pushes:
+Vis needs your request or permission in your project instructions. Ask to review
+first to keep the draft unapproved. Approval leaves it open for further work.
 
 Discarding a draft removes its unapproved changes and returns the session to the
 original checkout. Work already approved stays on the default branch. Ask Vis to
@@ -131,9 +138,9 @@ require Git history. The `draft_backend` toggle chooses between them:
 
 | Value | Meaning |
 |---|---|
-| `auto` (default) | `worktree` when the repository allows it, else `rift`. |
-| `worktree`, `rift` | Only that backend; `draft_create` refuses when it is unavailable. |
-| `off` | No drafts. `draft_create` explains why. |
+| `auto` (default) | Require drafts for changes; use `worktree` when the repository allows it, else `rift`. |
+| `worktree`, `rift` | Require drafts using only that backend; `draft_create` refuses when it is unavailable. |
+| `off` | No automatic draft workflow or draft creation. `draft_create` explains why. |
 
 Set it from the Settings dialog or in `~/.vis/config.yml`:
 

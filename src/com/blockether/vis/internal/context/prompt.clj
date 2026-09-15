@@ -385,7 +385,7 @@
     "- When relevant checks pass, finish the authorized workflow. Repeat or broaden checks\n"
     "  only for new edits, failures, or a concrete unresolved risk. Report checks you could not run.\n\n"
     "## 5. Act autonomously\n"
-    "- Work in the selected checkout; create worktrees or clones only when explicitly requested.\n"
+    "- Use the checkout or enabled draft workflow; other worktrees/clones need an explicit request.\n"
     "- Make non-destructive in-scope changes on your own and report what you did.\n"
     "- Keep secrets out of answers, logs, and files.\n"
     "- Commit and push require an explicit request or explicit authorization in applicable project instructions.\n"

@@ -770,7 +770,7 @@
       (doseq
         [required
          ["For analysis-only or diff-preview requests, do not apply changes"
-          "create worktrees or clones only when explicitly requested"
+          "checkout or enabled draft workflow" "other worktrees/clones need an explicit request"
           "Commit and push require an explicit request"
           "or explicit authorization in applicable project instructions"
           "Honor narrower user requests"

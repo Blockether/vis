@@ -551,7 +551,7 @@ toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
   council: true         # default true; classified project messages, replies and explicit pings
-  draft_backend: auto   # auto | worktree | rift | off; how the agent isolates a draft (see drafts.md)
+  draft_backend: auto   # auto | worktree | rift | off; require drafts for changes unless off (see drafts.md)
 ```
 
 Run `/reload` after editing.
